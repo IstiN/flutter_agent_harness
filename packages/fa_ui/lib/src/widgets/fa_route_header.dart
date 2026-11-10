@@ -5,6 +5,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../chat/fa_adaptive_header.dart';
+import '../chat/fa_duo_control_rail.dart';
 import '../utils/page_presentation.dart';
 
 /// Shared window-chrome geometry for route, floating and presented headers.
@@ -58,6 +60,17 @@ PreferredSizeWidget faRouteAppBar({
       toolbarHeight: toolbarHeight,
     );
   }
+  if (context != null &&
+      !FaDialogScope.of(context) &&
+      FaDuoControlRail.isActive(context)) {
+    return _FaDuoRouteHeader(
+      title: title,
+      actions: actions,
+      leading: leading,
+      centerTitle: centerTitle,
+      toolbarHeight: toolbarHeight,
+    );
+  }
   return AppBar(
     title: title,
     actions: actions,
@@ -65,6 +78,130 @@ PreferredSizeWidget faRouteAppBar({
     centerTitle: centerTitle,
     toolbarHeight: toolbarHeight,
   );
+}
+
+/// A compact route title with Duo Back overlaid in the native trailing rail.
+///
+/// Keeping [preferredSize] at the ordinary toolbar height is intentional:
+/// making the app bar as tall as the camera clearance would recreate the
+/// giant empty body inset that the rail is meant to avoid.
+final class _FaDuoRouteHeader extends StatefulWidget
+    implements PreferredSizeWidget {
+  const _FaDuoRouteHeader({
+    this.title,
+    this.actions,
+    this.leading,
+    this.centerTitle,
+    double? toolbarHeight,
+  }) : toolbarHeight = toolbarHeight ?? kToolbarHeight;
+
+  final Widget? title;
+  final List<Widget>? actions;
+  final Widget? leading;
+  final bool? centerTitle;
+  final double toolbarHeight;
+
+  @override
+  Size get preferredSize => Size.fromHeight(toolbarHeight);
+
+  @override
+  State<_FaDuoRouteHeader> createState() => _FaDuoRouteHeaderState();
+}
+
+final class _FaDuoRouteHeaderState extends State<_FaDuoRouteHeader> {
+  OverlayEntry? _backEntry;
+  ModalRoute<void>? _route;
+  bool _syncScheduled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    _scheduleSync();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FaDuoRouteHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _scheduleSync();
+  }
+
+  void _scheduleSync() {
+    if (_syncScheduled) return;
+    _syncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncScheduled = false;
+      if (!mounted) return;
+      final hasBack = widget.leading != null || Navigator.of(context).canPop();
+      if (!hasBack) {
+        _backEntry?.remove();
+        _backEntry = null;
+        return;
+      }
+      final entry = _backEntry;
+      if (entry == null) {
+        _backEntry = OverlayEntry(builder: _buildBack);
+        Overlay.of(context).insert(_backEntry!);
+      } else {
+        entry.markNeedsBuild();
+      }
+    });
+  }
+
+  Widget _buildBack(BuildContext _) {
+    if (_route?.isCurrent == false) return const SizedBox.shrink();
+    final back =
+        widget.leading ??
+        (Navigator.of(context).canPop()
+            ? const BackButton(key: ValueKey('faDuoRouteBack'))
+            : null);
+    if (back == null) return const SizedBox.shrink();
+    return Positioned(
+      top: FaDuoControlRail.topOf(context),
+      right: 0,
+      width: FaDuoControlRail.widthOf(context),
+      height: FaDuoControlRail.actionDimension + FaDuoControlRail.spacing,
+      child: FaDuoControlRail(
+        leading: [
+          SizedBox.square(
+            dimension: FaDuoControlRail.actionDimension,
+            child: FaHeaderCircularAction(
+              dimension: FaDuoControlRail.actionDimension,
+              child: IconTheme.merge(
+                data: const IconThemeData(size: 18),
+                child: back,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _backEntry?.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final railWidth = FaDuoControlRail.widthOf(context);
+    return Padding(
+      padding: EdgeInsets.only(right: railWidth),
+      child: MediaQuery.removePadding(
+        context: context,
+        removeRight: true,
+        child: AppBar(
+          title: widget.title,
+          actions: widget.actions,
+          centerTitle: widget.centerTitle,
+          toolbarHeight: widget.toolbarHeight,
+          automaticallyImplyLeading: false,
+        ),
+      ),
+    );
+  }
 }
 
 /// The shared full-window route header. Prefer [faRouteAppBar] at call sites.

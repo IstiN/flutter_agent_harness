@@ -653,6 +653,115 @@ void main() {
       });
     }
 
+    // ── channel-row tap over a NOT-yet-live session (the membership arms
+    // of the shell's _openNetworkChannel): a stored password resumes
+    // silently, and a resume rejection lands in the snack without
+    // swapping the content pane.
+    testWidgets('a rejected channel-row resume surfaces the snack and '
+        'keeps the unified list', (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(
+        networkId: 'net1',
+        name: 'fa-team',
+        password: 'stored-pw',
+      );
+      final httpClient = FakeHttpClient()
+        ..respond(500, body: resumeRejectedBody); // resume: join -> 5xx
+      final controller = NetworkModeController.inMemory();
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: httpClient,
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+      await _pumpWideHome(
+        tester,
+        controller: controller,
+        manager: manager,
+        networkInboxAdapter: FixtureNetworkInboxAdapter(
+          items: [
+            NetworkInboxItem(
+              kind: ChatListEntryKind.networkChannel,
+              networkId: 'net1',
+              id: 'c1',
+              title: 'general',
+              lastActivity: DateTime.utc(2026, 8, 1, 12),
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.text('general'));
+      for (var index = 0; index < 6; index++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      // The resume's join POST was rejected; the snack carries the body's
+      // error.message.
+      expect(find.textContaining('resume rejected'), findsOneWidget);
+      // No live session -> no content-pane swap, the list stays put.
+      expect(find.byType(NetworkChatPage), findsNothing);
+      expect(find.byType(ChatListPanel), findsOneWidget);
+      expect(controller.networkId, 'net1');
+      expect(controller.channelId, isNull);
+      await manager.disconnectAll();
+      await tester.pump();
+    });
+
+    testWidgets('a passwordless channel row opens the join sheet from the '
+        'unified list', (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody); // join-sheet probes, if any
+      final controller = NetworkModeController.inMemory();
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: httpClient,
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+      await _pumpWideHome(
+        tester,
+        controller: controller,
+        manager: manager,
+        networkInboxAdapter: FixtureNetworkInboxAdapter(
+          items: [
+            NetworkInboxItem(
+              kind: ChatListEntryKind.networkChannel,
+              networkId: 'net1',
+              id: 'c1',
+              title: 'general',
+              lastActivity: DateTime.utc(2026, 8, 1, 12),
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.text('general'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // No stored password -> the join sheet explains the membership
+      // instead of resuming, and no chat page opens behind it.
+      expect(find.byType(JoinSheet), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('networkNeedsPasswordExplanation')),
+        findsOneWidget,
+      );
+      expect(find.byType(NetworkChatPage), findsNothing);
+      expect(controller.networkId, 'net1');
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(JoinSheet), findsNothing);
+      await manager.disconnectAll();
+      await tester.pump();
+    });
+
     testWidgets('rail All is a global reset from a drilled network channel', (
       tester,
     ) async {

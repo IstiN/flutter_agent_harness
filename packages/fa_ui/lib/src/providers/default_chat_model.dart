@@ -147,6 +147,7 @@ class DefaultChatModelSection extends StatelessWidget {
                     onDeviceRoutes: onDeviceProviders,
                     addProviderPage: addProviderPage,
                   ),
+                  allowDuoDialog: true,
                 );
                 debugPrint(
                   '[fah][dcm] picker result: '

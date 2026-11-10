@@ -23,7 +23,17 @@ import 'package:test/test.dart';
 final _apiKey = Platform.environment['GOOGLE_API_KEY'];
 
 /// `false` when the key is present (tests run), otherwise the skip reason.
-final _skip = (_apiKey?.isEmpty ?? true) ? 'GOOGLE_API_KEY not set' : false;
+/// Live calls are OPT-IN (2026-11-10 nightly policy): a paid/region-blocked
+/// upstream must never redden CI on billing or quota (Google 402/403
+/// class). The mock parity coverage lives in the unit suite; set
+/// `FA_GOOGLE_LIVE=1` (plus the key below) to run this suite by hand.
+final _optedIn = Platform.environment['FA_GOOGLE_LIVE'] == '1';
+
+final _skip = !_optedIn
+    ? 'live Google is opt-in; set FA_GOOGLE_LIVE=1 to run'
+    : (_apiKey?.isEmpty ?? true)
+        ? 'GOOGLE_API_KEY not set'
+        : false;
 
 /// Cheap current Gemini chat model. Thinking is disabled per-request via
 /// [GoogleThinking] so text deltas arrive without a thinking preface.

@@ -383,6 +383,9 @@ jobs:
         if: matrix.target == 'macos'
         working-directory: flutter_app
         shell: bash
+        # TZ=UTC — the golden clock contract (see ci.yml flutter-app-goldens).
+        env:
+          TZ: UTC
         run: flutter test test/golden
 
       - name: ${{ matrix.cmd }}

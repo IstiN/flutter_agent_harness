@@ -166,6 +166,12 @@ const _exempt = <String, String>{
   'lib/ui/network/showcase_page.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/sign_in_dialog.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/wallet_menu.dart': 'fa_network #955: no goldens yet',
+  // Duo folder merge (main #2058 lineage): private new-session/sandbox
+  // folder dialogs, opened only from the folder-selection sheet — same
+  // waiver as the fa_network block above; goldens belong to the folder
+  // feature work.
+  'lib/ui/widgets/wide_layout_shell_session_actions.dart':
+      'Duo folder merge: private dialogs, no goldens yet',
   'lib/ui/widgets/store_get_banner.dart':
       'settings Get banner; rendered inside settings.dart (covered '
       'indirectly by settings_golden_test.dart)',

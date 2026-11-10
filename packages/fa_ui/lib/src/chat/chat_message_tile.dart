@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -216,8 +217,8 @@ class ChatMessageTile extends StatelessWidget {
   }
 
   /// The bubble body: width budget (user bubbles keep the compact fixed
-  /// cap, AI bubbles span up to 90% of the viewport), the role surface, and
-  /// the single SelectionArea over the Markdown body.
+  /// cap, AI bubbles span the full transcript row width), the role surface,
+  /// and the single SelectionArea over the Markdown body.
   Widget _bubbleContainer(BuildContext context, bool isUser) {
     final theme = Theme.of(context);
     final styleSheet = fahMarkdownStyleSheet(
@@ -232,47 +233,56 @@ class ChatMessageTile extends StatelessWidget {
     );
     final palette = fahChatColorsOf(context);
     final border = Theme.of(context).dividerColor;
-    return Container(
-      // AI messages can carry long code/report text: let the bubble span
-      // 90% of the viewport instead of a cramped fixed 560px cap. User
-      // bubbles keep the compact fixed width.
-      constraints: BoxConstraints(
-        maxWidth: isUser ? 560 : MediaQuery.sizeOf(context).width * 0.9,
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: isUser ? palette.userBubble : palette.panel,
-        border: _bubbleBorder(context, palette, border, isUser),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: _bubbleShadow(context, isUser),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Issue #461: the user's own attachments render INSIDE the
-          // bubble, above the text — thumbnails (wrapped grid when
-          // several), the unavailable-image placeholder, file chips.
-          if (isUser) _userAttachments(context),
-          SelectionArea(
-            // ONE selection region for the whole bubble: MarkdownBody's own
-            // `selectable: true` creates an independent region per block, so a
-            // drag stopped at every paragraph boundary. The SelectionArea
-            // handles selection; the body renders non-selectable Markdown.
-            child: MarkdownBody(
-              data: message.content,
-              styleSheet: styleSheet,
-              // Sandbox paths (`![alt](generated/x.png)`) load through the
-              // session env; taps open the fullscreen preview.
-              sizedImageBuilder: images.sizedImageBuilder(
-                onImageTap: (bytes) => showFahImagePreview(context, [bytes]),
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        // Use the transcript row's own width, not the whole window: a docked
+        // Duo pane (and an independently mounted chat) is smaller than it,
+        // and a nested MediaQueryData (overlay surfaces, golden hosts) can
+        // carry a zero `size`, which collapsed the bubble to a zero-width
+        // column (one glyph per line, gh chat_header_widths). The 90%-of-
+        // window cap only survives as the unbounded-row fallback.
+        constraints: BoxConstraints(
+          maxWidth: constraints.maxWidth.isFinite
+              ? (isUser
+                    ? math.min(560, constraints.maxWidth)
+                    : constraints.maxWidth)
+              : MediaQuery.sizeOf(context).width * 0.9,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isUser ? palette.userBubble : palette.panel,
+          border: _bubbleBorder(context, palette, border, isUser),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: _bubbleShadow(context, isUser),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Issue #461: the user's own attachments render INSIDE the
+            // bubble, above the text — thumbnails (wrapped grid when
+            // several), the unavailable-image placeholder, file chips.
+            if (isUser) _userAttachments(context),
+            SelectionArea(
+              // ONE selection region for the whole bubble: MarkdownBody's own
+              // `selectable: true` creates an independent region per block, so a
+              // drag stopped at every paragraph boundary. The SelectionArea
+              // handles selection; the body renders non-selectable Markdown.
+              child: MarkdownBody(
+                data: message.content,
+                styleSheet: styleSheet,
+                // Sandbox paths (`![alt](generated/x.png)`) load through the
+                // session env; taps open the fullscreen preview.
+                sizedImageBuilder: images.sizedImageBuilder(
+                  onImageTap: (bytes) => showFahImagePreview(context, [bytes]),
+                ),
+                // Audio/video sandbox links open a small inline-player dialog.
+                onTapLink: (text, href, title) =>
+                    _onMarkdownLink(context, text, href, title),
               ),
-              // Audio/video sandbox links open a small inline-player dialog.
-              onTapLink: (text, href, title) =>
-                  _onMarkdownLink(context, text, href, title),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

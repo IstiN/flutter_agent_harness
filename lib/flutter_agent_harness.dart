@@ -161,6 +161,7 @@ export 'src/env/memory_execution_env.dart';
 export 'src/env/secrets_execution_env.dart';
 export 'src/env/secret_presence.dart';
 export 'src/env/session_vars_execution_env.dart';
+export 'src/env/cwd_override_env.dart';
 export 'src/event_stream.dart';
 export 'src/exceptions.dart';
 export 'src/hashline/hashline.dart';

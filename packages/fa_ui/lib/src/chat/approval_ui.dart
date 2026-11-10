@@ -197,27 +197,52 @@ class ApprovalModeSelector extends StatelessWidget {
               style: theme.textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
-            SegmentedButton<ApprovalMode>(
-              segments: [
-                ButtonSegment(
-                  value: ApprovalMode.alwaysAsk,
-                  label: Text(FaChatStrings.of(context).approvalModeAlwaysAsk),
-                ),
-                ButtonSegment(
-                  value: ApprovalMode.write,
-                  label: Text(FaChatStrings.of(context).approvalModeWrite),
-                ),
-                ButtonSegment(
-                  value: ApprovalMode.yolo,
-                  label: Text(FaChatStrings.of(context).approvalModeYolo),
-                ),
-              ],
-              selected: {service.approval.mode},
-              onSelectionChanged: (modes) {
-                FaChatHost.track('approval_mode_changed', {
-                  'mode': modes.first.name,
-                });
-                service.setApprovalMode(modes.first);
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 300;
+                return SegmentedButton<ApprovalMode>(
+                  style: compact
+                      ? const ButtonStyle(
+                          padding: WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        )
+                      : null,
+                  segments: [
+                    ButtonSegment(
+                      value: ApprovalMode.alwaysAsk,
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          FaChatStrings.of(context).approvalModeAlwaysAsk,
+                        ),
+                      ),
+                    ),
+                    ButtonSegment(
+                      value: ApprovalMode.write,
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          FaChatStrings.of(context).approvalModeWrite,
+                        ),
+                      ),
+                    ),
+                    ButtonSegment(
+                      value: ApprovalMode.yolo,
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(FaChatStrings.of(context).approvalModeYolo),
+                      ),
+                    ),
+                  ],
+                  selected: {service.approval.mode},
+                  onSelectionChanged: (modes) {
+                    FaChatHost.track('approval_mode_changed', {
+                      'mode': modes.first.name,
+                    });
+                    service.setApprovalMode(modes.first);
+                  },
+                );
               },
             ),
             const SizedBox(height: 8),

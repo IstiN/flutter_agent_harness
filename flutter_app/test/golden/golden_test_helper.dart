@@ -50,12 +50,31 @@ var _fontsLoaded = false;
 /// CoreText/fontconfig substitute and drift per host/OS. Emoji and
 /// symbols (✦, 🍅, ⏳ …) stay deterministic-by-trap for the same reason;
 /// shadows are covered by the test runner's `--skia-deterministic-
-/// rendering` flag. The remaining drift axis is the SDK VERSION, so the
-/// baselines are only valid for the exact pinned SDK (3.47.4) the
-/// nightly golden leg (build-release macOS row) runs — after an SDK
-/// bump, regenerate (`flutter test test/golden --update-goldens`) and
-/// eyeball every changed PNG.
+/// rendering` flag. Two further drift axes are pinned by CONTRACT:
+/// the SDK VERSION — baselines are only valid for the exact pinned SDK
+/// (3.47.4) the nightly golden leg (build-release macOS row) runs;
+/// after an SDK bump, regenerate (`flutter test test/golden
+/// --update-goldens`) and eyeball every changed PNG — and the WALL
+/// CLOCK ZONE: activity/session rows render fixed test instants in the
+/// OS-local zone (`DateTime.toLocal()` at display time is correct app
+/// behavior), so a capture on UTC+3 and a verify on UTC disagree by
+/// exactly the offset (the 2026-11-10 activity-golden red: hosted
+/// "4:00 PM" vs a baseline captured on a UTC+3 Mac showing "7:00 PM").
+/// [ensureGoldenFonts] therefore pins the run to UTC and fails loudly
+/// when invoked from a non-UTC process — capture AND verify must run
+/// `TZ=UTC flutter test test/golden`.
 Future<void> ensureGoldenFonts() async {
+  // Wall-clock pin (see the doc above): every baseline embeds UTC
+  // renderings; a non-UTC host would silently re-render the timestamps.
+  final offset = DateTime.now().timeZoneOffset;
+  if (offset != Duration.zero) {
+    fail(
+      'Golden clock contract violation: local timezone offset is '
+      '$offset, goldens render fixed instants in the OS-local zone and '
+      'are pinned to UTC. Re-run with the zone pinned: '
+      '`TZ=UTC flutter test test/golden`.',
+    );
+  }
   // The kaomoji indicator (issue #1374) picks its face randomly in
   // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
   // mirrors this) so every frame is deterministic: `>_o`, everywhere.

@@ -26,10 +26,17 @@ final _credentials = Platform.environment['CHATGPT_OAUTH_CREDENTIALS'];
 
 /// `false` when the blob is present (the test runs), otherwise the skip
 /// reason pointing at the sign-in flow.
-final _skip = (_credentials?.isEmpty ?? true)
-    ? 'CHATGPT_OAUTH_CREDENTIALS not set — run `/provider chatgpt oauth` '
-          'first and export the stored blob'
-    : false;
+/// Live calls are OPT-IN (2026-11-10 nightly policy): a paid/region-blocked
+/// upstream must never redden CI on billing or quota (ChatGPT codex 402/403
+/// class). The mock parity coverage lives in the unit suite; set
+/// `FA_CHATGPT_CODEX_LIVE=1` (plus the key below) to run this suite by hand.
+final _optedIn = Platform.environment['FA_CHATGPT_CODEX_LIVE'] == '1';
+
+final _skip = !_optedIn
+    ? 'live ChatGPT codex is opt-in; set FA_CHATGPT_CODEX_LIVE=1 to run'
+    : (_credentials?.isEmpty ?? true)
+        ? 'CHATGPT_OAUTH_CREDENTIALS not set — run `/provider chatgpt oauth` first and export the stored blob'
+        : false;
 
 final _model = Model(
   id: 'gpt-5-codex',

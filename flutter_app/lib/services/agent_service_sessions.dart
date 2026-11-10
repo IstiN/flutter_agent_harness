@@ -158,10 +158,11 @@ extension AgentServiceSessions on AgentService {
     }
   }
 
-  /// Creates a new [AgentService] with the same config and env, for a fresh
-  /// session. The clone shares the [env] and the session repository but owns
-  /// its own [Agent], transcript, and session persistence.
-  AgentService clone() {
+  /// Creates a new [AgentService] with the same config for a fresh session.
+  /// The clone shares the session repository but owns its [Agent], transcript
+  /// and persistence. [envOverride] gives mobile/macOS a per-session working
+  /// directory without changing the environment of other open sessions.
+  AgentService clone({ExecutionEnv? envOverride}) {
     final config = _config;
     if (config == null) {
       throw StateError(
@@ -171,7 +172,7 @@ extension AgentServiceSessions on AgentService {
     // Reuse the current stream function so test doubles keep working; a real
     // service would recreate it from the provider kind.
     return AgentService._withEnv(
-      env: env,
+      env: envOverride ?? env,
       config: config,
       sessionsRoot: sessionsRoot,
       redactor: _redactor,

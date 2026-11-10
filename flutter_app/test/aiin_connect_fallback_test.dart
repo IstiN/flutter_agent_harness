@@ -194,6 +194,48 @@ void main() {
     expect(registry.providers.first.modelId, 'moonshotai/kimi-k2');
     expect(registry.keyFor(existing.id), 'sk-aiin-fake-key-0000000001');
   });
+
+  testWidgets('re-auth repairs a persisted scheme-less AIIN endpoint', (
+    tester,
+  ) async {
+    final registry = ProviderRegistry.inMemory();
+    final existing = await registry.add(
+      name: 'user@aiin.by',
+      baseUrl: 'api.aiin.by/v1',
+      modelId: 'moonshotai/kimi-k2',
+    );
+    final lastConnectionStore = LastConnectionStore.inMemory();
+    BuildContext? flowContext;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              flowContext = context;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+
+    final done = runAiinConnectFlow(
+      context: flowContext!,
+      registry: registry,
+      service: null,
+      lastConnectionStore: lastConnectionStore,
+      aiinConnectFn: () async => _fakeConnectResult(),
+      reauthenticateFor: existing,
+    );
+    await tester.pumpAndSettle();
+
+    expect(done, completion(true));
+    expect(registry.providers.single.baseUrl, aiinDefaultChatBaseUrl);
+    expect(lastConnectionStore.connection?.baseUrl, aiinDefaultChatBaseUrl);
+    expect(registry.providers.single.id, existing.id);
+    expect(registry.providers.single.modelId, existing.modelId);
+  });
 }
 
 AiinConnectResult _fakeConnectResult() => AiinConnectResult(

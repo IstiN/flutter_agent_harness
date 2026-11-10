@@ -26,8 +26,16 @@ import 'package:test/test.dart';
 
 import 'fa_cube_headless_helper.dart';
 
+/// Live calls are OPT-IN (2026-11-10 nightly policy): the suite drives the
+/// real codex wire and must never gate CI on an upstream quota. The mock
+/// half of the gh-760 family covers the boot contract; set
+/// `FA_CODEX_BOOT_LIVE=1` to run this leg by hand.
+final _optedIn = Platform.environment['FA_CODEX_BOOT_LIVE'] == '1';
+
 void main() {
-  group('gh-760 AC1 live-wire codex boot', () {
+  group(
+    'gh-760 AC1 live-wire codex boot',
+    () {
     late Directory tempHome;
     late Directory workspace;
 
@@ -78,5 +86,9 @@ approvalMode: yolo
         reason: result.output,
       );
     });
-  });
+  },
+    skip: !_optedIn
+        ? 'live codex boot is opt-in; set FA_CODEX_BOOT_LIVE=1 to run'
+        : null,
+  );
 }

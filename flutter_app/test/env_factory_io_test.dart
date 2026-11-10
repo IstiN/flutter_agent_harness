@@ -2,14 +2,18 @@ import 'dart:io';
 
 import 'package:fa/sandbox/env_factory_io.dart' as app_env;
 import 'package:fa/sandbox/persistent_web_env.dart';
+import 'package:fa/sandbox/wasm_shell.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/backup_exclusion.dart' as backup;
+import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:wasm_run/wasm_run.dart';
 
 void main() {
   group('desktopHomeDir (gh-1276 review: CLI parity on Windows)', () {
@@ -228,21 +232,190 @@ void main() {
 
     test('a failing WasiSandboxShell.load falls back to MemoryShell', () async {
       final env = await app_env.createMobileSandboxEnv(
-        loadShell: () async => throw StateError('PanicException: python.wasm'),
+        loadShell: (_, _) async =>
+            throw StateError('PanicException: python.wasm'),
       );
       expect(env, isA<PersistentWebExecutionEnv>());
+      expect(resolveProjectMountEnv(env), isNotNull);
+      expect(projectMountBackendAvailable(env), isFalse);
       // The fallback shell answers basic commands in memory.
       final r = await env.exec('echo ok');
       expect(r.valueOrNull!.exitCode, 0);
       expect(r.valueOrNull!.stdout, contains('ok'));
     });
+    test('the fallback never offers a native project-folder mount', () async {
+      final env = await app_env.createMobileSandboxEnv(
+        loadShell: (_, _) async => throw StateError('skip the wasm shell'),
+      );
+      expect(env, isA<PersistentWebExecutionEnv>());
+      expect(resolveProjectMountEnv(env), isNotNull);
+      expect(projectMountBackendAvailable(env), isFalse);
+      expect(env.cwd, isNot('/project'));
+    });
+
+    test('the fallback clears a restored mount it cannot honor', () async {
+      final env = await app_env.createMobileSandboxEnv(
+        loadShell: (mount, _) async {
+          mount.mountedRoot = '/previously/granted';
+          throw StateError('WASI unavailable');
+        },
+      );
+      expect(projectMountBackendAvailable(env), isFalse);
+      expect(resolveProjectMountEnv(env)!.mountedRoot, isNull);
+      expect(env.cwd, isNot('/project'));
+    });
+
     test('the fallback logs an informational warning line', () async {
       await app_env.createMobileSandboxEnv(
-        loadShell: () async => throw StateError('PanicException: python.wasm'),
+        loadShell: (_, _) async =>
+            throw StateError('PanicException: python.wasm'),
       );
       final log = AppLog.dump();
       expect(log, contains('falling back to MemoryShell'));
       expect(log, contains('PanicException'));
+    });
+  });
+
+  group('createMobileSandboxEnv live native project mount', () {
+    late Directory appSupport;
+    late Directory documents;
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      appSupport = Directory.systemTemp.createTempSync('fah_app_support_');
+      documents = Directory.systemTemp.createTempSync('fah_documents_');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(
+        appSupport,
+        documents,
+      );
+    });
+
+    tearDown(() {
+      for (final dir in [appSupport, documents]) {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('mount, explicit root, jobs, unmount and remount stay live', () async {
+      final project = Directory('${appSupport.path}/granted')..createSync();
+      final sandbox = Directory('${documents.path}/fah_sandbox');
+      late ProjectMountEnv mount;
+      final env = await app_env.createMobileSandboxEnv(
+        loadShell: (projectMount, sandboxHostPath) async {
+          mount = projectMount;
+          return _testWasiShell(projectMount, sandboxHostPath);
+        },
+      );
+      final background = env as BackgroundShell;
+      expect(resolveProjectMountEnv(env), same(mount));
+      expect(projectMountBackendAvailable(env), isTrue);
+      expect(env.cwd, sandbox.path);
+
+      Future<void> expectJob(
+        String id,
+        String logPath,
+        String hostLogPath,
+        String expectedPwd, {
+        String? cwd,
+      }) async {
+        final result = await background.startShellJob(
+          'pwd',
+          id: id,
+          logPath: logPath,
+          options: cwd == null ? null : ShellExecOptions(cwd: cwd),
+        );
+        expect(result.isOk, isTrue, reason: result.errorOrNull?.message);
+        await result.valueOrNull!.settled.timeout(const Duration(seconds: 5));
+        expect(File(hostLogPath).readAsStringSync(), expectedPwd);
+      }
+
+      final ops = _FakeFolderOps(project.path);
+      var applyNotifications = 0;
+      void onApplied() => applyNotifications++;
+
+      (await env.writeFile('/container.txt', 'container')).getOrThrow();
+      final picked = await pickAndApplyProjectMount(
+        env: env,
+        ops: ops,
+        onApplied: onApplied,
+      );
+      expect(picked, project.path);
+      expect(applyNotifications, 1);
+      expect(ops.startCount, 1);
+      final stored = (await ProjectMountStore.load(env))!;
+      expect(stored.path, project.path);
+      expect(File('${sandbox.path}/project_mount.json').existsSync(), isTrue);
+      expect(File('${project.path}/project_mount.json').existsSync(), isFalse);
+      expect(env.cwd, '/project');
+      (await env.writeFile('/project/one.txt', 'one')).getOrThrow();
+      expect(File('${project.path}/one.txt').readAsStringSync(), 'one');
+      expect(File('${sandbox.path}/project/one.txt').existsSync(), isFalse);
+      expect(
+        (await env.readTextFile('/container.txt')).getOrThrow(),
+        'container',
+      );
+
+      final mountedEntries = (await env.listDir('/project')).getOrThrow();
+      final one = mountedEntries.singleWhere(
+        (entry) => entry.name == 'one.txt',
+      );
+      expect((await env.readTextFile(one.path)).getOrThrow(), 'one');
+
+      final mountedExec = await env.exec('pwd');
+      expect(mountedExec.valueOrNull!.stdout, '/project\n');
+      final rootExec = await env.exec(
+        'pwd',
+        options: const ShellExecOptions(cwd: '/'),
+      );
+      expect(rootExec.valueOrNull!.stdout, '/\n');
+
+      await expectJob(
+        'mounted',
+        '/project/.fah/bash_jobs/mounted.log',
+        '${project.path}/.fah/bash_jobs/mounted.log',
+        '/project\n',
+      );
+      await expectJob(
+        'explicit-root',
+        '/.fah/bash_jobs/explicit-root.log',
+        '${sandbox.path}/.fah/bash_jobs/explicit-root.log',
+        '/\n',
+        cwd: '/',
+      );
+
+      expect(
+        await unapplyProjectMount(env: env, ops: ops, onApplied: onApplied),
+        isTrue,
+      );
+      expect(applyNotifications, 2);
+      expect(ops.stopCount, 1);
+      expect(await ProjectMountStore.load(env), isNull);
+      expect(env.cwd, sandbox.path);
+      expect(
+        (await env.readTextFile('/container.txt')).getOrThrow(),
+        'container',
+      );
+      await expectJob(
+        'unmounted',
+        '/.fah/bash_jobs/unmounted.log',
+        '${sandbox.path}/.fah/bash_jobs/unmounted.log',
+        '/\n',
+      );
+
+      expect(
+        await pickAndApplyProjectMount(
+          env: env,
+          ops: ops,
+          onApplied: onApplied,
+        ),
+        project.path,
+      );
+      expect(applyNotifications, 3);
+      expect(ops.startCount, 2);
+      (await env.writeFile('/project/two.txt', 'two')).getOrThrow();
+      expect((await env.readTextFile('/project/one.txt')).getOrThrow(), 'one');
+      expect(File('${project.path}/two.txt').readAsStringSync(), 'two');
+      expect(File('${sandbox.path}/project/two.txt').existsSync(), isFalse);
     });
   });
 
@@ -274,7 +447,7 @@ void main() {
       };
 
       await app_env.createMobileSandboxEnv(
-        loadShell: () async => throw StateError('skip the wasm shell'),
+        loadShell: (_, _) async => throw StateError('skip the wasm shell'),
       );
 
       // The hub config tree is created eagerly, before the hub client can
@@ -295,10 +468,12 @@ void main() {
       };
 
       final env = await app_env.createMobileSandboxEnv(
-        loadShell: () async => throw StateError('PanicException: python.wasm'),
+        loadShell: (_, _) async =>
+            throw StateError('PanicException: python.wasm'),
       );
 
-      expect(env, isA<PersistentWebExecutionEnv>());
+      expect(env, isA<ForwardingFs>());
+      expect(projectMountBackendAvailable(env), isFalse);
       final dapDir = Directory('${documents.path}/fah_sandbox/.dap');
       expect(dapDir.existsSync(), isTrue);
       expect(excluded, [dapDir.path]);
@@ -321,6 +496,50 @@ Future<(ProjectMountEnv, ProjectMountStore)> _mountWithStoredMount() async {
   final stored = (await ProjectMountStore.load(baseEnv))!;
   return (ProjectMountEnv(baseEnv), stored);
 }
+
+final class _FakeFolderOps implements ProjectFolderOps {
+  _FakeFolderOps(this.path);
+
+  final String path;
+  var startCount = 0;
+  var stopCount = 0;
+
+  @override
+  Future<({String path, String bookmark})?> pickDirectory() async =>
+      (path: path, bookmark: 'bookmark');
+
+  @override
+  Future<bool> startAccessing(String bookmark) async {
+    startCount++;
+    return true;
+  }
+
+  @override
+  Future<void> stopAccessing(String bookmark) async {
+    stopCount++;
+  }
+}
+
+WasiSandboxShell _testWasiShell(
+  ProjectMountEnv projectMount,
+  String sandboxHostPath,
+) => WasiSandboxShell(
+  coreutils: _UnusedWasmModule(),
+  rg: _UnusedWasmModule(),
+  find: _UnusedWasmModule(),
+  sed: _UnusedWasmModule(),
+  awk: _UnusedWasmModule(),
+  tar: _UnusedWasmModule(),
+  gzip: _UnusedWasmModule(),
+  zip: _UnusedWasmModule(),
+  workingDirectory: '/',
+  sandboxHostPath: sandboxHostPath,
+  projectMount: projectMount,
+);
+
+/// `pwd` and filesystem operations are Dart/host backed; no WASM instance is
+/// started by this integration test.
+final class _UnusedWasmModule extends Fake implements WasmModule {}
 
 /// Platform-interface fake: the path_provider method channel is gated by
 /// the host platform, the interface is not.

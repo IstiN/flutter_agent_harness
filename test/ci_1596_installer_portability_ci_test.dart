@@ -154,7 +154,8 @@ void main() {
       expect(
         body,
         contains(
-          'flutter-app-lock-smoke|installer-portability|office-addin-suite|'
+          'flutter-app-lock-smoke|flutter-app-goldens|installer-portability|'
+          'office-addin-suite|'
           'extension-size-gate)',
         ),
         reason:

@@ -426,7 +426,7 @@ void main() {
         final routes = <BootStores>[];
         await FaAppBoot(
           createEnv: () => createMobileSandboxEnv(
-            loadShell: () async =>
+            loadShell: (_, _) async =>
                 throw StateError('PanicException: python.wasm'),
           ),
           routes: (stores, analytics) async => routes.add(stores),

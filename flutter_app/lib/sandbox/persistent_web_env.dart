@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show protected;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/sandbox/fs_persistence.dart';
@@ -52,9 +53,35 @@ import 'package:fa/sandbox/fs_persistence.dart';
 /// failure in the pass cannot resurrect a deleted session. Residual: a
 /// crash between the fs removal and the eviction step resurrects that
 /// one session on next boot — deletion metadata, never chat data.
-final class PersistentWebExecutionEnv extends ForwardingFs
+base class PersistentWebExecutionEnv extends ForwardingFs
     with ForwardingBackgroundShell, ForwardingRangedReadFs {
   PersistentWebExecutionEnv._(super.delegate, this._store, this._persistDelay);
+
+  /// Shared with mobile's mount/persistence composition (gh-2052).
+  @protected
+  PersistentWebExecutionEnv.shared(
+    super.delegate,
+    this._store,
+    this._persistDelay,
+  );
+
+  /// Restores a subtype before exposing it to boot.
+  @protected
+  static Future<T> restoreSubtype<T extends PersistentWebExecutionEnv>(
+    ExecutionEnv delegate,
+    FsSnapshotStore store,
+    T Function(
+      ExecutionEnv delegate,
+      FsSnapshotStore store,
+      Duration persistDelay,
+    )
+    create, {
+    Duration persistDelay = const Duration(milliseconds: 800),
+  }) async {
+    final env = create(delegate, store, persistDelay);
+    await env._restore();
+    return env;
+  }
 
   /// Store key holding the versioned JSON envelope (the whole tree EXCEPT
   /// session files).
@@ -99,7 +126,7 @@ final class PersistentWebExecutionEnv extends ForwardingFs
     return _isSessionPath(path) ? path : null;
   }
 
-  final FsSnapshotStore _store;
+  final FsSnapshotStore? _store;
   final Duration _persistDelay;
 
   Timer? _timer;
@@ -135,9 +162,11 @@ final class PersistentWebExecutionEnv extends ForwardingFs
   }
 
   Future<void> _restore() async {
+    final store = _store;
+    if (store == null) return;
     Map<String, String> all;
     try {
-      all = await _store.load();
+      all = await store.load();
     } on Object {
       return; // Storage unavailable (blocked, private mode) → clean start.
     }
@@ -154,7 +183,7 @@ final class PersistentWebExecutionEnv extends ForwardingFs
       );
       if (restoredV1 == null) {
         try {
-          await _store.save({backupKey: raw});
+          await store.save({backupKey: raw});
         } on Object {
           // Backup failed (blocked storage): boot continues clean either
           // way.
@@ -285,6 +314,8 @@ final class PersistentWebExecutionEnv extends ForwardingFs
   /// sessions (issue #237 vector 2 × #238 F1). Throws when anything
   /// failed — the caller re-arms the retry.
   Future<void> _saveOnce() async {
+    final store = _store;
+    if (store == null) return;
     final (dirs, treeFiles) = await _exportTree();
     final envelopeFiles = <Map<String, String>>[];
     final sessionRecords = <String, String>{};
@@ -304,7 +335,7 @@ final class PersistentWebExecutionEnv extends ForwardingFs
     final stale = _knownSessionKeys.difference(sessionRecords.keys.toSet());
     if (stale.isNotEmpty) {
       try {
-        await _store.remove(stale);
+        await store.remove(stale);
         _knownSessionKeys.removeAll(stale);
       } on Object {
         failed = true; // retried by the next pass
@@ -312,7 +343,7 @@ final class PersistentWebExecutionEnv extends ForwardingFs
     }
     for (final record in sessionRecords.entries) {
       try {
-        await _store.save({record.key: record.value});
+        await store.save({record.key: record.value});
       } on Object {
         failed = true; // This session stays dirty; the rest keep saving.
       }
@@ -329,7 +360,7 @@ final class PersistentWebExecutionEnv extends ForwardingFs
         'envelope as the only durable copy of the sessions',
       );
     }
-    await _store.save({
+    await store.save({
       storageKey: jsonEncode({
         'version': snapshotVersion,
         'dirs': dirs,
@@ -375,7 +406,10 @@ final class PersistentWebExecutionEnv extends ForwardingFs
     String command, {
     ShellExecOptions? options,
   }) async {
-    final result = await delegate.exec(command, options: options);
+    final result = await delegate.exec(
+      command,
+      options: await mergeExecOptions(options),
+    );
     // The shell works on the delegate's memory FS directly (it was attached
     // before this wrapper existed), so any command may have mutated the
     // tree — schedule a snapshot regardless of the exit status.

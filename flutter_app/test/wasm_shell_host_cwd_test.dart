@@ -17,6 +17,7 @@ import 'dart:io' as io;
 import 'dart:typed_data';
 
 import 'package:fa/sandbox/wasm_shell.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -296,6 +297,99 @@ void main() {
       );
       expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
       expect(r.valueOrNull!.stdout, contains('"a": 1'));
+    });
+  });
+
+  group('live iOS /project mount', () {
+    test(
+      'host cwd maps to /project and files stay in the granted folder',
+      () async {
+        final project = io.Directory('${tmp.path}/granted_project')
+          ..createSync();
+        final mount = ProjectMountEnv(MemoryExecutionEnv(cwd: sandbox.path))
+          ..mountedRoot = project.path;
+        final session = WasiSandboxShell(
+          coreutils: _SlotModule(rec),
+          rg: _SlotModule(rec),
+          find: _SlotModule(rec),
+          sed: _SlotModule(rec),
+          awk: _SlotModule(rec),
+          tar: _SlotModule(rec),
+          gzip: _SlotModule(rec),
+          zip: _SlotModule(rec),
+          sandboxHostPath: sandbox.path,
+          projectMount: mount,
+        );
+        rec.next = _ScriptedInstance();
+        final result = await session.exec(
+          'pwd > mounted.txt && cat /project/mounted.txt',
+          options: ShellExecOptions(cwd: project.path),
+        );
+        expect(result.isOk, isTrue, reason: result.errorOrNull?.message);
+        expect(
+          io.File('${project.path}/mounted.txt').readAsStringSync(),
+          '/project\n',
+        );
+        expect(io.File('${sandbox.path}/mounted.txt').existsSync(), isFalse);
+        expect(rec.configs.last.args, ['cat', '/project/mounted.txt']);
+        expect(
+          rec.configs.last.preopenedDirs.any(
+            (dir) =>
+                dir.wasmGuestPath == '/project' && dir.hostPath == project.path,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('a background job and its log stay in the granted /project', () async {
+      final project = io.Directory('${tmp.path}/granted_jobs')..createSync();
+      final mount = ProjectMountEnv(MemoryExecutionEnv(cwd: sandbox.path))
+        ..mountedRoot = project.path;
+      final session = WasiSandboxShell(
+        coreutils: _SlotModule(rec),
+        rg: _SlotModule(rec),
+        find: _SlotModule(rec),
+        sed: _SlotModule(rec),
+        awk: _SlotModule(rec),
+        tar: _SlotModule(rec),
+        gzip: _SlotModule(rec),
+        zip: _SlotModule(rec),
+        sandboxHostPath: sandbox.path,
+        projectMount: mount,
+        moduleLoader: (_) async => _SlotModule(rec),
+      );
+      mount.mountedRoot = null;
+      final unmountedJob = await session.startShellJob(
+        'pwd',
+        id: 'unmounted-project-job',
+        logPath: '/.fah/bash_jobs/unmounted-project-job.log',
+      );
+      expect(unmountedJob.isOk, isTrue);
+      await unmountedJob.valueOrNull!.settled;
+      expect(
+        io.File(
+          '${sandbox.path}/.fah/bash_jobs/unmounted-project-job.log',
+        ).readAsStringSync(),
+        '/\n',
+      );
+      mount.mountedRoot = project.path;
+      rec.next = _ScriptedInstance();
+      final job = await session.startShellJob(
+        'pwd',
+        id: 'project-job',
+        logPath: '/project/.fah/bash_jobs/project-job.log',
+      );
+      expect(job.isOk, isTrue, reason: job.errorOrNull?.message);
+      await job.valueOrNull!.settled;
+      expect(job.valueOrNull!.exitCode, 0);
+      expect(job.valueOrNull!.stopReason, isNull);
+      expect(
+        io.File(
+          '${project.path}/.fah/bash_jobs/project-job.log',
+        ).readAsStringSync(),
+        '/project\n',
+      );
     });
   });
 

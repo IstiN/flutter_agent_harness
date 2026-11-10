@@ -180,6 +180,13 @@ abstract final class FaChatHost {
   /// the shell instead of pushing a full-screen route over it.
   static GlobalKey<NavigatorState>? jsAppNavigatorKey;
 
+  /// The chat's docked files panel toggled on a wide surface (true when it
+  /// opened, false when it closed or the screen went away with it open).
+  /// The wide shell gives the panel the same presentation run as presented
+  /// apps — collapse the chats list for the run, restore on close. Null on
+  /// hosts without shell chrome.
+  static ValueChanged<bool>? onFilesPanelChanged;
+
   /// Reveals the wide shell's Apps section before [jsAppNavigatorKey] is
   /// used. Null on surfaces without an embedded Apps section.
   static Future<void> Function()? revealJsApps;

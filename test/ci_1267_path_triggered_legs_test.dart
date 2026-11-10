@@ -200,8 +200,9 @@ void main() {
       expect(
         body,
         contains(
-          'install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke,'
-          ' office-addin-suite, extension-size-gate]',
+          'install-pin-gate, flutter-app-exzone, flutter-app-goldens,'
+          ' flutter-app-lock-smoke, office-addin-suite,'
+          ' extension-size-gate]',
         ),
         reason:
             'quality-gate must NEED the leg — a leg outside the '
@@ -214,8 +215,9 @@ void main() {
       expect(
         body,
         contains(
-          '"flutter-app-exzone:\$R_EXZONE" "flutter-app-lock-smoke:'
-          '\$R_LOCK_SMOKE" "office-addin-suite:\$R_OFFICE_ADDIN" '
+          '"flutter-app-exzone:\$R_EXZONE" "flutter-app-goldens:'
+          '\$R_GOLDENS" "flutter-app-lock-smoke:\$R_LOCK_SMOKE" '
+          '"office-addin-suite:\$R_OFFICE_ADDIN" '
           '"extension-size-gate:\$R_EXT_SIZE"; do',
         ),
         reason:
@@ -226,7 +228,8 @@ void main() {
         body,
         contains(
           'pty-coverage-gate|pty-visual|flutter-app-lock-smoke'
-          '|installer-portability|office-addin-suite|extension-size-gate)',
+          '|flutter-app-goldens|installer-portability|office-addin-suite|'
+          'extension-size-gate)',
         ),
         reason:
             'platform class (#1368): a red windows release build blocks '

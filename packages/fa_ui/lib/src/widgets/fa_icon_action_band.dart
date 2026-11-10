@@ -15,8 +15,9 @@ import 'fa_icon_action_button.dart';
 /// example Expand, Pin, Close and Overflow on an app). Unlike composing
 /// several [FaIconActionButton]s, the band has no per-action fill, ring or
 /// glass disc: the [FaSurface] is the only persistent chrome. Individual
-/// controls keep their own tooltip, focus, disabled state and at-least-32pt
-/// hit target.
+/// controls keep their own tooltip, focus, disabled state and at-least-28pt
+/// hit target. Hosts should prefer the 36pt default; 28pt is reserved for
+/// exceptionally dense embedded panels.
 ///
 /// The action metadata and ordering contract are shared with
 /// [FaAdaptiveHeader] through [FaHeaderAction]. Optional [overflowItems]
@@ -45,8 +46,8 @@ class FaIconActionBand<T> extends StatelessWidget {
   /// The default glyph edge, matching the control-scale Fa icon actions.
   static const double defaultIconSize = 18;
 
-  /// The minimum supported interactive edge.
-  static const double minHitTarget = 32;
+  /// The minimum supported interactive edge for dense embedded chrome.
+  static const double minHitTarget = 28;
 
   /// Inline actions, rendered in list order.
   final List<FaHeaderAction> actions;
@@ -140,25 +141,52 @@ class FaIconActionBand<T> extends StatelessWidget {
     );
   }
 
-  Widget _overflow(BuildContext context) => PopupMenuButton<T>(
-    key: overflowMenuKey,
-    tooltip:
-        overflowTooltip ?? MaterialLocalizations.of(context).showMenuTooltip,
-    color: menuColor,
-    padding: EdgeInsets.zero,
-    iconSize: iconSize,
-    style: IconButton.styleFrom(
-      minimumSize: Size.square(actionSize),
-      maximumSize: Size.square(actionSize),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(actionSize / 3),
+  Widget _overflow(BuildContext context) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final overlay = navigator.overlay?.context.findRenderObject() as RenderBox?;
+    final button = context.findRenderObject() as RenderBox?;
+    final origin = button?.localToGlobal(Offset.zero, ancestor: overlay);
+    return PopupMenuButton<T>(
+      // A docked Duo chat is narrower than the full-screen Overlay. Grow
+      // left from the button's right edge rather than cover the model with
+      // a menu sized for the other half of the foldable.
+      constraints: overlay == null || origin == null
+          ? null
+          : () {
+              // The full pane is the boundary. On a narrow pane the stock
+              // 112pt menu minimum would otherwise override maxWidth and
+              // leave an icon + gap wider than the row's Flexible label.
+              // Measure back from the trigger's RIGHT edge: the popup grows
+              // left, so space beyond that edge is not available to its rows.
+              final available = (origin.dx + (button?.size.width ?? 0))
+                  .clamp(0.0, overlay.size.width)
+                  .toDouble();
+              return BoxConstraints(
+                minWidth: available < 112 ? available : 112,
+                maxWidth: available,
+              );
+            }(),
+      position: PopupMenuPosition.under,
+      offset: Offset.zero,
+      key: overflowMenuKey,
+      tooltip:
+          overflowTooltip ?? MaterialLocalizations.of(context).showMenuTooltip,
+      color: menuColor,
+      padding: EdgeInsets.zero,
+      iconSize: iconSize,
+      style: IconButton.styleFrom(
+        minimumSize: Size.square(actionSize),
+        maximumSize: Size.square(actionSize),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(actionSize / 3),
+        ),
       ),
-    ),
-    icon: Icon(Icons.more_vert, size: iconSize),
-    onSelected: onOverflowSelected,
-    itemBuilder: (context) => overflowItems,
-  );
+      icon: Icon(Icons.more_vert, size: iconSize),
+      onSelected: onOverflowSelected,
+      itemBuilder: (context) => overflowItems,
+    );
+  }
 }

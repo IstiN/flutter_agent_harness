@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:fa/services/project_mount_env.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Persists the user-selected project folder (path + security-scoped
@@ -26,7 +27,7 @@ final class ProjectMountStore {
 
   /// Reads the stored mount, or null when none/absent/corrupt.
   static Future<ProjectMountStore?> load(ExecutionEnv env) async {
-    final result = await env.readTextFile(_fileName);
+    final result = await env.appOwnedEnv.readTextFile(_fileName);
     final text = result.valueOrNull;
     if (text == null || text.trim().isEmpty) return null;
     try {
@@ -51,7 +52,7 @@ final class ProjectMountStore {
     required String bookmark,
     bool scoped = false,
   }) async {
-    await env.writeFile(
+    await env.appOwnedEnv.writeFile(
       _fileName,
       jsonEncode({'path': path, 'bookmark': bookmark, 'scoped': scoped}),
     );
@@ -59,6 +60,6 @@ final class ProjectMountStore {
 
   /// Removes the stored mount (unmount flow).
   static Future<void> clear(ExecutionEnv env) async {
-    await env.remove(_fileName, force: true);
+    await env.appOwnedEnv.remove(_fileName, force: true);
   }
 }

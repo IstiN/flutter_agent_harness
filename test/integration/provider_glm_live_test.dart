@@ -26,9 +26,17 @@ final _apiKey = () {
   return null;
 }();
 
-final _skip = (_apiKey?.isEmpty ?? true)
-    ? 'FA_KEY_API_Z_AI_Z_AI not set and Keychain store unavailable'
-    : false;
+/// Live calls are OPT-IN (2026-11-10 nightly policy): a paid/region-blocked
+/// upstream must never redden CI on billing or quota (GLM 402/403
+/// class). The mock parity coverage lives in the unit suite; set
+/// `FA_GLM_LIVE=1` (plus the key below) to run this suite by hand.
+final _optedIn = Platform.environment['FA_GLM_LIVE'] == '1';
+
+final _skip = !_optedIn
+    ? 'live GLM is opt-in; set FA_GLM_LIVE=1 to run'
+    : (_apiKey?.isEmpty ?? true)
+        ? 'GLM_API_KEY not set'
+        : false;
 
 /// Cheap coding model on the z.ai OpenAI-compatible endpoint.
 const _model = Model(

@@ -1631,8 +1631,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ) {
     final tokens = faui.FaDesignTokens.of(context);
     final category = _effectiveCategory;
-    final title = category?.label ?? context.l10n.settingsTitle;
-    final body = category == null
+    final duoRailWidth = faui.FaDuoControlRail.widthOf(context);
+    final backButton = _settingsBackButton(category);
+    final body = _categoryBody(category, service, taskModels, onDeviceConfig);
+    final page = _categoryPage(
+      header: _categoryHeader(category, duoRailWidth, backButton),
+      body: body,
+      duoRailWidth: duoRailWidth,
+    );
+    return widget.embedded
+        ? _embeddedCategoryPage(page)
+        : _standaloneCategoryPage(tokens, duoRailWidth, page);
+  }
+
+  /// The floating Back control: in-page category reset first (drilled
+  /// category over the root picker), then the pushed-route back.
+  faui.FaIconActionButton _settingsBackButton(SettingsCategory? category) {
+    return faui.FaIconActionButton(
+      buttonKey: const ValueKey('settingsBackButton'),
+      diameter: 36,
+      glyphSize: 20,
+      glass: true,
+      tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+      onPressed: () {
+        if (widget.category == null && category != null) {
+          setState(() => _selectedCategory = null);
+        } else if (widget.onBack != null) {
+          widget.onBack!();
+        } else {
+          Navigator.of(context).maybePop();
+        }
+      },
+      child: const faui.FaIcon(faui.FaSemanticIcon.back),
+    );
+  }
+
+  /// The category picker at the root, the drilled category's scroll
+  /// otherwise.
+  Widget _categoryBody(
+    SettingsCategory? category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    return category == null
         ? SettingsCategoryPanel(
             selected: null,
             showHeader: false,
@@ -1640,48 +1682,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onSelected: _selectCategory,
           )
         : _categoryScroll(category, service, taskModels, onDeviceConfig);
-    final header = MessengerFloatingPageHeader(
+  }
+
+  /// The floating header: root title or the drilled category's label.
+  Widget _categoryHeader(
+    SettingsCategory? category,
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return MessengerFloatingPageHeader(
       key: const ValueKey('settingsCategoryHeader'),
-      title: title,
+      title: category?.label ?? context.l10n.settingsTitle,
       icon: Icons.settings_outlined,
       trafficLightClearance:
           !widget.embedded && !faui.FaDialogScope.of(context),
-      leading: !widget.embedded || widget.onBack != null
-          ? faui.FaIconActionButton(
-              buttonKey: const ValueKey('settingsBackButton'),
-              diameter: 36,
-              glyphSize: 20,
-              glass: true,
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              onPressed: () {
-                if (widget.category == null && category != null) {
-                  setState(() => _selectedCategory = null);
-                } else if (widget.onBack != null) {
-                  widget.onBack!();
-                } else {
-                  Navigator.of(context).maybePop();
-                }
-              },
-              child: const faui.FaIcon(faui.FaSemanticIcon.back),
-            )
-          : null,
+      leading: _categoryHeaderLeading(duoRailWidth, backButton),
+      actions: _categoryHeaderActions(duoRailWidth, backButton),
     );
-    final page = MessengerFloatingPageScaffold(header: header, body: body);
-    if (widget.embedded) {
-      return Material(
-        type: MaterialType.transparency,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            const Positioned.fill(child: FahWallpaper()),
-            KeyedSubtree(
-              key: const ValueKey('settingsCategoryContent'),
-              child: page,
-            ),
-          ],
+  }
+
+  /// The Back control leads on desktop and root surfaces; the Duo rail
+  /// lane replaces it.
+  faui.FaIconActionButton? _categoryHeaderLeading(
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return duoRailWidth == 0 && (!widget.embedded || widget.onBack != null)
+        ? backButton
+        : null;
+  }
+
+  /// With the Duo rail, the Back control rides the header actions instead
+  /// of the leading slot.
+  List<Widget> _categoryHeaderActions(
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return [
+      if (duoRailWidth > 0 && (!widget.embedded || widget.onBack != null))
+        backButton,
+    ];
+  }
+
+  /// The floating-page platter for the category root and its drilled
+  /// category.
+  Widget _categoryPage({
+    required Widget header,
+    required Widget body,
+    required double duoRailWidth,
+  }) {
+    return MessengerFloatingPageScaffold(
+      header: header,
+      body: Padding(
+        // Only the embedded wide shell owns a PERSISTENT Duo rail lane —
+        // the shell's own chrome fills it top to bottom. A narrow (pushed)
+        // Duo settings route has just the floating Back control inside the
+        // header, so insetting the body lane a second time capped the
+        // content column ~84px short of the free right edge. The header
+        // still owns the rail zone; body rows scroll under its glass.
+        padding: EdgeInsets.only(right: widget.embedded ? duoRailWidth : 0),
+        child: SizedBox.expand(
+          key: const ValueKey('settingsBodyContentLane'),
+          child: body,
         ),
-      );
-    }
+      ),
+    );
+  }
+
+  /// The embedded wide-shell surface: a transparent Material over the
+  /// shell's own wallpaper stack.
+  Widget _embeddedCategoryPage(Widget page) {
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(child: FahWallpaper()),
+          KeyedSubtree(
+            key: const ValueKey('settingsCategoryContent'),
+            child: page,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The standalone route: wallpaper under the scaffold, the SafeArea
+  /// matching a standalone Local chat route.
+  Widget _standaloneCategoryPage(
+    faui.FaDesignTokens tokens,
+    double duoRailWidth,
+    Widget page,
+  ) {
     return Scaffold(
       key: const ValueKey('settingsCategoryContent'),
       backgroundColor: tokens.background,
@@ -1691,7 +1783,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Match a standalone Local chat route: the short glass controls
           // sample real wallpaper, not an opaque header slab.
           const Positioned.fill(child: FahWallpaper()),
-          SafeArea(child: page),
+          // The floating header owns the full-width Duo rail and the body
+          // reserves that lane once; a SafeArea here would inset it twice.
+          SafeArea(right: duoRailWidth == 0, child: page),
         ],
       ),
     );
@@ -1708,27 +1802,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TaskModelsStore? taskModels,
     OnDeviceConfigStore? onDeviceConfig,
   ) {
-    return Scrollbar(
-      key: const ValueKey('settingsScrollbar'),
-      controller: _scrollController,
-      thumbVisibility: widget.embedded,
-      thickness: 5,
-      radius: const Radius.circular(8),
-      child: SingleChildScrollView(
+    final query = MediaQuery.of(context);
+    return MediaQuery(
+      // Material's scrollbar painter insets the thumb by MediaQuery
+      // padding.right. The Duo body lane is ALREADY bounded by that rail
+      // inset (settingsBodyContentLane); letting the painter read it again
+      // detached a fat thumb ~84px into the cards. Scope the padding out
+      // for the scrollbar+viewport only — rows and cards keep their own
+      // fixed padding, and desktop (padding.right == 0) is untouched.
+      data: query.copyWith(padding: query.padding.copyWith(right: 0)),
+      child: Scrollbar(
+        key: const ValueKey('settingsScrollbar'),
         controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          MessengerFloatingPageScaffold.bodyTop,
-          24,
-          32,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: _categorySections(
-            category,
-            service,
-            taskModels,
-            onDeviceConfig,
+        thumbVisibility: widget.embedded,
+        thickness: 5,
+        radius: const Radius.circular(8),
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            MessengerFloatingPageScaffold.bodyTop,
+            24,
+            32,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: _categorySections(
+              category,
+              service,
+              taskModels,
+              onDeviceConfig,
+            ),
           ),
         ),
       ),
@@ -2029,6 +2133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     webLlmEngine: widget.webLlmEngine,
                     transformersJsEngine: widget.transformersJsEngine,
                   ),
+                  allowDuoDialog: true,
                 ),
               );
             },

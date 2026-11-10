@@ -173,10 +173,9 @@ extension AgentServiceWiring on AgentService {
   String? _projectMountNote() {
     // [AgentService.create] always wraps the shared env in
     // [SecretsExecutionEnv]; look through it for the mount env.
-    var env = this.env;
-    if (env is SecretsExecutionEnv) env = env.delegate;
-    if (env is! ProjectMountEnv) return null;
-    final root = env.mountedRoot;
+    final mountEnv = resolveProjectMountEnv(env);
+    if (mountEnv == null) return null;
+    final root = mountEnv.mountedRoot;
     if (root == null) return null;
     return 'A project folder is mounted at $projectMountSegment '
         '(host: $root). File tools take $projectMountSegment/... paths; '

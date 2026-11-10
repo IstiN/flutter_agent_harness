@@ -44,6 +44,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newSessionFolderTitle => 'New session — folder';
 
   @override
+  String get newSessionChooseFolder => 'Choose folder from Files…';
+
+  @override
+  String get newSessionSandboxFolder => 'New folder in Personal sandbox…';
+
+  @override
+  String get newSessionSandboxNameTitle => 'New sandbox folder';
+
+  @override
+  String get newSessionSandboxNameLabel => 'Folder name';
+
+  @override
+  String get newSessionSandboxNameError => 'Enter a name without / or \\\\.';
+
+  @override
+  String get newSessionCreate => 'Create chat';
+
+  @override
   String newSessionCurrentFolder(Object folder) {
     return 'Current folder ($folder)';
   }

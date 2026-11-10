@@ -31,10 +31,17 @@ final _githubToken =
     Platform.environment['COPILOT_GITHUB_TOKEN'] ??
     Platform.environment['GITHUB_TOKEN'];
 
-final _skip = (_githubToken?.isEmpty ?? true)
-    ? 'GITHUB_TOKEN/COPILOT_GITHUB_TOKEN not set — run `/provider copilot` or '
-          'export a GitHub token with a Copilot subscription'
-    : false;
+/// Live calls are OPT-IN (2026-11-10 nightly policy): a paid/region-blocked
+/// upstream must never redden CI on billing or quota (Copilot 402/403
+/// class). The mock parity coverage lives in the unit suite; set
+/// `FA_COPILOT_LIVE=1` (plus the key below) to run this suite by hand.
+final _optedIn = Platform.environment['FA_COPILOT_LIVE'] == '1';
+
+final _skip = !_optedIn
+    ? 'live Copilot is opt-in; set FA_COPILOT_LIVE=1 to run'
+    : (_githubToken?.isEmpty ?? true)
+        ? 'COPILOT_GITHUB_TOKEN/GITHUB_TOKEN not set'
+        : false;
 
 /// API host selected by `COPILOT_ACCOUNT_TYPE` (default: individual).
 final _baseUrl = switch (Platform.environment['COPILOT_ACCOUNT_TYPE'] ??

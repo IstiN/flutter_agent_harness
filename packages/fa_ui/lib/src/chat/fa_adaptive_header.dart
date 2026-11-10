@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../theme/fa2_tokens.dart';
@@ -185,6 +187,7 @@ class FaAdaptiveHeader extends StatelessWidget {
     this.actionBuilder,
     this.overflowBuilder,
     this.actionBandBuilder,
+    this.compactActionLimit,
     this.menuColor,
     this.overflowMenuKey,
     this.overflowTooltip,
@@ -274,6 +277,10 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// Fit, demotion and menu callbacks stay owned by this header.
   final FaHeaderActionBandBuilder? actionBandBuilder;
 
+  /// Maximum inline actions for a compact pane whose model control has its
+  /// own overflow route. Null preserves the unrestricted greedy fit.
+  final int? compactActionLimit;
+
   /// The overflow menu's background color (the sheet passes its panel alt).
   final Color? menuColor;
 
@@ -296,7 +303,14 @@ class FaAdaptiveHeader extends StatelessWidget {
 
   /// One action slot's width: [IconButton]'s minimum interactive dimension
   /// adjusted by the density, which is exactly how the bar buttons size.
+  // The grouped glass band adds 2pt on each side of its 36pt control.
   double get _slot => 48 + 4 * visualDensity.horizontal;
+  double _bandWidth(int slots) =>
+      actionBandBuilder != null &&
+          compactActionLimit != null &&
+          visualDensity.horizontal == -2
+      ? slots * 40 + (slots > 0 ? 4 : 0)
+      : slots * _slot + (slots > 0 ? (slots - 1) * actionGap : 0);
 
   /// Whether a project identity pill renders (either half present).
   bool get _hasProject => projectIcon != null || projectLabel != null;
@@ -334,7 +348,7 @@ class FaAdaptiveHeader extends StatelessWidget {
   }) {
     final overflow = _overflowSlot(inline, demotableCount, overflowVisible) > 0;
     final count = pinnedCount + inline + (overflow ? 1 : 0);
-    return count * _slot + (count > 0 ? (count - 1) * actionGap : 0);
+    return _bandWidth(count);
   }
 
   /// Greedy-fit width: the fixed content plus [inline] demotable slots
@@ -397,13 +411,17 @@ class FaAdaptiveHeader extends StatelessWidget {
     final pinnedCount = actions.length - demotable.length;
     final overflowVisible = menuItems.isNotEmpty;
     final chipWidth = _chipBudget;
-    final inlineCount = _inlineCount(
-      demotableCount: demotable.length,
-      pinnedCount: pinnedCount,
-      chipWidth: chipWidth,
-      overflowVisible: overflowVisible,
-      maxWidth: constraints.maxWidth,
-    );
+    final int inlineCount =
+        _inlineCount(
+          demotableCount: demotable.length,
+          pinnedCount: pinnedCount,
+          chipWidth: chipWidth,
+          overflowVisible: overflowVisible,
+          maxWidth: constraints.maxWidth,
+        ).clamp(
+          0,
+          math.min(compactActionLimit ?? demotable.length, demotable.length),
+        );
     // The chip demotes last (issue #225): only when even with every
     // action in the menu the row still cannot fit it.
     final chipInline =
@@ -610,13 +628,16 @@ class FaAdaptiveHeader extends StatelessWidget {
     _HeaderFit fit,
   ) {
     final inline = _inlineActions(fit);
-    if (inline.isEmpty && !fit.showOverflow) return const SizedBox.shrink();
+    final overflowItems = fit.showOverflow
+        ? _overflowItems(context, strings, fit)
+        : const <PopupMenuEntry<String>>[];
+    if (inline.isEmpty && overflowItems.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return actionBandBuilder!(
       context,
       inline,
-      fit.showOverflow
-          ? _overflowItems(context, strings, fit)
-          : const <PopupMenuEntry<String>>[],
+      overflowItems,
       (value) => _onOverflowSelected(value, fit),
     );
   }

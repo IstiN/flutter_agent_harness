@@ -44,6 +44,24 @@ class AppLocalizationsRu extends AppLocalizations {
   String get newSessionFolderTitle => 'Новая сессия — папка';
 
   @override
+  String get newSessionChooseFolder => 'Выбрать папку в Файлах…';
+
+  @override
+  String get newSessionSandboxFolder => 'Новая папка в личном sandbox…';
+
+  @override
+  String get newSessionSandboxNameTitle => 'Новая папка в sandbox';
+
+  @override
+  String get newSessionSandboxNameLabel => 'Имя папки';
+
+  @override
+  String get newSessionSandboxNameError => 'Введите имя без / или \\\\.';
+
+  @override
+  String get newSessionCreate => 'Создать чат';
+
+  @override
   String newSessionCurrentFolder(Object folder) {
     return 'Текущая папка ($folder)';
   }

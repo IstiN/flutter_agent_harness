@@ -22,7 +22,17 @@ import 'package:test/test.dart';
 final _apiKey = Platform.environment['ANTHROPIC_API_KEY'];
 
 /// `false` when the key is present (tests run), otherwise the skip reason.
-final _skip = (_apiKey?.isEmpty ?? true) ? 'ANTHROPIC_API_KEY not set' : false;
+/// Live calls are OPT-IN (2026-11-10 nightly policy): a paid/region-blocked
+/// upstream must never redden CI on billing or quota (Anthropic 402/403
+/// class). The mock parity coverage lives in the unit suite; set
+/// `FA_ANTHROPIC_LIVE=1` (plus the key below) to run this suite by hand.
+final _optedIn = Platform.environment['FA_ANTHROPIC_LIVE'] == '1';
+
+final _skip = !_optedIn
+    ? 'live Anthropic is opt-in; set FA_ANTHROPIC_LIVE=1 to run'
+    : (_apiKey?.isEmpty ?? true)
+        ? 'ANTHROPIC_API_KEY not set'
+        : false;
 
 /// Cheapest current Anthropic chat model.
 const _model = Model(

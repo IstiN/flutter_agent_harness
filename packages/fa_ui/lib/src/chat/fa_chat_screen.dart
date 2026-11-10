@@ -4,6 +4,7 @@
 
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -47,10 +48,14 @@ import 'fa_adaptive_header.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
+import 'fa_duo_control_rail.dart';
+import 'fa_duo_layout.dart';
 import 'fa_run_status_row.dart';
 import 'markdown_style.dart';
 import 'media_player.dart';
 import 'secret_request_sheet.dart';
+
+part 'fa_chat_screen_header.dart';
 
 /// Minimum body width (logical px) at which the files panel becomes a
 /// persistent, collapsible panel instead of an end drawer.
@@ -602,6 +607,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       _filesPanelOpen
           ? _filesPanelReveal.forward()
           : _filesPanelReveal.reverse();
+      // The shell gives the docked panel the same presentation run as a
+      // presented app (chats list collapse + restore); notify on every
+      // transition, not only opens.
+      FaChatHost.onFilesPanelChanged?.call(_filesPanelOpen);
       if (_filesPanelOpen) {
         FaChatHost.track('files_opened', {'source': 'chat'});
       }
@@ -618,6 +627,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     if (_filesPanelOpen) {
       setState(() => _filesPanelOpen = false);
       _filesPanelReveal.reverse();
+      FaChatHost.onFilesPanelChanged?.call(false);
     }
   }
 
@@ -1125,6 +1135,8 @@ class _FaChatScreenState extends State<FaChatScreen>
   @override
   void dispose() {
     _syncDebounce?.cancel();
+    // Going away with the panel open still ends its presentation run.
+    if (_filesPanelOpen) FaChatHost.onFilesPanelChanged?.call(false);
     _chatScrollController.dispose();
     _unbindTrajectory();
     _unsubscribeFromService(widget.service);
@@ -1562,6 +1574,8 @@ class _FaChatScreenState extends State<FaChatScreen>
     int? historyAbove,
   ) {
     final tokens = FaDesignTokens.of(context);
+    final duoRailWidth = FaDuoControlRail.widthOf(context);
+    final transcript = _buildTranscript(context);
     final topOverlay = <Widget>[
       ?_buildErrorBanner(context, strings),
       ?widget.noticeBanner,
@@ -1580,7 +1594,17 @@ class _FaChatScreenState extends State<FaChatScreen>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Positioned.fill(child: _buildTranscript(context)),
+          Positioned.fill(
+            child: duoRailWidth == 0
+                ? transcript
+                : Padding(
+                    padding: EdgeInsets.only(right: duoRailWidth),
+                    child: SizedBox.expand(
+                      key: const ValueKey('faChatDuoContentLane'),
+                      child: transcript,
+                    ),
+                  ),
+          ),
           Positioned(
             top: 0,
             left: 0,
@@ -1642,7 +1666,7 @@ class _FaChatScreenState extends State<FaChatScreen>
             Positioned(
               top: _glassHeaderExtent + 4,
               left: 0,
-              right: 0,
+              right: duoRailWidth,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: topOverlay,
@@ -1651,7 +1675,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           if (bottomOverlay.isNotEmpty)
             Positioned(
               left: 0,
-              right: 0,
+              right: duoRailWidth,
               bottom: _glassComposerExtent + 4,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -1660,7 +1684,9 @@ class _FaChatScreenState extends State<FaChatScreen>
             ),
           Positioned(
             left: 0,
-            right: 0,
+            // The composer shares the transcript's usable lane on Duo; it
+            // never stretches underneath the native control rail.
+            right: duoRailWidth,
             bottom: 0,
             child: NotificationListener<SizeChangedLayoutNotification>(
               onNotification: _onGlassChromeResized,
@@ -1783,7 +1809,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     // Measure the agents/header slot WITH the composer. The transcript's
     // bottom inset then reserves it automatically instead of letting the
     // floating header cover the newest message.
-    return Column(
+    final content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1791,6 +1817,17 @@ class _FaChatScreenState extends State<FaChatScreen>
           Padding(padding: const EdgeInsets.only(bottom: 4), child: header),
         composer,
       ],
+    );
+    final duo =
+        FaDuoLayoutScope.maybeOf(context)?.isDuo ??
+        FaDuoControlRail.isActive(context);
+    if (!duo) return content;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: SizedBox(width: double.infinity, child: content),
+      ),
     );
   }
 
@@ -2143,6 +2180,12 @@ class _FaChatScreenState extends State<FaChatScreen>
                       right: slotMounted ? filesPanelWidth * reveal : 0,
                       child: _buildFloatingGlassHeader(isWide, headerActions),
                     ),
+                  if (widget.showAppBar && FaDuoControlRail.isActive(context))
+                    _buildDuoFloatingRail(
+                      headerActions,
+                      slotMounted ? filesPanelWidth * reveal : 0,
+                      showBack: !isWide && Navigator.canPop(context),
+                    ),
                 ],
               );
             },
@@ -2200,6 +2243,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       ..._hostHeaderActions(),
       if (fileBrowserBuilder != null && !(isWide && filesPanelOpen))
         FaHeaderAction(
+          key: const ValueKey('faChatFilesAction'),
           icon: Icons.folder_outlined,
           label: strings.chatFilesTooltip,
           onPressed: _openFiles,
@@ -2244,229 +2288,6 @@ class _FaChatScreenState extends State<FaChatScreen>
         ),
     ];
   }
-
-  Widget _buildFloatingGlassHeader(
-    bool isWide,
-    List<FaHeaderAction> headerActions,
-  ) {
-    return NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: _onGlassChromeResized,
-      child: SizeChangedLayoutNotifier(
-        child: SizedBox(
-          key: _glassHeaderMeasureKey,
-          child: SafeArea(
-            bottom: false,
-            // Keep the avatar + centered title pill stacked at every width.
-            // Narrow routes add Back independently; actions still demote into
-            // the adaptive overflow instead of switching to the compact bar.
-            child: _buildStackedGlassHeader(
-              headerActions,
-              showBack: !isWide && Navigator.canPop(context),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStackedGlassHeader(
-    List<FaHeaderAction> headerActions, {
-    bool showBack = false,
-  }) {
-    final tokens = FaDesignTokens.of(context);
-    return Padding(
-      key: const ValueKey('faChatFloatingHeader'),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Title sizing retains the original side budget. The action row
-          // itself may use all safe space to the right of the centered avatar
-          // so a long model id is not truncated by an artificial 38% cap.
-          final titleSideWidth = math.min(360.0, constraints.maxWidth * .38);
-          final actionWidth = math.max(0.0, constraints.maxWidth / 2 - 18 - 12);
-          final chipReserve = math.min(
-            constraints.maxWidth < 600 ? 96.0 : 112.0,
-            math.min(240.0, actionWidth),
-          );
-          final headerChipWidth = math.min(240.0, actionWidth);
-          // A fixed, viewport-derived pill width keeps geometry identical
-          // across direction-specific font families while remaining a
-          // centered identity control rather than a full-width app bar.
-          final titleWidth = math.min(
-            320.0,
-            math.max(200.0, constraints.maxWidth - 2 * (titleSideWidth + 12)),
-          );
-          final builtAvatar = widget.avatarBuilder?.call(context, 'assistant');
-          return SizedBox(
-            // 11 (identity air) + 36 (avatar) + 4 + 40 (pill): the avatar's
-            // center (11 + 18 = 29) sits ON the action row's center
-            // (Positioned top 9 + 40/2) — one centerline for the whole
-            // stacked glass header, and the circle clears the band's top
-            // edge (the old top-0 avatar read clipped at the window edge).
-            height: 91,
-            child: Stack(
-              children: [
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // The ONE circular chrome (FaHeaderCircularAction —
-                      // the painter behind FaIconActionButton): token
-                      // surface fill + hairline, ink1 glyph — not a third
-                      // tinted-glass disc.
-                      Padding(
-                        padding: const EdgeInsets.only(top: 11),
-                        child: FaHeaderCircularAction(
-                          key: const ValueKey('faChatHeaderAvatar'),
-                          dimension: 36,
-                          // Floating identity circle on the header
-                          // backdrop: the glass underlay state.
-                          glass: true,
-                          child:
-                              builtAvatar ??
-                              Icon(
-                                widget.projectIcon ?? Icons.person_rounded,
-                                size: widget.projectIcon == null ? 25 : 18,
-                                color: widget.projectIconColor ?? tokens.ink1,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      FaSurface(
-                        key: const ValueKey('faChatHeaderTitlePill'),
-                        glass: true,
-                        useBackdropGroup: true,
-                        color: tokens.surface1,
-                        borderRadius: BorderRadius.circular(14),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        onTap: widget.onProjectTap,
-                        child: SizedBox(
-                          width: titleWidth,
-                          height: 40,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    if (widget.projectLabel case final label?
-                                        when label.isNotEmpty)
-                                      Text(
-                                        label,
-                                        key: const ValueKey(
-                                          'faChatHeaderProjectLabel',
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: tokens.ink2,
-                                          fontSize: 10,
-                                          height: 1.2,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    Text(
-                                      widget.title,
-                                      key: const ValueKey(
-                                        'faChatHeaderSessionLabel',
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: tokens.ink1,
-                                        fontSize: 13,
-                                        height: 1.25,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              if (widget.onProjectTap != null)
-                                Icon(
-                                  Icons.chevron_right,
-                                  size: 15,
-                                  color: tokens.ink2,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (showBack)
-                  Positioned(
-                    top: 9,
-                    left: 0,
-                    width: 40,
-                    height: 40,
-                    child: _glassHeaderAction(
-                      IconTheme.merge(
-                        data: const IconThemeData(size: 18),
-                        child: const BackButton(
-                          key: ValueKey('faChatHeaderBack'),
-                          style: ButtonStyle(
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  top: 9,
-                  right: 0,
-                  width: actionWidth,
-                  height: 40,
-                  child: FaAdaptiveHeader(
-                    visualDensity: VisualDensity.compact,
-                    overflowMenuKey: const ValueKey('faChatHeaderOverflow'),
-                    chip: widget.modelChip,
-                    chipMinWidth: chipReserve,
-                    chipMaxWidth: headerChipWidth,
-                    onChipTap: widget.onModelChipTap,
-                    chipMenuLabel: widget.chipMenuLabel,
-                    actions: headerActions,
-                    iconSize: 18,
-                    actionGap: 0,
-                    menuColor: tokens.surface2,
-                    actionBandBuilder:
-                        (context, actions, overflowItems, onSelected) =>
-                            FaIconActionBand<String>(
-                              actions: actions,
-                              overflowItems: overflowItems,
-                              onOverflowSelected: onSelected,
-                              overflowMenuKey: const ValueKey(
-                                'faChatHeaderOverflow',
-                              ),
-                              overflowTooltip: FaChatStrings.of(
-                                context,
-                              ).chatMoreTooltip,
-                              menuColor: tokens.surface2,
-                              glass: true,
-                            ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  /// The chat bar's circular action chrome: the ONE control scale (the
-  /// 36pt [FaIconActionButton.defaultDiameter] — the sidebar toggle's and
-  /// the Files band's circle) floating on the header backdrop with no
-  /// surface of its own: the glass underlay state (owner rule).
-  Widget _glassHeaderAction(Widget button) => FaHeaderCircularAction(
-    dimension: FaIconActionButton.defaultDiameter,
-    glass: true,
-    child: button,
-  );
 
   /// The files end drawer (narrow layouts only — wide uses the side
   /// panel in the body row); null hides it.
@@ -2574,9 +2395,34 @@ class _FaChatScreenState extends State<FaChatScreen>
                                   child: Stack(
                                     children: [
                                       Positioned.fill(
-                                        child: FaFilesPanelScope(
-                                          closePanel: _closeFilesPanel,
-                                          child: fileBrowserBuilder(context),
+                                        child: Builder(
+                                          builder: (context) {
+                                            final panel = FaFilesPanelScope(
+                                              closePanel: _closeFilesPanel,
+                                              child: fileBrowserBuilder(
+                                                context,
+                                              ),
+                                            );
+                                            final duoRailWidth =
+                                                FaDuoControlRail.widthOf(
+                                                  context,
+                                                );
+                                            if (duoRailWidth == 0) return panel;
+                                            // Only the wide docked slot
+                                            // reaches the physical edge. The
+                                            // narrow Drawer owns a SafeArea;
+                                            // insetting its builder as well
+                                            // would subtract this lane twice.
+                                            return Padding(
+                                              key: const ValueKey(
+                                                'duoFilesContentLane',
+                                              ),
+                                              padding: EdgeInsets.only(
+                                                right: duoRailWidth,
+                                              ),
+                                              child: panel,
+                                            );
+                                          },
                                         ),
                                       ),
                                     ],

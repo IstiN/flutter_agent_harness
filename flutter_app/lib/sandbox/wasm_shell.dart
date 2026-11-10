@@ -22,6 +22,7 @@ import 'package:fa/sandbox/glob_expand.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_host_paths.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
@@ -97,6 +98,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     this.lua,
     this.workingDirectory,
     this.sandboxHostPath,
+    this.projectMount,
     http.Client? httpClient,
     this.moduleLoader,
     Map<String, WasmModule>? lazyModuleCache,
@@ -179,6 +181,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Host directory exposed to the WASM guest at `/`.
   @override
   final String? sandboxHostPath;
+
+  /// Live user-granted folder. Read at command launch so changing /project
+  /// requires neither a shell rebuild nor copying files into the container.
+  final LiveProjectMount? projectMount;
 
   /// Lazily-built matcher for the "inside [sandboxHostPath]" convention
   /// shared with `SandboxedExecutionEnv._map` (gh-1274 review); null when
@@ -316,6 +322,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   static Future<WasiSandboxShell> load({
     String? workingDirectory,
     String? sandboxHostPath,
+    LiveProjectMount? projectMount,
     http.Client? httpClient,
   }) async {
     Future<WasmModule> loadAsset(String name) async {
@@ -345,6 +352,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       zip: await loadAsset('zip.wasm'),
       workingDirectory: workingDirectory,
       sandboxHostPath: sandboxHostPath,
+      projectMount: projectMount,
       httpClient: httpClient,
       moduleLoader: loadAsset,
     );
@@ -472,7 +480,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    return handler(this, stage, options, inputSource);
+    final result = await handler(this, stage, options, inputSource);
+    final data = result.valueOrNull;
+    if (data != null) {
+      // WASM stages call this through _subscribeStdout. Dart builtins do
+      // not, so emit their stream here; _writeStageStdout still owns the
+      // single accumulated stdout and command-substitution feed.
+      if (data.stdout.isNotEmpty && !_capture.isActive) {
+        options?.onStdout?.call(utf8.decode(data.stdout, allowMalformed: true));
+      }
+    }
+    return result;
   }
 
   /// Runs either a builtin command or a WASM stage with stdin/source handling.
@@ -592,7 +610,34 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (cancelled != null) {
       return Err(cancelled);
     }
-    final prep = await _buildJobLog(id, logPath, options);
+    final requestedCwd = options?.cwd;
+    final mounted = projectMount?.liveMountedProjectPath;
+    final hasMount = mounted != null && mounted.isNotEmpty;
+    final jobCwd = hasMount && requestedCwd == mounted
+        ? '/project'
+        : requestedCwd ?? (hasMount ? '/project' : '/');
+    final jobOptions = jobCwd == requestedCwd
+        ? options
+        : ShellExecOptions(
+            cwd: jobCwd,
+            env: options?.env,
+            timeout: options?.timeout,
+            cancelToken: options?.cancelToken,
+            onStdout: options?.onStdout,
+            onStderr: options?.onStderr,
+            stdinData: options?.stdinData,
+            liveStdin: options?.liveStdin,
+            jobLogMaxBytes: options?.jobLogMaxBytes,
+            onJobLogWarning: options?.onJobLogWarning,
+            jobLogRedactor: options?.jobLogRedactor,
+          );
+    // A host-less shell (unit embeddings) already receives a physical log
+    // path. _hostPath's guest-root stripping is valid only with a sandbox
+    // root (or an actual mount) to project into.
+    final hostLogPath = hasMount || (sandboxHostPath?.isNotEmpty ?? false)
+        ? _hostPath(logPath)
+        : logPath;
+    final prep = await _buildJobLog(id, hostLogPath, jobOptions);
     if (prep.isErr) return Err(prep.errorOrNull!);
     final (:ceiling, :logFile) = prep.valueOrNull!;
     return Ok(
@@ -602,7 +647,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         logPath: logPath,
         logFile: logFile,
         ceiling: ceiling,
-        options: options,
+        options: jobOptions,
         token: token,
       ),
     );
@@ -616,6 +661,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     String logPath,
   ) async {
     try {
+      await io.File(logPath).parent.create(recursive: true);
       return Ok(await io.File(logPath).open(mode: io.FileMode.append));
     } on Object catch (error) {
       return Err(
@@ -714,6 +760,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       lua: lua,
       workingDirectory: _currentDir,
       sandboxHostPath: sandboxHostPath,
+      projectMount: projectMount,
       httpClient: _httpClient,
       moduleLoader: moduleLoader,
       lazyModuleCache: _lazyModules,
@@ -896,6 +943,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (text.isEmpty) return;
     _lastStdout = (_lastStdout ?? '') + text;
     _capture.feed(text);
+    // WASM stages stream through _subscribeStdout; only Dart builtins
+    // reach this sink without already delivering their output callback.
   }
 
   /// Writes a stage's stderr to its redirect target or the accumulator.
@@ -1007,21 +1056,31 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   String _sanitizeSandboxText(String text) {
     final host = sandboxHostPath;
     if (host == null || host.isEmpty) return text;
-    return text.replaceAll(host, '');
+    var sanitized = text.replaceAll(host, '');
+    for (final root in [projectMount?.liveMountedProjectPath]) {
+      if (root != null && root.isNotEmpty) {
+        sanitized = sanitized.replaceAll(root, '/project');
+      }
+    }
+    return sanitized;
   }
 
   int? _lastStageExitCode;
 
-  io.File _hostFile(String sandboxPath) {
-    final host = sandboxHostPath ?? '';
-    final stripped = sandboxPath.startsWith('/')
-        ? sandboxPath.substring(1)
-        : sandboxPath;
-    return io.File('$host/$stripped');
-  }
+  io.File _hostFile(String sandboxPath) => io.File(_hostPath(sandboxPath));
 
   String _hostPath(String sandboxPath) {
     final host = sandboxHostPath ?? '';
+    final mounted = projectMount?.liveMountedProjectPath;
+    if (mounted != null && mounted.isNotEmpty) {
+      if (sandboxPath == '/project') return mounted;
+      if (sandboxPath.startsWith('/project/')) {
+        return '$mounted/${sandboxPath.substring('/project/'.length)}';
+      }
+      if (sandboxPath == mounted || sandboxPath.startsWith('$mounted/')) {
+        return sandboxPath;
+      }
+    }
     // Idempotent for paths already inside the sandbox host directory: the
     // harness layer hands git/ssh its own *host* cwd (gh-1274), and mapping
     // it again would produce a nested `<sandbox>/<host-path>` mirror. Like
@@ -1083,7 +1142,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final root = _sandboxHostRoot;
     final requested = options?.cwd;
     if (requested != null) {
-      final mapped = root?.stripToSandboxPath(requested) ?? requested;
+      var mapped = root?.stripToSandboxPath(requested) ?? requested;
+      final mounted = projectMount?.liveMountedProjectPath;
+      if (mounted != null && mounted.isNotEmpty) {
+        if (requested == mounted) {
+          mapped = '/project';
+        } else if (requested.startsWith('$mounted/')) {
+          mapped = '/project/${requested.substring(mounted.length + 1)}';
+        }
+      }
       if (mapped != '/') cwd = mapped;
     }
     return cwd;
@@ -1111,8 +1178,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Maps an absolute path into the WASI guest namespace: a host-projection
   /// path under [sandboxHostPath] becomes its sandbox-absolute form
   /// (`<host>/f` → `/f`); guest-side paths pass through unchanged.
-  String _toGuestPath(String path) =>
-      _sandboxHostRoot?.stripToSandboxPath(path) ?? path;
+  String _toGuestPath(String path) {
+    final mounted = projectMount?.liveMountedProjectPath;
+    if (mounted != null && mounted.isNotEmpty) {
+      if (path == mounted) return '/project';
+      if (path.startsWith('$mounted/')) {
+        return '/project/${path.substring(mounted.length + 1)}';
+      }
+    }
+    return _sandboxHostRoot?.stripToSandboxPath(path) ?? path;
+  }
 
   /// Rewrites relative path arguments to absolute sandbox paths based on
   /// [cwd]. The WASI guest is rooted at `/`, so `cat file.txt` run after
@@ -1433,6 +1508,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (hostSandbox != null && hostSandbox.isNotEmpty) {
       preopenedDirs.add(
         PreopenedDir(wasmGuestPath: '/', hostPath: hostSandbox),
+      );
+    }
+    final mounted = projectMount?.liveMountedProjectPath;
+    if (mounted != null && mounted.isNotEmpty) {
+      preopenedDirs.add(
+        PreopenedDir(wasmGuestPath: '/project', hostPath: mounted),
       );
     }
     return preopenedDirs;

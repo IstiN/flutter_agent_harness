@@ -12,6 +12,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/chats/chat_list_stores.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
+import 'package:fa/ui/chats/networks_list_panel.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/image_preview_store.dart';
@@ -25,7 +26,8 @@ import 'package:fa/ui/apps/apps_directory_panel.dart';
 import 'package:fa/ui/apps/messenger_app_panel.dart';
 import 'package:fa/ui/apps/presentation_panel_card.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
-import 'package:fa/ui/chats/chat_list_panel.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart'
+    show CollapsedChatAvatarList, ChatListPanel;
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
@@ -34,6 +36,9 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:fa_ui/fa_ui.dart'
     show
+        FaDuoGeometry,
+        FaDuoLayoutScope,
+        FaDuoVerticalBarEdge,
         FaHeaderCircularAction,
         FaSurface,
         FaVisualDirection,
@@ -204,9 +209,35 @@ void main() {
   setUp(() => debugFaGlassAlwaysFake = true);
   tearDown(() => debugFaGlassAlwaysFake = false);
 
+  FaDuoGeometry duoGeometry(Size size) => FaDuoGeometry(
+    isDuo: true,
+    hardwareModel: 'iPhone19,4',
+    verticalBarEdge: FaDuoVerticalBarEdge.trailing,
+    safeAreaInsets: const EdgeInsets.only(top: 59, right: 84, bottom: 21),
+    occlusions: [Rect.fromLTWH(size.width - 84, 12, 84, 114)],
+    divisions: const [],
+  );
+
+  // Captured from the real iPhone Duo fa simulator through fah/duo_layout:
+  // 466×678, a 174pt camera region and no top safe-area inset. Keeping this
+  // second profile prevents the 390×844 fixture from hiding compact-height
+  // and native-inset regressions.
+  FaDuoGeometry compactDuoGeometry() => const FaDuoGeometry(
+    isDuo: true,
+    hardwareModel: 'iPhone19,4',
+    verticalBarEdge: FaDuoVerticalBarEdge.trailing,
+    safeAreaInsets: EdgeInsets.only(right: 84, bottom: 34),
+    occlusions: [
+      Rect.fromLTRB(399.7, 29.3, 436.7, 66.3),
+      Rect.fromLTRB(382, 0, 466, 174),
+    ],
+    divisions: [],
+  );
+
   Future<FlutterSessionManager> pumpShell(
     WidgetTester tester, {
     Size size = goldenSizeDesktop,
+    FaDuoGeometry? duo,
     Locale locale = const Locale('en'),
     bool populateChats = false,
     bool denseChats = false,
@@ -356,6 +387,13 @@ void main() {
       addTearDown(networkManager.disconnectAll);
       networkSessions = networkManager;
     }
+    if (duo != null) {
+      tester.view.padding = FakeViewPadding(
+        top: duo.safeAreaInsets.top,
+        right: duo.safeAreaInsets.right,
+        bottom: duo.safeAreaInsets.bottom,
+      );
+    }
     await pumpGolden(
       tester,
       WideLayoutShell(
@@ -418,30 +456,34 @@ void main() {
       ),
       wrap: (child) => child,
       builder: (context, navigator) {
-        final child = navigator ?? const SizedBox.shrink();
-        if (!settingsFixtures) return child;
-        return FahThemeScope(
-          controller: themeController!,
-          child: ThemePackScope(
-            store: themePacks!,
-            child: SessionKeysScope(
-              store: sessionKeys!,
-              child: MediaModelsScope(
-                store: mediaModels!,
-                child: TaskModelsScope(
-                  store: taskModels!,
-                  child: ChatTextScope(
-                    store: chatText!,
-                    child: ImagePreviewScope(
-                      store: imagePreviews!,
-                      child: child,
+        var child = navigator ?? const SizedBox.shrink();
+        if (settingsFixtures) {
+          child = FahThemeScope(
+            controller: themeController!,
+            child: ThemePackScope(
+              store: themePacks!,
+              child: SessionKeysScope(
+                store: sessionKeys!,
+                child: MediaModelsScope(
+                  store: mediaModels!,
+                  child: TaskModelsScope(
+                    store: taskModels!,
+                    child: ChatTextScope(
+                      store: chatText!,
+                      child: ImagePreviewScope(
+                        store: imagePreviews!,
+                        child: child,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
+          );
+        }
+        return duo == null
+            ? child
+            : FaDuoLayoutScope(geometry: duo, child: child);
       },
     );
     return manager;
@@ -482,6 +524,823 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Duo folded New chat and chat controls clear the camera', (
+    tester,
+  ) async {
+    const size = goldenSizePhone;
+    await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+    );
+    final newChat = find.byKey(const ValueKey('narrowShellNewChat'));
+    expect(newChat, findsOneWidget);
+    expect(tester.getRect(newChat).left, greaterThanOrEqualTo(390 - 84));
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(390 - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_chats');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    expect(newChat, findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(390 - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_local');
+
+    await tester.tap(find.text('fa'));
+    await tester.pumpAndSettle();
+    expect(newChat, findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(390 - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_local_detail');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatNetworksPanel), findsOneWidget);
+    expect(newChat, findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(390 - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_networks');
+
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fa 2.0 redesign'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('wideModelChip')), findsOneWidget);
+    expect(find.byIcon(Icons.timeline), findsOneWidget);
+    expect(find.byIcon(Icons.copy_outlined), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('wideModelChip'))).top,
+      lessThan(200),
+    );
+    expect(
+      tester.getRect(find.byKey(const ValueKey('faChatDuoContentLane'))).right,
+      lessThanOrEqualTo(390 - 84),
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('faChatTopMelt'))).height,
+      lessThanOrEqualTo(
+        115 +
+            MediaQuery.paddingOf(
+              tester.element(find.byKey(const ValueKey('faChatTopMelt'))),
+            ).top,
+      ),
+    );
+    final foldedComposer = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(foldedComposer.right, lessThanOrEqualTo(390 - 84));
+    expect(
+      foldedComposer.center.dx,
+      closeTo(
+        tester
+            .getRect(find.byKey(const ValueKey('faChatDuoContentLane')))
+            .center
+            .dx,
+        .5,
+      ),
+    );
+    final foldedRail = tester.getRect(
+      find.byKey(const ValueKey('faChatDuoControlRail')),
+    );
+    expect(foldedRail.bottom, lessThanOrEqualTo(foldedComposer.top));
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_chat');
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo folded every shell destination and Settings category', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const size = goldenSizePhone;
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+      denseChats: true,
+      denseChannels: true,
+      denseLocal: true,
+      settingsFixtures: true,
+      networkFixtures: true,
+    );
+    await manager.env.writeFile(
+      'apps/demo/manifest.json',
+      '{"name":"Demo","description":"A mock installed app for Duo verification."}',
+    );
+    await manager.env.writeFile(
+      'apps/demo/widget.js',
+      '(function(){jsr.render({type:"text",data:"Demo"});})();',
+    );
+
+    Future<void> capture(String name) async {
+      final lane = find.byKey(const ValueKey('narrowDuoContentLane'));
+      // Settings owns a full-width rail overlay (floating Back inside the
+      // header) and a separate body lane; the route root is intentionally
+      // full-width and the body now uses it too — only the shell sections
+      // with a persistent rail stay bounded by the rail width.
+      final settingsBody = find.byKey(
+        const ValueKey('settingsBodyContentLane'),
+      );
+      final Finder bounded;
+      var bound = size.width - 84;
+      if (lane.evaluate().isNotEmpty) {
+        bounded = lane;
+      } else if (settingsBody.evaluate().isNotEmpty) {
+        bounded = settingsBody;
+        bound = size.width;
+      } else {
+        bounded = find.byKey(const ValueKey('appsOverviewHeader'));
+      }
+      expect(bounded, findsOneWidget, reason: '$name keeps bounded Duo chrome');
+      expect(
+        tester.getRect(bounded).right,
+        lessThanOrEqualTo(bound),
+        reason:
+            '$name must stay inside the window (rail sections exclude '
+            'the vertical bar lane)',
+      );
+      await expectGolden(tester, 'wide_layout_shell_duo_folded_$name');
+    }
+
+    Future<void> openMore(String id, {bool captureSheet = false}) async {
+      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-more')));
+      await tester.pumpAndSettle();
+      if (captureSheet) await capture('more');
+      await tester.tap(find.byKey(ValueKey('narrowShellMore-$id')));
+      await tester.pumpAndSettle();
+    }
+
+    await capture('all_chats_dense');
+    await openMore('chatFilter-channels', captureSheet: true);
+    await capture('channels');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    await capture('local_dense');
+
+    for (var index = 0; index < 12; index++) {
+      manager.addSession(
+        'activity-$index',
+        _fakeService(manager.env),
+        createdAt: DateTime.utc(2020, 2, index + 1),
+        lastUpdatedAt: DateTime.utc(2020, 2, index + 1),
+      );
+    }
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
+    await tester.pumpAndSettle();
+    await capture('activity');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppLauncherScreen), findsOneWidget);
+    expect(find.text('Demo'), findsWidgets);
+    await capture('apps');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
+    await capture('networks_dense');
+
+    await openMore('messengerPrimaryNav-settings');
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byKey(const ValueKey('settingsCategoryPanel')), findsOneWidget);
+    await capture('settings_root');
+    final settingsBack = tester.getRect(
+      find.byKey(const ValueKey('settingsBackButton')),
+    );
+    expect(
+      settingsBack.left,
+      greaterThanOrEqualTo(size.width - 84),
+      reason: 'Duo Settings Back belongs inside the system rail below WiFi',
+    );
+    expect(settingsBack.right, lessThanOrEqualTo(size.width));
+    expect(settingsBack.top, greaterThanOrEqualTo(126));
+    const scenes = [
+      ('providersModels', 'Default chat model'),
+      ('uiTheme', 'Liquid Glass'),
+      ('accountsSecrets', 'OPENROUTER_API_KEY'),
+      ('skillsTools', 'Built-in skills'),
+      ('agentConfig', 'Tool approvals'),
+      ('others', 'Reset apps'),
+    ];
+    for (final scene in scenes) {
+      await tester.tap(find.byKey(ValueKey('settingsCategory-${scene.$1}')));
+      await tester.pumpAndSettle();
+      expect(find.text(scene.$2), findsWidgets, reason: scene.$1);
+      expect(find.byKey(const ValueKey('settingsBackButton')), findsOneWidget);
+      await capture('settings_${scene.$1}');
+      await tester.tap(find.byKey(const ValueKey('settingsBackButton')));
+      await tester.pumpAndSettle();
+    }
+    debugDefaultTargetPlatformOverride = null;
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo folded Activity detail', (tester) async {
+    const size = goldenSizePhone;
+    await pumpShell(tester, size: size, duo: duoGeometry(size));
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('activitySession-design-session')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_activity_detail');
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo folded opened app surface', (tester) async {
+    const size = goldenSizePhone;
+    final manager = await pumpShell(tester, size: size, duo: duoGeometry(size));
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    // Match the existing phone app golden: warm the lazy glass layer before
+    // the first capture instead of freezing its cold initialization frame.
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await openDemoApp(tester, manager, narrow: true);
+    expect(
+      find.byKey(const ValueKey('wideShellPresentationResizeHandle')),
+      findsNothing,
+    );
+    final canvasPadding = tester.widget<Padding>(
+      find.byKey(const ValueKey('appCanvasHeaderInset')),
+    );
+    expect(
+      canvasPadding.padding.resolve(TextDirection.ltr).top,
+      lessThan(180),
+      reason: 'the vertical Duo rail must not become a giant app top inset',
+    );
+    expect(
+      canvasPadding.padding.resolve(TextDirection.ltr).top,
+      greaterThanOrEqualTo(kToolbarHeight),
+      reason: 'the JS canvas still starts below the horizontal title band',
+    );
+    final appBack = tester.getRect(find.byKey(const ValueKey('duoAppBack')));
+    expect(appBack.left, greaterThanOrEqualTo(size.width - 84));
+    expect(appBack.top, greaterThanOrEqualTo(126));
+    final appBar = find.descendant(
+      of: find.byKey(const ValueKey('messengerAppPanel')),
+      matching: find.byType(AppBar),
+    );
+    final toolbarClip = find
+        .descendant(of: appBar, matching: find.byType(ClipRect))
+        .first;
+    expect(tester.getSize(toolbarClip).height, kToolbarHeight);
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_app_open');
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo folded chat Files and New chat folder dialog', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const size = goldenSizePhone;
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+      denseTranscript: true,
+    );
+    await manager.env.createDir('src');
+    await manager.env.writeFile('README.md', '# Duo shell files\n');
+    await tester.tap(find.text('Fa 2.0 redesign'));
+    await tester.pumpAndSettle();
+    final chatBack = tester.getRect(
+      find.byKey(const ValueKey('faChatHeaderBack')),
+    );
+    expect(
+      chatBack.left,
+      greaterThanOrEqualTo(size.width - 84),
+      reason:
+          'A pushed Duo chat owns Back in the system rail, not the title lane',
+    );
+    expect(chatBack.top, greaterThanOrEqualTo(126));
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_chat_back_rail');
+    final inlineFiles = find.byTooltip('Open files');
+    if (inlineFiles.evaluate().isEmpty) {
+      await tester.tap(find.byKey(const ValueKey('faChatHeaderOverflow')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open files'));
+    } else {
+      await tester.tap(inlineFiles);
+    }
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    expect(find.byType(FileBrowser), findsOneWidget);
+    expect(find.byKey(const ValueKey('duoFilesContentLane')), findsNothing);
+    final foldedFiles = tester.getRect(
+      find.byKey(const ValueKey('filesAppPanel')),
+    );
+    expect(
+      foldedFiles.right,
+      lessThanOrEqualTo(size.width - 84),
+      reason: 'Files controls must not paint under the Duo system rail',
+    );
+    expect(
+      foldedFiles.width,
+      greaterThanOrEqualTo(200),
+      reason: 'The Drawer SafeArea must not be followed by a second 84pt inset',
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_chat_files');
+    await tester.tapAt(const Offset(10, 400));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('faChatHeaderBack')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('narrowShellNewChat')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('newSessionChooseFolder')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('newSessionName')),
+      '  Duo launch plan  ',
+    );
+    await tester.pumpAndSettle();
+    await expectGolden(
+      tester,
+      'wide_layout_shell_duo_folded_new_chat_folder_dialog',
+    );
+    final names = tester
+        .widget<WideLayoutShell>(find.byType(WideLayoutShell))
+        .sessionNamesStore!;
+    await tester.tap(find.byKey(const ValueKey('newSessionCurrentFolder')));
+    await tester.pumpAndSettle();
+    final createdId = manager.active!.id;
+    expect(names.titleFor(createdId), 'Duo launch plan');
+    expect(find.text('Duo launch plan'), findsWidgets);
+    debugDefaultTargetPlatformOverride = null;
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo folded live 466x678 shell geometry', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const size = Size(466, 678);
+    await pumpShell(
+      tester,
+      size: size,
+      duo: compactDuoGeometry(),
+      populateChats: true,
+      denseLocal: true,
+      networkFixtures: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_compact_local');
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('networkRow-net1')), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('narrowDuoContentLane'))).right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
+    await tester.pumpAndSettle();
+    final conversationTitle = find.text('Fa 2.0 redesign');
+    await tester.scrollUntilVisible(
+      conversationTitle,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(conversationTitle);
+    await tester.pumpAndSettle();
+    final rail = tester.getRect(
+      find.byKey(const ValueKey('faChatDuoControlRail')),
+    );
+    final composer = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(rail.bottom, lessThanOrEqualTo(composer.top));
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_compact_chat');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('Duo folded live 466x678 Settings geometry', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const size = Size(466, 678);
+    await pumpShell(
+      tester,
+      size: size,
+      duo: compactDuoGeometry(),
+      settingsFixtures: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(
+        const ValueKey('narrowShellMore-messengerPrimaryNav-settings'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settingsCategory-uiTheme')));
+    await tester.pumpAndSettle();
+    expect(find.text('Liquid Glass'), findsWidgets);
+    await expectGolden(
+      tester,
+      'wide_layout_shell_duo_folded_compact_settings_uiTheme',
+    );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('Duo folded live 466x678 opened app geometry', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const size = Size(466, 678);
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: compactDuoGeometry(),
+      settingsFixtures: true,
+    );
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await openDemoApp(tester, manager, narrow: true);
+    expect(find.text('Demo'), findsWidgets);
+    final canvasPadding = tester.widget<Padding>(
+      find.byKey(const ValueKey('appCanvasHeaderInset')),
+    );
+    expect(
+      canvasPadding.padding.resolve(TextDirection.ltr).top,
+      kToolbarHeight,
+      reason: 'compact Duo has no top inset; only the 56pt title band remains',
+    );
+    final appBack = tester.getRect(find.byKey(const ValueKey('duoAppBack')));
+    expect(appBack.left, greaterThanOrEqualTo(size.width - 84));
+    expect(appBack.top, greaterThanOrEqualTo(174));
+    await expectGolden(tester, 'wide_layout_shell_duo_folded_compact_app_open');
+    debugDefaultTargetPlatformOverride = null;
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo expanded Files clears the trailing system rail', (
+    tester,
+  ) async {
+    const size = Size(951, 669);
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+    );
+    await manager.env.createDir('src');
+    await manager.env.writeFile('README.md', '# Duo Files\n');
+    await tester.tap(find.byTooltip('Open files'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    expect(find.byKey(const ValueKey('duoFilesContentLane')), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('filesAppPanel'))).right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_files');
+  });
+
+  testWidgets('Duo quick Apps chooser restores a running app', (tester) async {
+    const size = Size(951, 669);
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+    );
+    await openDemoApp(tester, manager);
+    expect(find.byKey(const ValueKey('appQuickApps')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appQuickApps')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quickApp-demo')), findsOneWidget);
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_quick_apps');
+    await tester.tap(find.byKey(const ValueKey('quickApp-demo')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('messengerAppPanel')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('duoAppBack')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('messengerAppPanel')), findsNothing);
+    expect(find.byKey(const ValueKey('chatQuickApps')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('chatQuickApps')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('quickApp-demo')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('messengerAppPanel')), findsOneWidget);
+    expect(find.byKey(const ValueKey('appQuickApps')), findsOneWidget);
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo expanded every shell destination', (tester) async {
+    const size = Size(951, 669);
+    final manager = await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+      denseLocal: true,
+      settingsFixtures: true,
+      networkFixtures: true,
+    );
+    await manager.env.writeFile(
+      'apps/demo/manifest.json',
+      '{"name":"Demo","description":"A mock installed app for Duo verification."}',
+    );
+    await manager.env.writeFile(
+      'apps/demo/widget.js',
+      '(function(){jsr.render({type:"text",data:"Demo"});})();',
+    );
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_all_chats');
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_local');
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-network')));
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_networks');
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_activity');
+    expect(
+      tester.getRect(find.byKey(const ValueKey('activityDetailScroll'))).right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('railSettingsRow')));
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_settings_root');
+    final expandedSettingsBack = tester.getRect(
+      find.byKey(const ValueKey('settingsBackButton')),
+    );
+    expect(expandedSettingsBack.left, greaterThanOrEqualTo(size.width - 84));
+    expect(expandedSettingsBack.right, lessThanOrEqualTo(size.width));
+    expect(expandedSettingsBack.top, greaterThanOrEqualTo(126));
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey('settingsBodyContentLane')))
+          .right,
+      lessThanOrEqualTo(size.width - 84),
+    );
+    expect(tester.takeException(), isNull);
+
+    for (final (key, label, expected) in [
+      (
+        'settingsCategory-providersModels',
+        'providersModels',
+        'Default chat model',
+      ),
+      ('settingsCategory-uiTheme', 'uiTheme', 'Liquid Glass'),
+      ('settingsCategory-accountsSecrets', 'accountsSecrets', 'Agent network'),
+      ('settingsCategory-skillsTools', 'skillsTools', 'Built-in skills'),
+      ('settingsCategory-agentConfig', 'agentConfig', 'Tool approvals'),
+      ('settingsCategory-others', 'others', 'Reset apps'),
+    ]) {
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pumpAndSettle();
+      expect(find.text(expected), findsWidgets, reason: 'expanded $label');
+      await expectGolden(
+        tester,
+        'wide_layout_shell_duo_expanded_settings_$label',
+      );
+      expect(tester.takeException(), isNull, reason: 'expanded $label');
+      if (label == 'providersModels') {
+        final modelRow = find.ancestor(
+          of: find.byIcon(Icons.chat_bubble_outline),
+          matching: find.byType(InkWell),
+        );
+        expect(modelRow, findsOneWidget);
+        Scrollable.ensureVisible(tester.element(modelRow), alignment: .7);
+        await tester.pumpAndSettle();
+        await tester.tap(modelRow);
+        await tester.pumpAndSettle();
+        expect(find.byType(Dialog), findsOneWidget);
+        final editor = tester.getRect(
+          find.descendant(
+            of: find.byType(Dialog),
+            matching: find.byType(Scaffold),
+          ),
+        );
+        expect(editor.width, lessThanOrEqualTo(560));
+        expect(editor.right, lessThanOrEqualTo(size.width - 84));
+        expect(editor.center.dx, closeTo((size.width - 84) / 2, .5));
+        await expectGolden(
+          tester,
+          'wide_layout_shell_duo_expanded_default_model_dialog',
+        );
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pumpAndSettle();
+        expect(find.byType(Dialog), findsNothing);
+      }
+    }
+
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_apps');
+    expect(tester.takeException(), isNull);
+
+    await openDemoApp(tester, manager, narrow: true);
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded_app_open');
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('messengerAppPanel')), findsOneWidget);
+    expect(find.text('Demo'), findsNWidgets(2));
+    // Expanded Duo docks the app at the window's right edge (owner call:
+    // no centered dialog) — the chat owns the left area beside it.
+    final expandedAppSlot = tester.getRect(
+      find.byKey(const ValueKey('wideShellPresentationSlot')),
+    );
+    final expandedAppCard = tester.getRect(
+      find.byKey(const ValueKey('messengerAppPanelCard')),
+    );
+    expect(expandedAppSlot.right, closeTo(size.width, .5));
+    expect(expandedAppSlot.width, greaterThan(340));
+    expect(expandedAppCard.right, closeTo(expandedAppSlot.right - 8, .5));
+    expect(expandedAppCard.width, lessThanOrEqualTo(expandedAppSlot.width));
+    final expandedAppBack = tester.getRect(
+      find.byKey(const ValueKey('duoAppBack')),
+    );
+    expect(expandedAppBack.left, greaterThanOrEqualTo(size.width - 84));
+    expect(expandedAppBack.top, greaterThanOrEqualTo(126));
+    // The app presented from the rail collapses the chats list; the chat
+    // (and its composer) still own the left area.
+    expect(find.byType(CollapsedChatAvatarList), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+      findsOneWidget,
+    );
+    expect(find.text('My Apps'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('appFull')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('messengerAppPanelCard')), findsNothing);
+    expect(find.byKey(const ValueKey('duoAppBack')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appFull')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('messengerAppPanelCard')), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('messengerAppPanelCard'))).right,
+      closeTo(expandedAppCard.right, .5),
+    );
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo expanded shell keeps vertical-bar controls in the rail', (
+    tester,
+  ) async {
+    const size = Size(951, 669);
+    await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+    );
+    final chip = find.byKey(const ValueKey('wideModelChip'));
+    final trajectory = find.byIcon(Icons.timeline);
+    expect(chip, findsOneWidget);
+    expect(trajectory, findsOneWidget);
+    expect(tester.getRect(chip).left, greaterThanOrEqualTo(951 - 84));
+    expect(tester.getRect(trajectory).left, greaterThanOrEqualTo(951 - 84));
+    expect(
+      tester.getRect(chip).top,
+      greaterThanOrEqualTo(
+        tester.getRect(find.byKey(const ValueKey('messengerNewButton'))).bottom,
+      ),
+    );
+    expect(
+      tester.getRect(find.byKey(const ValueKey('faChatDuoContentLane'))).right,
+      lessThanOrEqualTo(951 - 84),
+    );
+    expect(find.byKey(const ValueKey('quickModelChipLabel')), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('faChatTopMelt'))).height,
+      lessThanOrEqualTo(
+        115 +
+            MediaQuery.paddingOf(
+              tester.element(find.byKey(const ValueKey('faChatTopMelt'))),
+            ).top,
+      ),
+    );
+    final contentLane = tester.getRect(
+      find.byKey(const ValueKey('faChatDuoContentLane')),
+    );
+    final expandedComposer = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(expandedComposer.right, lessThanOrEqualTo(951 - 84));
+    expect(
+      expandedComposer.center.dx,
+      closeTo(contentLane.center.dx, .5),
+      reason: 'Duo composer is a centered strip inside the usable chat lane',
+    );
+    expect(expandedComposer.width, lessThanOrEqualTo(560));
+    final expandedRail = tester.getRect(
+      find.byKey(const ValueKey('faChatDuoControlRail')),
+    );
+    expect(expandedRail.bottom, lessThanOrEqualTo(expandedComposer.top));
+    await expectGolden(tester, 'wide_layout_shell_duo_collapsed');
+
+    tester.view.physicalSize = const Size(1280, 800);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quickModelChipLabel')), findsNothing);
+    expect(find.byIcon(Icons.timeline), findsOneWidget);
+    await expectGolden(tester, 'wide_layout_shell_duo_expanded');
+    await tester.tap(find.byKey(const ValueKey('wideShellSidebarToggle')));
+    await tester.pumpAndSettle();
+    final collapsedPanel = tester.getRect(
+      find.byKey(const ValueKey('glassSidebarPanel')),
+    );
+    final collapsedToggle = tester.getRect(
+      find.byKey(const ValueKey('wideShellSidebarToggle')),
+    );
+    expect(collapsedToggle.size, const Size.square(36));
+    expect(
+      collapsedToggle.center.dx,
+      closeTo(collapsedPanel.center.dx, .5),
+      reason:
+          'Duo collapsed chrome is one centered expand control, not a clipped brand+button row',
+    );
+    expect(find.byKey(const ValueKey('wideShellFaBrand')), findsNothing);
+    await expectGolden(
+      tester,
+      'wide_layout_shell_duo_expanded_sidebar_collapsed',
+    );
+    await tester.tap(find.byKey(const ValueKey('wideShellSidebarToggle')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getRect(find.byKey(const ValueKey('glassSidebarPanel'))).width,
+      greaterThan(collapsedPanel.width),
+    );
+    await disposeGoldenShell(tester);
+  });
+
+  testWidgets('Duo rotated composer is centered with a one-line hint', (
+    tester,
+  ) async {
+    const size = Size(856, 612);
+    await pumpShell(
+      tester,
+      size: size,
+      duo: duoGeometry(size),
+      populateChats: true,
+    );
+    // Wide Duo opens the active chat directly; tapping the same list row
+    // would only add a second header title to the finder.
+    final lane = tester.getRect(
+      find.byKey(const ValueKey('faChatDuoContentLane')),
+    );
+    final composer = tester.getRect(
+      find.byKey(const ValueKey('faChatFloatingComposer')),
+    );
+    expect(composer.center.dx, closeTo(lane.center.dx, .5));
+    expect(composer.width, lessThanOrEqualTo(560));
+    expect(composer.right, lessThanOrEqualTo(size.width - 84));
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('faChatComposerTextField')),
+    );
+    expect(field.decoration?.hintMaxLines, 1);
+    await expectGolden(tester, 'wide_layout_shell_duo_rotated_composer');
+    await disposeGoldenShell(tester);
+  });
 
   testWidgets('desktop Chats shell', (tester) async {
     await pumpShell(tester, populateChats: true);

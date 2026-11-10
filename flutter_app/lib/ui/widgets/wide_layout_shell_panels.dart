@@ -144,11 +144,16 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
       iconResolver: _folderIcons,
       networkMode: widget.networkMode,
       onOpen: _openChatEntry,
-      onNew: _newSession,
+      onNew: FaDuoControlRail.isActive(context)
+          ? null
+          : () => unawaited(_newSession()),
       onProfile: _openNarrowProfile,
       onBrandTap: compact ? () => unawaited(_pushNarrowChat()) : null,
       onBrandLongPress: () => unawaited(_mintSessionFromBrand()),
-      onCollapse: () => _updateShell(() => _sidebarCollapsed = true),
+      onCollapse: () => _updateShell(() {
+        _sidebarCollapsed = true;
+        _sidebarStateBeforePresentation = null;
+      }),
       onLocalMenu: _showChatEntryMenu,
       headerBottom: null,
       // The rail and narrow dock own the section/filter destinations. Only
@@ -266,10 +271,15 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
           _updateShell(() => _localFolderId = folderId),
       selectedSessionId: _selectedSessionId,
       onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
-      onNew: _newSession,
+      onNew: FaDuoControlRail.isActive(context)
+          ? null
+          : () => unawaited(_newSession()),
       onCollapse: compact
           ? null
-          : () => _updateShell(() => _sidebarCollapsed = true),
+          : () => _updateShell(() {
+              _sidebarCollapsed = true;
+              _sidebarStateBeforePresentation = null;
+            }),
       iconResolver: _folderIcons,
     );
   }

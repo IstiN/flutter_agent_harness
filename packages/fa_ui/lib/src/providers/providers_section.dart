@@ -22,7 +22,9 @@ import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/providers/sso_flows.dart';
 import 'package:fa_ui/src/providers/quota_gauge.dart';
+import 'package:fa_ui/src/stores/keychain_store.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
+import 'package:fa_ui/src/stores/session_keys_store.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
 
@@ -142,6 +144,16 @@ class ProvidersSection extends StatelessWidget {
     final rows = ListenableBuilder(
       listenable: registry,
       builder: (context, _) {
+        final hasConnectedPreset = hostedProviderPresets.any(
+          (preset) =>
+              hostedProviderConnected(preset) &&
+              !registry.providers.any(
+                (custom) => custom.baseUrl == preset.baseUrl,
+              ),
+        );
+        final hasVisibleOnDeviceRoute = onDeviceProviders.any(
+          (route) => onDeviceRowVisible?.call(route.id) ?? true,
+        );
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -153,7 +165,9 @@ class ProvidersSection extends StatelessWidget {
               ),
               const SizedBox(height: 8),
             ],
-            if (registry.providers.isEmpty)
+            if (registry.providers.isEmpty &&
+                !hasConnectedPreset &&
+                !hasVisibleOnDeviceRoute)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
@@ -395,6 +409,20 @@ class ProvidersSection extends StatelessWidget {
     ProviderRegistry registry,
     ProviderPreset preset,
   ) async {
+    final reauth = onProviderReauthenticate;
+    // A connected preset has no registry entry yet. This stable preset-shaped
+    // view lets the host run the same re-auth flow without manufacturing a
+    // provider (or touching the existing key) before sign-in succeeds.
+    final reauthProvider = CustomProvider(
+      id: preset.name,
+      name: preset.labelFor(context),
+      baseUrl: preset.baseUrl!,
+      modelId: registry.presetModelOverride(preset.name) ?? preset.defaultModel,
+    );
+    // Resolved before the editor push (no BuildContext use across the async
+    // gap); the store outlives the scope lookup, so disconnect keeps working
+    // even if this section left the tree while the editor was open.
+    final sessionKeys = SessionKeysScope.maybeOf(context);
     final result = await pushFaPage<ProviderEditorResult>(
       context,
       ProviderEditorPage(
@@ -404,10 +432,42 @@ class ProvidersSection extends StatelessWidget {
         registry: registry,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
         openRouterOAuthCapture: openRouterOAuthCapture,
+        onReauthenticate: reauth != null && preset == ProviderPreset.aiin
+            ? (ctx) => reauth(ctx, reauthProvider)
+            : null,
         modelsFetcher: modelsFetcher,
       ),
     );
-    if (result == null || result.deleted) return;
+    if (result == null) return;
+    if (result.deleted) {
+      final keyName = hostedProviderKeyName(preset);
+      if (keyName != null) {
+        await sessionKeys?.delete(keyName);
+        if (KeychainStore.isSupported) {
+          await const KeychainStore().delete(keyName);
+        }
+      }
+      final baseUrl = preset.baseUrl;
+      if (baseUrl != null) {
+        // The OAuth flow writes the endpoint-scoped FA_KEY_<HOST> name into
+        // the Keychain where one exists (iOS/macOS/Android) but into the
+        // saved-keys store on Keychain-less platforms (Linux/Windows) —
+        // clear BOTH stores so disconnect actually drops the credential.
+        final hostKeyName = ProviderRegistry.keyNameFor(baseUrl);
+        await sessionKeys?.delete(hostKeyName);
+        if (KeychainStore.isSupported) {
+          await const KeychainStore().delete(hostKeyName);
+        }
+      }
+      await registry.setPresetModelOverride(preset.name, null);
+      final existing = registry.providers
+          .where((p) => p.baseUrl == preset.baseUrl)
+          .firstOrNull;
+      if (existing != null) {
+        await registry.remove(existing.id);
+      }
+      return;
+    }
     final existing = registry.providers
         .where((p) => p.baseUrl == preset.baseUrl)
         .firstOrNull;

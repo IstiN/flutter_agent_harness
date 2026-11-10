@@ -8,6 +8,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
+        FaDuoControlRail,
         FaHeaderCircularAction,
         FaRouteHeader,
         FaSurface,
@@ -35,11 +36,14 @@ Future<void> _pumpView(
   bool fullScreen = false,
   bool pushedRoute = false,
   bool leadingMinimize = false,
+  double rightInset = 0,
+  double topInset = 0,
   List<String>? calls,
   ThemeData? theme,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 800);
+  tester.view.padding = FakeViewPadding(top: topInset, right: rightInset);
   addTearDown(tester.view.reset);
   final env = await _brokenAppEnv();
   final permissions = await AppPermissionsStore.load(env);
@@ -142,6 +146,156 @@ void main() {
       await tester.tap(find.text('Close app'));
       await tester.pumpAndSettle();
       expect(calls, ['full', 'pin', 'minimize', 'close', 'close']);
+    },
+  );
+
+  _testOnPlatform(
+    '320px panel keeps every app action inline at 28px without overflow',
+    TargetPlatform.android,
+    (tester) async {
+      await _pumpView(tester, width: 320, embeddedInPanel: true);
+
+      const actionKeys = [
+        'appFull',
+        'appPin',
+        'appMinimize',
+        'appPermissions',
+        'appReload',
+        'appClose',
+      ];
+      for (final key in actionKeys) {
+        final action = find.byKey(ValueKey(key));
+        expect(action, findsOneWidget, reason: '$key must stay inline');
+        expect(tester.getSize(action), const Size.square(28));
+      }
+      expect(find.byKey(const ValueKey('appOverflow')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  _testOnPlatform(
+    '160px panel overflow opens with intrinsic-safe rows for every action',
+    TargetPlatform.android,
+    (tester) async {
+      final calls = <String>[];
+      await _pumpView(tester, width: 160, embeddedInPanel: true, calls: calls);
+
+      for (final key in [
+        'appFull',
+        'appPin',
+        'appMinimize',
+        'appPermissions',
+        'appReload',
+        'appClose',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsNothing);
+      }
+      await tester.tap(find.byKey(const ValueKey('appOverflow')));
+      await tester.pumpAndSettle();
+
+      // This really lays out the popup route. In particular, a LayoutBuilder
+      // in an item fails here while PopupMenuItem computes intrinsics.
+      expect(tester.takeException(), isNull);
+      final entries = tester
+          .widgetList<PopupMenuItem<String>>(find.byType(PopupMenuItem<String>))
+          .toList();
+      expect(entries.map((entry) => entry.value), [
+        'full',
+        'pin',
+        'minimize',
+        'permissions',
+        'reload',
+        'close',
+      ]);
+      for (final entry in entries) {
+        final row = entry.child as Row;
+        expect(row.children[0], isA<Icon>());
+        expect(row.children[1], isA<SizedBox>());
+        final label = (row.children[2] as Flexible).child as Text;
+        expect(label.overflow, TextOverflow.ellipsis);
+      }
+
+      await tester.tap(find.text('Close app'));
+      await tester.pumpAndSettle();
+      expect(calls, ['close']);
+    },
+  );
+
+  _testOnPlatform(
+    'Duo presented app actions stay below the camera in the right rail',
+    TargetPlatform.iOS,
+    (tester) async {
+      final calls = <String>[];
+      await _pumpView(
+        tester,
+        width: 1230,
+        embeddedInPanel: true,
+        rightInset: 84,
+        calls: calls,
+        theme: buildFaTheme(
+          brightness: Brightness.light,
+          direction: FaVisualDirection.glass,
+        ),
+      );
+
+      final rail = find.byKey(const ValueKey('appChromeActions'));
+      expect(rail, findsOneWidget);
+      expect(tester.widget<FaDuoControlRail>(rail), isA<FaDuoControlRail>());
+      expect(tester.getRect(rail).left, greaterThanOrEqualTo(1230 - 84));
+      for (final key in [
+        'duoAppBack',
+        'appFull',
+        'appPin',
+        'appPermissions',
+        'appReload',
+        'appClose',
+      ]) {
+        final control = find.byKey(ValueKey(key));
+        final rect = tester.getRect(control);
+        expect(rect.left, greaterThanOrEqualTo(1230 - 84));
+        expect(rect.top, greaterThanOrEqualTo(FaDuoControlRail.top));
+        if (key != 'appPermissions' && key != 'appReload') {
+          await tester.tap(control);
+        }
+      }
+      // With no explicit Back callback the rail's Back action returns to
+      // the directory through the existing minimize callback.
+      expect(calls, ['minimize', 'full', 'pin', 'close']);
+      expect(find.byKey(const ValueKey('appOverflow')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  _testOnPlatform(
+    'Duo folded toolbar does not SafeArea its title to zero height',
+    TargetPlatform.iOS,
+    (tester) async {
+      await _pumpView(
+        tester,
+        width: 390,
+        embeddedInPanel: true,
+        rightInset: 84,
+        topInset: 59,
+      );
+
+      final appBar = find.byType(AppBar);
+      final toolbarClip = find
+          .descendant(of: appBar, matching: find.byType(ClipRect))
+          .first;
+      expect(tester.getSize(toolbarClip).height, kToolbarHeight);
+      final title = find.descendant(of: appBar, matching: find.text('Demo'));
+      expect(title, findsOneWidget);
+      expect(tester.getRect(title).top, greaterThanOrEqualTo(59));
+      expect(tester.getRect(title).right, lessThanOrEqualTo(390 - 84));
+      final preferred = find.byType(PreferredSize).first;
+      final canvasPadding = tester.widget<Padding>(
+        find.byKey(const ValueKey('appCanvasHeaderInset')),
+      );
+      expect(
+        canvasPadding.padding.resolve(TextDirection.ltr).top,
+        tester.getRect(preferred).height,
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 

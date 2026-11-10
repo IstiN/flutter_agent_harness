@@ -4,7 +4,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ModelsEndpointFetcher;
+    show ModelsEndpointFetcher, normalizeAiinBaseUrl;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fa_ui/src/chat/fa_glyphs.dart';
@@ -210,11 +210,11 @@ class ProviderEditorPage extends StatefulWidget {
   /// hint next to the API-key field; null hides it.
   final String? keyHelpUrl;
 
-  /// Re-authentication action for SSO-backed providers (CodeMie), shown in
-  /// edit mode only: re-runs the host's sign-in flow, which itself persists
-  /// the refreshed credentials. Returns true when the flow completed — the
-  /// editor then closes (its fields are stale by definition: the flow owns
-  /// the save). Null hides the button.
+  /// Re-authentication action for SSO/OAuth-backed providers, shown when
+  /// supplied in custom-edit or connected-preset mode: re-runs the host's
+  /// sign-in flow, which itself persists the refreshed credentials. Returns
+  /// true when the flow completed — the editor then closes (its fields are
+  /// stale by definition: the flow owns the save). Null hides the button.
   final Future<bool> Function(BuildContext context)? onReauthenticate;
 
   /// `/models` fetch override (tests), forwarded to the model selector the
@@ -297,7 +297,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   void _save() {
     final strings = FaUiStrings.of(context);
     final name = _nameController.text.trim();
-    final baseUrl = _urlController.text.trim();
+    final baseUrl = normalizeAiinBaseUrl(_urlController.text);
     final modelId = _modelController.text.trim();
     if (name.isEmpty) {
       setState(() => _error = strings.settingsNameRequired);
@@ -350,13 +350,13 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
   }
 
   Future<void> _delete() async {
-    final initial = widget.initial;
-    if (initial == null) return;
     final strings = FaUiStrings.of(context);
+    final title =
+        widget.initial?.name ?? widget.preset?.label(strings) ?? widget.title;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(strings.settingsDeleteProviderTitle(initial.name)),
+        title: Text(strings.settingsDeleteProviderTitle(title)),
         content: Text(strings.settingsDeleteProviderBody),
         actions: [
           TextButton(
@@ -553,8 +553,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                   },
                 ),
               ],
-              if (widget.initial != null &&
-                  widget.onReauthenticate != null) ...[
+              if (widget.onReauthenticate != null) ...[
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _reauthRunning ? null : _reauthenticate,
@@ -608,7 +607,8 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
               ...faFormErrorBlock(context, _error),
               Row(
                 children: [
-                  if (widget.initial != null)
+                  if (widget.initial != null ||
+                      (widget.preset != null && widget.hasSavedKey))
                     TextButton(
                       onPressed: _delete,
                       style: TextButton.styleFrom(

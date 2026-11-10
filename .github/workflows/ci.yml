@@ -2235,6 +2235,75 @@ jobs:
   # gate (platform class — it must block the merge, never the pure-Dart
   # publish, #1368).
   # ─────────────────────────────────────────────────────────────────────────
+  # Issue 2026-11-10 golden-drift leg: the golden suite was verified only
+  # by the nightly macOS row (main, post-merge) — a PR that changed
+  # rendering merged green and reddened the nightly hours later (the
+  # session_search_narrow_chats stale-baseline class: bottom-nav labels
+  # changed in a PR, the PNG regenerated only when the nightly went red).
+  # This leg closes that hole at PR time: path-triggered on flutter_app
+  # changes (app || shared, same filter as build-ios), macOS-hosted,
+  # pinned to the EXACT SDK the baselines were captured with (3.47.4,
+  # nightly #1856 parity) and running under the pinned-font contract
+  # (golden_test_helper.dart: every glyph from bundled faces — a diff is
+  # a real rendering regression, not a host substitution). Platform class
+  # in the Quality gate: reddens the merge check, never dart_ok (#1368).
+  flutter-app-goldens:
+    name: Golden suite (macOS baselines)
+    runs-on: macos-latest
+    needs: [release-pending, release-dedupe, changes]
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') &&
+      needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # EXACT patch — the golden baselines are pixel-sensitive to the
+      # engine's text stack; nightly renders them on the same 3.47.4.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - uses: ./.github/actions/flutter-pub-get
+      - name: flutter test/golden (issue #1856 pinned-font env)
+        working-directory: flutter_app
+        shell: bash
+        # TZ=UTC: the golden clock contract (golden_test_helper.dart) —
+        # activity/session rows render fixed instants in the OS-local
+        # zone; baselines embed UTC renderings, the runner's zone must
+        # match or the helper fails loudly.
+        env:
+          TZ: UTC
+        run: flutter test test/golden
+      # flutter_test writes the expected/actual/diff triple for every
+      # failed comparison into goldens/failures/ — upload them so a
+      # hosted-vs-capture drift can be EYEBALLED from the artifacts
+      # instead of triangulated from percentages (the 2026-11-10
+      # activity-golden red that passed locally).
+      - name: Upload golden failure diffs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-failure-diffs
+          # flutter_test writes the failure triple relative to the TEST
+          # dir (test/golden/failures/), not the goldens/ dir.
+          path: flutter_app/test/golden/failures/
+          if-no-files-found: ignore
+
   flutter-app-lock-smoke:
     name: Lockfile smoke (${{ matrix.os }} release)
     runs-on: ${{ matrix.runner }}
@@ -2974,7 +3043,10 @@ jobs:
 
   build-ios:
     name: Build iOS (debug, unsigned)
-    runs-on: macos-latest
+    # The owner's box carries Xcode 27 — the Duo layout channel's iOS 27
+    # fold APIs (UIView.reservedRegions, UITraitCollection.verticalBarEdge)
+    # do not exist in any hosted SDK (Xcode 26.6 tops out at iOS 26.5).
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30
@@ -2983,11 +3055,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # gh-1736 guard (test/setup_flutter_selfhosted_test.dart): a
+      # self-hosted leg may pair subosito/flutter-action with cache —
+      # never cache: true (the action's shared-cache poisoning is a
+      # hosted-only convenience). The box keeps its own warm pub cache.
+      # Exact patch (#1100 parity + #1431): the golden baselines and the
+      # nightly leg pin 3.47.4 — a release-path build must share it.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.4'
           channel: stable
-          cache: true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app
@@ -3476,7 +3553,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, model-switch-reg, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
+    needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, model-switch-reg, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-goldens, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
     if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 5
     permissions:
@@ -3518,6 +3595,7 @@ jobs:
           echo "installer-reg  = ${{ needs.installer-portability.result }}"
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
           echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
+          echo "goldens     = ${{ needs.flutter-app-goldens.result }}"
           echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
           echo "office-addin  = ${{ needs.office-addin-suite.result }}"
           echo "ext-size-gate = ${{ needs.extension-size-gate.result }}"
@@ -3554,6 +3632,7 @@ jobs:
           R_INSTALLER_REG: ${{ needs.installer-portability.result }}
           R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
           R_EXZONE: ${{ needs.flutter-app-exzone.result }}
+          R_GOLDENS: ${{ needs.flutter-app-goldens.result }}
           R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
           R_OFFICE_ADDIN: ${{ needs.office-addin-suite.result }}
           R_EXT_SIZE: ${{ needs.extension-size-gate.result }}
@@ -3601,10 +3680,10 @@ jobs:
                     "installer-portability:$R_INSTALLER_REG" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
                     "model-switch-reg:$R_MODEL_SWITCH_REG" \
-                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
+                    "flutter-app-exzone:$R_EXZONE" "flutter-app-goldens:$R_GOLDENS" "flutter-app-lock-smoke:$R_LOCK_SMOKE" "office-addin-suite:$R_OFFICE_ADDIN" "extension-size-gate:$R_EXT_SIZE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
-              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|installer-portability|office-addin-suite|extension-size-gate)
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke|flutter-app-goldens|installer-portability|office-addin-suite|extension-size-gate)
                 if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
                   platform_red=true
                 fi

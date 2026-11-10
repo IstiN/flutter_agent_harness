@@ -46,6 +46,7 @@ final class MessengerAppPanel extends StatelessWidget {
     required this.onClose,
     this.onMinimize,
     this.onBack,
+    this.onQuickApps,
   });
 
   final MessengerAppPresentation presentation;
@@ -55,6 +56,7 @@ final class MessengerAppPanel extends StatelessWidget {
   final VoidCallback onClose;
   final VoidCallback? onMinimize;
   final VoidCallback? onBack;
+  final VoidCallback? onQuickApps;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +79,7 @@ final class MessengerAppPanel extends StatelessWidget {
         onClose: onClose,
         onMinimize: onMinimize,
         onBack: onBack,
+        onQuickApps: onQuickApps,
       ),
     );
     if (presentation.fullScreen) {

@@ -33,6 +33,7 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../types.dart';
+import 'aiin_auth.dart';
 import 'provider_common.dart';
 
 /// Options for [streamOpenAICompletions].
@@ -276,7 +277,7 @@ final class _OpenAICompletionsSession {
 
     final url =
         options?.urlBuilder?.call(model) ??
-        Uri.parse('${model.baseUrl}/chat/completions');
+        Uri.parse('${normalizeAiinBaseUrl(model.baseUrl)}/chat/completions');
     final request = http.Request('POST', url)
       ..headers.addAll(_buildHeaders(model, options))
       ..body = jsonEncode(params);

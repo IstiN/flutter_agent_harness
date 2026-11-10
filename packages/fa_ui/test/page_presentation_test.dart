@@ -11,24 +11,32 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   String? result;
 
-  Widget harness() {
+  Widget harness({bool duo = false, bool allowDuoDialog = false}) {
     return MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (context) => TextButton(
-            onPressed: () async {
-              result = await pushFaPage<String>(
-                context,
-                Scaffold(
-                  appBar: AppBar(title: const Text('Editor')),
-                  body: TextButton(
-                    onPressed: () => Navigator.of(context).pop('saved'),
-                    child: const Text('Finish'),
-                  ),
-                ),
-              );
-            },
-            child: const Text('Open'),
+      home: Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            padding: duo ? const EdgeInsets.only(right: 84) : EdgeInsets.zero,
+          ),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  result = await pushFaPage<String>(
+                    context,
+                    Scaffold(
+                      appBar: AppBar(title: const Text('Editor')),
+                      body: TextButton(
+                        onPressed: () => Navigator.of(context).pop('saved'),
+                        child: const Text('Finish'),
+                      ),
+                    ),
+                    allowDuoDialog: allowDuoDialog,
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
           ),
         ),
       ),
@@ -96,6 +104,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(result, 'saved');
     expect(find.byType(Dialog), findsNothing);
+  });
+
+  testWidgets('wide Duo canvas pushes a full-page route instead of a Dialog', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1200, 900);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(harness(duo: true));
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('Editor'), findsOneWidget);
+
+    await tester.tap(find.text('Finish'));
+    await tester.pumpAndSettle();
+    expect(result, 'saved');
+    expect(find.text('Editor'), findsNothing);
+  });
+
+  testWidgets('opt-in Duo editor is centered in the usable lane', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1200, 900);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(harness(duo: true, allowDuoDialog: true));
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsOneWidget);
+    final editor = tester.getRect(
+      find.descendant(of: find.byType(Dialog), matching: find.byType(Scaffold)),
+    );
+    expect(editor.width, lessThanOrEqualTo(560));
+    expect(editor.height, lessThanOrEqualTo(900 * .84));
+    expect(editor.right, lessThanOrEqualTo(1200 - 84));
+    expect(
+      editor.center.dx,
+      closeTo((1200 - 84) / 2, .5),
+      reason: 'the editor centers in the canvas, not underneath the Duo rail',
+    );
+    await tester.tap(find.text('Finish'));
+    await tester.pumpAndSettle();
+    expect(result, 'saved');
   });
 
   testWidgets('dialog width override and height follow a live window resize', (

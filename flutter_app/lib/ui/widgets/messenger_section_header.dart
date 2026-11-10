@@ -88,6 +88,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
     this.leading,
     this.actions = const <Widget>[],
     this.trafficLightClearance = false,
+    this.duoLeadingToTrailing = false,
   });
 
   final String title;
@@ -101,6 +102,10 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   /// The title/icon and page body keep their ordinary vertical position.
   final bool trafficLightClearance;
 
+  /// Places [leading] at the usable trailing edge on Duo only. Ordinary
+  /// phone/desktop headers keep their conventional leading navigation.
+  final bool duoLeadingToTrailing;
+
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
@@ -111,103 +116,23 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final actionWidth = math.min(360.0, constraints.maxWidth * .38);
-          final titleWidth = math.min(
-            320.0,
-            math.max(200.0, constraints.maxWidth - 2 * (actionWidth + 12)),
-          );
+          final geometry = _HeaderGeometry.of(context, constraints, actions);
           return SizedBox(
-            height: 91,
+            height: geometry.headerHeight(hasActions: actions.isNotEmpty),
             child: Stack(
               children: [
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (icon case final icon?) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 11),
-                          child: FaHeaderCircularAction(
-                            key: const ValueKey('messengerPageIcon'),
-                            dimension: 36,
-                            glass: true,
-                            child: onIconTap == null
-                                ? Icon(icon, size: 18, color: tokens.ink1)
-                                : IconButton(
-                                    onPressed: onIconTap,
-                                    icon: Icon(
-                                      icon,
-                                      size: 18,
-                                      color: tokens.ink1,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                      ],
-                      FaSurface(
-                        key: const ValueKey('messengerPageTitlePill'),
-                        glass: true,
-                        useBackdropGroup: true,
-                        color: tokens.surface1,
-                        borderRadius: BorderRadius.circular(14),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: SizedBox(
-                          width: titleWidth,
-                          height: 40,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              if (subtitle case final subtitle?
-                                  when subtitle.isNotEmpty)
-                                Text(
-                                  subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: tokens.ink2,
-                                    fontSize: 10,
-                                    height: 1.2,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: tokens.ink1,
-                                  fontSize: 13,
-                                  height: 1.25,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: geometry.duoRailWidth,
+                  child: _buildIconAndTitleColumn(tokens, geometry.titleWidth),
                 ),
                 if (leading case final leading?)
-                  Positioned(top: leadingTop, left: 0, child: leading),
-                if (actions.isNotEmpty)
-                  Positioned(
-                    top: 9,
-                    right: 0,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final action in actions) ...[
-                          action,
-                          const SizedBox(width: 8),
-                        ],
-                      ],
-                    ),
-                  ),
+                  _buildLeadingOverlay(leading, leadingTop, geometry),
+                if (actions.isNotEmpty && geometry.duoRailWidth == 0)
+                  _buildTrailingActionsRow(),
+                if (actions.isNotEmpty && geometry.duoRailWidth > 0)
+                  _buildDuoActionRail(geometry),
               ],
             ),
           );
@@ -215,6 +140,188 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       ),
     );
   }
+
+  /// The icon bubble above the title pill — the header's left column.
+  Widget _buildIconAndTitleColumn(FaDesignTokens tokens, double titleWidth) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon case final icon?) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 11),
+            child: FaHeaderCircularAction(
+              key: const ValueKey('messengerPageIcon'),
+              dimension: 36,
+              glass: true,
+              child: onIconTap == null
+                  ? Icon(icon, size: 18, color: tokens.ink1)
+                  : IconButton(
+                      onPressed: onIconTap,
+                      icon: Icon(icon, size: 18, color: tokens.ink1),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        _buildTitlePill(tokens, titleWidth),
+      ],
+    );
+  }
+
+  /// The centered title (+ optional subtitle) pill.
+  Widget _buildTitlePill(FaDesignTokens tokens, double titleWidth) {
+    return FaSurface(
+      key: const ValueKey('messengerPageTitlePill'),
+      glass: true,
+      useBackdropGroup: true,
+      color: tokens.surface1,
+      borderRadius: BorderRadius.circular(14),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: SizedBox(
+        width: titleWidth,
+        height: 40,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (subtitle case final subtitle? when subtitle.isNotEmpty)
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: tokens.ink2,
+                  fontSize: 10,
+                  height: 1.2,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: tokens.ink1,
+                fontSize: 13,
+                height: 1.25,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Places [leading] — the conventional left navigation, or the
+  /// Duo-rail-trailing Back on Duo.
+  Widget _buildLeadingOverlay(
+    Widget leading,
+    double leadingTop,
+    _HeaderGeometry geometry,
+  ) {
+    final duoLeading = duoLeadingToTrailing && geometry.duoRailWidth > 0;
+    return Positioned(
+      top: leadingTop,
+      left: duoLeading ? null : 0,
+      // Settings already owns the Duo/SafeArea lane. Zero is
+      // its usable trailing edge; subtracting the rail again
+      // would put Back on top of the centered title.
+      right: duoLeading ? 0 : null,
+      child: leading,
+    );
+  }
+
+  /// The ordinary (non-Duo) horizontal actions row at the header's top
+  /// trailing edge.
+  Widget _buildTrailingActionsRow() {
+    return Positioned(
+      top: 9,
+      right: 0,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final action in actions) ...[
+            action,
+            const SizedBox(width: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The Duo control rail hosting the actions along the window's
+  /// trailing edge.
+  Widget _buildDuoActionRail(_HeaderGeometry geometry) {
+    return Positioned(
+      top: geometry.duoTop,
+      right: -8,
+      bottom: 0,
+      width: geometry.duoRailWidth,
+      child: FaDuoControlRail(leading: actions),
+    );
+  }
+}
+
+/// The LayoutBuilder-derived geometry of a [MessengerSectionHeader]:
+/// the Duo rail's footprint and the title pill's width budget.
+final class _HeaderGeometry {
+  const _HeaderGeometry._({
+    required this.duoRailWidth,
+    required this.duoTop,
+    required this.titleWidth,
+    required this.duoHeight,
+  });
+
+  static _HeaderGeometry of(
+    BuildContext context,
+    BoxConstraints constraints,
+    List<Widget> actions,
+  ) {
+    final duoRailWidth = FaDuoControlRail.widthOf(context);
+    final contentWidth = math.max(
+      0.0,
+      constraints.maxWidth - duoRailWidth,
+    );
+    final actionWidth = math.min(360.0, contentWidth * .38);
+    final titleWidth = math.min(
+      320.0,
+      math.max(200.0, contentWidth - 2 * (actionWidth + 12)),
+    );
+    final duoTop = FaDuoControlRail.topOf(context);
+    final duoHeight = math.min(
+      400.0,
+      duoTop +
+          actions.length *
+              (FaDuoControlRail.actionDimension +
+                  FaDuoControlRail.spacing) +
+          FaDuoControlRail.spacing,
+    );
+    return _HeaderGeometry._(
+      duoRailWidth: duoRailWidth,
+      duoTop: duoTop,
+      titleWidth: titleWidth,
+      duoHeight: duoHeight,
+    );
+  }
+
+  /// The Duo control rail's width — 0 on ordinary phone/desktop headers.
+  final double duoRailWidth;
+
+  /// The Duo control rail's top inset.
+  final double duoTop;
+
+  /// The title pill's width budget inside the header's content column.
+  final double titleWidth;
+
+  /// The Duo rail's natural height for the header's action count.
+  final double duoHeight;
+
+  /// The header's total height: the ordinary 91px pill row, grown only
+  /// when a Duo rail with actions demands more room.
+  double headerHeight({required bool hasActions}) =>
+      duoRailWidth > 0 && hasActions ? math.max(91.0, duoHeight) : 91;
 }
 
 /// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.

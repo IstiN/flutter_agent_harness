@@ -32,6 +32,7 @@ import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
@@ -41,19 +42,24 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaChatHost,
+        FaDuoControlRail,
         FaIconActionButton,
         FaLogo,
         FaSectionEyebrow,
+        ProviderEditorPage,
+        ProviderRegistry,
         FaSurface,
         FaVisualDirection,
         buildFaTheme,
-        debugFaGlassAlwaysFake;
+        debugFaGlassAlwaysFake,
+        pushFaPage;
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
     show GlassIconButton, ProgressiveBlur, ProgressiveBlurDirection;
 import 'package:flutter/cupertino.dart' show CupertinoTextField;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -170,6 +176,7 @@ void main() {
     WidgetTester tester, {
     required FlutterSessionManager manager,
     SessionNamesStore? sessionNamesStore,
+    ProviderRegistry? registry,
     LocalChatListSource Function()? localChatAdapterFactory,
     Size size = const Size(1280, 800),
     Locale locale = const Locale('en'),
@@ -202,11 +209,13 @@ void main() {
               return faHomeScreen(
                 context: context,
                 manager: manager,
+                registry: registry,
                 sessionNamesStore: sessionNamesStore,
               );
             }
             return WideLayoutShell(
               manager: manager,
+              registry: registry,
               sessionNamesStore: sessionNamesStore,
               localChatAdapterFactory: localChatAdapterFactory,
               networkMode: networkMode,
@@ -370,6 +379,63 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+
+  testWidgets('Duo provider details glass dialog opens and closes without '
+      'an inherited-element lifecycle failure', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    debugFaGlassAlwaysFake = false;
+
+    await pumpShell(
+      tester,
+      manager: manager,
+      size: const Size(1230, 880),
+      brightness: Brightness.light,
+    );
+    unawaited(
+      pushFaPage<void>(
+        tester.element(find.byType(ChatScreen)),
+        const ProviderEditorPage(title: 'Edit provider'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ProviderEditorPage), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+    Navigator.of(tester.element(find.byType(ProviderEditorPage))).pop();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ProviderEditorPage), findsNothing);
+  });
+
+  testWidgets('Duo session info dialog opens and closes without an '
+      'inherited-element lifecycle failure', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', _fakeService(env));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    debugFaGlassAlwaysFake = false;
+
+    await pumpShell(
+      tester,
+      manager: manager,
+      size: const Size(1230, 880),
+      brightness: Brightness.light,
+    );
+    await tester.tap(find.byKey(const ValueKey('faChatHeaderTitlePill')));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Your mailbox'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(AlertDialog), findsNothing);
+  });
 
   testWidgets('the session info dialog shows the folder state, the '
       'mailbox note and closes', (tester) async {
@@ -661,6 +727,220 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
     await tester.pumpAndSettle();
     expect(find.byType(MessengerAppPanel), findsNothing);
+  });
+
+  testWidgets('Duo docks the app right, collapses the chats list, and '
+      'restores it on close', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+    const app = JsAppInfo(
+      id: 'demo',
+      name: 'Demo app',
+      description: 'Demo',
+      icon: 'D',
+      declaredPermissions: AppPermissions(),
+    );
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    // Expanded chats list before the presentation.
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+    await pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager,
+      app: app,
+      source: 'test',
+    );
+    await tester.pumpAndSettle();
+
+    // Docked at the window's right edge — no centered dialog, no scrim.
+    final slot = find.byKey(const ValueKey('wideShellPresentationSlot'));
+    expect(slot, findsOneWidget);
+    final slotRect = tester.getRect(slot);
+    expect(slotRect.right, closeTo(1230, .5));
+    // First Duo presentation sizes the dock to the window, not the
+    // 340pt desktop default.
+    expect(slotRect.width, greaterThan(340));
+    final cardRect = tester.getRect(
+      find.byKey(const ValueKey('messengerAppPanelCard')),
+    );
+    expect(cardRect.right, closeTo(slotRect.right - 8, .5));
+    // The app rail actions stay on the window's right edge.
+    final backRect = tester.getRect(find.byKey(const ValueKey('duoAppBack')));
+    expect(backRect.left, greaterThanOrEqualTo(1230 - 84));
+    expect(backRect.right, lessThanOrEqualTo(1230));
+
+    // The chats list auto-collapsed; the chat keeps the left area.
+    expect(find.byType(ChatListPanel), findsNothing);
+    expect(find.byType(CollapsedChatAvatarList), findsOneWidget);
+    expect(find.byType(ChatScreen), findsOneWidget);
+
+    // Closing restores the pre-presentation list.
+    await tester.tap(find.byKey(const ValueKey('appClose')));
+    await tester.pumpAndSettle();
+    expect(slot, findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+
+    // Reopening collapses again; a manual re-expand during the
+    // presentation wins over the auto-restore.
+    await pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager,
+      app: app,
+      source: 'test',
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(CollapsedChatAvatarList), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('wideShellSidebarToggle')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appClose')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+  });
+
+  testWidgets('Duo Files docks right, collapses the chats list, and '
+      'restores it on close', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    // Expanded chats list before the presentation.
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+    // Reach the shell's native Files surface: the profile route's Files
+    // tile is its one UI entry (the launcher header's icon opens the
+    // route); on a wide shell the tile presents the right-dock surface,
+    // the same one a JS app uses — NOT the chat's docked Files panel.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('messengerPageIcon')),
+        matching: find.byType(IconButton),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('narrowProfileFiles')));
+    await tester.pumpAndSettle();
+    // The surface presents beneath the pushed profile route — pop it.
+    await tester.tap(find.byType(BackButton).first);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    // The profile chain lands on the Apps section — whose collapsed body
+    // proves the shell-wide auto-collapse: the sidebar column swaps the
+    // expanded directory for the collapsed rail while Files docks right.
+    expect(find.byKey(const ValueKey('collapsedAppsList')), findsOneWidget);
+
+    // Closing restores the pre-presentation (expanded) state.
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    expect(find.byKey(const ValueKey('collapsedAppsList')), findsNothing);
+  });
+
+  testWidgets('Duo: the quick apps menu lists running + installed apps '
+      'and presents a selection', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile('apps/alpha/manifest.json', '''
+{
+  "id": "alpha",
+  "name": "Alpha Widget",
+  "description": "A custom widget",
+  "icon": "A"
+}
+''');
+    await env.writeFile(
+      'apps/alpha/widget.js',
+      '(function(){ jsr.render({type:"text",data:"hi"}); })();',
+    );
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+    const app = JsAppInfo(
+      id: 'demo',
+      name: 'Demo app',
+      description: 'Demo',
+      icon: 'D',
+      declaredPermissions: AppPermissions(),
+    );
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    await pushJsApp(
+      tester.element(find.byType(ChatScreen)),
+      manager: manager,
+      app: app,
+      source: 'test',
+    );
+    await tester.pumpAndSettle();
+
+    // The presented app's chrome quick-apps control opens the menu; the
+    // running app comes first, then the installed-not-running ones.
+    await tester.tap(find.byKey(const ValueKey('appQuickApps')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('quickApp-demo')), findsOneWidget);
+    expect(find.byKey(const ValueKey('quickApp-alpha')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('quickApp-alpha')));
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha Widget'), findsWidgets);
+    // The presented engine's _watchUiTree arms a 10s fake-async Timer the
+    // settle does not flush; drain it before ending (the pattern at the
+    // dock-full test above).
+    await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('Duo: the chat files panel collapses the chats list and '
+      'restores it on close', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    // Expanded chats list before the presentation.
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+    // The CHAT's own docked Files panel — the header's files button —
+    // runs the same presentation as a presented app through the
+    // FaChatHost.onFilesPanelChanged hook.
+    await tester.tap(find.byTooltip('Open files'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    expect(find.byType(ChatListPanel), findsNothing);
+    expect(find.byType(CollapsedChatAvatarList), findsOneWidget);
+    expect(find.byType(ChatScreen), findsOneWidget);
+
+    // Closing through the panel band's own X restores the list.
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
   });
 
   testWidgets('desktop running apps minimize, keep their JS view, and switch', (
@@ -1275,6 +1555,24 @@ void main() {
     expect(find.byKey(const ValueKey('faChatHeaderTitlePill')), findsOneWidget);
   });
 
+  testWidgets('centered header names the live mounted project over Personal', (
+    tester,
+  ) async {
+    final sandbox = MemoryExecutionEnv(cwd: '/sandbox/fah_sandbox');
+    final env = ProjectMountEnv(sandbox)..mountedRoot = '/host/StudioProject';
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('faChatHeaderProjectLabel')))
+          .data,
+      'StudioProject',
+    );
+  });
+
   testWidgets('shared section header and primary nav keep geometry and style', (
     tester,
   ) async {
@@ -1547,7 +1845,7 @@ void main() {
           of: action,
           matching: find.byIcon(switch (section) {
             'activity' => Icons.notifications_none_rounded,
-            _ => Icons.apps_rounded,
+            _ => Icons.grid_view_rounded,
           }),
         ),
         findsOneWidget,
@@ -3160,7 +3458,7 @@ void main() {
           );
           final surface = tester.widget<FaSurface>(surfaceFinder);
           final surfaceRect = tester.getRect(surfaceFinder);
-          expect(surfaceRect.width, 280, reason: reason);
+          expect(surfaceRect.width, 366, reason: reason);
           expect(surfaceRect.height, 56, reason: reason);
           expect(surfaceRect.center.dx, 195, reason: reason);
           expect(
@@ -3180,7 +3478,7 @@ void main() {
           for (var index = 0; index < labels.length; index++) {
             final item = find.byKey(ValueKey(ids[index]));
             final rect = tester.getRect(item);
-            expect(rect.width, closeTo(280 / 6, .001), reason: reason);
+            expect(rect.width, closeTo(366 / 6, .001), reason: reason);
             expect(rect.height, 56, reason: reason);
             expect(rect.center.dy, dock.center.dy, reason: reason);
             final icon = tester.getRect(
@@ -3647,9 +3945,9 @@ void main() {
       final pill = find.byKey(const ValueKey('narrowShellSelectionPill'));
       // The first frame is already at Chats; there is no entrance animation.
       final initialPill = tester.getRect(pill);
-      expect(initialPill.left, closeTo(59, .001));
+      expect(initialPill.left, closeTo(16, .001));
       expect(initialPill.top, 784);
-      expect(initialPill.width, closeTo(280 / 6 - 8, .001));
+      expect(initialPill.width, closeTo(366 / 6 - 8, .001));
       expect(initialPill.bottom, 832);
       var animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, const Duration(milliseconds: 200));
@@ -3902,6 +4200,191 @@ void main() {
       expect(find.byType(ChatScreen), findsOneWidget);
       await tester.tap(find.byType(BackButton).first);
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('Duo New chat sits below the camera and gets its own folder', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv(cwd: '/sandbox');
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      tester.view.padding = const FakeViewPadding(right: 84);
+
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      final newButton = find.byKey(const ValueKey('narrowShellNewChat'));
+      final rect = tester.getRect(newButton);
+      expect(rect.left, greaterThanOrEqualTo(390 - 84));
+      expect(rect.top, greaterThanOrEqualTo(88));
+
+      await tester.tap(newButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('newSessionCurrentFolder')));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(manager.sessions, hasLength(2));
+      expect(find.byType(ChatScreen), findsOneWidget);
+      final sessionEnv = manager.active!.service.env;
+      expect(sessionEnv.cwd, startsWith('/sandbox/chats/'));
+      expect(sessionEnv, isA<CwdOverrideEnv>());
+      expect(env.cwd, '/sandbox');
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('faChatHeaderProjectLabel')),
+            )
+            .data,
+        sessionEnv.cwd.split('/').last,
+      );
+    });
+
+    testWidgets('New chat with a selected mount stays in that project', (
+      tester,
+    ) async {
+      final sandbox = MemoryExecutionEnv(cwd: '/sandbox');
+      final env = ProjectMountEnv(sandbox)..mountedRoot = '/host/StudioProject';
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      await tester.tap(find.byKey(const ValueKey('narrowShellNewChat')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('newSessionCurrentFolder')));
+      await tester.pumpAndSettle();
+
+      expect(manager.sessions, hasLength(2));
+      expect(manager.active!.service.env, same(env));
+      expect(manager.active!.service.env.sessionCwd, '/host/StudioProject');
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('faChatHeaderProjectLabel')),
+            )
+            .data,
+        'StudioProject',
+      );
+    });
+
+    testWidgets('Duo expanded chat and New chat controls use the safe rail', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      tester.view.padding = const FakeViewPadding(right: 84);
+      debugFaGlassAlwaysFake = false;
+      await pumpShell(
+        tester,
+        manager: manager,
+        size: const Size(1230, 880),
+        brightness: Brightness.light,
+      );
+
+      final newButton = find.byKey(const ValueKey('messengerNewButton'));
+      final newRect = tester.getRect(newButton);
+      expect(newRect.left, greaterThanOrEqualTo(1230 - 84));
+      expect(newRect.top, greaterThanOrEqualTo(FaDuoControlRail.top));
+      expect(newRect.height, 52);
+
+      final rail = find.byKey(const ValueKey('faChatDuoControlRail'));
+      expect(rail, findsOneWidget);
+      final railRect = tester.getRect(rail);
+      expect(railRect.left, greaterThanOrEqualTo(1230 - 84));
+      expect(railRect.top, greaterThanOrEqualTo(newRect.bottom));
+      for (final control in [
+        find.byKey(const ValueKey('wideModelChip')),
+        find.byIcon(Icons.timeline),
+      ]) {
+        expect(control, findsOneWidget);
+        expect(tester.getRect(control).left, greaterThanOrEqualTo(1230 - 84));
+      }
+      expect(
+        tester.getRect(find.byKey(const ValueKey('wideModelChip'))).top,
+        greaterThanOrEqualTo(newRect.bottom),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(milliseconds: 100));
+    });
+
+    testWidgets('iOS New chat can pick a Files folder for the session', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      const channel = MethodChannel('fah/project_folder');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            return switch (call.method) {
+              'pickDirectory' => const {
+                'path': '/host/StudioProject',
+                'bookmark': 'Ym9va21hcms=',
+              },
+              'startAccessing' => true,
+              _ => null,
+            };
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final sandbox = MemoryExecutionEnv(cwd: '/sandbox');
+      final env = ProjectMountEnv(sandbox);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      await tester.tap(find.byKey(const ValueKey('narrowShellNewChat')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('newSessionChooseFolder')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('newSessionChooseFolder')));
+      await tester.pumpAndSettle();
+
+      expect(manager.sessions, hasLength(2));
+      expect(env.mountedRoot, '/host/StudioProject');
+      expect(manager.active!.service.env.sessionCwd, '/host/StudioProject');
+      expect(find.byType(ChatScreen), findsOneWidget);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    testWidgets('New chat creates a named folder in the current sandbox', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv(cwd: '/sandbox');
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('design-session', _fakeService(env));
+      await pumpShell(tester, manager: manager, size: const Size(390, 844));
+      await tester.tap(find.byKey(const ValueKey('narrowShellNewChat')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('newSessionSandboxFolder')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('newSessionSandboxFolder')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('newSessionSandboxName')),
+        'research-notes',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('newSessionCreateSandboxFolder')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(manager.sessions, hasLength(2));
+      expect(manager.active!.service.env.cwd, '/sandbox/chats/research-notes');
+      expect(env.cwd, '/sandbox');
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('faChatHeaderProjectLabel')),
+            )
+            .data,
+        'research-notes',
+      );
     });
 
     testWidgets('New chat keeps the session-folder flow', (tester) async {
