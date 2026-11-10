@@ -759,21 +759,14 @@ class _JsAppViewState extends State<JsAppView> {
   }
 
   PreferredSizeWidget _panelAppBar(JsAppPanelChrome chrome) {
-    // Only compact/full presented chrome owns the window's leading edge.
-    final trafficLightLeading =
-        FaWindowChrome.presentedAppClearance(
-          context,
-          embeddedInPanel: widget.embeddedInPanel,
-        )
-        ? FaWindowChrome.compactLeadingInset
-        : 0.0;
+    final trafficLightLeading = _panelTrafficLightLeading();
     // The card floats 8pt below the window top, so only the remainder of
     // the platform safe area is needed above the toolbar. Compact macOS
     // window controls are cleared horizontally by [trafficLightLeading].
     final titlebarTop = math.max(0.0, MediaQuery.paddingOf(context).top - 8);
-    final colors = FahColors.of(context);
     final glass =
         FaDesignTokens.of(context).direction == FaVisualDirection.glass;
+    final colors = FahColors.of(context);
     final onBack = chrome.onBack;
     final duoRailWidth = FaDuoControlRail.widthOf(context);
     final chromeActions = _panelChromeActions(chrome, duoRailWidth);
@@ -781,40 +774,8 @@ class _JsAppViewState extends State<JsAppView> {
     final panelWidth = MediaQuery.sizeOf(context).width;
     final densePanel = duoRailWidth == 0 && panelWidth <= 360;
     final denseActionsInline = panelWidth >= 280;
-    final denseChromeActions = <FaHeaderAction>[
-      ...chromeActions.take(chromeActions.length - 1),
-      FaHeaderAction(
-        key: const ValueKey('appPermissions'),
-        icon: Icons.shield_outlined,
-        label: context.l10n.appsPermissionsTooltip,
-        onPressed: () => unawaited(_openPermissions()),
-      ),
-      FaHeaderAction(
-        key: const ValueKey('appReload'),
-        icon: Icons.refresh,
-        label: context.l10n.appsReloadTooltip,
-        onPressed: () {
-          AppAnalytics.instance.jsAppReloaded();
-          unawaited(_restart());
-        },
-      ),
-      chromeActions.last,
-    ];
-    final denseChromeMenuEntries = <PopupMenuItem<String>>[
-      for (final action in denseChromeActions)
-        _chromeMenuEntry(
-          value: switch ((action.key as ValueKey<String>).value) {
-            'appFull' => 'full',
-            'appPin' => 'pin',
-            'appMinimize' => 'minimize',
-            'appPermissions' => 'permissions',
-            'appReload' => 'reload',
-            _ => 'close',
-          },
-          icon: action.icon!,
-          label: action.label,
-        ),
-    ];
+    final denseChromeActions = _denseChromeActions(chromeActions);
+    final denseChromeMenuEntries = _denseChromeMenuEntries(denseChromeActions);
     return PreferredSize(
       // The vertical rail is a body overlay, never an app-bar height input.
       // Only this ordinary horizontal title band offsets the JS canvas.
@@ -844,78 +805,190 @@ class _JsAppViewState extends State<JsAppView> {
               scrolledUnderElevation: 0,
               centerTitle: false,
               automaticallyImplyLeading: false,
-              leadingWidth: onBack == null || duoRailWidth > 0
-                  ? null
-                  : kToolbarHeight + trafficLightLeading,
-              leading: onBack == null || duoRailWidth > 0
-                  ? null
-                  : Padding(
-                      padding: EdgeInsets.only(left: trafficLightLeading),
-                      child: IconButton(
-                        key: const ValueKey('presentedAppMinimizeButton'),
-                        tooltip: context.l10n.chatCollapse,
-                        onPressed: onBack,
-                        icon: const Icon(Icons.remove_rounded, size: 20),
-                      ),
-                    ),
-              title: Padding(
-                padding: EdgeInsets.only(
-                  left: onBack == null ? trafficLightLeading : 0,
-                ),
-                child: Row(
-                  children: [
-                    AppIcon(app: widget.app, env: widget.env, size: 20),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        widget.app.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.text,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              leadingWidth: _panelLeadingWidth(onBack, duoRailWidth, trafficLightLeading),
+              leading: _panelLeading(onBack, duoRailWidth, trafficLightLeading),
+              title: _panelAppBarTitle(colors, onBack, trafficLightLeading),
               actions: [
                 // The vertical Duo rail overlays the canvas's right edge;
                 // the title band keeps its actions clear of it.
                 if (duoRailWidth > 0)
                   SizedBox(width: duoRailWidth)
                 else if (densePanel)
-                  FaIconActionBand<String>(
-                    key: const ValueKey('appChromeActions'),
-                    glass: true,
-                    actionSize: 28,
-                    iconSize: 16,
-                    actions: denseActionsInline ? denseChromeActions : const [],
-                    overflowItems: denseActionsInline
-                        ? const []
-                        : denseChromeMenuEntries,
-                    onOverflowSelected: _onChromeMenuSelection,
-                    overflowMenuKey: const ValueKey('appOverflow'),
-                    overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+                  _denseChromeActionBand(
+                    inline: denseActionsInline,
+                    actions: denseChromeActions,
+                    menuEntries: denseChromeMenuEntries,
                   )
                 else
-                  FaIconActionBand<String>(
-                    key: const ValueKey('appChromeActions'),
-                    glass: true,
+                  _chromeActionBand(
                     actions: chromeActions,
-                    overflowItems: chromeMenuEntries,
-                    onOverflowSelected: _onChromeMenuSelection,
-                    overflowMenuKey: const ValueKey('appOverflow'),
-                    overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+                    menuEntries: chromeMenuEntries,
                   ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// Only compact/full presented chrome owns the window's leading edge.
+  double _panelTrafficLightLeading() {
+    return FaWindowChrome.presentedAppClearance(
+      context,
+      embeddedInPanel: widget.embeddedInPanel,
+    )
+        ? FaWindowChrome.compactLeadingInset
+        : 0.0;
+  }
+
+  /// The minimize control's clearance: no back action or a Duo rail lane
+  /// leaves the leading edge empty.
+  double? _panelLeadingWidth(
+    VoidCallback? onBack,
+    double duoRailWidth,
+    double trafficLightLeading,
+  ) {
+    return onBack == null || duoRailWidth > 0
+        ? null
+        : kToolbarHeight + trafficLightLeading;
+  }
+
+  /// The presented app's minimize button, inset past the compact macOS
+  /// window controls.
+  Widget? _panelLeading(
+    VoidCallback? onBack,
+    double duoRailWidth,
+    double trafficLightLeading,
+  ) {
+    return onBack == null || duoRailWidth > 0
+        ? null
+        : Padding(
+            padding: EdgeInsets.only(left: trafficLightLeading),
+            child: IconButton(
+              key: const ValueKey('presentedAppMinimizeButton'),
+              tooltip: context.l10n.chatCollapse,
+              onPressed: onBack,
+              icon: const Icon(Icons.remove_rounded, size: 20),
+            ),
+          );
+  }
+
+  /// The app-bar title: icon + name, inset past the compact macOS window
+  /// controls only while no minimize button owns the leading edge.
+  Widget _panelAppBarTitle(
+    FahColors colors,
+    VoidCallback? onBack,
+    double trafficLightLeading,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(left: onBack == null ? trafficLightLeading : 0),
+      child: Row(
+        children: [
+          AppIcon(app: widget.app, env: widget.env, size: 20),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              widget.app.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The dense panel's action set: every chrome action except the close
+  /// affordance, plus the permissions and reload actions, closed by the
+  /// original trailing action.
+  List<FaHeaderAction> _denseChromeActions(List<FaHeaderAction> chromeActions) {
+    return [
+      ...chromeActions.take(chromeActions.length - 1),
+      FaHeaderAction(
+        key: const ValueKey('appPermissions'),
+        icon: Icons.shield_outlined,
+        label: context.l10n.appsPermissionsTooltip,
+        onPressed: () => unawaited(_openPermissions()),
+      ),
+      FaHeaderAction(
+        key: const ValueKey('appReload'),
+        icon: Icons.refresh,
+        label: context.l10n.appsReloadTooltip,
+        onPressed: () {
+          AppAnalytics.instance.jsAppReloaded();
+          unawaited(_restart());
+        },
+      ),
+      chromeActions.last,
+    ];
+  }
+
+  /// The dense action set's overflow menu, keyed off each action's ValueKey.
+  List<PopupMenuItem<String>> _denseChromeMenuEntries(
+    List<FaHeaderAction> denseChromeActions,
+  ) {
+    return [
+      for (final action in denseChromeActions)
+        _chromeMenuEntry(
+          value: _denseMenuValue((action.key as ValueKey<String>).value),
+          icon: action.icon!,
+          label: action.label,
+        ),
+    ];
+  }
+
+  /// The overflow-menu value for a dense chrome action key.
+  String _denseMenuValue(String key) {
+    return switch (key) {
+      'appFull' => 'full',
+      'appPin' => 'pin',
+      'appMinimize' => 'minimize',
+      'appPermissions' => 'permissions',
+      'appReload' => 'reload',
+      _ => 'close',
+    };
+  }
+
+  /// The tight-window action band: inline actions while they fit, the
+  /// overflow menu below the inline threshold.
+  FaIconActionBand<String> _denseChromeActionBand({
+    required bool inline,
+    required List<FaHeaderAction> actions,
+    required List<PopupMenuItem<String>> menuEntries,
+  }) {
+    return FaIconActionBand<String>(
+      key: const ValueKey('appChromeActions'),
+      glass: true,
+      actionSize: 28,
+      iconSize: 16,
+      actions: inline ? actions : const [],
+      overflowItems: inline ? const [] : menuEntries,
+      onOverflowSelected: _onChromeMenuSelection,
+      overflowMenuKey: const ValueKey('appOverflow'),
+      overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
+    );
+  }
+
+  /// The ordinary action band with the panel's full chrome action set.
+  FaIconActionBand<String> _chromeActionBand({
+    required List<FaHeaderAction> actions,
+    required List<PopupMenuItem<String>> menuEntries,
+  }) {
+    return FaIconActionBand<String>(
+      key: const ValueKey('appChromeActions'),
+      glass: true,
+      actions: actions,
+      overflowItems: menuEntries,
+      onOverflowSelected: _onChromeMenuSelection,
+      overflowMenuKey: const ValueKey('appOverflow'),
+      overflowTooltip: FaChatStrings.of(context).chatMoreTooltip,
     );
   }
 

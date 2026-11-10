@@ -1631,9 +1631,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ) {
     final tokens = faui.FaDesignTokens.of(context);
     final category = _effectiveCategory;
-    final title = category?.label ?? context.l10n.settingsTitle;
     final duoRailWidth = faui.FaDuoControlRail.widthOf(context);
-    final backButton = faui.FaIconActionButton(
+    final backButton = _settingsBackButton(category);
+    final body = _categoryBody(category, service, taskModels, onDeviceConfig);
+    final page = _categoryPage(
+      header: _categoryHeader(category, duoRailWidth, backButton),
+      body: body,
+      duoRailWidth: duoRailWidth,
+    );
+    return widget.embedded
+        ? _embeddedCategoryPage(page)
+        : _standaloneCategoryPage(tokens, duoRailWidth, page);
+  }
+
+  /// The floating Back control: in-page category reset first (drilled
+  /// category over the root picker), then the pushed-route back.
+  faui.FaIconActionButton _settingsBackButton(SettingsCategory? category) {
+    return faui.FaIconActionButton(
       buttonKey: const ValueKey('settingsBackButton'),
       diameter: 36,
       glyphSize: 20,
@@ -1650,7 +1664,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
       child: const faui.FaIcon(faui.FaSemanticIcon.back),
     );
-    final body = category == null
+  }
+
+  /// The category picker at the root, the drilled category's scroll
+  /// otherwise.
+  Widget _categoryBody(
+    SettingsCategory? category,
+    AgentService? service,
+    TaskModelsStore? taskModels,
+    OnDeviceConfigStore? onDeviceConfig,
+  ) {
+    return category == null
         ? SettingsCategoryPanel(
             selected: null,
             showHeader: false,
@@ -1658,21 +1682,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onSelected: _selectCategory,
           )
         : _categoryScroll(category, service, taskModels, onDeviceConfig);
-    final header = MessengerFloatingPageHeader(
+  }
+
+  /// The floating header: root title or the drilled category's label.
+  Widget _categoryHeader(
+    SettingsCategory? category,
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return MessengerFloatingPageHeader(
       key: const ValueKey('settingsCategoryHeader'),
-      title: title,
+      title: category?.label ?? context.l10n.settingsTitle,
       icon: Icons.settings_outlined,
       trafficLightClearance:
           !widget.embedded && !faui.FaDialogScope.of(context),
-      leading: duoRailWidth == 0 && (!widget.embedded || widget.onBack != null)
-          ? backButton
-          : null,
-      actions: [
-        if (duoRailWidth > 0 && (!widget.embedded || widget.onBack != null))
-          backButton,
-      ],
+      leading: _categoryHeaderLeading(duoRailWidth, backButton),
+      actions: _categoryHeaderActions(duoRailWidth, backButton),
     );
-    final page = MessengerFloatingPageScaffold(
+  }
+
+  /// The Back control leads on desktop and root surfaces; the Duo rail
+  /// lane replaces it.
+  faui.FaIconActionButton? _categoryHeaderLeading(
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return duoRailWidth == 0 && (!widget.embedded || widget.onBack != null)
+        ? backButton
+        : null;
+  }
+
+  /// With the Duo rail, the Back control rides the header actions instead
+  /// of the leading slot.
+  List<Widget> _categoryHeaderActions(
+    double duoRailWidth,
+    faui.FaIconActionButton backButton,
+  ) {
+    return [
+      if (duoRailWidth > 0 && (!widget.embedded || widget.onBack != null))
+        backButton,
+    ];
+  }
+
+  /// The floating-page platter for the category root and its drilled
+  /// category.
+  Widget _categoryPage({
+    required Widget header,
+    required Widget body,
+    required double duoRailWidth,
+  }) {
+    return MessengerFloatingPageScaffold(
       header: header,
       body: Padding(
         // Only the embedded wide shell owns a PERSISTENT Duo rail lane —
@@ -1688,21 +1747,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
-    if (widget.embedded) {
-      return Material(
-        type: MaterialType.transparency,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            const Positioned.fill(child: FahWallpaper()),
-            KeyedSubtree(
-              key: const ValueKey('settingsCategoryContent'),
-              child: page,
-            ),
-          ],
-        ),
-      );
-    }
+  }
+
+  /// The embedded wide-shell surface: a transparent Material over the
+  /// shell's own wallpaper stack.
+  Widget _embeddedCategoryPage(Widget page) {
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(child: FahWallpaper()),
+          KeyedSubtree(
+            key: const ValueKey('settingsCategoryContent'),
+            child: page,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The standalone route: wallpaper under the scaffold, the SafeArea
+  /// matching a standalone Local chat route.
+  Widget _standaloneCategoryPage(
+    faui.FaDesignTokens tokens,
+    double duoRailWidth,
+    Widget page,
+  ) {
     return Scaffold(
       key: const ValueKey('settingsCategoryContent'),
       backgroundColor: tokens.background,

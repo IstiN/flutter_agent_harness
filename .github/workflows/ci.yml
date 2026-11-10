@@ -2974,14 +2974,10 @@ jobs:
 
   build-ios:
     name: Build iOS (debug, unsigned)
-    # macos-26 hosts at most Xcode 26.6 (iOS 26.5 SDK); the iOS 27 fold
-    # APIs in DuoLayoutChannel.swift do not exist there. The condition
-    # below compiles the channel's degraded path (hardware-model
-    # heuristic, real safe area); the TestFlight builds run on Xcode 27
-    # without it.
-    runs-on: macos-26
-    env:
-      FLUTTER_XCODE_SWIFT_ACTIVE_COMPILATION_CONDITIONS: 'DEBUG FA_NO_FOLD_SDK27'
+    # The owner's box carries Xcode 27 — the Duo layout channel's iOS 27
+    # fold APIs (UIView.reservedRegions, UITraitCollection.verticalBarEdge)
+    # do not exist in any hosted SDK (Xcode 26.6 tops out at iOS 26.5).
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30
