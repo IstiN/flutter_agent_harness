@@ -590,8 +590,12 @@ extension on AgentCli {
   }
 
   /// Applies an imported CUSTOM entry: per-name conflict prompt (keep
-  /// local / take bundle, never silent overwrite), key write into the
-  /// entry's slot, registry add, persist, and the switch offer.
+  /// local / take bundle, never silent overwrite), registry add FIRST
+  /// (the persist callback lands the entry in the config immediately —
+  /// even a declined switch keeps it), then the key write into the
+  /// entry's slot. The pin/activation happens only in the ACCEPTED
+  /// switch offer; a decline leaves the entry present-but-inactive and
+  /// the current provider untouched.
   Future<void> _applyImportedEntry(
     CustomProviderEntry entry,
     ProviderTransferKey? key, {
@@ -642,6 +646,11 @@ extension on AgentCli {
           entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl);
     }
     registry.add(entry);
+    // Persist the new entry right away (the executable writes the
+    // customProviders: config section on this callback): a declined
+    // switch must not LOSE the import on quit while its keychain slot
+    // survives. The pin/active state is NOT touched here.
+    await config.onProviderChanged?.call(_providerKind, _apiKey);
     if (key != null) {
       await _storeProviderToken(
         spec,
@@ -650,10 +659,9 @@ extension on AgentCli {
         keyName: entry.keyName!,
       );
     }
-    // NOT active yet: activation (the pin + onProviderChanged persist)
-    // happens only when the switch offer below is ACCEPTED — a decline
-    // must leave the imported entry present-but-inactive and the current
-    // provider untouched.
+    // NOT active yet: activation (the pin) happens only when the switch
+    // offer below is ACCEPTED — a decline leaves the imported entry
+    // present-but-inactive and the current provider untouched.
     io.writeln(
       'imported provider ${entry.name} '
       '(${key == null ? 'keyless' : key.kind.wireName})',

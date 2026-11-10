@@ -1199,10 +1199,15 @@ void main() {
       final cacheB = SecureKeyCache(storeB);
       await cacheB.probe();
       var providerChanged = 0;
+      final persistedNames = <List<String>>[];
       await runImport(
         secureKeys: cacheB,
         registry: registryB,
-        onProviderChanged: (kind, apiKey) async => providerChanged++,
+        onProviderChanged: (kind, apiKey) async {
+          providerChanged++;
+          // Simulate the executable's reload: what it would persist.
+          persistedNames.add(registryB.entries.map((e) => e.name).toList());
+        },
         answers: const [
           ('/provider import', 'container passphrase'),
           ('pass-phrase-1', 'imported provider acme (api-key)'),
@@ -1215,8 +1220,12 @@ void main() {
         ],
       );
 
-      // The decline itself never persists an activation.
-      expect(providerChanged, 0);
+      // The decline itself never fires further callbacks: the import
+      // persisted the entry ONCE (at registry add — a declined import
+      // survives reload), and no switch-time persist ran.
+      expect(providerChanged, 1);
+      // The simulated reload sees the imported entry.
+      expect(persistedNames.single, contains('acme'));
       // The entry is present, with its bundled model intact.
       final landed = registryB.find('acme');
       expect(landed, isNotNull);
