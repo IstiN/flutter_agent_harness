@@ -208,45 +208,24 @@ extension on AgentCli {
     );
   }
 
-  /// The UC1 `/provider export cicd [auth] ...` flow.
+  /// The UC1 `/provider export cicd [auth] ...` flow: parse args,
+  /// resolve the subject, build the content, gate, deliver.
   Future<void> _runCicdExport({
     required bool authOnly,
     required List<String> args,
   }) async {
-    final parsed = _splitTransferArgs(args);
-    final yes = parsed.flags.remove('--yes');
-    final stdout = authOnly && parsed.flags.remove('--stdout');
-    if (parsed.flags.isNotEmpty || parsed.operands.length > 1) {
-      io.writeln(
-        'usage: /provider export cicd${authOnly ? ' auth' : ''} '
-        '[path|--clipboard${authOnly ? '|--stdout' : ''}] [--yes]',
-      );
-      return;
-    }
-    final subject = _transferSubject();
-    if (subject == null) {
-      _printNonExportableRefusal();
-      return;
-    }
-    final key = _transferKeyFor(subject.spec, subject.entry, subject.baseUrl);
-    if (key == null) {
-      _printNoCredentialRefusal(subject.spec);
-      return;
-    }
-    _warnExpiredOAuthBlob(key);
-    final model = _agent.state.model;
-    final (what, content) = authOnly
+    final parsed = _parseCicdArgs(authOnly: authOnly, args: args);
+    if (parsed == null) return;
+    final resolved = _resolveExportSubject();
+    if (resolved == null) return;
+    final (subject, key) = resolved;
+    final (what, content, slotComment) = authOnly
         ? _cicdSecretPresentation(key)
-        : _cicdJsonContent(subject, key, model);
-    final destination = parsed.operands.isNotEmpty
-        ? parsed.operands.first
-        : stdout
-        ? 'stdout'
-        : 'the clipboard';
+        : _cicdJsonContent(subject, key, _agent.state.model);
     if (!await _confirmTransferGate(
       '${subject.spec.name}: $what',
-      destination,
-      yes: yes,
+      parsed.destination,
+      yes: parsed.yes,
     )) {
       io.writeln('export cancelled — nothing written');
       return;
@@ -254,25 +233,25 @@ extension on AgentCli {
     await _deliverTransferContent(
       content,
       paths: parsed.operands,
-      stdout: stdout,
-      slotComment: authOnly && key.kind != ProviderTransferKeyKind.apiKey
-          ? key.slot
-          : null,
+      stdout: parsed.stdout,
+      slotComment: slotComment,
     );
   }
 
   /// The `cicd auth` presentation: the bare secret value for the secrets
-  /// store — `SLOT=<value>` for an api key, the raw blob otherwise.
-  (String, String) _cicdSecretPresentation(_TransferKey key) {
+  /// store — `SLOT=<value>` for an api key, the raw blob otherwise. The
+  /// third field names the secret's slot for the transcript comment
+  /// (blob arms only).
+  (String, String, String?) _cicdSecretPresentation(_TransferKey key) {
     if (key.kind == ProviderTransferKeyKind.apiKey) {
-      return ('${key.slot}=<value>', '${key.slot}=${key.value}');
+      return ('${key.slot}=<value>', '${key.slot}=${key.value}', null);
     }
-    return ('the ${key.kind.wireName} blob', key.value);
+    return ('the ${key.kind.wireName} blob', key.value, key.slot);
   }
 
   /// The full `cicd` JSON: the current provider's config with the
   /// embedded secret under `auth`.
-  (String, String) _cicdJsonContent(
+  (String, String, String?) _cicdJsonContent(
     _TransferSubject subject,
     _TransferKey key,
     Model model,
@@ -288,7 +267,34 @@ extension on AgentCli {
       'maxTokens': model.maxTokens,
       'auth': {'type': key.kind.wireName, 'env': key.slot, 'value': key.value},
     });
-    return ('the cicd JSON', content);
+    return ('the cicd JSON', content, null);
+  }
+
+  /// Parses the cicd args: `--yes` skips the gate, `--stdout` (auth arm
+  /// only) prints instead of copying, at most one path operand. Null =
+  /// usage was printed.
+  ({bool yes, bool stdout, String destination, List<String> operands})?
+  _parseCicdArgs({required bool authOnly, required List<String> args}) {
+    final parsed = _splitTransferArgs(args);
+    final yes = parsed.flags.remove('--yes');
+    final stdout = authOnly && parsed.flags.remove('--stdout');
+    if (parsed.flags.isNotEmpty || parsed.operands.length > 1) {
+      io.writeln(
+        'usage: /provider export cicd${authOnly ? ' auth' : ''} '
+        '[path|--clipboard${authOnly ? '|--stdout' : ''}] [--yes]',
+      );
+      return null;
+    }
+    return (
+      yes: yes,
+      stdout: stdout,
+      destination: parsed.operands.isNotEmpty
+          ? parsed.operands.first
+          : stdout
+          ? 'stdout'
+          : 'the clipboard',
+      operands: parsed.operands,
+    );
   }
 
   /// Parses the UC2 export args and runs the flow: a bare path operand
