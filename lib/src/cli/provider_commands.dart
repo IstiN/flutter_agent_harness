@@ -618,7 +618,7 @@ extension on AgentCli {
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
   /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup,
-  /// export).
+  /// export, import).
   /// Returns true when one handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startAiinArg(args)) return true;
@@ -630,6 +630,7 @@ extension on AgentCli {
     if (_startDialSetupArg(args)) return true;
     if (_startKimiArg(args)) return true;
     if (_startProviderExportArg(args)) return true;
+    if (_startProviderImportArg(args)) return true;
     return false;
   }
 
