@@ -1675,7 +1675,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final page = MessengerFloatingPageScaffold(
       header: header,
       body: Padding(
-        padding: EdgeInsets.only(right: duoRailWidth),
+        // Only the embedded wide shell owns a PERSISTENT Duo rail lane —
+        // the shell's own chrome fills it top to bottom. A narrow (pushed)
+        // Duo settings route has just the floating Back control inside the
+        // header, so insetting the body lane a second time capped the
+        // content column ~84px short of the free right edge. The header
+        // still owns the rail zone; body rows scroll under its glass.
+        padding: EdgeInsets.only(right: widget.embedded ? duoRailWidth : 0),
         child: SizedBox.expand(
           key: const ValueKey('settingsBodyContentLane'),
           child: body,
@@ -1725,27 +1731,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TaskModelsStore? taskModels,
     OnDeviceConfigStore? onDeviceConfig,
   ) {
-    return Scrollbar(
-      key: const ValueKey('settingsScrollbar'),
-      controller: _scrollController,
-      thumbVisibility: widget.embedded,
-      thickness: 5,
-      radius: const Radius.circular(8),
-      child: SingleChildScrollView(
+    final query = MediaQuery.of(context);
+    return MediaQuery(
+      // Material's scrollbar painter insets the thumb by MediaQuery
+      // padding.right. The Duo body lane is ALREADY bounded by that rail
+      // inset (settingsBodyContentLane); letting the painter read it again
+      // detached a fat thumb ~84px into the cards. Scope the padding out
+      // for the scrollbar+viewport only — rows and cards keep their own
+      // fixed padding, and desktop (padding.right == 0) is untouched.
+      data: query.copyWith(padding: query.padding.copyWith(right: 0)),
+      child: Scrollbar(
+        key: const ValueKey('settingsScrollbar'),
         controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          MessengerFloatingPageScaffold.bodyTop,
-          24,
-          32,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: _categorySections(
-            category,
-            service,
-            taskModels,
-            onDeviceConfig,
+        thumbVisibility: widget.embedded,
+        thickness: 5,
+        radius: const Radius.circular(8),
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            MessengerFloatingPageScaffold.bodyTop,
+            24,
+            32,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: _categorySections(
+              category,
+              service,
+              taskModels,
+              onDeviceConfig,
+            ),
           ),
         ),
       ),

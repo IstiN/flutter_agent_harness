@@ -419,6 +419,10 @@ class ProvidersSection extends StatelessWidget {
       baseUrl: preset.baseUrl!,
       modelId: registry.presetModelOverride(preset.name) ?? preset.defaultModel,
     );
+    // Resolved before the editor push (no BuildContext use across the async
+    // gap); the store outlives the scope lookup, so disconnect keeps working
+    // even if this section left the tree while the editor was open.
+    final sessionKeys = SessionKeysScope.maybeOf(context);
     final result = await pushFaPage<ProviderEditorResult>(
       context,
       ProviderEditorPage(
@@ -438,16 +442,22 @@ class ProvidersSection extends StatelessWidget {
     if (result.deleted) {
       final keyName = hostedProviderKeyName(preset);
       if (keyName != null) {
-        await SessionKeysScope.maybeOf(context)?.delete(keyName);
+        await sessionKeys?.delete(keyName);
         if (KeychainStore.isSupported) {
           await const KeychainStore().delete(keyName);
         }
       }
       final baseUrl = preset.baseUrl;
-      if (baseUrl != null && KeychainStore.isSupported) {
-        await const KeychainStore().delete(
-          ProviderRegistry.keyNameFor(baseUrl),
-        );
+      if (baseUrl != null) {
+        // The OAuth flow writes the endpoint-scoped FA_KEY_<HOST> name into
+        // the Keychain where one exists (iOS/macOS/Android) but into the
+        // saved-keys store on Keychain-less platforms (Linux/Windows) —
+        // clear BOTH stores so disconnect actually drops the credential.
+        final hostKeyName = ProviderRegistry.keyNameFor(baseUrl);
+        await sessionKeys?.delete(hostKeyName);
+        if (KeychainStore.isSupported) {
+          await const KeychainStore().delete(hostKeyName);
+        }
       }
       await registry.setPresetModelOverride(preset.name, null);
       final existing = registry.providers

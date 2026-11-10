@@ -647,21 +647,30 @@ void main() {
 
     Future<void> capture(String name) async {
       final lane = find.byKey(const ValueKey('narrowDuoContentLane'));
-      // Settings owns a full-width rail overlay and a separate body lane;
-      // the route root is intentionally full-width, the body is bounded.
+      // Settings owns a full-width rail overlay (floating Back inside the
+      // header) and a separate body lane; the route root is intentionally
+      // full-width and the body now uses it too — only the shell sections
+      // with a persistent rail stay bounded by the rail width.
       final settingsBody = find.byKey(
         const ValueKey('settingsBodyContentLane'),
       );
-      final bounded = lane.evaluate().isNotEmpty
-          ? lane
-          : settingsBody.evaluate().isNotEmpty
-          ? settingsBody
-          : find.byKey(const ValueKey('appsOverviewHeader'));
+      final Finder bounded;
+      var bound = size.width - 84;
+      if (lane.evaluate().isNotEmpty) {
+        bounded = lane;
+      } else if (settingsBody.evaluate().isNotEmpty) {
+        bounded = settingsBody;
+        bound = size.width;
+      } else {
+        bounded = find.byKey(const ValueKey('appsOverviewHeader'));
+      }
       expect(bounded, findsOneWidget, reason: '$name keeps bounded Duo chrome');
       expect(
         tester.getRect(bounded).right,
-        lessThanOrEqualTo(size.width - 84),
-        reason: '$name must not paint its destination under the vertical bar',
+        lessThanOrEqualTo(bound),
+        reason:
+            '$name must stay inside the window (rail sections exclude '
+            'the vertical bar lane)',
       );
       await expectGolden(tester, 'wide_layout_shell_duo_folded_$name');
     }

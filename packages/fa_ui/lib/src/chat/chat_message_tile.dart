@@ -217,8 +217,8 @@ class ChatMessageTile extends StatelessWidget {
   }
 
   /// The bubble body: width budget (user bubbles keep the compact fixed
-  /// cap, AI bubbles span up to 90% of the viewport), the role surface, and
-  /// the single SelectionArea over the Markdown body.
+  /// cap, AI bubbles span the full transcript row width), the role surface,
+  /// and the single SelectionArea over the Markdown body.
   Widget _bubbleContainer(BuildContext context, bool isUser) {
     final theme = Theme.of(context);
     final styleSheet = fahMarkdownStyleSheet(
@@ -235,15 +235,18 @@ class ChatMessageTile extends StatelessWidget {
     final border = Theme.of(context).dividerColor;
     return LayoutBuilder(
       builder: (context, constraints) => Container(
-        // Use the transcript's own width, not the whole window: a docked
-        // Duo pane (and an independently mounted chat) is smaller than it.
+        // Use the transcript row's own width, not the whole window: a docked
+        // Duo pane (and an independently mounted chat) is smaller than it,
+        // and a nested MediaQueryData (overlay surfaces, golden hosts) can
+        // carry a zero `size`, which collapsed the bubble to a zero-width
+        // column (one glyph per line, gh chat_header_widths). The 90%-of-
+        // window cap only survives as the unbounded-row fallback.
         constraints: BoxConstraints(
-          maxWidth: isUser
-              ? math.min(560, constraints.maxWidth)
-              : math.min(
-                  MediaQuery.sizeOf(context).width * 0.9,
-                  constraints.maxWidth,
-                ),
+          maxWidth: constraints.maxWidth.isFinite
+              ? (isUser
+                    ? math.min(560, constraints.maxWidth)
+                    : constraints.maxWidth)
+              : MediaQuery.sizeOf(context).width * 0.9,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(

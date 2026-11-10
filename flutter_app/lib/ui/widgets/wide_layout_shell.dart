@@ -182,6 +182,11 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// the presentation clears it, so closing never fights the user's latest
   /// intent.
   bool? _sidebarStateBeforePresentation;
+
+  /// Whether the chat's docked files panel is driving a presentation run
+  /// (the [FaChatHost] `onFilesPanelChanged` hook). See
+  /// [_onChatFilesPanelChanged].
+  bool _chatFilesPanelActive = false;
   _WideShellSection _section = _WideShellSection.chats;
   SettingsCategory _settingsCategory = SettingsCategory.providersModels;
 
@@ -592,6 +597,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     FaChatHost.jsAppNavigatorKey = _appsNavigatorKey;
     FaChatHost.revealJsApps = _revealApps;
     FaChatHost.revealActiveChat = _revealActiveChat;
+    FaChatHost.onFilesPanelChanged = _onChatFilesPanelChanged;
   }
 
   @override
@@ -642,6 +648,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     }
     if (FaChatHost.revealActiveChat == _revealActiveChat) {
       FaChatHost.revealActiveChat = null;
+    }
+    if (FaChatHost.onFilesPanelChanged == _onChatFilesPanelChanged) {
+      FaChatHost.onFilesPanelChanged = null;
     }
     super.dispose();
   }
@@ -730,8 +739,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   }
 
   Widget _buildNarrowNavigation() {
+    // The dock keeps the full between-margins span: SafeArea's right
+    // inset (the folded Duo's 84pt camera-lane profile) is NOT consumed
+    // here — the camera hardware sits top-right, the bottom-right glass
+    // is free, and consuming it squeezed the 6 phone slots below the
+    // full-label minimum ("Netw…"/"Activ…").
     return SafeArea(
       top: false,
+      right: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           MessengerBottomNavigation.horizontalMargin,
@@ -756,20 +771,22 @@ class _WideLayoutShellState extends State<WideLayoutShell>
               'messengerPrimaryNav-settings',
             ];
             final screenWidth = MediaQuery.sizeOf(context).width;
-            final phone = screenWidth <= 400;
-            final widthLimit = phone
-                ? MessengerBottomNavigation.maxWidth
-                : MessengerBottomNavigation.expandedMaxWidth;
+            // The dock spans the full width between its side margins so the
+            // 6 phone slots get even slices: ~53pt of text width at 390pt
+            // keeps "Networks"/"Activity" whole, and a 320pt screen still
+            // fits without overflowing (labels may truncate there).
+            final widthLimit = MessengerBottomNavigation.expandedMaxWidth;
             final dockWidth = math.min(
               widthLimit,
               screenWidth - 2 * MessengerBottomNavigation.horizontalMargin,
             );
-            // Five primary destinations plus More fit the existing 280pt
-            // phone dock. Networks stays direct; Channels is promoted from
-            // overflow before Unread and Settings as capacity grows.
-            final slotCapacity = phone
-                ? 6
-                : (dockWidth / 64).floor().clamp(6, destinations.length);
+            // Five primary destinations plus More are the phone contract;
+            // wider narrow screens promote Channels from overflow before
+            // Unread and Settings as capacity grows.
+            final slotCapacity = (dockWidth / 64).floor().clamp(
+              6,
+              destinations.length,
+            );
             final visibleOverflowCount = slotCapacity >= destinations.length
                 ? overflowOrder.length
                 : slotCapacity - primaryKeys.length - 1;
@@ -1571,12 +1588,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  /// Owner call (Duo): an open app owns the right dock, so the chats list
+  /// Owner call (Duo): a presented surface (a JS app OR the native Files
+  /// browser — both dock right) owns the right dock, so the chats list
   /// collapses and the chat fills the left area. The pre-presentation state
   /// is saved once per presentation run and restored on close/minimize; a
   /// manual toggle in between clears the save (the user's intent wins).
   void _collapseSidebarForDuoPresentation() {
-    if (_appPresentation == null ||
+    if (!_presentationMounted ||
         _sidebarStateBeforePresentation != null ||
         _isNarrow ||
         !FaDuoControlRail.isActive(context)) {
@@ -1587,12 +1605,52 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   }
 
   /// Restores the sidebar state saved by
-  /// [_collapseSidebarForDuoPresentation] when the presented app goes away.
+  /// [_collapseSidebarForDuoPresentation] when the presented surface (app
+  /// or Files) goes away. A chat files panel still open keeps owning the
+  /// collapse — its own close restores instead.
   void _restoreSidebarAfterPresentation() {
+    if (_chatFilesPanelActive) return;
     final saved = _sidebarStateBeforePresentation;
     if (saved == null) return;
     _sidebarStateBeforePresentation = null;
     if (_sidebarCollapsed != saved) _sidebarCollapsed = saved;
+  }
+
+  /// The chat's docked files panel toggled (the [FaChatHost]
+  /// `onFilesPanelChanged` hook): opening it is a presentation run of its
+  /// own — collapse the chats list for the run, restore on close. Shares
+  /// the save slot with presented surfaces so an app opened on top never
+  /// expands the list mid-run, and a manual toggle still wins. The
+  /// collapse starts on the NEXT frame: starting it in the same frame the
+  /// panel reveal mounts made the chat body relayout mid-build and
+  /// transiently squeezed the panel's search band below the field's
+  /// minimum (a 5px RenderFlex overflow on the transition frame).
+  void _onChatFilesPanelChanged(bool open) {
+    if (!mounted) return;
+    if (open) {
+      if (_chatFilesPanelActive ||
+          _isNarrow ||
+          !FaDuoControlRail.isActive(context)) {
+        return;
+      }
+      _chatFilesPanelActive = true;
+      _sidebarStateBeforePresentation ??= _sidebarCollapsed;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !_chatFilesPanelActive ||
+            _presentationMounted ||
+            _sidebarCollapsed) {
+          return;
+        }
+        setState(() => _sidebarCollapsed = true);
+      });
+    } else {
+      if (!_chatFilesPanelActive) return;
+      _chatFilesPanelActive = false;
+      if (!_presentationMounted) {
+        setState(_restoreSidebarAfterPresentation);
+      }
+    }
   }
 
   Future<void> _activateRunningApp(String appId) async {

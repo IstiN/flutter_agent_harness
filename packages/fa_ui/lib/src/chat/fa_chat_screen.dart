@@ -607,6 +607,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       _filesPanelOpen
           ? _filesPanelReveal.forward()
           : _filesPanelReveal.reverse();
+      // The shell gives the docked panel the same presentation run as a
+      // presented app (chats list collapse + restore); notify on every
+      // transition, not only opens.
+      FaChatHost.onFilesPanelChanged?.call(_filesPanelOpen);
       if (_filesPanelOpen) {
         FaChatHost.track('files_opened', {'source': 'chat'});
       }
@@ -623,6 +627,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     if (_filesPanelOpen) {
       setState(() => _filesPanelOpen = false);
       _filesPanelReveal.reverse();
+      FaChatHost.onFilesPanelChanged?.call(false);
     }
   }
 
@@ -1130,6 +1135,8 @@ class _FaChatScreenState extends State<FaChatScreen>
   @override
   void dispose() {
     _syncDebounce?.cancel();
+    // Going away with the panel open still ends its presentation run.
+    if (_filesPanelOpen) FaChatHost.onFilesPanelChanged?.call(false);
     _chatScrollController.dispose();
     _unbindTrajectory();
     _unsubscribeFromService(widget.service);

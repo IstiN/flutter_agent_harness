@@ -3,7 +3,9 @@
 // in the LICENSE file.
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -321,6 +323,146 @@ void main() {
       expect(reauthed?.id, ProviderPreset.aiin.name);
       expect(reauthed?.baseUrl, ProviderPreset.aiin.baseUrl);
       expect(find.byType(ProviderEditorPage), findsNothing);
+    });
+
+    testWidgets('connected preset disconnect clears the preset and host key '
+        'names from both stores', (tester) async {
+      // Keychain-backed platform (the section's Keychain branch): the
+      // OAuth flow writes the endpoint-scoped FA_KEY_<HOST> name into the
+      // Keychain and the app keeps the preset-name key in the saved-keys
+      // store — disconnect must drop BOTH names from BOTH stores.
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      // Reset INSIDE the body: the binding's foundation-var invariant check
+      // runs before addTearDown teardowns.
+      try {
+        const channel = MethodChannel('fah/keychain');
+        final keychain = <String, String>{};
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              switch (call.method) {
+                case 'delete':
+                  keychain.remove(call.arguments['name'] as String);
+                  return true;
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+
+        const presetKeyName = 'AIIN_API_KEY';
+        final hostKeyName = ProviderRegistry.keyNameFor(
+          ProviderPreset.aiin.baseUrl!,
+        );
+        final keysStore = SessionKeysStore.inMemory({
+          presetKeyName: 'sk-ain',
+          hostKeyName: 'sk-host',
+        });
+        keychain[presetKeyName] = 'sk-ain';
+        keychain[hostKeyName] = 'sk-host';
+        final registry = ProviderRegistry.inMemory();
+        await registry.setPresetModelOverride(
+          ProviderPreset.aiin.name,
+          'openai/gpt-4o-mini',
+        );
+        // The host resolver reads the same two stores, so the row lists as
+        // connected — and stops resolving once disconnect clears them.
+        FaUiHost.keyResolver = (name) =>
+            keysStore.valueOf(name) ?? keychain[name] ?? '';
+        addTearDown(() => FaUiHost.keyResolver = null);
+        await _pump(
+          tester,
+          SessionKeysScope(
+            store: keysStore,
+            child: ProvidersSection(registry: registry),
+          ),
+        );
+        expect(find.text('AIIN (aiin.by)'), findsOneWidget);
+
+        await tester.tap(find.text('AIIN (aiin.by)'));
+        await tester.pumpAndSettle();
+        expect(find.byType(ProviderEditorPage), findsOneWidget);
+        // The same-endpoint registry entry (what a completed OAuth connect
+        // adds) lands while the editor is up — the section hides the preset
+        // row behind such an entry, so it cannot predate the pump.
+        await registry.add(
+          name: 'AIIN direct',
+          baseUrl: ProviderPreset.aiin.baseUrl!,
+          modelId: 'openai/gpt-4o-mini',
+        );
+        await tester.ensureVisible(find.text('Delete'));
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        expect(find.text('Delete AIIN (aiin.by)?'), findsOneWidget);
+        await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+        await tester.pumpAndSettle();
+
+        // Both names, both stores.
+        expect(keysStore.has(presetKeyName), isFalse);
+        expect(keysStore.has(hostKeyName), isFalse);
+        expect(keychain.containsKey(presetKeyName), isFalse);
+        expect(keychain.containsKey(hostKeyName), isFalse);
+        // The model override is cleared and the same-endpoint entry removed.
+        expect(registry.presetModelOverride(ProviderPreset.aiin.name), isNull);
+        expect(registry.providers, isEmpty);
+        // Nothing resolves anymore: the connected row is gone.
+        expect(find.text('AIIN (aiin.by)'), findsNothing);
+        expect(find.text('AIIN direct'), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('connected preset disconnect on a Keychain-less platform '
+        'clears the saved keys store', (tester) async {
+      // Linux/Windows run without the Keychain: the OAuth flow persists the
+      // host-scoped FA_KEY_<HOST> name into the saved-keys store instead, so
+      // disconnect must clear it there. No fah/keychain handler is installed
+      // — any Keychain channel call would throw and fail the test.
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      // Reset INSIDE the body: the binding's foundation-var invariant check
+      // runs before addTearDown teardowns.
+      try {
+        expect(KeychainStore.isSupported, isFalse);
+
+        const presetKeyName = 'AIIN_API_KEY';
+        final hostKeyName = ProviderRegistry.keyNameFor(
+          ProviderPreset.aiin.baseUrl!,
+        );
+        final keysStore = SessionKeysStore.inMemory({
+          presetKeyName: 'sk-ain',
+          hostKeyName: 'sk-host',
+        });
+        final registry = ProviderRegistry.inMemory();
+        FaUiHost.keyResolver = (name) => keysStore.valueOf(name) ?? '';
+        addTearDown(() => FaUiHost.keyResolver = null);
+        await _pump(
+          tester,
+          SessionKeysScope(
+            store: keysStore,
+            child: ProvidersSection(registry: registry),
+          ),
+        );
+        expect(find.text('AIIN (aiin.by)'), findsOneWidget);
+
+        await tester.tap(find.text('AIIN (aiin.by)'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Delete'));
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+        await tester.pumpAndSettle();
+
+        expect(keysStore.has(presetKeyName), isFalse);
+        // The fixed gap: the host-scoped name leaves the saved-keys store.
+        expect(keysStore.has(hostKeyName), isFalse);
+        expect(find.text('AIIN (aiin.by)'), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
 
     testWidgets('saving an AIIN editor normalizes a scheme-less endpoint', (

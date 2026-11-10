@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -1394,6 +1396,10 @@ final class FilesChrome extends StatelessWidget {
   /// Minimum width the title text needs before it is worth showing.
   static const double _titleMin = 44;
 
+  /// The field's hard floor: the glass kit's search chip (~44pt) plus the
+  /// air the row needs to lay it out without overflow.
+  static const double _fieldChipMin = 48;
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -1428,18 +1434,26 @@ final class FilesChrome extends StatelessWidget {
                 : bare >= kFilesSearchCompactFloor
                 ? kFilesSearchCompactFloor
                 : 0.0;
+            // The one search field is the glass kit's GlassTextField: its
+            // chip owns a ~44pt internal minimum (icon row + paddings) and
+            // OVERFLOWS when squeezed under it. The capsule's promise
+            // floors at the compact band, but the demotion must also hold
+            // on tiny bands (reveal first frames, narrow windows) where
+            // even the compact floor is unreachable — there the field
+            // keeps the chip minimum and the chrome demotes instead.
+            final fieldFloor = math.max(searchFloor, _fieldChipMin);
             // Actions demote tail-first while they would bite into the
             // capsule's promise; the ⋮ menu lives on the compact floor so
-            // the actions stay reachable on middle-width bands.
+            // the actions stay reachable on middle-width bands. Anything
+            // demoted at all keeps the ⋮ visible — the actions must stay
+            // reachable even on bands where the floor itself is
+            // unreachable.
             var inline = actions.length;
             while (inline > 0 &&
-                budget(inline: inline, overflow: true) < searchFloor) {
+                budget(inline: inline, overflow: true) < fieldFloor) {
               inline--;
             }
-            final overflow =
-                inline < actions.length &&
-                budget(inline: inline, overflow: true) >=
-                    kFilesSearchCompactFloor;
+            final overflow = inline < actions.length;
             final titleBudget =
                 budget(inline: inline, overflow: overflow) -
                 _titleExtras -

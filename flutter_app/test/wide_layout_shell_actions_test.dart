@@ -807,6 +807,87 @@ void main() {
     expect(find.byType(CollapsedChatAvatarList), findsNothing);
   });
 
+  testWidgets('Duo Files docks right, collapses the chats list, and '
+      'restores it on close', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    // Expanded chats list before the presentation.
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+    // Reach the shell's native Files surface: the profile route's Files
+    // tile is its one UI entry (the launcher header's icon opens the
+    // route); on a wide shell the tile presents the right-dock surface,
+    // the same one a JS app uses — NOT the chat's docked Files panel.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('messengerPageIcon')),
+        matching: find.byType(IconButton),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('narrowProfileFiles')));
+    await tester.pumpAndSettle();
+    // The surface presents beneath the pushed profile route — pop it.
+    await tester.tap(find.byType(BackButton).first);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    // The profile chain lands on the Apps section — whose collapsed body
+    // proves the shell-wide auto-collapse: the sidebar column swaps the
+    // expanded directory for the collapsed rail while Files docks right.
+    expect(find.byKey(const ValueKey('collapsedAppsList')), findsOneWidget);
+
+    // Closing restores the pre-presentation (expanded) state.
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    expect(find.byKey(const ValueKey('collapsedAppsList')), findsNothing);
+  });
+
+  testWidgets('Duo: the chat files panel collapses the chats list and '
+      'restores it on close', (tester) async {
+    final env = MemoryExecutionEnv();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', service);
+
+    await pumpShell(tester, manager: manager, size: const Size(1230, 880));
+    tester.view.padding = const FakeViewPadding(right: 84);
+    addTearDown(tester.view.reset);
+    await tester.pumpAndSettle();
+
+    // Expanded chats list before the presentation.
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+    // The CHAT's own docked Files panel — the header's files button —
+    // runs the same presentation as a presented app through the
+    // FaChatHost.onFilesPanelChanged hook.
+    await tester.tap(find.byTooltip('Open files'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsOneWidget);
+    expect(find.byType(ChatListPanel), findsNothing);
+    expect(find.byType(CollapsedChatAvatarList), findsOneWidget);
+    expect(find.byType(ChatScreen), findsOneWidget);
+
+    // Closing through the panel band's own X restores the list.
+    await tester.tap(find.byKey(const ValueKey('filesAppClose')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('filesAppPanel')), findsNothing);
+    expect(find.byType(ChatListPanel), findsOneWidget);
+    expect(find.byType(CollapsedChatAvatarList), findsNothing);
+  });
+
   testWidgets('desktop running apps minimize, keep their JS view, and switch', (
     tester,
   ) async {
@@ -3322,7 +3403,7 @@ void main() {
           );
           final surface = tester.widget<FaSurface>(surfaceFinder);
           final surfaceRect = tester.getRect(surfaceFinder);
-          expect(surfaceRect.width, 280, reason: reason);
+          expect(surfaceRect.width, 366, reason: reason);
           expect(surfaceRect.height, 56, reason: reason);
           expect(surfaceRect.center.dx, 195, reason: reason);
           expect(
@@ -3342,7 +3423,7 @@ void main() {
           for (var index = 0; index < labels.length; index++) {
             final item = find.byKey(ValueKey(ids[index]));
             final rect = tester.getRect(item);
-            expect(rect.width, closeTo(280 / 6, .001), reason: reason);
+            expect(rect.width, closeTo(366 / 6, .001), reason: reason);
             expect(rect.height, 56, reason: reason);
             expect(rect.center.dy, dock.center.dy, reason: reason);
             final icon = tester.getRect(
@@ -3809,9 +3890,9 @@ void main() {
       final pill = find.byKey(const ValueKey('narrowShellSelectionPill'));
       // The first frame is already at Chats; there is no entrance animation.
       final initialPill = tester.getRect(pill);
-      expect(initialPill.left, closeTo(59, .001));
+      expect(initialPill.left, closeTo(16, .001));
       expect(initialPill.top, 784);
-      expect(initialPill.width, closeTo(280 / 6 - 8, .001));
+      expect(initialPill.width, closeTo(366 / 6 - 8, .001));
       expect(initialPill.bottom, 832);
       var animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, const Duration(milliseconds: 200));

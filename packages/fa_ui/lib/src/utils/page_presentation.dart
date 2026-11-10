@@ -44,6 +44,10 @@ Future<T?> pushFaPage<T>(
     // into an unreadable full-height strip. Height caps at 84% of the
     // window so it never feels like a mobile full-screen page.
     // A full scrim keeps every underlying surface visually subordinate.
+    // On Duo the scrim is OPAQUE: the 60% veil let the underlying page's
+    // section title bleed through the band right above the sheet's top
+    // seam, which read as a broken seam. Nothing is interactive above the
+    // sheet there — just backdrop.
     // Only a REAL glass-direction theme opts in — a plain MaterialApp
     // without the token extension keeps the legacy opaque dialog.
     final glass =
@@ -55,7 +59,9 @@ Future<T?> pushFaPage<T>(
       // Duo insets below already include the native safe/rail regions. The
       // default SafeArea would consume the same 84pt rail a second time.
       useSafeArea: duoRailWidth == 0,
-      barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: .60),
+      barrierColor: Theme.of(
+        context,
+      ).colorScheme.scrim.withValues(alpha: duoRailWidth == 0 ? .60 : 1.0),
       builder: (dialogContext) {
         // Read the DIALOG's live media: a desktop window can be resized
         // after the route opens. Capturing the launcher's original height
