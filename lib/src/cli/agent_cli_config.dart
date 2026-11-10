@@ -120,6 +120,7 @@ final class AgentCliConfig {
     this.copilotDeviceFlowFn,
     this.copilotUserFn,
     this.clipboardWrite,
+    this.clipboardRead,
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
@@ -438,6 +439,12 @@ final class AgentCliConfig {
   /// surfaces). Tests inject a fake; production runs
   /// [writeClipboardText] (pbcopy/xclip/wl-copy/clip).
   final Future<String?> Function(String text)? clipboardWrite;
+
+  /// Optional override for the platform clipboard read behind `/provider
+  /// import` (issue #2090): reads the host clipboard text. Tests inject a
+  /// fake; production runs [readPasteboardText] (pbpaste/xclip/wl-copy/
+  /// powershell). Null keeps the production reader.
+  final Future<PasteboardRead> Function()? clipboardRead;
 
   /// Optional override for the CodeMie SSO browser flow
   /// (`/provider codemie sso`). Tests inject a fake returning canned
