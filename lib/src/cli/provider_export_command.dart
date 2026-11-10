@@ -1,8 +1,8 @@
 /// The `/provider export` + `/provider import` REPL family (issue #2090):
 ///
-/// - UC1 `/provider export cicd [path|--clipboard] [--yes]` — the CURRENT
+/// - UC1 `/provider export cicd [path] [--yes]` — the CURRENT
 ///   provider as CI/CD-ready JSON with the embedded secret, and
-///   `/provider export cicd auth [path|--clipboard|--stdout]` — the bare
+///   `/provider export cicd auth [path|--stdout]` — the bare
 ///   secret (`ENV_NAME=<value>` for api-keys, the blob plus a slot-naming
 ///   comment for OAuth/SSO). `--stdout` is the ONLY surface that prints a
 ///   secret; every confirmation line carries name/kind/size only.
@@ -42,7 +42,7 @@ extension on AgentCli {
         rest.first != 'cicd' &&
         !rest.first.startsWith('--')) {
       io.writeln(
-        'usage: /provider export [cicd [auth] [path|--clipboard|--stdout]] '
+        'usage: /provider export [cicd [auth] [path|--stdout]] '
         '[--yes] [--path <p>]',
       );
       return true;
@@ -64,7 +64,7 @@ extension on AgentCli {
     return true;
   }
 
-  /// The `/provider import [--force] [path]` branch (UC2). Returns true
+  /// The `/provider import [--force | <path>]` branch (UC2). Returns true
   /// when the command targeted the import.
   bool _startProviderImportArg(List<String> args) {
     if (args.first != 'import') return false;
@@ -72,7 +72,7 @@ extension on AgentCli {
     if (parsed.operands.length > 1 ||
         parsed.flags.contains('--force') && parsed.operands.isNotEmpty ||
         parsed.flags.difference(const {'--force'}).isNotEmpty) {
-      io.writeln('usage: /provider import [--force] [path]');
+      io.writeln('usage: /provider import [--force | <path>]');
       return true;
     }
     unawaited(
@@ -281,7 +281,7 @@ extension on AgentCli {
     if (parsed.flags.isNotEmpty || parsed.operands.length > 1) {
       io.writeln(
         'usage: /provider export cicd${authOnly ? ' auth' : ''} '
-        '[path|--clipboard${authOnly ? '|--stdout' : ''}] [--yes]',
+        '[path${authOnly ? '|--stdout' : ''}] [--yes]',
       );
       return null;
     }
@@ -325,7 +325,7 @@ extension on AgentCli {
       }
     }
     if (bad) {
-      io.writeln('usage: /provider export [--yes] [--path <p>]');
+      io.writeln('usage: /provider export [--yes] [--path <p>] [--clipboard]');
       return;
     }
     if (!await _transferExportGateAndDeliver(
@@ -634,15 +634,26 @@ extension on AgentCli {
       );
       return;
     }
+    // Registry add FIRST: a reserved-name container fails the add before
+    // any key slot is written (no partial import). The keyName rides the
+    // entry so the store write lands in the slot the added entry reads.
     if (key != null) {
-      final slot =
+      entry.keyName =
           entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl);
-      await _storeProviderToken(spec, entry.baseUrl, key.value, keyName: slot);
-      entry.keyName = slot;
     }
     registry.add(entry);
-    _activeCustomName = entry.name;
-    await config.onProviderChanged?.call(_providerKind, _apiKey);
+    if (key != null) {
+      await _storeProviderToken(
+        spec,
+        entry.baseUrl,
+        key.value,
+        keyName: entry.keyName!,
+      );
+    }
+    // NOT active yet: activation (the pin + onProviderChanged persist)
+    // happens only when the switch offer below is ACCEPTED — a decline
+    // must leave the imported entry present-but-inactive and the current
+    // provider untouched.
     io.writeln(
       'imported provider ${entry.name} '
       '(${key == null ? 'keyless' : key.kind.wireName})',

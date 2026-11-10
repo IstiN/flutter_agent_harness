@@ -100,6 +100,7 @@ void main() {
     Future<String?> Function(String text)? clipboardWrite,
     Future<PasteboardRead> Function()? clipboardRead,
     void Function(String name, String value)? onSecretStored,
+    Future<void> Function(String kind, String apiKey)? onProviderChanged,
     FakeCliIO? ioOverride,
   }) {
     return AgentCli(
@@ -113,6 +114,7 @@ void main() {
         secureKeys: secureKeys,
         customProviders: customProviders,
         onSecretStored: onSecretStored,
+        onProviderChanged: onProviderChanged,
         clipboardWrite:
             clipboardWrite ??
             (text) async {
@@ -434,37 +436,78 @@ void main() {
       await run;
     });
 
-    test(
-      'cicd usage: unknown flags and extra operands print usage',
-      () async {
-        final fake = FakeStreamFunction([textTurn('ok')]);
-        final store = FakeSecureKeyStore()
-          ..map['FA_KEY_API_ACME_IO'] = _acmeKey;
-        final cache = SecureKeyCache(store);
-        await cache.preload(const ['FA_KEY_API_ACME_IO']);
-        final entry = _acmeEntry();
-        final cli = cliFor(
-          fake.call,
-          model: _entryModel(entry),
-          secureKeys: cache,
-          customProviders: CustomProviderRegistry([entry]),
-          activeCustomName: 'acme',
-        );
-        final run = cli.run();
+    test('cicd usage: unknown flags and extra operands print usage', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore()..map['FA_KEY_API_ACME_IO'] = _acmeKey;
+      final cache = SecureKeyCache(store);
+      await cache.preload(const ['FA_KEY_API_ACME_IO']);
+      final entry = _acmeEntry();
+      final cli = cliFor(
+        fake.call,
+        model: _entryModel(entry),
+        secureKeys: cache,
+        customProviders: CustomProviderRegistry([entry]),
+        activeCustomName: 'acme',
+      );
+      final run = cli.run();
 
-        await step(
-          '/provider export cicd --wat a b',
-          'usage: /provider export cicd [path|--clipboard] [--yes]',
-        );
-        await step(
-          '/provider export cicd auth --wat x y',
-          'usage: /provider export cicd auth',
-        );
-        expect(clipboardBox, isNull);
-        io.sendLine('/exit');
-        await run;
-      },
-    );
+      await step(
+        '/provider export cicd --wat a b',
+        'usage: /provider export cicd [path] [--yes]',
+      );
+      await step(
+        '/provider export cicd auth --wat x y',
+        'usage: /provider export cicd auth',
+      );
+      expect(clipboardBox, isNull);
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('AC3: a CI job consumes a cicd auth export end-to-end', () async {
+      // Machine A: the current provider is the anthropic catalog preset,
+      // its key resolved from the environment; export the auth value.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        model: _anthropicModel,
+        envVarValue: (name) =>
+            name == 'ANTHROPIC_API_KEY' ? 'sk-ant-raw' : null,
+      );
+      final run = cli.run();
+      await step(
+        '/provider export cicd auth --stdout --yes',
+        'ANTHROPIC_API_KEY=',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // A CI step pastes the emitted line into its secret store — parse
+      // it exactly as emitted (the idle prompt may share the line).
+      final match = RegExp(
+        'ANTHROPIC_API_KEY=(\\S+)',
+      ).firstMatch(io.out.toString());
+      expect(match, isNotNull);
+      final emitted = match!.group(1)!;
+      expect(emitted, 'sk-ant-raw');
+
+      // Machine B: a fresh CI box — the exported value rides an env
+      // var, the catalog provider resolves with no secure store, and
+      // the value never prints.
+      final ioB = machineB();
+      final cliB = cliFor(
+        FakeStreamFunction([textTurn('ok')]).call,
+        model: _anthropicModel,
+        envVarValue: (name) => name == 'ANTHROPIC_API_KEY' ? emitted : null,
+        ioOverride: ioB,
+      );
+      final runB = cliB.run();
+      await stepOn(ioB, '/provider anthropic', 'key: ANTHROPIC_API_KEY');
+      ioB.sendLine('/exit');
+      await runB;
+      // Env-resolved keys show only the slot name — never the value.
+      expect(ioB.out.toString(), isNot(contains(emitted)));
+    });
 
     test('a non-exportable current provider is refused', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
@@ -614,6 +657,7 @@ void main() {
       required SecureKeyCache secureKeys,
       required CustomProviderRegistry registry,
       void Function(String name, String value)? onSecretStored,
+      Future<void> Function(String kind, String apiKey)? onProviderChanged,
       required List<(String, String)> answers,
       Future<PasteboardRead> Function()? clipboardRead,
     }) async {
@@ -625,6 +669,7 @@ void main() {
         clipboardRead:
             clipboardRead ?? () async => PasteboardText(clipboardBox!),
         onSecretStored: onSecretStored,
+        onProviderChanged: onProviderChanged,
         ioOverride: ioB,
       );
       final run = cli.run();
@@ -1134,6 +1179,50 @@ void main() {
         expect(_decodeContainer(file, 'pass-phrase-1').entry!.name, 'acme');
       },
     );
+
+    test('declining the switch offer leaves the current provider active and '
+        'the entry untouched', () async {
+      final entry = _acmeEntry();
+      final container = await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_API_ACME_IO': _acmeKey}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'acme',
+        ),
+      );
+      clipboardBox = container;
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      var providerChanged = 0;
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        onProviderChanged: (kind, apiKey) async => providerChanged++,
+        answers: const [
+          ('/provider import', 'container passphrase'),
+          ('pass-phrase-1', 'imported provider acme (api-key)'),
+          // Decline: the imported entry must stay INACTIVE.
+          ('n', 'keeping the current provider'),
+          // A later /model switch must NOT rewrite the inactive entry's
+          // model (the old bug: import pinned the entry active, so this
+          // switch corrupted its modelId).
+          ('/model m-9', 'm-9'),
+        ],
+      );
+
+      // The decline itself never persists an activation.
+      expect(providerChanged, 0);
+      // The entry is present, with its bundled model intact.
+      final landed = registryB.find('acme');
+      expect(landed, isNotNull);
+      expect(landed!.modelId, 'glm-4.6');
+      expect(storeB.map['FA_KEY_API_ACME_IO'], _acmeKey);
+    });
 
     test('mismatched passphrase confirmation cancels', () async {
       final entry = _acmeEntry();
