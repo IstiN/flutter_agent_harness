@@ -81,7 +81,7 @@ const expectedUsesPerWorkflow = {
   // daily leg's pipeline must retry and enforce the lockfile the same way
   // (the drift guard test/ci_1659_office_addin_matrix_test.dart pins the
   // step parity).
-  '.github/workflows/ci.yml': 13,
+  '.github/workflows/ci.yml': 14,
   // gh-1538: nightly slimmed to builds + integration-only — the
   // full-quality / cli-visual / flutter-app-macos jobs (3 of the 4
   // pre-migration resolutions) are gone as pre-merge-gate duplication.
