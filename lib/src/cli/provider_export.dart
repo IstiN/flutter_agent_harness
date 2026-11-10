@@ -33,8 +33,6 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-import 'dart:typed_data';
 
 import '../env/execution_env.dart';
 import '../model_roles/provider_catalog.dart' show parseAuthHeaderName;
@@ -42,11 +40,8 @@ import '../providers/fahx_codec.dart'
     show
         FahxException,
         decryptFahxEnvelope,
-        fahxKeystream,
-        fahxMacTag,
-        fahxXor,
-        parseFahxProviderEntry,
-        pbkdf2Sha256;
+        encryptFahxEnvelope,
+        parseFahxProviderEntry;
 import 'agent_cli.dart';
 import 'cli_args.dart';
 import 'custom_providers.dart';
@@ -80,47 +75,22 @@ final class ExportedProvider {
   final String? key;
 }
 
-Uint8List _randomBytes(int count) {
-  final bytes = Uint8List(count);
-  final random = Random.secure();
-  for (var i = 0; i < count; i++) {
-    bytes[i] = random.nextInt(256);
-  }
-  return bytes;
-}
-
-/// Encrypts [plaintext] into the `.fahx` envelope map.
+/// Encrypts [plaintext] into the `.fahx` envelope map. The codec owns the
+/// byte format; this wrapper keeps the CLI-side name and the CLI's
+/// `providerExportIterations` default for every existing call site.
 Map<String, dynamic> encryptProvidersExport(
   String plaintext,
   String passphrase, {
   int iterations = providerExportIterations,
   List<int>? salt,
   List<int>? nonce,
-}) {
-  final usedSalt = salt ?? _randomBytes(16);
-  final usedNonce = nonce ?? _randomBytes(16);
-  final plainBytes = utf8.encode(plaintext);
-  final keys = pbkdf2Sha256(utf8.encode(passphrase), usedSalt, iterations, 64);
-  final ciphertext = fahxXor(
-    plainBytes,
-    fahxKeystream(keys.sublist(0, 32), usedNonce, plainBytes.length),
-  );
-  final tag = fahxMacTag(keys.sublist(32), usedNonce, ciphertext);
-  final blob = Uint8List(ciphertext.length + tag.length);
-  blob
-    ..setRange(0, ciphertext.length, ciphertext)
-    ..setRange(ciphertext.length, blob.length, tag);
-  return {
-    'version': providerExportVersion,
-    'kdf': {
-      'algo': 'pbkdf2-sha256',
-      'iterations': iterations,
-      'salt': base64Encode(usedSalt),
-    },
-    'nonce': base64Encode(usedNonce),
-    'ct': base64Encode(blob),
-  };
-}
+}) => encryptFahxEnvelope(
+  plaintext,
+  passphrase,
+  iterations: iterations,
+  salt: salt,
+  nonce: nonce,
+);
 
 /// Decrypts a `.fahx` envelope. Every failure is a loud
 /// [ProviderExportException] — wrong passphrase and tampered ciphertext

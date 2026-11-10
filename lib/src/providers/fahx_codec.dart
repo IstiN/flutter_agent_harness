@@ -31,6 +31,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 /// A loud, single failure type for every `.fahx` format error: bad shape,
@@ -84,6 +85,50 @@ FahxProviderEntry parseFahxProviderEntry(Object? raw) {
     keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
     key: key is String && key.isNotEmpty ? key : null,
   );
+}
+
+/// Cryptographically-secure random bytes for the per-export salt/nonce.
+Uint8List fahxRandomBytes(int count) {
+  final random = Random.secure();
+  return Uint8List.fromList([
+    for (var i = 0; i < count; i++) random.nextInt(256),
+  ]);
+}
+
+/// Encrypts [plaintext] into a fresh `.fahx` envelope map (the same bytes
+/// `fa config export-providers` has always written — goldens pin the
+/// shape). [salt]/[nonce] override the secure RNG for deterministic
+/// golden tests.
+Map<String, dynamic> encryptFahxEnvelope(
+  String plaintext,
+  String passphrase, {
+  int iterations = 210000,
+  List<int>? salt,
+  List<int>? nonce,
+}) {
+  final usedSalt = salt ?? fahxRandomBytes(16);
+  final usedNonce = nonce ?? fahxRandomBytes(16);
+  final plainBytes = utf8.encode(plaintext);
+  final keys = pbkdf2Sha256(utf8.encode(passphrase), usedSalt, iterations, 64);
+  final ciphertext = fahxXor(
+    plainBytes,
+    fahxKeystream(keys.sublist(0, 32), usedNonce, plainBytes.length),
+  );
+  final tag = fahxMacTag(keys.sublist(32), usedNonce, ciphertext);
+  final blob = Uint8List(ciphertext.length + tag.length);
+  blob
+    ..setRange(0, ciphertext.length, ciphertext)
+    ..setRange(ciphertext.length, blob.length, tag);
+  return {
+    'version': 1,
+    'kdf': {
+      'algo': 'pbkdf2-sha256',
+      'iterations': iterations,
+      'salt': base64Encode(usedSalt),
+    },
+    'nonce': base64Encode(usedNonce),
+    'ct': base64Encode(blob),
+  };
 }
 
 /// Validates the `.fahx` [envelope] (version/kdf/field shapes), decodes the
