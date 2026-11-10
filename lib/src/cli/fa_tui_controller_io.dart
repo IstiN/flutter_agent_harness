@@ -43,7 +43,7 @@ extension FaTuiControllerIo on FaTuiController {
     if (_outputBuffer.isEmpty) return;
     final text = _outputBuffer.toString();
     _outputBuffer.clear();
-    _outputTailOpen = false;
+    _outputTailOpen = !text.endsWith('\n');
     _send(OutputMsg(text));
   }
 
