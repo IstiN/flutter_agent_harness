@@ -50,6 +50,7 @@ import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
+import 'package:fa/network/models.dart' show Channel;
 import 'package:fa/ui/chats/network_inbox_http_adapter.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
@@ -2150,82 +2151,117 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           networkMode: widget.networkMode,
         ),
       ),
-      onOpenChannel: (networkId, channel) async {
-        // Select + open the tapped channel's messages right away
-        // (channel-rail contract). Deliberately NO setNetworkFilter here:
-        // a latched network filter narrowed the All facet to that
-        // network's rows only (owner bug).
-        final manager = widget.networkSessions;
-        final mode = widget.networkMode;
-        if (manager == null || mode == null) {
-          setState(() => _networksSurfaceOpen = false);
-          return;
-        }
-        await mode.enterNetwork(networkId);
-        if (!manager.sessions.containsKey(networkId)) {
-          if (manager.wallet.networks[networkId]?.password == null) {
-            if (!mounted) return;
-            await showJoinSheet(
-              context,
-              controller: mode,
-              manager: manager,
-              initialNetworkId: networkId,
-            );
-          } else {
-            try {
-              await manager.resume(networkId);
-            } on Object catch (error) {
-              if (mounted) showFahErrorSnack(context, error.toString());
-            }
-          }
-        }
-        final session = manager.sessions[networkId];
-        if (session != null) {
-          try {
-            await session.openChannel(channel.id);
-          } on Object catch (error) {
-            if (mounted) showFahErrorSnack(context, error.toString());
-          }
-        }
-        if (!mounted) return;
-        await mode.selectChannel(channel.id);
-        // Land the tap exactly like the chat-list row open does, but the
-        // surface STAYS open (owner pass): ONLY the content pane swaps to
-        // the channel's message view; the strip + channels list keep
-        // their place and the tapped row highlights through
-        // mode.selectChannel above. The projection row still becomes the
-        // selected network entry so the All home carries the row's
-        // selection once the back chevrons close the surface.
-        // Session-snapshot fallback rows have no projection row; a
-        // minimal stand-in entry keeps the content-pane contract there.
-        final entry = _chatController.networkChannelEntries
-            .where(
-              (candidate) =>
-                  candidate.networkId == networkId &&
-                  candidate.id.value == channel.id,
-            )
-            .firstOrNull;
-        if (!mounted) return;
-        setState(() {
-          _activeNetworkEntry =
-              entry ??
-              ChatListEntry(
-                id: ChatEntryId.network(
-                  ChatListEntryKind.networkChannel,
-                  networkId: networkId,
-                  id: channel.id,
-                ),
-                kind: ChatListEntryKind.networkChannel,
-                networkId: networkId,
-                networkName: manager.wallet.networks[networkId]?.name,
-                title: channel.name ?? channel.id,
-                createdAt: DateTime.now(),
-              );
-        });
-        // The row-open parity: the tap marks the projection row read.
-        if (entry != null) await _chatController.markOpened(entry);
-        if (mounted && _isNarrow) await _pushNarrowChat();
-      },
+      onOpenChannel: (networkId, channel) =>
+          unawaited(_openSidebarNetworkChannel(networkId, channel)),
+    );
+  }
+
+  /// The sidebar channel-row tap: membership first, then the channel
+  /// entry (channel-rail contract).
+  Future<void> _openSidebarNetworkChannel(
+    String networkId,
+    Channel channel,
+  ) async {
+    final manager = widget.networkSessions;
+    final mode = widget.networkMode;
+    if (manager == null || mode == null) {
+      setState(() => _networksSurfaceOpen = false);
+      return;
+    }
+    await _ensureSidebarNetworkMembership(manager, mode, networkId);
+    await _openSidebarChannelEntry(manager, mode, networkId, channel);
+  }
+
+  /// Joins or resumes the network when the tapped channel's session is
+  /// not live yet (open networks get the join sheet; password-protected
+  /// ones resume straight from the saved credential).
+  Future<void> _ensureSidebarNetworkMembership(
+    NetworkSessionManager manager,
+    NetworkModeController mode,
+    String networkId,
+  ) async {
+    await mode.enterNetwork(networkId);
+    if (manager.sessions.containsKey(networkId)) return;
+    if (manager.wallet.networks[networkId]?.password == null) {
+      if (!mounted) return;
+      await showJoinSheet(
+        context,
+        controller: mode,
+        manager: manager,
+        initialNetworkId: networkId,
+      );
+    } else {
+      try {
+        await manager.resume(networkId);
+      } on Object catch (error) {
+        if (mounted) showFahErrorSnack(context, error.toString());
+      }
+    }
+  }
+
+  /// Select + open the tapped channel's messages right away. Deliberately
+  /// NO setNetworkFilter here: a latched network filter narrowed the All
+  /// facet to that network's rows only (owner bug).
+  Future<void> _openSidebarChannelEntry(
+    NetworkSessionManager manager,
+    NetworkModeController mode,
+    String networkId,
+    Channel channel,
+  ) async {
+    final session = manager.sessions[networkId];
+    if (session != null) {
+      try {
+        await session.openChannel(channel.id);
+      } on Object catch (error) {
+        if (mounted) showFahErrorSnack(context, error.toString());
+      }
+    }
+    if (!mounted) return;
+    await mode.selectChannel(channel.id);
+    // Land the tap exactly like the chat-list row open does, but the
+    // surface STAYS open (owner pass): ONLY the content pane swaps to
+    // the channel's message view; the strip + channels list keep
+    // their place and the tapped row highlights through
+    // mode.selectChannel above. The projection row still becomes the
+    // selected network entry so the All home carries the row's
+    // selection once the back chevrons close the surface.
+    // Session-snapshot fallback rows have no projection row; a
+    // minimal stand-in entry keeps the content-pane contract there.
+    final entry = _chatController.networkChannelEntries
+        .where(
+          (candidate) =>
+              candidate.networkId == networkId &&
+              candidate.id.value == channel.id,
+        )
+        .firstOrNull;
+    if (!mounted) return;
+    setState(() {
+      _activeNetworkEntry =
+          entry ??
+          _standInNetworkChannelEntry(manager, networkId, channel);
+    });
+    // The row-open parity: the tap marks the projection row read.
+    if (entry != null) await _chatController.markOpened(entry);
+    if (mounted && _isNarrow) await _pushNarrowChat();
+  }
+
+  /// The fallback entry for session-snapshot rows with no projection row.
+  ChatListEntry _standInNetworkChannelEntry(
+    NetworkSessionManager manager,
+    String networkId,
+    Channel channel,
+  ) {
+    return ChatListEntry(
+      id: ChatEntryId.network(
+        ChatListEntryKind.networkChannel,
+        networkId: networkId,
+        id: channel.id,
+      ),
+      kind: ChatListEntryKind.networkChannel,
+      networkId: networkId,
+      networkName: manager.wallet.networks[networkId]?.name,
+      title: channel.name ?? channel.id,
+      createdAt: DateTime.now(),
     );
   }
 

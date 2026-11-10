@@ -34,6 +34,7 @@ private final class FaDuoLayoutChannel: NSObject {
   }
 
   private func installTraitObserverIfNeeded() {
+#if !FA_NO_FOLD_SDK27
     guard #available(iOS 27.1, *), observedController == nil,
           let controller else { return }
     observedController = controller
@@ -41,6 +42,7 @@ private final class FaDuoLayoutChannel: NSObject {
       [weak self] (_: FlutterViewController, _: UITraitCollection) in
       self?.notifySoon()
     }
+#endif
   }
 
   @objc private func notifySoon() {
@@ -65,6 +67,7 @@ private final class FaDuoLayoutChannel: NSObject {
 
   private func snapshot() -> [String: Any] {
     installTraitObserverIfNeeded()
+#if !FA_NO_FOLD_SDK27
     guard #available(iOS 27.1, *), let view = controller?.view else {
       return [
         "isDuo": false,
@@ -93,12 +96,31 @@ private final class FaDuoLayoutChannel: NSObject {
       "occlusions": occlusions.map(regionPayload),
       "divisions": divisions.map(regionPayload),
     ]
+#else
+    // CI's hosted SDK tops out at Xcode 26/iOS 26 — the iOS 27 fold APIs
+    // above do not exist there. Degrade to the hardware-model heuristic
+    // with a real safe area; the TestFlight builds run on Xcode 27
+    // without the FA_NO_FOLD_SDK27 condition (set via
+    // FLUTTER_XCODE_SWIFT_ACTIVE_COMPILATION_CONDITIONS in ci.yml).
+    let model = hardwareModel()
+    let safe = controller?.view?.safeAreaInsets ?? .zero
+    let isDuo = model == "iPhone19,4" || model.lowercased().contains("duo")
+    let payload: [String: Any] = [
+      "isDuo": isDuo,
+      "hardwareModel": model,
+      "verticalBarEdge": 0,
+      "safeArea": ["left": safe.left, "top": safe.top, "right": safe.right, "bottom": safe.bottom],
+      "occlusions": [Any](),
+      "divisions": [Any](),
+    ]
+#endif
     #if DEBUG
     print("[fah] duo snapshot: \(payload)")
     #endif
     return payload
   }
 
+#if !FA_NO_FOLD_SDK27
   @available(iOS 27.1, *)
   private func regionPayload(_ region: UIView.ReservedRegion) -> [String: Any] {
     [
@@ -113,6 +135,7 @@ private final class FaDuoLayoutChannel: NSObject {
       "active": region.isActive,
     ]
   }
+#endif
 }
 
 private var faDuoLayoutChannel: FaDuoLayoutChannel?
