@@ -92,6 +92,16 @@ if (-not (Test-Path $binDir)) {
 }
 $target = Join-Path $binDir "$BinaryName.exe"
 
+# issue #2052: an interrupted self-update can leave the previous binary parked
+# as fa.exe.old with NO fa.exe on disk -- every shell then answers "command not
+# found" and nothing on the machine points at the parked copy. Heal that state
+# before installing, so re-running the documented one-liner recovers the host.
+$asideExe = Join-Path $binDir "$BinaryName.exe.old"
+if (-not (Test-Path $target) -and (Test-Path $asideExe)) {
+    Write-Warn "found an interrupted update (fa.exe is missing, fa.exe.old is present) - restoring the parked binary"
+    Copy-Item $asideExe $target -Force
+}
+
 # ── 3. Resolve download URL ──────────────────────────────────────────────────
 
 # ── 4. Install bundle (or fall back to Dart) ────────────────────────────────
