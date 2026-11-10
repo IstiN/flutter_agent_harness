@@ -1,26 +1,4 @@
 {
-  "issue-1929": [
-    {
-      "leg": "dev",
-      "at": "2026-10-27T11:32:33Z",
-      "prompt": 381623,
-      "completion": 78380,
-      "total": 460003,
-      "cacheRead": 27842176,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-1930": [
-    {
-      "leg": "review",
-      "at": "2026-10-27T12:05:01Z",
-      "prompt": 157221,
-      "completion": 27864,
-      "total": 185085,
-      "cacheRead": 3193344,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1928": [
     {
       "leg": "review",
@@ -2899,6 +2877,17 @@
       "completion": 17323,
       "total": 132641,
       "cacheRead": 1558144,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2092": [
+    {
+      "leg": "review",
+      "at": "2026-11-10T12:18:46Z",
+      "prompt": 300954,
+      "completion": 33936,
+      "total": 334890,
+      "cacheRead": 10823872,
       "model": "glm-5.3-flash"
     }
   ]
