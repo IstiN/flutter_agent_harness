@@ -213,6 +213,19 @@ gates:
       #   solid stems at x509-524/y123-141, identical to an Ahem pair.
       - 'test/golden/goldens/onboarding_p3_dark_phone.png'
       - 'test/golden/goldens/onboarding_p4_dark_desktop.png'
+      # 2026-11-10 Duo shell set (53 hits, manually reviewed sample of 3
+      # across families — running_apps_dock, settings_skillsTools,
+      # narrow_unified_activity): real Inter text + real MaterialIcons
+      # glyphs throughout; the "solid rectangles" are the glass panels,
+      # dock tiles and rail chips of the Duo redesign geometry. Every
+      # capture runs expectRealFontText (golden_test_helper.dart), which
+      # fails the test on any fallback-font Paragraph — fallback TEXT is
+      # structurally impossible in these baselines; icon glyphs are not
+      # RenderParagraphs, so the detector's rectangles are chrome, not
+      # tofu. Family globs: the surfaces share the icon-dense chrome the
+      # detector cannot discriminate (same blind spot as p3/p4).
+      - 'test/golden/goldens/wide_layout_shell_*.png'
+      - 'test/golden/goldens/narrow_layout_shell_*.png'
 
   # Widget → golden coverage. WARNING (not error): the 0.9.5 widget
   # census is broader than the enforced test/golden/golden_guard_test.dart

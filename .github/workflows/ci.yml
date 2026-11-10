@@ -2283,6 +2283,18 @@ jobs:
         working-directory: flutter_app
         shell: bash
         run: flutter test test/golden
+      # flutter_test writes the expected/actual/diff triple for every
+      # failed comparison into goldens/failures/ — upload them so a
+      # hosted-vs-capture drift can be EYEBALLED from the artifacts
+      # instead of triangulated from percentages (the 2026-11-10
+      # activity-golden red that passed locally).
+      - name: Upload golden failure diffs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: golden-failure-diffs
+          path: flutter_app/test/golden/goldens/failures/
+          if-no-files-found: ignore
 
   flutter-app-lock-smoke:
     name: Lockfile smoke (${{ matrix.os }} release)
