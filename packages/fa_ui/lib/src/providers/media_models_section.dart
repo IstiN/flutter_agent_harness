@@ -17,10 +17,12 @@ import 'package:fa_ui/src/widgets/settings_scaffold.dart';
 
 /// The settings "Media models" section: one row per [MediaSlot] showing the
 /// slot's override (`model · provider`), the explicit "Same as main
-/// connection" opt-in (gh-1844), or "Not configured" — the main connection
-/// is never shown as an inherited default. Tapping a row pushes the
-/// two-step flow ([MediaSlotProviderPickerPage] → [MediaSlotModelPage]);
-/// picking "Same as main connection" saves the opt-in override.
+/// connection" opt-in (gh-1844), the explicit "Unsupported" opt-out
+/// (issue #2085 — the capability is removed), or "Not configured" — the
+/// main connection is never shown as an inherited default. Tapping a row
+/// pushes the two-step flow ([MediaSlotProviderPickerPage] →
+/// [MediaSlotModelPage]); picking "Same as main connection" or
+/// "Unsupported" saves the corresponding override.
 ///
 /// The store comes from [store] or the nearest [MediaModelsScope]; the whole
 /// section hides when no store is available (tests pumping the bare form).
@@ -146,10 +148,14 @@ class MediaModelsSection extends StatelessWidget {
         ? null
         : providerForBaseUrl(override.baseUrl, registry);
     final unconfigured = override == null;
+    final unsupported = override?.unsupported ?? false;
     final summary = unconfigured
         // gh-1844: no override = UNCONFIGURED — never an inherited main
         // endpoint.
         ? strings.mediaModelsUnconfiguredSummary
+        // Issue #2085: the explicit opt-OUT state.
+        : unsupported
+        ? strings.mediaModelsUnsupported
         : override.useMainConnection
         ? strings.mediaModelsFallbackSummary
         : strings.mediaModelsOverrideSummary(
@@ -159,8 +165,11 @@ class MediaModelsSection extends StatelessWidget {
             override.modelId,
           );
     // Hierarchy: a configured slot's summary is secondary ink; the dim
-    // tertiary ink is reserved for the unconfigured callout.
-    final summaryColor = unconfigured ? tokens.ink3 : tokens.ink2;
+    // tertiary ink is reserved for the unconfigured and unsupported
+    // callouts (the capability is off in both).
+    final summaryColor = unconfigured || unsupported
+        ? tokens.ink3
+        : tokens.ink2;
     return InkWell(
       onTap: () => _editSlot(context, store, slot),
       child: ConstrainedBox(
