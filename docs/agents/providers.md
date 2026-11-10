@@ -57,7 +57,7 @@ Three supported GitHub credential shapes (`lib/src/providers/copilot_oauth.dart`
 | Fine-grained PAT (pasted or env) | **PAT mode:** the exchange is skipped entirely — the raw PAT is the Bearer against the configured base URL (the seat's tier host), with the official Copilot CLI's first-party identity headers (`copilot-integration-id: copilot-developer-cli`, `user-agent: copilot/<fa-version> (<os>) term/unknown`) — the only request shape the Copilot API accepts a PAT with. No 401 refresh-retry (nothing to refresh). Requires the token's **"Copilot Requests"** permission and a Copilot seat |
 | Classic PAT (`ghp_…`) | Never supported by Copilot — rejected at paste time |
 
-Headless flows: `--provider copilot --model <id>` with `COPILOT_GITHUB_TOKEN` (OAuth or fine-grained PAT), or a saved entry's key slot (`FA_KEY_COPILOT_<NAME>`). `/provider export` copies the saved Copilot account's full token to the clipboard (picker on several accounts; the token never prints to the transcript).
+Headless flows: `--provider copilot --model <id>` with `COPILOT_GITHUB_TOKEN` (OAuth or fine-grained PAT), or a saved entry's key slot (`FA_KEY_COPILOT_<NAME>`). `/provider export cicd [auth]` exports the CURRENT provider for CI/CD — the full JSON (config + embedded secret) or, with `auth`, the bare secret value for the secrets store; `/provider export` + `/provider import` move the current provider between machines via a passphrase-encrypted clipboard container (secrets never print to the transcript).
 
 ## CLI flags
 

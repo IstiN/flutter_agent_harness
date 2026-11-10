@@ -666,10 +666,12 @@ SKILLS AND CONTEXT FILES
                     FA_KEY_COPILOT_<NAME> (env FA_COPILOT_CLIENT_ID
                     overrides the device-flow client id); the short-lived
                     Copilot token refreshes automatically
-                    /provider export copies the saved Copilot account's
-                    token to the clipboard (several accounts → the account
-                    picker) — one line: token copied to clipboard; the
-                    token itself never prints
+                    /provider export cicd [auth] exports the CURRENT
+                    provider for CI/CD — the full JSON (config + embedded
+                    secret) or, with auth, the bare secret value for the
+                    secrets store; /provider export + /provider import move
+                    the current provider between machines via a
+                    passphrase-encrypted clipboard container
   /providers         provider queue editor (list/add/remove/move/test)
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode
