@@ -2282,6 +2282,12 @@ jobs:
       - name: flutter test/golden (issue #1856 pinned-font env)
         working-directory: flutter_app
         shell: bash
+        # TZ=UTC: the golden clock contract (golden_test_helper.dart) —
+        # activity/session rows render fixed instants in the OS-local
+        # zone; baselines embed UTC renderings, the runner's zone must
+        # match or the helper fails loudly.
+        env:
+          TZ: UTC
         run: flutter test test/golden
       # flutter_test writes the expected/actual/diff triple for every
       # failed comparison into goldens/failures/ — upload them so a
