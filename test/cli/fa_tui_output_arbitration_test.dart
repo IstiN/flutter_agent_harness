@@ -482,6 +482,7 @@ void main() {
       final runRow = paintedRowOf(frames.text, '◐ agent_message: msg_1');
       final settledRow = paintedRowOf(frames.text, '✔ agent_message: msg_1 0s');
       expect(settledRow, isNotNull, reason: 'the settled card must paint');
+      expect(runRow, isNotNull, reason: 'the running card must paint');
       expect(
         settledRow,
         isNot(equals(runRow)),
@@ -539,15 +540,33 @@ void main() {
       controller.sendOutput('unterminated tail two');
       await waitForIt(() => frames.text.contains('unterminated tail two'));
       expect(controller.outputTailOpenForTest, isTrue);
-      // An empty-buffer flush (the timer fires after the buffer was
-      // already drained) must not touch the flag — the early-return
-      // ordering stays BEFORE any reset.
-      controller.sendOutput(''); // arms the timer on an empty buffer
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      // An empty-buffer flush must not touch the flag — the
+      // early-return ordering stays BEFORE any reset. Pinned
+      // deterministically: sendBusy() is a non-output message, and
+      // _send() flushes the buffer synchronously ahead of every
+      // non-output message — no 16ms timer to starve (a starved timer
+      // made the old fixed-80ms pin vacuously pass). The open tail is
+      // provably preserved…
+      controller.sendBusy(true, source: 'run');
       expect(
         controller.outputTailOpenForTest,
         isTrue,
-        reason: 'an empty flush must leave the tail flag untouched',
+        reason:
+            'an empty flush must leave an OPEN tail untouched — the '
+            'empty early return precedes any reset',
+      );
+      // …and a CLOSED tail is not reopened by an empty flush either —
+      // the truth is only ever re-derived from REAL flushed text.
+      controller.sendOutput('complete line two\n');
+      await waitForIt(() => frames.text.contains('complete line two'));
+      expect(controller.outputTailOpenForTest, isFalse);
+      controller.sendBusy(false, source: 'run');
+      expect(
+        controller.outputTailOpenForTest,
+        isFalse,
+        reason:
+            'an empty flush must leave a CLOSED tail untouched — the '
+            'flag is only re-derived from real flushed text',
       );
     } finally {
       keys.add([0x03]);
