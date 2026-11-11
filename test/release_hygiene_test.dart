@@ -1253,6 +1253,223 @@ gh release create "v9.9.9" \
         expect(run.log.where((l) => l.contains('issue create')), isEmpty);
       },
     );
+
+    // gh-2105 — the sweeper's issue misdirected the RCA for draft
+    // v1.0.697: the static prose blames "a `gh release create` step died
+    // between asset upload and publish — check the creating run's failed
+    // step", but the gh-1801 staging draft's publish owner is the TAG
+    // TRAIN (ci.yml's push run on the tag — release-provenance is the
+    // sole publish point), a DIFFERENT run the sweep issue never named.
+    // For v1.0.697 the creating job was green (build-extension minted the
+    // tag + draft) while the train's quality gate red on the sqlite3
+    // hook brownout; a superseded failed train is never rerun
+    // (verify_pubdev_release.sh heals the LATEST tag only), so the draft
+    // rotted to the sweeper. When the deleted draft's tag has a failed
+    // push train, the issue must name it (URL + conclusion + failed
+    // jobs) — the AC2 "points at its broken step" contract.
+    group('gh-2105 — the sweep issue names a failed tag train', () {
+      final staleDate = '2020-01-01T00:00:00Z';
+      String markerDraft(String tag, int id) => jsonEncode([
+        {
+          'tag_name': tag,
+          'id': id,
+          'draft': true,
+          'created_at': staleDate,
+          'author': {'login': 'IstiN', 'type': 'User'},
+          'body':
+              'Release $tag\n'
+              '<!-- release-draft-owner: run/42566734746/job/build-extension -->',
+        },
+      ]);
+      final trainUrl =
+          'https://github.com/OWNER/REPO/actions/runs/4256724426';
+      Map<String, String> sweepFixtures({
+        required String trainRuns,
+        String trainJobs = '{"jobs":[]}',
+      }) => {
+        'releases.json': markerDraft('v1.0.697', 697),
+        'issues.tsv': '',
+        'runs.tsv': '',
+        'train-runs.json': trainRuns,
+        'train-jobs.json': trainJobs,
+      };
+
+      test(
+        'a stale pipeline draft whose tag train failed names the train run '
+        'and its failed jobs',
+        () {
+          final run = runSweeper(
+            'train-failed',
+            sweepFixtures(
+              trainRuns: jsonEncode([
+                {
+                  'databaseId': 4256724426,
+                  'conclusion': 'failure',
+                  'url': trainUrl,
+                },
+              ]),
+              trainJobs: jsonEncode({
+                'jobs': [
+                  {
+                    'name': 'Terminal visual (PTY screenshots, PR)',
+                    'conclusion': 'failure',
+                  },
+                  {
+                    'name': 'Quality gate',
+                    'conclusion': 'failure',
+                  },
+                ],
+              }),
+            ),
+          );
+          expect(
+            run.log,
+            contains('api -X DELETE repos/OWNER/REPO/releases/697'),
+            reason: 'the stale pipeline draft is still deleted',
+          );
+          expect(run.body, isNotNull, reason: 'the sweep issue is still filed');
+          expect(
+            run.body,
+            contains('actions/runs/4256724426'),
+            reason:
+                'the failed tag train must be named in the issue — it, '
+                'not the creating run, is the broken step for a staging '
+                'draft that never published',
+          );
+          expect(
+            run.body,
+            contains('concluded failure'),
+            reason: 'the train conclusion rides the issue',
+          );
+          expect(
+            run.body,
+            contains('Terminal visual (PTY screenshots, PR)'),
+            reason:
+                'the failed jobs are named so the reader lands on the '
+                'broken step without re-deriving the run graph',
+          );
+          expect(
+            run.body,
+            contains('Quality gate'),
+          );
+          expect(
+            run.body,
+            isNot(contains('died between asset upload and publish')),
+            reason:
+                'the generic create-death prose must NOT fire when the '
+                'real blocker is known — for a failed train the create '
+                'step did not die, the publish owner never ran',
+          );
+          expect(
+            run.body,
+            contains('Rerun the train'),
+            reason: 'the recovery action is named explicitly',
+          );
+        },
+      );
+
+      test(
+        'a stale pipeline draft whose train succeeded keeps the '
+        'create-death prose (there the create step really did die)',
+        () {
+          final run = runSweeper(
+            'train-green',
+            sweepFixtures(
+              trainRuns: jsonEncode([
+                {
+                  'databaseId': 4256724426,
+                  'conclusion': 'success',
+                  'url': trainUrl,
+                },
+              ]),
+            ),
+          );
+          expect(run.body, isNotNull);
+          expect(
+            run.body,
+            contains('died between asset upload and publish'),
+            reason:
+                'no failed train found — the static prose stays as the '
+                'best available diagnosis',
+          );
+          expect(
+            run.body,
+            isNot(contains('concluded failure')),
+            reason: 'no failed-train line may appear for a green train',
+          );
+        },
+      );
+
+      test(
+        'an unreadable train lookup degrades to the static prose and never '
+        'blocks the delete + issue filing',
+        () {
+          final run = runSweeper(
+            'train-junk',
+            sweepFixtures(trainRuns: 'not-json-at-all'),
+          );
+          expect(
+            run.log,
+            contains('api -X DELETE repos/OWNER/REPO/releases/697'),
+            reason: 'the delete is the sweeper\'s contract — diagnosis '
+                    'must never gate it',
+          );
+          expect(run.body, isNotNull, reason: 'the issue is still filed');
+          expect(
+            run.body,
+            contains('died between asset upload and publish'),
+            reason:
+                'an unreadable lookup degrades to the static prose — '
+                'never a missing diagnosis line, never a red sweep',
+          );
+          expect(
+            run.stdoutText,
+            isNot(contains('::error::')),
+            reason: 'the sweep must stay green through a lookup blip',
+          );
+        },
+      );
+
+      test('fresh and human drafts never trigger a train lookup', () {
+        final freshDate = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String()
+            .substring(0, 19);
+        final run = runSweeper('no-lookup', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'v9.9.8',
+              'id': 888,
+              'draft': true,
+              'created_at': staleDate,
+              'author': {'login': 'somehuman', 'type': 'User'},
+              'body': 'human WIP',
+            },
+            {
+              'tag_name': 'v9.9.9',
+              'id': 999,
+              'draft': true,
+              'created_at': '${freshDate}Z',
+              'author': {'login': 'github-actions[bot]', 'type': 'Bot'},
+              'body': 'fresh staging draft',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        expect(
+          run.log.where((l) => l.contains('--workflow')),
+          isEmpty,
+          reason:
+              'only DELETED pipeline drafts are diagnosed — fresh drafts '
+              '(an in-flight run may own them) and human drafts (kept, '
+              'E1) are never touched, so the train lookup must not run '
+              'for them',
+        );
+        expect(run.log.where((l) => l.contains('-X DELETE')), isEmpty);
+      });
+    });
   });
 
   // AC4 — truthful Latest (provenance-owned `latest`, gh-1801 rework) moved

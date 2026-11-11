@@ -572,7 +572,29 @@ case "\$cmd" in
       *) : ;;
     esac
     ;;
-  run) [ "\$2" = "list" ] && cat "\$GH_STUB_DIR/runs.tsv" 2>/dev/null || true ;;
+  run)
+    if [ "\$2" = "list" ] && printf '%s' "\$*" | grep -q -- '--workflow'; then
+      # gh-2105: the sweeper's tag-train lookup
+      # (gh run list --workflow ci.yml --branch <tag>) — served from
+      # train-runs.json when planted, an empty array otherwise. The
+      # plain --branch fallback below must keep hitting runs.tsv (the
+      # existing creating-run fixtures).
+      if [ -s "\$GH_STUB_DIR/train-runs.json" ]; then
+        cat "\$GH_STUB_DIR/train-runs.json"
+      else
+        echo "[]"
+      fi
+    elif [ "\$2" = "view" ] && printf '%s' "\$*" | grep -q -- '--json jobs'; then
+      # gh-2105: the failed-train job names (gh run view <id> --json jobs).
+      if [ -s "\$GH_STUB_DIR/train-jobs.json" ]; then
+        cat "\$GH_STUB_DIR/train-jobs.json"
+      else
+        echo '{"jobs":[]}'
+      fi
+    else
+      [ "\$2" = "list" ] && cat "\$GH_STUB_DIR/runs.tsv" 2>/dev/null || true
+    fi
+    ;;
   issue)
     if [ "\$2" = "list" ]; then cat "\$GH_STUB_DIR/issues.tsv" 2>/dev/null || true; exit 0; fi
     want_url=""

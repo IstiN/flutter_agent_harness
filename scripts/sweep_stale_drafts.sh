@@ -75,6 +75,7 @@ drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max
 deleted=""
 deleted_tags=""
 deleted_count=0
+failed_trains=0
 humans=""
 human_tags=""
 fresh_count=0
@@ -105,7 +106,39 @@ while IFS=$'\t' read -r bucket tag id created author marker_run; do
           --json url --jq '.[0].url // empty' 2>/dev/null || true)
       fi
       [ -n "$run_url" ] || run_url="no run on ref \`$tag\` (dispatch-time draft — the creating step died mid-run)"
-      deleted="$deleted- \`$tag\` — created $created by @$author; creating run: $run_url\n"
+      # gh-2105: the staging draft's publish owner is the TAG TRAIN
+      # (ci.yml's push run on the tag ref — release-provenance is the
+      # sole publish point, gh-1801). When that train failed, the
+      # creating run named above is NOT the broken step — the train is,
+      # and a superseded failed train is never rerun
+      # (verify_pubdev_release.sh heals the LATEST tag only). Name it
+      # (URL + conclusion + failed jobs) so the sweep issue points at
+      # the true blocker. Any lookup failure degrades to the static
+      # prose below — the delete + issue filing must never depend on
+      # the diagnosis.
+      train_line=""
+      if [ "$tag" != "(untagged)" ]; then
+        train_json=$(gh run list --repo "$repo" --workflow ci.yml \
+          --branch "$tag" --event push --limit 5 \
+          --json databaseId,conclusion,url 2>/dev/null || echo "[]")
+        failed_train=$(printf '%s' "$train_json" | jq -cr '
+          ([.[] | select(.conclusion != "success" and .conclusion != null)][0]
+            | if . == null then empty else
+                {c: .conclusion, u: (.url // ""), i: .databaseId}
+              end)' 2>/dev/null || echo "")
+        if [ -n "$failed_train" ]; then
+          train_conclusion=$(printf '%s' "$failed_train" | jq -r '.c // "unknown"' 2>/dev/null || echo "unknown")
+          train_url_found=$(printf '%s' "$failed_train" | jq -r '.u // ""' 2>/dev/null || echo "")
+          train_id=$(printf '%s' "$failed_train" | jq -r '.i // ""' 2>/dev/null || echo "")
+          failed_jobs=$(gh run view "$train_id" --repo "$repo" --json jobs 2>/dev/null \
+            | jq -r '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || echo "")
+          failed_trains=$((failed_trains + 1))
+          train_line="  - tag train: ${train_url_found:-<url unavailable>} concluded ${train_conclusion:-unknown} — the staged draft was never published (release-provenance, the sole publish point, is gated behind the tag train; a superseded failed train is never rerun — verify_pubdev_release.sh heals the LATEST tag only)"
+          [ -n "$failed_jobs" ] && train_line="$train_line; failed jobs: $failed_jobs"
+          train_line="$train_line\n"
+        fi
+      fi
+      deleted="$deleted- \`$tag\` — created $created by @$author; creating run: $run_url\n$train_line"
       deleted_tags="$deleted_tags $tag"
       ;;
   esac
@@ -132,7 +165,13 @@ if [ "$stale_count" -gt 0 ]; then
     echo
     echo "**Fresh drafts (<$((max_age / 3600))h):** $fresh_count — untouched (an in-flight run may own them)"
     echo
-    echo "A stale draft means a \`gh release create\` step died between asset upload and publish — check the creating run's failed step. Recurrence means a lifecycle guard is missing (issue #282)."
+    if [ "$failed_trains" -gt 0 ]; then
+      echo "**Failed tag trains named above:** $failed_trains"
+      echo
+      echo "A stale draft whose tag train failed means the publish owner never ran — the draft was the gh-1801 staging draft and release-provenance (its sole publish point) is gated behind the failed train. Rerun the train if the tag should still ship; recurrence means a lifecycle guard is missing (issue #282)."
+    else
+      echo "A stale draft means a \`gh release create\` step died between asset upload and publish — check the creating run's failed step. Recurrence means a lifecycle guard is missing (issue #282)."
+    fi
     echo
     echo "---"
     echo "Auto-filed by the daily draft sweeper; auto-closes when a sweep finds nothing stale."
@@ -161,7 +200,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 echo "sweeper: deleted=${deleted_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"
