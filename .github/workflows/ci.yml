@@ -2264,7 +2264,7 @@ jobs:
       # engine's text stack; nightly renders them on the same 3.47.4.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
       - name: Create placeholder .env asset
@@ -2329,7 +2329,7 @@ jobs:
       # Same pinned SDK as the nightly build-release legs (#281).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -2538,7 +2538,7 @@ jobs:
           # re-resolves a new engine build on every 3.47.x patch drop;
           # the rev normalization absorbs the path churn, the pin keeps
           # the builds comparable across legs).
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           # Same cache as the sibling legs (office-addin-suite et al):
           # the pin — not the cache — keeps the engine rev stable, and
@@ -2906,7 +2906,7 @@ jobs:
       # in a PR never restores a poisoned cache (E1).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -2950,7 +2950,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -3063,7 +3063,7 @@ jobs:
       # nightly leg pin 3.47.4 — a release-path build must share it.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
 
       - name: Create placeholder .env asset
@@ -3222,7 +3222,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -4414,7 +4414,7 @@ jobs:
       # gates track. Bump consciously, with any floor reseed in the same PR.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -4540,7 +4540,7 @@ jobs:
       # canvaskit/skwasm churn, the pin keeps every build comparable.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 

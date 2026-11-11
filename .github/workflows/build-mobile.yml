@@ -846,7 +846,7 @@ jobs:
       - name: Setup Flutter (self-hosted)
         uses: ./.github/actions/setup-flutter-selfhosted
         with:
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
 
       - name: Setup environment (self-hosted)
         run: |

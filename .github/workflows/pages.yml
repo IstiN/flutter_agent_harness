@@ -55,7 +55,7 @@ jobs:
           # artifacts move under a new rev-hash dir and every size gate on
           # the artifact false-reds. Bump this pin consciously in the same
           # PR that reseeds any floor a real size delta moved.
-          flutter-version: '3.47.4'
+          flutter-version: '3.47.7'
           channel: stable
 
       # gh-1275 AC3 (web leg): fail fast before the web build — the full
