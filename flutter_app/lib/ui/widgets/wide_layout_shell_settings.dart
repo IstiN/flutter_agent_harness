@@ -9,9 +9,16 @@ part of 'wide_layout_shell.dart';
 /// transcript; narrow layouts use a full-route category drill-down.
 extension _WideLayoutShellSettings on _WideLayoutShellState {
   Widget _buildSettingsPanel({bool collapsed = false}) {
+    // Narrow only: the floating dock scrolls over the category list, so its
+    // occupied height is reserved as scroll padding. Desktop sidebars keep
+    // the legacy geometry (no dock, raw MediaQuery insets).
+    final dockReserve = _isNarrow
+        ? MessengerFloatingDockInsets.bottomOf(context)
+        : 0.0;
     return SettingsCategoryPanel(
       selected: _settingsCategory,
       collapsed: collapsed,
+      bottomReserve: dockReserve,
       onSelected: (category) {
         _settingsCategory = category;
         _selectSection(_WideShellSection.settings);

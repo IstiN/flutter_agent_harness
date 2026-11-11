@@ -1,7 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart'
+    show MessengerFloatingDockInsets;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
@@ -223,6 +227,7 @@ final class ActivityListPanel extends StatelessWidget {
                           controller: controller,
                           sessions: sessions,
                           onSelect: onSelect,
+                          compact: compact,
                         ),
                 ),
               ],
@@ -366,12 +371,18 @@ final class _ActivityList extends StatelessWidget {
     required this.sessions,
     this.onSelect,
     this.topPadding = 0,
+    this.compact = false,
   });
 
   final ActivityController controller;
   final List<FlutterManagedSession> sessions;
   final ValueChanged<String>? onSelect;
   final double topPadding;
+
+  /// Compact (phone) host: the floating dock scrolls OVER this list, so the
+  /// dock's occupied height is reserved as scroll padding — the final rows
+  /// stay reachable above the pill. Desktop keeps the plain 4pt inset.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +393,12 @@ final class _ActivityList extends StatelessWidget {
     final selectedId = controller.selectedSession?.id;
     return ListView(
       key: const ValueKey('activityList'),
-      padding: EdgeInsets.only(top: topPadding + 4, bottom: 4),
+      padding: EdgeInsets.only(
+        top: topPadding + 4,
+        bottom: compact
+            ? math.max<double>(4, MessengerFloatingDockInsets.bottomOf(context))
+            : 4,
+      ),
       children: [
         if (running.isNotEmpty) ...[
           _ListSectionLabel(label: context.l10n.activityRunning),
@@ -730,7 +746,13 @@ final class _ActivityDetail extends StatelessWidget {
         Expanded(
           child: SingleChildScrollView(
             key: const ValueKey('activityDetailScroll'),
-            padding: const EdgeInsets.all(18),
+            // Compact (phone): reserve the floating dock's occupied height
+            // so the reading pane's tail scrolls above the pill (desktop
+            // keeps the plain 18pt frame).
+            padding: compact
+                ? EdgeInsets.fromLTRB(18, 18, 18,
+                    18 + MessengerFloatingDockInsets.bottomOf(context))
+                : const EdgeInsets.all(18),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),

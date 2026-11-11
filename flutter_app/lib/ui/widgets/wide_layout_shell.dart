@@ -818,9 +818,21 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     // panels are flush with the window edge and clear it themselves —
     // ChatListPanel adds the same inset when not compact).
     final inset = math.max(8.0, MediaQuery.paddingOf(context).top);
+    // Apps is the one narrow section that owns its SafeArea: the launcher's
+    // Scaffold consumes the phone status bar itself. Removing the top
+    // padding here means the shared inset applies exactly once — the macOS
+    // titlebar breathing room on desktop, the status bar on phones — and
+    // never status bar + panel SafeArea together (the giant empty iOS Apps
+    // gap). padding.top is 0 on desktop, so this is a no-op there.
     final positioned = Padding(
       padding: EdgeInsets.only(top: inset),
-      child: base,
+      child: _section == _WideShellSection.apps
+          ? MediaQuery.removePadding(
+              context: context,
+              removeTop: true,
+              child: base,
+            )
+          : base,
     );
     final showPresentation =
         _presentationMounted || _presentationReveal.value > 0;
@@ -1748,7 +1760,13 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     _narrowChatRouteVisible = true;
     final route = MaterialPageRoute<void>(
       builder: (routeContext) => service == null
-          ? _buildChatArea(FahColors.of(routeContext), narrowRoute: true)
+          ? _buildChatArea(
+              FahColors.of(routeContext),
+              narrowRoute: true,
+              // The chat's MediaQuery override resolves from the ROUTE's
+              // context so keyboard-inset changes rebuild it (iOS resize).
+              narrowChatContext: routeContext,
+            )
           : ListenableBuilder(
               // The route tracks the MANAGER too: an active-session switch
               // under an open route (the subagent chips, or the subagent
@@ -1771,6 +1789,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                   child: _buildChatArea(
                     FahColors.of(routeContext),
                     narrowRoute: true,
+                    // The chat's MediaQuery override resolves from the
+                    // ROUTE's context so keyboard-inset changes rebuild it
+                    // (iOS resize).
+                    narrowChatContext: routeContext,
                   ),
                 );
               },

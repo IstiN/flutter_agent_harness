@@ -51,6 +51,7 @@ class SettingsCategoryPanel extends StatelessWidget {
     this.collapsed = false,
     this.showHeader = true,
     this.topPadding = 0,
+    this.bottomReserve = 0,
   });
 
   final SettingsCategory? selected;
@@ -61,11 +62,21 @@ class SettingsCategoryPanel extends StatelessWidget {
   /// Top inset supplied by a floating host header on narrow layouts.
   final double topPadding;
 
+  /// Extra scroll padding under the floating phone dock — the narrow
+  /// shell passes the dock's occupied height; desktop keeps 0 and the
+  /// legacy 16pt inset.
+  final double bottomReserve;
+
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     final list = ListView(
-      padding: EdgeInsets.fromLTRB(8, topPadding + 4, 8, 16),
+      padding: EdgeInsets.fromLTRB(
+        8,
+        topPadding + 4,
+        8,
+        16 + bottomReserve,
+      ),
       children: [
         for (final category in SettingsCategory.values)
           SidebarNavItem(

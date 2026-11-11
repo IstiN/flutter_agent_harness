@@ -381,6 +381,40 @@ final class MessengerGlassBodyInsets extends InheritedWidget {
       top != oldWidget.top;
 }
 
+/// The floating phone dock's occupied bottom height, for scroll views that
+/// run underneath it.
+///
+/// The narrow shell scaffold sets `extendBody` while the dock rides in its
+/// `bottomNavigationBar` slot, so the ambient [MediaQuery] padding.bottom
+/// inside the narrow body is INFLATED to exactly the dock's occupied height
+/// (home indicator + 8pt separation gap + 56pt pill). Sections consume that
+/// value as scroll padding so their final rows stay reachable above the
+/// glass instead of being cut behind the pill.
+///
+/// Desktop layouts never build the narrow scaffold: their raw inset stays
+/// 0 (and the desktop Duo camera profile seeds at most 34), which never
+/// reaches [minInflatedBottom] — so [bottomOf] resolves to 0 there and
+/// every caller keeps its legacy padding, keeping desktop geometry
+/// byte-identical.
+final class MessengerFloatingDockInsets {
+  MessengerFloatingDockInsets._();
+
+  /// 56pt pill ([MessengerBottomNavigation.height]) + 8pt bottom gap
+  /// ([MessengerBottomNavigation.bottomGap]) — the smallest inflated value
+  /// the narrow scaffold can report. Raw device safe areas (iOS home
+  /// indicator ≈ 34) stay below it, so only the scaffold's inflated inset
+  /// qualifies. (Literal: importing the controls file here would create an
+  /// import cycle.)
+  static const double minInflatedBottom = 64;
+
+  /// The dock's occupied bottom height, or 0 when the ambient MediaQuery
+  /// was not inflated for the floating dock (desktop, standalone hosts).
+  static double bottomOf(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return bottom >= minInflatedBottom ? bottom : 0;
+  }
+}
+
 /// Shared simple messenger panel: one header and a full-size scrolling body.
 /// Scroll views consume [MessengerGlassBodyInsets] internally. Hosts
 /// with extra banner/filter rows use [MessengerGlassUnderlay] directly.
