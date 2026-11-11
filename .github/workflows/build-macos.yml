@@ -345,7 +345,7 @@ jobs:
           # diagnostic), and scripts/assert_macos_min_platform.sh asserts
           # the post-config state. Same 3.47.7 the extension + Pages legs
           # already pin.
-          flutter-version: '3.47.7'
+          flutter-version: '3.47.4'
 
       - name: Setup host toolchains
         run: |
@@ -1364,7 +1364,7 @@ jobs:
           # legs). The old unpinned `channel: stable` floated the engine
           # per run — one of the two ways the release and Pages legs
           # diverged.
-          flutter-version: '3.47.7'
+          flutter-version: '3.47.4'
           channel: stable
 
       - name: dart pub get (root)
