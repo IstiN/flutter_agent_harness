@@ -1,15 +1,4 @@
 {
-  "pr-1939": [
-    {
-      "leg": "review",
-      "at": "2026-10-28T06:49:34Z",
-      "prompt": 75733,
-      "completion": 18073,
-      "total": 93806,
-      "cacheRead": 962816,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-1934": [
     {
       "leg": "dev",
@@ -2806,6 +2795,17 @@
       "completion": 34795,
       "total": 240787,
       "cacheRead": 3346688,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2108": [
+    {
+      "leg": "dev",
+      "at": "2026-11-11T07:11:31Z",
+      "prompt": 146206,
+      "completion": 25465,
+      "total": 171671,
+      "cacheRead": 3267008,
       "model": "glm-5.3-flash"
     }
   ]
