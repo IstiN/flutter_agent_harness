@@ -2805,6 +2805,15 @@
       "total": 134840,
       "cacheRead": 5255232,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-11T07:35:12Z",
+      "prompt": 148518,
+      "completion": 10618,
+      "total": 159136,
+      "cacheRead": 2070528,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-2108": [
