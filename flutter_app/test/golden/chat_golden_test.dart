@@ -118,6 +118,22 @@ Future<void> _pumpChatScreen(
 }
 
 void main() {
+  /// Kills the composer caret for the capture. The composer autofocuses
+  /// via post-frame callbacks, and on the slower hosted runner a late
+  /// requestFocus can land between the last pump and the capture — the
+  /// 2×20px caret then enters the frame and drifts the golden by 0.01%
+  /// (the hosted chat_image/chat_bubble_1_image failures). Making the
+  /// field's focus node un-focusable turns every pending/late
+  /// requestFocus into a no-op, so the caret can never paint.
+  Future<void> disableComposerCaret(WidgetTester tester) async {
+    for (final element in find.byType(EditableText).evaluate()) {
+      (element.widget as EditableText).focusNode
+        ..canRequestFocus = false
+        ..unfocus();
+    }
+    await tester.pump();
+  }
+
   setUpAll(() async {
     await ensureGoldenFonts();
     // Icon fonts are not registered from the test asset bundle — without
@@ -307,14 +323,14 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 100));
           await tester.pump();
         }
+        // Thumbnails decode on the real event loop; give the hop time.
+        for (var i = 0; i < 6; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+        }
         await tester.pumpAndSettle();
       });
-      // Drop the composer focus so the caret never enters the frame: the
-      // caret x follows text shaping, which differs by a few px between
-      // the local bake and the hosted macOS runner (the 0.01% chat_image
-      // CI drift) — an unfocused composer makes the golden deterministic.
-      FocusManager.instance.primaryFocus?.unfocus();
-      await tester.pump();
+      await disableComposerCaret(tester);
       await expectGolden(tester, 'chat_image');
     });
 
@@ -508,6 +524,7 @@ void main() {
       }
       await tester.pumpAndSettle();
     });
+    await disableComposerCaret(tester);
   }
 
   group('user bubble attachments (issue #461)', () {
