@@ -1,15 +1,6 @@
 {
   "issue-1934": [
     {
-      "leg": "dev",
-      "at": "2026-10-28T08:10:47Z",
-      "prompt": 1545535,
-      "completion": 133600,
-      "total": 1679135,
-      "cacheRead": 46646720,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-28T10:31:08Z",
       "prompt": 3360724,
@@ -2844,6 +2835,17 @@
       "completion": 20677,
       "total": 134692,
       "cacheRead": 1126144,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2094": [
+    {
+      "leg": "dev",
+      "at": "2026-11-11T08:51:36Z",
+      "prompt": 211548,
+      "completion": 40877,
+      "total": 252425,
+      "cacheRead": 5649088,
       "model": "glm-5.3-flash"
     }
   ]
