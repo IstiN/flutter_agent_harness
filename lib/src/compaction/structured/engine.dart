@@ -510,64 +510,30 @@ final class StructuredCompactor {
       if (view == null) return true;
       if (_hideableEntries(view.ledger).isEmpty) break;
 
-      // gh-2096: the cross-run latch — while latched the judge
+      // gh-2096: the cross-run latch gate — while latched the judge
       // contributes nothing unless the probe window elapsed (or the
       // configured class changed, which probes at once). This run makes
-      // exactly one judge decision, then the deterministic hide decides.
-      if (_judgeLatched && !_latchedProbeDue) {
-        if (!await _latchedSkipHide(trigger, before)) break;
-        return true;
-      }
+      // exactly one judge decision, then the deterministic hide decides;
+      // a non-null gate result is that decision — both skip outcomes
+      // converge on the loop's own successful-verdict return.
+      if (await _latchedGate(trigger, before) != null) return true;
 
       final call = await _callJudge(view);
-      if (call.failure != null) {
-        // F1: a failed judge call hides nothing — but since #541 it is
-        // COUNTED, not fatal: one retry, then the deterministic
-        // judge-less hide, so a dead judge can no longer brick the run.
-        if (_judgeLatched) {
-          // The probe paid the budget and lost: count + persist, then
-          // the deterministic hide decides — NO retry (one probe per
-          // window; the retry ladder is the tax the latch exists to end).
-          await _persistProbeFailure();
-          if (!await _registerJudgeFailure(
-            trigger,
-            call.failure!,
-            shape: call.shape,
-            latched: true,
-          )) {
-            break;
-          }
-          return true;
-        }
-        if (!await _registerJudgeFailure(
+      // F1: a failed judge call hides nothing — but since #541 it is
+      // COUNTED, not fatal: one retry, then the deterministic
+      // judge-less hide, so a dead judge can no longer brick the run.
+      // A garbage answer decided nothing — a failure like any other.
+      final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
+      if (picks == null) {
+        if (!await _handleJudgeFailure(
           trigger,
-          call.failure!,
+          call.failure ??
+              const CompactionException(
+                'hide judge returned an unparseable answer',
+              ),
           shape: call.shape,
         )) {
-          break;
-        }
-        continue;
-      }
-      final picks = parseHidePicks(call.answer!);
-      if (picks == null) {
-        // A garbage answer decided nothing — a failure like any other.
-        final failure = const CompactionException(
-          'hide judge returned an unparseable answer',
-        );
-        if (_judgeLatched) {
-          await _persistProbeFailure();
-          if (!await _registerJudgeFailure(
-            trigger,
-            failure,
-            shape: call.shape,
-            latched: true,
-          )) {
-            break;
-          }
           return true;
-        }
-        if (!await _registerJudgeFailure(trigger, failure, shape: call.shape)) {
-          break;
         }
         continue;
       }
@@ -599,6 +565,47 @@ final class StructuredCompactor {
       );
     }
     return true;
+  }
+
+  /// gh-2096: the cross-run latch gate. While latched the judge
+  /// contributes nothing this run unless the probe window elapsed (or
+  /// the configured class changed, which probes at once): the skip
+  /// receipt names the consequence ("budget unwinnable for the
+  /// configured class") and the deterministic hide decides. Returns
+  /// `null` when the judge may be called; a non-null result means the
+  /// run is decided — the skip's outcomes converge on the same
+  /// successful-verdict return the loop's natural end produces.
+  Future<bool?> _latchedGate(int trigger, int before) async {
+    if (!_judgeLatched || _latchedProbeDue) return null;
+    return _latchedSkipHide(trigger, before);
+  }
+
+  /// One counted judge failure (issue #541 F1): a failed call or a
+  /// garbage answer decides nothing — it is COUNTED, not fatal. Returns
+  /// whether the hide-pass loop continues. While latched the call WAS
+  /// the one probe-per-window: the probe paid the budget and lost, so
+  /// count + persist, then the deterministic hide decides — NO retry
+  /// (the retry ladder is the tax the latch exists to end) and the run
+  /// is decided either way. A fresh failure retries toward
+  /// [judgeLatchAfter] and the deterministic judge-less hide; `false`
+  /// means that hide decided against continuing — the run ends with the
+  /// loop's own successful verdict.
+  Future<bool> _handleJudgeFailure(
+    int trigger,
+    Object failure, {
+    JudgeAttemptShape? shape,
+  }) async {
+    if (_judgeLatched) {
+      await _persistProbeFailure();
+      await _registerJudgeFailure(
+        trigger,
+        failure,
+        shape: shape,
+        latched: true,
+      );
+      return false;
+    }
+    return _registerJudgeFailure(trigger, failure, shape: shape);
   }
 
   /// One judge call under the attempt budget (issue #515). A budget
