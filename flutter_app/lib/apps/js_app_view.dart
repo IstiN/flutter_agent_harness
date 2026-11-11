@@ -1040,14 +1040,15 @@ class _JsAppViewState extends State<JsAppView> {
     final titlebarTop = widget.panelChrome == null
         ? 0.0
         : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    // The panel chrome's PreferredSize ALREADY positions its title band
+    // below the platform inset (titlebarTop above). The Scaffold must not
+    // stretch that slot by the safe area a second time — primary Scaffold
+    // layout adds MediaQuery.padding.top to the app-bar height, which on a
+    // phone painted a ~59pt dead glass band under the toolbar and pushed
+    // the canvas down with it. Desktop (padding.top = 0) is unchanged.
     final canvasTopInset = widget.panelChrome == null
         ? 0.0
-        : titlebarTop +
-              kToolbarHeight +
-              // Scaffold adds the view's top padding to the appBar slot even
-              // for our custom PreferredSize. Match that REAL horizontal
-              // slot; the independent vertical rail never moves the canvas.
-              MediaQuery.paddingOf(context).top;
+        : titlebarTop + kToolbarHeight;
     // With a jsr.onBack handler registered the app owns back navigation:
     // the native pop (iOS edge swipe, system back) is vetoed and the
     // attempt forwards to JS instead. Without one the route pops natively.
@@ -1059,6 +1060,11 @@ class _JsAppViewState extends State<JsAppView> {
           onPopInvokedWithResult: (didPop, _) =>
               _onAppPopInvoked(didPop, backRegistered),
           child: Scaffold(
+            // The panel-chrome app bar is a manually positioned PreferredSize
+            // that owns the platform inset itself (see canvasTopInset): the
+            // Scaffold must treat it as non-primary so the safe area is not
+            // added to the slot a second time.
+            primary: widget.panelChrome == null,
             extendBodyBehindAppBar: widget.panelChrome != null,
             appBar: _buildAppBar(fullChrome),
             body: Stack(
