@@ -20,7 +20,9 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatStrings,
         FaDesignTokens,
         FaDuoControlRail,
+        FaFloatingHeaderBar,
         FaHeaderAction,
+        FaIconActionButton,
         FaIconActionBand,
         FaVisualDirection,
         FahColors;
@@ -758,12 +760,41 @@ class _JsAppViewState extends State<JsAppView> {
     ];
   }
 
+  /// The panel chrome's title-band metrics for the current frame.
+  ///
+  /// Phone (safe-area insets, no Duo rail): the band IS the canonical
+  /// narrow header bar — full status-bar clearance plus
+  /// [FaFloatingHeaderBar.barExtent], exactly the chat floating glass
+  /// header's strip on the same frame (59 + 103 = 162 on an iPhone), so
+  /// the opened app reads as the same chrome system as chats and Apps.
+  /// Desktop and the Duo vertical rail keep the 56pt Material toolbar:
+  /// the desktop title band has no platform inset (`titlebarTop` 0) and
+  /// the Duo rail is its own chrome system.
+  ({bool phoneBar, double titlebarTop, double toolbarHeight})
+  _panelBarMetrics() {
+    final statusBarTop = MediaQuery.paddingOf(context).top;
+    final phoneBar = statusBarTop > 0 && FaDuoControlRail.widthOf(context) == 0;
+    final titlebarTop = phoneBar
+        ? statusBarTop
+        : math.max(0.0, statusBarTop - 8);
+    final toolbarHeight = phoneBar
+        ? FaFloatingHeaderBar.barExtent
+        : kToolbarHeight;
+    return (
+      phoneBar: phoneBar,
+      titlebarTop: titlebarTop,
+      toolbarHeight: toolbarHeight,
+    );
+  }
+
   PreferredSizeWidget _panelAppBar(JsAppPanelChrome chrome) {
     final trafficLightLeading = _panelTrafficLightLeading();
     // The card floats 8pt below the window top, so only the remainder of
     // the platform safe area is needed above the toolbar. Compact macOS
     // window controls are cleared horizontally by [trafficLightLeading].
-    final titlebarTop = math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    // On a phone the band becomes the canonical narrow bar instead: full
+    // status-bar clearance + FaFloatingHeaderBar (see _panelBarMetrics).
+    final (:phoneBar, :titlebarTop, :toolbarHeight) = _panelBarMetrics();
     final glass =
         FaDesignTokens.of(context).direction == FaVisualDirection.glass;
     final colors = FahColors.of(context);
@@ -779,7 +810,7 @@ class _JsAppViewState extends State<JsAppView> {
     return PreferredSize(
       // The vertical rail is a body overlay, never an app-bar height input.
       // Only this ordinary horizontal title band offsets the JS canvas.
-      preferredSize: Size.fromHeight(titlebarTop + kToolbarHeight),
+      preferredSize: Size.fromHeight(titlebarTop + toolbarHeight),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -793,41 +824,132 @@ class _JsAppViewState extends State<JsAppView> {
             top: titlebarTop,
             left: 0,
             right: 0,
-            height: kToolbarHeight,
-            child: AppBar(
-              // This toolbar is manually positioned below the platform inset
-              // by titlebarTop. primary=true would SafeArea its 56pt child
-              // again and clip the whole title to 56 - 59 = 0 on folded Duo.
-              primary: false,
-              backgroundColor: glass ? Colors.transparent : null,
-              surfaceTintColor: Colors.transparent,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              centerTitle: false,
-              automaticallyImplyLeading: false,
-              leadingWidth: _panelLeadingWidth(onBack, duoRailWidth, trafficLightLeading),
-              leading: _panelLeading(onBack, duoRailWidth, trafficLightLeading),
-              title: _panelAppBarTitle(colors, onBack, trafficLightLeading),
-              actions: [
-                // The vertical Duo rail overlays the canvas's right edge;
-                // the title band keeps its actions clear of it.
-                if (duoRailWidth > 0)
-                  SizedBox(width: duoRailWidth)
-                else if (densePanel)
-                  _denseChromeActionBand(
-                    inline: denseActionsInline,
-                    actions: denseChromeActions,
-                    menuEntries: denseChromeMenuEntries,
+            height: toolbarHeight,
+            child: phoneBar
+                ? _buildPhonePanelBand(
+                    chrome,
+                    colors,
+                    chromeActions,
+                    chromeMenuEntries,
+                    densePanel: densePanel,
+                    denseActionsInline: denseActionsInline,
+                    denseChromeActions: denseChromeActions,
+                    denseChromeMenuEntries: denseChromeMenuEntries,
                   )
-                else
-                  _chromeActionBand(
-                    actions: chromeActions,
-                    menuEntries: chromeMenuEntries,
+                : AppBar(
+                    // This toolbar is manually positioned below the platform
+                    // inset by titlebarTop. primary=true would SafeArea its
+                    // 56pt child again and clip the whole title to
+                    // 56 - 59 = 0 on folded Duo.
+                    primary: false,
+                    backgroundColor: glass ? Colors.transparent : null,
+                    surfaceTintColor: Colors.transparent,
+                    elevation: 0,
+                    scrolledUnderElevation: 0,
+                    centerTitle: false,
+                    automaticallyImplyLeading: false,
+                    leadingWidth: _panelLeadingWidth(
+                      onBack,
+                      duoRailWidth,
+                      trafficLightLeading,
+                    ),
+                    leading: _panelLeading(
+                      onBack,
+                      duoRailWidth,
+                      trafficLightLeading,
+                    ),
+                    title: _panelAppBarTitle(
+                      colors,
+                      onBack,
+                      trafficLightLeading,
+                    ),
+                    actions: [
+                      // The vertical Duo rail overlays the canvas's right
+                      // edge; the title band keeps its actions clear of it.
+                      if (duoRailWidth > 0)
+                        SizedBox(width: duoRailWidth)
+                      else if (densePanel)
+                        _denseChromeActionBand(
+                          inline: denseActionsInline,
+                          actions: denseChromeActions,
+                          menuEntries: denseChromeMenuEntries,
+                        )
+                      else
+                        _chromeActionBand(
+                          actions: chromeActions,
+                          menuEntries: chromeMenuEntries,
+                        ),
+                    ],
                   ),
-              ],
-            ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// The phone panel band: the chat floating glass header's canonical
+  /// strip (FaFloatingHeaderBar) with this app's title and chrome actions
+  /// on the same centerline — 36pt circles in a 40pt band at top 9.
+  Widget _buildPhonePanelBand(
+    JsAppPanelChrome chrome,
+    FahColors colors,
+    List<FaHeaderAction> chromeActions,
+    List<PopupMenuItem<String>> chromeMenuEntries, {
+    required bool densePanel,
+    required bool denseActionsInline,
+    required List<FaHeaderAction> denseChromeActions,
+    required List<PopupMenuItem<String>> denseChromeMenuEntries,
+  }) {
+    final onBack = chrome.onBack;
+    return Padding(
+      // Geometry-test handle: the padded band rect (status bar + 103) is
+      // the strip the golden asserts equal to the chat header's.
+      key: const ValueKey('appPanelChromeBand'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: FaFloatingHeaderBar.padHorizontal,
+        vertical: FaFloatingHeaderBar.padVertical,
+      ),
+      child: SizedBox(
+        height: FaFloatingHeaderBar.contentHeight,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              top: FaFloatingHeaderBar.actionBandTop,
+              left: 0,
+              right: 0,
+              height: FaFloatingHeaderBar.pillHeight,
+              child: Row(
+                children: [
+                  if (onBack != null) ...[
+                    FaIconActionButton(
+                      buttonKey: const ValueKey('presentedAppMinimizeButton'),
+                      onPressed: onBack,
+                      tooltip: context.l10n.chatCollapse,
+                      diameter: FaFloatingHeaderBar.actionDimension,
+                      glyphSize: 18,
+                      glass: true,
+                      icon: Icons.remove_rounded,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(child: _panelAppBarTitle(colors, onBack, 0)),
+                  if (densePanel)
+                    _denseChromeActionBand(
+                      inline: denseActionsInline,
+                      actions: denseChromeActions,
+                      menuEntries: denseChromeMenuEntries,
+                    )
+                  else
+                    _chromeActionBand(
+                      actions: chromeActions,
+                      menuEntries: chromeMenuEntries,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -835,9 +957,9 @@ class _JsAppViewState extends State<JsAppView> {
   /// Only compact/full presented chrome owns the window's leading edge.
   double _panelTrafficLightLeading() {
     return FaWindowChrome.presentedAppClearance(
-      context,
-      embeddedInPanel: widget.embeddedInPanel,
-    )
+          context,
+          embeddedInPanel: widget.embeddedInPanel,
+        )
         ? FaWindowChrome.compactLeadingInset
         : 0.0;
   }
@@ -1037,9 +1159,12 @@ class _JsAppViewState extends State<JsAppView> {
     final theme = Theme.of(context);
     final fullChrome = widget.app.isFullChrome;
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    final titlebarTop = widget.panelChrome == null
-        ? 0.0
-        : math.max(0.0, MediaQuery.paddingOf(context).top - 8);
+    // The panel chrome's bar metrics (phone: canonical narrow bar; desktop
+    // and Duo: the 56pt toolbar) — the canvas inset must track the exact
+    // PreferredSize the app bar reports (see _panelBarMetrics).
+    final panelBar = widget.panelChrome == null
+        ? (phoneBar: false, titlebarTop: 0.0, toolbarHeight: kToolbarHeight)
+        : _panelBarMetrics();
     // The panel chrome's PreferredSize ALREADY positions its title band
     // below the platform inset (titlebarTop above). The Scaffold must not
     // stretch that slot by the safe area a second time — primary Scaffold
@@ -1048,7 +1173,7 @@ class _JsAppViewState extends State<JsAppView> {
     // the canvas down with it. Desktop (padding.top = 0) is unchanged.
     final canvasTopInset = widget.panelChrome == null
         ? 0.0
-        : titlebarTop + kToolbarHeight;
+        : panelBar.titlebarTop + panelBar.toolbarHeight;
     // With a jsr.onBack handler registered the app owns back navigation:
     // the native pop (iOS edge swipe, system back) is vetoed and the
     // attempt forwards to JS instead. Without one the route pops natively.

@@ -110,10 +110,16 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     final leadingTop = trafficLightClearance && FaWindowChrome.isMacOS
-        ? 9.0 + FaWindowChrome.titlebarHeight
-        : 9.0;
+        ? FaFloatingHeaderBar.actionBandTop + FaWindowChrome.titlebarHeight
+        : FaFloatingHeaderBar.actionBandTop;
+    // The canonical narrow bar strip (FaFloatingHeaderBar): the same
+    // 6 + 91 + 6 extent and 36pt circle / 40pt pill column as the chat
+    // floating glass header, so every phone header strip is one system.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      padding: const EdgeInsets.symmetric(
+        horizontal: FaFloatingHeaderBar.padHorizontal,
+        vertical: FaFloatingHeaderBar.padVertical,
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final geometry = _HeaderGeometry.of(context, constraints, actions);
@@ -148,10 +154,10 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       children: [
         if (icon case final icon?) ...[
           Padding(
-            padding: const EdgeInsets.only(top: 11),
+            padding: const EdgeInsets.only(top: FaFloatingHeaderBar.iconTop),
             child: FaHeaderCircularAction(
               key: const ValueKey('messengerPageIcon'),
-              dimension: 36,
+              dimension: FaFloatingHeaderBar.actionDimension,
               glass: true,
               child: onIconTap == null
                   ? Icon(icon, size: 18, color: tokens.ink1)
@@ -161,7 +167,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
                     ),
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: FaFloatingHeaderBar.iconTitleGap),
         ],
         _buildTitlePill(tokens, titleWidth),
       ],
@@ -179,7 +185,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: SizedBox(
         width: titleWidth,
-        height: 40,
+        height: FaFloatingHeaderBar.pillHeight,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -237,15 +243,12 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   /// trailing edge.
   Widget _buildTrailingActionsRow() {
     return Positioned(
-      top: 9,
+      top: FaFloatingHeaderBar.actionBandTop,
       right: 0,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final action in actions) ...[
-            action,
-            const SizedBox(width: 8),
-          ],
+          for (final action in actions) ...[action, const SizedBox(width: 8)],
         ],
       ),
     );
@@ -280,10 +283,7 @@ final class _HeaderGeometry {
     List<Widget> actions,
   ) {
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    final contentWidth = math.max(
-      0.0,
-      constraints.maxWidth - duoRailWidth,
-    );
+    final contentWidth = math.max(0.0, constraints.maxWidth - duoRailWidth);
     final actionWidth = math.min(360.0, contentWidth * .38);
     final titleWidth = math.min(
       320.0,
@@ -294,8 +294,7 @@ final class _HeaderGeometry {
       400.0,
       duoTop +
           actions.length *
-              (FaDuoControlRail.actionDimension +
-                  FaDuoControlRail.spacing) +
+              (FaDuoControlRail.actionDimension + FaDuoControlRail.spacing) +
           FaDuoControlRail.spacing,
     );
     return _HeaderGeometry._(
@@ -318,10 +317,13 @@ final class _HeaderGeometry {
   /// The Duo rail's natural height for the header's action count.
   final double duoHeight;
 
-  /// The header's total height: the ordinary 91px pill row, grown only
-  /// when a Duo rail with actions demands more room.
+  /// The header's total height: the ordinary canonical content column
+  /// ([FaFloatingHeaderBar.contentHeight]), grown only when a Duo rail
+  /// with actions demands more room.
   double headerHeight({required bool hasActions}) =>
-      duoRailWidth > 0 && hasActions ? math.max(91.0, duoHeight) : 91;
+      duoRailWidth > 0 && hasActions
+      ? math.max(FaFloatingHeaderBar.contentHeight, duoHeight)
+      : FaFloatingHeaderBar.contentHeight;
 }
 
 /// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.

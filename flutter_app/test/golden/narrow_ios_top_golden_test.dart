@@ -28,6 +28,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
+        FaFloatingHeaderBar,
         FaVisualDirection,
         TrajectoryHeader,
         buildFaTheme,
@@ -192,8 +193,11 @@ void main() {
     final header = _globalRect(
       find.byKey(const ValueKey('appsOverviewHeader')),
     );
-    expect(header.top, _iPhoneTopInset,
-        reason: 'Apps top clearance is the status bar, applied once');
+    expect(
+      header.top,
+      _iPhoneTopInset,
+      reason: 'Apps top clearance is the status bar, applied once',
+    );
     final icon = _globalRect(find.byKey(const ValueKey('messengerPageIcon')));
     expect(icon.top, 76, reason: '59 status bar + 6 header + 11 icon inset');
     // The grid keeps its own lane below the header instead of overlapping.
@@ -236,24 +240,29 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The chrome band = status-bar remainder + toolbar, and the JS canvas
-      // starts EXACTLY there — not another status bar lower (the old 166pt
-      // inset with a dead glass band under the toolbar).
+      // The chrome band = status bar + the canonical narrow bar (the chat
+      // header's strip), and the JS canvas starts EXACTLY there — not
+      // another status bar lower (the old 166pt inset with a dead glass
+      // band under the toolbar) nor the old 56pt Material band.
       final canvas = tester.widget<Padding>(
         find.byKey(const ValueKey('appCanvasHeaderInset')),
       );
       expect(
         canvas.padding.resolve(TextDirection.ltr).top,
-        107,
-        reason: 'status-bar remainder (51) + toolbar (56), applied once',
+        _iPhoneTopInset + FaFloatingHeaderBar.barExtent,
+        reason: 'status bar (59) + canonical bar (103), applied once',
       );
-      final toolbarAction = _globalRect(
-        find.byKey(const ValueKey('appFull')),
+      final toolbarAction = _globalRect(find.byKey(const ValueKey('appFull')));
+      expect(toolbarAction.top, greaterThanOrEqualTo(_iPhoneTopInset));
+      expect(
+        toolbarAction.bottom,
+        lessThanOrEqualTo(_iPhoneTopInset + FaFloatingHeaderBar.barExtent),
       );
-      expect(toolbarAction.top, greaterThanOrEqualTo(_iPhoneTopInset - 8));
-      expect(toolbarAction.bottom, lessThanOrEqualTo(107));
       final canvasContent = _globalRect(find.text('Demo'));
-      expect(canvasContent.top, 107);
+      expect(
+        canvasContent.top,
+        _iPhoneTopInset + FaFloatingHeaderBar.barExtent,
+      );
       await expectGolden(tester, 'narrow_ios_top_app_view');
       await disposeGoldenShell(tester);
       debugDefaultTargetPlatformOverride = null;
@@ -269,15 +278,13 @@ void main() {
       service.messages.add(
         FahChatMessage(role: 'user', content: 'Hello from the top golden.'),
       );
-      final manager = FlutterSessionManager(
-        env: env,
-        sessionsRoot: '/sessions',
-      )..addSession(
-        'design-session',
-        service,
-        createdAt: DateTime.utc(2020, 1, 2, 15, 4),
-        lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
-      );
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(
+          'design-session',
+          service,
+          createdAt: DateTime.utc(2020, 1, 2, 15, 4),
+          lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
+        );
       manager.switchTo('design-session');
       // The narrow shell pushes ChatScreen as a route and adds NO iOS inset
       // of its own (_chatAreaTopInset is macOS-only), so this direct pump is
@@ -308,12 +315,19 @@ void main() {
       await tester.pumpAndSettle();
 
       // The trajectory page starts at the chat header's bottom edge — not
-      // another status bar lower (the old double SafeArea, 162 + 59).
+      // another status bar lower (the old double SafeArea, 162 + 59) — and
+      // its bar shares the chat header's canonical height (the old header
+      // stacked stats + search + filters into a 210pt block).
       final trajectoryHeader = _globalRect(find.byType(TrajectoryHeader));
       expect(
         trajectoryHeader.top,
         chatHeader.bottom,
         reason: 'no second top inset between the chat chrome and trajectory',
+      );
+      expect(
+        trajectoryHeader.height,
+        chatHeader.height,
+        reason: 'the trajectory bar shares the canonical chat bar height',
       );
       expect(find.byIcon(Icons.close), findsWidgets);
       await expectGolden(tester, 'narrow_ios_top_trajectory');
