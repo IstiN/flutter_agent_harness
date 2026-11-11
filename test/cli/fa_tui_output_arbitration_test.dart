@@ -432,4 +432,275 @@ void main() {
       JsonlSessionStorage.onRotationWarning = prevWarning;
     }
   });
+
+  // ── gh-2094: the flush drain must not lose the arbiter's tail-open
+  // truth. _flushOutput() used to reset _outputTailOpen unconditionally,
+  // so a newline-terminated write (settled tool card, notice) that
+  // followed an unterminated write ACROSS a flush lost its boundary
+  // newline and glued onto the painted mid-line tail.
+
+  /// The grid row the renderer painted [needle]'s first occurrence on:
+  /// the row of the last absolute home sequence (`ESC[row;colH`) emitted
+  /// before the needle's first byte. The row-level proof shape for
+  /// gh-2094 — glue means "the two texts painted on the same row", the
+  /// boundary means "separate rows" — regardless of whether the second
+  /// paint re-addressed the cursor or continued it.
+  int? paintedRowOf(String frames, String needle) {
+    final at = frames.indexOf(needle);
+    if (at < 0) return null;
+    final homes = RegExp(
+      r'\x1b\[(\d+);(\d+)H',
+    ).allMatches(frames.substring(0, at));
+    if (homes.isEmpty) return null;
+    return int.parse(homes.last.group(1)!);
+  }
+
+  test('gh-2094: flush between the running and settled card keeps the '
+      'boundary — no glue (AC1)', () async {
+    final frames = _FrameSink();
+    final keys = StreamController<List<int>>();
+    final controller = _controller(frames, keys);
+    controller.sendOutput('canary-one', newline: true);
+    final run = controller.run();
+    try {
+      await waitForIt(() => frames.text.contains('canary-one'));
+      controller.sendBusy(true, source: 'run');
+      // The incident shape: the running tool card is written
+      // unterminated (plain write — the row expects in-place
+      // continuation). The busy flip carries no buffered text (the
+      // non-output flush no-ops on the empty buffer), so the card's
+      // flush below is the TIMER's — the incident's trigger.
+      controller.sendOutput('◐ agent_message: msg_1');
+      // Waiting for the glass also proves _flushOutput() already ran:
+      // the row is PAINTED mid-line before the settle arrives.
+      await waitForIt(() => frames.text.contains('agent_message: msg_1'));
+      // The settled card is a newline-terminated write — a COMPLETE
+      // line (#2069 rule): it must open on a fresh row even though the
+      // running card was already flushed out of the buffer.
+      controller.sendOutput('✔ agent_message: msg_1 0s', newline: true);
+      await waitForIt(() => frames.text.contains('agent_message: msg_1 0s'));
+      final runRow = paintedRowOf(frames.text, '◐ agent_message: msg_1');
+      final settledRow = paintedRowOf(frames.text, '✔ agent_message: msg_1 0s');
+      expect(settledRow, isNotNull, reason: 'the settled card must paint');
+      expect(
+        settledRow,
+        isNot(equals(runRow)),
+        reason:
+            'the settled card glued onto the flushed running card tail '
+            '(rows $runRow/$settledRow) — the flush lost the tail-open '
+            'truth',
+      );
+      // The pre-fix byte shape, when both cards share one contiguous
+      // paint run — also forbidden.
+      expect(
+        frames.text.contains('agent_message: msg_1✔'),
+        isFalse,
+        reason: 'the settled card glued onto the running card tail',
+      );
+      expect(frames.text.contains('◐ agent_message: msg_1'), isTrue);
+      expect(frames.text.contains('✔ agent_message: msg_1 0s'), isTrue);
+    } finally {
+      keys.add([0x03]); // press 1 arms the double-press window (#830)…
+      keys.add([0x03]); // …press 2 quits the TUI
+      await run;
+      await keys.close();
+    }
+  });
+
+  test('gh-2094: the tail flag equals the flushed-text truth after every '
+      'real flush; an empty flush leaves it untouched (AC2)', () async {
+    final frames = _FrameSink();
+    final keys = StreamController<List<int>>();
+    final controller = _controller(frames, keys);
+    controller.sendOutput('canary-one', newline: true);
+    final run = controller.run();
+    try {
+      await waitForIt(() => frames.text.contains('canary-one'));
+      // Unterminated write → real flush → the painted tail is OPEN.
+      controller.sendOutput('unterminated tail one');
+      await waitForIt(() => frames.text.contains('unterminated tail one'));
+      expect(
+        controller.outputTailOpenForTest,
+        isTrue,
+        reason:
+            'state-truth invariant: after a real flush the flag must '
+            'equal !flushedText.endsWith("\\n") — the flushed text is '
+            'unterminated, the painted tail is open',
+      );
+      // Terminated write → real flush → the painted tail is CLOSED.
+      controller.sendOutput('complete line\n');
+      await waitForIt(() => frames.text.contains('complete line'));
+      expect(
+        controller.outputTailOpenForTest,
+        isFalse,
+        reason: 'the flushed text ended with a newline — tail closed',
+      );
+      // Each flush re-derives truth from its own text — no drift.
+      controller.sendOutput('unterminated tail two');
+      await waitForIt(() => frames.text.contains('unterminated tail two'));
+      expect(controller.outputTailOpenForTest, isTrue);
+      // An empty-buffer flush (the timer fires after the buffer was
+      // already drained) must not touch the flag — the early-return
+      // ordering stays BEFORE any reset.
+      controller.sendOutput(''); // arms the timer on an empty buffer
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(
+        controller.outputTailOpenForTest,
+        isTrue,
+        reason: 'an empty flush must leave the tail flag untouched',
+      );
+    } finally {
+      keys.add([0x03]);
+      keys.add([0x03]);
+      await run;
+      await keys.close();
+    }
+  });
+
+  test('gh-2094: plain unterminated deltas still merge into one paragraph '
+      'across flushes (AC3 REG)', () async {
+    final frames = _FrameSink();
+    final keys = StreamController<List<int>>();
+    final controller = _controller(frames, keys);
+    controller.sendOutput('canary-one', newline: true);
+    final run = controller.run();
+    try {
+      await waitForIt(() => frames.text.contains('canary-one'));
+      // Plain write() deltas, each riding its own flush (#2069 shape —
+      // streaming paragraphs must stay byte-identical to the
+      // pre-gh-2094 behavior; the fix must not adopt the retracted
+      // "always append '\n' on flush" alternative).
+      controller.sendOutput('streamed alpha');
+      await waitForIt(() => frames.text.contains('streamed alpha'));
+      controller.sendOutput(' continued beta');
+      await waitForIt(() => frames.text.contains(' continued beta'));
+      controller.sendOutput(' continued gamma');
+      await waitForIt(() => frames.text.contains(' continued gamma'));
+      final alphaRow = paintedRowOf(frames.text, 'streamed alpha');
+      final betaRow = paintedRowOf(frames.text, ' continued beta');
+      final gammaRow = paintedRowOf(frames.text, ' continued gamma');
+      expect(
+        betaRow,
+        equals(alphaRow),
+        reason:
+            'a flush must not split the streamed paragraph (rows '
+            '$alphaRow/$betaRow)',
+      );
+      expect(
+        gammaRow,
+        equals(alphaRow),
+        reason:
+            'a flush must not split the streamed paragraph (rows '
+            '$alphaRow/$gammaRow)',
+      );
+    } finally {
+      keys.add([0x03]);
+      keys.add([0x03]);
+      await run;
+      await keys.close();
+    }
+  });
+
+  test('gh-2094: the #2069 merge golden over the emitted stream — flushed '
+      'deltas concatenate, flushes never inject a newline (AC3)', () {
+    // The flush drain emits OutputMsg(text) VERBATIM — never with an
+    // appended terminator (the retracted "always append '\n' on flush"
+    // shape would land every flushed delta on its own row). Golden: N
+    // deltas, each riding its own flush emission, compose ONE
+    // paragraph row.
+    var model = FaTuiModel(callbacks: _callbacks(), isExited: () => false);
+    model = model.update(BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    for (final delta in [
+      'streamed alpha',
+      ' continued beta',
+      ' continued gamma',
+    ]) {
+      model = model.update(OutputMsg(delta)).$1 as FaTuiModel;
+    }
+    final rows = model.view().content.split('\n');
+    expect(
+      rows
+          .where(
+            (row) =>
+                row.contains('streamed alpha continued beta continued gamma'),
+          )
+          .length,
+      1,
+      reason:
+          'plain unterminated deltas must merge into exactly one '
+          'paragraph row across flushes (#2069)',
+    );
+  });
+
+  test('gh-2094: a notice landing mid-card (after a flush) keeps its own '
+      'row, the settled card the next one (AC4 REG)', () async {
+    final frames = _FrameSink();
+    final keys = StreamController<List<int>>();
+    final controller = _controller(frames, keys);
+    controller.sendOutput('canary-one', newline: true);
+    final run = controller.run();
+    try {
+      await waitForIt(() => frames.text.contains('canary-one'));
+      controller.sendBusy(true, source: 'run');
+      // Running card painted mid-line (flush timer fired first —
+      // waitForIt proves the flush ran).
+      controller.sendOutput('◐ read_file: lib/main.dart');
+      await waitForIt(() => frames.text.contains('read_file: lib/main.dart'));
+      // The #2069 scenario across a flush: the notice is a
+      // newline-terminated write — it must render intact on its OWN
+      // row, never glued onto the painted card tail.
+      controller.sendOutput(
+        'notice — steering interrupt fired mid-run',
+        newline: true,
+      );
+      await waitForIt(
+        () => frames.text.contains('notice — steering interrupt fired mid-run'),
+      );
+      // The settled card follows on the next row — ordering preserved.
+      controller.sendOutput('✔ read_file: lib/main.dart 12ms', newline: true);
+      await waitForIt(
+        () => frames.text.contains('read_file: lib/main.dart 12ms'),
+      );
+      final runRow = paintedRowOf(frames.text, '◐ read_file: lib/main.dart');
+      final noticeRow = paintedRowOf(
+        frames.text,
+        'notice — steering interrupt fired mid-run',
+      );
+      final settledRow = paintedRowOf(
+        frames.text,
+        '✔ read_file: lib/main.dart 12ms',
+      );
+      expect(noticeRow, isNotNull, reason: 'the notice must paint');
+      expect(settledRow, isNotNull, reason: 'the settled card must paint');
+      expect(
+        noticeRow,
+        isNot(equals(runRow)),
+        reason:
+            'the notice glued onto the flushed running card tail '
+            '(rows $runRow/$noticeRow)',
+      );
+      expect(
+        settledRow,
+        isNot(equals(noticeRow)),
+        reason:
+            'the settled card glued onto the notice row '
+            '(rows $noticeRow/$settledRow)',
+      );
+      expect(
+        frames.text.contains('lib/main.dartnotice'),
+        isFalse,
+        reason: 'the notice glued onto the running card tail',
+      );
+      expect(
+        frames.text.contains('mid-run✔'),
+        isFalse,
+        reason: 'the settled card glued onto the notice row',
+      );
+    } finally {
+      keys.add([0x03]);
+      keys.add([0x03]);
+      await run;
+      await keys.close();
+    }
+  });
 }
