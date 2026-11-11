@@ -309,6 +309,12 @@ void main() {
         }
         await tester.pumpAndSettle();
       });
+      // Drop the composer focus so the caret never enters the frame: the
+      // caret x follows text shaping, which differs by a few px between
+      // the local bake and the hosted macOS runner (the 0.01% chat_image
+      // CI drift) — an unfocused composer makes the golden deterministic.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
       await expectGolden(tester, 'chat_image');
     });
 
