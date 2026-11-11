@@ -404,6 +404,12 @@ void main() {
       () async {
         final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
         final registry = ShellJobRegistry(env: env);
+        // A minted tail ends in 'zz' once every ~1296 starts; the stale id
+        // would then be the EXACT id and lookup rightly answers a Hit
+        // (gh-2113 — v1.0.708 hostile-env red). Force the id so the stale
+        // id is really a miss, deterministically (AC5 precedent below in
+        // bash_job_resolution_test.dart).
+        env.forcedIds = ['sh-1-aaaa'];
         final entry = await registry.start('a');
         final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
         final lookup = registry.lookup(stale);

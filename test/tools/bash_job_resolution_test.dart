@@ -160,6 +160,9 @@ void main() {
 
   group('AC1 — near-miss output resolves a unique same-n job', () {
     test('exited job: tail + corrected id + stop-polling note', () async {
+      // Forced id: a minted tail can end in 'zz', making the stale id an
+      // exact hit (gh-2113; same hazard as the AC5 stop test below).
+      env.forcedIds = ['sh-1-aaaa'];
       final entry = await registry.start('make all');
       await env.jobs.single.writeLog('built ok\n');
       env.jobs.single.complete(0);
@@ -174,6 +177,8 @@ void main() {
     });
 
     test('running job: tail + corrected id, no exit claim (E4)', () async {
+      // Forced id — see the gh-2113 note in the exited-job test above.
+      env.forcedIds = ['sh-1-aaaa'];
       final entry = await registry.start('make all');
       await env.jobs.single.writeLog('halfway\n');
       final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
@@ -186,6 +191,8 @@ void main() {
     });
 
     test('status acts on the resolved near-miss too', () async {
+      // Forced id — see the gh-2113 note in the exited-job test above.
+      env.forcedIds = ['sh-1-aaaa'];
       final entry = await registry.start('make all');
       env.jobs.single.complete(0);
       await _pumpSettles();
