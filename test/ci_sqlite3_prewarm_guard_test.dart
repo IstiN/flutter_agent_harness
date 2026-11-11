@@ -599,5 +599,233 @@ void main() {
             'live inside the composite itself (gh-2072 review thread 7)',
       );
     });
+
+    // gh-2105 — the release-train legs in build-macos.yml still rode the
+    // OLD prewarm (scripts/sqlite3_hook_prewarm.dart: 3 attempts × 60s +
+    // 15s sleeps ≈ 3.5 min of coverage) when the v1.0.697 egress storm
+    // (5+ minutes of 504/error pages — every failed job carries the same
+    // constant bogus digest bef140a1…) red'd Build CLI bundle arm64 on
+    // the raw 504 and both desktop matrix legs ~20 min in on the hook's
+    // digest mismatch. The green extension leg minted the tag + staging
+    // draft, the failed train never published it, and the daily sweeper
+    // deleted it a day later (gh-2105). Every hosted leg was hardened
+    // post-incident (gh-2072/2074/2075: 8-attempt ≈ 10 min composite
+    // contract); these pins keep the RELEASE legs on the same contract,
+    // so the same storm cannot re-strand a draft through them.
+    group('gh-2105 — build-macos.yml release legs ride the hardened prewarm', () {
+      const wf = '.github/workflows/build-macos.yml';
+
+      test(
+        'build-macos-cli prewarms through the shared composite between pub '
+        'get and its first dart build, with per-arch targets the script '
+        'can resolve',
+        () {
+          final steps = jobSteps(wf, 'build-macos-cli');
+          final prewarm = [
+            for (var i = 0; i < steps.length; i++)
+              if ((steps[i] as YamlMap)['uses'] == prewarmAction) i,
+          ];
+          expect(
+            prewarm,
+            isNotEmpty,
+            reason:
+                'build-macos-cli runs `dart build cli` on a root package '
+                'graph carrying sqlite3 (via flutter_agent_memory) — the '
+                'hook downloads its prebuilt dylib in a single attempt '
+                'with no status check; one 504 error page reds the leg '
+                '(gh-2075, run 42566734746) and the stranded-draft shape '
+                'of gh-2105 re-arms. Add `uses: $prewarmAction`.',
+          );
+          final pubGet = [
+            for (var i = 0; i < steps.length; i++)
+              if (RegExp(
+                r'^\s*dart pub get\b',
+              ).hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'))
+                i,
+          ].first;
+          final firstBuild = [
+            for (var i = 0; i < steps.length; i++)
+              if (hookBuildingSignatures.any(
+                (re) => re.hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'),
+              ))
+                i,
+          ].first;
+          expect(
+            prewarm.first,
+            greaterThan(pubGet),
+            reason:
+                'the prewarm reads .dart_tool/package_config.json and '
+                'hard-fails before `dart pub get` has produced it',
+          );
+          expect(
+            prewarm.first,
+            lessThan(firstBuild),
+            reason:
+                'the prewarm must land in the hook cache BEFORE the first '
+                'hook-building step — a later prewarm never applies',
+          );
+          final step = steps[prewarm.first] as YamlMap;
+          final withMap = step['with'];
+          expect(
+            withMap,
+            isA<YamlMap>(),
+            reason: 'the composite invocation must pass `with:` inputs',
+          );
+          // The CLI legs build the ROOT package graph (dart build cli at
+          // the repo root) — the root is the correct package-roots value
+          // here, but it must be DECLARED: explicit targets never ride a
+          // silent default (the AC7 doctrine).
+          expect(
+            '${(withMap as YamlMap)['package-roots'] ?? ''}'.trim(),
+            '.',
+            reason:
+                'build-macos-cli resolves the root package (dart pub get '
+                'at the repo root) — declare package-roots: . explicitly '
+                'next to the explicit targets',
+          );
+          final targets = '${withMap['targets'] ?? ''}'.trim();
+          expect(
+            targets,
+            contains('matrix.arch'),
+            reason:
+                'the two matrix legs (arm64/x64) build different macOS '
+                'dylibs — a fixed target provisions one arch and leaves '
+                'the other on the bare hook download',
+          );
+          // Resolve the matrix placeholder for BOTH rows and validate the
+          // values through the script's own grammar (AC8 doctrine): the
+          // <abi>-<os> order, not the reversed <os>-<abi> the nightly
+          // android row rode green with (gh-2072 review thread 14).
+          for (final arch in ['arm64', 'x64']) {
+            final resolved = targets.replaceAll(
+              RegExp(r'\$\{\{\s*matrix\.arch\s*\}\}'),
+              arch,
+            );
+            for (final target in expandTargets(
+              resolved,
+              hostTarget: hostTarget(),
+            )) {
+              expect(
+                () => sourceFilenameForTarget(target),
+                returnsNormally,
+                reason:
+                    'targets value "$target" (from "$targets", arch '
+                    '$arch) is not a target the prewarm script can '
+                    'download — it would fail per-target and the '
+                    'composite degrades to the bare hook download',
+              );
+            }
+          }
+        },
+      );
+
+      test(
+        'desktop build step prewarms post-clean with the hardened script '
+        'and the composite retry budget',
+        () {
+          final steps = jobSteps(wf, 'build-macos');
+          final runText = [
+            for (final step in steps.whereType<YamlMap>())
+              if ('${step['name'] ?? ''}'.startsWith('Build macOS release'))
+                '${step['run'] ?? ''}',
+          ].first;
+          expect(
+            runText,
+            contains('sqlite3_native_assets_prewarm.dart'),
+            reason:
+                'the desktop release build must prewarm through the '
+                'hardened script (status-gated, exponential backoff, '
+                'per-request timeouts) — the old '
+                'sqlite3_hook_prewarm.dart budget (3 attempts ≈ 3.5 min) '
+                'did not cover the 5+ minute v1.0.697 storm and the leg '
+                'red ~20 min into the build on the hook digest mismatch '
+                '(gh-2105 RCA, run 42566734746)',
+          );
+          expect(
+            runText,
+            isNot(contains('sqlite3_hook_prewarm.dart')),
+            reason:
+                'the retired 3-attempt script must not come back on the '
+                'release legs — its budget is below the measured storm '
+                'duration',
+          );
+          expect(
+            runText,
+            contains('--attempts 8'),
+            reason:
+                'the composite contract passes attempts: 8 (≈ 10 min of '
+                'coverage with the exponential backoff) — the v1.0.697 '
+                'storm was 5+ minutes; the script default (4) does not '
+                'cover it',
+          );
+          expect(
+            runText,
+            contains('RUNNER_TEMP'),
+            reason:
+                'the script must be copied OUT of the workspace before '
+                'invocation — a plain dart <path> inside flutter_app '
+                'builds the package graph\'s own hooks BEFORE main(), '
+                'i.e. performs the exact single-attempt download this '
+                'step exists to bypass (the composite does the same '
+                'copy)',
+          );
+          expect(
+            runText,
+            contains('::warning::'),
+            reason:
+                'best-effort semantics (gh-2072 review thread 7): a '
+                'failed prewarm degrades to the hook\'s own '
+                'single-attempt download, never reds the leg by itself',
+          );
+          // Post-clean position is load-bearing: this step's
+          // `flutter clean` wipes .dart_tool — including the
+          // flutter-pub-get prewarm's warmed cache — so THIS invocation
+          // must re-warm AFTER the clean or the hook re-downloads bare.
+          expect(
+            runText.indexOf('flutter clean'),
+            lessThan(
+              runText.indexOf('sqlite3_native_assets_prewarm.dart'),
+            ),
+            reason:
+                'the prewarm must run AFTER `flutter clean` — the clean '
+                'wipes the hooks_runner cache and a pre-warmed-but-then-'
+                'wiped cache is the bare download again',
+          );
+          expect(
+            runText.indexOf('cd flutter_app'),
+            lessThan(
+              runText.indexOf('sqlite3_native_assets_prewarm.dart'),
+            ),
+            reason:
+                'the prewarm must resolve flutter_app (the desktop build '
+                'compiles its graph, whose lockfile pins sqlite3) — run '
+                'it from the flutter_app working directory',
+          );
+          expect(
+            runText,
+            contains('-macos'),
+            reason:
+                'the desktop build targets macOS — the prewarm must '
+                'request the macOS dylib in the script\'s <abi>-<os> '
+                'grammar (arm64-macos / x64-macos), not a host-auto '
+                'guess that can drift from the build arch',
+          );
+        },
+      );
+
+      test('build-macos.yml no longer references the retired prewarm '
+          'script', () {
+        expect(
+          read(wf),
+          isNot(contains('sqlite3_hook_prewarm.dart')),
+          reason:
+              'both call sites must ride the hardened contract '
+              '(composite for build-macos-cli, the hardened script '
+              'in-run for the post-clean desktop prewarm) — one leg '
+              'staying on the 3-attempt budget is a leg the same storm '
+              'can still red',
+        );
+      });
+    });
   });
 }

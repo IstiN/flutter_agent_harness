@@ -709,16 +709,34 @@ jobs:
           # hook's sha256 pin caught the wrong bytes ~20 min into each
           # build). Pre-warm the hook's own digest-checked cache now —
           # post-clean, post-config-only (this step's flutter clean wipes
-          # .dart_tool; the config pass just recreated it) — via the ONE
-          # prewarm tool (gh-2074's scripts/sqlite3_hook_prewarm.dart,
-          # shared with build-mobile.yml + ci.yml): HTTP-status-gated
-          # fetch, bounded retries, sha256 pin from the resolved package,
-          # tmp+rename writes. A wrong file fails HERE in seconds, never
-          # mid-build; a warm cache skips the network entirely. The hook
-          # re-validates any cached file against the same pinned digest,
-          # so pre-warming is integrity-neutral.
+          # .dart_tool; the config pass just recreated it): sha256 pin
+          # from the resolved package, atomic tmp+rename writes. A wrong
+          # file fails HERE in seconds, never mid-build; a warm cache
+          # skips the network entirely. The hook re-validates any cached
+          # file against the same pinned digest, so pre-warming is
+          # integrity-neutral.
           if [ "$ARCH" = "x86_64" ]; then SQLITE_SEED_ARCH="x64"; else SQLITE_SEED_ARCH="$ARCH"; fi
-          dart --disable-dart-dev ../scripts/sqlite3_hook_prewarm.dart --package . --targets macos-"$SQLITE_SEED_ARCH"
+          # gh-2105: the retired inline 3-attempt prewarm's ~3.5 min
+          # budget did not cover the 5+ minute v1.0.697 egress storm —
+          # ride the same hardened contract as the composite (gh-2072's
+          # sqlite3_native_assets_prewarm.dart: status-gated fetch,
+          # exponential backoff, per-request timeouts, attempts: 8 ≈ 10+
+          # min of coverage). Copied OUT of the workspace first: a plain
+          # dart <path> inside flutter_app builds the package graph's own
+          # hooks BEFORE main() — the exact single-attempt download this
+          # step exists to bypass (the composite does the same copy).
+          # Best-effort (gh-2072 review thread 7): a failed prewarm
+          # degrades to the hook's own single-attempt download, never
+          # reds the leg by itself. The post-clean position is
+          # load-bearing: this step's flutter clean wipes .dart_tool, so
+          # the job-level flutter-pub-get prewarm's warmed cache dies
+          # here and must be re-warmed.
+          cp ../scripts/sqlite3_native_assets_prewarm.dart "$RUNNER_TEMP/fa-sqlite3-native-assets-prewarm.dart"
+          dart "$RUNNER_TEMP/fa-sqlite3-native-assets-prewarm.dart" \
+            --package-root . \
+            --targets "$SQLITE_SEED_ARCH-macos" \
+            --attempts 8 \
+            || echo "::warning::sqlite3 native-assets prewarm failed — falling back to the hook's own single-attempt download (gh-2072: best-effort, never a red leg by itself)"
           FLUTTER_XCODE_ARCHS="$ARCH" flutter build macos --release \
             --build-name=$BUILD_VERSION \
             --build-number=$BUILD_NUMBER
@@ -1232,16 +1250,24 @@ jobs:
       # package:sqlite3 native-assets hook, which downloads its prebuilt
       # dylib with ONE un-retried GET — this leg died on a 504 Gateway
       # Time-out. Pre-warm the hook's digest-checked cache with the ONE
-      # shared tool (gh-2074's scripts/sqlite3_hook_prewarm.dart — the
-      # same contract build-mobile.yml + ci.yml already ride) BEFORE the
-      # build: a flaky egress window fails here in seconds, retried,
-      # instead of killing the bundle leg; the hook re-validates any
-      # cached file against the same pinned digest, so pre-warming is
-      # integrity-neutral.
-      - name: Pre-warm sqlite3 hook assets (gh-2075)
-        run: |
-          set -euo pipefail
-          dart --disable-dart-dev scripts/sqlite3_hook_prewarm.dart --package . --targets macos-${{ matrix.arch }}
+      # shared prewarm BEFORE the build: a flaky egress window fails here
+      # in seconds, retried, instead of killing the bundle leg; the hook
+      # re-validates any cached file against the same pinned digest, so
+      # pre-warming is integrity-neutral.
+      # gh-2105: the shared composite (gh-2072's ONE prewarm
+      # implementation) replaces the retired inline 3-attempt script whose
+      # ~3.5 min budget did not cover the 5+ minute v1.0.697 egress storm
+      # that red'd this leg on the raw 504 (run 42566734746). Targets are
+      # per-arch in the script's <abi>-<os> grammar; package-roots is the
+      # root package this job resolves (dart pub get at the repo root),
+      # declared explicitly next to the explicit targets. Best-effort
+      # semantics live inside the composite (a failed prewarm degrades to
+      # the hook's own single-attempt download, never reds the leg).
+      - name: Prewarm sqlite3 native-assets (gh-2075, composite contract)
+        uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          targets: ${{ matrix.arch }}-macos
+          package-roots: .
 
       - name: Build CLI bundle
         run: |
