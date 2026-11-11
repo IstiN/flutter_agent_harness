@@ -790,10 +790,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  Widget _buildNarrowBody(FahColors colors) {
-    final base = switch (_section) {
-      // Top clearance comes from the single narrow-body wrap below — no
-      // per-branch SafeArea (it would double the inset on macOS).
+  // Per-section surface switch, extracted from [_buildNarrowBody] so the
+  // shared top-inset wrap stays a straight line (the CRAP ladder counts
+  // the switch arms against this method's coverage).
+  Widget _narrowSectionSurface(FahColors colors) {
+    // Top clearance comes from the single narrow-body wrap in
+    // [_buildNarrowBody] — no per-branch SafeArea (it would double the
+    // inset on macOS).
+    return switch (_section) {
       _WideShellSection.chats =>
         _networksSurfaceOpen
             ? _buildNetworksSidebar()
@@ -814,6 +818,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       _WideShellSection.apps => _buildAppsArea(),
       _WideShellSection.settings => _buildSettingsPanel(),
     };
+  }
+
+  Widget _buildNarrowBody(FahColors colors) {
+    final base = _narrowSectionSurface(colors);
     // One shared titlebar inset for every narrow section (the wide sidebar
     // panels are flush with the window edge and clear it themselves —
     // ChatListPanel adds the same inset when not compact).
