@@ -365,11 +365,6 @@ void main() {
       isFalse,
       reason: 'a judge timeout must not cancel the run-wide budget token',
     );
-    expect(
-      budgetSource.token.isCancelled,
-      isFalse,
-      reason: 'a judge timeout must not cancel the run-wide budget token',
-    );
     // The fallback hid deterministically, whole pairs, oldest-first.
     final records = await session.getEntries();
     final hidden = records.whereType<HiddenRangeRecord>().toList();
