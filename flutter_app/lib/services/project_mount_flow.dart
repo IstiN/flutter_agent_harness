@@ -91,15 +91,49 @@ String? currentMountedPath(ExecutionEnv env) =>
 /// or blank candidates never pass), so one function owns the decision and
 /// the follow-up access flow (the 'allow folder access' open-panel
 /// affordance for a non-visible folder) can hook the same seam.
+///
+/// A session folder recorded under a RELOCATED container also resolves:
+/// mobile reinstall/backup-restore re-seats the app container (the
+/// recorded cwd keeps the old UUID prefix, `env.cwd` the new one) — the
+/// folder is still the sandbox the env opens, so the match returns the
+/// LIVE root the listing can actually open (never the stale prefix,
+/// which would resolve nowhere). See [_isSameFolderPath].
 String? visibleFolderRoot(ExecutionEnv env, String? candidatePath) {
   final candidate = _normalizeFolderPath(candidatePath);
   if (candidate == null) return null;
   for (final root in <String?>[env.cwd, currentMountedPath(env)]) {
     final visible = _normalizeFolderPath(root);
-    if (visible != null && visible == candidate) return candidate;
+    if (visible == null) continue;
+    if (_isSameFolderPath(visible, candidate)) return visible;
   }
   return null;
 }
+
+/// Whether [candidate] names the same folder as [root] after a relocation
+/// of every segment before the last two (the folder and its parent).
+/// Exact equality is the primary contract; the tail match only fires when
+/// both paths carry at least two segments and the trailing two agree
+/// (case-folded on case-insensitive platforms, mirroring the
+/// SandboxHostRoot convention). Single-segment roots never tail-match —
+/// a shared folder name alone is too weak to claim identity.
+bool _isSameFolderPath(String root, String candidate) {
+  if (root == candidate) return true;
+  final fold = Platform.isLinux
+      ? (String s) => s
+      : (String s) => s.toLowerCase();
+  final rootSegments = _folderSegments(root);
+  final candidateSegments = _folderSegments(candidate);
+  if (rootSegments.length < 2 || candidateSegments.length < 2) return false;
+  return fold(rootSegments.last) == fold(candidateSegments.last) &&
+      fold(rootSegments[rootSegments.length - 2]) ==
+          fold(candidateSegments[candidateSegments.length - 2]);
+}
+
+/// Non-empty path segments (slashes and '.' dropped).
+List<String> _folderSegments(String path) => [
+  for (final segment in path.split('/'))
+    if (segment.isNotEmpty && segment != '.') segment,
+];
 
 /// Trailing-slash-insensitive folder-path comparison form: null for
 /// null/blank, the path with any trailing slashes stripped (`/` stays

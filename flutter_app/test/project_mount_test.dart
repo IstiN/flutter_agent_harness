@@ -40,27 +40,58 @@ void main() {
     test('session folder == the mounted root passes through', () {
       final base = LocalExecutionEnv(cwd: '/app/support');
       final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project';
-      expect(
-        visibleFolderRoot(env, '/Users/x/project'),
-        '/Users/x/project',
+      expect(visibleFolderRoot(env, '/Users/x/project'), '/Users/x/project');
+    });
+
+    test(
+      'an unrelated host path (the macOS sandbox cannot see it) is null',
+      () {
+        // The regression: currentSessionCwd passed raw — Files tried to
+        // list a host path outside the granted mount and painted "could
+        // not open folder". Null keeps the env cwd instead (for a mounted
+        // session that already is the session's folder via /project).
+        final base = LocalExecutionEnv(cwd: '/app/support');
+        final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project';
+        expect(visibleFolderRoot(env, '/Users/Uladzimir/git/support'), isNull);
+      },
+    );
+
+    test(
+      'session folder == the env cwd (unmounted desktop) passes through',
+      () {
+        final env = LocalExecutionEnv(cwd: '/app/support');
+        expect(visibleFolderRoot(env, '/app/support'), '/app/support');
+      },
+    );
+
+    test('a relocated sandbox folder (stale container prefix) resolves to '
+        'the live root', () {
+      // iOS reinstall/backup-restore re-seats the app container UUID: a
+      // restored session records the OLD prefix while the env root
+      // carries the NEW one. The folder is still the sandbox the env
+      // opens, and the returned root must be the LIVE one — the stale
+      // prefix would resolve nowhere on the listing.
+      final env = LocalExecutionEnv(
+        cwd:
+            '/var/mobile/Containers/Data/Application/9F2E-live/Documents/'
+            'fah_sandbox',
       );
+      const stale =
+          '/var/mobile/Containers/Data/Application/4A7D-old/Documents/'
+          'fah_sandbox';
+      expect(visibleFolderRoot(env, stale), env.cwd);
     });
 
-    test('an unrelated host path (the macOS sandbox cannot see it) is null',
-        () {
-      // The regression: currentSessionCwd passed raw — Files tried to
-      // list a host path outside the granted mount and painted "could
-      // not open folder". Null keeps the env cwd instead (for a mounted
-      // session that already is the session's folder via /project).
-      final base = LocalExecutionEnv(cwd: '/app/support');
-      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/project';
-      expect(visibleFolderRoot(env, '/Users/Uladzimir/git/support'), isNull);
-    });
-
-    test('session folder == the env cwd (unmounted desktop) passes through',
-        () {
+    test('a same-name folder under a DIFFERENT parent never matches', () {
+      // The tail identity needs the folder AND its parent to agree — a
+      // shared folder name alone must not claim visibility.
       final env = LocalExecutionEnv(cwd: '/app/support');
-      expect(visibleFolderRoot(env, '/app/support'), '/app/support');
+      expect(visibleFolderRoot(env, '/elsewhere/support'), isNull);
+    });
+
+    test('single-segment roots never tail-match', () {
+      final env = LocalExecutionEnv(cwd: '/sandbox');
+      expect(visibleFolderRoot(env, '/other/sandbox'), isNull);
     });
 
     test('trailing slashes do not hide visibility', () {
@@ -81,20 +112,22 @@ void main() {
       expect(visibleFolderRoot(env, '   '), isNull);
     });
 
-    test('the visible root is returned for the env the listing will use',
-        () async {
-      // End-to-end shape: what the seam returns must be a path the env's
-      // listing can actually open — mounted root lists through the mount
-      // pass-through, the env cwd always lists.
-      final dir = await Directory.systemTemp.createTemp('visible_root');
-      addTearDown(() => dir.delete(recursive: true));
-      await File('${dir.path}/in_project.txt').writeAsString('x');
-      final base = LocalExecutionEnv(cwd: dir.path);
-      final env = ProjectMountEnv(base)..mountedRoot = dir.path;
-      final root = visibleFolderRoot(env, dir.path);
-      expect(root, dir.path);
-      expect((await env.listDir(root!)).isOk, isTrue);
-    });
+    test(
+      'the visible root is returned for the env the listing will use',
+      () async {
+        // End-to-end shape: what the seam returns must be a path the env's
+        // listing can actually open — mounted root lists through the mount
+        // pass-through, the env cwd always lists.
+        final dir = await Directory.systemTemp.createTemp('visible_root');
+        addTearDown(() => dir.delete(recursive: true));
+        await File('${dir.path}/in_project.txt').writeAsString('x');
+        final base = LocalExecutionEnv(cwd: dir.path);
+        final env = ProjectMountEnv(base)..mountedRoot = dir.path;
+        final root = visibleFolderRoot(env, dir.path);
+        expect(root, dir.path);
+        expect((await env.listDir(root!)).isOk, isTrue);
+      },
+    );
   });
 
   group('ProjectFolderChannelOps', () {
