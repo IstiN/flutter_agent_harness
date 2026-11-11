@@ -137,6 +137,39 @@ post_install do |installer|
           ldflags.concat(export_flags) unless config.name == 'Debug'
           config.build_settings[key] = ldflags
         end
+
+        # gh-2106: CocoaPods turns the vendored archive-slice XCFramework
+        # into -l"wasm_run_dart" on the Runner link (Pods-Runner.*.xcconfig
+        # OTHER_LDFLAGS), resolved ONLY through LIBRARY_SEARCH_PATHS'
+        # ${PODS_XCFRAMEWORKS_BUILD_DIR}/wasm_run_flutter — a copy the
+        # wasm_run_flutter pod's "[CP] Copy XCFrameworks" phase rsyncs at
+        # BUILD time. That phase's DECLARED output
+        # (…/XCFrameworkIntermediates/wasm_run_flutter/WasmRun.framework)
+        # never matches the real artifact (the slices ship a bare
+        # libwasm_run_dart.a, no framework bundle), so on a self-hosted
+        # runner a cancelled build can poison the per-project DerivedData
+        # build database (~/Library/Developer/Xcode/DerivedData — keyed by
+        # the checkout path, OUTSIDE the repo, invisible to the workspace
+        # `git clean -ffdx`) and every later run skips the copy; the link
+        # then dies with "Library 'wasm_run_dart' not found"
+        # (v1.0.707, run 42965479924: 6/6 fa-m5-2 runs red since the
+        # cancelled 20:45 dispatch, same tree green on fa-m5-1 and hosted).
+        # Point the -l straight at the restored slices — the same paths the
+        # force_load flags and the post_install nm check already pin — so
+        # the link no longer depends on the intermediates copy at all.
+        # Search order puts the vendor slice before $(inherited) so a
+        # stale intermediates copy can never satisfy the -l lookup with
+        # different bytes than the force_load loaded.
+        device_slice_dir = "#{xcframework}/ios-arm64"
+        simulator_slice_dir = "#{xcframework}/ios-arm64_x86_64-simulator"
+        { 'iphoneos*' => device_slice_dir, 'iphonesimulator*' => simulator_slice_dir }.each do |sdk, slice_dir|
+          key = "LIBRARY_SEARCH_PATHS[sdk=#{sdk}]"
+          paths = Array(config.build_settings[key] || []).dup
+          # Drop flags injected by earlier pod installs (idempotent re-runs).
+          paths.reject! { |p| p.include?('WasmRun.xcframework') }
+          paths.reject! { |p| p == '$(inherited)' }
+          config.build_settings[key] = [slice_dir, '$(inherited)', *paths]
+        end
       end
     end
   end
