@@ -683,7 +683,7 @@ void main() {
                 'at the repo root) — declare package-roots: . explicitly '
                 'next to the explicit targets',
           );
-          final targets = '${(withMap as YamlMap)['targets'] ?? ''}'.trim();
+          final targets = '${withMap['targets'] ?? ''}'.trim();
           expect(
             targets,
             contains('matrix.arch'),
