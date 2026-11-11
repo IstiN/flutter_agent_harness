@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-11T06:57:33.531Z",
+  "ticketKey": "gh-2105",
+  "headSha": "81800695be277199dae1ea51408fa9db57b85ff8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:2115a40dda13d105",
+      "size": 285638
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:762aaf83905bb20d",
+      "size": 3370926
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:f28bdf006178986f",
+      "size": 2489
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1504f4d9a72efd3c",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1e561f86c4fdf210",
+      "size": 11414
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:0e48b16f01e48fde",
+      "size": 4947
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a5f747eb3365a9ab",
+      "size": 3094
+    },
+    "request.md": {
+      "hash": "fnv1a64:06c56962775c0c01",
+      "size": 1000
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:30c66eef359767e7",
+      "size": 815
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:05596d36c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:5a7fd4e5f6aebf57",
+      "size": 1065
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:06c56962775c0c01",
+      "size": 1000
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc62Dmwq",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_sqlite3_prewarm_guard_test.dart:686",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: CI red — `unnecessary_cast` fatal lint (Static gates job failed)**\n\n`ci_failures.md` on commit `81800695`: the **Static gates** check failed —\n`dart analyze --fatal-infos --fatal-warnings` exited 2 with exactly one issue:\n\n```\nwarning - test/ci_sqlite3_prewarm_guard_test.dart:686:31 - Unnecessary cast. Try removing the cast. - unnecessary_cast\n##[error]Process completed with exit code 2.\n```\n\nReproduced locally with the same invocation (`dart analyze --fatal-infos --fatal-warnings` after `dart pub get` + `dart pub get --directory=office_addin/dart`): exit 2, the same single issue — nothing else in this PR trips the analyzer.\n\n**Why it fires**: line 679 already casts `(withMap as YamlMap)['package-roots']`. A cast on a `final` local promotes `withMap` (`dynamic`) to `YamlMap` for the rest of the block via flow analysis — so the identical cast at line 686 is a static no-op, which is exactly what `unnecessary_cast` flags.\n\n**Fix** (verified lint-clean via a probe file with the same shape — `dart analyze` → `No issues found!`): drop the redundant cast on line 686 only:\n\n```dart\nfinal targets = '${withMap['targets'] ?? ''}'.trim();\n```\n\nKeep exactly one cast: line 679's `as YamlMap` stays (a `dynamic → YamlMap` runtime check is not flagged), and it is what makes the un-cast read on 686 type-safe. Do not \"fix\" it by removing 679's cast instead — that un-promotes `withMap` and 686's cast becomes necessary again (also clean, but then the `expect(withMap, isA<YamlMap>())` guard at 669–673 documents a cast that no longer exists)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc62Dmy4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:734",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the gh-2075 seed guard (`test/ci_sqlite3_native_asset_seed_guard_test.dart`) is red on this commit — it still pins build-macos.yml to the retired tool this PR removes**\n\nThis PR rewires **both** macOS lanes off `scripts/sqlite3_hook_prewarm.dart` (3-attempt ≈3.5 min budget) onto the hardened contracts — the composite here for `build-macos-cli`, the hardened inline script (`sqlite3_native_assets_prewarm.dart`, attempts 8, RUNNER_TEMP copy, post-clean) for the desktop step. But `test/ci_sqlite3_native_asset_seed_guard_test.dart` still asserts the **old** wiring and now fails — 6 tests, reproduced locally:\n\n```\ndart test test/ci_sqlite3_native_asset_seed_guard_test.dart  →  6 failures, exit 1\n- gh-2075 AC1 — \"the release build step pre-warms via the shared tool\"\n    Expected: contains '../scripts/sqlite3_hook_prewarm.dart'  ← got the new hardened script\n- gh-2075 AC1 — \"pre-warm runs after the min-platform gate, before the release\"\n- gh-2075 AC2 — \"a pre-warm step runs the shared tool for the matrix arch\"\n- gh-2075 AC2 — \"pre-warm runs after pub get, before dart build cli\"\n- gh-2075 AC2 — \"the pre-warm is paired with the hooks-shared cache restore\"\n- gh-2075 AC3 — \"both macOS lanes invoke the shared tool\"\n```\n\nThe file carries no `@Tags` exclusion, so it runs in the default suite: the full-suite CI leg will be red on this head, and the PR description's \"Full suite: 2394 tests, 0 failures\" does not hold for commit `81800695`. The repo now carries two guards asserting **contradictory** contracts for the same file: `ci_sqlite3_prewarm_guard_test.dart` (updated by this PR: composite + hardened script) vs. the seed guard (old tool). Whichever runs, one of them lies.\n\n**Fix** — update `test/ci_sqlite3_native_asset_seed_guard_test.dart` to the new contracts (or supersede its duplicated wiring assertions in favor of the new pins, keeping AC3's one-mechanism intent):\n\n- AC1: the desktop \"Build macOS release\" step pre-warms via `../scripts/sqlite3_native_assets_prewarm.dart` copied to `$RUNNER_TEMP`, post-clean, `--attempts 8`, `--targets \"$SQLITE_SEED_ARCH-macos\"`, best-effort `|| echo \"::warning::\"` (exactly what the new `ci_sqlite3_prewarm_guard_test.dart` pins).\n- AC2: the CLI legs pre-warm via `uses: ./.github/actions/sqlite3-native-assets-prewarm` with `targets: ${{ matrix.arch }}-macos`, `package-roots: .`, after `dart pub get` and before `dart build cli`, still paired with the hooks-shared cache restore step.\n- AC3: both lanes ride the ONE hardened mechanism (composite/`sqlite3_native_assets_prewarm.dart`) — no `sqlite3_hook_prewarm.dart` reference survives in the workflow (the third new pin already asserts this)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:00f2aa4e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: CI red — `unnecessary_cast` fatal lint (Static gates job failed)**\n\n`ci_failures.md` on commit `81800695`: the **Static gates** check failed —\n`dart analyze --fatal-infos --fatal-warnings` exited 2 with exactly one issue:\n\n```\nwarning - test/ci_sqlite3_prewarm_guard_test.dart:686:31 - Unnecessary cast. Try removing the cast. - unnecessary_cast\n##[error]Process completed with exit code 2.\n```\n\nReproduced locally with the same invocation (`dart analyze --fatal-infos --fatal-warnings` after `dart pub get` + `dart pub get --directory=office_addin/dart`): exit 2, the same single issue — nothing else in this PR trips the analyzer.\n\n**Why it fires**: line 679 already casts `(withMap as YamlMap)['package-roots']`. A cast on a `final` local promotes `withMap` (`dynamic`) to `YamlMap` for the rest of the block via flow analysis — so the identical cast at line 686 is a static no-op, which is exactly what `unnecessary_cast` flags.\n\n**Fix** (verified lint-clean via a probe file with the same shape — `dart analyze` → `No issues found!`): drop the redundant cast on line 686 only:\n\n```dart\nfinal targets = '${withMap['targets'] ?? ''}'.trim();\n```\n\nKeep exactly one cast: line 679's `as YamlMap` stays (a `dynamic → YamlMap` runtime check is not flagged), and it is what makes the un-cast read on 686 type-safe. Do not \"fix\" it by removing 679's cast instead — that un-promotes `withMap` and 686's cast becomes necessary again (also clean, but then the `expect(withMap, isA<YamlMap>())` guard at 669–673 documents a cast that no longer exists)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:bf218060",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the gh-2075 seed guard (`test/ci_sqlite3_native_asset_seed_guard_test.dart`) is red on this commit — it still pins build-macos.yml to the retired tool this PR removes**\n\nThis PR rewires **both** macOS lanes off `scripts/sqlite3_hook_prewarm.dart` (3-attempt ≈3.5 min budget) onto the hardened contracts — the composite here for `build-macos-cli`, the hardened inline script (`sqlite3_native_assets_prewarm.dart`, attempts 8, RUNNER_TEMP copy, post-clean) for the desktop step. But `test/ci_sqlite3_native_asset_seed_guard_test.dart` still asserts the **old** wiring and now fails — 6 tests, reproduced locally:\n\n```\ndart test test/ci_sqlite3_native_asset_seed_guard_test.dart  →  6 failures, exit 1\n- gh-2075 AC1 — \"the release build step pre-warms via the shared tool\"\n    Expected: contains '../scripts/sqlite3_hook_prewarm.dart'  ← got the new hardened script\n- gh-2075 AC1 — \"pre-warm runs after the min-platform gate, before the release\"\n- gh-2075 AC2 — \"a pre-warm step runs the shared tool for the matrix arch\"\n- gh-2075 AC2 — \"pre-warm runs after pub get, before dart build cli\"\n- gh-2075 AC2 — \"the pre-warm is paired with the hooks-shared cache restore\"\n- gh-2075 AC3 — \"both macOS lanes invoke the shared tool\"\n```\n\nThe file carries no `@Tags` exclusion, so it runs in the default suite: the full-suite CI leg will be red on this head, and the PR description's \"Full suite: 2394 tests, 0 failures\" does not hold for commit `81800695`. The repo now carries two guards asserting **contradictory** contracts for the same file: `ci_sqlite3_prewarm_guard_test.dart` (updated by this PR: composite + hardened script) vs. the seed guard (old tool). Whichever runs, one of them lies.\n\n**Fix** — update `test/ci_sqlite3_native_asset_seed_guard_test.dart` to the new contracts (or supersede its duplicated wiring assertions in favor of the new pins, keeping AC3's one-mechanism intent):\n\n- AC1: the desktop \"Build macOS release\" step pre-warms via `../scripts/sqlite3_native_assets_prewarm.dart` copied to `$RUNNER_TEMP`, post-clean, `--attempts 8`, `--targets \"$SQLITE_SEED_ARCH-macos\"`, best-effort `|| echo \"::warning::\"` (exactly what the new `ci_sqlite3_prewarm_guard_test.dart` pins).\n- AC2: the CLI legs pre-warm via `uses: ./.github/actions/sqlite3-native-assets-prewarm` with `targets: ${{ matrix.arch }}-macos`, `package-roots: .`, after `dart pub get` and before `dart build cli`, still paired with the hooks-shared cache restore step.\n- AC3: both lanes ride the ONE hardened mechanism (composite/`sqlite3_native_assets_prewarm.dart`) — no `sqlite3_hook_prewarm.dart` reference survives in the workflow (the third new pin already asserts this)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:f85a17ad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Two blockers: the `Static gates` CI check is red on an `unnecessary_cast` fatal lint (`test/ci_sqlite3_prewarm_guard_test.dart:686`, reproduced locally, exit 2, single issue), and the gh-2075 guard `test/ci_sqlite3_native_asset_seed_guard_test.dart` still pins build-macos.yml to the retired `sqlite3_hook_prewarm.dart` tool this PR removes (6 failing tests → full-suite leg red; \"2394 tests, 0 failures\" does not hold on this head). Otherwise clean: the composite/hardened prewarm wiring matches the action contract (inputs, per-arch `<abi>-macos` targets, best-effort degradation, no new permissions), the sweeper's failed-train diagnosis quotes and degrades correctly, and all 11 new tests pass.\n\n**Key Issues**:\n1. 🚨 CI breakage — fatal lint `unnecessary_cast` at `test/ci_sqlite3_prewarm_guard_test.dart:686` (Static gates per `ci_failures.md`).\n2. 🚨 CI breakage — stale gh-2075 guard: `test/ci_sqlite3_native_asset_seed_guard_test.dart` × 6 failures vs the new build-macos.yml wiring.\n\n**Next Steps**:\n1. Drop the redundant cast at `test/ci_sqlite3_prewarm_guard_test.dart:686` — line 679's cast already promotes `withMap` to `YamlMap` (verified fix in inline comment).\n2. Update `test/ci_sqlite3_native_asset_seed_guard_test.dart` AC1/AC2/AC3 to the new contracts (composite for CLI legs, hardened post-clean inline script for the desktop step), keeping AC3's one-mechanism intent (inline comment).\n\n**Digest** (suggestion-level, no threads): `scripts/sweep_stale_drafts.sh:120` — train picker takes the first non-success of the 5 most-recent tag-ref runs; a re-cut tag with an older failed run names the old train (contrived — a green train consumes the staging draft). • `scripts/sqlite3_hook_prewarm.dart` — zero production call sites remain after this PR; script + its guard/unit tests are now legacy pins, follow-up cleanup candidate. • `test/ci_sqlite3_prewarm_guard_test.dart:696` — AC8 loop hardcodes `['arm64', 'x64']`, duplicating the workflow matrix. • CI noise: the three `##[error] size budget regression` annotations in the Static-gates log (`panel/app` skwasm/main.dart.js) are `continue-on-error` steps (job continued to `dart analyze`), ownership `unknown` per `ci_violations.json` — engine/vendor churn, not attributable to this diff."
+    }
+  ]
+}
