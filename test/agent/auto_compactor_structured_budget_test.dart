@@ -329,12 +329,18 @@ void main() {
       messages: await session.buildContextMessages(),
     );
     final budgetSource = CancelTokenSource();
+    // gh-2096: the engine hands every judge call a per-call child token
+    // — capture it to assert the abort reached the provider layer.
+    final judgeTokens = <CancelToken>[];
     final compactor = StructuredCompactor(
       session: session,
       state: state,
       window: 1000,
       settings: settings,
-      judge: (ledger, [token]) => Completer<String?>().future,
+      judge: (ledger, [token]) {
+        if (token != null) judgeTokens.add(token);
+        return Completer<String?>().future;
+      },
       summarize: (request) async => SummarizationResult.failure('unused'),
       attemptBudget: const Duration(milliseconds: 150),
       protectLastN: 3,
@@ -346,9 +352,24 @@ void main() {
     // #541: the timeout no longer bricks the run — the fallback hid
     // past the recency floor and the window closed.
     expect(ok, isTrue);
-    // The engine killed the in-flight call at the token, not just the
-    // await: the provider layer sees the abort (#515 semantics kept).
-    expect(budgetSource.token.isCancelled, isTrue);
+    // gh-2096: the engine killed each in-flight judge call at its
+    // PER-CALL child token, not the run-wide one — the provider layer
+    // still sees every abort (#515 semantics kept via the forwarded
+    // child tokens; the retry stays live, so both attempts fire), while
+    // the run-wide budget token stays live for the retry and the later
+    // LM stages of the run.
+    expect(judgeTokens, hasLength(2));
+    expect(judgeTokens.every((t) => t.isCancelled), isTrue);
+    expect(
+      budgetSource.token.isCancelled,
+      isFalse,
+      reason: 'a judge timeout must not cancel the run-wide budget token',
+    );
+    expect(
+      budgetSource.token.isCancelled,
+      isFalse,
+      reason: 'a judge timeout must not cancel the run-wide budget token',
+    );
     // The fallback hid deterministically, whole pairs, oldest-first.
     final records = await session.getEntries();
     final hidden = records.whereType<HiddenRangeRecord>().toList();
