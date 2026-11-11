@@ -245,4 +245,37 @@ void main() {
     expect(find.byIcon(Icons.eject_outlined), findsNothing);
     expect(find.byIcon(Icons.warning_amber_outlined), findsNothing);
   });
+
+  group('folderPathsTailMatch — platform fold seam (review blockers, PR #2112)', () {
+    test('web fold is case-sensitive (URL semantics, same as Linux)', () {
+      // The web build cannot touch dart:io's Platform at all — the seam
+      // takes the resolved bool so this branch is exercisable on the VM.
+      expect(
+        folderPathsTailMatch('/a/b/Demo', '/x/b/Demo', caseSensitive: true),
+        isTrue,
+      );
+      expect(
+        folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: true),
+        isFalse,
+      );
+    });
+
+    test('case-insensitive platforms fold the trailing two segments', () {
+      expect(
+        folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: false),
+        isTrue,
+      );
+    });
+
+    test('single-segment paths never tail-match on any platform', () {
+      expect(
+        folderPathsTailMatch('/Demo', '/x/Demo', caseSensitive: true),
+        isFalse,
+      );
+      expect(
+        folderPathsTailMatch('/Demo', '/x/demo', caseSensitive: false),
+        isFalse,
+      );
+    });
+  });
 }

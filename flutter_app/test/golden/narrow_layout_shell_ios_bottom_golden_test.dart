@@ -27,6 +27,12 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
+import 'package:fa/ui/screens/settings_navigation.dart'
+    show SettingsCategoryPanel;
+import 'package:fa/ui/widgets/messenger_navigation_controls.dart'
+    show MessengerBottomNavigation;
+import 'package:fa/ui/widgets/messenger_section_header.dart'
+    show MessengerFloatingDockInsets;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
@@ -235,6 +241,47 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('iOS settings category list clears the home indicator', (
+    tester,
+  ) async {
+    // Review blocker (PR #2112): the dock reserve used to be read from the
+    // shell State context — ABOVE the Scaffold's extendBody MediaQuery
+    // injection — so the ≥64pt gate saw the raw 34pt home indicator and the
+    // reserve silently degraded to 0. On narrow the More sheet pushes the
+    // SettingsScreen route (its own SafeArea, no dock); the reserve is now
+    // resolved inside SettingsCategoryPanel.build, where the shell context
+    // actually lives, and the route list must clear the gesture area.
+    final conversations = <ChatListEntry>[
+      _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 2, 15, 4)),
+    ];
+    await _pumpNarrowShell(tester, conversations: conversations);
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(
+        const ValueKey('narrowShellMore-messengerPrimaryNav-settings'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The pushed route replaces the shell chrome — no dock on this page.
+    expect(find.byKey(const ValueKey('narrowShellNavigation')), findsNothing);
+    expect(find.byType(SettingsCategoryPanel), findsOneWidget);
+
+    // The category list tail ('Others') stays above the 34pt gesture area.
+    final lastCategory = find.byKey(
+      const ValueKey('settingsCategory-others'),
+    );
+    expect(lastCategory, findsOneWidget);
+    expect(
+      tester.getRect(lastCategory).bottom,
+      lessThanOrEqualTo(844 - 34),
+      reason: 'the settings tail must clear the home-indicator gesture area',
+    );
+    await expectGolden(tester, 'narrow_layout_shell_ios_bottom_settings');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('iOS keyboard lifts the chat composer above it', (tester) async {
     final conversations = <ChatListEntry>[
       _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 2, 15, 4)),
@@ -290,5 +337,15 @@ void main() {
       'narrow_layout_shell_ios_bottom_chat_keyboard_dismissed',
     );
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  test('dock gate stays pinned to the dock geometry (review digest)', () {
+    // The ≥64pt gate duplicates MessengerBottomNavigation.height + 8pt
+    // bottomGap as a literal (an import cycle forbids sharing it in
+    // production); this test is the pin so the two can never drift.
+    expect(
+      MessengerFloatingDockInsets.minInflatedBottom,
+      MessengerBottomNavigation.height + MessengerBottomNavigation.bottomGap,
+    );
   });
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, visibleForTesting;
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
@@ -118,7 +119,27 @@ String? visibleFolderRoot(ExecutionEnv env, String? candidatePath) {
 /// a shared folder name alone is too weak to claim identity.
 bool _isSameFolderPath(String root, String candidate) {
   if (root == candidate) return true;
-  final fold = Platform.isLinux
+  return folderPathsTailMatch(
+    root,
+    candidate,
+    // kIsWeb MUST short-circuit before Platform: dart:io's Platform throws
+    // UnsupportedError on the web build, and this comparison runs un-gated
+    // every time the Files panel resolves a folder (review blocker, PR
+    // #2112). Web paths follow URL case semantics — same as Linux.
+    caseSensitive: kIsWeb || Platform.isLinux,
+  );
+}
+
+/// The tail-match half of [_isSameFolderPath], with the platform fold
+/// injected as a plain bool so tests can exercise the web branch on the
+/// VM (the web build cannot reach dart:io's Platform at all).
+@visibleForTesting
+bool folderPathsTailMatch(
+  String root,
+  String candidate, {
+  required bool caseSensitive,
+}) {
+  final fold = caseSensitive
       ? (String s) => s
       : (String s) => s.toLowerCase();
   final rootSegments = _folderSegments(root);

@@ -10,15 +10,16 @@ part of 'wide_layout_shell.dart';
 extension _WideLayoutShellSettings on _WideLayoutShellState {
   Widget _buildSettingsPanel({bool collapsed = false}) {
     // Narrow only: the floating dock scrolls over the category list, so its
-    // occupied height is reserved as scroll padding. Desktop sidebars keep
-    // the legacy geometry (no dock, raw MediaQuery insets).
-    final dockReserve = _isNarrow
-        ? MessengerFloatingDockInsets.bottomOf(context)
-        : 0.0;
+    // occupied height is reserved as scroll padding. The reserve is read
+    // INSIDE the panel's build (reserveDock) — the State context here sits
+    // above the Scaffold, where the extendBody-inflated MediaQuery does
+    // not exist yet, so the ≥64pt gate would always see the raw 34pt home
+    // indicator and the reserve would silently be 0 on the phone (review
+    // blocker, PR #2112). Desktop sidebars keep the legacy geometry.
     return SettingsCategoryPanel(
       selected: _settingsCategory,
       collapsed: collapsed,
-      bottomReserve: dockReserve,
+      reserveDock: _isNarrow,
       onSelected: (category) {
         _settingsCategory = category;
         _selectSection(_WideShellSection.settings);
