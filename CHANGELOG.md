@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2096): auto-compact no longer re-pays the judge budget on every
+  run when the configured smol class cannot answer within it, and a judge
+  timeout no longer kills the retry. Three engine changes: (1) the
+  judge call runs under a PER-CALL child cancel token — a budget expiry
+  aborts only the in-flight call while the retry and the later LM stages
+  keep the run-wide token live (previously the first timeout cancelled
+  the shared token and the retry died born-cancelled in ~75 ms); (2) the
+  consecutive judge-failure counter is persisted per session as additive
+  `structured_judge_health` custom records (newest wins; no migrations —
+  old sessions load byte-identical), so the #541 deterministic fallback
+  latches ACROSS runs: while latched, auto-compact skips the judge
+  entirely (deterministic hide, receipt says "budget unwinnable for the
+  configured class") and pays ONE probe call per `judgeProbeAfter`
+  window (default 10 min; a changed model class probes at once) — the
+  probe unlatches on success, failure re-arms; (3) the named judge
+  timeout line (#541 AC3) now carries the attempt shape — input entries,
+  est. tokens, elapsed — so a slow-reasoning class is distinguishable
+  from a wedged endpoint in logs alone; the pass reports gain
+  `judgeInputEntries`/`judgeInputTokens`/`judgeElapsedMs`/`judgeLatched`.
+  Docs: the smol/judge model-class rule (a class that answers within the
+  budget, or a budget sized to the class) in `docs/agents/providers.md`.
 - fix(gh-2075): the daily-publish macOS legs no longer depend on the
   package:sqlite3 native-assets hook's single un-retried build-time
   download. The `build-macos.yml` app-build and CLI-bundle steps now

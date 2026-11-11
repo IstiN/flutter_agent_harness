@@ -334,7 +334,7 @@ void main() {
       state: state,
       window: 1000,
       settings: settings,
-      judge: (ledger) => Completer<String?>().future,
+      judge: (ledger, [token]) => Completer<String?>().future,
       summarize: (request) async => SummarizationResult.failure('unused'),
       attemptBudget: const Duration(milliseconds: 150),
       protectLastN: 3,
@@ -376,7 +376,7 @@ void main() {
       settings: settings,
       // Judge declines ('[]', F1 no-op): straight to pass 2, where the
       // summarizer wedges past the attempt budget.
-      judge: (ledger) async => '[]',
+      judge: (ledger, [token]) async => '[]',
       summarize: (request) => Completer<SummarizationResult>().future,
       checkpointPrompt: 'P',
       budgetSource: budgetSource,

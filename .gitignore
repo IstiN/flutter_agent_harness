@@ -208,3 +208,7 @@ agents/
 # drift-details.txt) — test-run residue, never committed.
 /release-notes.md
 /drift-details.txt
+
+# gh-2096 leg: coverage2/ scratch run swept by a WIP auto-save — same
+# artifact class as coverage/ (gh-1033 lineage).
+coverage2/
