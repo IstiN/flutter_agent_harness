@@ -31,24 +31,6 @@
   "pr-1940": [
     {
       "leg": "rework",
-      "at": "2026-10-28T12:25:22Z",
-      "prompt": 395602,
-      "completion": 39353,
-      "total": 434955,
-      "cacheRead": 24173888,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-28T12:39:03Z",
-      "prompt": 86454,
-      "completion": 8334,
-      "total": 94788,
-      "cacheRead": 1111104,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-28T13:09:46Z",
       "prompt": 342042,
       "completion": 30865,
@@ -2837,6 +2819,15 @@
       "completion": 11343,
       "total": 130883,
       "cacheRead": 1005120,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-11T13:09:26Z",
+      "prompt": 138501,
+      "completion": 10861,
+      "total": 149362,
+      "cacheRead": 1428928,
       "model": "glm-5.3-flash"
     }
   ],
