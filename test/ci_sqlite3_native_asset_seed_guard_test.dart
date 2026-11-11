@@ -42,21 +42,35 @@
 // to its own download. The tool reads version + release tag + pinned
 // hashes from the INSTALLED package's lib/src/hook/asset_hashes.dart —
 // no hashes pinned in the workflow, a lockfile bump self-updates.
+// HARDENING (gh-2105): the v1.0.697 stranded draft exposed the release
+// train legs still on the retired 3-attempt ≈3.5 min budget when a 5+
+// minute egress storm hit — build-macos.yml now rides the same 8-attempt
+// ≈10 min contracts as every other hosted leg (gh-2072/2074): the
+// sqlite3-native-assets-prewarm composite for the CLI matrix and the
+// hardened script copied to $RUNNER_TEMP for the desktop step. This
+// guard pins the hardened wiring; scripts/sqlite3_hook_prewarm.dart and
+// its suite remain as legacy pins (AC4) until the removal follow-up.
 //
 // Deliberately YAML-level asserts (the ci_core_shard_upload_retry_guard_test
 // .dart / ci_pub_get_retry_guard_test.dart static pattern):
-//  AC1  the app build step pre-warms macos-<arch> AFTER the min-platform
-//       gate and BEFORE `flutter build macos --release` (post-`flutter
-//       clean`, post-config — .dart_tool exists there — and every arch of
-//       the matrix gets the pre-warm with the x86_64 → x64 asset-arch
-//       mapping),
-//  AC2  the CLI matrix legs pre-warm AFTER `dart pub get` and BEFORE
-//       `dart build cli` (both archs — the 504 killed the bundle leg
-//       first, and it is the cheapest place to fail loud),
-//  AC3  ONE prewarm mechanism exists: the bash seed script and its
-//       selftest are GONE from the tree and unreferenced by the
-//       workflow (a re-introduction re-creates the two-implementations
-//       drift the round-2 review flagged),
+//  AC1  the app build step pre-warms <abi>-macos via the hardened
+//       sqlite3_native_assets_prewarm.dart script copied to $RUNNER_TEMP
+//       (--attempts 8, best-effort ::warning:: degradation) AFTER the
+//       min-platform gate and BEFORE `flutter build macos --release`
+//       (post-`flutter clean`, post-config — .dart_tool exists there —
+//       and every arch of the matrix gets the pre-warm with the x86_64 →
+//       x64 asset-arch mapping),
+//  AC2  the CLI matrix legs pre-warm via the shared
+//       sqlite3-native-assets-prewarm composite (targets
+//       ${{ matrix.arch }}-macos, package-roots: .) AFTER `dart pub get`
+//       and BEFORE `dart build cli` (both archs — the 504 killed the
+//       bundle leg first, and it is the cheapest place to fail loud),
+//  AC3  ONE hardened prewarm mechanism exists: the bash seed script and
+//       its selftest are GONE from the tree, and NO retired
+//       sqlite3_hook_prewarm.dart reference survives in the workflow —
+//       both macOS lanes ride the composite / hardened script (a
+//       re-introduction re-creates the two-implementations drift the
+//       round-2 review flagged),
 //  AC4  the shared tool's download contract stays statically pinned by
 //       the canonical suite — bounded retries (brownout recovery,
 //       exhausted-retry loud failure, corrupt-body never written), the
@@ -82,6 +96,7 @@ const bashSeedSelftest = 'scripts/seed_sqlite3_native_assets_selftest.sh';
 const sharedPrewarmTool = 'scripts/sqlite3_hook_prewarm.dart';
 const sharedPrewarmUnitSuite = 'test/scripts/sqlite3_hook_prewarm_test.dart';
 const sharedPrewarmWiringGuard = 'test/ci_sqlite3_hook_prewarm_guard_test.dart';
+const prewarmComposite = './.github/actions/sqlite3-native-assets-prewarm';
 
 List<YamlMap> jobSteps(YamlMap root, String jobId) {
   final jobs = root['jobs'] as YamlMap;
@@ -109,7 +124,7 @@ void main() {
   group('gh-2075 AC1 — app build step pre-warms the sqlite3 hook cache', () {
     final steps = jobSteps(root, 'build-macos');
 
-    test('the release build step pre-warms via the shared tool', () {
+    test('the release build step pre-warms via the hardened script', () {
       final build = steps
           .where(
             (s) =>
@@ -117,27 +132,70 @@ void main() {
           )
           .toList();
       expect(build, hasLength(1), reason: 'the release build step must exist');
+      final run = runOf(build.single);
       expect(
-        runOf(build.single),
-        contains('../scripts/sqlite3_hook_prewarm.dart'),
+        run,
+        contains('../scripts/sqlite3_native_assets_prewarm.dart'),
         reason:
             'the release build step must pre-warm the hook cache via the '
-            'shared gh-2074 tool (the hook runs inside '
-            '`flutter build macos --release`); the step cwd is flutter_app, '
-            'hence the ../scripts/ prefix',
+            'hardened gh-2072 script (status-gated fetch, exponential '
+            'backoff, per-request timeouts) — the hook downloads inside '
+            '`flutter build macos --release`; the step cwd is '
+            'flutter_app, hence the ../scripts/ prefix',
       );
       expect(
-        runOf(build.single),
-        contains('--disable-dart-dev'),
+        run,
+        contains(
+          r'cp ../scripts/sqlite3_native_assets_prewarm.dart "$RUNNER_TEMP/',
+        ),
         reason:
-            'plain `dart run` executes the whole package graph build hooks '
-            'BEFORE main() — on a live brownout the pre-warm would die '
-            'before it could pre-warm (the gh-2074 rework lesson)',
+            'the script must be copied OUT of the workspace before '
+            'invocation — a plain dart <path> inside flutter_app builds '
+            'the package graph\'s own hooks BEFORE main(), i.e. performs '
+            'the exact single-attempt download this step exists to '
+            'bypass (the hook-free contract; the composite does the '
+            'same copy)',
       );
       expect(
-        runOf(build.single),
-        contains('--targets macos-'),
-        reason: 'the pre-warm targets the macOS release assets',
+        run,
+        contains('--attempts 8'),
+        reason:
+            'the hardened contract is 8 attempts (≈ 10 min of coverage '
+            'with the exponential backoff) — the retired 3-attempt '
+            'budget (~3.5 min) did not cover the 5+ minute v1.0.697 '
+            'storm that stranded the draft (gh-2105)',
+      );
+      expect(
+        run,
+        contains(r'--targets "$SQLITE_SEED_ARCH-macos"'),
+        reason:
+            'the pre-warm targets the macOS release assets in the '
+            'script\'s <abi>-<os> grammar, through the mapped arch '
+            'variable',
+      );
+      expect(
+        run,
+        contains('--package-root .'),
+        reason:
+            'the package root must be declared — explicit targets never '
+            'ride a silent default (the AC7 doctrine of the canonical '
+            'guard)',
+      );
+      expect(
+        run,
+        contains('|| echo "::warning::'),
+        reason:
+            'best-effort semantics (gh-2072 review thread 7): a failed '
+            'pre-warm degrades to the hook\'s own single-attempt '
+            'download, never reds the leg by itself',
+      );
+      expect(
+        run,
+        isNot(contains('sqlite3_hook_prewarm.dart')),
+        reason:
+            'the retired 3-attempt script must not come back on the '
+            'release legs — its budget is below the measured storm '
+            'duration',
       );
     });
 
@@ -153,7 +211,7 @@ void main() {
       }
       final text = combined.toString();
       final gate = text.indexOf('assert_macos_min_platform');
-      final prewarm = text.indexOf('sqlite3_hook_prewarm.dart');
+      final prewarm = text.indexOf('sqlite3_native_assets_prewarm.dart');
       final release = text.indexOf('flutter build macos --release');
       expect(gate, greaterThanOrEqualTo(0), reason: 'gate step must exist');
       expect(
@@ -209,36 +267,38 @@ void main() {
   group('gh-2075 AC2 — CLI bundle legs pre-warm before dart build cli', () {
     final steps = jobSteps(root, 'build-macos-cli');
 
-    test('a pre-warm step runs the shared tool for the matrix arch', () {
+    test('a pre-warm step runs the shared composite for the matrix arch', () {
       final prewarms = steps
-          .map(stepText)
-          .where((t) => t.contains('sqlite3_hook_prewarm.dart'))
+          .where((s) => s['uses'] == prewarmComposite)
           .toList();
       expect(
         prewarms,
         hasLength(1),
         reason: 'exactly one pre-warm step in the CLI job',
       );
+      final with_ = prewarms.single['with'] as YamlMap;
       expect(
-        prewarms.single,
-        contains('--targets macos-'),
+        with_['targets'].toString().trim(),
+        r'${{ matrix.arch }}-macos',
         reason:
             'the CLI targets macOS — the target token must be the '
-            'composite macos-<arch> form the tool validates',
+            'per-arch <abi>-<os> form the script validates, resolved '
+            'per matrix row by the workflow',
       );
       expect(
-        prewarms.single,
-        contains('--disable-dart-dev'),
-        reason: 'the hook-free invocation contract (gh-2074 rework)',
+        with_['package-roots'].toString().trim(),
+        '.',
+        reason:
+            'build-macos-cli resolves the root package (dart pub get at '
+            'the repo root) — declare package-roots: . explicitly next '
+            'to the explicit targets',
       );
     });
 
     test('pre-warm runs after pub get, before dart build cli', () {
       final texts = steps.map(stepText).toList();
       final pubGet = texts.indexWhere((t) => t.contains('dart pub get'));
-      final prewarm = texts.indexWhere(
-        (t) => t.contains('sqlite3_hook_prewarm.dart'),
-      );
+      final prewarm = steps.indexWhere((s) => s['uses'] == prewarmComposite);
       final build = texts.indexWhere((t) => t.contains('dart build cli'));
       expect(pubGet, greaterThanOrEqualTo(0));
       expect(
@@ -268,9 +328,7 @@ void main() {
       final texts = steps.map(stepText).toList();
       final pubGet = texts.indexWhere((t) => t.contains('dart pub get'));
       final cache = texts.indexWhere((t) => t.contains('hooks-shared-'));
-      final prewarm = texts.indexWhere(
-        (t) => t.contains('sqlite3_hook_prewarm.dart'),
-      );
+      final prewarm = steps.indexWhere((s) => s['uses'] == prewarmComposite);
       expect(
         cache,
         greaterThanOrEqualTo(0),
@@ -364,17 +422,27 @@ void main() {
       );
     });
 
-    test('both macOS lanes invoke the shared tool', () {
+    test('both macOS lanes ride the ONE hardened mechanism', () {
       final text = read(workflow);
       expect(
-        text.contains('../scripts/sqlite3_hook_prewarm.dart'),
-        isTrue,
-        reason: 'the app-build lane (cwd flutter_app)',
+        text.contains('sqlite3_hook_prewarm.dart'),
+        isFalse,
+        reason:
+            'the retired 3-attempt script must not survive anywhere in '
+            'build-macos.yml — its ≈3.5 min budget is below the measured '
+            '5+ minute v1.0.697 egress storm (gh-2105)',
       );
       expect(
-        text.contains('scripts/sqlite3_hook_prewarm.dart'),
+        text.contains('../scripts/sqlite3_native_assets_prewarm.dart'),
         isTrue,
-        reason: 'the CLI lane (cwd repo root)',
+        reason:
+            'the app-build lane (cwd flutter_app) rides the hardened '
+            'script',
+      );
+      expect(
+        text.contains('uses: ./.github/actions/sqlite3-native-assets-prewarm'),
+        isTrue,
+        reason: 'the CLI lane (cwd repo root) rides the shared composite',
       );
     });
   });
