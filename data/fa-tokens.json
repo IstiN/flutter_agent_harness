@@ -66,15 +66,6 @@
   "pr-1960": [
     {
       "leg": "review",
-      "at": "2026-10-29T09:04:22Z",
-      "prompt": 114924,
-      "completion": 48944,
-      "total": 163868,
-      "cacheRead": 6092992,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-29T11:16:50Z",
       "prompt": 325195,
       "completion": 17444,
@@ -2844,6 +2835,17 @@
       "completion": 83209,
       "total": 1145384,
       "cacheRead": 26550336,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2127": [
+    {
+      "leg": "rework",
+      "at": "2026-11-12T09:24:18Z",
+      "prompt": 151206,
+      "completion": 22602,
+      "total": 173808,
+      "cacheRead": 1793344,
       "model": "glm-5.3-flash"
     }
   ]
