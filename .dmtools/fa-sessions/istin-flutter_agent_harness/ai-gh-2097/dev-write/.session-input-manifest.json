@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T11:19:36.117Z",
+  "ticketKey": "gh-2097",
+  "headSha": "295a3df052dd81f48c293d56b95c17c57c2be0f5",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:75f871626b469030",
+      "size": 96844
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:84bfc9d93e88b3a0",
+      "size": 176706
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:88066e63f8f46568",
+      "size": 727
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:70a677bc20d715bc",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:cc4dbdc19313d65a",
+      "size": 9080
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:47dc053c3f0c25f0",
+      "size": 4862
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a42d195b2cedcaa6",
+      "size": 4040
+    },
+    "request.md": {
+      "hash": "fnv1a64:aee51317b0fda28f",
+      "size": 2872
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:60a197467f58bfe1",
+      "size": 596
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:e67a174ec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f9a2876083df5f42",
+      "size": 2966
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:aee51317b0fda28f",
+      "size": 2872
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, contained fix for gh-2097. The structured engine re-anchors on the session projection before any trigger/over math (the ONE existing `refreshAgentState` contract — persist-cursor alignment held by the unconditional `_persistedCount` resync after every `_runAutoCompact`), basis flips render as `basis re-read: +Nk` precisely when the clamp would have printed «0 freed · 0%» (flip ⟺ after > before ⟺ freed would be 0 — no information lost), all six compaction diag lines carry `sid=`, and diagnostic appends ride one serialized chain drained by both exit paths. Ticket ACs all have real fixtures: two-writer first-pass sizing, basis-flip goldens (clamp pinned unchanged), sid + no-dropped-lines log tests. `dart analyze` clean on all changed files; the 4 touched test files pass locally (full suite green in the dev job). No blocking or important findings.\n\n**Key Issues** (digest only — none block):\n- `test/compaction/structured_engine_test.dart:369` — new hunks not `dart format` canonical (84-char expect line; pre-commit self-heal did not run, no CI stage gates format)\n- `test/cli/compaction_diag_log_test.dart:104` — third file-local `waitUntil` copy across test files\n- `lib/src/cli/agent_cli_diag_log.dart:36` — `flushDiagnosticLog()` drains the chain as of call time; a straggler enqueue after the drain starts is not covered (theoretical behind the gh-1589 seal fence)\n\n**Next Steps**:\n1. Optional: run `dart format test/compaction/structured_engine_test.dart` before merge (self-heal will also cover it on the next staged commit).\n2. Optional: hoist the lazy-describe `waitUntil` into `agent_cli_test_support.dart` next to `waitForIt` in a later cleanup PR.\n3. Nothing else — mergeable as is."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## gh-2097 rework — reply to the APPROVE review\n\nThanks for the APPROVE and the digest. This rework lap picked up the actionable digest items and fixed the CI flutter-tests red the PR's core change had caused. Three things:\n\n**1. The CI red (owned by this PR) — fixed.** The `Flutter app tests (shard 0/2)` leg failed on `agent_service_compaction_it_test.dart` IT-2 E4: after the gh-2097 run-start re-anchor, the loop's over-window relief could compact while the app's crash-safe persister still had the just-sent message in flight (`_persistSoon` appends unawaited). The structured engine then re-anchored the live transcript onto a session projection that lacked the newest message — the context silently lost it, the local-trim valve found nothing droppable (the newest remaining message alone busts the kept region), and the turn died on the guard error instead of being relieved. Cold/loaded schedules hit the race (the leg failed twice locally on a cold tree, passed warm — timing-dependent before the fix).\n\nFix: `AgentService._relieveOverWindow` now drains the pending persist BEFORE compacting (`await _persist()`, best effort) — the same ordering `_onAgentEnd` and the CLI's over-window funnel (`_persistMessages` before compaction) already enforce. No core code changed; the engine's re-anchor contract is untouched.\n\n**2. Digest item 1 (`test/compaction/structured_engine_test.dart:369` — new hunks not format-canonical) — fixed surgically.** The three NEW hunks the digest flagged (the `stale`/`fresh`/`fresh2` expect lines, 82–83 chars) are now wrapped to the canonical multi-line `expect(` shape. A whole-file `dart format` with the local SDK rewrites 363 lines of this file's pre-existing style (it predates the current formatter), which is outside the rework's surgical scope — so the two remaining >80-char lines (`:189`, `:285`) are main's pre-existing style and stay untouched.\n\n**3. Digest items 2 and 3 — acknowledged, not picked.** The file-local `waitUntil` hoist into `agent_cli_test_support.dart` (item 2) is the cross-file cleanup you already scoped to \"a later cleanup PR\"; the `flushDiagnosticLog()` straggler-enqueue note (item 3) stays as reviewed — theoretical behind the gh-1589 seal fence.\n\nThe lap also added the deterministic regression fixture for (1): an IT-2 test with a gated session-append FS (same decorator shape as the core's `FlakySessionFs`) that holds the newest record's append in flight across the relief — pre-fix it fails with exactly the guard error CI showed, post-fix it passes, deterministically (no timing dependence left)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:4f7e5d78",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, contained fix for gh-2097. The structured engine re-anchors on the session projection before any trigger/over math (the ONE existing `refreshAgentState` contract — persist-cursor alignment held by the unconditional `_persistedCount` resync after every `_runAutoCompact`), basis flips render as `basis re-read: +Nk` precisely when the clamp would have printed «0 freed · 0%» (flip ⟺ after > before ⟺ freed would be 0 — no information lost), all six compaction diag lines carry `sid=`, and diagnostic appends ride one serialized chain drained by both exit paths. Ticket ACs all have real fixtures: two-writer first-pass sizing, basis-flip goldens (clamp pinned unchanged), sid + no-dropped-lines log tests. `dart analyze` clean on all changed files; the 4 touched test files pass locally (full suite green in the dev job). No blocking or important findings.\n\n**Key Issues** (digest only — none block):\n- `test/compaction/structured_engine_test.dart:369` — new hunks not `dart format` canonical (84-char expect line; pre-commit self-heal did not run, no CI stage gates format)\n- `test/cli/compaction_diag_log_test.dart:104` — third file-local `waitUntil` copy across test files\n- `lib/src/cli/agent_cli_diag_log.dart:36` — `flushDiagnosticLog()` drains the chain as of call time; a straggler enqueue after the drain starts is not covered (theoretical behind the gh-1589 seal fence)\n\n**Next Steps**:\n1. Optional: run `dart format test/compaction/structured_engine_test.dart` before merge (self-heal will also cover it on the next staged commit).\n2. Optional: hoist the lazy-describe `waitUntil` into `agent_cli_test_support.dart` next to `waitForIt` in a later cleanup PR.\n3. Nothing else — mergeable as is."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:8d94ce6d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## gh-2097 rework — reply to the APPROVE review\n\nThanks for the APPROVE and the digest. This rework lap picked up the actionable digest items and fixed the CI flutter-tests red the PR's core change had caused. Three things:\n\n**1. The CI red (owned by this PR) — fixed.** The `Flutter app tests (shard 0/2)` leg failed on `agent_service_compaction_it_test.dart` IT-2 E4: after the gh-2097 run-start re-anchor, the loop's over-window relief could compact while the app's crash-safe persister still had the just-sent message in flight (`_persistSoon` appends unawaited). The structured engine then re-anchored the live transcript onto a session projection that lacked the newest message — the context silently lost it, the local-trim valve found nothing droppable (the newest remaining message alone busts the kept region), and the turn died on the guard error instead of being relieved. Cold/loaded schedules hit the race (the leg failed twice locally on a cold tree, passed warm — timing-dependent before the fix).\n\nFix: `AgentService._relieveOverWindow` now drains the pending persist BEFORE compacting (`await _persist()`, best effort) — the same ordering `_onAgentEnd` and the CLI's over-window funnel (`_persistMessages` before compaction) already enforce. No core code changed; the engine's re-anchor contract is untouched.\n\n**2. Digest item 1 (`test/compaction/structured_engine_test.dart:369` — new hunks not format-canonical) — fixed surgically.** The three NEW hunks the digest flagged (the `stale`/`fresh`/`fresh2` expect lines, 82–83 chars) are now wrapped to the canonical multi-line `expect(` shape. A whole-file `dart format` with the local SDK rewrites 363 lines of this file's pre-existing style (it predates the current formatter), which is outside the rework's surgical scope — so the two remaining >80-char lines (`:189`, `:285`) are main's pre-existing style and stay untouched.\n\n**3. Digest items 2 and 3 — acknowledged, not picked.** The file-local `waitUntil` hoist into `agent_cli_test_support.dart` (item 2) is the cross-file cleanup you already scoped to \"a later cleanup PR\"; the `flushDiagnosticLog()` straggler-enqueue note (item 3) stays as reviewed — theoretical behind the gh-1589 seal fence.\n\nThe lap also added the deterministic regression fixture for (1): an IT-2 test with a gated session-append FS (same decorator shape as the core's `FlakySessionFs`) that holds the newest record's append in flight across the relief — pre-fix it fails with exactly the guard error CI showed, post-fix it passes, deterministically (no timing dependence left)."
+    }
+  ]
+}
