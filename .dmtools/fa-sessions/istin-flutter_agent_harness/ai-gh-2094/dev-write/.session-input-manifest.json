@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T06:27:31.424Z",
+  "ticketKey": "pr-2110",
+  "headSha": "d2bc0f923601656394966bfc7badf3858ae9dacd",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:34c3e7b45e6900d9",
+      "size": 172795
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:c191552c6516cde8",
+      "size": 826500
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:def5b3a04588804f",
+      "size": 1133
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:6a680432e1d65c67",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:a880036e31fbb9f3",
+      "size": 8947
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:cb320f1f24de38d3",
+      "size": 5509
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ebc3b57ea6adc085",
+      "size": 2165
+    },
+    "request.md": {
+      "hash": "fnv1a64:686f73c2d6c5240c",
+      "size": 1829
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:a2e149685d6cbc48",
+      "size": 587
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:d3c4e4c9c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ef47e4038b541dac",
+      "size": 1896
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:686f73c2d6c5240c",
+      "size": 1829
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, minimal fix for gh-2094. The flush drain now re-derives `_outputTailOpen` from the flushed text (`!text.endsWith('\\n')`), exactly the ticket's contract; the empty-buffer early-return keeps empty flushes a no-op (contract #4 pinned by AC2). Verified locally: the three new regression tests fail without the fix (reproducing the exact glue, `rows 2/2`) and pass with it — arbitration file 12/12 green, interaction neighborhood (#503 coalesce, #538 race, controller send, busy row) 23/23 green, `dart analyze` clean on both changed files. Ticket ACs AC1–AC4 + AC6 verified; AC5 is manual by the ticket's own design; fa_tui.dart untouched (2783/2800 LOC gate).\n\n**Key Issues**: none blocking or important. Two digest-level notes (no threads, do not block):\n- `test/cli/fa_tui_output_arbitration_test.dart:546` — the AC2 empty-flush pin uses a fixed 80ms wait for a 16ms timer; a starved timer makes the assertion vacuous-pass (false-pass only, not flaky red).\n- `test/cli/fa_tui_output_arbitration_test.dart:482` — `runRow` missing the `isNotNull` guard its sibling row vars have; vacuous-pass risk is unreachable in practice.\n\n**Next Steps**:\n1. Merge — nothing here gates approval.\n2. Optional follow-ups at author's discretion: strengthen the AC2 empty-flush pin (e.g. a flush-counter seam) and add the `runRow` `isNotNull` asserts in a future polish PR."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Re: Automated Code Review — APPROVE\n\nAcknowledged — thank you for the clean verdict. Re-verified against the current head (`f0b9a452be`): the gh-2094 fix is intact in `lib/src/cli/fa_tui_controller_io.dart` — `_flushOutput()` re-derives `_outputTailOpen = !text.endsWith('\\n')` from the flushed (painted) text, empty-buffer flushes early-return before any flag write, and the `@visibleForTesting outputTailOpenForTest` seam stays inside the io part-file (fa_tui.dart untouched, 2783/2800 LOC gate). The full arbitration file is green on this tree.\n\nBoth digest-level notes were picked up in this lap (cheap, same-file — `test/cli/fa_tui_output_arbitration_test.dart`, commit `f0b9a452be`), so the follow-up polish PR is no longer needed:\n\n1. **AC2 empty-flush pin (fixed 80ms wait for a 16ms timer)** — replaced with a deterministic pin: `sendBusy()` is a non-output message, and `_send()` flushes the output buffer *synchronously* ahead of every non-output message — no starvable timer, so the empty flush provably runs before each assertion. The pin now covers **both directions**: an OPEN tail stays open across an empty flush, and a CLOSED tail stays closed (the old pin asserted only the open direction). Mutation-checked per TDD: a mutant that writes the flag before `_flushOutput()`'s empty early-return fails the new pin deterministically (`an empty flush must leave a CLOSED tail untouched — the flag is only re-derived from real flushed text`, test line 564) while the old 80ms pin passed the same mutant.\n2. **`runRow` missing the `isNotNull` guard** — added (`expect(runRow, isNotNull, reason: 'the running card must paint')`), matching its sibling row vars, so `settledRow isNot(equals(runRow))` can no longer pass vacuously if the home-sequence lookup ever misses.\n\nVerification on the reworked tree: arbitration file 12/12 green; interaction neighborhood (#503 coalesce, #538 race, controller send, busy row) 35/35 green; `dart analyze` clean; `dart format --set-exit-if-changed` clean on the changed file; full repo unit gate `dart test --exclude-tags integration` green. No production code changed in this lap — the rework commit is test-only (+25/−6).\n\nCI note: the failed \"Golden suite (macOS baselines)\" check is foreign to this PR — it is a 0.01% (40px) pixel diff in `flutter_app/test/golden/chat_golden_test.dart` (`goldens/chat_image.png`), a file this PR never touches and a package that does not import either changed file. Details in the PR-level rework comment."
+    },
+    {
+      "id": "thread-3",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-11T11:54:09.638Z"
+    },
+    {
+      "id": "thread-4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head a4fee7173fe124dc25f8de5fbdf39b91216b6464 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "thread-5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 2 at 2026-11-12T05:18:48.786Z"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:e1e74c7d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, minimal fix for gh-2094. The flush drain now re-derives `_outputTailOpen` from the flushed text (`!text.endsWith('\\n')`), exactly the ticket's contract; the empty-buffer early-return keeps empty flushes a no-op (contract #4 pinned by AC2). Verified locally: the three new regression tests fail without the fix (reproducing the exact glue, `rows 2/2`) and pass with it — arbitration file 12/12 green, interaction neighborhood (#503 coalesce, #538 race, controller send, busy row) 23/23 green, `dart analyze` clean on both changed files. Ticket ACs AC1–AC4 + AC6 verified; AC5 is manual by the ticket's own design; fa_tui.dart untouched (2783/2800 LOC gate).\n\n**Key Issues**: none blocking or important. Two digest-level notes (no threads, do not block):\n- `test/cli/fa_tui_output_arbitration_test.dart:546` — the AC2 empty-flush pin uses a fixed 80ms wait for a 16ms timer; a starved timer makes the assertion vacuous-pass (false-pass only, not flaky red).\n- `test/cli/fa_tui_output_arbitration_test.dart:482` — `runRow` missing the `isNotNull` guard its sibling row vars have; vacuous-pass risk is unreachable in practice.\n\n**Next Steps**:\n1. Merge — nothing here gates approval.\n2. Optional follow-ups at author's discretion: strengthen the AC2 empty-flush pin (e.g. a flush-counter seam) and add the `runRow` `isNotNull` asserts in a future polish PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:a63e5c41",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Re: Automated Code Review — APPROVE\n\nAcknowledged — thank you for the clean verdict. Re-verified against the current head (`f0b9a452be`): the gh-2094 fix is intact in `lib/src/cli/fa_tui_controller_io.dart` — `_flushOutput()` re-derives `_outputTailOpen = !text.endsWith('\\n')` from the flushed (painted) text, empty-buffer flushes early-return before any flag write, and the `@visibleForTesting outputTailOpenForTest` seam stays inside the io part-file (fa_tui.dart untouched, 2783/2800 LOC gate). The full arbitration file is green on this tree.\n\nBoth digest-level notes were picked up in this lap (cheap, same-file — `test/cli/fa_tui_output_arbitration_test.dart`, commit `f0b9a452be`), so the follow-up polish PR is no longer needed:\n\n1. **AC2 empty-flush pin (fixed 80ms wait for a 16ms timer)** — replaced with a deterministic pin: `sendBusy()` is a non-output message, and `_send()` flushes the output buffer *synchronously* ahead of every non-output message — no starvable timer, so the empty flush provably runs before each assertion. The pin now covers **both directions**: an OPEN tail stays open across an empty flush, and a CLOSED tail stays closed (the old pin asserted only the open direction). Mutation-checked per TDD: a mutant that writes the flag before `_flushOutput()`'s empty early-return fails the new pin deterministically (`an empty flush must leave a CLOSED tail untouched — the flag is only re-derived from real flushed text`, test line 564) while the old 80ms pin passed the same mutant.\n2. **`runRow` missing the `isNotNull` guard** — added (`expect(runRow, isNotNull, reason: 'the running card must paint')`), matching its sibling row vars, so `settledRow isNot(equals(runRow))` can no longer pass vacuously if the home-sequence lookup ever misses.\n\nVerification on the reworked tree: arbitration file 12/12 green; interaction neighborhood (#503 coalesce, #538 race, controller send, busy row) 35/35 green; `dart analyze` clean; `dart format --set-exit-if-changed` clean on the changed file; full repo unit gate `dart test --exclude-tags integration` green. No production code changed in this lap — the rework commit is test-only (+25/−6).\n\nCI note: the failed \"Golden suite (macOS baselines)\" check is foreign to this PR — it is a 0.01% (40px) pixel diff in `flutter_app/test/golden/chat_golden_test.dart` (`goldens/chat_image.png`), a file this PR never touches and a package that does not import either changed file. Details in the PR-level rework comment."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-11:6c41f787",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-11T11:54:09.638Z"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-11:a085a601",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head a4fee7173fe124dc25f8de5fbdf39b91216b6464 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-12:05ace843",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 2 at 2026-11-12T05:18:48.786Z"
+    }
+  ]
+}
