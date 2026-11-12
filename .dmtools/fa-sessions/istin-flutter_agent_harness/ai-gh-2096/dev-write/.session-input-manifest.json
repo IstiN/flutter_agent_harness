@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T06:14:01.625Z",
+  "ticketKey": "gh-2096",
+  "headSha": "6fa2ed6c4885f8c86a75c43d235e9c7a9211e2f1",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:9bf459c51187882e",
+      "size": 75765
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:c277a1e10e8cda86",
+      "size": 158302
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:c573fd7ec12b07ed",
+      "size": 536
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:57027716887ec762",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e96eb70eb6ccc0c1",
+      "size": 8295
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a3d07e23940a4b47",
+      "size": 3463
+    },
+    "request.md": {
+      "hash": "fnv1a64:1c8c1483d6830eb7",
+      "size": 5669
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:bcfc7785c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:697c5cc08092c126",
+      "size": 5783
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1c8c1483d6830eb7",
+      "size": 5669
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:6931f6bf",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING — fixed**\n\nThe stale `#515` assertion is updated to the gh-2096 semantics — the fix is exactly the one requested: assert the **per-call child token** was cancelled and the **run-wide budget token stayed live**.\n\nCommit: `ad1c56dfa1` (+ the interleaved WIP auto-save `51698433bb`; net rework diff vs `d57ee076`: 1 file, +20/−4) on `ai/gh-2096` (`test/agent/auto_compactor_structured_budget_test.dart`, the `structured engine, direct: the hide judge budget kill` test):\n\n```dart\n// gh-2096: the engine hands every judge call a per-call child token\n// — capture it to assert the abort reached the provider layer.\nfinal judgeTokens = <CancelToken>[];\n...\njudge: (ledger, [token]) {\n  if (token != null) judgeTokens.add(token);\n  return Completer<String?>().future;\n},\n...\nexpect(judgeTokens, hasLength(2));\nexpect(judgeTokens.every((t) => t.isCancelled), isTrue);\nexpect(\n  budgetSource.token.isCancelled,\n  isFalse,\n  reason: 'a judge timeout must not cancel the run-wide budget token',\n);\n```\n\nNotes on the shape of the fix:\n\n- `hasLength(2)` (not 1) is deliberate and matches this PR's own semantics: after the first per-call timeout the retry stays live, so the engine fires **both** judge attempts — each under its own child token, each killed by its own budget expiry (#515 preserved at the provider layer via the forwarded child tokens). This mirrors `structured_judge_health_test.dart` (`receivedTokens, hasLength(2)` / `liveAtReceive` / `every((t) => t.isCancelled)`), so the two tests now encode the same behavior instead of contradictory behavior.\n- `budgetSource.token.isCancelled` is now asserted **false** — the engine code is untouched (as the finding states, only the stale assertion needed the update).\n- The test no longer relies on the old mechanism: it now fails if the engine ever cancels the run-wide token on a judge timeout, which is exactly the regression gh-2096 fixed (the \"born-cancelled retry\").\n\nVerification on the branch:\n\n- `dart test test/agent/auto_compactor_structured_budget_test.dart --plain-name \"the hide judge budget kill\"` → **1 passed** (was the reported `Expected: true / Actual: <false>` at `351:5`).\n- `dart test test/agent/auto_compactor_structured_budget_test.dart` → **7 passed**.\n- `dart test test/compaction/structured_judge_health_test.dart test/compaction/structured_judge_fallback_test.dart test/compaction/structured_engine_test.dart` (the PR's verify commands) → **31 passed**.\n- Full `test/compaction + test/agent` sweep → green (no regressions; this was the only failing test in the CI Core/Hostile runs)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:fc736243",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One 🚨 BLOCKING: the PR introduces a deterministic test failure — `test/agent/auto_compactor_structured_budget_test.dart:351` still asserts the pre-gh-2096 mechanism (`budgetSource.token.isCancelled == true`), which the per-call token change intentionally inverted; reproduced on the branch (1050/1 in compaction+agent) and verified green on `origin/main`. The engine work itself is sound: analyzer clean, judge_health latch/probe/diagnosis logic correct and additive, old sessions stay byte-identical, docs + CHANGELOG present.\n\n**Key Issues**:\n- 🚨 [comment1](pr_review_comments/comment1.md) — stale #515 assertion contradicts the PR's own new test; CI red, must fix before merge.\n- 💡 Digest: `engine.dart:574-578` — a successful probe's judged hide pass carries `judgeLatched: false`; the field doc promises the flag on \"a probe receipt\", so hosts can't distinguish probe-driven successes.\n- 💡 Digest: `engine.dart:173` — `judgeProbeAfter` has no config surface (`compaction.judgeProbeAfterSeconds`); CHANGELOG reads \"default 10 min\" as if configurable, but it is a constructor param only.\n- 💡 Digest: `engine.dart:730-748` — the latched skip emits kind `'hide'` with `ok: false`; a deliberate skip reads as a failure in hosts counting `!ok` passes — a dedicated kind (`'hide-skip'`) would be cleaner.\n- 🪶 Digest: `judge_health.dart:86-97` — a latched record with null `target` never gets the class-change probe bypass (unreachable via real writers, defensive note only).\n- 🪶 Digest: `structured_judge_fallback_test.dart:229` — the regex hardcodes `~104 tok`, brittle to unrelated ledger-line format changes.\n\n**Next Steps**:\n1. Update the stale assertion in `auto_compactor_structured_budget_test.dart` to gh-2096 semantics (per-call token cancelled; run-wide token stays live) — then re-run the three verify commands from the PR description."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:b28a1ca7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: stale #515 assertion — this PR introduces a deterministic test failure (CI breakage)**\n\nThe per-call token change is the point of gh-2096, but the pre-existing test whose body asserts the OLD mechanism (this hunk's test — the stale assertion sits at line 351, ~14 lines below the changed line) was not updated:\n\n```dart\n// The engine killed the in-flight call at the token, not just the\n// await: the provider layer sees the abort (#515 semantics kept).\nexpect(budgetSource.token.isCancelled, isTrue);   // line 351\n```\n\nOn this branch the judge timeout cancels ONLY the per-call child token, so `budgetSource.token` stays live and the assertion fails:\n\n- Reproduced twice on the PR branch: `dart test test/agent/auto_compactor_structured_budget_test.dart --plain-name \"the hide judge budget kill\"` → `Expected: true / Actual: <false>` at `351:5`. The full `test/compaction + test/agent` sweep is **1050 passed / 1 failed — this is the only failure**.\n- Verified **passing on `origin/main`** in a clean worktree — the failure is introduced by this PR, deterministic, not flaky.\n- This PR's own new test asserts the **opposite** semantics (`structured_judge_health_test.dart`: `expect(budgetSource.token.isCancelled, isFalse, reason: 'a judge timeout must not cancel the run-wide budget token')`) — the two tests now encode contradictory behavior, and the old one loses.\n\nFix: update this test to gh-2096 semantics — assert the **per-call token** was cancelled (the provider layer still sees the abort; #515 is preserved via the forwarded child token) and the **run-wide budget token stayed live**. The engine code itself is correct; only this stale assertion needs the update."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-11:563f598f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-11",
+      "updatedAt": "2026-11-11",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review round 2)\n\n**Summary**: Re-review of the rework (`d57ee076..03e65244`): F1 (🚨 stale #515 assertion) verified **fixed** — `auto_compactor_structured_budget_test.dart:332-368` now asserts the per-call child tokens were each cancelled and the run-wide budget token stayed live; the previously-failing test passes. The `_runHidePasses` → `_latchedGate`/`_handleJudgeFailure` CRAP refactor is behavior-preserving (verified case-by-case against the reviewed control flow): full `test/compaction + test/agent` sweep **1051/1051 green**; analyzer clean on the changed lib files; the PR's verify command passes (31/31).\n\n**Key Issues**: none blocking. Remaining advisory digest (all on frozen lines — no threads per the re-review protocol):\n- 💡 `engine.dart:555-565` — a successful probe's judged hide pass carries `judgeLatched: false`; the field doc promises the flag on \"a probe receipt\".\n- 💡 `engine.dart:173` — `judgeProbeAfter` has no config surface, while CHANGELOG reads \"default 10 min\" as if configurable.\n- 💡 `engine.dart:730-750` — the latched skip emits kind `'hide'` with `ok: false`; a dedicated kind (`'hide-skip'`) would read cleaner in hosts counting `!ok` passes.\n- 🪶 `judge_health.dart:86-97` — a latched record with null `target` never gets the class-change probe bypass (unreachable via real writers).\n- 🪶 `structured_judge_fallback_test.dart:230` — the timeout-line regex hardcodes `~104 tok`.\n\n**Next Steps**:\n1. None required for merge — the digest items are optional polish, none block this or a future change."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-12:a60cbcba",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-12T05:18:58.583Z"
+    }
+  ]
+}
