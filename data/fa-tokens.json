@@ -13,15 +13,6 @@
   "pr-1970": [
     {
       "leg": "rework",
-      "at": "2026-10-29T14:13:06Z",
-      "prompt": 103240,
-      "completion": 19774,
-      "total": 123014,
-      "cacheRead": 6086400,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-29T16:10:18Z",
       "prompt": 264214,
       "completion": 12346,
@@ -2865,6 +2856,15 @@
       "completion": 36930,
       "total": 216152,
       "cacheRead": 7407488,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-12T14:29:06Z",
+      "prompt": 145006,
+      "completion": 22723,
+      "total": 167729,
+      "cacheRead": 2840768,
       "model": "glm-5.3-flash"
     }
   ],
