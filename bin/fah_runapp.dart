@@ -671,6 +671,15 @@ Future<void> _runApp(List<String> args) async {
   // judgeBudgetSeconds`; `null` keeps the 90s default.
   final compactionJudgeBudgetSeconds = saved.compactionJudgeBudgetSeconds;
 
+  // Compaction trigger tuning (gh-2098): the `compaction:` section's
+  // `triggerRatio`/`reserveTokens`/`keepRecentTokens`, merged per key
+  // (project `.fah/config.yaml` wins over user `~/.fah/config.yaml`).
+  // Null/empty keeps the gh-1742 curves byte-identically.
+  final compactionTuning = mergeCompactionTuning(
+    global: saved.compactionTuning,
+    project: loadProjectCompactionTuning(cwd),
+  );
+
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
   // gh-1745: the same section carries the request-blob spill policy
@@ -1786,6 +1795,7 @@ Future<void> _runApp(List<String> args) async {
         misuseBreaker: saved.misuseBreaker,
         compactionEngine: compactionEngine,
         compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
+        compactionTuning: compactionTuning,
         wireDump: wireDump,
         trajectoryRequestBlobs: trajectoryRequestBlobs,
         trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,
