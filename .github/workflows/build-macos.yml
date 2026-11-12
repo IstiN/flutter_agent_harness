@@ -1129,15 +1129,15 @@ jobs:
             export FA_PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID"
           fi
           FLUTTER_XCODE_ARCHS="$ARCH" ./scripts/build_macos_nosandbox.sh
-          APP_PATH="build/macos/Build/Products/Release/Fa.app"
+          APP_PATH="build/macos/Build/Products/ReleaseNoSandbox/Fa.app"
           NO_DMG="fa-macos-nosandbox-${ARCH}-${VERSION}.dmg"
           NO_DMGTMP="tmp-fa-nosandbox.dmg"
-          # Same size diet as the sandboxed DMG above (review, #1096): the
-          # fresh no-sandbox build carries the full flutter_assets — prune
-          # before any packaging so DMG and ZIP both ship lean.
-          bash ../scripts/prune_flutter_assets.sh \
-            "build/macos/Build/Products/Release/Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets" \
-            assets/wasm packages/js_widget_runtime/test
+          # The size diet (prune_flutter_assets.sh, #1096) runs INSIDE
+          # build_macos_nosandbox.sh, BEFORE its re-sign (#2132): the fresh
+          # no-sandbox build carries the full flutter_assets, and pruning a
+          # signed bundle breaks the seal — the script order mirrors the
+          # sandboxed leg's "prune before any codesign" doctrine. DMG and
+          # ZIP below stage the pruned, re-signed app.
           rm -rf dmg-staging-nosandbox
           mkdir dmg-staging-nosandbox
           cp -R "$APP_PATH" dmg-staging-nosandbox/
@@ -1155,6 +1155,32 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$NO_ZIP"
           echo "dmg_name=$NO_DMG" >> "$GITHUB_OUTPUT"
           echo "zip_name=$NO_ZIP" >> "$GITHUB_OUTPUT"
+
+      # #2132: the no-sandbox DMG must clear Gatekeeper like the sandboxed
+      # one — same notarytool submit + stapler machinery, byte-shape and
+      # graceful-skip semantics copied from the "Notarize DMG" step above.
+      # The DMG lives in flutter_app/ (this step's build ran with
+      # cwd=flutter_app), unlike the sandboxed leg's repo-root DMG.
+      - name: Notarize no-sandbox DMG
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
+          DMG_NAME: ${{ steps.package_nosandbox.outputs.dmg_name }}
+        run: |
+          if [ -z "$MACOS_NOTARIZE_APPLE_ID" ]; then
+            echo "⚠️  Notarization secrets not set — skipping notarization"
+            exit 0
+          fi
+          echo "Submitting for notarization..."
+          xcrun notarytool submit "flutter_app/$DMG_NAME" \
+            --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
+            --team-id "$MACOS_NOTARIZE_TEAM_ID" \
+            --password "$MACOS_NOTARIZE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "flutter_app/$DMG_NAME"
+          echo "✅ Notarization complete"
 
       - name: Upload no-sandbox macOS artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

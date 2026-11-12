@@ -20,5 +20,11 @@ CODE_SIGN_STYLE = $(FA_CODE_SIGN_STYLE)
 DEVELOPMENT_TEAM = $(FA_DEVELOPMENT_TEAM)
 PROVISIONING_PROFILE_SPECIFIER = $(FA_PROVISIONING_PROFILE_SPECIFIER)
 
+// The app's minimum macOS version. Pinned here because a config-name
+// variant (ReleaseNoSandbox) carries no project-level floor line (the lane
+// guard pins the pbxproj floor shape at exactly the Debug/Release/Profile
+// trio); per-config pins in the pbxproj set the same value.
+MACOSX_DEPLOYMENT_TARGET = 14.0
+
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 fa1.dev. All rights reserved.
