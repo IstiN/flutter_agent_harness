@@ -134,7 +134,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       // hint. Printing the success-looking "auto-compacted" line here
       // claimed context was summarized when nothing was.
       cli._logDiagnostic(
-        'auto-compact pass ${pass.pass} FAILED sid=${cli._logSid} '
+        'auto-compact pass ${pass.pass} FAILED '
         'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
         '$escalationCounts'
         'error=${pass.error ?? '-'}',
@@ -150,7 +150,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
         'locally; the session file keeps the full history)',
       );
       cli._logDiagnostic(
-        'auto-compact pass ${pass.pass} local-trim sid=${cli._logSid} '
+        'auto-compact pass ${pass.pass} local-trim '
         'tokens ${pass.tokensBefore}→${pass.tokensAfter}',
       );
       return;
@@ -163,9 +163,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       // Honest zeros print only when nothing happened; a pass that hid
       // or summarized records prints even on a flat token estimate
       // (issue #438 E3).
-      cli._logDiagnostic(
-        'auto-compact pass ${pass.pass} no-op sid=${cli._logSid}',
-      );
+      cli._logDiagnostic('auto-compact pass ${pass.pass} no-op');
       return;
     }
     cli._printCompactionReport(pass, auto: auto);
@@ -181,7 +179,6 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
-      'sid=${cli._logSid} '
       'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
       '$escalationCounts'
       'ok=${pass.ok} error=${pass.error ?? '-'}',
@@ -196,8 +193,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       'retrying in ${backoff.inSeconds}s — $error',
     );
     cli._logDiagnostic(
-      'compact retry sid=${cli._logSid} '
-      'attempt=$attempt/$maxAttempts backoff=${backoff.inSeconds}s '
+      'compact retry attempt=$attempt backoff=${backoff.inSeconds}s '
       'error=$error',
     );
   }
@@ -209,9 +205,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   @override
   void onDone(int passes, int tokens) {
     if (passes > 0) {
-      cli._logDiagnostic(
-        'auto-compact done sid=${cli._logSid} passes=$passes tokens=$tokens',
-      );
+      cli._logDiagnostic('auto-compact done passes=$passes tokens=$tokens');
     }
     // Backend agent mode (issue #155): close the compaction bracket once
     // per run with the net freed delta (clamped — a restamped estimator
@@ -307,27 +301,21 @@ List<String> formatCompactionReport(
   final pct = pass.tokensBefore == 0
       ? 0
       : (freed * 100 / pass.tokensBefore).round();
-  // gh-2097: an upward basis jump renders EXPLICITLY — the pass appended
-  // only shrinkers, so an after-count above the before-count is the
-  // session projection holding more than the in-memory view did at
-  // measurement time (a second writer), not a compaction regression.
-  // «0 freed · 0%» used to read the first honest measurement as one.
-  final outcome = pass.basisReadTokens != null
-      ? 'basis re-read: +${formatTokens(pass.basisReadTokens)}'
-      : '$freed freed · $pct%';
   final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
   final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
   final header = '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix';
   // gh-1636: the default report — one line, no checkpoint text.
   if (!details) {
     return [
-      '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens ($outcome)',
+      '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens '
+          '($freed freed · $pct%)',
     ];
   }
   final summary = pass.summary?.trim();
   return [
     header,
-    'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} ($outcome)',
+    'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
+        '($freed freed · $pct%)',
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
     // session records or folding a summary — a bare "0 hidden · 0
     // summarized" next to a big freed count cannot describe a real

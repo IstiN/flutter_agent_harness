@@ -114,9 +114,6 @@ extension AgentCliLifecycle on AgentCli {
     await _flushJobBoardPersist();
     await _flushObligationsLedger();
     await _subagentManager.flushPersist();
-    // gh-2097: drain the diagnostic-append chain — a compaction post-
-    // mortem must never lose its last lines to the process exit.
-    await flushDiagnosticLog();
     // gh-1589 (REG-2): the REPL path seals with the SAME implementation
     // and the SAME close order as headless — drain → usage fold → seal →
     // exit. One invariant, both exits, no divergent variants.

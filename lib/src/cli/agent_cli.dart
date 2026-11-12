@@ -137,7 +137,6 @@ import '../hosts/host_wiring_builder.dart';
 import '../exceptions.dart';
 import '../js_ext/ext_bootstrap_js.dart';
 import '../js_ext/ext_catalog.dart';
-import '../trajectory/formatters.dart' show formatTokens;
 import '../js_ext/ext_install.dart';
 import '../js_ext/ext_manifest.dart';
 import '../js_ext/extension_host.dart';
@@ -2545,9 +2544,6 @@ class AgentCli {
       await _flushJobBoardPersist();
       await _flushObligationsLedger();
       await _subagentManager.flushPersist();
-      // gh-2097: drain the diagnostic-append chain — a headless exit
-      // must not leave compaction pass lines in flight.
-      await flushDiagnosticLog();
       // gh-1589: the seal is the LAST session action of the run — every
       // deliberate flush has landed, and any straggler write from here
       // (a late settle's registry snapshot, a lost usage record) is
@@ -2728,13 +2724,6 @@ class AgentCli {
   final Map<String, String> _runtimeSecrets = {};
 
   var _diagnosticLogDirEnsured = false;
-
-  /// gh-2097: the serialized diagnostic-append chain — every
-  /// `_logDiagnostic` call links its append onto this future, so bursts
-  /// land in order and never race each other on the same file. Exit
-  /// paths await [flushDiagnosticLog] so the process cannot die with
-  /// pending lines in the chain.
-  Future<void> _diagLogChain = Future<void>.value();
 
   /// Size cap of the shared diagnostics log (`~/.fah/logs/fa.log`): on the
   /// first write of a process, an oversized log rotates to `fa.log.1`.
