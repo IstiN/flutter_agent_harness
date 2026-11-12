@@ -49,6 +49,20 @@ block a release again.
   being relieved). AC: a gated-persist IT-2 fixture holds the newest
   record's append in flight across the relief and asserts the turn
   still completes.
+- fix(gh-2132): the shipped non-sandboxed macOS app is real now — the
+  orphaned `ReleaseNoSandbox.entitlements`/`DebugNoSandbox.entitlements`
+  are pruned to EXACTLY {cs.allow-jit, network.client, network.server}
+  (the stale personal-information/healthkit/homekit claims are
+  sandbox-scoped or iOS-only and poison profile-free Developer ID
+  notarization) and wired as a real `ReleaseNoSandbox` Xcode build
+  configuration (project + Runner + Flutter Assemble, byte-cloned from
+  Release); `build_macos_nosandbox.sh` prunes BEFORE the re-sign (the old
+  prune-after-sign order shipped a broken seal) and fails the leg loud
+  when the SIGNED app's entitlements deviate from the pinned trio;
+  build-macos.yml gains a "Notarize no-sandbox DMG" step (notarytool
+  --wait + stapler staple, same signed-path gating and no-secrets graceful
+  skip as the sandboxed "Notarize DMG" step). Pinned by
+  `test/ci_macos_nosandbox_entitlements_guard_test.dart`.
 - fix(gh-2096): auto-compact no longer re-pays the judge budget on every
   run when the configured smol class cannot answer within it, and a judge
   timeout no longer kills the retry. Three engine changes: (1) the

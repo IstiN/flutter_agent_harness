@@ -88,6 +88,16 @@ readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
 echo "[build_macos_nosandbox] Building Release (identity='${identity}', team='${team:-}')..."
 flutter build macos --release
 
+# #2132: the size diet (prune_flutter_assets.sh, #1096) must run BEFORE any
+# codesign so the seal covers the shipped tree — pruning a signed bundle
+# breaks it (missing sealed resource). Same two cuts and the same fail-loud
+# script the sandboxed DMG leg uses (its "before any codesign" doctrine
+# comment); the workflow step used to prune AFTER the re-sign below, which
+# shipped a broken seal.
+bash ../scripts/prune_flutter_assets.sh \
+  "${APP}/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets" \
+  assets/wasm packages/js_widget_runtime/test
+
 echo "[build_macos_nosandbox] Re-signing with no-sandbox entitlements..."
 codesign --force \
   --deep \
@@ -96,7 +106,24 @@ codesign --force \
   --options runtime \
   "${APP}"
 
-echo "[build_macos_nosandbox] Entitlements now applied:"
-codesign -d --entitlements - "${APP}" | grep -E 'app-sandbox|jit|personal-information|homekit|healthkit' || true
+# #2132 AC3 pipeline assertion: the shipped entitlement set must be EXACTLY
+# the pruned trio from ReleaseNoSandbox.entitlements — no app-sandbox, none
+# of the stale personal-information / healthkit / homekit claims (they are
+# sandbox-scoped or iOS-only and poison profile-free Developer ID
+# notarization), JIT present for the Flutter engine. Fail the release leg
+# loud instead of attaching a mis-entitled DMG.
+SIGNED_ENTS="$(codesign -d --entitlements :- "${APP}" 2>/dev/null || true)"
+for BAD in app-sandbox personal-information healthkit homekit; do
+  if grep -q "${BAD}" <<<"${SIGNED_ENTS}"; then
+    echo "::error::the signed no-sandbox app declares '${BAD}' — build_macos_nosandbox.sh must ship EXACTLY {com.apple.security.cs.allow-jit, com.apple.security.network.client, com.apple.security.network.server} (macos/Runner/ReleaseNoSandbox.entitlements); fix the entitlements file or the re-sign and re-run." >&2
+    exit 1
+  fi
+done
+if ! grep -q 'cs.allow-jit' <<<"${SIGNED_ENTS}"; then
+  echo "::error::the signed no-sandbox app is missing com.apple.security.cs.allow-jit — the Flutter engine needs JIT without the App Sandbox; re-sign with macos/Runner/ReleaseNoSandbox.entitlements." >&2
+  exit 1
+fi
+echo "[build_macos_nosandbox] entitlement set OK (no sandbox, no stale claims, JIT present)"
+spctl -a -vv -t exec "${APP}" 2>/dev/null || true
 
 echo "[build_macos_nosandbox] Done: ${APP}"
