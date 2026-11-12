@@ -800,7 +800,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 
@@ -1630,10 +1630,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # gh-2120: PINNED to an exact tag — `-b stable` cloned 3.50.0 after the
           # 2026-11-11 channel float and failed enforce-lockfile against the
           # committed flutter_app lock.
-          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
+          git clone --depth 1 -b 3.50.0 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
@@ -2002,7 +2002,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 
@@ -2082,10 +2082,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # gh-2120: PINNED to an exact tag — `-b stable` cloned 3.50.0 after the
           # 2026-11-11 channel float and failed enforce-lockfile against the
           # committed flutter_app lock.
-          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
+          git clone --depth 1 -b 3.50.0 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
@@ -2208,7 +2208,7 @@ jobs:
       # flutter-app-macos leg used (gh-1538).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
       - name: Create placeholder .env asset
@@ -2426,7 +2426,7 @@ jobs:
         with:
           # gh-2120: PINNED — floating stable (3.50.0) fails --enforce-lockfile
           # against the committed flutter_app lock (deterministic skew).
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 
@@ -2698,7 +2698,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 
@@ -2845,10 +2845,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # gh-2120: PINNED to an exact tag — `-b stable` cloned 3.50.0 after the
           # 2026-11-11 channel float and failed enforce-lockfile against the
           # committed flutter_app lock.
-          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
+          git clone --depth 1 -b 3.50.0 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
