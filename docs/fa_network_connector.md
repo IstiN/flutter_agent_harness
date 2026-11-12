@@ -53,7 +53,21 @@ both repos in the same change).
 - Membership: the owner's devices + their clients (browser/mobile/app
   viewer sessions). Join-by-password semantics do not apply.
 - Exposure defaults: agents ON, sessions ON (personal). Shared
-  networks: unchanged join flow; sessions default OFF (§6).
+  networks: sessions default OFF (§6).
+- Shared-network join semantics (co-acked 2026-11-12): membership is
+  USER-centric — join membership lives on the aiNativeUserId account
+  (`joinAsAuthed` upserts `Member{UserID, NetworkID}`); every device
+  of the user inherits it (`device.UserID → Member` lookup in device
+  routing and roster). The password/invite is a FIRST-ADMISSION
+  credential only: the network creator is a member at creation
+  (`seedOwnerMember`) and is never asked for a password; an authed
+  existing member joins by JWT alone (backend change landing
+  separately: `joinNetwork` auth-first early exit — today it rejects
+  an empty password even for members). Re-entry is required only
+  after an explicit kick (`DELETE /api/networks/{id}/members/
+  {memberId}`), leave, or membership reset. Passwordless re-entry for
+  JWT-less guests is OPEN DESIGN (per-device member token —
+  undecided, not part of this contract).
 
 ## 3. Envelope v1 (one upstream WS per device)
 
