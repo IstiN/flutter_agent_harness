@@ -3175,6 +3175,13 @@ jobs:
         run: |
           set -o pipefail
           cd flutter_app
+          # SDK-train moves regenerate Flutter.framework/Headers, and the
+          # self-hosted box's Xcode DerivedData keeps SwiftExplicitPrecompiledModules
+          # .pcm files built against the PREVIOUS train's headers — the next
+          # build dies with "FlutterPlugin.h has been modified since the
+          # module file was built". Wipe the Runner scheme's DerivedData
+          # before building (cheap: the pod/Xcode caches live elsewhere).
+          rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*
           if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
             if grep -qE 'Building native assets failed|build_hooks failed|Hash of downloaded file|build\.dart returned with exit code' /tmp/build-ios.log; then
               if grep -q 'Hash of downloaded file' /tmp/build-ios.log; then
