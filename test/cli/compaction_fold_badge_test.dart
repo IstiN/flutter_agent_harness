@@ -211,6 +211,16 @@ void main() {
           providerKind: 'openai-completions',
           skillsAccess: SkillsAccess.granted,
           compactionEngine: CompactionEngine.classic,
+          // gh-209: the mid-run relief is deterministic, so this badge
+          // test pins the relief DECLINE (the trim valve's kept region
+          // 400 sits below the newest tool result) and drives the
+          // over-window funnel backstop — the classic pass whose fold
+          // badge (`[auto-compacted · continuing]`) issue #438 AC3 pins.
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 2048,
+            keepRecentTokens: 400,
+          ),
         ),
         io: io,
         streamFunction: stream.call,

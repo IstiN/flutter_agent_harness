@@ -897,6 +897,16 @@ void main() {
           approvalMode: ApprovalMode.yolo,
           headlessRun: true,
           compactionEngine: CompactionEngine.classic,
+          // gh-209: the mid-run relief is deterministic, so these E4
+          // tests pin settings that make the relief DECLINE (the trim
+          // valve's kept region is 2000 < the transcript) and the
+          // over-window funnel backstop runs the classic pass mid-turn
+          // — the shape whose log face gh-1433/gh-1636 pin.
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 24000,
+            keepRecentTokens: 2000,
+          ),
           // gh-1636: the live summarizer-delta stream (and the full
           // report block) rides the tui.showCompactionDetails opt-in.
           showCompactionDetails: details,
@@ -909,14 +919,14 @@ void main() {
 
     List<List<AssistantMessageEvent>> turns() => [
       // Three tool calls whose outputs (~8200 tokens each) push the
-      // next request past the window — the over-window guard fires.
+      // next request past the window — the over-window guard fires,
+      // the deterministic relief declines (the settings pin), and the
+      // funnel backstop runs the classic summarizer pass.
       toolTurn(const [
         ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'cat a.log'}),
         ToolCall(id: 'c2', name: 'bash', arguments: {'command': 'cat b.log'}),
         ToolCall(id: 'c3', name: 'bash', arguments: {'command': 'cat c.log'}),
       ]),
-      // Consumed by the mid-run relief's no-op compaction attempt.
-      textTurn('S'),
       // The real summarizer pass: the gh-1433 E4 contract is that its
       // THINKING renders live on the log face instead of vanishing
       // into a busy row that does not exist in a captured log — since
@@ -928,7 +938,6 @@ void main() {
       ),
       // The continuation turn after the fold.
       textTurn('continued after compaction'),
-      textTurn('spare'),
     ];
 
     test('gh-1636: the default log face stays summary-free — one marker '

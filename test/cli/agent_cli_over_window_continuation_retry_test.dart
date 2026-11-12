@@ -1,23 +1,29 @@
-// Issue #1085 M2 — the over-window continuation funnel's round-1 review
-// contract, over the scripted-LLM CLI harness (no network, no PTY):
+// gh-209 — the two-tier compaction engine's over-window paths, over the
+// scripted-LLM CLI harness (no network, no PTY).
 //
-// 1. the bounded retry is REAL: two compaction passes run and the
-//    exhaustion verdict names them (the old single shot died quietly);
-// 2. the verdict is HONEST: with compaction disabled it says zero passes
-//    ran instead of blaming "N compaction attempts";
-// 3. a user abort during the funnel's compaction stays an ABORT: the
-//    engines report a cancelled summarizer as a failed pass, so the funnel
-//    gates on the sticky abort flag + the token rethrow — no retry, no
-//    resumed task, no false exhaustion verdict;
-// 4. an auto-continued run that answers EMPTY gets the one-shot "continue"
-//    nudge like any run (the old `!isAutoContinue` exclusion left the
-//    continuation idle forever — the post-compaction silence again);
-// 5. Ctrl+C during a BARE compaction (manual /compact, no run bracket)
-//    stops the compaction while the session lives on — the round-2
-//    review split: a run abort is run+compaction, a bare-compaction
-//    interrupt is the compaction only (no sticky abort, no exit);
-// 6. HEADLESS: the funnel's compaction runs outside any run bracket,
-//    so its interrupt is compaction-only — but the FUNNEL must see the
+// The mid-turn relief runs ONLY the deterministic emergency tier now (no
+// LM call on any path). The funnel (the bounded classic/structured retry
+// from issue #1085 M2) survives as the BACKSTOP for the shape the
+// deterministic tier cannot free, and its review contract still holds:
+//
+// 1. the deterministic relief recovers a ballooned transcript in ONE
+//    pass — seconds, zero summarizer calls; the dedup pass folds the
+//    older copy of a re-read path (lossless append) and the trim valve
+//    bounds the live context in memory;
+// 2. the funnel backstop: when the relief cannot free the window (the
+//    keep floor pins the valve below the newest message), the bounded
+//    passes run and the local trim still recovers the task;
+// 3. with compaction disabled the verdict says zero passes ran instead
+//    of blaming "N compaction attempts";
+// 4. a user abort during the funnel's compaction stays an ABORT: no
+//    retry, no resumed task, no false exhaustion verdict;
+// 5. an auto-continued run that answers EMPTY gets the one-shot
+//    "continue" nudge like any run (the post-compaction silence rule);
+// 6. Ctrl+C during a BARE compaction (manual /compact, no run bracket)
+//    stops the compaction while the session lives on — a run abort is
+//    run+compaction, a bare-compaction interrupt is the compaction only;
+// 7. HEADLESS: the funnel's compaction runs outside any run bracket, so
+//    its interrupt is compaction-only — but the FUNNEL must see the
 //    cancel, not a "nothing changed" false (the round-4 blocker: the
 //    swallowed cancel relaunched attempt 2). AutoCompactorFactory.run()
 //    throws on cancel, the funnel rethrow is live, the task ends with
@@ -74,17 +80,21 @@ class ScriptedThenHangStream {
 
 void main() {
   test(
-    'two fruitless compaction passes recover through the local trim',
+    'the emergency relief recovers deterministically: no summarizer call',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+      env.writeFile('mid.txt', List.filled(500, 'y' * 40).join('\n'));
+      env.writeFile('big2.txt', List.filled(1000, 'z' * 45).join('\n'));
       final io = FakeCliIO();
-      // Keep-recent covers the whole transcript: both classic passes run but
-      // free nothing — and the funnel now RECOVERS instead of killing the
-      // task (issue #1914): the mechanical local trim bounds the context and
-      // the interrupted task continues on it.
+      // Three reads over a tiny window: the deterministic relief (the
+      // in-memory trim valve — the keep-N fold stays inside the protected
+      // tail on this small transcript) bounds the live context after
+      // every over-window measure. No summarizer call ever runs; the
+      // session file keeps every original record (the valve is
+      // in-memory only).
       final fake = FakeStreamFunction([
         toolTurn([
           const ToolCall(
@@ -93,9 +103,21 @@ void main() {
             arguments: {'path': 'big.txt'},
           ),
         ]),
-        textTurn('summary pass one'),
-        textTurn('summary pass two'),
-        textTurn('continuing the task after the trim'),
+        toolTurn([
+          const ToolCall(
+            id: 't2',
+            name: 'read',
+            arguments: {'path': 'mid.txt'},
+          ),
+        ]),
+        toolTurn([
+          const ToolCall(
+            id: 't3',
+            name: 'read',
+            arguments: {'path': 'big2.txt'},
+          ),
+        ]),
+        textTurn('continuing after the relief'),
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
@@ -107,7 +129,7 @@ void main() {
             contextWindow: 12000,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -125,15 +147,103 @@ void main() {
       final exitCode = await cli.runHeadless('count the words');
       await io.close();
 
-      expect(exitCode, 0, reason: 'the task continued on the trimmed context');
-      // Both bounded passes ran (tool turn + two summarizer calls) and the
-      // continuation consumed exactly one more — no third compaction pass.
-      expect(fake.calls, 4, reason: 'bounded retry: no third LM compaction');
+      expect(exitCode, 0, reason: 'the task continued on the relieved context');
+      // Deterministic: three tool turns + the retried request. No
+      // summarizer call ever ran.
+      expect(fake.calls, 4, reason: 'relief then retry — zero LM compaction');
       final output = io.out.toString();
-      expect(output, contains('auto-compacted'));
-      // The trim recovery note names the honest numbers…
-      expect(output, contains('[context trimmed]'));
-      // …and the loud terminal verdict is GONE: the task was continued.
+      // The relieved turn continues visibly.
+      expect(output, contains('[resuming]'));
+      // The loud terminal verdict is GONE: the task was continued.
+      expect(output, isNot(contains('did not free it')));
+      expect(output, isNot(contains('The task was NOT continued')));
+
+      // In-memory relief: no compaction-side records at all — the
+      // session file keeps every original record untouched (gh-209 owner
+      // directive: additive only).
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final sessions = await repo.list(cwd: '/work');
+      final session = await repo.open(sessions.first);
+      final entries = await session.getEntries();
+      expect(
+        entries.whereType<CompactionRecord>(),
+        isEmpty,
+        reason: 'the relief appended no compaction record',
+      );
+      expect(entries.whereType<HiddenRangeRecord>(), isEmpty);
+      final carriers = entries
+          .whereType<MessageRecord>()
+          .map((r) => r.message)
+          .whereType<AssistantMessage>()
+          .where((m) => m.content.whereType<ToolCall>().isNotEmpty)
+          .length;
+      expect(carriers, 3, reason: 'every original record stays in the file');
+    },
+  );
+
+  test(
+    'the funnel backstop: a keep floor the relief cannot cross still '
+    'recovers through its bounded pass',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+      final io = FakeCliIO();
+      // The keep-recent floor (400) sits BELOW the newest message: the
+      // deterministic relief's valve finds nothing droppable (its budget
+      // is capped by keepRecentTokens), so it declines — and the FUNNEL
+      // backstop takes over: the bounded classic pass runs, frees the
+      // window, and the interrupted task continues on the compacted
+      // transcript (the issue #1085 M2 recovery, preserved verbatim
+      // behind the new tier).
+      final fake = FakeStreamFunction([
+        toolTurn([
+          const ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': 'big.txt'},
+          ),
+        ]),
+        textTurn('summary pass one'),
+        textTurn('continuing the task after the trim'),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 12000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 400,
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      final exitCode = await cli.runHeadless('count the words');
+      await io.close();
+
+      expect(exitCode, 0, reason: 'the task continued on the compacted context');
+      // Tool turn + the funnel's bounded pass + the continuation.
+      expect(fake.calls, 3, reason: 'bounded retry: no third LM compaction');
+      final output = io.out.toString();
+      // The funnel recovered the task visibly…
+      expect(output, contains('auto-compacted; continuing the turn'));
+      expect(output, contains('[resuming]'));
+      // …and the loud terminal verdict is GONE.
       expect(output, isNot(contains('did not free it')));
       expect(output, isNot(contains('The task was NOT continued')));
     },
@@ -146,16 +256,19 @@ void main() {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
-      // One huge prompt over a tiny window: the first pass keeps everything
-      // (the never-crossing backward walk) and the retry must NOT repeat the
-      // identical cut — it escalates past the previous kept boundary. The
-      // weight rides the newest (tail) messages, which a prefix fold cannot
-      // drop, so the mechanical local trim bounds the context and the task
-      // continues — no terminal abort.
+      // One huge prompt over a tiny window: the deterministic relief's
+      // hide passes have nothing to fold and the valve cannot drop the
+      // newest (and only) message, so the funnel backstop takes over. The
+      // first pass keeps everything (the never-crossing backward walk)
+      // and the retry must NOT repeat the identical cut — it escalates
+      // past the previous kept boundary. The weight rides the newest
+      // (tail) messages, which a prefix fold cannot drop, so the
+      // mechanical local trim bounds the context and the task continues —
+      // no terminal abort.
       final fake = FakeStreamFunction([
         textTurn('summary pass one'),
         textTurn('summary pass two'),
-        textTurn('continuing after the trim'),
+        textTurn('spare — the recovery lands on an earlier slot'),
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
@@ -167,7 +280,7 @@ void main() {
             contextWindow: 12000,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -175,7 +288,7 @@ void main() {
           compactionSettings: const CompactionSettings(
             enabled: true,
             reserveTokens: 100,
-            keepRecentTokens: 100000,
+            keepRecentTokens: 400,
           ),
         ),
         io: io,
@@ -186,8 +299,8 @@ void main() {
       await io.close();
 
       expect(exitCode, 0, reason: 'the task continued on the trimmed context');
+      expect(fake.calls, 2, reason: 'one bounded pass, then the continuation');
       final output = io.out.toString();
-      expect(output, contains('auto-compacted'));
       expect(output, contains('[context trimmed]'));
       expect(output, isNot(contains('did not free it')));
       expect(output, isNot(contains('The task was NOT continued')));
@@ -202,6 +315,10 @@ void main() {
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
       final io = FakeCliIO();
+      // Compaction is disabled AND the keep floor pins the whole
+      // transcript: the deterministic relief's valve has nothing
+      // droppable (its budget is capped by keepRecentTokens), the funnel
+      // runs ZERO passes, and the exhaustion verdict says exactly that.
       final fake = FakeStreamFunction([
         toolTurn([
           const ToolCall(
@@ -221,14 +338,14 @@ void main() {
             contextWindow: 12000,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
           compactionSettings: const CompactionSettings(
             enabled: false,
             reserveTokens: 100,
-            keepRecentTokens: 100,
+            keepRecentTokens: 400,
           ),
         ),
         io: io,
@@ -249,7 +366,7 @@ void main() {
   );
 
   test(
-    'a user abort during the hung over-window retry stays an abort: '
+    'a user abort during the hung funnel backstop stays an abort: '
     'no relaunch, no resumed task, no false verdict',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
@@ -266,11 +383,11 @@ void main() {
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
       // Call 1: the ballooning tool turn; the guard refuses the retried
-      // request. Call 2: the loop's mid-run relief pass — frees nothing,
-      // so the relief's local trim frees the window and the loop RETRIES
-      // the request: call 3. The retry HANGS until the user aborts — the
-      // interrupt must cancel the in-flight call, surface loudly, and
-      // never relaunch it.
+      // request. The deterministic relief runs first — instant, no LM
+      // (the keep floor pins its valve below the newest result, so it
+      // frees nothing) — then the funnel's compaction summarizer
+      // (call 2) HANGS until the user aborts. The interrupt must cancel
+      // the in-flight call, surface loudly, and never relaunch it.
       final fake = ScriptedThenHangStream([
         toolTurn([
           ToolCall(
@@ -289,30 +406,28 @@ void main() {
             arguments: const {'command': 'cat c.log'},
           ),
         ]),
-        // Relief pass — frees nothing (keep floor pins the transcript
-        // over the window), so the funnel takes over.
-        textTurn('S'),
         // The funnel's compaction summarizer — hangs from here on.
         textTurn('S'),
         // A would-be retry pass — must NEVER run after the abort.
         textTurn('S'),
-      ], hangFromCall: 3);
+      ], hangFromCall: 2);
       final cli = AgentCli(
         config: AgentCliConfig(
           model: window32k,
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
           skillsAccess: SkillsAccess.granted,
           compactionEngine: CompactionEngine.classic,
-          // A keep-recent floor above the window: the relief's local-trim
-          // valve cannot free the window, so the funnel's compaction pass is
-          // the only thing running when the user aborts.
+          // A keep-recent floor below the newest result: the deterministic
+          // relief's valve cannot free the window either, so the funnel's
+          // compaction pass is the only thing running when the user
+          // aborts.
           compactionSettings: const CompactionSettings(
             enabled: true,
             reserveTokens: 100,
-            keepRecentTokens: 40000,
+            keepRecentTokens: 400,
           ),
         ),
         io: io,
@@ -322,7 +437,7 @@ void main() {
 
       io.sendLine('go');
       await waitForIt(
-        () => fake.calls >= 3,
+        () => fake.calls >= 2,
         reason: 'the funnel compaction started',
       );
       io.interrupt();
@@ -333,7 +448,7 @@ void main() {
       // No retry after the abort: give a would-be second pass ample time to
       // start, then pin the call count.
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(fake.calls, 3, reason: 'the aborted compaction is not relaunched');
+      expect(fake.calls, 2, reason: 'the aborted compaction is not relaunched');
 
       final output = io.out.toString();
       expect(output, isNot(contains('[resuming]')));
@@ -388,9 +503,8 @@ void main() {
             arguments: const {'command': 'cat c.log'},
           ),
         ]),
-        // Consumed by the loop's mid-run relief pass — frees nothing.
-        textTurn('S'),
-        // Consumed by the funnel's compaction — frees the window.
+        // Consumed by the funnel's bounded pass (the deterministic relief
+        // declines — the keep floor pins its valve).
         textTurn('S'),
         // The auto-continued run answers EMPTY: nothing actionable.
         emptyTurn,
@@ -400,12 +514,17 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           model: window32k,
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
           skillsAccess: SkillsAccess.granted,
           compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 400,
+          ),
         ),
         io: io,
         streamFunction: fake.call,
@@ -414,7 +533,7 @@ void main() {
 
       io.sendLine('go');
       await waitForIt(
-        () => fake.calls >= 5 && !cli.isBusy,
+        () => fake.calls >= 4 && !cli.isBusy,
         reason: 'empty auto-continued reply nudged to a real answer',
       );
       io.sendLine('/exit');
@@ -424,12 +543,16 @@ void main() {
       final output = io.out.toString();
       expect(output, contains('[resuming]'));
       expect(output, contains('nudged continuation fine'));
-      expect(fake.calls, 5, reason: 'tool, relief, funnel fold, empty, nudge');
-      // The fifth request is the NUDGE ('continue'), not the original user
-      // text — the M2b contract: auto-continued runs get the nudge like any
-      // run; the old exclusion stopped at the empty reply and went silent.
-      final nudgePrompt = fake.contexts[4].messages
-          .whereType<UserMessage>()
+      expect(
+        fake.calls,
+        4,
+        reason: 'tool, funnel pass, empty, nudge',
+      );
+      // The fourth request is the NUDGE ('continue'), not the original
+      // user text — the M2b contract: auto-continued runs get the nudge
+      // like any run; the old exclusion stopped at the empty reply and
+      // went silent.
+      final nudgePrompt = fake.contexts[3].messages.whereType<UserMessage>()
           .last;
       expect(nudgePrompt.content as String, 'continue');
     },
@@ -468,7 +591,7 @@ void main() {
             contextWindow: 32768,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -558,7 +681,7 @@ void main() {
             contextWindow: 32768,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -612,17 +735,20 @@ void main() {
   );
 
   test(
-    'headless: Ctrl+C during the in-loop relief aborts the run, no relaunch',
+    'headless: Ctrl+C during the funnel-recovered retry aborts the run, '
+    'no relaunch',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
       final io = FakeCliIO();
-      // Call 2 is the over-window relief's summarizer, running INSIDE the
-      // live agent run. The interrupt must cancel it and end the run as an
-      // abort — never a relaunch of the pass and never the guard error
-      // (which would hand the task to the continuation funnel).
+      // Call 2 is the funnel's bounded pass (the deterministic relief
+      // declines — the keep floor pins its valve); the pass FREES the
+      // window (the 11000-token floor still allows a fold) and the funnel
+      // relaunches the task. Call 3 is the RETRIED request, hung. The
+      // interrupt must cancel it and end the run as an abort — never a
+      // relaunch and never the guard error.
       final fake = ScriptedThenHangStream([
         toolTurn([
           const ToolCall(
@@ -631,8 +757,9 @@ void main() {
             arguments: {'path': 'big.txt'},
           ),
         ]),
-        textTurn('unused — call 2 is the hung relief summarizer'),
-      ], hangFromCall: 2);
+        textTurn('summary pass one'),
+        textTurn('unused — call 3 is the hung retried request'),
+      ], hangFromCall: 3);
       final cli = AgentCli(
         config: AgentCliConfig(
           model: const Model(
@@ -643,7 +770,7 @@ void main() {
             contextWindow: 12000,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -651,7 +778,7 @@ void main() {
           compactionSettings: const CompactionSettings(
             enabled: true,
             reserveTokens: 100,
-            keepRecentTokens: 40000,
+            keepRecentTokens: 11000,
           ),
         ),
         io: io,
@@ -660,18 +787,18 @@ void main() {
 
       final run = cli.runHeadless('count the words');
       await waitForIt(
-        () => fake.calls >= 2,
-        reason: 'the relief compaction summarizer started',
+        () => fake.calls >= 3,
+        reason: 'the retried request started after the funnel recovered',
       );
       io.interrupt();
       final exitCode = await run;
       // No attempt-2 relaunch after the cancel: give it ample time, then
       // pin the call count.
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(fake.calls, 2, reason: 'the pass is never relaunched');
+      expect(fake.calls, 3, reason: 'the retry is never relaunched');
 
       final output = io.out.toString();
-      // The relief abort ends the run: headless SIGINT parity is exit 130
+      // The retry abort ends the run: headless SIGINT parity is exit 130
       // (runHeadless maps StopReason.aborted to 130) — a user-intended
       // stop, not silence and not a fake success.
       expect(
@@ -679,11 +806,10 @@ void main() {
         130,
         reason: 'the abort surfaces as the headless abort exit code',
       );
-      // The relief abort never reaches the funnel: no dim receipt, no
+      // The retry abort never reaches the funnel: no dim receipt, no
       // exhaustion verdict, no resumed marker.
       expect(output, isNot(contains('compaction interrupted')));
       expect(output, isNot(contains('The task was NOT continued')));
-      expect(output, isNot(contains('[resuming]')));
       await io.close();
     },
   );
@@ -698,13 +824,13 @@ void main() {
       final io = FakeCliIO();
       // Headless settles OUTSIDE any run bracket, so the funnel's
       // compaction cancel is compaction-only — and the funnel must still
-      // SEE the cancel and rethrow it loudly. Call 2 is the one-shot
-      // in-loop relief (completes, but keepRecentTokens keeps everything,
-      // so it frees nothing and the guard stops the turn with the
-      // exhausted error); call 3 is the settle funnel's compaction, hung
-      // when the interrupt lands. Before the fix the funnel swallowed that
-      // cancel as "compaction interrupted" and RELAUNCHED the pass as
-      // attempt 2 (call 4) — the silence-with-spinner bug.
+      // SEE the cancel and rethrow it loudly. The deterministic relief
+      // runs first (instant, no LM — the keep floor pins everything, so
+      // it frees nothing) and the guard stops the run with the exhausted
+      // error; call 2 is the settle funnel's compaction, hung when the
+      // interrupt lands. Before the fix the funnel swallowed that cancel
+      // as "compaction interrupted" and RELAUNCHED the pass as attempt 2
+      // (call 3) — the silence-with-spinner bug.
       final fake = ScriptedThenHangStream([
         toolTurn([
           const ToolCall(
@@ -713,9 +839,8 @@ void main() {
             arguments: {'path': 'big.txt'},
           ),
         ]),
-        textTurn('relief pass summary that frees nothing'),
         textTurn('attempt-2 relaunch probe — must never be consumed'),
-      ], hangFromCall: 3);
+      ], hangFromCall: 2);
       final cli = AgentCli(
         config: AgentCliConfig(
           model: const Model(
@@ -726,7 +851,7 @@ void main() {
             contextWindow: 12000,
             maxTokens: 4096,
           ),
-          apiKey: 'test-key',
+          apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
@@ -734,7 +859,7 @@ void main() {
           compactionSettings: const CompactionSettings(
             enabled: true,
             reserveTokens: 100,
-            keepRecentTokens: 40000,
+            keepRecentTokens: 400,
           ),
         ),
         io: io,
@@ -743,13 +868,13 @@ void main() {
 
       final run = cli.runHeadless('count the words');
       await waitForIt(
-        () => fake.calls >= 3,
+        () => fake.calls >= 2,
         reason: 'the funnel compaction summarizer started',
       );
       io.interrupt();
       final exitCode = await run;
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(fake.calls, 3, reason: 'no attempt-2 relaunch after the cancel');
+      expect(fake.calls, 2, reason: 'no attempt-2 relaunch after the cancel');
 
       final output = io.out.toString();
       // The cancel surfaces as the loud abort through the run's error
@@ -763,7 +888,6 @@ void main() {
       // Not the bare-window dim receipt and not the exhaustion verdict.
       expect(output, isNot(contains('compaction interrupted')));
       expect(output, isNot(contains('The task was NOT continued')));
-      expect(output, isNot(contains('[resuming]')));
       await io.close();
     },
   );

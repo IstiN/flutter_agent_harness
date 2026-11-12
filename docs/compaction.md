@@ -150,3 +150,52 @@ extra passes; 0.75 buys 5 more points of headroom for a doubled pass
 count on the 128k class. On the ×3 marathon the frequency cost is
 +50% (2 → 3 passes at 200k), not an order of magnitude — the informed
 opt-in price.
+
+## The two-tier engine (gh-209)
+
+The engine splits by WHEN it may afford a language model:
+
+### Emergency tier — mid-turn, deterministic, no LM
+
+The loop's over-window guard and the message-cap self-heal (`gh-1680`)
+call **only** the emergency tier (`EmergencyRelief`,
+`lib/src/compaction/emergency_relief.dart`). It runs in seconds on any
+path:
+
+1. **Re-anchor** the live transcript from the session projection (the
+   gh-2097 basis rule) and measure on the request-size basis.
+2. **Dedup repeated reads** — for every read-class path seen more than
+   once, the older pair groups fold into markers; the newest
+   *successful* group stays live (its content is already on the wire).
+   A group whose newest result failed never relieves its older
+   successful copies.
+3. **Keep-N-recent per tool class** — the newest N pair groups of each
+   class stay live (read 2 / exec 4 / other 8, stalest-first folding of
+   the rest) until the over-target amount is freed, net of the marker
+   overhead. One exception: a group whose heaviest single result ALONE
+   exceeds the window (minus the marker allowance) is a fold candidate
+   regardless of the class budgets and the protected tail — a result
+   that alone overflows the request can never ride it, so the
+   marker-reopenable fold is the only deterministic recovery (the
+   buster rule; pinned expansions still veto).
+4. **Local trim valve** — when the hides cannot free enough, the
+   mechanical in-memory trim bounds the live context (the session file
+   keeps every record).
+
+No language model is attempted on ANY path — a dead or slow judge can
+no longer turn an in-turn overflow into a long silent stall. The
+invariants are the quality tier's: whole pair groups hide atomically
+(pair integrity, #85/D6), real user turns and the protected tail and
+pinned expansions never hide (F8/#1379), hides are lossless appends
+(every id stays expandable behind its marker), and the relieved turn
+continues visibly (`[resuming] continuing the turn on the compacted
+context`).
+
+### Quality tier — turn boundaries, judge-led
+
+Digests, checkpoints, the judge and escalation run only at turn
+boundaries (post-run and pre-flight), exactly as before. The over-window
+funnel (issue #1085 M2) survives as the backstop: when the deterministic
+tier cannot free the window (e.g. a keep-recent floor pinning the whole
+transcript), the bounded classic/structured passes run and the exhaustion
+verdict stays honest about how many ran.

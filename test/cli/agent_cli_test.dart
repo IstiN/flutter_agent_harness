@@ -936,12 +936,13 @@ void main() {
     expect(entries.whereType<CompactionRecord>(), isNotEmpty);
   });
 
-  test('over-window guard auto-compacts and continues the turn', () async {
+  test('over-window guard relief recovers the turn deterministically', () async {
     // The guard refuses to send when a mid-run tool result balloons the
-    // outgoing request past the window. Stopping there is only half the
-    // job: after the post-run auto-compaction frees the window, the CLI
-    // must CONTINUE the interrupted task on its own — exactly once —
-    // instead of idling until the user types "continue".
+    // outgoing request past the window. With the two-tier engine (gh-209)
+    // the host relief runs ONLY the deterministic emergency tier — its
+    // trim valve bounds the live context in-memory and the turn retries
+    // immediately: no summarizer call on the relief path, the post-run
+    // quality tier still fires at the turn boundary.
     const window32k = Model(
       id: 'test-model',
       api: 'test-api',
@@ -953,9 +954,7 @@ void main() {
     final fake = FakeStreamFunction([
       // 1. Three tool calls whose outputs (~8200 tokens each) balloon the
       //    next request past the window (3 × 8200 + the ~8.4k system
-      //    prompt/tool-schema overhead > 32768) — each one is droppable
-      //    (over the 20000-token keep region together) so the summarizer
-      //    can free the window.
+      //    prompt/tool-schema overhead > 32768).
       toolTurn([
         ToolCall(
           id: 'c1',
@@ -973,21 +972,15 @@ void main() {
           arguments: const {'command': 'cat c.log'},
         ),
       ]),
-      // 2. Consumed by the mid-run relief's no-op compaction attempt
-      //    (issue #387: the guard offers the host one synchronous pass
-      //    before erroring; the classic engine's rollback happens
-      //    post-run here).
-      textTurn('S'),
-      // 3. Consumed as the post-run compaction summary.
-      textTurn('S'),
-      // 4. After the guard + compaction + auto-continue, the model
-      //    finishes the task against the compacted transcript.
+      // 2. Consumed as the retried request after the emergency relief
+      //    trimmed the live context — the turn completes in-run.
       textTurn('continued after compaction'),
+      // 3. Consumed as the post-run compaction summary (the quality tier
+      //    at the turn boundary — the relief never touched it).
+      textTurn('S'),
     ]);
     final shell = FakeShell(stdout: 'x' * 32800);
     final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    // Issue #287: the guard→classic-summarizer→auto-continue recovery is
-    // the classic rollback path under test.
     final cli = cliFor(
       fake.call,
       model: window32k,
@@ -998,38 +991,51 @@ void main() {
 
     io.sendLine('go');
     await waitForIt(
-      () => fake.calls >= 4 && !cli.isBusy,
-      reason: 'auto-continuation after guard + compaction',
+      () => fake.calls >= 2 && !cli.isBusy,
+      reason: 'relief-retry completes the turn',
     );
     io.sendLine('/exit');
     await run;
 
     final output = io.out.toString();
-    // The guard fired — as a calm yellow note, never the red error line
-    // (auto-compaction recovers right after)…
-    expect(output, contains('note: Context window exhausted'));
-    expect(output, isNot(contains('error: Context window exhausted')));
-    expect(output, contains('● auto-compacted'));
-    // …and the turn visibly continued on its own.
-    expect(output, contains('auto-compacted; continuing'));
-    // request 1 (tool turn) + the relief's no-op summarizer attempt +
-    // the post-run summarizer + the continuation request.
-    expect(fake.calls, greaterThanOrEqualTo(4));
+    // The guard refusal never surfaces at all when the deterministic
+    // relief succeeds inside the guard (gh-209) — no note, no red error
+    // line; the relief's own continuation note is the whole face.
+    expect(output, isNot(contains('Context window exhausted')));
+    expect(output, isNot(contains('error:')));
+    // The relieved turn continues visibly, deterministically.
+    expect(output, contains('[resuming]'));
+    // The relief brought the transcript under the trigger, so the
+    // post-run quality tier has nothing to do at the boundary — no
+    // mid-run summarizer call ever happened (gh-209).
+    expect(output, isNot(contains('● auto-compacted')));
+    // request 1 (tool turn) + the relief retry. The deterministic tier
+    // never calls the summarizer.
+    expect(fake.calls, 2);
     final repo = JsonlSessionRepo(fs: shellEnv, sessionsRoot: '/sessions');
     final sessions = await repo.list(cwd: '/work');
     final session = await repo.open(sessions.first);
     final entries = await session.getEntries();
-    // The relief's attempt plus the post-run compaction each roll back.
-    expect(entries.whereType<CompactionRecord>(), isNotEmpty);
-    // The continuation prompt lands as a system notice (user-role record
-    // the way shell-job settle notices are), not as typed user chatter.
-    final notice = entries
+    // Nothing persisted a compaction artifact: the relief's trim is
+    // in-memory only (no CompactionRecord, no HiddenRangeRecord), and
+    // the relief left the transcript under the trigger so the post-run
+    // quality tier had nothing to fold either (gh-209).
+    expect(entries.whereType<CompactionRecord>(), isEmpty);
+    expect(entries.whereType<HiddenRangeRecord>(), isEmpty);
+    final answers = entries
         .whereType<MessageRecord>()
         .map((r) => r.message)
-        .whereType<UserMessage>()
-        .last;
-    expect((notice.content as String), contains('<system-notice>'));
-    expect((notice.content as String), contains('context-window guard'));
+        .whereType<AssistantMessage>()
+        .where((m) => m.stopReason == StopReason.stop)
+        .toList();
+    expect(
+      answers
+          .expand(
+            (m) => m.content.whereType<TextContent>().map((c) => c.text),
+          )
+          .join(),
+      contains('continued after compaction'),
+    );
   });
 
   test('/help lists the slash commands', () async {
