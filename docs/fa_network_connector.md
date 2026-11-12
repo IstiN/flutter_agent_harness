@@ -61,9 +61,11 @@ both repos in the same change).
   routing and roster). The password/invite is a FIRST-ADMISSION
   credential only: the network creator is a member at creation
   (`seedOwnerMember`) and is never asked for a password; an authed
-  existing member joins by JWT alone (backend change landing
-  separately: `joinNetwork` auth-first early exit — today it rejects
-  an empty password even for members). Re-entry is required only
+  existing member joins by JWT alone (`joinNetwork` auth-first early
+  exit — landed on the backend 2026-11-12: valid JWT + existing
+  Member row → `joinAsAuthed` without reading the body; JWT without
+  membership falls through to the password path as the first
+  admission; guests and throttling unchanged). Re-entry is required only
   after an explicit kick (`DELETE /api/networks/{id}/members/
   {memberId}`), leave, or membership reset. Passwordless re-entry for
   JWT-less guests is OPEN DESIGN (per-device member token —
