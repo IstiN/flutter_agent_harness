@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -278,7 +277,7 @@ void main() {
     // the /reset claim on the fresh session (REFUSED), rename #2 = the
     // restore re-claim on 'first' (publishes).
     final meta = await namedSession('first');
-    final gate = _RenameGateEnv(env, failFrom: 1, failTo: 1);
+    final gate = RenameGateEnv(env, failFrom: 1, failTo: 1);
     final gatedStore = FileSessionLeaseStore(env: gate);
     final cli = AgentCli(
       config: AgentCliConfig(
@@ -330,7 +329,7 @@ void main() {
     () async {
       final meta = await namedSession('unprovable');
       final bytesBefore = (await env.readTextFile(meta.path)).valueOrNull;
-      final gate = _RenameGateEnv(env, failFrom: 0, failTo: 1 << 30);
+      final gate = RenameGateEnv(env, failFrom: 0, failTo: 1 << 30);
       final gatedStore = FileSessionLeaseStore(env: gate);
       final fake = FakeStreamFunction([textTurn('never')]);
       final cli = AgentCli(
@@ -641,105 +640,3 @@ void main() {
 /// 14:32 local wall-clock: the banner's "since HH:MM" round-trips
 /// through toLocal, so this pins the exact banner text in any TZ.
 final DateTime _fixedWhen = DateTime(2026, 9, 15, 14, 32);
-
-/// An env whose `.owner.json` renames fail for a chosen call window
-/// (0-based, counting only sidecar publishes): the #2138 refused-claim
-/// rig. Boot/switch renames on other paths (waiting manifest, usage
-/// ledger) pass through untouched, so the window pins exactly which
-/// lease claim refuses.
-final class _RenameGateEnv implements ExecutionEnv, RenamableFileSystem {
-  _RenameGateEnv(
-    this._delegate, {
-    required this.failFrom,
-    required this.failTo,
-  });
-
-  final MemoryExecutionEnv _delegate;
-
-  /// The 0-based window of `.owner.json` rename calls that fail.
-  final int failFrom;
-  final int failTo;
-  int _ownerRenames = 0;
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) async {
-    if (to.endsWith('.owner.json')) {
-      final index = _ownerRenames++;
-      if (index >= failFrom && index <= failTo) {
-        return Err(
-          FileError(FileErrorCode.unknown, 'injected owner rename failure'),
-        );
-      }
-    }
-    return _delegate.renamePath(from, to);
-  }
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  String get cwd => _delegate.cwd;
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(path, content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(path, recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(path, recursive: recursive, force: force);
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) => _delegate.exec(command, options: options);
-}
