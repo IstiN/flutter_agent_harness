@@ -1651,6 +1651,12 @@ factual: paths, commands, invariants — no essays.
 
 ## Hard architecture rules
 
+- **NEVER push directly to `main`/`master` — no exceptions for agents.**
+  All changes (code, workflows, docs, plan/queue files, release prep) go
+  through a feature branch + PR; the merge happens via the PR flow
+  (machine merge bot or explicit owner action). Direct pushes to the
+  protected default branch are a policy violation even for one-line doc
+  updates. (Owner rule, 2026-11-12 — global, applies to every session.)
 - `lib/` is pure Dart: **no `dart:io`** (must compile for web). The only
   `dart:io` entry points are `bin/` and `lib/io.dart`; file/process/network
   behind tools goes through the `ExecutionEnv` abstraction.
