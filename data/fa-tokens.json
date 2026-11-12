@@ -43,15 +43,6 @@
   ],
   "pr-1958": [
     {
-      "leg": "review",
-      "at": "2026-10-29T08:43:08Z",
-      "prompt": 190748,
-      "completion": 29242,
-      "total": 219990,
-      "cacheRead": 5202880,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-29T10:29:55Z",
       "prompt": 431055,
@@ -2831,6 +2822,15 @@
       "completion": 16805,
       "total": 124343,
       "cacheRead": 1988416,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-12T08:56:33Z",
+      "prompt": 137859,
+      "completion": 13926,
+      "total": 151785,
+      "cacheRead": 1280000,
       "model": "glm-5.3-flash"
     }
   ],
