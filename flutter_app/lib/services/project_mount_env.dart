@@ -170,6 +170,12 @@ final class ProjectMountEnv extends ForwardingFs
 
 /// Finds the live project mount below the host's secrets/session wrappers.
 /// Returns null when this host has no native project-folder entitlement.
+///
+/// A [CwdOverrideEnv] session env (a per-chat sandbox folder wrapped
+/// around the full stack) is transparent here: the mount lives below it,
+/// and a session that picks a project folder AFTER creation must still
+/// surface the mount (identity chip, mount-aware [visibleFolderRoot],
+/// mount-root listing) — gh-2131 "mounted files not visible".
 ProjectMountEnv? resolveProjectMountEnv(ExecutionEnv env) {
   ExecutionEnv current = env;
   for (var depth = 0; depth < 8; depth++) {
@@ -181,6 +187,10 @@ ProjectMountEnv? resolveProjectMountEnv(ExecutionEnv env) {
     }
     if (current case final SessionVarsExecutionEnv vars) {
       current = vars.delegate;
+      continue;
+    }
+    if (current case final CwdOverrideEnv override) {
+      current = override.delegate;
       continue;
     }
     return null;
@@ -201,6 +211,8 @@ bool projectMountBackendAvailable(ExecutionEnv env) {
       current = secrets.delegate;
     } else if (current case final SessionVarsExecutionEnv vars) {
       current = vars.delegate;
+    } else if (current case final CwdOverrideEnv override) {
+      current = override.delegate;
     } else {
       break;
     }
@@ -227,10 +239,37 @@ extension SessionCwd on ExecutionEnv {
         break;
       }
     }
+    // A cwd override IS the session's working directory: its folder
+    // scopes the session even when a mount lives below the override.
+    if (env is CwdOverrideEnv) return env.cwd;
     final root = resolveProjectMountEnv(env)?.mountedRoot;
     if (root != null) return root;
     return cwd;
   }
+}
+
+/// Whether cwd-relative paths resolve against the mount segment: the
+/// stack's [ExecutionEnv.cwd] IS `/project` only when no cwd override
+/// sits between the caller and the live mount. The file browser branches
+/// on this — a mount-rooted session navigates through
+/// [projectMountSegment], an override session (sandbox folder) keeps
+/// plain cwd-relative paths.
+bool envCwdResolvesToMountSegment(ExecutionEnv env) {
+  ExecutionEnv current = env;
+  for (var depth = 0; depth < 8; depth++) {
+    if (current case final ProjectMountEnv mount) {
+      return mount.mountedRoot != null;
+    }
+    if (current case final SecretsExecutionEnv secrets) {
+      current = secrets.delegate;
+    } else if (current case final SessionVarsExecutionEnv vars) {
+      current = vars.delegate;
+    } else {
+      // A CwdOverrideEnv (or any other decorator) owns the cwd.
+      return false;
+    }
+  }
+  return false;
 }
 
 /// App-container storage root, never the mounted user project. Dedicated
