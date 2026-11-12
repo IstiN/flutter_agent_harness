@@ -141,6 +141,8 @@ final class StructuredCompactionPass {
 /// hide use (issue #1379 tier 2) — a single contract, not two copies.
 Future<void> refreshAgentState(Session session, AgentState state) async {
   final rebuilt = await session.buildContextMessages();
+  // ignore: avoid_print
+  print('DBG refreshAgentState t=${DateTime.now()} rebuilt=${rebuilt.length} prev=${state.messages.length} prevRoles=${state.messages.map((m) => m.role).toList()}');
   state.messages = [
     for (final message in rebuilt)
       message is AssistantMessage
@@ -293,6 +295,8 @@ final class StructuredCompactor {
 
   /// Runs both passes; returns whether the context ended under pressure.
   Future<bool> run({bool force = false}) async {
+    // ignore: avoid_print
+    print('DBG engine.run t=${DateTime.now()} window=$window force=$force');
     if (window <= 0) return true;
     final trigger = window - settings.reserveTokens;
     if (!force && _requestTokens() <= trigger) {

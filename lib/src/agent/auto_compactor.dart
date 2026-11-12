@@ -899,6 +899,8 @@ final class _PickOutcome {
       estimateTokens(messages.last), // never an empty window
     ),
   );
+  // ignore: avoid_print
+  print('DBG localTrimValve t=${DateTime.now()} msgs=${messages.length} budget=$budget last=${estimateTokens(messages.last)}');
   var cut = 0; // first kept index
   var accumulated = 0;
   for (var i = messages.length - 1; i >= 0; i--) {
@@ -1084,6 +1086,8 @@ class AutoCompactorFactory {
   /// inspect the compactor before starting (e.g. for logging) can use
   /// [build] instead.
   Future<bool> run() async {
+    // ignore: avoid_print
+    print('DBG factory.run t=${DateTime.now()} engine=$engine');
     if (engine == CompactionEngine.structured) {
       // gh-1680: a reached message-cap trigger forces the pass exactly
       // like `force` — the structured engine's internal gate is

@@ -267,6 +267,8 @@ extension CompactionWindowSizing on AgentService {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
+    // ignore: avoid_print
+    print('DBG mac gate t=${DateTime.now()} tokens=$transcriptTokens window=$conversationWindow keep=${settings.keepRecentTokens} engine=${loadAppCompactionEngine(env.sessionCwd)}');
     if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
       return false;
     }
