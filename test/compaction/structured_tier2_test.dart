@@ -304,7 +304,7 @@ void main() {
         window: 8000,
         settings: _settings,
         protectLastN: 2,
-        judge: (ledgerText) async => '[]',
+        judge: (ledgerText, [token]) async => '[]',
         summarize: (request) async =>
             SummarizationResult.failure('no checkpoint in this test'),
         checkpointPrompt: 'P',
@@ -350,7 +350,7 @@ void main() {
         window: 8000,
         settings: _settings,
         protectLastN: 2,
-        judge: (ledgerText) async => '["3"]',
+        judge: (ledgerText, [token]) async => '["3"]',
         summarize: (request) async =>
             SummarizationResult.failure('no checkpoint in this test'),
         checkpointPrompt: 'P',
@@ -396,7 +396,7 @@ void main() {
         window: 8000,
         settings: _settings,
         protectLastN: 2,
-        judge: (ledgerText) async => '[]',
+        judge: (ledgerText, [token]) async => '[]',
         summarize: (request) async => SummarizationResult.success(
           'Earlier work: a login crash investigation across a read pair '
           'and a bash pair. Both tool outputs were consumed.',
@@ -424,7 +424,7 @@ void main() {
         window: 8000,
         settings: _settings,
         protectLastN: 2,
-        judge: (ledgerText) async => '[]',
+        judge: (ledgerText, [token]) async => '[]',
         summarize: (request) async => SummarizationResult.success(
           'Earlier work: a login crash investigation across a read pair '
           'and a bash pair. Both tool outputs were consumed.',
@@ -533,7 +533,7 @@ void main() {
                   window: 8000,
                   settings: _settings,
                   protectLastN: 1,
-                  judge: (ledgerText) async => jsonEncode(picks),
+                  judge: (ledgerText, [token]) async => jsonEncode(picks),
                   summarize: (request) async =>
                       SummarizationResult.failure('no checkpoint'),
                   checkpointPrompt: 'P',

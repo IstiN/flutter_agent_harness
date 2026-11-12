@@ -16,7 +16,20 @@ import 'ledger.dart';
 const int hideProtectTailEntries = 8;
 
 /// answer (null = failed call — caller treats as no-op).
-typedef HideJudgeFn = Future<String?> Function(String ledgerText);
+///
+/// The engine passes a PER-CALL [CancelToken] (gh-2096): a budget timeout
+/// aborts only the in-flight call — the retry and the later LM stages of
+/// the run keep a live token. The token is optional positional so fake
+/// judges in tests may ignore it; the real adapter forwards it to the
+/// provider stream, where a cancel kills the underlying HTTP call.
+typedef HideJudgeFn =
+    Future<String?> Function(String ledgerText, [CancelToken? cancelToken]);
+
+/// The judged attempt's measured shape (gh-2096): the rendered judge
+/// input's entry count, its estimated token size, and the wall-clock time
+/// the attempt consumed — the timeout-diagnosis payload that lets an
+/// operator tell a slow-reasoning class from a wedged/queueing endpoint.
+typedef JudgeAttemptShape = ({int entries, int tokens, Duration elapsed});
 
 /// Parses judge output into numeric ids.
 ///
@@ -106,17 +119,19 @@ Set<String> validateHidePicks(
 /// text blocks or `null` on error/abort/empty (F1). Temperature 0 and
 /// `max_tokens` ≥ 1500 (F2) are the model-role/adapter's responsibility —
 /// the same place the summarizer's pi clamp divergence lives.
+///
+/// The cancel token arrives PER CALL (gh-2096): the engine cancels it on
+/// the call's budget expiry and forwards run-wide cancels (a user abort,
+/// a total-budget kill) into it, so an abort still reaches the provider
+/// layer (issue #515) while a judge timeout leaves the rest of the run
+/// untouched.
 HideJudgeFn streamFunctionHideJudge(
   StreamFunction streamFunction,
   Model model, {
   required String system,
   void Function(String delta)? onDelta,
-
-  /// Aborts the in-flight judge call — the compaction budget owner
-  /// cancels it on expiry (issue #515).
-  CancelToken? cancelToken,
 }) {
-  return (String ledgerText) async {
+  return (String ledgerText, [CancelToken? cancelToken]) async {
     try {
       final stream = StreamCacheRouting.runWith(
         () => streamFunction(

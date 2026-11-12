@@ -108,7 +108,7 @@ void main() {
       state: state,
       window: 8000,
       settings: _settings,
-      judge: (ledger) async {
+      judge: (ledger, [token]) async {
         judgeCalls++;
         // Hide the read pair: the assistant carrier (line 3) snaps the
         // whole group with its result.
@@ -151,7 +151,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledger) async {
+        judge: (ledger, [token]) async {
           judgeCalls++;
           // First call fails (F1: null, never an empty hide list); the
           // retry answers as a healthy no-op so the run continues to
@@ -186,7 +186,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledger) async => '[]', // Judge declines: straight to pass 2.
+        judge: (ledger, [token]) async => '[]', // Judge declines: straight to pass 2.
         summarize: (request) async {
           prompts.add(request.prompt);
           return SummarizationResult.success(
@@ -244,7 +244,7 @@ void main() {
             window: 8000,
             settings: _settings,
             // Judge declines: straight to pass 2.
-            judge: (ledger) async => '[]',
+            judge: (ledger, [token]) async => '[]',
             summarize: (request) async =>
                 SummarizationResult.success('investigated; tests green'),
             checkpointPrompt: 'CHECKPOINT INSTRUCTIONS',
@@ -282,7 +282,7 @@ void main() {
       settings: _settings,
       summarize: (request) async => SummarizationResult.failure('boom'),
       checkpointPrompt: 'P',
-      judge: (ledger) async => '[]', // Judge declines: straight to pass 2.
+      judge: (ledger, [token]) async => '[]', // Judge declines: straight to pass 2.
     );
     final ok = await compactor.run();
 
@@ -306,7 +306,7 @@ void main() {
         reserveTokens: 100,
         keepRecentTokens: 100,
       ),
-      judge: (ledger) async => '[]',
+      judge: (ledger, [token]) async => '[]',
       summarize: (request) async =>
           SummarizationResult.success('round summary'),
       checkpointPrompt: 'P',
