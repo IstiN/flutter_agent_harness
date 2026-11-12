@@ -121,7 +121,6 @@ final class EmergencyRelief {
     required this.settings,
     this.protectLastN = hideProtectTailEntries,
     this.keepRecent = defaultEmergencyKeepRecent,
-    this.ledgerCache,
   });
 
   /// The session to read the projection from and to append hides to.
@@ -145,10 +144,6 @@ final class EmergencyRelief {
   /// Keep-N-recent per tool class (see [defaultEmergencyKeepRecent]).
   final Map<String, int> keepRecent;
 
-  /// Optional shared ledger-entry memo (issue #1499). Scope it to ONE
-  /// session like every other cache owner.
-  final LedgerEntryCache? ledgerCache;
-
   /// The marker allowance subtracted from the WINDOW for the buster
   /// floor: a hidden record still rides the wire as a one-line marker,
   /// so the fold must land under the window WITH the marker counted
@@ -167,7 +162,7 @@ final class EmergencyRelief {
   /// session (a broken projection degrades to the trim valve; a failed
   /// hide append leaves the transcript untouched and reports `ok:
   /// false`). Pure-local: no LM call is attempted on ANY path.
-  Future<EmergencyReliefOutcome> run({int? targetTokens}) async {
+  Future<EmergencyReliefOutcome> run() async {
     if (window <= 0) {
       return _outcome(alreadyUnder: true);
     }
@@ -176,8 +171,7 @@ final class EmergencyRelief {
     // projection (an in-flight persist, a second writer), and the stale
     // basis under-sizes every step of the run.
     await refreshAgentState(session, state);
-    final target =
-        targetTokens ?? window - settings.reserveTokens;
+    final target = window - settings.reserveTokens;
     final before = _requestTokens();
     if (before <= target) {
       return _outcome(alreadyUnder: true);
@@ -320,11 +314,7 @@ final class EmergencyRelief {
     if (visible.isEmpty) return null;
     final seqs = RecordSeqIndex(await session.getEntries());
     return _LedgerView._(
-      buildContextLedger(
-        visiblePath: visible,
-        seqs: seqs,
-        cache: ledgerCache,
-      ),
+      buildContextLedger(visiblePath: visible, seqs: seqs),
       viewState,
       seqs,
       path,
@@ -457,8 +447,13 @@ final class _ToolGroup {
   /// output must not be unrecoverable just because it is the only one.
   final int heaviestResult;
 
-  /// The shared safety veto: the protected tail, a pinned expansion, or
-  /// an exempt (real user) record in the group — all-or-none.
+  /// The shared safety veto: the protected tail or a pinned expansion —
+  /// all-or-none. Exempt (real user) records are safe STRUCTURALLY, not
+  /// here: a group is an assistant carrier + its `ToolResultMessage`s
+  /// (`_pairGroups` in structured/ledger.dart), so a user record can
+  /// never ride inside one — unlike the quality tier, whose
+  /// `validateHidePicks` drops exempt picks explicitly (the emergency
+  /// tier walks groups, not raw picks, so there is nothing to drop).
   bool vetoed(Set<String> protectedTail, Set<String> pinnedRecordIds) {
     for (final id in recordIds) {
       if (protectedTail.contains(id) || pinnedRecordIds.contains(id)) {

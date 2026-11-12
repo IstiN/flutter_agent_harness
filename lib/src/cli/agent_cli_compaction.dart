@@ -932,8 +932,12 @@ extension OverWindowGuardRelief on AgentCli {
     // and the pre-flight); a slow or unusable judge class can no longer
     // turn an in-turn overflow into a ≤15 min silent stall.
     _pushBusyPhase('Compacting context…');
-    final reliefOutcome = await _runEmergencyRelief();
-    _pushBusyPhase('');
+    final EmergencyReliefOutcome reliefOutcome;
+    try {
+      reliefOutcome = await _runEmergencyRelief();
+    } finally {
+      _pushBusyPhase('');
+    }
     final after = _agent.state.messages.toList();
     final afterTokens = _liveRequestTokens();
     if (afterTokens >= beforeTokens) {
@@ -1000,8 +1004,12 @@ extension AgentCliMessageCapRelief on AgentCli {
     // message-count dimension (the hide passes fold groups into
     // markers, which keeps the count; the valve bounds it mechanically).
     _pushBusyPhase('Compacting context…');
-    final reliefOutcome = await _runEmergencyRelief();
-    _pushBusyPhase('');
+    final EmergencyReliefOutcome reliefOutcome;
+    try {
+      reliefOutcome = await _runEmergencyRelief();
+    } finally {
+      _pushBusyPhase('');
+    }
     final after = _agent.state.messages.toList();
     if (after.length >= beforeCount) {
       _logDiagnostic('message-cap relief no-op sid=$_logSid');
