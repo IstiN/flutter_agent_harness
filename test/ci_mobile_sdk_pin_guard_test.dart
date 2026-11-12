@@ -81,8 +81,8 @@ Set<String> selfHostedPins() {
       final uses = (step as Map)['uses'];
       if (uses is String && uses == selfHostedAction) {
         // `step` is already promoted to `Map` by the cast above — a second
-      // cast here trips unnecessary_cast under --fatal-infos.
-      final withBlock = step['with'] as Map? ?? const {};
+        // cast here trips unnecessary_cast under --fatal-infos.
+        final withBlock = step['with'] as Map? ?? const {};
         final pin = withBlock['flutter-version']?.toString();
         expect(pin, isNotNull,
             reason:
