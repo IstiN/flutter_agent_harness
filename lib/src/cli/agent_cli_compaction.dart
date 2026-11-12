@@ -926,12 +926,15 @@ extension OverWindowGuardRelief on AgentCli {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    // Issue #1085 M3: the relief path never showed the busy label — a
-    // 15-30 min compaction read as a dead, silent stall. Same label as
-    // the auto-compact path.
+    // gh-209: the relief path runs ONLY the emergency tier —
+    // deterministic, seconds, no LM call on any path. The quality tier
+    // (judge/checkpoints) owns the turn boundaries (the post-run fold
+    // and the pre-flight); a slow or unusable judge class can no longer
+    // turn an in-turn overflow into a ≤15 min silent stall.
     _pushBusyPhase('Compacting context…');
+    final EmergencyReliefOutcome reliefOutcome;
     try {
-      await _runAutoCompact('[auto-compacted]');
+      reliefOutcome = await _runEmergencyRelief();
     } finally {
       _pushBusyPhase('');
     }
@@ -943,7 +946,9 @@ extension OverWindowGuardRelief on AgentCli {
     }
     _logDiagnostic(
       'over-window relief done sid=$_logSid tokens=$afterTokens '
-      '(was $beforeTokens, ${after.length} messages)',
+      '(was $beforeTokens, ${after.length} messages, '
+      'hidden=${reliefOutcome.hiddenRecords}, '
+      'trim=${reliefOutcome.usedTrimValve})',
     );
     // Issue #1085 M3: the relieved turn CONTINUES — say so visibly, the
     // post-compaction silence is exactly what this run must never do. A
@@ -956,6 +961,26 @@ extension OverWindowGuardRelief on AgentCli {
       );
     }
     return after;
+  }
+
+  /// The emergency tier over the live session (gh-209): deterministic
+  /// hide (dedup reads, keep-N-recent per tool class) + the local trim
+  /// valve. No LM call is attempted on ANY path. Every CLI compaction
+  /// entry point awaits inline (there is no fire-and-forget compactor),
+  /// so this cannot overlap the quality tier's post-run pass.
+  Future<EmergencyReliefOutcome> _runEmergencyRelief() async {
+    final relief = EmergencyRelief(
+      session: _session!,
+      state: _agent.state,
+      window: _effectiveContextWindow,
+      settings: _effectiveCompactionSettings,
+    );
+    final outcome = await relief.run();
+    // The relief re-anchored the live transcript from the session
+    // projection (refreshAgentState) — keep the persist cursor in step,
+    // exactly like the quality tier's post-run bookkeeping.
+    _persistedCount = _agent.state.messages.length;
+    return outcome;
   }
 }
 
@@ -975,9 +1000,13 @@ extension AgentCliMessageCapRelief on AgentCli {
       'message-cap relief start sid=$_logSid messages=${overCap.length}',
     );
     final beforeCount = overCap.length;
+    // gh-209: the emergency tier ONLY — the trim valve owns the
+    // message-count dimension (the hide passes fold groups into
+    // markers, which keeps the count; the valve bounds it mechanically).
     _pushBusyPhase('Compacting context…');
+    final EmergencyReliefOutcome reliefOutcome;
     try {
-      await _runAutoCompact('[auto-compacted]');
+      reliefOutcome = await _runEmergencyRelief();
     } finally {
       _pushBusyPhase('');
     }
@@ -988,7 +1017,8 @@ extension AgentCliMessageCapRelief on AgentCli {
     }
     _logDiagnostic(
       'message-cap relief done sid=$_logSid messages=${after.length} '
-      '(was $beforeCount)',
+      '(was $beforeCount, hidden=${reliefOutcome.hiddenRecords}, '
+      'trim=${reliefOutcome.usedTrimValve})',
     );
     io.writeln(
       _style.dim(

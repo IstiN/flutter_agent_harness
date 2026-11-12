@@ -2915,11 +2915,11 @@ void main() {
       await service.sendText('go');
       await service.waitForIdle();
 
-      // The turn continued to the final answer on its own. The relief's
-      // synchronous compaction consumes summarizer/judge calls on the same
-      // fake stream, so the count is the two answers plus those.
+      // The turn continued to the final answer on its own. Since gh-209
+      // the relief runs ONLY the deterministic emergency tier — no
+      // summarizer/judge calls — so the count is the two answers.
       expect(service.messages.last.content, 'continued');
-      expect(streamCalls, greaterThanOrEqualTo(2));
+      expect(streamCalls, 2, reason: 'tool turn, then the relieved retry');
       expect(service.error, isNull);
       // The transcript was compacted: the huge tool result is gone.
       expect(

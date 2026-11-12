@@ -17,12 +17,18 @@ void main() {
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
-    // Thirteen fat files, read one per turn: the executed tool results
-    // (~2.5k estimated tokens each) eventually blow the 40k window — the
-    // over-window guard refuses the next request and the structured
-    // engine folds the older records to get the retry through.
-    for (var i = 1; i <= 13; i++) {
-      env.writeFile('big$i.txt', List.filled(250, 'x' * 40).join('\n'));
+    // Three huge files, read one per turn: the executed tool results
+    // (~12.3k estimated tokens each) blow the 40k window on the third
+    // read — the over-window guard refuses the next request. gh-209:
+    // with only three tool turns the whole transcript (7 ledger
+    // entries) sits INSIDE the deterministic relief's protected tail
+    // (8 entries), so the relief has nothing to hide, the trim valve
+    // declines (the newest result dwarfs the keep region), and the
+    // relief writes NO records — every fold the fixture asserts on
+    // comes from the receipted structured engine (the settle funnel at
+    // the turn boundary), keeping the issue #438 contract intact.
+    for (var i = 1; i <= 3; i++) {
+      env.writeFile('big$i.txt', List.filled(1200, 'x' * 40).join('\n'));
     }
   });
 
@@ -51,7 +57,7 @@ void main() {
       if (text.contains('<conversation>') || system.contains('hand off')) {
         return textTurn('checkpoint: the file counting investigation');
       }
-      if (nextFile > 13) return textTurn('done: all files counted');
+      if (nextFile > 3) return textTurn('done: all files counted');
       final file = nextFile++;
       return toolTurn([
         ToolCall(

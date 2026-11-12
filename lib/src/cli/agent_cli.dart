@@ -121,6 +121,7 @@ import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/bench_trigger.dart';
 import '../compaction/compaction.dart';
+import '../compaction/emergency_relief.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';

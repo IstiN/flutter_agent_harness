@@ -13,6 +13,26 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-209): two-tier compaction engine — the mid-turn relief paths
+  (the loop's over-window guard and the gh-1680 message-cap self-heal,
+  CLI and Flutter app) now run ONLY the deterministic emergency tier
+  (`EmergencyRelief`): re-anchor from the session projection, dedup
+  repeated reads of the same path (the newest successful copy stays
+  live), keep-N-recent per tool class stalest-first (read 2 / exec 4 /
+  other 8 — `defaultEmergencyKeepRecent`), then the local trim valve —
+  plus the buster rule: a tool result that ALONE overflows the window
+  folds regardless of the class budgets (marker-reopenable; pinned
+  expansions still veto).
+  Seconds, bounded, ZERO language-model calls on any path — a dead or
+  slow judge can no longer turn an in-turn overflow into the declared
+  ≤15 min silent stall. All quality-tier invariants hold: whole pair
+  groups hide atomically (#85/D6), real user turns / protected tail /
+  pinned expansions never hide (F8/#1379), hides are lossless appends
+  (every id stays expandable behind its marker), and the relieved turn
+  continues visibly (`[resuming] …`). The quality tier (judge,
+  checkpoints, escalation) stays at the turn boundaries — post-run and
+  pre-flight — and the over-window funnel (issue #1085) survives as the
+  backstop when the deterministic tier cannot free the window.
 - feat(gh-2098): the auto-compact trigger is user-configurable —
   `compaction.triggerRatio` / `compaction.reserveTokens` /
   `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
