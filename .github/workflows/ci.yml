@@ -2410,6 +2410,9 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-2120: PINNED — floating stable (3.50.0) fails --enforce-lockfile
+          # against the committed flutter_app lock (deterministic skew).
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -4234,7 +4237,15 @@ jobs:
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
-          sdk: stable
+          # gh-2120: PINNED — the unpinned stable float (3.13.5 -> 3.14.0 on
+          # 2026-11-11) changed `dart build cli`'s output layout mid-stream
+          # (self-contained bin/fa -> thin dartaotruntime-style binary +
+          # lib/libdartaotfah.so); the published v1.0.709 bundle broke every
+          # machine-loop fa launch (dartaotruntime: "not an AOT snapshot",
+          # exit 255 at agent startup). Same exact-patch policy build-macos.yml
+          # already applies to its flutter-version pins. Bump deliberately,
+          # in the commit that verifies the new layout end-to-end.
+          sdk: '3.13.5'
 
       # gh-1522: the committed pubspec carries the 0.0.0-dev placeholder —
       # the TAG is the version (the retired flow compared tag vs pubspec
