@@ -365,6 +365,22 @@ extension CompactionWindowSizing on AgentService {
       tools: tools,
     );
     AppLog.i('compaction', 'over-window relief start tokens=$beforeTokens');
+    // gh-2097: drain the pending persist BEFORE compacting. The
+    // structured engine re-anchors the agent state on the session
+    // projection at run start, so a transcript with messages still in
+    // flight (the crash-safe persister appends unawaited — the just-sent
+    // user message rides in memory only) would re-anchor onto a
+    // projection that lacks them: the live context silently loses the
+    // newest message and the trim valve finds nothing droppable. Same
+    // ordering as [_onAgentEnd] and the CLI's over-window funnel
+    // (`_persistMessages` before compaction); best effort like every
+    // persist pass — a failed flush keeps the pre-gh-2097 behavior.
+    try {
+      await _persist();
+    } on Object {
+      // The transcript stays in memory; the next trigger retries the
+      // missed appends (see _persistedCount).
+    }
     await _maybeAutoCompact();
     final after = _agent.state.messages.toList();
     final afterTokens = estimateRequestTokens(

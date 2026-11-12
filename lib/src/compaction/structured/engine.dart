@@ -70,6 +70,7 @@ final class StructuredCompactionPass {
     this.judgeInputTokens,
     this.judgeElapsedMs,
     this.judgeLatched = false,
+    this.basisReadTokens,
   });
 
   /// `'hide'` or `'checkpoint'`.
@@ -133,6 +134,17 @@ final class StructuredCompactionPass {
   /// latch (a latched skip or a probe receipt). Never content — a count
   /// and a flag only, like the escalation metadata above.
   final bool judgeLatched;
+
+  /// gh-2097: the upward basis jump this pass's post-append re-read
+  /// revealed. A pass appends only shrinkers (hidden ranges, a
+  /// checkpoint), so an after-count above its before-count is the
+  /// session projection holding MORE than the in-memory view did at
+  /// measurement time (a second writer appending between the two
+  /// measurements) — a measurement-basis change, never a compaction
+  /// regression. The report renders it as `basis re-read: +N` instead
+  /// of a clamped `0 freed`. Null when the re-read landed on the same
+  /// basis. A count only, never content.
+  final int? basisReadTokens;
 }
 
 /// Rebuilds [state.messages] from the session projection, zeroing usage
@@ -294,6 +306,14 @@ final class StructuredCompactor {
   /// Runs both passes; returns whether the context ended under pressure.
   Future<bool> run({bool force = false}) async {
     if (window <= 0) return true;
+    // gh-2097: re-anchor the agent state from the session projection
+    // BEFORE any trigger/before/over math. The in-memory transcript can
+    // lag the session file (an in-memory tail cut, a second writer
+    // appending to the same session between runs) — the stale basis
+    // computed `over` ≈ 1.4k where ~177k was needed and every pass of
+    // the run under-sized against it. One projection build, bounded by
+    // the ledger cache (O(changed records)).
+    await _refreshState();
     final trigger = window - settings.reserveTokens;
     if (!force && _requestTokens() <= trigger) {
       return true;
@@ -359,6 +379,7 @@ final class StructuredCompactor {
         ok: true,
         judgeCalls: 0,
         hiddenCount: evictions.length,
+        basisReadTokens: _basisFlip(before, after),
       ),
     );
   }
@@ -561,6 +582,7 @@ final class StructuredCompactor {
           ok: true,
           judgeCalls: 1,
           hiddenCount: ids.length,
+          basisReadTokens: _basisFlip(before, after),
         ),
       );
     }
@@ -878,6 +900,7 @@ final class StructuredCompactor {
         tokensAfter: after,
         ok: true,
         hiddenCount: ids.length,
+        basisReadTokens: _basisFlip(before, after),
       ),
     );
     return true;
@@ -968,6 +991,7 @@ final class StructuredCompactor {
           judgeCalls: 1,
           summarizedCount: summarizedCount,
           summary: text,
+          basisReadTokens: _basisFlip(before, after),
         ),
       );
     }
@@ -1195,6 +1219,7 @@ final class StructuredCompactor {
     marginTokens: margin,
     bandTokens: band,
     hideableRemaining: hideableRemaining,
+    basisReadTokens: _basisFlip(before, after),
   );
 
   /// Diagnostic count only — never rendered content.
@@ -1280,6 +1305,13 @@ final class StructuredCompactor {
     await refreshAgentState(session, state);
     return _requestTokens();
   }
+
+  /// gh-2097: the upward basis jump an after-measurement revealed over
+  /// [before] — null when the re-read landed on the same basis. Pass
+  /// appends are shrink-only, so growth here is a second writer's
+  /// records entering the projection between the two measurements.
+  int? _basisFlip(int before, int after) =>
+      after > before ? after - before : null;
 
   /// Projects the view path into sized entries: visible records at their
   /// full token cost, hidden ones at their marker's (issue #387 - a
