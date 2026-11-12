@@ -134,8 +134,13 @@ final _runningCard = RegExp(
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
 
 /// A settled card's trailing meta zone: the bracketed badge, the elapsed
-/// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916).
-final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—)+$');
+/// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916) — plus
+/// the RIGHT-ALIGNED zone's pad. gh-1933 reserved the meta against the
+/// row edge, so both edges pad the card to the same column before the
+/// token (`ok<pad30> 0s` live vs `ok<pad31> —` replay — the pads differ
+/// by the token width); the whitespace run is part of the meta zone and
+/// normalizes away with it.
+final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—|\s)+$');
 
 /// Canonicalizes one settled tool row to its shared `name: detail` core.
 /// Since #916 BOTH edges paint the settled band card — it is the ONLY
