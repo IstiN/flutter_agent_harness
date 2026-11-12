@@ -365,6 +365,11 @@ extension CompactionWindowSizing on AgentService {
       tools: tools,
     );
     AppLog.i('compaction', 'over-window relief start tokens=$beforeTokens');
+    // ignore: avoid_print
+    print('DBG relief-start=${DateTime.now()}');
+    final smolSlotProbe = _resolveCompactionSmol();
+    // ignore: avoid_print
+    print('DBG smol-resolved=${DateTime.now()}');
     await _maybeAutoCompact();
     final after = _agent.state.messages.toList();
     final afterTokens = estimateRequestTokens(
@@ -372,6 +377,8 @@ extension CompactionWindowSizing on AgentService {
       systemPrompt: systemPrompt,
       tools: tools,
     );
+    // ignore: avoid_print
+    print('DBG relief-end=${DateTime.now()} after=$afterTokens');
     if (afterTokens >= beforeTokens) {
       AppLog.i('compaction', 'over-window relief no-op');
       return null;

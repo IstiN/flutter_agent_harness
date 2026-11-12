@@ -249,10 +249,14 @@ void main() {
       // relief had its chance — pre-fix the relief never waits for it,
       // post-fix it joins the persist drain first.
       final gate = Completer<void>();
-      var heldPingAppend = false;
+      var heldPingAppend = 0;
+      var gatedCalls = 0;
       final gatedFs = _GatedAppendFs(env, (content) {
-        if (!content.contains('"ping"') || heldPingAppend) return null;
-        heldPingAppend = true;
+        gatedCalls++;
+        // ignore: avoid_print
+        print('DBG gated appendFile len=${content.length} ping=${content.contains('"ping"')} head=${content.length > 80 ? content.substring(0, 80) : content}');
+        if (!content.contains('"ping"') || heldPingAppend > 0) return null;
+        heldPingAppend++;
         return gate.future;
       });
       final service = AgentService(
@@ -277,12 +281,20 @@ void main() {
       expect(service.overWindowReliefCountForTest, 0);
 
       // Release the held append while the turn-3 relief is in flight.
+      // ignore: avoid_print
+      print('DBG t0=${DateTime.now()}');
       unawaited(
-        Future<void>.delayed(const Duration(milliseconds: 50), gate.complete),
+        Future<void>.delayed(const Duration(milliseconds: 50), () {
+          // ignore: avoid_print
+          print('DBG gate-release=${DateTime.now()}');
+          gate.complete();
+        }),
       );
       await service.sendText('ping');
       await service.waitForIdle();
 
+      // ignore: avoid_print
+      print('DBG gatedCalls=$gatedCalls heldPingAppend=$heldPingAppend relief=${service.overWindowReliefCountForTest} error=${service.error} msgs=${service.messages.map((m) => m.role).toList()}');
       // The relief compacted on a basis that still held the just-sent
       // message: the trim kept it, the retry carried it, the turn
       // completed.
