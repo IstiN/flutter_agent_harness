@@ -390,10 +390,13 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   String _childPath(String name) {
-    if (_segments.isEmpty) {
-      return _navigatesMountNamespace ? '$projectMountSegment/$name' : name;
-    }
-    return '${_segments.join('/')}/$name';
+    final joined = _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+    // The mount namespace prefix covers EVERY depth (gh-2131 round 3):
+    // a subfolder's child path ('src/nested.txt') resolved against the
+    // container cwd exactly like the root-level open did — subfolder
+    // file opens failed and subfolder uploads silently landed in the
+    // container instead of the mount.
+    return _navigatesMountNamespace ? '$projectMountSegment/$joined' : joined;
   }
 
   List<String> _segmentsOf(String path) => [

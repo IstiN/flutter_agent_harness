@@ -507,6 +507,84 @@ void main() {
       expect(find.text('nested.txt'), findsOneWidget);
     });
 
+    testWidgets(
+      'opening a file INSIDE a mounted subfolder reads through the mount '
+      'namespace (gh-2131 round-3 regression: subfolder opens rendered '
+      '"Could not load file" — _childPath skipped the /project prefix '
+      'for non-root segments)',
+      (tester) async {
+        final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+        await base.writeFile(
+          '/Users/x/support/src/nested.txt',
+          'subfolder body text',
+        );
+        final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+        await tester.pumpWidget(
+          _wrap(
+            FileBrowser(
+              env: env,
+              initialPath: visibleFolderRoot(env, '/Users/x/support'),
+              sessionFolder: '/Users/x/support',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('src'));
+        await tester.pumpAndSettle();
+        expect(find.text('nested.txt'), findsOneWidget);
+
+        await tester.tap(find.text('nested.txt'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Could not load file'),
+          findsNothing,
+          reason: 'the preview must read /project/src/nested.txt',
+        );
+        expect(find.text('subfolder body text'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'uploading INSIDE a mounted subfolder lands the file in the mount, '
+      'not the container (gh-2131 round-3 regression: subfolder uploads '
+      'silently wrote into the app container)',
+      (tester) async {
+        final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+        await base.createDir('/Users/x/support/src');
+        final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+        final picker = _FakePicker([_uploadFile('probe.txt', 'mount side')]);
+        await tester.pumpWidget(
+          _wrap(
+            FileBrowser(
+              env: env,
+              initialPath: visibleFolderRoot(env, '/Users/x/support'),
+              sessionFolder: '/Users/x/support',
+              uploadPicker: picker,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('src'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Upload files here'));
+        await tester.pumpAndSettle();
+
+        // The upload went through the mount namespace: the file lives in
+        // the mounted subfolder on the host…
+        expect(
+          (await env.readTextFile('/project/src/probe.txt')).getOrThrow(),
+          'mount side',
+        );
+        // …and never in the container cwd the pre-fix path resolved to.
+        expect(
+          (await base.readTextFile('/app-sandbox/src/probe.txt')).isOk,
+          isFalse,
+        );
+        expect(find.text('Uploaded 1 file'), findsOneWidget);
+      },
+    );
+
     testWidgets('a personal session (no folder) keeps the env-root listing', (
       tester,
     ) async {

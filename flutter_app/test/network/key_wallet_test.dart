@@ -424,11 +424,78 @@ void main() {
         final guest = wallet.networks['guest-net'];
         expect(guest, isNotNull);
         expect(guest!.password, 'guest-pw');
+        expect(guest.synced, isFalse);
         final reloaded = await KeyWallet.load(backend);
         expect(reloaded.networks.containsKey('synced-net'), isFalse);
         expect(reloaded.networks['guest-net']!.password, 'guest-pw');
       },
     );
+
+    test('clearAccount keys on the persisted synced flag, not the '
+        'password shape: a passwordless row the account sync never '
+        'touched survives', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.createIfMissing(displayName: 'Me');
+      // A legacy passwordless LOCAL row (no sync ever listed it).
+      await wallet.addNetwork(networkId: 'legacy-net', name: 'Legacy Net');
+      await wallet.saveAccount(account());
+
+      await wallet.clearAccount();
+
+      expect(wallet.networks.containsKey('legacy-net'), isTrue);
+    });
+
+    test('syncAccountNetworks pins synced on a passwordless local row it '
+        'lists, so sign-out then removes it', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(networkId: 'adopted-net', name: 'Stale Name');
+      await wallet.saveAccount(account());
+
+      await wallet.syncAccountNetworks([
+        AccountNetworkInfo(
+          id: 'adopted-net',
+          name: 'Adopted',
+          isPublic: false,
+          memberClass: MemberClass.member,
+        ),
+      ]);
+      expect(wallet.networks['adopted-net']!.synced, isTrue);
+      expect(wallet.networks['adopted-net']!.password, isNull);
+
+      await wallet.clearAccount();
+      expect(wallet.networks.containsKey('adopted-net'), isFalse);
+    });
+
+    test('a local join the account also lists stays local (password '
+        'wins, synced stays false)', () async {
+      final backend = MemoryWalletBackend();
+      final wallet = await KeyWallet.load(backend);
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.addNetwork(
+        networkId: 'joined-net',
+        name: 'joined',
+        password: 'pw',
+      );
+      await wallet.syncAccountNetworks([
+        AccountNetworkInfo(
+          id: 'joined-net',
+          name: 'renamed',
+          isPublic: false,
+          memberClass: MemberClass.admin,
+        ),
+      ]);
+      final entry = wallet.networks['joined-net']!;
+      expect(entry.name, 'renamed');
+      expect(entry.password, 'pw');
+      expect(entry.synced, isFalse);
+
+      await wallet.saveAccount(account());
+      await wallet.clearAccount();
+      expect(wallet.networks.containsKey('joined-net'), isTrue);
+    });
 
     test('withTokens swaps the token fields only', () {
       final updated = account().withTokens(
