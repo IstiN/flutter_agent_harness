@@ -63,6 +63,12 @@ void main() {
       expectUsage(r, '--window', 'abc');
     });
 
+    test('a non-integer --window (valid double) is rejected too', () {
+      // int.tryParse('12.5') is null — the flag wants tokens, not a ratio.
+      final r = runSim([fixture(dir).path, '--window', '12.5']);
+      expectUsage(r, '--window', '12.5');
+    });
+
     test('junk --scale gets the usage line + exit 2, not a stack trace', () {
       final r = runSim([fixture(dir).path, '--scale', 'junk']);
       expectUsage(r, '--scale', 'junk');
