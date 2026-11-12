@@ -6,8 +6,12 @@ name: 🖼 golden-regen
 # flutter_app/test/golden/goldens/, commit. TZ=UTC + bundled fonts are the
 # #1856 pinned-render contract; the capture host is the same macos-latest
 # image the enforcement legs use.
+# Runs when the 'golden-regen' label is added to a PR (the workflow file
+# lives on the PR branch; pull_request events execute the branch's copy
+# against the merge ref). Remove the label and re-add to re-capture.
 on:
-  workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -16,6 +20,7 @@ jobs:
   regen:
     name: Golden regen (macOS capture)
     runs-on: macos-latest
+    if: github.event.label.name == 'golden-regen'
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
