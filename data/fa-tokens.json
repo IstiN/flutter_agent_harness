@@ -54,15 +54,6 @@
   ],
   "pr-1961": [
     {
-      "leg": "review",
-      "at": "2026-10-29T09:00:27Z",
-      "prompt": 248888,
-      "completion": 33053,
-      "total": 281941,
-      "cacheRead": 5261952,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-29T10:47:21Z",
       "prompt": 854162,
@@ -2842,6 +2833,17 @@
       "completion": 36657,
       "total": 137218,
       "cacheRead": 5572672,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2097": [
+    {
+      "leg": "dev",
+      "at": "2026-11-12T09:03:37Z",
+      "prompt": 1062175,
+      "completion": 83209,
+      "total": 1145384,
+      "cacheRead": 26550336,
       "model": "glm-5.3-flash"
     }
   ]
