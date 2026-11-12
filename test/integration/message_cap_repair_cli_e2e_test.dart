@@ -102,14 +102,17 @@ void main() {
 
   group('gh-1680 message-cap repair through the real CLI', () {
     test(
-      'learned-cap refusal heals: persist, compact via relief, retry once',
+      'learned-cap refusal heals: persist, coalesce the retry, compact at '
+      'the boundary',
       timeout: const Timeout(Duration(seconds: 120)),
       () async {
         // One prompt, 8 sequential tool delegations (17 transcript
         // messages — below the cap-24 pre-emptive trigger at 8 only in
-        // COUNT; the relief pass hides the bulky old pairs), then the
-        // provider's cap refusal, the relief's summarizer, and the
-        // retried request.
+        // COUNT; token-healthy, so gh-209's emergency relief cannot
+        // reduce the message count — its hides keep the wire count and
+        // its valve is keyed on the 1M window), then the provider's cap
+        // refusal, the COALESCED retry, and the post-run cap-gate
+        // compaction.
         final turns = <List<AssistantMessageEvent>>[
           for (var i = 1; i <= 8; i++) _readTurn(i),
           _capRefusalTurn('400 messages: array length 25 exceeds limit 24'),
@@ -131,29 +134,42 @@ void main() {
         expect(
           fake.calls,
           11,
-          reason: '8 tool turns + refusal + relief + retry',
+          reason:
+              '8 tool turns + refusal + coalesced retry + the post-run '
+              'cap-gate compaction summarizer',
         );
 
         // The repair is never silent: the loop-side event names the cap
-        // and the refused count, and says the relief compacted.
+        // and the refused count, and says the retry rides the COALESCED
+        // payload (gh-209: the relief pass is the deterministic tier —
+        // it cannot shrink the message count on a token-healthy
+        // transcript, so the old "context compacted before the retry"
+        // face is gone).
         final output = io.out.toString();
         expect(output, contains('[message cap] provider refused the request'));
         expect(output, contains('(cap 24)'));
-        expect(output, contains('context compacted, retrying once'));
-        // The relief pass reports its own completion line.
+        expect(output, contains('— coalescing the request, retrying once'));
         expect(
           output,
-          contains('context compacted before the retry — continuing the turn'),
+          isNot(contains('context compacted before the retry')),
+          reason: 'the emergency relief cannot reduce the message count',
         );
-        // The retried request rode the COMPACTED transcript.
-        final refused = fake.contexts[8].messages.length;
+        // The retried request rode the COALESCED payload: the marker
+        // note rides along and the wire form fits the learned cap (the
+        // transcript count alone no longer shrinks — gh-209's relief
+        // cannot reduce the message count on a token-healthy
+        // transcript).
         final retried = fake.contexts[9].messages.length;
         expect(
           retried,
-          lessThan(refused),
-          reason: 'the relief must shrink the payload before the retry',
+          lessThanOrEqualTo(24),
+          reason: 'the coalesced retry fits the learned cap',
         );
-        expect(output, contains('recovered — task complete'));
+        // The retried turn completed the task on the coalesced payload;
+        // the post-run cap-gate compaction consumed the last scripted
+        // turn as its summary (its ● receipt names the token movement).
+        expect(output, contains('summary of the earlier notes'));
+        expect(output, contains('● auto-compacted'));
 
         // AC2: the learned cap persists for the NEXT process (the store
         // keys records by `provider<US>modelId`).
