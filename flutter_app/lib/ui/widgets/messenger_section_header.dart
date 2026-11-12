@@ -110,10 +110,16 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
     final leadingTop = trafficLightClearance && FaWindowChrome.isMacOS
-        ? 9.0 + FaWindowChrome.titlebarHeight
-        : 9.0;
+        ? FaFloatingHeaderBar.actionBandTop + FaWindowChrome.titlebarHeight
+        : FaFloatingHeaderBar.actionBandTop;
+    // The canonical narrow bar strip (FaFloatingHeaderBar): the same
+    // 6 + 91 + 6 extent and 36pt circle / 40pt pill column as the chat
+    // floating glass header, so every phone header strip is one system.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      padding: const EdgeInsets.symmetric(
+        horizontal: FaFloatingHeaderBar.padHorizontal,
+        vertical: FaFloatingHeaderBar.padVertical,
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final geometry = _HeaderGeometry.of(context, constraints, actions);
@@ -148,10 +154,10 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       children: [
         if (icon case final icon?) ...[
           Padding(
-            padding: const EdgeInsets.only(top: 11),
+            padding: const EdgeInsets.only(top: FaFloatingHeaderBar.iconTop),
             child: FaHeaderCircularAction(
               key: const ValueKey('messengerPageIcon'),
-              dimension: 36,
+              dimension: FaFloatingHeaderBar.actionDimension,
               glass: true,
               child: onIconTap == null
                   ? Icon(icon, size: 18, color: tokens.ink1)
@@ -161,7 +167,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
                     ),
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: FaFloatingHeaderBar.iconTitleGap),
         ],
         _buildTitlePill(tokens, titleWidth),
       ],
@@ -179,7 +185,7 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: SizedBox(
         width: titleWidth,
-        height: 40,
+        height: FaFloatingHeaderBar.pillHeight,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -237,15 +243,12 @@ final class MessengerFloatingPageHeader extends StatelessWidget {
   /// trailing edge.
   Widget _buildTrailingActionsRow() {
     return Positioned(
-      top: 9,
+      top: FaFloatingHeaderBar.actionBandTop,
       right: 0,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final action in actions) ...[
-            action,
-            const SizedBox(width: 8),
-          ],
+          for (final action in actions) ...[action, const SizedBox(width: 8)],
         ],
       ),
     );
@@ -280,10 +283,7 @@ final class _HeaderGeometry {
     List<Widget> actions,
   ) {
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    final contentWidth = math.max(
-      0.0,
-      constraints.maxWidth - duoRailWidth,
-    );
+    final contentWidth = math.max(0.0, constraints.maxWidth - duoRailWidth);
     final actionWidth = math.min(360.0, contentWidth * .38);
     final titleWidth = math.min(
       320.0,
@@ -294,8 +294,7 @@ final class _HeaderGeometry {
       400.0,
       duoTop +
           actions.length *
-              (FaDuoControlRail.actionDimension +
-                  FaDuoControlRail.spacing) +
+              (FaDuoControlRail.actionDimension + FaDuoControlRail.spacing) +
           FaDuoControlRail.spacing,
     );
     return _HeaderGeometry._(
@@ -318,10 +317,13 @@ final class _HeaderGeometry {
   /// The Duo rail's natural height for the header's action count.
   final double duoHeight;
 
-  /// The header's total height: the ordinary 91px pill row, grown only
-  /// when a Duo rail with actions demands more room.
+  /// The header's total height: the ordinary canonical content column
+  /// ([FaFloatingHeaderBar.contentHeight]), grown only when a Duo rail
+  /// with actions demands more room.
   double headerHeight({required bool hasActions}) =>
-      duoRailWidth > 0 && hasActions ? math.max(91.0, duoHeight) : 91;
+      duoRailWidth > 0 && hasActions
+      ? math.max(FaFloatingHeaderBar.contentHeight, duoHeight)
+      : FaFloatingHeaderBar.contentHeight;
 }
 
 /// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.
@@ -379,6 +381,40 @@ final class MessengerGlassBodyInsets extends InheritedWidget {
   @override
   bool updateShouldNotify(MessengerGlassBodyInsets oldWidget) =>
       top != oldWidget.top;
+}
+
+/// The floating phone dock's occupied bottom height, for scroll views that
+/// run underneath it.
+///
+/// The narrow shell scaffold sets `extendBody` while the dock rides in its
+/// `bottomNavigationBar` slot, so the ambient [MediaQuery] padding.bottom
+/// inside the narrow body is INFLATED to exactly the dock's occupied height
+/// (home indicator + 8pt separation gap + 56pt pill). Sections consume that
+/// value as scroll padding so their final rows stay reachable above the
+/// glass instead of being cut behind the pill.
+///
+/// Desktop layouts never build the narrow scaffold: their raw inset stays
+/// 0 (and the desktop Duo camera profile seeds at most 34), which never
+/// reaches [minInflatedBottom] — so [bottomOf] resolves to 0 there and
+/// every caller keeps its legacy padding, keeping desktop geometry
+/// byte-identical.
+final class MessengerFloatingDockInsets {
+  MessengerFloatingDockInsets._();
+
+  /// 56pt pill ([MessengerBottomNavigation.height]) + 8pt bottom gap
+  /// ([MessengerBottomNavigation.bottomGap]) — the smallest inflated value
+  /// the narrow scaffold can report. Raw device safe areas (iOS home
+  /// indicator ≈ 34) stay below it, so only the scaffold's inflated inset
+  /// qualifies. (Literal: importing the controls file here would create an
+  /// import cycle.)
+  static const double minInflatedBottom = 64;
+
+  /// The dock's occupied bottom height, or 0 when the ambient MediaQuery
+  /// was not inflated for the floating dock (desktop, standalone hosts).
+  static double bottomOf(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return bottom >= minInflatedBottom ? bottom : 0;
+  }
 }
 
 /// Shared simple messenger panel: one header and a full-size scrolling body.

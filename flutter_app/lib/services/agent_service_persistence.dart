@@ -8,6 +8,11 @@ part of 'agent_service.dart';
 /// (library-private; the state fields they drive stay on the class).
 extension AgentServicePersistence on AgentService {
   void _armIdleWatchdog() {
+    // A disposed service never re-arms: a late agent event arriving after
+    // dispose used to leave a live watchdog timer behind (widget tests'
+    // fake_async invariant tripped on it; a real host kept a timer that
+    // would abort a dead service).
+    if (_disposed) return;
     _idleWatchdog?.cancel();
     _idleWatchdog = Timer(_responseTimeout, () {
       if (_activeToolCalls > 0) return; // a long tool is still running

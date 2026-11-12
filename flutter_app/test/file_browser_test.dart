@@ -458,6 +458,58 @@ void main() {
       expect(find.text('aaa.txt'), findsOneWidget);
     });
 
+    testWidgets('mount machinery without a live mount lists the env root '
+        '(regression: the virtual /project error replaced the listing)', (
+      tester,
+    ) async {
+      // Mobile/desktop hosts always carry the project-mount env; with no
+      // grant active the browser used to ask for the virtual /project
+      // segment anyway and painted "Could not open folder" over the
+      // personal (container/sandbox) root.
+      final base = MemoryExecutionEnv(cwd: '/app/container');
+      await base.writeFile('sandbox_file.txt', 'in the container root');
+      final env = SecretsExecutionEnv(ProjectMountEnv(base), const {});
+      await tester.pumpWidget(_wrap(FileBrowser(env: env)));
+      await tester.pumpAndSettle();
+      expect(find.text('sandbox_file.txt'), findsOneWidget);
+      expect(find.text('Could not open folder'), findsNothing);
+    });
+
+    testWidgets(
+      'a session folder under a stale container prefix (relocated sandbox) '
+      'lists instead of gating',
+      (tester) async {
+        // iOS reinstall/backup-restore re-seats the app container: the
+        // restored session records the OLD UUID prefix while the env root
+        // carries the NEW one. The folder IS the sandbox — Files must
+        // resolve it onto the live root, never gate.
+        final base = MemoryExecutionEnv(
+          cwd:
+              '/var/mobile/Containers/Data/Application/9F2E-live/Documents/'
+              'fah_sandbox',
+        );
+        await base.writeFile('sandbox_file.txt', 'in the sandbox');
+        final env = SecretsExecutionEnv(ProjectMountEnv(base), const {});
+        await tester.pumpWidget(
+          _wrap(
+            FileBrowser(
+              env: env,
+              sessionFolder:
+                  '/var/mobile/Containers/Data/Application/4A7D-old/'
+                  'Documents/fah_sandbox',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsNothing,
+          reason: 'the stale prefix is the same sandbox folder',
+        );
+        expect(find.text('sandbox_file.txt'), findsOneWidget);
+      },
+    );
+
     testWidgets('granting access switches the mount and lists the session '
         'folder', (tester) async {
       // Sandboxed delegate (non-root cwd): the post-grant jump must go

@@ -940,6 +940,11 @@ class Agent {
 
   void _armRunWatchdog() {
     if (runIdleTimeout == Duration.zero) return;
+    // Arm only for a LIVE run: events draining after the run finished
+    // (or after abort tore it down) used to re-arm the watchdog behind
+    // _finishRun's disarm — a pointless 8-minute timer outliving the host
+    // (widget tests' fake_async invariant trips on it).
+    if (_activeRun == null) return;
     _runWatchdogTimer?.cancel();
     // gh-1617 I1: the window re-derives on EVERY arm, so a mid-run
     // roles-chain OR providers-queue failover re-windows the watchdog

@@ -4,6 +4,8 @@
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart'
+    show MessengerFloatingDockInsets;
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -51,6 +53,8 @@ class SettingsCategoryPanel extends StatelessWidget {
     this.collapsed = false,
     this.showHeader = true,
     this.topPadding = 0,
+    this.bottomReserve = 0,
+    this.reserveDock = false,
   });
 
   final SettingsCategory? selected;
@@ -61,11 +65,31 @@ class SettingsCategoryPanel extends StatelessWidget {
   /// Top inset supplied by a floating host header on narrow layouts.
   final double topPadding;
 
+  /// Extra scroll padding under the floating phone dock — the narrow
+  /// shell passes the dock's occupied height; desktop keeps 0 and the
+  /// legacy 16pt inset.
+  final double bottomReserve;
+
+  /// Narrow-shell mode: resolve the dock reserve from THIS panel's
+  /// context in build. The shell's State context sits above the Scaffold,
+  /// where the extendBody-inflated MediaQuery does not exist yet —
+  /// reading there always returns the raw home-indicator inset and the
+  /// reserve silently degrades to 0 (review blocker, PR #2112).
+  final bool reserveDock;
+
   @override
   Widget build(BuildContext context) {
     final tokens = FaDesignTokens.of(context);
+    final dockReserve = reserveDock
+        ? MessengerFloatingDockInsets.bottomOf(context)
+        : bottomReserve;
     final list = ListView(
-      padding: EdgeInsets.fromLTRB(8, topPadding + 4, 8, 16),
+      padding: EdgeInsets.fromLTRB(
+        8,
+        topPadding + 4,
+        8,
+        16 + dockReserve,
+      ),
       children: [
         for (final category in SettingsCategory.values)
           SidebarNavItem(

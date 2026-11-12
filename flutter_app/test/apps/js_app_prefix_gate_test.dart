@@ -13,8 +13,6 @@
 /// first-render await are pure Dart. They must keep running everywhere.
 library;
 
-import 'dart:async';
-
 import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';

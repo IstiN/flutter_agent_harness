@@ -320,6 +320,11 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                               : _NetworksList(
                                   networks: networks,
                                   onOpen: _openNetwork,
+                                  bottomReserve: widget.compact
+                                      ? MessengerFloatingDockInsets.bottomOf(
+                                          context,
+                                        )
+                                      : 0,
                                 ))
                         : _ChannelsList(
                             networkId: openId,
@@ -330,6 +335,9 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                                 ? widget.mode?.channelId
                                 : null,
                             query: _query,
+                            bottomReserve: widget.compact
+                                ? MessengerFloatingDockInsets.bottomOf(context)
+                                : 0,
                             onClearSearch: _clearSearch,
                             onOpenChannel: (channel) =>
                                 widget.onOpenChannel(openId, channel),
@@ -349,10 +357,18 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
 /// rows (70pt pitch, Ø50 avatar, display name) that drill into the
 /// avatar-strip + channels view when tapped.
 class _NetworksList extends StatelessWidget {
-  const _NetworksList({required this.networks, required this.onOpen});
+  const _NetworksList({
+    required this.networks,
+    required this.onOpen,
+    this.bottomReserve = 0,
+  });
 
   final Map<String, NetworkEntry> networks;
   final ValueChanged<String> onOpen;
+
+  /// Extra scroll padding under the floating phone dock (compact hosts
+  /// only; desktop passes 0 and keeps the plain 4pt inset).
+  final double bottomReserve;
 
   @override
   Widget build(BuildContext context) {
@@ -361,7 +377,7 @@ class _NetworksList extends StatelessWidget {
       key: const ValueKey('networksList'),
       padding: EdgeInsets.only(
         top: MessengerGlassBodyInsets.topOf(context) + 4,
-        bottom: 4,
+        bottom: 4 + bottomReserve,
       ),
       itemCount: networks.length,
       itemBuilder: (context, index) {
@@ -511,9 +527,14 @@ class _ChannelsList extends StatelessWidget {
     required this.query,
     required this.onClearSearch,
     required this.onOpenChannel,
+    this.bottomReserve = 0,
   });
 
   final String networkId;
+
+  /// Extra scroll padding under the floating phone dock (compact hosts
+  /// only; desktop passes 0 and keeps the plain 4pt inset).
+  final double bottomReserve;
 
   /// The projection's channel entries for the drilled network.
   final List<ChatListEntry> entries;
@@ -590,7 +611,7 @@ class _ChannelsList extends StatelessWidget {
         left: 8,
         right: 8,
         top: MessengerGlassBodyInsets.topOf(context) + 4,
-        bottom: 4,
+        bottom: 4 + bottomReserve,
       ),
       itemCount: rows.length,
       itemBuilder: (context, index) {

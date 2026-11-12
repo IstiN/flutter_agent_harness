@@ -11,7 +11,7 @@ lib/apps/apps_grid.dart 1
 lib/apps/dynamic_widget_tile.dart 12
 lib/apps/fa_chat_overlay.dart 3
 lib/apps/fa_work_bar.dart 3
-lib/apps/js_app_view.dart 21
+lib/apps/js_app_view.dart 22
 lib/apps/js_theme_bridge_host.dart 1
 lib/apps/unpacked_load_flow.dart 5
 lib/apps/widgets_catalog_sheet.dart 5

@@ -43,9 +43,9 @@ final class _OpfsArtifactStore implements GemmaWebArtifactStore {
     final entries = <GemmaArtifactEntry>[];
     while (true) {
       final step = await iterator.next().toDart;
-      if (step == null || (step.done?.toDart ?? true)) break;
-      final handle = step.value;
-      if (handle == null) break;
+      if (step.done?.toDart ?? true) break;
+      final web.FileSystemHandle? handle = step.value;
+      if (handle == null) continue;
       entries.add(
         GemmaArtifactEntry(
           name: handle.name,

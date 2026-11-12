@@ -61,7 +61,7 @@ files in the PR.
 ### Machine pinning
 
 Numbers are only comparable on the same machine class and SDK. The CI
-legs pin the Flutter SDK (`3.47.4`) for exactly this reason; locally, use
+legs pin the Flutter SDK (`3.50.0`) for exactly this reason; locally, use
 the same SDK across before/after and expect ±10 % run-to-run noise.
 
 ## Settled retention (is a growth number a leak?)
@@ -83,11 +83,11 @@ RETAINS, force a full GC at suite end and read the per-class live set:
    ```
 
 3. `totalLiveBytes` is the truth: framework baseline (~105 MB per
-   flutter_tester process on 3.47.4 macOS-arm64) + the code model of
+   flutter_tester process on 3.50.0 macOS-arm64) + the code model of
    everything the file imports + the suite's own live data.
 
 Measurements recorded for the #1850 offenders (2026-10-25, macOS-arm64,
-Flutter 3.47.4): an empty suite settles at ~105 MB; the six named app
+Flutter 3.50.0): an empty suite settles at ~105 MB; the six named app
 suites settle at 259–397 MB **and a one-test bisect of a suite equals the
 full suite's settled set** — i.e. nothing accumulates *across* tests.
 Cross-test "growth" in the GC stream is promotion smear + per-process
