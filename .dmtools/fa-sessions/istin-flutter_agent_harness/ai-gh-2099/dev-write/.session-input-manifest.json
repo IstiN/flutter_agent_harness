@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T20:03:07.388Z",
+  "ticketKey": "gh-2099",
+  "headSha": "5cf9c122bb2ca23347fe5546d455273c3b35e3f2",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:adc3dd94602469bc",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:6c1def96fc69699c",
+      "size": 10329
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:88dc7a531f78e3b8",
+      "size": 4960
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ae27ba9a151908f7",
+      "size": 2446
+    },
+    "request.md": {
+      "hash": "fnv1a64:0c18b40c775f1dbc",
+      "size": 2807
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f9874c8c182cb21c",
+      "size": 928
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:f32d4470c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:dc965ebb9f6814d3",
+      "size": 2901
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0c18b40c775f1dbc",
+      "size": 2807
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc62zPFA",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/agent_cli_compaction.dart:936",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the busy-phase `try/finally` guard was dropped from both relief call sites**\n\nThe old code cleared the `Compacting context…` busy label in a `finally`:\n\n```dart\n_pushBusyPhase('Compacting context…');\ntry {\n  await _runAutoCompact('[auto-compacted]');\n} finally {\n  _pushBusyPhase('');\n}\n```\n\nThe new code clears it only on the success path:\n\n```dart\n_pushBusyPhase('Compacting context…');\nfinal reliefOutcome = await _runEmergencyRelief();\n_pushBusyPhase('');\n```\n\n`EmergencyRelief.run()`'s own failure-safety covers only `appendHiddenRange`\n(`emergency_relief.dart:319-329`). Its re-anchor and view-build I/O —\n`refreshAgentState` → `session.buildContextMessages()` (line 186), and\n`session.getBranch()`/`session.getEntries()` in `_buildView` (lines 336-341) —\nsit OUTSIDE that guard and can still throw (torn/corrupt session JSONL, I/O\nfailure). On such a throw the label is never cleared: the loop's `catch (_)`\n(agent_loop.dart:1624) turns the relief into \"no relief\" and the turn ends on\nthe terminal guard error — printed under a stuck `Compacting context…` busy\nrow. That is exactly the \"reads as a dead stall\" face the removed `finally`\nwas introduced to prevent (issue #1085 M3, comment right above this line).\n\nThe window is bounded (the row drops when the run settles), but the regression\nis on the exact lines this PR rewrote and costs one line to restore. Please\nwrap the relief await in `try/finally` in BOTH sites (`_relieveOverWindow` and\n`_relieveMessageCap`, same shape at line 1002-1004)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc62zPJP",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/emergency_relief.dart:462",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `vetoed()` docstring claims an exempt-user veto the code does not implement**\n\nThe doc says the veto covers three things:\n\n```dart\n/// The shared safety veto: the protected tail, a pinned expansion, or\n/// an exempt (real user) record in the group — all-or-none.\nbool vetoed(Set<String> protectedTail, Set<String> pinnedRecordIds) {\n```\n\nbut the body checks only `protectedTail` and `pinnedRecordIds` — there is no\n`exempt` (real-user) check, unlike the quality tier's `validateHidePicks`,\nwhich drops exempt picks explicitly (`structured/judge.dart:100-105`,\n`entry.exempt`).\n\nToday the behavior is safe only STRUCTURALLY: pair groups are built from an\nassistant carrier + its `ToolResultMessage`s (`structured/ledger.dart:313-343`,\n`_pairGroups`), so a user record can never ride inside a tool group, and the\nnew unit test pins the observable outcome. But the doc on a freshly exported\npublic engine class asserts a safety check that does not exist — the next\nchange to group formation (or a reader porting this veto elsewhere) inherits a\nguarantee the code never provided.\n\nEither narrow the doc (\"tool pair groups structurally never contain exempt\nuser records — see `_pairGroups`\") or add the explicit exempt check for\ndefense in depth, mirroring `validateHidePicks`."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc62zPMv",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/emergency_relief.dart:170",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: speculative public API — `run({int? targetTokens})` and `ledgerCache` have no callers**\n\nBoth knobs ship on the newly exported `EmergencyRelief` class but nothing in\nproduction or tests uses them:\n\n- `run({int? targetTokens})` — every caller (CLI `_runEmergencyRelief`, the\n  Flutter `_relieveOverWindow`, all 12 unit tests) relies on the default\n  `window - settings.reserveTokens`;\n- `this.ledgerCache` / `final LedgerEntryCache? ledgerCache` — the doc says\n  \"Scope it to ONE session like every other cache owner\", but no owner scopes\n  one; the relief is a once-per-overflow event, not a hot loop.\n\nThis repo's own doctrine for the append-only barrel is explicit\n(`lib/flutter_agent_harness.dart:143-147`, gh-1232): API stays internal\n\"*until a caller exists* — a speculative export is the wrong order.\"\n\n`EmergencyRelief` itself absolutely belongs in the barrel (it has two\nproduction callers); the suggestion is to drop the two speculative parameters\nuntil a consumer exists — they are trivial to re-add, but a public class in\nthe package barrel is contract surface every future change must preserve."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:e17a5c21",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the busy-phase `try/finally` guard was dropped from both relief call sites**\n\nThe old code cleared the `Compacting context…` busy label in a `finally`:\n\n```dart\n_pushBusyPhase('Compacting context…');\ntry {\n  await _runAutoCompact('[auto-compacted]');\n} finally {\n  _pushBusyPhase('');\n}\n```\n\nThe new code clears it only on the success path:\n\n```dart\n_pushBusyPhase('Compacting context…');\nfinal reliefOutcome = await _runEmergencyRelief();\n_pushBusyPhase('');\n```\n\n`EmergencyRelief.run()`'s own failure-safety covers only `appendHiddenRange`\n(`emergency_relief.dart:319-329`). Its re-anchor and view-build I/O —\n`refreshAgentState` → `session.buildContextMessages()` (line 186), and\n`session.getBranch()`/`session.getEntries()` in `_buildView` (lines 336-341) —\nsit OUTSIDE that guard and can still throw (torn/corrupt session JSONL, I/O\nfailure). On such a throw the label is never cleared: the loop's `catch (_)`\n(agent_loop.dart:1624) turns the relief into \"no relief\" and the turn ends on\nthe terminal guard error — printed under a stuck `Compacting context…` busy\nrow. That is exactly the \"reads as a dead stall\" face the removed `finally`\nwas introduced to prevent (issue #1085 M3, comment right above this line).\n\nThe window is bounded (the row drops when the run settles), but the regression\nis on the exact lines this PR rewrote and costs one line to restore. Please\nwrap the relief await in `try/finally` in BOTH sites (`_relieveOverWindow` and\n`_relieveMessageCap`, same shape at line 1002-1004)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:ae7e42b0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `vetoed()` docstring claims an exempt-user veto the code does not implement**\n\nThe doc says the veto covers three things:\n\n```dart\n/// The shared safety veto: the protected tail, a pinned expansion, or\n/// an exempt (real user) record in the group — all-or-none.\nbool vetoed(Set<String> protectedTail, Set<String> pinnedRecordIds) {\n```\n\nbut the body checks only `protectedTail` and `pinnedRecordIds` — there is no\n`exempt` (real-user) check, unlike the quality tier's `validateHidePicks`,\nwhich drops exempt picks explicitly (`structured/judge.dart:100-105`,\n`entry.exempt`).\n\nToday the behavior is safe only STRUCTURALLY: pair groups are built from an\nassistant carrier + its `ToolResultMessage`s (`structured/ledger.dart:313-343`,\n`_pairGroups`), so a user record can never ride inside a tool group, and the\nnew unit test pins the observable outcome. But the doc on a freshly exported\npublic engine class asserts a safety check that does not exist — the next\nchange to group formation (or a reader porting this veto elsewhere) inherits a\nguarantee the code never provided.\n\nEither narrow the doc (\"tool pair groups structurally never contain exempt\nuser records — see `_pairGroups`\") or add the explicit exempt check for\ndefense in depth, mirroring `validateHidePicks`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:ce42fff4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: speculative public API — `run({int? targetTokens})` and `ledgerCache` have no callers**\n\nBoth knobs ship on the newly exported `EmergencyRelief` class but nothing in\nproduction or tests uses them:\n\n- `run({int? targetTokens})` — every caller (CLI `_runEmergencyRelief`, the\n  Flutter `_relieveOverWindow`, all 12 unit tests) relies on the default\n  `window - settings.reserveTokens`;\n- `this.ledgerCache` / `final LedgerEntryCache? ledgerCache` — the doc says\n  \"Scope it to ONE session like every other cache owner\", but no owner scopes\n  one; the relief is a once-per-overflow event, not a hot loop.\n\nThis repo's own doctrine for the append-only barrel is explicit\n(`lib/flutter_agent_harness.dart:143-147`, gh-1232): API stays internal\n\"*until a caller exists* — a speculative export is the wrong order.\"\n\n`EmergencyRelief` itself absolutely belongs in the barrel (it has two\nproduction callers); the suggestion is to drop the two speculative parameters\nuntil a consumer exists — they are trivial to re-add, but a public class in\nthe package barrel is contract surface every future change must preserve."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:1691b0f3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The two-tier engine holds every safety invariant (atomic pair groups, user turns / protected tail / pins, lossless additive-only session writes) — 1242 CLI + 77 Flutter tests pass locally and `dart analyze` is clean on the touched files. One important regression: both CLI relief call sites dropped the `try/finally` that cleared the `Compacting context…` busy label, so a throwing relief ends the turn with the terminal guard error under a stuck compaction label.\n\n**Key Issues**:\n- ⚠️ `agent_cli_compaction.dart:934-936` (+ `:1002-1004`) — busy-phase `try/finally` dropped; relief I/O (`refreshAgentState`, `_buildView`) sits outside `run()`'s failure-safety and can throw.\n- 💡 `emergency_relief.dart:460-462` — `vetoed()` docstring claims an exempt-user veto the code doesn't implement (safe only structurally via `_pairGroups`).\n- 💡 `emergency_relief.dart:124,170` — speculative `ledgerCache`/`targetTokens` params, zero callers, on a freshly barrel-exported class (gh-1232 doctrine).\n\n**Next Steps**:\n1. Restore `try { … } finally { _pushBusyPhase(''); }` in both relief sites.\n2. Fix the `vetoed()` doc or add the explicit exempt check (mirror `validateHidePicks`).\n3. Drop the two speculative params until a caller exists.\n\n**Digest**: `emergency_relief.dart:410` folded buster still bumps its class keep counter (one extra group folds) · `:556` ranged reads dedup on `path` alone — older range content not in the newest copy (line 13 claim overstates) · `:416` candidate tuple's `tokens` unused · `:378` `dedupedPaths` double-counts multi-path groups."
+    }
+  ]
+}
