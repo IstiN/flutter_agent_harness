@@ -293,4 +293,30 @@ void main() {
       );
     },
   );
+
+  testWidgets('AC4 (#2138): disposing the manager releases the drive lease and '
+      'cancels the heartbeat — no pending timer survives teardown', (
+    tester,
+  ) async {
+    final meta = await persisted('lifecycle');
+    final mgr = manager(lease: store);
+    await mgr.openSession(
+      meta,
+      config: _config,
+      serviceFactory: () async => _fakeService(env),
+    );
+    expect((await store.inspect(meta.path)).state, LeaseState.live);
+
+    // Walk away WITHOUT closeSession (the boot/test teardown shape).
+    // The service's own external-session watcher timer is disposed
+    // first (pre-existing shape — boot_flows_test does the same), so
+    // the binding's !timersPending invariant at test end isolates the
+    // MANAGER's lease heartbeat: dispose must release the lease AND
+    // kill the 5s heartbeat timer.
+    mgr.dispose();
+    expect((await store.inspect(meta.path)).state, LeaseState.free);
+    for (final s in mgr.sessions) {
+      s.service.dispose();
+    }
+  });
 }

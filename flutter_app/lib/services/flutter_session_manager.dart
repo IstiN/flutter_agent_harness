@@ -1132,6 +1132,16 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
   }
 
+  /// Walks away from the manager: releases the held drive lease and
+  /// cancels the heartbeat — a lease (and its 5s periodic timer) must
+  /// never outlive the manager that holds it (#2138: the boot/test
+  /// teardown path, where no closeSession ever runs).
+  @override
+  void dispose() {
+    _releaseDriveLease();
+    super.dispose();
+  }
+
   /// session becomes active, or none if the manager is empty.
   Future<void> closeSession(String sessionId, {bool deleteFile = false}) async {
     final managed = _sessions.remove(sessionId);
