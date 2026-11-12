@@ -43,9 +43,22 @@ extension FaTuiControllerIo on FaTuiController {
     if (_outputBuffer.isEmpty) return;
     final text = _outputBuffer.toString();
     _outputBuffer.clear();
-    _outputTailOpen = false;
+    // gh-2094: the flag describes the last PAINTED byte, not the last
+    // buffered write — a real flush PAINTS the text, so an unterminated
+    // flush keeps the tail open. An unconditional reset here made the
+    // next newline-terminated write (settled tool card, notice) skip its
+    // boundary newline and glue onto the painted mid-line tail. The
+    // empty-buffer early return above keeps empty flushes a no-op.
+    _outputTailOpen = !text.endsWith('\n');
     _send(OutputMsg(text));
   }
+
+  /// Test seam (gh-2094 AC2): the arbiter's tail-open truth. The
+  /// state-truth invariant — after every real (non-empty) flush the flag
+  /// equals `!flushedText.endsWith('\n')` — is only assertable from
+  /// outside the library through this getter.
+  @visibleForTesting
+  bool get outputTailOpenForTest => _outputTailOpen;
 
   void sendModelsRefresh() {
     _send(_ModelsRefreshMsg());

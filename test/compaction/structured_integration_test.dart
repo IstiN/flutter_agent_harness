@@ -183,9 +183,9 @@ void main() {
 
   /// Judge that picks a random subset of the ledger lines (occasionally
   /// contaminated with junk — validation must strip, never corrupt).
-  Future<String?> Function(String) randomJudge(Random random) {
+  HideJudgeFn randomJudge(Random random) {
     final seqRe = RegExp(r'^\[(\d+)\]', multiLine: true);
-    return (ledgerText) async {
+    return (ledgerText, [token]) async {
       final seqs = seqRe
           .allMatches(ledgerText)
           .map((m) => int.parse(m.group(1)!))
@@ -744,7 +744,7 @@ void main() {
           window: window,
           settings: _settings,
           // Hide-everything-possible judge: maximal marker count.
-          judge: (ledgerText) async {
+          judge: (ledgerText, [token]) async {
             final seqs = RegExp(
               r'^\[(\d+)\]',
               multiLine: true,
@@ -869,7 +869,7 @@ void main() {
           state: state,
           window: 8000,
           settings: _settings,
-          judge: (ledgerText) async {
+          judge: (ledgerText, [token]) async {
             judgeCalls++;
             // Hide every candidate the ledger offers.
             final seqs = RegExp(
@@ -954,7 +954,7 @@ void main() {
           state: state,
           window: 8000,
           settings: _settings,
-          judge: (ledgerText) async => '[]', // declines: nothing to pick
+          judge: (ledgerText, [token]) async => '[]', // declines: nothing to pick
           summarize: (r) async {
             summarizeCalls++;
             return SummarizationResult.success('checkpoint text');
@@ -1222,7 +1222,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledgerText) async {
+        judge: (ledgerText, [token]) async {
           final seqs = RegExp(
             r'^\[(\d+)\] (toolResult|assistant-TOOLCALL)',
             multiLine: true,
@@ -1294,7 +1294,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledgerText) async {
+        judge: (ledgerText, [token]) async {
           // Offer every result; validation strips the protected tail.
           final seqs = RegExp(
             r'^\[(\d+)\] toolResult',
@@ -1336,7 +1336,7 @@ void main() {
             state: state,
             window: 8000,
             settings: _settings,
-            judge: (ledgerText) async {
+            judge: (ledgerText, [token]) async {
               // Hide every hideable pair entry the ledger offers.
               final seqs = RegExp(
                 r'^\[(\d+)\] (toolResult|assistant-TOOLCALL)',
@@ -1458,7 +1458,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledgerText) async {
+        judge: (ledgerText, [token]) async {
           // The legacy summary is itself hideable — but NOT expandable
           // to its originals (they were replaced by the summary).
           final line = RegExp(
@@ -1525,7 +1525,7 @@ void main() {
           state: stateFor(await session.buildContextMessages()),
           window: 8000,
           settings: _settings,
-          judge: (ledger) async => null,
+          judge: (ledger, [token]) async => null,
           summarize: (request) async {
             prompts.add(request.prompt);
             return SummarizationResult.success('fold ${prompts.length}');
@@ -1583,7 +1583,7 @@ void main() {
         state: stateFor(await session.buildContextMessages()),
         window: 8000,
         settings: _settings,
-        judge: (ledger) async => null,
+        judge: (ledger, [token]) async => null,
         summarize: (request) async {
           prompts.add(request.prompt);
           if (prompts.length == 2) {

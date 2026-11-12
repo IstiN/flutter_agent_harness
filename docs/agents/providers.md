@@ -128,6 +128,21 @@ roles:
   smol: [openrouter/openai/gpt-4o-mini]   # keeps 300s
 ```
 
+Judge/smol model-class rule: the `smol` role also serves the structured
+compaction hide judge — ONE call under a fixed attempt budget
+(`compaction.judgeBudgetSeconds`, default 300 s) with a bounded input
+(newest 512 ledger entries). Pick a class that answers within that budget
+(a non-mandatory-reasoning class, or a budget sized to the class's
+thinking time); a mandatory-reasoning class behind a queueing gateway can
+make EVERY judge call hit the full budget. The engine defends itself: a
+judge that times out falls back to the deterministic judge-less hide
+after two consecutive failures, and the failure latches across runs —
+auto-compact then skips the judge (deterministic hide) and pays one
+probe call per window instead of the full budget per run. The named
+failure line carries the attempt shape (input entries, est. tokens,
+elapsed), so a slow-reasoning class reads differently from a wedged
+endpoint in logs.
+
 ## Vision helpers
 
 - `lib/src/model_roles/vision_models.dart` — shared vision heuristic (`modelIdSuggestsVision`, `visionMarker` picker checkmark, `inputModalitiesFor`): CLI model switches recompute `Model.input` from it and the model pickers show the ✓/✗ marker; `packages/fa_ui` re-exports it (one marker list for CLI and app).

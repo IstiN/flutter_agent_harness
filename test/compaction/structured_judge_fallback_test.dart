@@ -51,7 +51,8 @@ const _settings = CompactionSettings(
 
 /// A judge that never answers — the marathon-session wedge, minus the
 /// wall clock (150ms budgets, real event loop, no real provider).
-Future<String?> _deadJudge(String ledger) => Completer<String?>().future;
+Future<String?> _deadJudge(String ledger, [CancelToken? cancelToken]) =>
+    Completer<String?>().future;
 
 final class _Hooks implements StructuredCompactorHooks {
   final passes = <StructuredCompactionPass>[];
@@ -120,7 +121,7 @@ void main() {
       state: state,
       window: 8000,
       settings: _settings,
-      judge: (ledger) {
+      judge: (ledger, [token]) {
         judgeCalls++;
         return _deadJudge(ledger);
       },
@@ -218,10 +219,18 @@ void main() {
         for (final pass in hooks.passes.where((p) => !p.ok)) pass.error,
       ];
       expect(errors, isNotEmpty);
+      // gh-2096: the named line now also carries the attempt shape —
+      // input entries, estimated tokens, elapsed — on top of the
+      // role/model/endpoint/budget the #541 line already named.
       expect(
         (errors.first as TimeoutException).message,
-        'structured compaction judge timeout (role=smol, model=kimi-k2 @ '
-        'gate.example.ai, 1s budget) (issue #515)',
+        matches(
+          RegExp(
+            r'structured compaction judge timeout \(role=smol, model=kimi-k2 @ '
+            r'gate\.example\.ai, 1s budget, entries=5, ~104 tok, '
+            r'elapsed=\d+ms\) \(issue #515\)',
+          ),
+        ),
       );
     },
   );
@@ -236,7 +245,7 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledger) async {
+        judge: (ledger, [token]) async {
           // An 80ms judge: patient budgets win, tight ones fall back.
           await Future<void>.delayed(const Duration(milliseconds: 80));
           return '["3"]';
@@ -327,7 +336,7 @@ void main() {
       state: state,
       window: 8000,
       settings: _settings,
-      judge: (ledger) async => '["3"]',
+      judge: (ledger, [token]) async => '["3"]',
       summarize: (request) async => SummarizationResult.failure('no ckpt'),
       checkpointPrompt: 'P',
       hooks: hooks,
@@ -353,7 +362,7 @@ void main() {
       state: state,
       window: 8000,
       settings: _settings,
-      judge: (ledger) {
+      judge: (ledger, [token]) {
         calls++;
         return calls == 1 ? Future<String?>.value(null) : Future.value('["3"]');
       },
