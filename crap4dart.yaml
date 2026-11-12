@@ -250,3 +250,24 @@ gates:
       - 'flutter_app/ios/.symlinks/**'
       - 'flutter_app/**/ephemeral/**'
       - 'flutter_app/**/.plugin_symlinks/**'
+      # Parallel agent worktrees (git worktree scratch spaces, untracked,
+      # never on CI) — tens of thousands of throwaway dart copies; with
+      # them the similarity scan scope blows the 20000-file safety cap.
+      - '.worktrees/**'
+      # Gitignored local build/dependency trees: the filesystem scan sees
+      # them, CI never will — kept out so local runs match CI (same class
+      # as .dart-tools above). flutter/dart build outputs (incl. the
+      # fa-extension bundle and flutter intermediates copying
+      # assets/wasm/ATTRIBUTION.md ~20x), .dart_tool generated fixtures,
+      # macOS Pods, e2e vendor checkouts.
+      - 'build/**'
+      - 'flutter_app/build/**'
+      - '.dart_tool/**'
+      - 'flutter_app/.dart_tool/**'
+      - 'flutter_app/macos/Pods/**'
+      - 'browser_ext/e2e/node_modules/**'
+      - 'playwright/**'
+      # Built mirror synced by scripts/build_browser_ext.sh
+      # (prune_flutter_assets.sh from flutter_app assets + bundled skill
+      # copies) — the mirror is the feature; the sources stay gated.
+      - 'browser_ext/panel/app/assets/**'

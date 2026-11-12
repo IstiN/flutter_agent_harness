@@ -1497,393 +1497,105 @@
     },
     {
       "gate": "similarity",
-      "file": "flutter_app/assets/fonts/README.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/fonts/README.md, flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/README.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/fonts/README.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/fonts/README.md, flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/README.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/README.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/fonts/README.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/fonts/README.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/fonts/README.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/fonts/README.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/fonts/README.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/unit_test_assets/assets/fonts/README.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/fonts/README.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/fonts/README.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/assets/wasm/ATTRIBUTION.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md, flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/wasm/ATTRIBUTION.md, flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/Debug-iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/wasm/ATTRIBUTION.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/iphonesimulator/Runner.app/Frameworks/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/wasm/ATTRIBUTION.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/unit_test_assets/assets/wasm/ATTRIBUTION.md",
-      "line": null,
-      "message": "similar to flutter_app/assets/wasm/ATTRIBUTION.md, flutter_app/build/ios/Debug-iphonesimulator/App.framework/flutter_assets/assets/wasm/ATTRIBUTION.md (+2 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/firebase_options.dart, flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart (+1 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/firebase_options.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart, flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart (+1 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart, flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/firebase_options.dart (+1 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/example/lib/firebase_options.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/firebase_options.dart, flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/firebase_options.dart (+1 more) — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
       "file": "test/ci_core_shard_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_pty_artifact_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart — near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_pty_artifact_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/ci_pty_artifact_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart — near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/ci_shard_evidence_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_pty_artifact_upload_retry_guard_test.dart — near-duplicate content (jaccard 0.58, containment 0.80); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/.dart_tool/calendar_tz_freeze/calendar_service_plain.dart",
-      "line": null,
-      "message": "similar to flutter_app/lib/services/calendar_service.dart — near-duplicate content (jaccard 0.99, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/lib/services/calendar_service.dart",
-      "line": null,
-      "message": "similar to flutter_app/.dart_tool/calendar_tz_freeze/calendar_service_plain.dart — near-duplicate content (jaccard 0.99, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/.dart_tool/calendar_tz_freeze/calendar_service_stub_plain.dart",
-      "line": null,
-      "message": "similar to flutter_app/lib/services/calendar_service_stub.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/lib/services/calendar_service_stub.dart",
-      "line": null,
-      "message": "similar to flutter_app/.dart_tool/calendar_tz_freeze/calendar_service_stub_plain.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/.dart_tool/calendar_tz_freeze/calendar_tool_plain.dart",
-      "line": null,
-      "message": "similar to flutter_app/lib/services/calendar_tool.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/lib/services/calendar_tool.dart",
-      "line": null,
-      "message": "similar to flutter_app/.dart_tool/calendar_tz_freeze/calendar_tool_plain.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/CHANGELOG.md",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/CHANGELOG.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/CHANGELOG.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/CHANGELOG.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/README.md",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/README.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/README.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/README.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/main.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/main.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/main.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/main.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/tabs_page.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/tabs_page.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/example/lib/tabs_page.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/example/lib/tabs_page.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/lib/observer.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/lib/observer.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/lib/observer.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/lib/observer.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/lib/src/firebase_analytics.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/lib/src/firebase_analytics.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/lib/src/firebase_analytics.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/lib/src/firebase_analytics.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/test/firebase_analytics_test.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/test/firebase_analytics_test.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_analytics-12.4.5/test/firebase_analytics_test.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_analytics-12.4.5/test/firebase_analytics_test.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/CHANGELOG.md",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/CHANGELOG.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/CHANGELOG.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/CHANGELOG.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/README.md",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/README.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/README.md",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/README.md — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/main.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/example/lib/main.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/example/lib/main.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/example/lib/main.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/lib/src/firebase_crashlytics.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/lib/src/firebase_crashlytics.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/lib/src/firebase_crashlytics.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/lib/src/firebase_crashlytics.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/lib/src/utils.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/lib/src/utils.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/lib/src/utils.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/lib/src/utils.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/test/firebase_crashlytics_test.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/test/firebase_crashlytics_test.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/test/firebase_crashlytics_test.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/test/firebase_crashlytics_test.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/test/mock.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/test/mock.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
-    },
-    {
-      "gate": "similarity",
-      "file": "flutter_app/build/macos/SourcePackages/firebase_crashlytics-5.2.6/test/mock.dart",
-      "line": null,
-      "message": "similar to flutter_app/build/ios/SourcePackages/firebase_crashlytics-5.2.6/test/mock.dart — near-duplicate content (jaccard 1.00, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_pty_artifact_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.58, containment 0.80); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/integration_test/bash_tool_test.dart",
       "line": null,
-      "message": "similar to flutter_app/integration_test/edit_tool_test.dart — near-duplicate content (jaccard 0.66, containment 0.83); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/integration_test/edit_tool_test.dart \u2014 near-duplicate content (jaccard 0.66, containment 0.83); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/integration_test/edit_tool_test.dart",
       "line": null,
-      "message": "similar to flutter_app/integration_test/bash_tool_test.dart — near-duplicate content (jaccard 0.66, containment 0.83); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/integration_test/bash_tool_test.dart \u2014 near-duplicate content (jaccard 0.66, containment 0.83); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/lib/network/ws_connector_io.dart",
       "line": null,
-      "message": "similar to flutter_app/lib/network/ws_connector_web.dart — near-duplicate content (jaccard 0.56, containment 0.88); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/lib/network/ws_connector_web.dart \u2014 near-duplicate content (jaccard 0.56, containment 0.88); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/lib/network/ws_connector_web.dart",
       "line": null,
-      "message": "similar to flutter_app/lib/network/ws_connector_io.dart — near-duplicate content (jaccard 0.56, containment 0.88); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/lib/network/ws_connector_io.dart \u2014 near-duplicate content (jaccard 0.56, containment 0.88); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/lib/services/folder_picker_web.dart",
       "line": null,
-      "message": "similar to flutter_app/lib/services/upload_picker_web.dart — near-duplicate content (jaccard 0.61, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/lib/services/upload_picker_web.dart \u2014 near-duplicate content (jaccard 0.61, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/lib/services/upload_picker_web.dart",
       "line": null,
-      "message": "similar to flutter_app/lib/services/folder_picker_web.dart — near-duplicate content (jaccard 0.61, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/lib/services/folder_picker_web.dart \u2014 near-duplicate content (jaccard 0.61, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/test/provider_registry_test.dart",
       "line": null,
-      "message": "similar to packages/fa_ui/test/provider_registry_test.dart — near-duplicate content (jaccard 0.62, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to packages/fa_ui/test/provider_registry_test.dart \u2014 near-duplicate content (jaccard 0.62, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "packages/fa_ui/test/provider_registry_test.dart",
       "line": null,
-      "message": "similar to flutter_app/test/provider_registry_test.dart — near-duplicate content (jaccard 0.62, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/test/provider_registry_test.dart \u2014 near-duplicate content (jaccard 0.62, containment 1.00); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/test/transformers_js_cache_section_test.dart",
       "line": null,
-      "message": "similar to flutter_app/test/webllm_cache_section_test.dart — near-duplicate content (jaccard 0.53, containment 0.70); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/test/webllm_cache_section_test.dart \u2014 near-duplicate content (jaccard 0.53, containment 0.70); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "flutter_app/test/webllm_cache_section_test.dart",
       "line": null,
-      "message": "similar to flutter_app/test/transformers_js_cache_section_test.dart — near-duplicate content (jaccard 0.53, containment 0.70); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to flutter_app/test/transformers_js_cache_section_test.dart \u2014 near-duplicate content (jaccard 0.53, containment 0.70); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/cli/agent_cli_tui_adapter403_test.dart",
       "line": null,
-      "message": "similar to test/cli/agent_cli_tui_socket403_test.dart — near-duplicate content (jaccard 0.52, containment 0.74); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/cli/agent_cli_tui_socket403_test.dart \u2014 near-duplicate content (jaccard 0.52, containment 0.74); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/cli/agent_cli_tui_socket403_test.dart",
       "line": null,
-      "message": "similar to test/cli/agent_cli_tui_adapter403_test.dart — near-duplicate content (jaccard 0.52, containment 0.74); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/cli/agent_cli_tui_adapter403_test.dart \u2014 near-duplicate content (jaccard 0.52, containment 0.74); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/integration/provider_ollama_test.dart",
       "line": null,
-      "message": "similar to test/integration/provider_openrouter_test.dart — near-duplicate content (jaccard 0.57, containment 0.73); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/integration/provider_openrouter_test.dart \u2014 near-duplicate content (jaccard 0.57, containment 0.73); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/integration/provider_openrouter_test.dart",
       "line": null,
-      "message": "similar to test/integration/provider_ollama_test.dart — near-duplicate content (jaccard 0.57, containment 0.73); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/integration/provider_ollama_test.dart \u2014 near-duplicate content (jaccard 0.57, containment 0.73); reuse the shared source, generate one of them, or delete the stale copy"
     }
   ]
 }
