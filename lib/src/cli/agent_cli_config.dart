@@ -124,6 +124,7 @@ final class AgentCliConfig {
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
+    this.compactionTuning,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
@@ -239,11 +240,28 @@ final class AgentCliConfig {
   /// embedded hosts): the command reports the surface as unavailable.
   final Future<void> Function(String? sessionId)? updateCommand;
 
-  /// Override for the compaction thresholds (ratio-based trigger, reserve
-  /// and recent-token budgets). When `null`, `defaultCompactionSettings`
-  /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
-  /// `compaction:` yaml section through this field.
+  /// Full override for the compaction thresholds (the reserve and
+  /// recent-token budgets). When `null`, the shared host wiring scales
+  /// `CompactionSettings.forWindow` to the conversation window — the
+  /// gh-1742 curve (6.25% headroom, clamped 64Ki, floored by the legacy
+  /// flat curve). NO ratio-based default exists. The user-facing
+  /// `compaction:` yaml keys (`triggerRatio`/`reserveTokens`/
+  /// `keepRecentTokens`, gh-2098) ride [compactionTuning], applied over
+  /// the scaled curve by the same wiring.
   final CompactionSettings? compactionSettings;
+
+  /// The `compaction:` yaml trigger tuning (gh-2098): `triggerRatio`
+  /// pins the trigger line at r × the conversation window (the reserve
+  /// becomes `window − floor(r × window)`, so every window-derived
+  /// consumer moves together); `reserveTokens`/`keepRecentTokens`
+  /// override the forWindow curve outputs directly. `null` or an empty
+  /// tuning keeps the gh-1742 behavior byte-identically. A non-empty
+  /// tuning is a user pin: the bench env knob
+  /// (`FAH_COMPACT_TRIGGER_TOKENS`) never rewrites it, mirroring
+  /// [compactionSettings]. Parsed strict at boot
+  /// (`CompactionTuning.fromSection`); hosts merge the scopes with
+  /// [mergeCompactionTuning] (global < project, deepest key wins).
+  final CompactionTuning? compactionTuning;
 
   /// The effective compaction engine (issue #148), resolved by the host
   /// (global < project < `--compaction-engine` runtime flag). `null` keeps
