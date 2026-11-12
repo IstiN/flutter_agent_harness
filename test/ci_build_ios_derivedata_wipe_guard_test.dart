@@ -64,7 +64,15 @@
 //       tree with a PlistBuddy stub: owned dir removed + logged, live
 //       sibling and plist-less dirs survive, orphan removed + logged,
 //       exit 0 under the step's shell shape; the no-candidate pass
-//       emits the distinct no-match line.
+//       emits the distinct no-match line,
+//  AC8  a WorkspacePath spelling divergence (symlinked runner-path
+//       component: Xcode records the RESOLVED path, the step's `$(pwd)`
+//       reports the logical one) must still wipe the owned dir — CI run
+//       43204833 (2026-11-12) silently kept its own dir Runner-bdeltr…
+//       (still carrying the earlier incident's corrupted build.db) and
+//       the build died on it with the same disk-I/O signature; the
+//       seen-but-kept case logs a `keeping (WorkspacePath mismatch)`
+//       line so it is diagnosable from CI logs alone.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -125,13 +133,33 @@ void fixtureCandidate(Directory dd, String name, String? plistContent) {
 }
 
 /// Runs the extracted wipe block for real: `/usr/libexec/PlistBuddy` is
-/// substituted with a stub that cats the fixture plist (the sim harness
-/// substitution — the block text itself is unmodified), and `$HOME` is
-/// pointed at the fixture home so the `~/Library/...` glob lands there.
-Future<ProcessResult> runWipeSimulation(Directory tmp) {
+/// substituted with a stub that emulates the real binary's observed
+/// behavior (the sim harness substitution — the block text itself is
+/// unmodified), and `$HOME` is pointed at the fixture home so the
+/// `~/Library/...` glob lands there.
+///
+/// [logicalPwd] emulates a symlinked runner-path component: bash's
+/// builtin `pwd` (logical mode) honors $PWD when it names the same
+/// directory, while `pwd -P` resolves it — exactly the logical-vs-
+/// resolved spelling divergence CI run 43204833 died on.
+Future<ProcessResult> runWipeSimulation(Directory tmp, {String? logicalPwd}) {
   final stubDir = Directory('${tmp.path}/pb-stub')..createSync(recursive: true);
   final stub = File('${stubDir.path}/PlistBuddy');
-  stub.writeAsStringSync('#!/usr/bin/env bash\nexec cat "\$3"\n');
+  // gh-2136 rework: the stub must match REAL PlistBuddy's stdout
+  // behavior — a missing plist makes it print "File Doesn't Exist, Will
+  // Create: <path>" ON STDOUT (the block's `2>/dev/null` cannot suppress
+  // stdout) and exit 1. The old `exec cat` stub printed nothing for a
+  // missing plist, so the sim stayed green while run 43204833's orphan
+  // sweep captured that error text into $ws and removed two plist-less
+  // (maybe-live early-build) dirs.
+  stub.writeAsStringSync(
+    '#!/usr/bin/env bash\n'
+    'if [ "\$#" -lt 3 ] || [ ! -f "\$3" ]; then\n'
+    '  echo "File Doesn\'t Exist, Will Create: \$3"\n'
+    '  exit 1\n'
+    'fi\n'
+    'exec cat "\$3"\n',
+  );
   // Invoke the stub through `bash` so no +x bit is needed (File
   // permissions helpers are POSIX-gated in dart:io).
   final block = wipeBlock().replaceAll(
@@ -149,7 +177,11 @@ Future<ProcessResult> runWipeSimulation(Directory tmp) {
     'bash',
     ['-c', block],
     workingDirectory: wsRoot.path,
-    environment: {'HOME': home.path, 'PATH': '/usr/bin:/bin'},
+    environment: {
+      'HOME': home.path,
+      'PATH': '/usr/bin:/bin',
+      if (logicalPwd != null) 'PWD': logicalPwd,
+    },
   );
 }
 
@@ -306,6 +338,21 @@ void main() {
             '"protection ran but found no candidate" must be '
             'distinguishable from "protection never matched" in CI logs',
       );
+      // gh-2136 rework (run 43204833): a dir that is SEEN but matches
+      // neither branch must also be visible — that run's own dir was
+      // glob-matched, silently kept on a WorkspacePath spelling
+      // divergence, and the build then died on the stale dir 13 min
+      // later. The only signal in that log was the ABSENT wipe line.
+      expect(
+        run,
+        contains(
+          r'echo "gh-2134: keeping DerivedData dir (WorkspacePath mismatch): $dd -> $ws"',
+        ),
+        reason:
+            'a seen-but-kept dir must log its recorded WorkspacePath so a '
+            'future spelling divergence (symlinked workspace component, '
+            'resolved vs logical path) is diagnosable in one log read',
+      );
     });
 
     test('AC6: orphan Runner-* dirs with a dead-checkout WorkspacePath '
@@ -327,6 +374,22 @@ void main() {
         run,
         contains('gh-2134: removing orphaned DerivedData'),
         reason: 'the orphan removal must be observable in CI logs',
+      );
+      // gh-2136 rework (run 43204833): PlistBuddy prints its error text
+      // ("File Doesn't Exist, Will Create: …" for a missing plist,
+      // "Print: Entry, :WorkspacePath, Does Not Exist" for a keyless one)
+      // on STDOUT, where the block's `2>/dev/null` cannot suppress it.
+      // That run captured the text into $ws; `[ -n "$ws" ]` then passed
+      // and `[ ! -e "$ws" ]` was trivially true, so the orphan sweep
+      // removed two plist-less (maybe-live early-build) dirs. Non-path
+      // values must be neutralized before any branch sees them.
+      expect(
+        run,
+        contains('case "\$ws" in'),
+        reason:
+            'the WorkspacePath value must be filtered to absolute paths '
+            'before the branch logic — PlistBuddy error text must never '
+            'be treated as a readable WorkspacePath',
       );
     });
 
@@ -362,6 +425,71 @@ void main() {
         Directory('${dd.path}/Runner-plistless').existsSync(),
         isTrue,
         reason: 'a plist-less dir (maybe a live early build) must survive',
+      );
+      // gh-2136 rework (run 43204833): the seen-but-kept sibling dir must
+      // leave a visible log line, not just survive silently.
+      expect(
+        result.stdout,
+        contains('gh-2134: keeping DerivedData dir (WorkspacePath mismatch)'),
+        reason:
+            'the live sibling\'s dir is seen and kept — the log must say '
+            'so with its recorded WorkspacePath',
+      );
+    });
+
+    test('AC8: a WorkspacePath spelling divergence (symlinked runner-path '
+        'component) still wipes the owned dir — run 43204833 regression',
+        () async {
+      final tmp = await Directory.systemTemp.createTemp('fa-wipe-sim');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final dd = Directory(
+        '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
+      )..createSync(recursive: true);
+      // The REAL workspace lives under real-ws; the runner process
+      // reaches it through the ws symlink (a symlinked runner-path
+      // component). Xcode records the RESOLVED path in WorkspacePath
+      // while the step's `$(pwd)` walks the symlink (logical spelling) —
+      // run 43204833: this exact divergence silently kept THIS
+      // checkout's dir Runner-bdeltr… (still carrying the earlier
+      // sibling deletion's corrupted build.db) and the xcodebuild died
+      // on it 13 min later with the same disk-I/O signature.
+      final realWs = '${tmp.path}/real-ws/flutter_app/ios/Runner.xcworkspace';
+      Directory(realWs).createSync(recursive: true);
+      Link('${tmp.path}/ws').createSync('${tmp.path}/real-ws');
+      fixtureCandidate(dd, 'Runner-owned', realWs);
+      // A concurrent leg's dir must keep its protection under the same
+      // normalization: its workspace exists, so it is kept — visibly.
+      final siblingWs =
+          '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace';
+      Directory(siblingWs).createSync(recursive: true);
+      fixtureCandidate(dd, 'Runner-live-sibling', siblingWs);
+
+      final result = await runWipeSimulation(
+        tmp,
+        logicalPwd: '${tmp.path}/ws/flutter_app',
+      );
+      expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+      expect(
+        result.stdout,
+        contains('gh-2134: wiping DerivedData owned by this workspace'),
+        reason:
+            'the resolved-vs-logical spelling divergence must never '
+            'silently skip THIS checkout\'s dir',
+      );
+      expect(
+        Directory('${dd.path}/Runner-owned').existsSync(),
+        isFalse,
+        reason: 'the owned dir must be wiped under both spellings',
+      );
+      expect(
+        Directory('${dd.path}/Runner-live-sibling').existsSync(),
+        isTrue,
+        reason: 'a concurrent leg\'s dir must still survive',
+      );
+      expect(
+        result.stdout,
+        contains('gh-2134: keeping DerivedData dir (WorkspacePath mismatch)'),
+        reason: 'the kept sibling dir must be visible in the log',
       );
     });
 
