@@ -23,7 +23,7 @@
 library;
 
 import 'dart:async';
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 
 import '../../agent/agent.dart' show AgentState;
 import '../../cancel_token.dart' show CancelToken, CancelTokenSource;
@@ -35,6 +35,7 @@ import '../compaction.dart';
 import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import 'judge.dart';
+import 'judge_health.dart';
 import 'ledger.dart';
 import 'markers.dart';
 import 'projection.dart';
@@ -65,6 +66,10 @@ final class StructuredCompactionPass {
     this.marginTokens,
     this.bandTokens,
     this.hideableRemaining,
+    this.judgeInputEntries,
+    this.judgeInputTokens,
+    this.judgeElapsedMs,
+    this.judgeLatched = false,
   });
 
   /// `'hide'` or `'checkpoint'`.
@@ -110,6 +115,24 @@ final class StructuredCompactionPass {
   /// diagnostic count only (the rejected "hides exhausted" gate must not
   /// grow back as a hidden precondition). Null on every other pass kind.
   final int? hideableRemaining;
+
+  /// gh-2096 timeout diagnosis (judge-failure and probe receipts): the
+  /// attempt shape — the rendered judge input's entry count. Null on
+  /// every other pass kind.
+  final int? judgeInputEntries;
+
+  /// gh-2096: the rendered judge input's estimated token size. Null on
+  /// every other pass kind.
+  final int? judgeInputTokens;
+
+  /// gh-2096: the wall-clock time the judged attempt consumed. Null on
+  /// every other pass kind.
+  final int? judgeElapsedMs;
+
+  /// gh-2096: whether this pass was decided by the cross-run judge-health
+  /// latch (a latched skip or a probe receipt). Never content — a count
+  /// and a flag only, like the escalation metadata above.
+  final bool judgeLatched;
 }
 
 /// Rebuilds [state.messages] from the session projection, zeroing usage
@@ -147,6 +170,7 @@ final class StructuredCompactor {
     this.budgetSource,
     this.attemptBudget = const Duration(seconds: 300),
     this.judgeTarget = 'role=default',
+    this.judgeProbeAfter = const Duration(minutes: 10),
     this.pinnedOperativeBlock,
     this.pinnedLines = const {},
   });
@@ -215,6 +239,15 @@ final class StructuredCompactor {
   /// judge must never surface as an anonymous TimeoutException.
   final String judgeTarget;
 
+  /// gh-2096: how long a latched judge goes unprobed. While the
+  /// cross-run health latch holds, every run takes the deterministic
+  /// hide and pays NO judge budget; once this window has elapsed since
+  /// the newest health record — or the configured class changed, which
+  /// probes at once — the run pays ONE probe call: success unlatches,
+  /// failure re-arms the window. The budget tax becomes once per window
+  /// instead of once per run.
+  final Duration judgeProbeAfter;
+
   /// gh-1409 E7: the rendered PINNED OPERATIVE LINES block (verbatim-
   /// preserve duty) inserted into every checkpoint prompt. `null` →
   /// prompts are byte-identical to the pre-pin engine (F4 compat guard).
@@ -225,10 +258,16 @@ final class StructuredCompactor {
   final Set<String> pinnedLines;
 
   /// Consecutive judge failures before the deterministic fallback hide
-  /// engages (issue #541): one retry, then the judge-less hide.
-  static const int _judgeFallbackAfter = 2;
-
+  /// engages (issue #541): one retry, then the judge-less hide. The
+  /// threshold itself is [judgeLatchAfter] — the same count persists
+  /// across runs through the health latch (gh-2096).
   int _consecutiveJudgeFailures = 0;
+
+  /// gh-2096: the persisted cross-run judge-health state (the newest
+  /// `structured_judge_health` record on the branch) and whether the
+  /// latch currently holds. Loaded at the start of every hide-pass run.
+  JudgeHealthState _judgeHealth = JudgeHealthState.fresh;
+  bool _judgeLatched = false;
 
   /// The token passed into every LLM call: the budget source when the
   /// factory provided one, else the plain external [cancelToken].
@@ -456,7 +495,14 @@ final class StructuredCompactor {
       );
 
   Future<bool> _runHidePasses(int trigger) async {
-    _consecutiveJudgeFailures = 0;
+    // gh-2096: the consecutive-failure counter is PERSISTED per session —
+    // it seeds from the newest judge-health record instead of resetting
+    // every run (the incident re-paid the full budget on every run for as
+    // long as the configured class stayed slow).
+    final health = await _loadJudgeHealth();
+    _judgeHealth = health;
+    _consecutiveJudgeFailures = health.consecutiveFailures;
+    _judgeLatched = health.latched;
     for (var i = 0; i < maxHidePasses; i++) {
       final before = _requestTokens();
       if (before <= trigger) return true;
@@ -464,28 +510,38 @@ final class StructuredCompactor {
       if (view == null) return true;
       if (_hideableEntries(view.ledger).isEmpty) break;
 
+      // gh-2096: the cross-run latch gate — while latched the judge
+      // contributes nothing unless the probe window elapsed (or the
+      // configured class changed, which probes at once). This run makes
+      // exactly one judge decision, then the deterministic hide decides;
+      // a non-null gate result is that decision — both skip outcomes
+      // converge on the loop's own successful-verdict return.
+      if (await _latchedGate(trigger, before) != null) return true;
+
       final call = await _callJudge(view);
-      if (call.failure != null) {
-        // F1: a failed judge call hides nothing — but since #541 it is
-        // COUNTED, not fatal: one retry, then the deterministic
-        // judge-less hide, so a dead judge can no longer brick the run.
-        if (!await _registerJudgeFailure(trigger, call.failure!)) break;
-        continue;
-      }
-      final picks = parseHidePicks(call.answer!);
+      // F1: a failed judge call hides nothing — but since #541 it is
+      // COUNTED, not fatal: one retry, then the deterministic
+      // judge-less hide, so a dead judge can no longer brick the run.
+      // A garbage answer decided nothing — a failure like any other.
+      final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
       if (picks == null) {
-        // A garbage answer decided nothing — a failure like any other.
-        if (!await _registerJudgeFailure(
+        if (!await _handleJudgeFailure(
           trigger,
-          const CompactionException(
-            'hide judge returned an unparseable answer',
-          ),
+          call.failure ??
+              const CompactionException(
+                'hide judge returned an unparseable answer',
+              ),
+          shape: call.shape,
         )) {
-          break;
+          return true;
         }
         continue;
       }
       _consecutiveJudgeFailures = 0;
+      // gh-2096: a parsed answer is a live judge — clear the persisted
+      // latch (additive unlatch record; a no-op write when the session
+      // was never unhealthy, keeping the legacy flow write-free).
+      await _recordJudgeSuccess();
       if (picks.isEmpty) break;
       final ids = validateHidePicks(
         picks,
@@ -511,40 +567,122 @@ final class StructuredCompactor {
     return true;
   }
 
+  /// gh-2096: the cross-run latch gate. While latched the judge
+  /// contributes nothing this run unless the probe window elapsed (or
+  /// the configured class changed, which probes at once): the skip
+  /// receipt names the consequence ("budget unwinnable for the
+  /// configured class") and the deterministic hide decides. Returns
+  /// `null` when the judge may be called; a non-null result means the
+  /// run is decided — the skip's outcomes converge on the same
+  /// successful-verdict return the loop's natural end produces.
+  Future<bool?> _latchedGate(int trigger, int before) async {
+    if (!_judgeLatched || _latchedProbeDue) return null;
+    return _latchedSkipHide(trigger, before);
+  }
+
+  /// One counted judge failure (issue #541 F1): a failed call or a
+  /// garbage answer decides nothing — it is COUNTED, not fatal. Returns
+  /// whether the hide-pass loop continues. While latched the call WAS
+  /// the one probe-per-window: the probe paid the budget and lost, so
+  /// count + persist, then the deterministic hide decides — NO retry
+  /// (the retry ladder is the tax the latch exists to end) and the run
+  /// is decided either way. A fresh failure retries toward
+  /// [judgeLatchAfter] and the deterministic judge-less hide; `false`
+  /// means that hide decided against continuing — the run ends with the
+  /// loop's own successful verdict.
+  Future<bool> _handleJudgeFailure(
+    int trigger,
+    Object failure, {
+    JudgeAttemptShape? shape,
+  }) async {
+    if (_judgeLatched) {
+      await _persistProbeFailure();
+      await _registerJudgeFailure(
+        trigger,
+        failure,
+        shape: shape,
+        latched: true,
+      );
+      return false;
+    }
+    return _registerJudgeFailure(trigger, failure, shape: shape);
+  }
+
   /// One judge call under the attempt budget (issue #515). A budget
   /// expiry cancels the budget token — aborting the wedged provider
   /// call — but since #541 it is a JUDGE failure, not a run failure:
   /// the caller counts it and falls toward the deterministic hide.
-  Future<({String? answer, Object? failure})> _callJudge(
-    _LedgerView view,
-  ) async {
+  ///
+  /// gh-2096: the call runs under a PER-CALL child token — a timeout
+  /// aborts ONLY the in-flight call, while the retry and the later LM
+  /// stages of the run keep a live token (the incident's retry was born
+  /// cancelled: the run-wide budget token died with the first timeout
+  /// and every later call failed in ~75 ms). The attempt's measured
+  /// shape — input entries, estimated tokens, elapsed — rides every
+  /// failure receipt.
+  Future<({String? answer, Object? failure, JudgeAttemptShape shape})>
+  _callJudge(_LedgerView view) async {
+    final ledgerText = view.ledger.render();
+    final perCall = CancelTokenSource();
+    // gh-2096: forward the run-wide token's cancel (a user abort, a
+    // total-budget kill) into the in-flight call; a per-call budget
+    // expiry cancels ONLY the child — the retry and later stages keep a
+    // live parent. One listener per call, bounded by the pass caps.
+    final parent = _effectiveToken;
+    if (parent != null) {
+      unawaited(
+        parent.onCancel.then((_) => perCall.cancel(parent.cancelReason)),
+      );
+    }
+    JudgeAttemptShape shapeOf(Duration elapsed) => (
+      entries: min(
+        view.ledger.entries.length,
+        ContextLedger.judgePreviewEntries,
+      ),
+      tokens: estimateStringTokens(ledgerText),
+      elapsed: elapsed,
+    );
+    final watch = Stopwatch()..start();
     try {
-      final answer = await judge(view.ledger.render()).timeout(
+      final answer = await judge(ledgerText, perCall.token).timeout(
         attemptBudget,
         onTimeout: () {
-          final timeout = _judgeTimeout();
-          budgetSource?.cancel(timeout);
+          final timeout = _judgeTimeout(shapeOf(watch.elapsed));
+          // gh-2096: the child token dies — the parent (the retry and
+          // the summarizer stages) stays live.
+          perCall.cancel(timeout);
           throw timeout;
         },
       );
+      watch.stop();
       // HideJudgeFn contract: null IS a failed call (F1) — count it.
       return (
         answer: answer,
         failure: answer == null
             ? const CompactionException('hide judge failed call')
             : null,
+        shape: shapeOf(watch.elapsed),
       );
     } on Object catch (error) {
+      watch.stop();
       // Timeout and adapter/provider failures alike: a judge failure like
       // any other; the run must not die on it.
-      return (answer: null, failure: error);
+      return (answer: null, failure: error, shape: shapeOf(watch.elapsed));
     }
   }
 
   /// Records a judge failure (issue #541): a named pass report, then —
-  /// after N consecutive failures — the deterministic judge-less hide.
+  /// after [judgeLatchAfter] consecutive failures — the deterministic
+  /// judge-less hide. gh-2096: the failure receipt carries the attempt
+  /// [shape] and the [latched] flag, and the threshold crossing PERSISTS
+  /// the latch (an additive record) so the next run skips the judge.
   /// Returns whether the hide loop continues.
-  Future<bool> _registerJudgeFailure(int trigger, Object error) async {
+  Future<bool> _registerJudgeFailure(
+    int trigger,
+    Object error, {
+    JudgeAttemptShape? shape,
+    bool latched = false,
+  }) async {
     _consecutiveJudgeFailures++;
     final tokens = _requestTokens();
     hooks?.onPass(
@@ -555,10 +693,121 @@ final class StructuredCompactor {
         tokensAfter: tokens,
         ok: false,
         error: error,
+        judgeInputEntries: shape?.entries,
+        judgeInputTokens: shape?.tokens,
+        judgeElapsedMs: shape?.elapsed.inMilliseconds,
+        judgeLatched: latched,
       ),
     );
-    if (_consecutiveJudgeFailures < _judgeFallbackAfter) return true;
+    if (_consecutiveJudgeFailures < judgeLatchAfter) return true;
+    if (!_judgeLatched) {
+      // The latch engages NOW: persist it (best-effort) so the next run
+      // takes the deterministic hide without re-paying the budget, and
+      // mirror the state in memory (a still-over run keeps skipping).
+      await _persistJudgeHealth(
+        consecutiveFailures: _consecutiveJudgeFailures,
+        target: judgeTarget,
+      );
+      _judgeLatched = true;
+      _judgeHealth = JudgeHealthState(
+        consecutiveFailures: _consecutiveJudgeFailures,
+        target: judgeTarget,
+        updatedAt: DateTime.now(),
+      );
+    }
     return _deterministicHide(trigger);
+  }
+
+  /// gh-2096: whether the latched judge gets its probe this run — the
+  /// probe window elapsed since the newest health record, or the
+  /// configured class changed since the latch (a new class deserves an
+  /// immediate chance; the latch is about the class, not the session).
+  bool get _latchedProbeDue {
+    final health = _judgeHealth;
+    final target = health.target;
+    if (target != null && target != judgeTarget) return true;
+    final updated = health.updatedAt;
+    if (updated == null) return true;
+    return DateTime.now().difference(updated) >= judgeProbeAfter;
+  }
+
+  /// gh-2096: the latched skip — the judge contributes nothing this run.
+  /// The receipt names the consequence explicitly ("budget unwinnable
+  /// for the configured class"), then the deterministic hide decides.
+  Future<bool> _latchedSkipHide(int trigger, int before) async {
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: before,
+        ok: false,
+        error: CompactionException(
+          'judge latched: budget unwinnable for the configured class '
+          '(consecutive judge failures: $_consecutiveJudgeFailures) — '
+          'skipping the judge this run (gh-2096)',
+        ),
+        judgeLatched: true,
+      ),
+    );
+    return _deterministicHide(trigger);
+  }
+
+  /// gh-2096: the probe's failure count grew — persist it (best-effort)
+  /// and re-arm the probe window before the fallback decides the run.
+  Future<void> _persistProbeFailure() async {
+    await _persistJudgeHealth(
+      consecutiveFailures: _consecutiveJudgeFailures + 1,
+      target: judgeTarget,
+    );
+    _judgeHealth = JudgeHealthState(
+      consecutiveFailures: _consecutiveJudgeFailures + 1,
+      target: judgeTarget,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// gh-2096: a parsed judge answer is a live judge — persist the
+  /// unlatch when the session was ever unhealthy. A legacy session
+  /// (never latched) writes nothing, keeping the healthy flow
+  /// byte-identical.
+  Future<void> _recordJudgeSuccess() async {
+    if (!_judgeLatched && _judgeHealth.consecutiveFailures == 0) return;
+    _judgeLatched = false;
+    _judgeHealth = JudgeHealthState.fresh;
+    await _persistJudgeHealth(consecutiveFailures: 0, target: judgeTarget);
+  }
+
+  /// Loads the persisted judge-health state from the branch path
+  /// (gh-2096). A read failure degrades to fresh — the latch must never
+  /// fail a run.
+  Future<JudgeHealthState> _loadJudgeHealth() async {
+    try {
+      return judgeHealthFromPath(await session.getBranch()) ??
+          JudgeHealthState.fresh;
+    } on Object catch (_) {
+      return JudgeHealthState.fresh;
+    }
+  }
+
+  /// Appends the additive health record (gh-2096). Best-effort: a sealed
+  /// or read-only session keeps its in-memory decision and never fails
+  /// the compaction over the latch bookkeeping.
+  Future<void> _persistJudgeHealth({
+    required int consecutiveFailures,
+    String? target,
+  }) async {
+    try {
+      await session.appendCustomEntry(
+        customType: judgeHealthRecordType,
+        data: judgeHealthPayload(
+          consecutiveFailures: consecutiveFailures,
+          target: target,
+        ),
+      );
+    } on Object catch (_) {
+      // Best-effort by contract — see the doc comment.
+    }
   }
 
   /// The deterministic judge-less hide (issue #541): the judge is down
@@ -658,9 +907,14 @@ final class StructuredCompactor {
 
   /// The named judge-timeout error (issue #541 AC3): role, model and
   /// endpoint of the dead call — never an anonymous TimeoutException.
-  TimeoutException _judgeTimeout() => TimeoutException(
+  /// gh-2096: the attempt shape rides the line — input entries, estimated
+  /// tokens, elapsed — so "slow-reasoning class" vs "wedged/queueing
+  /// endpoint" is distinguishable from logs alone.
+  TimeoutException _judgeTimeout(JudgeAttemptShape shape) => TimeoutException(
     'structured compaction judge timeout '
-    '($judgeTarget, ${attemptBudget.inSeconds}s budget) (issue #515)',
+    '($judgeTarget, ${attemptBudget.inSeconds}s budget, '
+    'entries=${shape.entries}, ~${shape.tokens} tok, '
+    'elapsed=${shape.elapsed.inMilliseconds}ms) (issue #515)',
     attemptBudget,
   );
 
