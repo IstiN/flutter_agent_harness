@@ -1,0 +1,1 @@
+{"ts":"2026-11-11T13:52:51.261775Z","event":"scheduled","id":"1794405171261022_0000_70d5n5","dueMs":1794406971261,"to":"01a1ca1d-6043-750c-8ab2-a778bd72f3a8/main","text":"pr-2111 lap 4 follow-up: the PTY shard 2/3 hang-flake infra retry is in flight (gh run rerun 43023981623 --failed) and the SM dispatched a fresh full CI run 43031038114 on head b35cd69863. Check `gh r"}
