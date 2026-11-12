@@ -1,15 +1,6 @@
 {
   "issue-1951": [
     {
-      "leg": "dev",
-      "at": "2026-10-29T08:11:33Z",
-      "prompt": 380038,
-      "completion": 84791,
-      "total": 464829,
-      "cacheRead": 37629440,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-29T12:02:01Z",
       "prompt": 614186,
@@ -2849,6 +2840,15 @@
       "completion": 15225,
       "total": 103417,
       "cacheRead": 1222912,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-12T08:26:00Z",
+      "prompt": 107538,
+      "completion": 16805,
+      "total": 124343,
+      "cacheRead": 1988416,
       "model": "glm-5.3-flash"
     }
   ]
