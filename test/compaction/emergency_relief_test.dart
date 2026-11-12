@@ -29,7 +29,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/compaction/emergency_relief.dart';
 import 'package:test/test.dart';
 
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
@@ -303,12 +302,12 @@ void main() {
       return (session, state, carrierIds);
     }
 
-    const _keepTwoSettings = CompactionSettings(
+    const keepTwoSettings = CompactionSettings(
       enabled: true,
       reserveTokens: 800,
       keepRecentTokens: 400,
     );
-    final _keepTwoRelief = {
+    final keepTwoRelief = {
       'read': 2,
       'exec': 2,
       'other': 99,
@@ -321,8 +320,8 @@ void main() {
         session: session,
         state: state,
         window: 2800,
-        settings: _keepTwoSettings,
-        keepRecent: _keepTwoRelief,
+        settings: keepTwoSettings,
+        keepRecent: keepTwoRelief,
         protectLastN: 2,
       );
 
@@ -360,8 +359,8 @@ void main() {
         session: session,
         state: state,
         window: 2800,
-        settings: _keepTwoSettings,
-        keepRecent: _keepTwoRelief,
+        settings: keepTwoSettings,
+        keepRecent: keepTwoRelief,
         protectLastN: 2,
       );
 
