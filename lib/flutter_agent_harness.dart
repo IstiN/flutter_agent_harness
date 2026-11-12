@@ -347,6 +347,7 @@ export 'src/network/connector/connector_mux.dart';
 export 'src/network/connector/device_registry.dart';
 export 'src/network/connector/envelope.dart';
 export 'src/network/connector/exposure_acl.dart';
+export 'src/network/connector/machine_connector.dart';
 export 'src/network/connector/offline_outbox.dart';
 export 'src/network/connector/presence_engine.dart';
 export 'src/network/connector/upstream_client.dart';

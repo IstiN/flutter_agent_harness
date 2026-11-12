@@ -104,6 +104,18 @@ final class FakeDeviceServer {
     _handOff(record, entry);
   }
 
+  /// Pushes ONE raw frame to a live device socket WITHOUT mail
+  /// semantics — no dedup, no seq stamp, no pending queue (test seam
+  /// for §8 fan-out / presence / error-frame assertions).
+  void pushRawTo({required String deviceId, required NetworkEnvelope frame}) {
+    final connection = _devices[deviceId]?.connection;
+    if (connection == null) {
+      onLog?.call('pushRawTo: no live connection for $deviceId');
+      return;
+    }
+    unawaited(connection.pushToClient(frame));
+  }
+
   /// Closes every live socket (simulated outage — the AC5 kill switch).
   /// Pending (unacked) frames stay queued for the resume redelivery.
   void dropAll() {
