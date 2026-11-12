@@ -601,7 +601,9 @@ jobs:
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
-          sdk: stable
+          # gh-2120: PINNED Dart 3.13.5 — the 3.14.0 float regressed the size
+          # manifest gate self-test (artifact budgets sized on the 3.13.5
+          # layout); bump deliberately with a budget re-baseline.          sdk: '3.13.5'
 
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -795,6 +797,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -1624,7 +1627,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # 2026-11-11 channel float and failed enforce-lockfile against the
+          # committed flutter_app lock.
+          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
@@ -1632,6 +1638,7 @@ jobs:
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          flutter-version: '3.47.7'
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: pubcache-flutter-${{ runner.os }}-
@@ -1993,6 +2000,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -2072,7 +2080,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # 2026-11-11 channel float and failed enforce-lockfile against the
+          # committed flutter_app lock.
+          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
@@ -2080,6 +2091,7 @@ jobs:
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          flutter-version: '3.47.7'
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: pubcache-flutter-${{ runner.os }}-
@@ -2195,6 +2207,7 @@ jobs:
       # flutter-app-macos leg used (gh-1538).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
       - name: Create placeholder .env asset
@@ -2684,6 +2697,7 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
@@ -2830,7 +2844,10 @@ jobs:
       - name: Flutter SDK (arm64 git bootstrap)
         shell: bash
         run: |
-          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          # gh-2120: PINNED to the 3.47.7 tag — `-b stable` cloned 3.50.0 after the
+          # 2026-11-11 channel float and failed enforce-lockfile against the
+          # committed flutter_app lock.
+          git clone --depth 1 -b 3.47.7 https://github.com/flutter/flutter.git "$HOME/flutter"
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/flutter/bin:$PATH"
           flutter --version
@@ -5017,7 +5034,9 @@ jobs:
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
-          sdk: stable
+          # gh-2120: PINNED Dart 3.13.5 — same `dart build cli` layout surface
+          # as the release binaries job (3.14.0 emits the split layout).
+          sdk: '3.13.5'
 
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
