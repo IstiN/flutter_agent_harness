@@ -85,7 +85,12 @@ void main() {
     final fake = FakeStreamFunction([
       // 1. Mid-turn TOOL-CALL phase: three tool calls whose outputs
       //    (~8200 tokens each) balloon the next request past the window —
-      //    the support incident's shape.
+      //    the support incident's shape. gh-209: the mid-turn relief is
+      //    the deterministic emergency tier — no buster candidate, no
+      //    dedup (three different paths), and the tiny keep region below
+      //    pins the valve budget so the relief declines and the guard
+      //    stop lands (the default forWindow keep of ~16k would let the
+      //    valve recover the turn mid-run — no continuation to test).
       toolTurn([
         ToolCall(
           id: 'c1',
@@ -103,20 +108,16 @@ void main() {
           arguments: const {'command': 'cat c.log'},
         ),
       ]),
-      // 2-5. The compaction pipeline's filler requests: the mid-run
-      //    relief summarizer, pass-1 memory extraction, the post-run
-      //    compaction summarizer, pass-2 memory extraction (gh-1636
-      //    note: the old fixture scripted only ONE filler + the answer,
-      //    so the answer turn was consumed as the post-run SUMMARY and
-      //    leaked into the assertions through the report's summary
-      //    fence — the fence print masked a continuation that never ran.
-      //    With the one-line default report the mask is gone, and the
-      //    fillers make every consumer's request explicit).
+      // 2-4. The settle funnel's compaction pipeline filler requests
+      //    (the quality tier at the turn boundary): the classic passes'
+      //    summarizers plus the gh-1636 memory-extraction pass over the
+      //    seeded 620-record session. The mid-turn relief consumes NONE
+      //    of them — it is deterministic and never calls the summarizer
+      //    (gh-209).
       textTurn('S'),
       textTurn('S'),
       textTurn('S'),
-      textTurn('S'),
-      // 6. The continuation turn's final answer — only reachable when
+      // 5. The continuation turn's final answer — only reachable when
       //    the notice builds without crashing.
       textTurn('continued after compaction'),
     ]);
@@ -131,6 +132,15 @@ void main() {
         providerKind: 'openai-completions',
         skillsAccess: SkillsAccess.granted,
         compactionEngine: CompactionEngine.classic,
+        // Tiny keep region: the newest ~8.2k-token result must stay
+        // OUTSIDE the relief's valve budget so the deterministic relief
+        // declines (see the fixture comment above) and the settle
+        // funnel's classic pass can fold the results.
+        compactionSettings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 100,
+        ),
       ),
       io: io,
       streamFunction: fake.call,
@@ -139,7 +149,7 @@ void main() {
 
     io.sendLine('go');
     await waitForIt(
-      () => fake.calls >= 4 && !cli.isBusy,
+      () => fake.calls >= 5 && !cli.isBusy,
       reason:
           'auto-continuation after guard + compaction on the '
           'windowed resume',
