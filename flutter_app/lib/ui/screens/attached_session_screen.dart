@@ -95,7 +95,11 @@ class _AttachedSessionScreenState extends State<AttachedSessionScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 14, color: colors.teal),
+                    FaIcon(
+                      FaSemanticIcon.checkCircle,
+                      size: 14,
+                      color: colors.teal,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
