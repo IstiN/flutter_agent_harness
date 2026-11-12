@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T13:59:30.096Z",
+  "ticketKey": "gh-2098",
+  "headSha": "29d575296c6514cf59b7f0a6cd6ac360e9e698b4",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:00e4afde8dc4c13f",
+      "size": 81803
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:e2a8c204386afe24",
+      "size": 93547
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:d6c8dd43d887f3f1",
+      "size": 1188
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:65ee08ed2cc84c33",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:3f5c314b31b8ec09",
+      "size": 4494
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a3dbe8d136d5dd8a",
+      "size": 3116
+    },
+    "request.md": {
+      "hash": "fnv1a64:b6f47d9e4dedc8de",
+      "size": 4548
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:7bf5cf10c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:a2bf071f29fe121d",
+      "size": 4651
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b6f47d9e4dedc8de",
+      "size": 4548
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:2e239788",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: junk numerics crash the bench sim with a stack trace instead of the usage line**\n\nThe `--window`/`--scale` loop uses bare `int.parse` / `double.parse`:\n\n```dart\nwindows.add(int.parse(args[i + 1]));\nscale = double.parse(args[i + 1]);\n```\n\n`dart bench/compaction_trigger_sim.dart session.jsonl --window abc` dies with an uncaught `FormatException` instead of the usage message the tool prints for every other input mistake (missing file, empty curve). A trailing `--window` with no value is also silently skipped (`i < args.length - 1`). Dev-only standalone tool, nothing product-side — a `tryParse` + usage/exit-2 like the file-arg guard above would make it consistent."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:0565bebe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Reply — NIT: junk numerics crash the bench sim with a stack trace instead of the usage line\n\n**Thread**: `bench/compaction_trigger_sim.dart:39` — 🪶 NIT\n**Fixed in**: `16f4addc22` (guard) + `29d575296c` (extra rejection case) on `ai/gh-2098`\n\nAgreed and fixed — the sim now answers every bad numeric flag exactly like the\nfile-arg guard above: usage line on stderr + exit 2, no stack trace, no partial\ncurve output.\n\n**What changed** (`bench/compaction_trigger_sim.dart`):\n\n- The `--window`/`--scale` loop uses `int.tryParse` / `double.tryParse` instead\n  of bare `parse`; a `null` parse exits 2 with `invalid --window value: \"…\"`.\n- A trailing flag with no value is no longer silently skipped — the loop bound\n  moved from `i < args.length - 1` to `i < args.length`, and a missing value\n  exits 2 with `missing value for --window/--scale`.\n- The usage line is shared via a `_badArg([String? problem])` helper (the\n  file-arg guard rides it too), so every input mistake prints the same message.\n\n**Test-first** (`test/compaction/compaction_trigger_sim_test.dart`, new): runs\nthe real script over a recorded-session fixture and pins all rejection paths —\njunk `--window abc`, junk `--scale junk`, trailing `--window`/`--scale` with no\nvalue, `--window 12.5` (valid double, invalid integer tokens), junk after a\nvalid window (no partial stdout) — plus the happy path (exit 0, fire points\nreported). Before the fix the first four failed exactly as the NIT describes\n(exit 255 + `FormatException` stack trace / exit 0 silent skip); after, all six\npass."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:51f80409",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: gh-2098 delivers exactly the ticket contract: `compaction.triggerRatio` / `reserveTokens` / `keepRecentTokens` parse strictly, merge per-key (project > user), ride the shared host wiring so every window-derived consumer moves together (both trigger channels, structured gate, ctx meter, spill budget, task children), and absent keys are instance-identical to the gh-1742 curves (golden tests pin `same(instance)`). The stale `compactionSettings` doc comment is fixed; the default-decision benchmark note lives in `docs/compaction.md`; the Flutter-app non-coverage is explicitly documented. The full verification set passes locally (333 tests green: tuning + host wiring + bench-compaction + cli config + config service + subagent registry).\n\n**Key Issues** (all non-blocking):\n- 💡 `tuning.dart:57` — a typo'd key (`trigerRatio:`) silently keeps the legacy curve; unknown keys in `compaction:` are never rejected.\n- 🪶 `bench/compaction_trigger_sim.dart:39` — junk `--window`/`--scale` values crash instead of printing usage.\n\n**Digest** (ranked, no threads):\n- `docs/compaction.md:66` — \"the whole `compaction:` section has been strict since issue #148\" overstates #148 (it covered the `engine` value; unknown keys were never rejected) — same subject as the 💡 thread.\n- `docs/compaction.md:73` — \"a ratio below ~0.5\" clamps: ratio **exactly** 0.5 also clamps (the guard is `>=`); suggest \"at or below ~0.5\".\n- `test/compaction/host_wiring_test.dart` — ~10 pre-existing call sites reformatted (formatter churn, diff noise, zero risk).\n\n**Next Steps**:\n1. Optional polish: reject unknown keys in the `compaction:` section (one shared validator covers boot + `fa config set`).\n2. Optional: `tryParse` the bench sim's numeric args.\n3. Mergeable as-is — no blocking or important findings; suggestion/nit items do not gate per policy."
+    }
+  ]
+}
