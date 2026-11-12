@@ -2058,7 +2058,18 @@ workspace.
   installers.
 - App builds (`build-mobile.yml`, `build-macos.yml`, manual dispatch):
   Android AAB + iOS IPA on `[self-hosted, macOS, ARM64]`, macOS DMG/ZIP
-  signed + notarized, TestFlight via `flutter_app/fastlane`. Optional
+  signed + notarized, TestFlight via `flutter_app/fastlane`. build-macos.yml
+  also packages a NON-sandboxed Fa.app DMG/ZIP per arch
+  (`fa-macos-nosandbox-<arch>-<version>.dmg`, #2132): hardened-runtime-only
+  entitlements pinned in `flutter_app/macos/Runner/ReleaseNoSandbox.entitlements`
+  (+ Debug twin, exactly {cs.allow-jit, network.client, network.server} —
+  test-pinned) and wired as the `ReleaseNoSandbox` Xcode configuration;
+  `build_macos_nosandbox.sh` prunes before its re-sign (sealed tree) and
+  asserts the signed entitlement set; the DMG is notarized + stapled by the
+  same signed-path-gated step shape as the sandboxed DMG and rides the
+  release attach path with the other DMGs (excluded from the auto-update
+  stable names — the sandboxed build stays the default update feed).
+  Optional
   secrets: `APP_STORE_CONNECT_KEY_ID/_ISSUER_ID/_KEY_CONTENT`,
   `MACOS_INSTALLER_P12_BASE64/_PASSWORD/MACOS_INSTALLER_CERT_ID`,
   `GOOGLE_SERVICE_INFO_PLIST_BASE64`. Both workflows hard-gate the binary
