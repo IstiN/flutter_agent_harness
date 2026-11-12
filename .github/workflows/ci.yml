@@ -3202,7 +3202,30 @@ jobs:
           # build dies with "FlutterPlugin.h has been modified since the
           # module file was built". Wipe the Runner scheme's DerivedData
           # before building (cheap: the pod/Xcode caches live elsewhere).
-          rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*
+          # gh-2134: the old wipe was a HOME-global glob
+          # (`rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*`) — and
+          # the fa-m5 pool is ONE box (one $HOME) hosting MULTIPLE
+          # concurrent runner processes (fa-m5-1/2/3). Run 43203130726
+          # (v1.0.712) died exactly that way: the sibling run 43202707134's
+          # wipe on fa-m5-2 (10:55:32) deleted THIS leg's live DerivedData
+          # on fa-m5-1 mid-xcodebuild → "accessing build database … disk
+          # I/O error" + vanished Runner-OutputFileMap.json. The DerivedData
+          # dir hash is keyed to the checkout path, so each runner process
+          # owns a private dir — scope the wipe by the owner recorded in
+          # each Runner-*/info.plist WorkspacePath: only the dir whose
+          # WorkspacePath equals THIS checkout's workspace is removed (a
+          # concurrent leg's dir can never match; a dir with no readable
+          # info.plist may be a live early build and is left alone). Pinned
+          # by test/ci_build_ios_derivedata_wipe_guard_test.dart.
+          ws_path="$(pwd)/ios/Runner.xcworkspace"
+          shopt -s nullglob
+          for dd in ~/Library/Developer/Xcode/DerivedData/Runner-*/; do
+            ws=$(/usr/libexec/PlistBuddy -c 'Print :WorkspacePath' "$dd/info.plist" 2>/dev/null || true)
+            if [ "$ws" = "$ws_path" ]; then
+              rm -rf "$dd"
+            fi
+          done
+          shopt -u nullglob
           if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
             if grep -qE 'Building native assets failed|build_hooks failed|Hash of downloaded file|build\.dart returned with exit code' /tmp/build-ios.log; then
               if grep -q 'Hash of downloaded file' /tmp/build-ios.log; then
