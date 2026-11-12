@@ -302,15 +302,8 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                     child: openId == null
                         ? (allNetworks.isEmpty
                               ? _NetworksEmptyState(
+                                  manager: manager,
                                   onManage: widget.onManageNetworks,
-                                  onSignIn: manager != null && !manager.hasJwt
-                                      ? () => unawaited(
-                                          showSignInDialog(
-                                            context,
-                                            manager: manager,
-                                          ),
-                                        )
-                                      : null,
                                 )
                               : networks.isEmpty
                               ? sessionSearchEmptyState(
@@ -364,18 +357,23 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
 /// the join/manage surface). Mirrors the management sidebar's empty
 /// state ([joinFirstNetwork]/[emptyStateSignIn] keys).
 class _NetworksEmptyState extends StatelessWidget {
-  const _NetworksEmptyState({required this.onManage, required this.onSignIn});
+  const _NetworksEmptyState({required this.onManage, required this.manager});
 
   /// Opens the network management dialog (join lives there).
   final VoidCallback onManage;
 
-  /// Opens the sign-in dialog; null when already signed in (the button
-  /// hides — an empty list signed in means join, not re-auth).
-  final VoidCallback? onSignIn;
+  /// The session manager (nullable when the shell has no network
+  /// wiring): decides the sign-in affordance — hidden while wired-null
+  /// (nothing to sign into) or already signed in.
+  final NetworkSessionManager? manager;
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final manager = this.manager;
+    final onSignIn = manager != null && !manager.hasJwt
+        ? () => unawaited(showSignInDialog(context, manager: manager))
+        : null;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
