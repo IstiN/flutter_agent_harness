@@ -762,7 +762,7 @@ final class WebGitCommands {
 
     try {
       if (create) {
-        return _checkoutCreateBranch(repo, target, positional);
+        return await _checkoutCreateBranch(repo, target, positional);
       }
       return await _checkoutExisting(repo, target);
     } catch (e) {

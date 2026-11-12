@@ -518,7 +518,7 @@ void main() {
       // must fall UNDER this guard, not walk past a hard-coded lane map
       // (gh-1826 review hardening).
       const exactPatch = r'^\d+\.\d+\.\d+$';
-      const pinnedVersion = '3.47.7';
+      const pinnedVersion = '3.50.0';
       const knownLanes = {
         '.github/workflows/build-mobile.yml': 'build-ios',
         '.github/workflows/build-macos.yml': 'build-macos',

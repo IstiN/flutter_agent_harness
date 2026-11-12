@@ -1058,7 +1058,11 @@ void main() {
       final proc = await Process.run(
         'dart',
         ['${scratch.path}/freeze_main.dart'],
-        environment: {'TZ': 'Europe/Berlin', ...Platform.environment},
+        // Berlin must WIN: spreading the ambient environment OVER the
+        // override let an invoking shell's TZ=UTC silently unfreeze the
+        // zone (the subprocess inherited UTC and rendered UTC-anchored
+        // wall times).
+        environment: {...Platform.environment, 'TZ': 'Europe/Berlin'},
       );
       expect(proc.exitCode, 0, reason: '${proc.stdout}\n${proc.stderr}');
       final out = proc.stdout.toString();

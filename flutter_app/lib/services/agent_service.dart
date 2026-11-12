@@ -701,8 +701,6 @@ class AgentService extends ChangeNotifier
       );
     }
 
-    _childSessionFactory = childSessionFactory;
-    // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
     // The yaml sections the app honors (issue #1078): the CLI's own
     // parsers; warnings surface once here, boot never blocks (E2/AC7).
@@ -834,7 +832,6 @@ class AgentService extends ChangeNotifier
     // handles + callbacks.
     _subagentManager = wired.subagentManager!;
     _taskConfig = wired.taskConfig;
-    _shellJobs = wired.shellJobs;
     // The app agent's opt-in hub membership (issue #402 AC3): the
     // controller owns the settings store and swaps the hub-primary
     // composite over the builder's file fabric when enabled.
@@ -1130,17 +1127,9 @@ class AgentService extends ChangeNotifier
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
-  /// The session's background shell jobs (bash background / steer-yield);
-  /// null before the agent is built.
-  ShellJobRegistry? _shellJobs;
-
   /// Model-roles resolver over the [TaskModelsStore] (`smol` + `subagent`
   /// overrides), lazily reflecting settings edits (Phase 3d).
   ModelRolesResolver? _taskRolesResolver;
-
-  /// The completion-time child-session factory wired into the task tool
-  /// (real JSONL sessions for `/agents open <id>` and the Agents panel).
-  late Future<Session> Function(String, String) _childSessionFactory;
 
   /// Memory controller (Phase 1): durable cross-session memory.
   MemoryController? _memoryController;

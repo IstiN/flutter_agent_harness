@@ -102,6 +102,7 @@ class TrajectoryScreen extends StatefulWidget {
     this.loaded = true,
     this.scope,
     this.onRecordActivate,
+    this.clearsTopChrome = true,
   });
 
   /// The screen-level controller holding the snapshot and interaction state.
@@ -118,6 +119,12 @@ class TrajectoryScreen extends StatefulWidget {
 
   /// Jump-in-chat for a ledger record (issue #135 AC6); null hides it.
   final ValueChanged<TrajectoryRecord>? onRecordActivate;
+
+  /// macOS traffic-light clearance for the standalone pushed route. An
+  /// embedded pane that already sits below a host header (the narrow chat
+  /// swap) passes false — the host header cleared the traffic lights, and
+  /// a second 28pt here would open a dead band under it.
+  final bool clearsTopChrome;
 
   @override
   State<TrajectoryScreen> createState() => _TrajectoryScreenState();
@@ -170,7 +177,11 @@ class _TrajectoryScreenState extends State<TrajectoryScreen> {
       body: SafeArea(
         child: Padding(
           // macOS only: traffic lights float over the header otherwise.
-          padding: EdgeInsets.only(top: _isMacOSDesktop ? 28.0 : 0),
+          // [clearsTopChrome] is false when the host header above this pane
+          // (the narrow chat swap) already cleared them.
+          padding: EdgeInsets.only(
+            top: _isMacOSDesktop && widget.clearsTopChrome ? 28.0 : 0,
+          ),
           child: CallbackShortcuts(
             bindings: {
               LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
@@ -660,7 +661,14 @@ class _ChatListPanelState extends State<ChatListPanel> {
       key: const ValueKey('chatListScroll'),
       padding: EdgeInsets.only(
         top: topPadding + 2,
-        bottom: widget.compact ? 76 : 10,
+        // Compact (phone): the floating dock scrolls OVER this list via the
+        // shell scaffold's extendBody — the inflated ambient padding.bottom
+        // covers exactly the dock's occupied height, so reserving it keeps
+        // the last rows reachable above the pill. The legacy 76 stays for
+        // hosts whose MediaQuery was not inflated (desktop keeps 10).
+        bottom: widget.compact
+            ? math.max<double>(76, MessengerFloatingDockInsets.bottomOf(context))
+            : 10,
       ),
       itemCount: visibleEntries.length,
       findChildIndexCallback: (key) =>

@@ -75,7 +75,7 @@ void main() {
       final border = decoration.border! as OutlineInputBorder;
       expect(border.borderSide, BorderSide.none);
       expect(
-        (border.borderRadius as BorderRadius).topLeft.x,
+        border.borderRadius.topLeft.x,
         greaterThanOrEqualTo(20),
       );
     });

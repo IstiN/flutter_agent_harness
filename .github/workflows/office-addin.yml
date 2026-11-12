@@ -51,7 +51,7 @@ jobs:
         with:
           # gh-2120: PINNED — must stay step-identical with the ci.yml
           # office-addin-suite copy (test/ci_1659_office_addin_matrix_test.dart).
-          flutter-version: '3.47.7'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
 

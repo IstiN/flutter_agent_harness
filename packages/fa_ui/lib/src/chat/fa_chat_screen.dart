@@ -1575,7 +1575,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   ) {
     final tokens = FaDesignTokens.of(context);
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    final transcript = _buildTranscript(context);
+    final transcript = _wrapTranscriptKeyboardDismiss(context, _buildTranscript(context));
     final topOverlay = <Widget>[
       ?_buildErrorBanner(context, strings),
       ?widget.noticeBanner,
@@ -1835,6 +1835,29 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// around the chat list (follow classifier, reveal gate, wheel gate).
   Widget _buildTranscript(BuildContext context) =>
       _buildScrollLayer(_buildChatList(context));
+
+  /// Tap-to-dismiss for the on-screen keyboard (the iOS messenger
+  /// contract): any pointer-down on the message area drops the composer's
+  /// focus so the keyboard hides, exactly like the native chat apps.
+  ///
+  /// Gated on a VISIBLE keyboard: desktop pointer sessions never report
+  /// view insets, so the gate is a no-op there and desktop focus behavior
+  /// (clicking the transcript keeps the composer focused) is unchanged.
+  /// A raw [Listener] — not a tap recognizer — keeps the gesture arena
+  /// untouched: scrolling, long-press selection and message interactions
+  /// all behave exactly as before while still dismissing the keyboard.
+  Widget _wrapTranscriptKeyboardDismiss(BuildContext context, Widget child) {
+    // Resolved at build time so the state depends on the ambient view
+    // insets: the gate flips exactly when the keyboard appears/hides.
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    return Listener(
+      onPointerDown: (event) {
+        if (!keyboardVisible) return;
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: child,
+    );
+  }
 
   /// The three notification layers around the [Chat]:
   /// - layout-time extent changes never move the scroll position, so the
@@ -2321,17 +2344,30 @@ class _FaChatScreenState extends State<FaChatScreen>
             padding: EdgeInsets.only(
               top: widget.showAppBar ? _glassHeaderExtent : 0,
             ),
-            child: TrajectoryScreen(
-              controller: _trajectory,
-              loaded: _trajectoryLoaded,
-              scope: TrajectoryProjectionScope(
-                above: widget.service.historyAboveCount,
-                below: widget.service.historyBelowCount,
-                total: widget.service.historyTotalCount,
+            // The measured glass header extent INCLUDES the SafeArea the
+            // floating header consumed. TrajectoryScreen's own Scaffold
+            // SafeArea must not apply that top inset a second time — on a
+            // phone that painted the status bar twice and opened a giant
+            // gap between the chat chrome and the trajectory page. The
+            // embedded pane also skips the macOS traffic-light clearance:
+            // it starts below the chat header, which already cleared the
+            // traffic lights. The pushed standalone route keeps both.
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: true,
+              child: TrajectoryScreen(
+                controller: _trajectory,
+                loaded: _trajectoryLoaded,
+                clearsTopChrome: false,
+                scope: TrajectoryProjectionScope(
+                  above: widget.service.historyAboveCount,
+                  below: widget.service.historyBelowCount,
+                  total: widget.service.historyTotalCount,
+                ),
+                onRecordActivate: (record) =>
+                    widget.service.jumpToMessage(record.recordId),
+                onClose: () => setState(() => _showTrajectory = false),
               ),
-              onRecordActivate: (record) =>
-                  widget.service.jumpToMessage(record.recordId),
-              onClose: () => setState(() => _showTrajectory = false),
             ),
           ),
         ],

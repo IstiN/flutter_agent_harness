@@ -5,7 +5,6 @@
 import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/services/agent_service.dart';
@@ -86,7 +85,6 @@ class _DownloadedModelsQuickStartState
       widget.webLlmEngine ?? createWebLlmService();
   late final TransformersJsEngineApi _transformersJs =
       widget.transformersJsEngine ?? createTransformersJsService();
-  late final bool _isWeb = widget.isWeb ?? kIsWeb;
 
   /// Rows from the last scan; `null` while the scan runs (section hidden).
   List<_QuickStartEntry>? _entries;

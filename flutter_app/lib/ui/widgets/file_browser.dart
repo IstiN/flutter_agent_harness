@@ -359,14 +359,17 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   /// Path of the current directory in the env namespace. Relative to the
-  /// env's working directory EXCEPT at a mounted root: there the browser's
-  /// root IS the mount segment ([projectMountSegment]) — a bare '.' would
-  /// resolve against the delegate's own cwd (the app container), listing
-  /// the container instead of the mounted project folder ('Could not list
-  /// folder' on the sandboxed desktop when the container has no such
-  /// path).
+  /// env's working directory EXCEPT at a LIVE mounted root: there the
+  /// browser's root IS the mount segment ([projectMountSegment]) — a bare
+  /// '.' would resolve against the delegate's own cwd (the app container),
+  /// listing the container instead of the mounted project folder ('Could
+  /// not list folder' on the sandboxed desktop when the container has no
+  /// such path). Mount machinery without a live mount keeps the env cwd:
+  /// an unmounted host has no '/project' to open, and asking for the
+  /// segment anyway reported 'Could not open folder' in place of the
+  /// personal (container/sandbox) root listing.
   String get _envPath => _segments.isEmpty
-      ? (_mountEnv != null ? projectMountSegment : '.')
+      ? (_mountEnv?.mountedRoot != null ? projectMountSegment : '.')
       : _segments.join('/');
 
   String _childPath(String name) =>

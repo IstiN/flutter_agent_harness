@@ -71,6 +71,52 @@ typedef FaHeaderActionBandBuilder =
       ValueChanged<String> onOverflowSelected,
     );
 
+/// The narrow shell's canonical floating header bar geometry — the ONE
+/// bar height every mobile header strip shares, so the chats, Apps,
+/// trajectory, and opened-app chrome read as a single system on a phone.
+///
+/// The chat floating glass header is the reference implementation: 6pt
+/// vertical air, then a 91pt content column (11pt identity air, the 36pt
+/// leading circle, a 4pt gap, the 40pt title pill) whose action band
+/// (top 9, height 40) shares the circle's centerline. Every other narrow
+/// header bar sizes itself from these constants instead of private
+/// literals, and the goldens assert the four strips stay equal
+/// (`narrow_ios_header_heights_golden_test.dart`).
+abstract final class FaFloatingHeaderBar {
+  /// Horizontal air around the bar's content column.
+  static const double padHorizontal = 8;
+
+  /// Vertical air above and below the content column (the chat header's
+  /// `EdgeInsets.fromLTRB(8, 6, 8, 6)`).
+  static const double padVertical = 6;
+
+  /// Air between the content column's top edge and the leading circle.
+  static const double iconTop = 11;
+
+  /// The leading circle's edge (chat avatar, Apps icon, back buttons).
+  static const double actionDimension = 36;
+
+  /// Gap between the leading circle and the title pill.
+  static const double iconTitleGap = 4;
+
+  /// The centered title pill's height (the chat/app bar's control band
+  /// height too: actions ride `top 9 + 40`).
+  static const double pillHeight = 40;
+
+  /// The action band's top inset inside the content column; its 40pt band
+  /// shares the leading circle's centerline (11 + 36/2 == 9 + 40/2).
+  static const double actionBandTop = 9;
+
+  /// The content column's height: 11 + 36 + 4 + 40.
+  static const double contentHeight =
+      iconTop + actionDimension + iconTitleGap + pillHeight;
+
+  /// The full bar strip extent below the safe area: 6 + 91 + 6. On an
+  /// iPhone (status bar 59) the chat header's measured
+  /// `_glassHeaderExtent` is `59 + barExtent` = 162.
+  static const double barExtent = padVertical + contentHeight + padVertical;
+}
+
 /// The ONE circular chrome for icon actions (the painter behind
 /// [FaIconActionButton], the styleguide's canonical circular icon
 /// control). Token-driven surface fill + hairline ring — the same style
