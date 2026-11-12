@@ -43,12 +43,19 @@ typedef _ManagerRig = ({
 Future<_ManagerRig> _manager({
   bool withLiveSession = true,
   bool withSecondNetwork = true,
+  bool emptyWallet = false,
 }) async {
   final wallet = await KeyWallet.load(MemoryWalletBackend());
   await wallet.createIfMissing(displayName: 'Me');
-  await wallet.addNetwork(networkId: 'net1', name: 'fa-team', password: 'pw-1');
-  if (withSecondNetwork) {
-    await wallet.addNetwork(networkId: 'net2', name: 'quiet-net');
+  if (!emptyWallet) {
+    await wallet.addNetwork(
+      networkId: 'net1',
+      name: 'fa-team',
+      password: 'pw-1',
+    );
+    if (withSecondNetwork) {
+      await wallet.addNetwork(networkId: 'net2', name: 'quiet-net');
+    }
   }
   final manager = NetworkSessionManager(
     baseUrl: testBase,
@@ -423,6 +430,18 @@ void main() {
     expect(find.byKey(const ValueKey('networksList')), findsNothing);
     expect(find.byKey(const ValueKey('networkRow-net1')), findsNothing);
     expect(find.text('No networks yet'), findsOneWidget);
+
+    // A signed-out visitor gets the entry points (gh-2131): the join
+    // affordance and the sign-in button — not a dead-end title.
+    final empty = await _manager(
+      withLiveSession: false,
+      withSecondNetwork: false,
+      emptyWallet: true,
+    );
+    await pumpPanel(tester, manager: empty.manager);
+    expect(find.text('No networks yet'), findsOneWidget);
+    expect(find.byKey(const ValueKey('joinFirstNetwork')), findsOneWidget);
+    expect(find.byKey(const ValueKey('emptyStateSignIn')), findsOneWidget);
 
     final rig = await _manager(
       withLiveSession: false,

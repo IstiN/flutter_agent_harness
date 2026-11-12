@@ -188,6 +188,7 @@ final class NetworkEntry {
     this.memberClass = 'member',
     this.displayName = '',
     this.password,
+    this.synced = false,
   });
 
   /// The network's display name.
@@ -207,6 +208,23 @@ final class NetworkEntry {
   /// device's only secret store, so this lives here and nowhere else.
   final String? password;
 
+  /// Whether the membership came from the signed-in account's server
+  /// list ([KeyWallet.syncAccountNetworks]) rather than a local join:
+  /// signing out removes account-synced memberships (gh-2131), never
+  /// local joins — which carry the re-join credential in [password].
+  final bool synced;
+
+  /// A copy of this entry with [synced] set — the merge/rekey helpers
+  /// rebuild entries field-wise.
+  NetworkEntry withSynced(bool synced) => NetworkEntry(
+    name: name,
+    joinedAt: joinedAt,
+    memberClass: memberClass,
+    displayName: displayName,
+    password: password,
+    synced: synced,
+  );
+
   /// Tolerant parse; returns `null` when the entry is malformed.
   static NetworkEntry? tryFromJson(Object? json) {
     if (json is! Map) return null;
@@ -222,6 +240,7 @@ final class NetworkEntry {
           ? json['displayName']! as String
           : '',
       password: json['password'] is String ? json['password']! as String : null,
+      synced: json['synced'] is bool ? json['synced']! as bool : false,
     );
   }
 
@@ -232,6 +251,7 @@ final class NetworkEntry {
     'memberClass': memberClass,
     'displayName': displayName,
     if (password != null) 'password': password,
+    if (synced) 'synced': true,
   };
 }
 
@@ -531,6 +551,7 @@ final class KeyWallet {
           joinedAt: DateTime.now().toUtc().toIso8601String(),
           memberClass: network.memberClass.name,
           displayName: _identity?.displayName ?? '',
+          synced: true,
         );
         changed = true;
       } else if (existing.name != network.name ||
@@ -541,6 +562,10 @@ final class KeyWallet {
           memberClass: network.memberClass.name,
           displayName: existing.displayName,
           password: existing.password,
+          // A local join the account also lists stays LOCAL (it carries
+          // the re-join credential); only a passwordless row is
+          // account-owned, and the sync now pins that on the flag.
+          synced: existing.password == null ? true : existing.synced,
         );
         changed = true;
       }
@@ -574,6 +599,7 @@ final class KeyWallet {
             memberClass: target.memberClass,
             displayName: target.displayName,
             password: target.password ?? legacy.password,
+            synced: target.synced || legacy.synced,
           );
     final prefix = '$from/';
     final legacyChannelEntries = {
@@ -605,9 +631,26 @@ final class KeyWallet {
   }
 
   /// Drops the stored ai-native account (sign-out) and persists.
+  ///
+  /// The account-synced memberships go with it (gh-2131: after sign-out
+  /// the networks list kept showing the signed-in account's networks).
+  /// "Account-synced" is the persisted [NetworkEntry.synced] flag —
+  /// pinned by [KeyWallet.syncAccountNetworks] on insert/update — not a
+  /// password-shape convention: a membership row the account sync never
+  /// touched (a legacy passwordless local entry) survives sign-out.
+  /// Local joins (and their channel keys, the re-join credentials)
+  /// always survive.
   Future<void> clearAccount() async {
     if (_account == null) return;
     _account = null;
+    final synced = _networks.entries
+        .where((e) => e.value.synced)
+        .map((e) => e.key)
+        .toList();
+    for (final id in synced) {
+      _networks.remove(id);
+      _channels.removeWhere((key, _) => key.startsWith('$id/'));
+    }
     await _persist();
   }
 
