@@ -2,31 +2,11 @@
   "pr-1974": [
     {
       "leg": "review",
-      "at": "2026-10-29T19:18:06Z",
-      "prompt": 109543,
-      "completion": 29023,
-      "total": 138566,
-      "cacheRead": 3871296,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-29T23:02:09Z",
       "prompt": 129766,
       "completion": 14565,
       "total": 144331,
       "cacheRead": 2357952,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-1975": [
-    {
-      "leg": "review",
-      "at": "2026-10-29T19:24:09Z",
-      "prompt": 114095,
-      "completion": 26750,
-      "total": 140845,
-      "cacheRead": 3540288,
       "model": "glm-5.3-flash"
     }
   ],
@@ -2941,6 +2921,17 @@
       "completion": 22078,
       "total": 99748,
       "cacheRead": 1100736,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2139": [
+    {
+      "leg": "review",
+      "at": "2026-11-12T19:49:11Z",
+      "prompt": 135529,
+      "completion": 36692,
+      "total": 172221,
+      "cacheRead": 8061632,
       "model": "glm-5.3-flash"
     }
   ]
