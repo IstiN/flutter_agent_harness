@@ -180,7 +180,7 @@ Future<ProcessResult> runWipeSimulation(Directory tmp, {String? logicalPwd}) {
     environment: {
       'HOME': home.path,
       'PATH': '/usr/bin:/bin',
-      if (logicalPwd != null) 'PWD': logicalPwd,
+      'PWD': ?logicalPwd,
     },
   );
 }
@@ -437,61 +437,63 @@ void main() {
       );
     });
 
-    test('AC8: a WorkspacePath spelling divergence (symlinked runner-path '
-        'component) still wipes the owned dir — run 43204833 regression',
-        () async {
-      final tmp = await Directory.systemTemp.createTemp('fa-wipe-sim');
-      addTearDown(() => tmp.deleteSync(recursive: true));
-      final dd = Directory(
-        '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
-      )..createSync(recursive: true);
-      // The REAL workspace lives under real-ws; the runner process
-      // reaches it through the ws symlink (a symlinked runner-path
-      // component). Xcode records the RESOLVED path in WorkspacePath
-      // while the step's `$(pwd)` walks the symlink (logical spelling) —
-      // run 43204833: this exact divergence silently kept THIS
-      // checkout's dir Runner-bdeltr… (still carrying the earlier
-      // sibling deletion's corrupted build.db) and the xcodebuild died
-      // on it 13 min later with the same disk-I/O signature.
-      final realWs = '${tmp.path}/real-ws/flutter_app/ios/Runner.xcworkspace';
-      Directory(realWs).createSync(recursive: true);
-      Link('${tmp.path}/ws').createSync('${tmp.path}/real-ws');
-      fixtureCandidate(dd, 'Runner-owned', realWs);
-      // A concurrent leg's dir must keep its protection under the same
-      // normalization: its workspace exists, so it is kept — visibly.
-      final siblingWs =
-          '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace';
-      Directory(siblingWs).createSync(recursive: true);
-      fixtureCandidate(dd, 'Runner-live-sibling', siblingWs);
+    test(
+      'AC8: a WorkspacePath spelling divergence (symlinked runner-path '
+      'component) still wipes the owned dir — run 43204833 regression',
+      () async {
+        final tmp = await Directory.systemTemp.createTemp('fa-wipe-sim');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final dd = Directory(
+          '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
+        )..createSync(recursive: true);
+        // The REAL workspace lives under real-ws; the runner process
+        // reaches it through the ws symlink (a symlinked runner-path
+        // component). Xcode records the RESOLVED path in WorkspacePath
+        // while the step's `$(pwd)` walks the symlink (logical spelling) —
+        // run 43204833: this exact divergence silently kept THIS
+        // checkout's dir Runner-bdeltr… (still carrying the earlier
+        // sibling deletion's corrupted build.db) and the xcodebuild died
+        // on it 13 min later with the same disk-I/O signature.
+        final realWs = '${tmp.path}/real-ws/flutter_app/ios/Runner.xcworkspace';
+        Directory(realWs).createSync(recursive: true);
+        Link('${tmp.path}/ws').createSync('${tmp.path}/real-ws');
+        fixtureCandidate(dd, 'Runner-owned', realWs);
+        // A concurrent leg's dir must keep its protection under the same
+        // normalization: its workspace exists, so it is kept — visibly.
+        final siblingWs =
+            '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace';
+        Directory(siblingWs).createSync(recursive: true);
+        fixtureCandidate(dd, 'Runner-live-sibling', siblingWs);
 
-      final result = await runWipeSimulation(
-        tmp,
-        logicalPwd: '${tmp.path}/ws/flutter_app',
-      );
-      expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
-      expect(
-        result.stdout,
-        contains('gh-2134: wiping DerivedData owned by this workspace'),
-        reason:
-            'the resolved-vs-logical spelling divergence must never '
-            'silently skip THIS checkout\'s dir',
-      );
-      expect(
-        Directory('${dd.path}/Runner-owned').existsSync(),
-        isFalse,
-        reason: 'the owned dir must be wiped under both spellings',
-      );
-      expect(
-        Directory('${dd.path}/Runner-live-sibling').existsSync(),
-        isTrue,
-        reason: 'a concurrent leg\'s dir must still survive',
-      );
-      expect(
-        result.stdout,
-        contains('gh-2134: keeping DerivedData dir (WorkspacePath mismatch)'),
-        reason: 'the kept sibling dir must be visible in the log',
-      );
-    });
+        final result = await runWipeSimulation(
+          tmp,
+          logicalPwd: '${tmp.path}/ws/flutter_app',
+        );
+        expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+        expect(
+          result.stdout,
+          contains('gh-2134: wiping DerivedData owned by this workspace'),
+          reason:
+              'the resolved-vs-logical spelling divergence must never '
+              'silently skip THIS checkout\'s dir',
+        );
+        expect(
+          Directory('${dd.path}/Runner-owned').existsSync(),
+          isFalse,
+          reason: 'the owned dir must be wiped under both spellings',
+        );
+        expect(
+          Directory('${dd.path}/Runner-live-sibling').existsSync(),
+          isTrue,
+          reason: 'a concurrent leg\'s dir must still survive',
+        );
+        expect(
+          result.stdout,
+          contains('gh-2134: keeping DerivedData dir (WorkspacePath mismatch)'),
+          reason: 'the kept sibling dir must be visible in the log',
+        );
+      },
+    );
 
     test(
       'AC7b: a pass with no candidate logs the distinct no-match line',
