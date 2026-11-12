@@ -3202,7 +3202,85 @@ jobs:
           # build dies with "FlutterPlugin.h has been modified since the
           # module file was built". Wipe the Runner scheme's DerivedData
           # before building (cheap: the pod/Xcode caches live elsewhere).
-          rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*
+          # gh-2134: the old wipe was a HOME-global glob
+          # (`rm -rf ~/Library/Developer/Xcode/DerivedData/Runner-*`) — and
+          # the fa-m5 pool is ONE box (one $HOME) hosting MULTIPLE
+          # concurrent runner processes (fa-m5-1/2/3). Run 43203130726
+          # (v1.0.712) died exactly that way: the sibling run 43202707134's
+          # wipe on fa-m5-2 (10:55:32) deleted THIS leg's live DerivedData
+          # on fa-m5-1 mid-xcodebuild → "accessing build database … disk
+          # I/O error" + vanished Runner-OutputFileMap.json. The DerivedData
+          # dir hash is keyed to the checkout path, so each runner process
+          # owns a private dir — scope the wipe by the owner recorded in
+          # each Runner-*/info.plist WorkspacePath: only the dir whose
+          # WorkspacePath resolves to THIS checkout's workspace is removed
+          # (both spellings are compared — raw and symlink-resolved — so a
+          # concurrent leg's dir can never match; a dir with no readable
+          # info.plist may be a live early build and is left alone; the
+          # PlistBuddy error text that lands on STDOUT is filtered from
+          # $ws before any branch sees it). Dirs whose recorded
+          # WorkspacePath no longer exists on disk (dead checkout:
+          # re-registered runner, renumbered _work, deleted branch) are
+          # swept as orphans — race-free, a live leg's checkout always
+          # exists. Every removal, every kept dir, and a no-candidate pass
+          # log a `gh-2134:` line — a silent no-op must be diagnosable
+          # from CI logs (run 43204833 kept its own dir on a
+          # resolved-vs-logical divergence with zero signal). Pinned by
+          # test/ci_build_ios_derivedata_wipe_guard_test.dart.
+          ws_path="$(pwd -P)/ios/Runner.xcworkspace"
+          shopt -s nullglob
+          matched=
+          for dd in ~/Library/Developer/Xcode/DerivedData/Runner-*/; do
+            ws=$(/usr/libexec/PlistBuddy -c 'Print :WorkspacePath' "$dd/info.plist" 2>/dev/null || true)
+            # PlistBuddy prints its error text on STDOUT (the 2>/dev/null
+            # above cannot suppress it): "File Doesn't Exist, Will
+            # Create: …" for a missing plist, "Print: Entry,
+            # :WorkspacePath, Does Not Exist" for a keyless one. Run
+            # 43204833 captured that text into $ws and the orphan sweep
+            # below then removed two plist-less (maybe-live early-build)
+            # dirs. Keep only absolute-path values.
+            case "$ws" in
+              /*) ;;
+              *) ws= ;;
+            esac
+            # gh-2136 rework (run 43204833): the recorded WorkspacePath
+            # can spell the SAME directory differently than this step's
+            # `pwd` — a symlinked runner-path component makes Xcode
+            # record the resolved path while `$(pwd)` reports the logical
+            # one. That run's own dir Runner-bdeltrtwvfjmnocetzuxfpyqvkmk
+            # (still carrying the earlier incident's corrupted build.db)
+            # was seen but silently kept on exactly this divergence, and
+            # the xcodebuild died on it 13 min later with the same
+            # disk-I/O signature. Normalize both spellings before
+            # comparing (`cd + pwd -P` resolves the recorded value).
+            ws_res="$(cd "$ws" 2>/dev/null && pwd -P || true)"
+            if [ "$ws" = "$ws_path" ] || [ "$ws_res" = "$ws_path" ]; then
+              echo "gh-2134: wiping DerivedData owned by this workspace: $dd"
+              rm -rf "$dd"
+              matched=1
+            elif [ -n "$ws" ] && [ ! -e "$ws" ]; then
+              # gh-2136 review: orphan GC — the recorded owner checkout is
+              # gone (re-registered runner, renumbered _work dir, deleted
+              # branch checkout). Race-free by construction: a live leg's
+              # checkout always exists, so a concurrent build's dir can
+              # never satisfy this; a dir with no readable info.plist
+              # (empty ws after the absolute-path filter above — a
+              # maybe-live early build) is still left alone.
+              echo "gh-2134: removing orphaned DerivedData (owner checkout gone): $dd -> $ws"
+              rm -rf "$dd"
+              matched=1
+            elif [ -n "$ws" ]; then
+              # gh-2136 rework: a seen-but-kept dir must be VISIBLE —
+              # run 43204833's only divergence signal was the ABSENT wipe
+              # line. One line per kept dir makes a future spelling
+              # divergence diagnosable in a single log read.
+              echo "gh-2134: keeping DerivedData dir (WorkspacePath mismatch): $dd -> $ws"
+            fi
+          done
+          shopt -u nullglob
+          if [ -z "${matched:-}" ]; then
+            echo "gh-2134: no DerivedData dir matched (fresh box, or nothing stale/orphaned)"
+          fi
           if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
             if grep -qE 'Building native assets failed|build_hooks failed|Hash of downloaded file|build\.dart returned with exit code' /tmp/build-ios.log; then
               if grep -q 'Hash of downloaded file' /tmp/build-ios.log; then
