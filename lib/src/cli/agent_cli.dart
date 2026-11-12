@@ -2123,7 +2123,12 @@ class AgentCli {
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
     await _cubeBootRestore();
-    await _claimSessionLease();
+    if (!await _claimSessionLease()) {
+      throw StateError(
+        'session lease refused — the lease store cannot prove the session '
+        'is free; refusing to drive',
+      );
+    }
     // Restart honesty (issue #450): jobs in the manifest were left
     // running by the previous run — count them, then take the file over.
     await _waiting.captureLostJobs();
@@ -2136,7 +2141,12 @@ class AgentCli {
     _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
-    await _claimSessionLease();
+    if (!await _claimSessionLease()) {
+      throw StateError(
+        'session lease refused — the lease store cannot prove the session '
+        'is free; refusing to drive',
+      );
+    }
     // gh-1241: NO segment marker here — an idle owner boot must add zero
     // session bytes (issue #428 invariant); the marker lands lazily at the
     // first drive ([_runPrompt]) instead.
@@ -2359,10 +2369,24 @@ class AgentCli {
     // wake loops reopen interactively instead of fighting the owner.
     // Restart honesty (issue #450): detached jobs from the previous run.
     await _waiting.captureLostJobs();
-    final leaseBlocked = await _claimSessionLeaseHeadless();
-    if (leaseBlocked != null) {
-      io.writeln(viewerBannerText(leaseBlocked, stale: false));
-      return 3;
+    final claim = await _claimSessionLeaseHeadless();
+    switch (claim) {
+      case HeadlessLeaseClaimAcquired():
+        break;
+      case HeadlessLeaseClaimBlocked(:final lease):
+        io.writeln(viewerBannerText(lease, stale: false));
+        return 3;
+      case HeadlessLeaseClaimRefused(:final reason):
+        // #2138: the store cannot prove the session free on an
+        // enforceable backend — refuse loudly INSIDE the guarded boot
+        // (exit 4, never the crash handler, never an unleased drive).
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'refusing to drive (exit 4)',
+          ),
+        );
+        return 4;
     }
     // gh-1241: the owner opens a usage segment (viewer never appends).
     await _markUsageSegmentStart();

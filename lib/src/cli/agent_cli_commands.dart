@@ -548,6 +548,7 @@ extension SlashCommandDispatch on AgentCli {
         // The image-drop latch is run-lifetime state (issue #1889 R4): a
         // brand-new session re-latches from its first request.
         imageDropUx.reset();
+        final previousSession = _session;
         _session = await _createSession();
         _notifyPluginSessionReady();
         // /reset is an in-process switch to a brand-new session — herdr
@@ -555,9 +556,9 @@ extension SlashCommandDispatch on AgentCli {
         // carries the stale pre-reset id (#1483 review).
         _herdrSessionSwitched();
         _syncMailboxPrefix();
-        // Re-claim ownership for the new session (#428).
-        await _releaseSessionLease();
-        await _claimSessionLease();
+        // Re-claim ownership for the new session (#428); a refused claim
+        // (#2138) restores the previous session — no unleased drive.
+        await _reclaimAfterSwitch(previousSession);
         await _printViewerBannerIfAny();
         _persistedCount = 0;
         io.writeln('new session started');

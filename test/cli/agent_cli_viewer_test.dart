@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -270,6 +271,97 @@ void main() {
     expect((await env.readTextFile(meta.path)).valueOrNull, bytesBefore);
     expect((await store.inspect(meta.path)).state, LeaseState.live);
   });
+
+  test('#2138: a refused /reset claim restores the previous session — '
+      'no unleased drive follows the error panel', () async {
+    // Rename #0 = the boot claim on 'first' (publishes), rename #1 =
+    // the /reset claim on the fresh session (REFUSED), rename #2 = the
+    // restore re-claim on 'first' (publishes).
+    final meta = await namedSession('first');
+    final gate = _RenameGateEnv(env, failFrom: 1, failTo: 1);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'first',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    await waitForIt(() => out().isNotEmpty, reason: 'boot (claim settled)');
+
+    io.sendLine('/reset');
+    await waitForIt(
+      () => out().contains('cannot prove this session is free'),
+      reason: 'the loud refusal',
+    );
+    await waitForIt(
+      () => out().contains('staying on the previous session'),
+      reason: 'the restore — the CLI never sits on the unclaimed session',
+    );
+
+    io.sendLine('/exit');
+    await run;
+    // The restored session was the DRIVEN one: its lease was held on
+    // exit (graceful release) and the refused session never published a
+    // sidecar.
+    expect(
+      (await store.inspect(meta.path)).state,
+      LeaseState.free,
+      reason: 'exit released the RESTORED session, not a stray',
+    );
+    final sidecars = (await env.listDir(
+      '/sessions',
+    )).valueOrNull!.where((f) => f.path.endsWith('.owner.json'));
+    expect(sidecars, isEmpty, reason: 'the refused session stays unleased');
+  });
+
+  test(
+    '#2138: a headless run over an unprovable session refuses loudly '
+    'with exit 4 — never the crash handler, never an unleased drive',
+    () async {
+      final meta = await namedSession('unprovable');
+      final bytesBefore = (await env.readTextFile(meta.path)).valueOrNull;
+      final gate = _RenameGateEnv(env, failFrom: 0, failTo: 1 << 30);
+      final gatedStore = FileSessionLeaseStore(env: gate);
+      final fake = FakeStreamFunction([textTurn('never')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          sessionName: 'unprovable',
+          leaseStore: gatedStore,
+          processId: 4242,
+          presenceStore: presence,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      // The refusal MUST come back as a dedicated exit code — a throw here
+      // would escape runHeadless into the crash handler (review I-2).
+      final exit = await cli.runHeadless('do the thing');
+      expect(exit, 4);
+      expect(
+        out().contains('cannot prove this session is free'),
+        isTrue,
+        reason: 'the loud refusal names the reason',
+      );
+      expect(fake.calls, 0, reason: 'no second writer ever runs');
+      expect((await env.readTextFile(meta.path)).valueOrNull, bytesBefore);
+    },
+  );
 
   test('AC2: viewer composer lands in the LIVE owner transcript with '
       'attribution (two real CLIs, one writer)', () async {
@@ -549,3 +641,105 @@ void main() {
 /// 14:32 local wall-clock: the banner's "since HH:MM" round-trips
 /// through toLocal, so this pins the exact banner text in any TZ.
 final DateTime _fixedWhen = DateTime(2026, 9, 15, 14, 32);
+
+/// An env whose `.owner.json` renames fail for a chosen call window
+/// (0-based, counting only sidecar publishes): the #2138 refused-claim
+/// rig. Boot/switch renames on other paths (waiting manifest, usage
+/// ledger) pass through untouched, so the window pins exactly which
+/// lease claim refuses.
+final class _RenameGateEnv implements ExecutionEnv, RenamableFileSystem {
+  _RenameGateEnv(
+    this._delegate, {
+    required this.failFrom,
+    required this.failTo,
+  });
+
+  final MemoryExecutionEnv _delegate;
+
+  /// The 0-based window of `.owner.json` rename calls that fail.
+  final int failFrom;
+  final int failTo;
+  int _ownerRenames = 0;
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    if (to.endsWith('.owner.json')) {
+      final index = _ownerRenames++;
+      if (index >= failFrom && index <= failTo) {
+        return Err(
+          FileError(FileErrorCode.unknown, 'injected owner rename failure'),
+        );
+      }
+    }
+    return _delegate.renamePath(from, to);
+  }
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
+}

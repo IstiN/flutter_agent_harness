@@ -1952,18 +1952,21 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       title: widget.sessionNamesStore?.titleFor(metadata.id) ?? metadata.id,
       transport: transport,
     );
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => AttachedSessionScreen(
-          controller: controller,
-          ownerLease: error.lease,
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => AttachedSessionScreen(
+            controller: controller,
+            ownerLease: error.lease,
+          ),
         ),
-      ),
-    );
-    controller.dispose();
-    // The transcript watcher stops with the view — no poller tails a
-    // session nobody is watching.
-    await transport.dispose();
+      );
+    } finally {
+      // Success AND failure: a throw out of push must not leak the
+      // transcript poller or the controller's subscription.
+      controller.dispose();
+      await transport.dispose();
+    }
   }
 
   void _showLeaseRefused(SessionMetadata metadata, LeaseRefusedException e) {

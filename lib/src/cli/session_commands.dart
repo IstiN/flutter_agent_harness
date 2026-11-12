@@ -80,6 +80,7 @@ extension on AgentCli {
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
+    final previousSession = _session;
     _session = await _createSession(name: trimmed);
     _notifyPluginSessionReady();
     _syncMailboxPrefix();
@@ -87,9 +88,9 @@ extension on AgentCli {
     // the new session, never a release.
     _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
-    // live lease → viewer (no takeover ever).
-    await _releaseSessionLease();
-    await _claimSessionLease();
+    // live lease → viewer (no takeover ever); refused (#2138) → restore
+    // the previous session, never an unleased drive.
+    await _reclaimAfterSwitch(previousSession);
     await _printViewerBannerIfAny();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
@@ -154,6 +155,7 @@ extension on AgentCli {
     // still in place, and re-scanning skills plus re-reading the project
     // tree for the SAME project re-pays the boot for nothing.
     if (cwdChanged) await _loadAgentContext();
+    final previousSession = _session;
     _session = await _loadSession(metadata);
     _notifyPluginSessionReady();
     _syncMailboxPrefix();
@@ -161,9 +163,9 @@ extension on AgentCli {
     // the new session, never a release.
     _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
-    // live lease → viewer (no takeover ever).
-    await _releaseSessionLease();
-    await _claimSessionLease();
+    // live lease → viewer (no takeover ever); refused (#2138) → restore
+    // the previous session, never an unleased drive.
+    await _reclaimAfterSwitch(previousSession);
     await _printViewerBannerIfAny();
     // gh-1241: NO eager marker — a switch that never drives must leave the
     // resumed chain byte-untouched; the segment opens lazily at the first
@@ -312,6 +314,7 @@ extension on AgentCli {
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
+    final previousSession = _session;
     _session = await _createSession(name: trimmed);
     _notifyPluginSessionReady();
     _syncMailboxPrefix();
@@ -319,9 +322,9 @@ extension on AgentCli {
     // the new session, never a release.
     _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
-    // live lease → viewer (no takeover ever).
-    await _releaseSessionLease();
-    await _claimSessionLease();
+    // live lease → viewer (no takeover ever); refused (#2138) → restore
+    // the previous session, never an unleased drive.
+    await _reclaimAfterSwitch(previousSession);
     await _printViewerBannerIfAny();
     // gh-1241: NO eager marker — the fresh session's segment opens lazily
     // at its first drive ([_runPrompt]), keeping an idle boot byte-silent.

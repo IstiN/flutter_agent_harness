@@ -38,9 +38,11 @@ block a release again.
   backend (atomic rename available) a lease publish failure or a
   persistently failing ownership verify now REFUSES the drive-open
   (`LeaseRefused` → the app throws `LeaseRefusedException` and the wide
-  shell refuses loudly; the CLI prints a loud refusal and aborts —
-  headless exits 1) instead of silently driving unleased; the verify
-  re-read retries a bounded 3× so a transient hiccup still acquires. The
+  shell refuses loudly; the CLI prints a loud refusal — boot aborts, an
+  in-process switch restores the previous session, headless/serve exit
+  4/blocked-serve — instead of silently driving unleased); the verify
+  re-read re-runs up to 3× with no backoff — fail-closed is the
+  guarantee, not fast recovery. The
   only remaining fail-open is a backend with no atomic rename (E5, web),
   and a store-less manager (now impossible on desktop: every app
   bootstrap wires `defaultLeaseStore`) proceeds with a loud warning.
