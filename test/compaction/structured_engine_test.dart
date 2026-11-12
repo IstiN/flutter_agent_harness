@@ -366,8 +366,16 @@ void main() {
           systemPrompt: state.systemPrompt,
           tools: state.tools,
         );
-        expect(stale, lessThan(600), reason: 'fixture: stale basis under trigger');
-        expect(fresh, greaterThan(6000), reason: 'fixture: session over trigger');
+        expect(
+          stale,
+          lessThan(600),
+          reason: 'fixture: stale basis under trigger',
+        );
+        expect(
+          fresh,
+          greaterThan(6000),
+          reason: 'fixture: session over trigger',
+        );
 
         final passes = <StructuredCompactionPass>[];
         final compactor = StructuredCompactor(
@@ -441,8 +449,11 @@ void main() {
           systemPrompt: state.systemPrompt,
           tools: state.tools,
         );
-        expect(fresh2, greaterThan(6000),
-            reason: 'fixture: writer B pushed the session back over the trigger');
+        expect(
+          fresh2,
+          greaterThan(6000),
+          reason: 'fixture: writer B pushed the session back over the trigger',
+        );
 
         // RUN 2 over the SAME state object (writer A never saw B's
         // records).
