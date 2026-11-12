@@ -500,7 +500,7 @@ void structuredCheckpointTests() {
         settings: _structuredSettings,
         // An empty hide list ends the hide loop without failure — the run
         // proceeds to the checkpoint pass while still over the trigger.
-        judge: (ledger) async => '[]',
+        judge: (ledger, [token]) async => '[]',
         summarize: (request) async {
           promptsSeen.add(request.prompt);
           // The summarizer copies the pin verbatim (obedient case).

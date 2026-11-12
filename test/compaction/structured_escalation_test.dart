@@ -255,7 +255,7 @@ void main() {
         state: state,
         window: 400000,
         settings: _incidentSettings,
-        judge: (_) async {
+        judge: (_, [token]) async {
           judgeCalls++;
           return null; // the incident's dead judge
         },
@@ -314,7 +314,7 @@ void main() {
         state: state,
         window: 400000,
         settings: _incidentSettings,
-        judge: (_) async {
+        judge: (_, [token]) async {
           judgeCalls++;
           return null;
         },
@@ -351,7 +351,7 @@ void main() {
         state: state,
         window: 400000,
         settings: _incidentSettings,
-        judge: (_) async {
+        judge: (_, [token]) async {
           judgeCalls++;
           return null;
         },
@@ -394,7 +394,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -467,7 +467,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => '[]',
+        judge: (_, [token]) async => '[]',
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -498,7 +498,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -537,7 +537,7 @@ void main() {
           reserveTokens: 200,
           keepRecentTokens: 400,
         ),
-        judge: (_) async => '[]',
+        judge: (_, [token]) async => '[]',
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -565,7 +565,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) {
           hooks.summarizeCalls++;
           return Future.value(SummarizationResult.success('CKPT'));
@@ -605,7 +605,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) => Future.value(SummarizationResult.success('')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -644,7 +644,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) async => throw StateError('smol endpoint down'),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -708,7 +708,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
@@ -752,7 +752,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async =>
+        judge: (_, [token]) async =>
             '["${RecordSeqIndex(entries).seqOf(entries.whereType<MessageRecord>().elementAt(1).id)}"]',
         summarize: (_) {
           summarizeCalls++;
@@ -808,7 +808,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (request) async {
           // The user aborts mid-deepening; the adapter lands aborted.
           cancelSource.cancel('user abort');
@@ -849,7 +849,7 @@ void main() {
           state: state,
           window: 800,
           settings: _boundarySettings,
-          judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+          judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
           summarize: (_) {
             summarizeCalls++;
             return Future.value(SummarizationResult.success('CKPT'));
@@ -879,7 +879,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) async => throw TimeoutException(
           'checkpoint summarizer deadline',
           const Duration(seconds: 1),
@@ -919,7 +919,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (request) {
           summarizerCalls++;
           return Future.value(SummarizationResult.success('CKPT chunk'));
@@ -971,7 +971,7 @@ void main() {
         state: state,
         window: 400000,
         settings: _incidentSettings,
-        judge: (_) async => null,
+        judge: (_, [token]) async => null,
         summarize: (_) =>
             Future.value(SummarizationResult.success('ESCALATED')),
         checkpointPrompt: 'P',
@@ -1051,7 +1051,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) {
           summarizeCalls++;
           return Future.value(SummarizationResult.success('SWALLOWED'));
@@ -1121,7 +1121,7 @@ void main() {
         state: state,
         window: 800,
         settings: _boundarySettings,
-        judge: (_) async => judgeAnswerFor(entries, hiddenIds),
+        judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
         checkpointPrompt: 'P',
         hooks: hooks,
