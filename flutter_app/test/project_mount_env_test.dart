@@ -135,6 +135,48 @@ void main() {
     expect(secretsEnv.sessionCwd, '/host/repo');
     expect(mountEnv.sessionCwd, '/host/repo');
   });
+
+  test('resolveProjectMountEnv sees through a cwd override (gh-2131: a '
+      'session created pre-mount kept the mount invisible)', () async {
+    final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+    final mountEnv = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+    final stack = CwdOverrideEnv(
+      SecretsExecutionEnv(
+        SessionVarsExecutionEnv(mountEnv, () => const {}),
+        const {},
+      ),
+    )..cwd = '/app-sandbox/chats/abc';
+    final inner = SecretsExecutionEnv(stack, const {});
+
+    expect(resolveProjectMountEnv(stack), same(mountEnv));
+    expect(resolveProjectMountEnv(inner), same(mountEnv));
+    expect(projectMountBackendAvailable(stack), isTrue);
+
+    // The override folder still scopes the session: sessionCwd reports
+    // the override cwd, never the mounted host path.
+    expect(stack.sessionCwd, '/app-sandbox/chats/abc');
+  });
+
+  test('envCwdResolvesToMountSegment follows the stack shape', () async {
+    final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+    final mounted = ProjectMountEnv(base)..mountedRoot = '/host/repo';
+    final unmounted = ProjectMountEnv(base);
+
+    // Mount-rooted stack: cwd-relative paths resolve through /project.
+    expect(envCwdResolvesToMountSegment(mounted), isTrue);
+    expect(
+      envCwdResolvesToMountSegment(SecretsExecutionEnv(mounted, const {})),
+      isTrue,
+    );
+
+    // No live mount: no mount namespace.
+    expect(envCwdResolvesToMountSegment(unmounted), isFalse);
+    expect(envCwdResolvesToMountSegment(base), isFalse);
+
+    // A cwd override owns the cwd even with a mount below it.
+    final overridden = CwdOverrideEnv(mounted)..cwd = '/app-sandbox/chats/x';
+    expect(envCwdResolvesToMountSegment(overridden), isFalse);
+  });
 }
 
 final class RecordingShell implements Shell, BackgroundShell {

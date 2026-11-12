@@ -605,9 +605,26 @@ final class KeyWallet {
   }
 
   /// Drops the stored ai-native account (sign-out) and persists.
+  ///
+  /// The account-synced memberships go with it (gh-2131: after sign-out
+  /// the networks list kept showing the signed-in account's networks).
+  /// Synced rows are exactly the passwordless ones — [syncAccountNetworks]
+  /// inserts without a password (the server list never returns one) and
+  /// preserves any stored password — whereas a join-sheet/guest join
+  /// always records the typed password. Guest memberships (and channel
+  /// keys) therefore survive the sign-out; their channel keys ride along
+  /// for safety even though the sync never creates any.
   Future<void> clearAccount() async {
     if (_account == null) return;
     _account = null;
+    final synced = _networks.entries
+        .where((e) => e.value.password == null)
+        .map((e) => e.key)
+        .toList();
+    for (final id in synced) {
+      _networks.remove(id);
+      _channels.removeWhere((key, _) => key.startsWith('$id/'));
+    }
     await _persist();
   }
 

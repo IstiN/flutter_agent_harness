@@ -394,6 +394,42 @@ void main() {
       expect(reloaded.account, isNull);
     });
 
+    test(
+      'clearAccount removes account-synced memberships, keeps guest '
+      'joins (gh-2131: signed-out list showed the account networks)',
+      () async {
+        final backend = MemoryWalletBackend();
+        final wallet = await KeyWallet.load(backend);
+        await wallet.createIfMissing(displayName: 'Me');
+        // A guest join (join-sheet credential) and a synced membership.
+        await wallet.addNetwork(
+          networkId: 'guest-net',
+          name: 'Guest Net',
+          password: 'guest-pw',
+        );
+        await wallet.syncAccountNetworks([
+          AccountNetworkInfo(
+            id: 'synced-net',
+            name: 'Synced Net',
+            isPublic: false,
+            memberClass: MemberClass.member,
+          ),
+        ]);
+        await wallet.saveAccount(account());
+
+        await wallet.clearAccount();
+
+        expect(wallet.account, isNull);
+        expect(wallet.networks.containsKey('synced-net'), isFalse);
+        final guest = wallet.networks['guest-net'];
+        expect(guest, isNotNull);
+        expect(guest!.password, 'guest-pw');
+        final reloaded = await KeyWallet.load(backend);
+        expect(reloaded.networks.containsKey('synced-net'), isFalse);
+        expect(reloaded.networks['guest-net']!.password, 'guest-pw');
+      },
+    );
+
     test('withTokens swaps the token fields only', () {
       final updated = account().withTokens(
         TokenBundle(

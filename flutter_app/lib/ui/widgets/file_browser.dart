@@ -368,12 +368,33 @@ class _FileBrowserState extends State<FileBrowser> {
   /// an unmounted host has no '/project' to open, and asking for the
   /// segment anyway reported 'Could not open folder' in place of the
   /// personal (container/sandbox) root listing.
-  String get _envPath => _segments.isEmpty
-      ? (_mountEnv?.mountedRoot != null ? projectMountSegment : '.')
-      : _segments.join('/');
+  ///
+  /// The segment prefix covers SUBDIRECTORY navigation and file opens
+  /// too (gh-2131): segments are relative to [ExecutionEnv.cwd], which
+  /// at a live mount is '/project' — forwarding them bare made the
+  /// delegate resolve every entered folder and every opened file
+  /// against the container cwd ("Could not open folder" /
+  /// "Could not load file · No such file or directory"). A cwd override
+  /// (a per-chat sandbox folder session with a mount below) keeps plain
+  /// cwd-relative paths — its cwd is the override folder, not the mount.
+  bool get _navigatesMountNamespace =>
+      _mountEnv?.mountedRoot != null &&
+      envCwdResolvesToMountSegment(widget.env);
 
-  String _childPath(String name) =>
-      _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+  String get _envPath {
+    if (_segments.isEmpty) {
+      return _navigatesMountNamespace ? projectMountSegment : '.';
+    }
+    final joined = _segments.join('/');
+    return _navigatesMountNamespace ? '$projectMountSegment/$joined' : joined;
+  }
+
+  String _childPath(String name) {
+    if (_segments.isEmpty) {
+      return _navigatesMountNamespace ? '$projectMountSegment/$name' : name;
+    }
+    return '${_segments.join('/')}/$name';
+  }
 
   List<String> _segmentsOf(String path) => [
     for (final segment in path.split('/'))

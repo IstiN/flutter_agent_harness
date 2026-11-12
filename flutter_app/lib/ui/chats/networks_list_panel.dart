@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async' show unawaited;
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/key_wallet.dart' show NetworkEntry;
 import 'package:fa/network/models.dart' show Channel;
@@ -12,6 +14,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
 import 'package:fa/ui/chats/messenger_list_row_style.dart';
+import 'package:fa/ui/network/sign_in_dialog.dart' show showSignInDialog;
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
@@ -298,14 +301,16 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
                     key: ValueKey('networksContent-${openId ?? 'list'}'),
                     child: openId == null
                         ? (allNetworks.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    context.l10n.networkEmptyTitle,
-                                    style: TextStyle(
-                                      color: FahColors.of(context).dim,
-                                      fontSize: 13,
-                                    ),
-                                  ),
+                              ? _NetworksEmptyState(
+                                  onManage: widget.onManageNetworks,
+                                  onSignIn: manager != null && !manager.hasJwt
+                                      ? () => unawaited(
+                                          showSignInDialog(
+                                            context,
+                                            manager: manager,
+                                          ),
+                                        )
+                                      : null,
                                 )
                               : networks.isEmpty
                               ? sessionSearchEmptyState(
@@ -349,6 +354,56 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
           ),
         );
       },
+    );
+  }
+}
+
+/// The wallet has no memberships: the empty state with the affordances
+/// that get the user INTO networks (gh-2131 — the bare title was a dead
+/// end; a signed-out visitor needs the sign-in entry, a signed-in one
+/// the join/manage surface). Mirrors the management sidebar's empty
+/// state ([joinFirstNetwork]/[emptyStateSignIn] keys).
+class _NetworksEmptyState extends StatelessWidget {
+  const _NetworksEmptyState({required this.onManage, required this.onSignIn});
+
+  /// Opens the network management dialog (join lives there).
+  final VoidCallback onManage;
+
+  /// Opens the sign-in dialog; null when already signed in (the button
+  /// hides — an empty list signed in means join, not re-auth).
+  final VoidCallback? onSignIn;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.l10n.networkEmptyTitle,
+              style: TextStyle(color: colors.dim, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const ValueKey('joinFirstNetwork'),
+              onPressed: onManage,
+              icon: const Icon(Icons.add, size: 18),
+              label: Text(context.l10n.networkJoinFirst),
+            ),
+            if (onSignIn != null) ...[
+              const SizedBox(height: 4),
+              TextButton(
+                key: const ValueKey('emptyStateSignIn'),
+                onPressed: onSignIn,
+                child: Text(context.l10n.networkSignInTitle),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

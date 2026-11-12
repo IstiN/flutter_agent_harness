@@ -443,6 +443,70 @@ void main() {
       },
     );
 
+    testWidgets('opening a file at the mounted root reads through the mount '
+        'namespace (gh-2131 regression: Could not load file · No such file '
+        'or directory on every open)', (tester) async {
+      // The mounted root lists fine (the owner saw files and folders)
+      // but the preview read the file name RELATIVE to the container
+      // cwd: '<container>/opened.txt' — never a real path.
+      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+      await base.writeFile('/Users/x/support/opened.txt', 'mounted body line');
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            initialPath: visibleFolderRoot(env, '/Users/x/support'),
+            sessionFolder: '/Users/x/support',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('opened.txt'), findsOneWidget);
+
+      await tester.tap(find.text('opened.txt'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not load file'),
+        findsNothing,
+        reason: 'the preview must read /project/opened.txt',
+      );
+      expect(find.text('mounted body line'), findsOneWidget);
+    });
+
+    testWidgets('entering a folder of the mounted listing navigates the mount '
+        'namespace (gh-2131 regression: Could not open folder on every '
+        'drill-down)', (tester) async {
+      final base = MemoryExecutionEnv(cwd: '/app-sandbox');
+      await base.writeFile(
+        '/Users/x/support/src/nested.txt',
+        'inside the mounted subfolder',
+      );
+      final env = ProjectMountEnv(base)..mountedRoot = '/Users/x/support';
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            initialPath: visibleFolderRoot(env, '/Users/x/support'),
+            sessionFolder: '/Users/x/support',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('src'), findsOneWidget);
+
+      await tester.tap(find.text('src'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not open folder'),
+        findsNothing,
+        reason: 'the subfolder listing must resolve via /project/src',
+      );
+      expect(find.text('nested.txt'), findsOneWidget);
+    });
+
     testWidgets('a personal session (no folder) keeps the env-root listing', (
       tester,
     ) async {
