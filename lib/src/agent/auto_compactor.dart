@@ -58,6 +58,10 @@ final class AutoCompactorPass {
     this.marginTokens,
     this.bandTokens,
     this.hideableRemaining,
+    this.judgeInputEntries,
+    this.judgeInputTokens,
+    this.judgeElapsedMs,
+    this.judgeLatched = false,
   });
 
   /// 1-based pass number.
@@ -107,6 +111,22 @@ final class AutoCompactorPass {
   /// gh-2044: remaining hideable-entry count at escalation time — a
   /// diagnostic count only. Null except on escalation passes.
   final int? hideableRemaining;
+
+  /// gh-2096 timeout diagnosis (judge-failure and probe receipts): the
+  /// judged attempt's input entry count. Null on every other pass.
+  final int? judgeInputEntries;
+
+  /// gh-2096: the judged attempt's input estimated-token size. Null on
+  /// every other pass.
+  final int? judgeInputTokens;
+
+  /// gh-2096: the wall-clock time the judged attempt consumed. Null on
+  /// every other pass.
+  final int? judgeElapsedMs;
+
+  /// gh-2096: whether this pass was decided by the cross-run judge-health
+  /// latch (a latched skip or a probe receipt).
+  final bool judgeLatched;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -1177,12 +1197,18 @@ class AutoCompactorFactory {
       // reason-type heuristic degrades to a harmless fallback for
       // callers that only pass budgetSource.
       cancelToken: runToken,
+      // gh-2096: the judge adapter receives NO baked-in run-wide token —
+      // the engine hands every judge call a PER-CALL child token (a
+      // budget timeout aborts only the in-flight call; the retry and the
+      // later LM stages keep the run-wide token live) and forwards this
+      // run's cancels into it. Wiring the run-wide token here was the
+      // incident's born-cancelled retry: the first judge timeout killed
+      // the shared token and every later call failed in ~75 ms.
       judge: streamFunctionHideJudge(
         smolStream,
         smolModel,
         system: prompts.hideJudgeSystem,
         onDelta: hooks.onDelta,
-        cancelToken: budgetSource.token,
       ),
       summarize: streamFunctionSummarizer(smolStream, smolModel),
       // Issue #729: the checkpoint payloads are bounded by the
@@ -1324,6 +1350,12 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         marginTokens: pass.marginTokens,
         bandTokens: pass.bandTokens,
         hideableRemaining: pass.hideableRemaining,
+        // gh-2096: the judge attempt shape and the latch flag ride to the
+        // host reporting the same way — counts and a flag, never content.
+        judgeInputEntries: pass.judgeInputEntries,
+        judgeInputTokens: pass.judgeInputTokens,
+        judgeElapsedMs: pass.judgeElapsedMs,
+        judgeLatched: pass.judgeLatched,
       ),
     );
   }
