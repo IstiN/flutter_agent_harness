@@ -1,15 +1,4 @@
 {
-  "pr-1972": [
-    {
-      "leg": "review",
-      "at": "2026-10-29T17:14:51Z",
-      "prompt": 160086,
-      "completion": 27652,
-      "total": 187738,
-      "cacheRead": 2721536,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1974": [
     {
       "leg": "review",
@@ -2921,6 +2910,17 @@
       "completion": 21996,
       "total": 127937,
       "cacheRead": 3810752,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2099": [
+    {
+      "leg": "dev",
+      "at": "2026-11-12T17:59:50Z",
+      "prompt": 998076,
+      "completion": 209687,
+      "total": 1207763,
+      "cacheRead": 60572672,
       "model": "glm-5.3-flash"
     }
   ]
