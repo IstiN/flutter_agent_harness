@@ -26,21 +26,43 @@ import 'dart:io';
 const _policies = ['legacy(0.9375)', '0.80', '0.75'];
 const _ratios = {'legacy(0.9375)': 15 / 16, '0.80': 0.80, '0.75': 0.75};
 
+Never _badArg([String? problem]) {
+  if (problem != null) stderr.writeln(problem);
+  stderr.writeln(
+    'usage: dart bench/compaction_trigger_sim.dart <session.jsonl> '
+    '[--window N]... [--scale X]',
+  );
+  exit(2);
+}
+
 void main(List<String> args) {
-  if (args.isEmpty || !File(args.first).existsSync()) {
-    stderr.writeln(
-      'usage: dart bench/compaction_trigger_sim.dart <session.jsonl> '
-      '[--window N]... [--scale X]',
-    );
-    exit(2);
-  }
+  if (args.isEmpty || !File(args.first).existsSync()) _badArg();
   final windows = <int>[];
   var scale = 1.0;
-  for (var i = 1; i < args.length - 1; i++) {
+  // gh-2098 review NIT: every bad flag — junk numerics included — gets
+  // the usage line + exit 2, like the file guard above. The old bare
+  // `int.parse`/`double.parse` crashed with an uncaught FormatException,
+  // and the `i < args.length - 1` bound silently skipped a trailing
+  // flag that had no value.
+  for (var i = 1; i < args.length; i++) {
     if (args[i] == '--window') {
-      windows.add(int.parse(args[i + 1]));
+      if (i + 1 >= args.length) {
+        _badArg('missing value for --window');
+      }
+      final window = int.tryParse(args[++i]);
+      if (window == null) {
+        _badArg('invalid --window value: "${args[i]}"');
+      }
+      windows.add(window);
     } else if (args[i] == '--scale') {
-      scale = double.parse(args[i + 1]);
+      if (i + 1 >= args.length) {
+        _badArg('missing value for --scale');
+      }
+      final parsed = double.tryParse(args[++i]);
+      if (parsed == null) {
+        _badArg('invalid --scale value: "${args[i]}"');
+      }
+      scale = parsed;
     }
   }
   if (windows.isEmpty) windows.addAll([128000, 200000, 400000]);
