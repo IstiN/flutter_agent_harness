@@ -13,6 +13,42 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2097): auto-compact measures honestly — no more stale pre-run
+  estimates or «0 freed» basis flips. (1) `StructuredCompactor.run()`
+  re-anchors the agent state from the session projection BEFORE any
+  trigger/before/over math: the in-memory transcript can lag the session
+  file (an in-memory tail cut, a second writer appending to the same
+  session between runs), and the stale basis computed `over` ≈ 1.4k
+  where ~177k was needed — the deterministic hide under-sized every
+  pass and the run paid extra passes/minutes; one projection build
+  bounded by the ledger cache (O(changed records)) now starts every
+  run. (2) Pass reports render an upward basis jump explicitly:
+  `StructuredCompactionPass`/`AutoCompactorPass` gain `basisReadTokens`
+  (a pass appends only shrinkers, so an after-count above its
+  before-count is a second writer's records entering the projection,
+  never a regression) and `formatCompactionReport` prints
+  `basis re-read: +Nk` instead of a clamped `0 freed · 0%`; the small
+  restamp jitter (no flip metadata) keeps its `0 freed` clamp. (3) The
+  compaction hooks' diagnostic lines (`auto-compact pass/retry/done`)
+  now carry `sid=` like every other compaction lifecycle line, and the
+  diagnostic appends run through one serialized in-order chain
+  (`flushDiagnosticLog()`, awaited by the REPL teardown and the
+  headless finally) — bursts land complete instead of being dropped by
+  unawaited fire-and-forget appends racing the process exit. AC: a
+  two-writer fixture asserts correct first-pass sizing; golden tests
+  pin the basis-flip rendering; log tests pin sid presence and
+  no-dropped-lines. (4) The app's over-window relief
+  (`AgentService._relieveOverWindow`) now drains the pending persist
+  BEFORE compacting — the same ordering the run-end funnel and the CLI
+  already enforce: the structured engine's run-start re-anchor rewrites
+  the live transcript from the session projection, so a relief that
+  compacted while the crash-safe persister still had the just-sent
+  message in flight re-anchored onto a projection without it (the live
+  context silently lost the newest message and the trim valve found
+  nothing droppable — the turn died on the guard error instead of
+  being relieved). AC: a gated-persist IT-2 fixture holds the newest
+  record's append in flight across the relief and asserts the turn
+  still completes.
 - fix(gh-2096): auto-compact no longer re-pays the judge budget on every
   run when the configured smol class cannot answer within it, and a judge
   timeout no longer kills the retry. Three engine changes: (1) the

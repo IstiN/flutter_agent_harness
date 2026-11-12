@@ -62,6 +62,7 @@ final class AutoCompactorPass {
     this.judgeInputTokens,
     this.judgeElapsedMs,
     this.judgeLatched = false,
+    this.basisReadTokens,
   });
 
   /// 1-based pass number.
@@ -127,6 +128,13 @@ final class AutoCompactorPass {
   /// gh-2096: whether this pass was decided by the cross-run judge-health
   /// latch (a latched skip or a probe receipt).
   final bool judgeLatched;
+
+  /// gh-2097: the upward basis jump this pass's post-append re-read
+  /// revealed (the session projection held more than the in-memory view
+  /// did at measurement time — a second writer). The report renders it
+  /// as `basis re-read: +N` instead of a clamped `0 freed`. Null when
+  /// the re-read landed on the same basis. A count only, never content.
+  final int? basisReadTokens;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -1356,6 +1364,9 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         judgeInputTokens: pass.judgeInputTokens,
         judgeElapsedMs: pass.judgeElapsedMs,
         judgeLatched: pass.judgeLatched,
+        // gh-2097: the upward re-read basis jump rides to the host
+        // reporting — a count only, never content.
+        basisReadTokens: pass.basisReadTokens,
       ),
     );
   }
