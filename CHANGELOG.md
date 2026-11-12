@@ -13,6 +13,33 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2098): the auto-compact trigger is user-configurable —
+  `compaction.triggerRatio` / `compaction.reserveTokens` /
+  `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
+  `.fah/config.yaml` (per-key deepest scope wins) override the gh-1742
+  `forWindow` curves; absent keys stay byte-identical (golden-pinned).
+  `triggerRatio` (0 < r < 1) pins the trigger line at r × window
+  (reserve = window − floor(r·window)) so every window-derived consumer
+  moves together — both trigger channels (estimate + the gh-1742
+  observed anchor), the structured engine's gate and fragile-band
+  escalation, the ctx meter, the spill budget, and task children (the
+  CLI threads the merged section through the executor). `reserveTokens`
+  sets the headroom directly (mutually exclusive with `triggerRatio` —
+  strict named `ConfigException`s, also enforced at `fa config set` —
+  nothing persists that the next boot would reject); `keepRecentTokens`
+  overrides the post-pass kept region. Degenerate guards mirror
+  forWindow (reserve > window/2 clamps to window/4, keep > window
+  clamps to window/2) so a pass always frees tokens. A non-empty tuning
+  is a user pin: the bench env knob (`FAH_COMPACT_TRIGGER_TOKENS`)
+  never rewrites it (gh-1604's rule). Default decision documented in
+  `docs/compaction.md` with the benchmark note
+  (`bench/compaction_trigger_sim.dart`, fire points + frequency at
+  0.9375 vs 0.80 vs 0.75 on a recorded 218-request session): the legacy
+  curve stays the default (byte-identical contract + pass-frequency
+  cost), 0.80 is the informed opt-in. Stale doc comment fixed: the CLI
+  settings field described a ratio-based default
+  ("ratio 0.7, reserve 50000, keep 80000") that never shipped — the
+  field now says what it does and points at [compactionTuning].
 - fix(gh-2097): auto-compact measures honestly — no more stale pre-run
   estimates or «0 freed» basis flips. (1) `StructuredCompactor.run()`
   re-anchors the agent state from the session projection BEFORE any

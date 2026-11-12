@@ -220,6 +220,7 @@ final class _Wiring {
     ModelRolesResolver? rolesResolver,
     _ScriptedStream? scriptedStream,
     int fatChars = 2400,
+    CompactionTuning? compactionTuning,
   }) : stream = scriptedStream ?? _ScriptedStream() {
     manager = SubagentManager(
       parentSessionId: 'parent-session',
@@ -239,6 +240,7 @@ final class _Wiring {
       semaphore: Semaphore(4),
       store: AgentOutputStore(),
       subagentManager: manager,
+      compactionTuning: compactionTuning,
       contextWindowRegistry: registry,
       contextWindowCap: contextWindowCap,
       rolesResolver: rolesResolver,
@@ -380,6 +382,99 @@ void main() {
             '(${result.status}, ${messages.length} messages)',
       );
     });
+  });
+
+  group('gh-2098: compaction tuning reaches the child pass', () {
+    // The child rides the REGISTERED window (100000): the legacy curve
+    // (forWindow(100000): reserve 16384) fires at 83616; a ratio of
+    // 0.75 pins the line at 75000. The fixture sits an estimate of ~66k
+    // with an observed context of ~76k — between the two lines, so ONLY
+    // the tuned policy fires.
+    test(
+      'ratio 0.75: observed 76100 fires the pass the legacy curve ignores',
+      () async {
+        final registry = ContextWindowRegistry();
+        registry.publish(
+          model: _model,
+          window: 100000,
+          source: ContextWindowSource.endpointReport,
+        );
+        final wiring = _Wiring(
+          registry: registry,
+          compactionTuning: const CompactionTuning(triggerRatio: 0.75),
+          fatChars: 260000,
+        );
+        wiring.stream.rules.addAll({
+          'tuned-pass': () => _toolTurn('c1'),
+          'fat:': () =>
+              _toolTurn('c2', input: 100, cacheRead: 76000, totalTokens: 100),
+        });
+        final result = await wiring.executor.runSpawn(
+          item: const TaskItem(
+            name: 'tuned',
+            agent: 'worker',
+            task: 'tuned-pass',
+          ),
+          index: 0,
+          context: '',
+        );
+        expect(result.status, TaskSpawnStatus.completed);
+
+        // The estimate channel alone cannot fire: every real request
+        // estimate stays under the tuned line (75000).
+        for (final context in wiring.stream.contexts) {
+          final estimate = estimateRequestTokens(
+            context.messages,
+            systemPrompt: context.systemPrompt,
+            tools: context.tools ?? const [],
+          );
+          expect(
+            estimate,
+            lessThan(75000),
+            reason:
+                'the estimate channel must stay under the tuned '
+                'trigger for this repro (got $estimate)',
+          );
+        }
+        expect(
+          wiring.stream.compactionCalls,
+          greaterThanOrEqualTo(1),
+          reason:
+              'the tuned ratio line must fire the child pass '
+              '(observed 76100 > 0.75 × 100000)',
+        );
+      },
+    );
+
+    test(
+      'without tuning the same transcript does not compact (control)',
+      () async {
+        final registry = ContextWindowRegistry();
+        registry.publish(
+          model: _model,
+          window: 100000,
+          source: ContextWindowSource.endpointReport,
+        );
+        final wiring = _Wiring(registry: registry, fatChars: 260000);
+        wiring.stream.rules.addAll({
+          'tuned-pass': () => _toolTurn('c1'),
+          'fat:': () =>
+              _toolTurn('c2', input: 100, cacheRead: 76000, totalTokens: 100),
+        });
+        await wiring.executor.runSpawn(
+          item: const TaskItem(
+            name: 'untuned',
+            agent: 'worker',
+            task: 'tuned-pass',
+          ),
+          index: 0,
+          context: '',
+        );
+        // Estimate ~66k and observed ~76k, both under the legacy line
+        // (83616) — neither channel crosses.
+        expect(wiring.stream.compactionCalls, 0);
+      },
+    );
   });
 
   group('AC5: observed-over-headroom forces the compaction pass', () {

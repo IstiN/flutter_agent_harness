@@ -415,4 +415,77 @@ void main() {
       expect(settings.keepRecentTokens, defaults.keepRecentTokens);
     });
   });
+
+  group('compaction tuning vs bench env (gh-2098)', () {
+    AgentCli agent({
+      CompactionTuning? tuning,
+      Map<String, String> environment = const {},
+    }) => AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: '[REDACTED:Sensitive-Value]',
+        env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell()),
+        sessionRoot: '/sessions',
+        sessionName: 'bench-trigger-target',
+        providerKind: 'openai-completions',
+        skillsAccess: SkillsAccess.granted,
+        compactionTuning: tuning,
+      ),
+      io: io,
+      environment: environment,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+
+    test('the ratio moves the trigger line to r × window', () {
+      final settings = agent(
+        tuning: const CompactionTuning(triggerRatio: 0.75),
+      ).effectiveCompactionSettingsForTest;
+      expect(_window - settings.reserveTokens, 150000);
+      expect(
+        settings.keepRecentTokens,
+        CompactionSettings.forWindow(_window).keepRecentTokens,
+      );
+    });
+
+    test('a pinned tuning beats the bench env knob — the knob retunes '
+        'the DEFAULTS, it never rewrites a user-pinned section', () {
+      final settings = agent(
+        tuning: const CompactionTuning(triggerRatio: 0.75),
+        environment: const {
+          'FAH_COMPACT_TRIGGER_TOKENS': '$_benchTriggerTokens',
+        },
+      ).effectiveCompactionSettingsForTest;
+      expect(_window - settings.reserveTokens, 150000);
+    });
+
+    test('the token-budget overrides apply over the scaled curve', () {
+      final settings = agent(
+        tuning: const CompactionTuning(
+          reserveTokens: 50000,
+          keepRecentTokens: 80000,
+        ),
+      ).effectiveCompactionSettingsForTest;
+      expect(settings.reserveTokens, 50000);
+      expect(settings.keepRecentTokens, 80000);
+    });
+
+    test('an empty tuning (an engine-only section) keeps the bench knob '
+        'in charge', () {
+      final settings = agent(
+        tuning: const CompactionTuning(),
+        environment: const {
+          'FAH_COMPACT_TRIGGER_TOKENS': '$_benchTriggerTokens',
+        },
+      ).effectiveCompactionSettingsForTest;
+      expect(shouldCompact(_benchTriggerTokens + 1, _window, settings), isTrue);
+    });
+
+    test('without tuning and without the env the defaults apply '
+        '(byte-identical legacy)', () {
+      final settings = agent().effectiveCompactionSettingsForTest;
+      final defaults = CompactionSettings.forWindow(_window);
+      expect(settings.reserveTokens, defaults.reserveTokens);
+      expect(settings.keepRecentTokens, defaults.keepRecentTokens);
+    });
+  });
 }

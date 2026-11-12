@@ -122,6 +122,7 @@ import '../cancel_token.dart';
 import '../compaction/bench_trigger.dart';
 import '../compaction/compaction.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
@@ -741,6 +742,9 @@ class AgentCli {
           // (live settings override, else config, else default).
           compactionEngine:
               config.liveCompactionEngine ?? config.compactionEngine,
+          // gh-2098: children ride the same `compaction:` trigger tuning
+          // the main agent's gate applies.
+          compactionTuning: config.compactionTuning,
           // Issue #862: the `agent.misuseBreaker` switch covers children.
           misuseBreaker: config.misuseBreaker,
           // Real JSONL child sessions, created at child completion (fast
@@ -2694,18 +2698,24 @@ class AgentCli {
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
-    // An explicit `compactionSettings` config pin beats the bench env
-    // (gh-1604): `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a
-    // bench run — it must never silently rewrite a user-pinned section,
-    // including `enabled: false` (the knob cannot re-enable compaction
-    // the user switched off). Unset env = byte-identical base.
-    final override = config.compactionSettings;
-    if (override != null) return override;
+    final wiring = resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+      settingsOverride: config.compactionSettings,
+      tuning: config.compactionTuning,
+    );
+    // An explicit settings pin — or the gh-2098 `compaction:` tuning
+    // keys, a user pin too — beats the bench env (gh-1604):
+    // `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a bench run
+    // — it must never silently rewrite a user-pinned section, including
+    // `enabled: false` (the knob cannot re-enable compaction the user
+    // switched off). Unset env = byte-identical base.
+    final pinned =
+        config.compactionSettings != null ||
+        (config.compactionTuning?.isNotEmpty ?? false);
+    if (pinned) return wiring.settings;
     return resolveBenchCompactionSettings(
-      resolveCompactionHostWiring(
-        mainModel: _agent.state.model,
-        contextWindowCap: config.contextWindowCap,
-      ).settings,
+      wiring.settings,
       window: _effectiveContextWindow,
       env: environment,
     );
