@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T12:17:18.418Z",
+  "ticketKey": "pr-2136",
+  "headSha": "4e1987846fbb99d02eb7c42b3dc11beef286a508",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:756be727693be7e6",
+      "size": 11016
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:25a87b3e02f9742c",
+      "size": 7016
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:be27168b01a13d87",
+      "size": 3081
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:02b040a9d3ac5d9c",
+      "size": 2261
+    },
+    "request.md": {
+      "hash": "fnv1a64:43445b916006c52f",
+      "size": 1925
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f4994cc389fd52bc",
+      "size": 797
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b48157e8c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:8d53759e1a171a28",
+      "size": 1995
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:43445b916006c52f",
+      "size": 1925
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc62mytY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/ci.yml:3225",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the scoped wipe is silent — a future no-op would be undiagnosable**\n\nThe new wipe only removes a dir when the recorded `WorkspacePath` equals `$(pwd)/ios/Runner.xcworkspace`. That comparison is correct today (the runner's `_work/...` paths are real, non-symlinked), but it is the one failure mode neither the fix nor the guard test can see: if the two spellings of the path ever diverge (a symlinked workspace component, Xcode recording a resolved vs logical path), the wipe **silently no-ops forever** and the gh-1296 failure class (`FlutterPlugin.h has been modified since the module file was built`) returns with nothing pointing at the wipe. `AC3` in the guard test pins the code shape, but cannot detect a runtime no-op.\n\nOne echo keeps the protection observable and makes the next stale-pcm red diagnosable in a single read:\n\n```bash\nif [ \"$ws\" = \"$ws_path\" ]; then\n  echo \"gh-2134: wiping DerivedData owned by this workspace: $dd\"\n  rm -rf \"$dd\"\nfi\n```\n\nOptionally also emit one line when the loop matched nothing, so \"protection ran but found no candidate\" vs \"protection never matched\" is distinguishable in CI logs."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc62mywY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/ci.yml:3222",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: stale `Runner-*` dirs from dead checkouts are now never cleaned**\n\nThe old HOME-global glob did two things at once: (a) deleted concurrent builds' live DerivedData — the bug this PR fixes — and (b) garbage-collected stale `Runner-*` dirs whose owning checkout no longer exists. The scoped wipe keeps (a) fixed but drops (b) entirely: a dir whose recorded `WorkspacePath` points at a checkout that is gone (re-registered runner process, renumbered `_work` dir, deleted branch checkout) can now never be removed by any build on the box.\n\nOn the shared self-hosted fa-m5 Mac each `Runner-*` dir is multiple GB, so orphans accumulate toward disk exhaustion — and disk pressure produces exactly the `accessing build database ... disk I/O error` class this PR is fixing. Worth a companion sweep so the fix doesn't trade a deterministic race for a slow disk-full drift:\n\n- a scheduled (or pre-build) sweep that removes `Runner-*` dirs whose recorded `WorkspacePath` no longer exists on disk — that condition is race-free by construction (a live leg's checkout always exists);\n- or a retention policy (age-based) in the same loop.\n\nNot needed to merge this PR — the correctness of the scoped wipe stands on its own — but the accumulation has no owner otherwise."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:6ac91a65",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the scoped wipe is silent — a future no-op would be undiagnosable**\n\nThe new wipe only removes a dir when the recorded `WorkspacePath` equals `$(pwd)/ios/Runner.xcworkspace`. That comparison is correct today (the runner's `_work/...` paths are real, non-symlinked), but it is the one failure mode neither the fix nor the guard test can see: if the two spellings of the path ever diverge (a symlinked workspace component, Xcode recording a resolved vs logical path), the wipe **silently no-ops forever** and the gh-1296 failure class (`FlutterPlugin.h has been modified since the module file was built`) returns with nothing pointing at the wipe. `AC3` in the guard test pins the code shape, but cannot detect a runtime no-op.\n\nOne echo keeps the protection observable and makes the next stale-pcm red diagnosable in a single read:\n\n```bash\nif [ \"$ws\" = \"$ws_path\" ]; then\n  echo \"gh-2134: wiping DerivedData owned by this workspace: $dd\"\n  rm -rf \"$dd\"\nfi\n```\n\nOptionally also emit one line when the loop matched nothing, so \"protection ran but found no candidate\" vs \"protection never matched\" is distinguishable in CI logs."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:7a5d60fb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: stale `Runner-*` dirs from dead checkouts are now never cleaned**\n\nThe old HOME-global glob did two things at once: (a) deleted concurrent builds' live DerivedData — the bug this PR fixes — and (b) garbage-collected stale `Runner-*` dirs whose owning checkout no longer exists. The scoped wipe keeps (a) fixed but drops (b) entirely: a dir whose recorded `WorkspacePath` points at a checkout that is gone (re-registered runner process, renumbered `_work` dir, deleted branch checkout) can now never be removed by any build on the box.\n\nOn the shared self-hosted fa-m5 Mac each `Runner-*` dir is multiple GB, so orphans accumulate toward disk exhaustion — and disk pressure produces exactly the `accessing build database ... disk I/O error` class this PR is fixing. Worth a companion sweep so the fix doesn't trade a deterministic race for a slow disk-full drift:\n\n- a scheduled (or pre-build) sweep that removes `Runner-*` dirs whose recorded `WorkspacePath` no longer exists on disk — that condition is race-free by construction (a live leg's checkout always exists);\n- or a retention policy (age-based) in the same loop.\n\nNot needed to merge this PR — the correctness of the scoped wipe stands on its own — but the accumulation has no owner otherwise."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:4fc3190e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Root cause and fix for the gh-2134 build-ios red verified. The HOME-global `rm -rf .../DerivedData/Runner-*` on the shared fa-m5 box (3 concurrent runner processes, one `$HOME`) is now WorkspacePath-scoped via `info.plist` — concurrent legs can never match each other. Verified locally: guard test red on `main` / green on this PR (4/4); wipe loop simulated (matched dir removed; sibling-workspace, plist-less, empty DerivedData all survive, exit 0); `dart format`/`dart analyze` clean; run 43203130726 had exactly one red leg — Build iOS (\"Quality gate\" is the aggregate check) — so this PR covers the full failure; no other workflow carries the global wipe pattern.\n\n**Key Issues**:\n- 💡 `.github/workflows/ci.yml:3225` — the scoped wipe is silent: a future `WorkspacePath` mismatch (symlinked/logical-vs-resolved path) would disable the gh-1296 stale-pcm protection with zero signal; add a one-line echo.\n- 💡 `.github/workflows/ci.yml:322` — the scoped wipe no longer garbage-collects stale `Runner-*` dirs from dead checkouts; plan an orphan sweep before disk pressure reproduces the \"disk I/O error\" class.\n- 🪶 digest: `.github/workflows/ci.yml:3213` — wording: the DerivedData dir hash is keyed to the *workspace* path (`Runner.xcworkspace`), not the \"checkout path\".\n\n**Next Steps**:\n1. Optional polish: add the wipe log line (comment 1) — not blocking.\n2. Follow-up: orphan `Runner-*` sweep on the fa-m5 box (comment 2) — no owner today.\n3. Safe to merge; when the ref goes green, gh-2134 closes per its contract."
+    }
+  ]
+}
