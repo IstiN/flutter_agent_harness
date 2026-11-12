@@ -603,7 +603,10 @@ jobs:
         with:
           # gh-2120: PINNED Dart 3.13.5 — the 3.14.0 float regressed the size
           # manifest gate self-test (artifact budgets sized on the 3.13.5
-          # layout); bump deliberately with a budget re-baseline.          sdk: '3.13.5'
+          # gh-2120: PINNED Dart 3.13.5 — the 3.14.0 float regressed the size
+          # manifest gate self-test (artifact budgets sized on the 3.13.5
+          # layout); bump deliberately with a budget re-baseline.
+          sdk: '3.13.5'
 
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1638,7 +1641,6 @@ jobs:
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          flutter-version: '3.47.7'
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: pubcache-flutter-${{ runner.os }}-
@@ -2091,7 +2093,6 @@ jobs:
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          flutter-version: '3.47.7'
           path: ~/.pub-cache
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: pubcache-flutter-${{ runner.os }}-
