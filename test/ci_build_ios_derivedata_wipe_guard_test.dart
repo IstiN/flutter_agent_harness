@@ -45,7 +45,26 @@
 //  AC4  the leg stays routed to the shared `macos-m5` pool — the fix must
 //       never arrive packaged with a reroute off the one genuinely
 //       macOS-only gate box (same re-assert discipline as
-//       ci_cube_kernel_ceiling_guard_test.dart AC2).
+//       ci_cube_kernel_ceiling_guard_test.dart AC2),
+//  AC5  the wipe is OBSERVABLE: the matched removal logs a `gh-2134:`
+//       line and a pass with no candidate logs its own line — a silent
+//       runtime no-op (WorkspacePath spelling divergence, symlinked
+//       workspace) must be diagnosable from CI logs alone (gh-2136
+//       review thread 1; the YAML-level shape asserts cannot see a
+//       no-op, so AC7 runs the block for real),
+//  AC6  orphan `Runner-*` dirs whose recorded `WorkspacePath` no longer
+//       exists on disk are swept in the same loop (dead checkouts from
+//       re-registered runners / renumbered `_work` / deleted branches
+//       otherwise accumulate multiple GB toward disk exhaustion — the
+//       same "disk I/O error" class). Race-free by construction: a live
+//       leg's checkout always exists, and a dir with NO readable
+//       info.plist may be a live early build and stays untouched
+//       (gh-2136 review thread 2),
+//  AC7  the extracted block is EXECUTED against a fixture DerivedData
+//       tree with a PlistBuddy stub: owned dir removed + logged, live
+//       sibling and plist-less dirs survive, orphan removed + logged,
+//       exit 0 under the step's shell shape; the no-candidate pass
+//       emits the distinct no-match line.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -80,6 +99,79 @@ String buildStepRun() => buildStep()['run'].toString();
 /// Every `rm -rf` invocation line inside the step's run block.
 List<String> rmLines() =>
     buildStepRun().split('\n').where((l) => l.contains('rm -rf')).toList();
+
+/// The wipe block verbatim — from the `ws_path=` line through the closing
+/// `shopt -u nullglob` — extracted from the step's run block so AC7 can
+/// execute it against fixtures.
+String wipeBlock() {
+  final lines = buildStepRun().split('\n');
+  final start = lines.indexWhere(
+    (l) => l.trimLeft().startsWith('ws_path='),
+  );
+  final end = lines.indexWhere(
+    (l) => l.trimLeft().startsWith('shopt -u nullglob'),
+  );
+  expect(start, greaterThan(-1), reason: 'wipe block start marker missing');
+  expect(end, greaterThan(start), reason: 'wipe block end marker missing');
+  return lines.sublist(start, end + 1).join('\n');
+}
+
+/// One fixture DerivedData candidate: `dir` carries `plistContent` (the
+/// recorded WorkspacePath) in its `info.plist`, or no plist at all.
+void fixtureCandidate(Directory dd, String name, String? plistContent) {
+  final dir = Directory('${dd.path}/$name')..createSync(recursive: true);
+  if (plistContent != null) {
+    File('${dir.path}/info.plist').writeAsStringSync(plistContent);
+  }
+}
+
+/// Runs the extracted wipe block for real: `/usr/libexec/PlistBuddy` is
+/// substituted with a stub that cats the fixture plist (the sim harness
+/// substitution — the block text itself is unmodified), and `$HOME` is
+/// pointed at the fixture home so the `~/Library/...` glob lands there.
+Future<ProcessResult> runWipeSimulation(Directory tmp) {
+  final stubDir = Directory('${tmp.path}/pb-stub')..createSync(recursive: true);
+  final stub = File('${stubDir.path}/PlistBuddy');
+  stub.writeAsStringSync('#!/usr/bin/env bash\nexec cat "$3"\n');
+  stub.setSync(executable: true);
+  final block = wipeBlock().replaceAll('/usr/libexec/PlistBuddy', stub.path);
+  expect(
+    block.contains(stub.path),
+    isTrue,
+    reason: 'PlistBuddy substitution must hit the extracted block',
+  );
+  final home = Directory('${tmp.path}/home');
+  final wsRoot = Directory('${tmp.path}/ws/flutter_app');
+  return Process.run(
+    'bash',
+    ['-c', block],
+    workingDirectory: wsRoot.path,
+    environment: {'HOME': home.path, 'PATH': '/usr/bin:/bin'},
+  );
+}
+
+/// Builds the AC7 fixture tree: a fixture home with a DerivedData holding
+/// the owned dir, a LIVE sibling leg's dir, an orphan whose checkout is
+/// gone, and a plist-less dir; plus the two workspace trees (owned cwd +
+/// sibling). Returns the DerivedData root for assertions.
+Directory buildSimFixtures(Directory tmp) {
+  final dd = Directory(
+    '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
+  );
+  dd.createSync(recursive: true);
+  final ownedWs =
+      '${tmp.path}/ws/flutter_app/ios/Runner.xcworkspace'; // cwd workspace
+  Directory(ownedWs).createSync(recursive: true);
+  final siblingWs =
+      '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace';
+  Directory(siblingWs).createSync(recursive: true);
+  final goneWs = '${tmp.path}/gone/flutter_app/ios/Runner.xcworkspace';
+  fixtureCandidate(dd, 'Runner-owned', ownedWs);
+  fixtureCandidate(dd, 'Runner-live-sibling', siblingWs);
+  fixtureCandidate(dd, 'Runner-orphan', goneWs);
+  fixtureCandidate(dd, 'Runner-plistless', null);
+  return dd;
+}
 
 void main() {
   group('gh-2134 — build-ios DerivedData wipe is checkout-scoped', () {
