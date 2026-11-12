@@ -1132,6 +1132,13 @@
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				// Deliberate deviation from the byte-clone (review
+				// 5876405113): CocoaPods TargetInspector merges PROJECT
+				// config settings into every native target — a
+				// project-level config without SWIFT_VERSION injects a nil
+				// bucket into targets lacking the named config
+				// (RunnerTests) and pod install dies with "multiple Swift
+				// versions" (validation run 43205737499).
 				SWIFT_VERSION = 5.0;
 			};
 			name = ReleaseNoSandbox;

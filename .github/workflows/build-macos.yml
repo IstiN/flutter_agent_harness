@@ -1129,7 +1129,7 @@ jobs:
             export FA_PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID"
           fi
           FLUTTER_XCODE_ARCHS="$ARCH" ./scripts/build_macos_nosandbox.sh
-          APP_PATH="build/macos/Build/Products/Release/Fa.app"
+          APP_PATH="build/macos/Build/Products/ReleaseNoSandbox/Fa.app"
           NO_DMG="fa-macos-nosandbox-${ARCH}-${VERSION}.dmg"
           NO_DMGTMP="tmp-fa-nosandbox.dmg"
           # The size diet (prune_flutter_assets.sh, #1096) runs INSIDE

@@ -29,8 +29,10 @@ if [[ "$identity" == "-" ]]; then
 fi
 
 # If we have a real identity but no team, extract the team identifier (OU)
-# from the matching certificate's subject. HealthKit/HomeKit entitlements
-# require a non-empty team.
+# from the matching certificate's subject: DEVELOPMENT_TEAM keeps the app's
+# TeamIdentifier stable for TCC prompts and Developer ID notarization (the
+# shipped no-sandbox entitlement set declares no team-scoped claims — the
+# gh-2132 prune removed HealthKit/HomeKit).
 if [[ "$identity" != "-" && -z "$team" ]]; then
   cert_label=$(security find-identity -v -p codesigning 2>/dev/null \
     | grep -F "$identity" \
@@ -82,11 +84,49 @@ if [[ "$identity" != "-" ]]; then
   echo "[build_macos_nosandbox] identity pre-flight OK: '$identity' resolvable for codesigning"
 fi
 
-readonly APP="build/macos/Build/Products/Release/Fa.app"
+readonly APP="build/macos/Build/Products/ReleaseNoSandbox/Fa.app"
 readonly ENTITLEMENTS="macos/Runner/ReleaseNoSandbox.entitlements"
 
-echo "[build_macos_nosandbox] Building Release (identity='${identity}', team='${team:-}')..."
-flutter build macos --release
+# Configuration pass (SPM migration + pod install) — the same tool pass the
+# sandboxed leg drives before its release build (build-macos.yml "Build
+# macOS release"): it writes the Generated.xcconfig + ephemeral package the
+# xcodebuild below consumes and puts the checkout in the SPM-lane state the
+# gate asserts.
+echo "[build_macos_nosandbox] Config pass (identity='${identity}', team='${team:-}')..."
+flutter build macos --config-only
+
+# gh-1814 gate, same post-config assertion as the sandboxed leg: floors
+# intact + SwiftPM lane adopted BEFORE any compile minute is spent.
+bash ../scripts/assert_macos_min_platform.sh 14.0 ..
+
+# #2132 (review 5876405113): CONSUME the ReleaseNoSandbox configuration —
+# the real compile runs THE configuration the PR wires, so its
+# CODE_SIGN_ENTITLEMENTS pin signs the bundle at build time and the
+# configuration is not an inert artifact. Flags mirror flutter's own
+# xcodebuild invocation (build_macos.dart: -clonedSourcePackagesDirPath /
+# -workspace / -scheme / -derivedDataPath / -destination / OBJROOT /
+# SYMROOT / COMPILER_INDEX_STORE_ENABLE / -quiet / build) with the
+# mode-mapped Release swapped for ReleaseNoSandbox; xcode_backend maps the
+# name to release mode (contains('release')). ARCHS rides
+# FLUTTER_XCODE_ARCHS exactly like the tool's env→build-setting mapping.
+echo "[build_macos_nosandbox] Building ReleaseNoSandbox configuration..."
+arch_args=()
+if [[ -n "${FLUTTER_XCODE_ARCHS:-}" ]]; then
+  arch_args+=(ARCHS="$FLUTTER_XCODE_ARCHS")
+fi
+xcodebuild \
+  -clonedSourcePackagesDirPath "$PWD/build/macos/PackageCache" \
+  -workspace macos/Runner.xcworkspace \
+  -configuration ReleaseNoSandbox \
+  -scheme Runner \
+  -derivedDataPath "$PWD/build/macos" \
+  -destination 'platform=macOS' \
+  OBJROOT="$PWD/build/macos/Build/Intermediates.noindex" \
+  SYMROOT="$PWD/build/macos/Build/Products" \
+  COMPILER_INDEX_STORE_ENABLE=NO \
+  "${arch_args[@]+${arch_args[@]}}" \
+  -quiet \
+  build
 
 # #2132: the size diet (prune_flutter_assets.sh, #1096) must run BEFORE any
 # codesign so the seal covers the shipped tree — pruning a signed bundle
@@ -98,7 +138,7 @@ bash ../scripts/prune_flutter_assets.sh \
   "${APP}/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets" \
   assets/wasm packages/js_widget_runtime/test
 
-echo "[build_macos_nosandbox] Re-signing with no-sandbox entitlements..."
+echo "[build_macos_nosandbox] Re-signing after the prune (seal repair — the build-time signature already carries the same no-sandbox set)..."
 codesign --force \
   --deep \
   --sign "${identity}" \

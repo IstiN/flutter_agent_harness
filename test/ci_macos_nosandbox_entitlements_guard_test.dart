@@ -48,11 +48,17 @@ String read(String path) => File(path).readAsStringSync();
 /// Top-level entitlement keys of a plist entitlements file, extracted the
 /// text way: every `<key>…</key>` that sits at dict depth (the files are
 /// flat — no nested dicts but the app-groups array, whose entries are
-/// `<string>` elements, never `<key>`).
+/// `<string>` elements, never `<key>`). XML comments are stripped first —
+/// a future comment containing a literal `<key>…</key>` must not pollute
+/// the count (review 5876405113, digest 3).
 List<String> entitlementKeys(String text) {
+  final withoutComments = text.replaceAll(
+    RegExp('<!--.*?-->', dotAll: true),
+    '',
+  );
   final keys = <String>[];
   final pattern = RegExp(r'<key>([^<]+)</key>');
-  for (final match in pattern.allMatches(text)) {
+  for (final match in pattern.allMatches(withoutComments)) {
     keys.add(match.group(1)!);
   }
   return keys;
@@ -230,11 +236,50 @@ void main() {
     },
   );
 
+  test('Consume — the leg builds the ReleaseNoSandbox configuration '
+      '(review 5876405113: the wired config is the BUILT config)', () {
+    final script = read(scriptPath);
+    final configOnly = script.indexOf('flutter build macos --config-only');
+    final gate = script.indexOf('scripts/assert_macos_min_platform.sh 14.0');
+    final consume = script.indexOf('-configuration ReleaseNoSandbox');
+    expect(
+      configOnly,
+      greaterThan(-1),
+      reason:
+          'the leg runs the same tool config pass as the sandboxed leg '
+          '(SPM migration + pod install) — the xcodebuild below consumes '
+          'its Generated.xcconfig + integrated Pods',
+    );
+    expect(
+      gate,
+      greaterThan(configOnly),
+      reason:
+          'the gh-1814 gate must see the post-config state before '
+          'any compile minute is spent (sandboxed-leg AC2 doctrine)',
+    );
+    expect(
+      consume,
+      greaterThan(gate),
+      reason:
+          'the real compile must invoke xcodebuild with '
+          '-configuration ReleaseNoSandbox — a configuration CI never '
+          'builds cannot be gated by CI (review 5876405113 gating '
+          'issue: the config was consumed by no build path)',
+    );
+    expect(
+      script,
+      contains('APP="build/macos/Build/Products/ReleaseNoSandbox/Fa.app"'),
+      reason:
+          'the shipped app is the ReleaseNoSandbox product, not the '
+          'mode-mapped Release one',
+    );
+  });
+
   test(
     'Seal order — prune runs inside the script BEFORE the re-sign (and not in the workflow step)',
     () {
       final script = read(scriptPath);
-      final build = script.indexOf('flutter build macos --release');
+      final build = script.indexOf('-configuration ReleaseNoSandbox');
       final prune = script.indexOf('prune_flutter_assets.sh');
       final resign = script.indexOf('codesign --force');
       expect(build, greaterThan(-1));
