@@ -13,7 +13,6 @@ block a release again.
 
 ## Unreleased
 
-<<<<<<< HEAD
 - fix(gh-2096): auto-compact no longer re-pays the judge budget on every
   run when the configured smol class cannot answer within it, and a judge
   timeout no longer kills the retry. Three engine changes: (1) the
@@ -35,7 +34,6 @@ block a release again.
   `judgeInputEntries`/`judgeInputTokens`/`judgeElapsedMs`/`judgeLatched`.
   Docs: the smol/judge model-class rule (a class that answers within the
   budget, or a budget sized to the class) in `docs/agents/providers.md`.
-=======
 - fix(gh-2120): the release toolchain no longer floats on unpinned SDKs.
   Two `sdk: stable` / `channel: stable` consumers broke simultaneously
   when the Dart/Flutter stable channel moved on 2026-11-11
@@ -54,8 +52,6 @@ block a release again.
   install + agent launch). Follow-ups: teach the factory kit
   (install-fa-cli.sh / launch path) to handle the split layout; extend
   the unpinned-SDK guard to these jobs.
-
->>>>>>> origin/main
 - fix(gh-2075): the daily-publish macOS legs no longer depend on the
   package:sqlite3 native-assets hook's single un-retried build-time
   download. The `build-macos.yml` app-build and CLI-bundle steps now
