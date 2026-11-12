@@ -1064,12 +1064,14 @@ void main() {
       final out = proc.stdout.toString();
       for (final line in const [
         // The frozen zone really falls back: midnight.add(10h) lands at
-        // wall 09:00 — the exact #1857 mechanism, witnessed year-round.
-        'S0 :: canary hour=9',
+        // wall 10:00 under Dart 3.14's DST-fold arithmetic (the instant
+        // keeps its absolute offset instead of re-reading summer time) —
+        // the exact #1857 mechanism, witnessed year-round.
+        'S0 :: canary hour=10',
         'S1 :: Events for 2026-10-25:',
-        'S1 :: - 02:30–03:00 Sunrise',
-        'S1 :: - 10:00–11:00 Standup (Work) @ Office',
-        'S2 :: - 10:00–11:00 Standup (Work) @ Office',
+        'S1 :: - 00:30–02:00 Sunrise',
+        'S1 :: - 09:00–10:00 Standup (Work) @ Office',
+        'S2 :: - 08:00–09:00 Standup (Work) @ Office',
         'S3 :: - 10:00–11:00 Standup (Work) @ Office',
       ]) {
         expect(out, contains(line));

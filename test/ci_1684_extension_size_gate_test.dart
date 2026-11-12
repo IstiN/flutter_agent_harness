@@ -377,7 +377,7 @@ void main() {
           .split('\n  release-macos:')[0];
       expect(
         jobBody,
-        contains("flutter-version: '3.47.7'"),
+        contains("flutter-version: '3.50.0'"),
         reason:
             'gh-1684 decision 4: the old unpinned channel: stable was '
             'one of the two ways the release and Pages legs diverged',
@@ -385,7 +385,7 @@ void main() {
       final ciSteps = (((ciJobs[legId] as YamlMap)['steps'] as YamlList).map(
         (s) => s.toString(),
       )).join('\n');
-      expect(ciSteps, contains('flutter-version: 3.47.7'));
+      expect(ciSteps, contains('flutter-version: 3.50.0'));
     });
 
     test('the gate leg caches the pinned Flutter SDK (rework)', () {
@@ -395,7 +395,7 @@ void main() {
       // same pinned version, so build comparability is unaffected.
       final flutterStep = ((ciJobs[legId] as YamlMap)['steps'] as YamlList)
           .map((s) => s.toString())
-          .firstWhere((s) => s.contains('flutter-version: 3.47.7'));
+          .firstWhere((s) => s.contains('flutter-version: 3.50.0'));
       expect(
         flutterStep,
         contains('cache: true'),

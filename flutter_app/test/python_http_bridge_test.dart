@@ -15,7 +15,6 @@ String _marker(String rid, String authority, String rawRequest) {
 
 void main() {
   late Directory root;
-  late FaHttpBridge bridge;
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('fah_bridge');
@@ -23,7 +22,7 @@ void main() {
   });
 
   FaHttpBridge makeBridge(http.Client client) =>
-      bridge = FaHttpBridge(sandboxRoot: root.path, httpClient: client);
+      FaHttpBridge(sandboxRoot: root.path, httpClient: client);
 
   test('complete control line is stripped and the request is served', () async {
     http.Request? captured;
@@ -75,7 +74,7 @@ void main() {
   });
 
   test('split control lines across chunks are reassembled', () async {
-    final b = makeBridge(
+    makeBridge(
       MockClient((request) async => http.Response('{}', 200)),
     );
     final marker = _marker(
@@ -86,6 +85,9 @@ void main() {
     final bytes = utf8.encode('plain\n$marker');
     final cut = 'plain\n\x01FAHTTP1 deadbeef example.com:443 '.length;
 
+    final b = makeBridge(
+      MockClient((request) async => http.Response('{}', 200)),
+    );
     final first = b.filter(bytes.sublist(0, cut));
     expect(utf8.decode(first), 'plain\n');
     final second = b.filter(bytes.sublist(cut));
@@ -136,7 +138,7 @@ void main() {
   });
 
   test('gzip responses are decoded for the socket-less client', () async {
-    final b = makeBridge(
+    makeBridge(
       MockClient((request) async => http.Response('{}', 200)),
     );
     // A tiny valid gzip payload of `hi` built via dart:io gzip encoder.

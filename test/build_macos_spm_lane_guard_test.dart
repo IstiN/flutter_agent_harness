@@ -50,7 +50,7 @@ import 'package:yaml/yaml.dart';
 const workflowPath = '.github/workflows/build-macos.yml';
 const jobName = 'build-macos';
 const buildStepPrefix = 'Build macOS release (';
-const pinnedFlutterVersion = '3.47.7';
+const pinnedFlutterVersion = '3.50.0';
 const deadSwiftPmKnob = 'FLUTTER_SWIFT_PACKAGE_MANAGER';
 
 String read(String path) => File(path).readAsStringSync();
