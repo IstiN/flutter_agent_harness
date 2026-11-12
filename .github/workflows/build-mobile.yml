@@ -156,6 +156,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-2126: EXACT patch pin (#1431 discipline, gh-1826). The
+          # committed flutter_app/pubspec.lock is a flutter_test@3.47.7
+          # resolution (test_api 0.7.12); the unpinned `channel: stable`
+          # float landed 3.50.0 (test_api 0.7.14) and --enforce-lockfile
+          # fail-fasted every Android leg ("Unable to satisfy pubspec.yaml
+          # using pubspec.lock"). Same pin as this workflow's self-hosted
+          # iOS lane and gh-2120's office-addin-suite. Bump ONLY with the
+          # regenerated lockfile, in the same PR.
+          flutter-version: '3.47.7'
           channel: 'stable'
           cache: true
 
@@ -337,6 +346,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-2126: EXACT patch pin (#1431 discipline, gh-1826). The
+          # committed flutter_app/pubspec.lock is a flutter_test@3.47.7
+          # resolution (test_api 0.7.12); the unpinned `channel: stable`
+          # float landed 3.50.0 (test_api 0.7.14) and --enforce-lockfile
+          # fail-fasted every Android leg ("Unable to satisfy pubspec.yaml
+          # using pubspec.lock"). Same pin as this workflow's self-hosted
+          # iOS lane and gh-2120's office-addin-suite. Bump ONLY with the
+          # regenerated lockfile, in the same PR.
+          flutter-version: '3.47.7'
           channel: 'stable'
           cache: true
 
@@ -438,6 +456,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-2126: EXACT patch pin (#1431 discipline, gh-1826). The
+          # committed flutter_app/pubspec.lock is a flutter_test@3.47.7
+          # resolution (test_api 0.7.12); the unpinned `channel: stable`
+          # float landed 3.50.0 (test_api 0.7.14) and --enforce-lockfile
+          # fail-fasted every Android leg ("Unable to satisfy pubspec.yaml
+          # using pubspec.lock"). Same pin as this workflow's self-hosted
+          # iOS lane and gh-2120's office-addin-suite. Bump ONLY with the
+          # regenerated lockfile, in the same PR.
+          flutter-version: '3.47.7'
           channel: 'stable'
           cache: true
 
@@ -623,6 +650,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # gh-2126: EXACT patch pin (#1431 discipline, gh-1826). The
+          # committed flutter_app/pubspec.lock is a flutter_test@3.47.7
+          # resolution (test_api 0.7.12); the unpinned `channel: stable`
+          # float landed 3.50.0 (test_api 0.7.14) and --enforce-lockfile
+          # fail-fasted every Android leg ("Unable to satisfy pubspec.yaml
+          # using pubspec.lock"). Same pin as this workflow's self-hosted
+          # iOS lane and gh-2120's office-addin-suite. Bump ONLY with the
+          # regenerated lockfile, in the same PR.
+          flutter-version: '3.47.7'
           channel: 'stable'
           cache: true
 
