@@ -3215,17 +3215,39 @@ jobs:
           # each Runner-*/info.plist WorkspacePath: only the dir whose
           # WorkspacePath equals THIS checkout's workspace is removed (a
           # concurrent leg's dir can never match; a dir with no readable
-          # info.plist may be a live early build and is left alone). Pinned
-          # by test/ci_build_ios_derivedata_wipe_guard_test.dart.
+          # info.plist may be a live early build and is left alone). Dirs
+          # whose recorded WorkspacePath no longer exists on disk (dead
+          # checkout: re-registered runner, renumbered _work, deleted
+          # branch) are swept as orphans — race-free, a live leg's
+          # checkout always exists. Every removal and a no-candidate pass
+          # log a `gh-2134:` line — a silent no-op must be diagnosable
+          # from CI logs. Pinned by
+          # test/ci_build_ios_derivedata_wipe_guard_test.dart.
           ws_path="$(pwd)/ios/Runner.xcworkspace"
           shopt -s nullglob
+          matched=
           for dd in ~/Library/Developer/Xcode/DerivedData/Runner-*/; do
             ws=$(/usr/libexec/PlistBuddy -c 'Print :WorkspacePath' "$dd/info.plist" 2>/dev/null || true)
             if [ "$ws" = "$ws_path" ]; then
+              echo "gh-2134: wiping DerivedData owned by this workspace: $dd"
               rm -rf "$dd"
+              matched=1
+            elif [ -n "$ws" ] && [ ! -e "$ws" ]; then
+              # gh-2136 review: orphan GC — the recorded owner checkout is
+              # gone (re-registered runner, renumbered _work dir, deleted
+              # branch checkout). Race-free by construction: a live leg's
+              # checkout always exists, so a concurrent build's dir can
+              # never satisfy this; an unreadable info.plist (empty ws —
+              # a maybe-live early build) is still left alone.
+              echo "gh-2134: removing orphaned DerivedData (owner checkout gone): $dd -> $ws"
+              rm -rf "$dd"
+              matched=1
             fi
           done
           shopt -u nullglob
+          if [ -z "${matched:-}" ]; then
+            echo "gh-2134: no DerivedData dir matched (fresh box, or nothing stale/orphaned)"
+          fi
           if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
             if grep -qE 'Building native assets failed|build_hooks failed|Hash of downloaded file|build\.dart returned with exit code' /tmp/build-ios.log; then
               if grep -q 'Hash of downloaded file' /tmp/build-ios.log; then

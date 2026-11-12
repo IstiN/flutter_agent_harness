@@ -100,20 +100,19 @@ String buildStepRun() => buildStep()['run'].toString();
 List<String> rmLines() =>
     buildStepRun().split('\n').where((l) => l.contains('rm -rf')).toList();
 
-/// The wipe block verbatim — from the `ws_path=` line through the closing
-/// `shopt -u nullglob` — extracted from the step's run block so AC7 can
-/// execute it against fixtures.
+/// The wipe block verbatim — from the `ws_path=` line through the
+/// no-match report, up to (exclusive of) the `flutter build ios`
+/// invocation — extracted from the step's run block so AC7 can execute it
+/// against fixtures.
 String wipeBlock() {
   final lines = buildStepRun().split('\n');
-  final start = lines.indexWhere(
-    (l) => l.trimLeft().startsWith('ws_path='),
-  );
+  final start = lines.indexWhere((l) => l.trimLeft().startsWith('ws_path='));
   final end = lines.indexWhere(
-    (l) => l.trimLeft().startsWith('shopt -u nullglob'),
+    (l) => l.trimLeft().startsWith('if ! flutter build ios'),
   );
   expect(start, greaterThan(-1), reason: 'wipe block start marker missing');
   expect(end, greaterThan(start), reason: 'wipe block end marker missing');
-  return lines.sublist(start, end + 1).join('\n');
+  return lines.sublist(start, end).join('\n');
 }
 
 /// One fixture DerivedData candidate: `dir` carries `plistContent` (the
@@ -132,9 +131,13 @@ void fixtureCandidate(Directory dd, String name, String? plistContent) {
 Future<ProcessResult> runWipeSimulation(Directory tmp) {
   final stubDir = Directory('${tmp.path}/pb-stub')..createSync(recursive: true);
   final stub = File('${stubDir.path}/PlistBuddy');
-  stub.writeAsStringSync('#!/usr/bin/env bash\nexec cat "$3"\n');
-  stub.setSync(executable: true);
-  final block = wipeBlock().replaceAll('/usr/libexec/PlistBuddy', stub.path);
+  stub.writeAsStringSync('#!/usr/bin/env bash\nexec cat "\$3"\n');
+  // Invoke the stub through `bash` so no +x bit is needed (File
+  // permissions helpers are POSIX-gated in dart:io).
+  final block = wipeBlock().replaceAll(
+    '/usr/libexec/PlistBuddy',
+    'bash ${stub.path}',
+  );
   expect(
     block.contains(stub.path),
     isTrue,
@@ -155,9 +158,7 @@ Future<ProcessResult> runWipeSimulation(Directory tmp) {
 /// gone, and a plist-less dir; plus the two workspace trees (owned cwd +
 /// sibling). Returns the DerivedData root for assertions.
 Directory buildSimFixtures(Directory tmp) {
-  final dd = Directory(
-    '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
-  );
+  final dd = Directory('${tmp.path}/home/Library/Developer/Xcode/DerivedData');
   dd.createSync(recursive: true);
   final ownedWs =
       '${tmp.path}/ws/flutter_app/ios/Runner.xcworkspace'; // cwd workspace
@@ -282,5 +283,128 @@ void main() {
             'genuinely macOS-only gate box must be a separate decision',
       );
     });
+
+    test('AC5: the matched wipe logs a gh-2134 line; an empty pass logs '
+        'its own no-match line', () {
+      final run = buildStepRun();
+      expect(
+        run,
+        contains(
+          r'echo "gh-2134: wiping DerivedData owned by this workspace: $dd"',
+        ),
+        reason:
+            'the removal must be observable in CI logs — if the '
+            'WorkspacePath comparison ever silently diverges (symlinked '
+            'workspace component, resolved vs logical path), a no-op '
+            'wipe must be diagnosable in one read, not invisible until '
+            'the gh-1296 stale-pcm failure class returns',
+      );
+      expect(
+        run,
+        contains('gh-2134: no DerivedData dir matched'),
+        reason:
+            '"protection ran but found no candidate" must be '
+            'distinguishable from "protection never matched" in CI logs',
+      );
+    });
+
+    test('AC6: orphan Runner-* dirs with a dead-checkout WorkspacePath '
+        'are swept; plist-less dirs stay untouched', () {
+      final run = buildStepRun();
+      // The orphan condition must be guarded by a READABLE WorkspacePath:
+      // a dir with no plist may be a live early build and must never be
+      // removed by the existence sweep.
+      expect(
+        RegExp(r'\[ -n "\$ws" \] && \[ ! -e "\$ws" \]').hasMatch(run),
+        isTrue,
+        reason:
+            'orphan sweep must require a readable WorkspacePath whose '
+            'path no longer exists on disk — race-free by construction '
+            '(a live leg\'s checkout always exists), and it must never '
+            'fire on an unreadable info.plist',
+      );
+      expect(
+        run,
+        contains('gh-2134: removing orphaned DerivedData'),
+        reason: 'the orphan removal must be observable in CI logs',
+      );
+    });
+
+    test('AC7: the wipe block runs for real — owned dir wiped + logged, '
+        'live sibling and plist-less survive, orphan swept, exit 0', () async {
+      final tmp = await Directory.systemTemp.createTemp('fa-wipe-sim');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final dd = buildSimFixtures(tmp);
+
+      final result = await runWipeSimulation(tmp);
+      expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+      expect(
+        result.stdout,
+        contains('gh-2134: wiping DerivedData owned by this workspace'),
+      );
+      expect(result.stdout, contains('gh-2134: removing orphaned DerivedData'));
+      expect(
+        Directory('${dd.path}/Runner-owned').existsSync(),
+        isFalse,
+        reason: 'the owned dir must be wiped',
+      );
+      expect(
+        Directory('${dd.path}/Runner-orphan').existsSync(),
+        isFalse,
+        reason: 'the dead-checkout dir must be swept',
+      );
+      expect(
+        Directory('${dd.path}/Runner-live-sibling').existsSync(),
+        isTrue,
+        reason: 'a concurrent leg\'s dir (its workspace EXISTS) must survive',
+      );
+      expect(
+        Directory('${dd.path}/Runner-plistless').existsSync(),
+        isTrue,
+        reason: 'a plist-less dir (maybe a live early build) must survive',
+      );
+    });
+
+    test(
+      'AC7b: a pass with no candidate logs the distinct no-match line',
+      () async {
+        final tmp = await Directory.systemTemp.createTemp('fa-wipe-sim');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        // Fresh box: DerivedData exists but holds only a sibling dir —
+        // nothing matches this workspace.
+        final dd = Directory(
+          '${tmp.path}/home/Library/Developer/Xcode/DerivedData',
+        );
+        Directory(
+          '${tmp.path}/ws/flutter_app/ios/Runner.xcworkspace',
+        ).createSync(recursive: true);
+        Directory(
+          '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace',
+        ).createSync(recursive: true);
+        fixtureCandidate(
+          dd,
+          'Runner-live-sibling',
+          '${tmp.path}/sibling-leg/flutter_app/ios/Runner.xcworkspace',
+        );
+
+        final result = await runWipeSimulation(tmp);
+        expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+        expect(
+          result.stdout,
+          contains('gh-2134: no DerivedData dir matched'),
+          reason: 'the no-op pass must say so in the log',
+        );
+        expect(
+          result.stdout,
+          isNot(contains('wiping DerivedData owned by this workspace')),
+          reason: 'no candidate means no wipe log line',
+        );
+        expect(
+          Directory('${dd.path}/Runner-live-sibling').existsSync(),
+          isTrue,
+          reason: 'the sibling dir must survive',
+        );
+      },
+    );
   });
 }
