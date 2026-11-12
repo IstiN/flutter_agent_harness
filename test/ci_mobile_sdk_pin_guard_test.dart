@@ -14,12 +14,16 @@
 // 3.47.7 for the identical enforce-lockfile float — the four hosted
 // subosito/flutter-action setups were the remaining floaters in a
 // workflow whose lanes all resolve ONE committed lockfile.
+// (#2112 has since regenerated the committed lockfile to the 3.50.0
+// resolution (test_api 0.7.14) and bumped the self-hosted lane and the
+// office-addin-suite to match — the EXACT patch pinned below is that
+// resolution, so every lane keeps ONE committed lockfile + ONE SDK.)
 //
 // Deliberately YAML-level asserts (the store_automation_guard /
 // nightly_desktop_leg_guard static pattern):
-//  AC1  every hosted flutter-action setup pins an EXACT 3.47.x patch —
+//  AC1  every hosted flutter-action setup pins an EXACT 3.50.x patch —
 //       no absent pin (a float on `channel: stable`) and no wildcard
-//       `3.47.x` (#1431: a wildcard re-resolves a freshly released patch
+//       `3.50.x` (#1431: a wildcard re-resolves a freshly released patch
 //       whose flutter_test/test_api pins the lockfile does not carry),
 //  AC2  the hosted pins agree with the workflow's own self-hosted
 //       setup-flutter-selfhosted pin — one workflow, one SDK; bumping one
@@ -39,10 +43,12 @@ const flutterActionPrefix = 'subosito/flutter-action@';
 const selfHostedAction = './.github/actions/setup-flutter-selfhosted';
 
 /// The exact patch the committed flutter_app/pubspec.lock is a resolution
-/// of (flutter_test@3.47.7 → test_api 0.7.12) — also the self-hosted iOS
-/// lane pin (gh-1826) and the office-addin-suite pin (gh-2120). Bump ONLY
-/// together with a regenerated lockfile, in the same PR.
-const expectedSdkLine = '3.47.7';
+/// of (flutter_test@3.50.0 → test_api 0.7.14 — the #2112 regenerated
+/// lockfile) — also the self-hosted iOS lane pin and the
+/// office-addin-suite pin. Bump ONLY together with a regenerated
+/// lockfile, in the same PR. Keep the AC1 `3.50.x` regex below in sync
+/// with this line.
+const expectedSdkLine = '3.50.0';
 
 YamlMap loadWorkflow() =>
     loadYaml(File(workflowPath).readAsStringSync()) as YamlMap;
@@ -92,7 +98,7 @@ Set<String> selfHostedPins() {
 
 void main() {
   test(
-    'AC1: every hosted flutter-action setup pins an exact 3.47.x patch '
+    'AC1: every hosted flutter-action setup pins an exact 3.50.x patch '
     '(gh-2126: the absent pin floated stable to 3.50.0, whose '
     'flutter_test test_api 0.7.14 deterministically skew-failed the '
     'committed lockfile under --enforce-lockfile)',
@@ -112,12 +118,12 @@ void main() {
                 'flutter_app/pubspec.lock under --enforce-lockfile '
                 '(gh-2126; gh-2120 pinned office-addin-suite for the '
                 'identical float)');
-        expect(pin, matches(RegExp(r'^3\.47\.\d+$')),
+        expect(pin, matches(RegExp(r'^3\.50\.\d+$')),
             reason: 'job `${setup.key}` pins `$pin` — the pin must be an '
-                'EXACT 3.47.x patch (#1431 discipline, gh-1826): a '
-                'wildcard or a foreign line resolves a flutter_test whose '
-                'exact test_api pin the committed lockfile does not '
-                'carry');
+                'EXACT 3.50.x patch (#1431 discipline, gh-1826; keep in '
+                'sync with expectedSdkLine): a wildcard or a foreign '
+                'line resolves a flutter_test whose exact test_api pin '
+                'the committed lockfile does not carry');
       }
     },
   );
