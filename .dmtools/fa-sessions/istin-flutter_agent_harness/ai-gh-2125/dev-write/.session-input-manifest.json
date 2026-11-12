@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T09:14:43.668Z",
+  "ticketKey": "pr-2127",
+  "headSha": "3962a0fd2e8bf222e9fe84982e872891adf24171",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:e0d613eb1e3d8d0e",
+      "size": 143620
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:d2fc51eb03c26950",
+      "size": 246843
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:f17775b8981c4111",
+      "size": 1220
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:af66ec5832e87979",
+      "size": 10124
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:0e47d4b0185e4515",
+      "size": 9555
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:8d50be2bcfd726cb",
+      "size": 5115
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:92741d3ca4bb927e",
+      "size": 2945
+    },
+    "request.md": {
+      "hash": "fnv1a64:9dd35eb5c0f59eff",
+      "size": 2609
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:74b19f7db998ebfa",
+      "size": 610
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:2e396c15c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:fa3d8696a0180588",
+      "size": 2679
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:9dd35eb5c0f59eff",
+      "size": 2609
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: gh-2125 fix verified — the gym archive is pinned to a workspace-local per-run derived-data path (`flutter_app/build/ios/archive-dd`) with `archive_path` beside it, both removed before every archive, and the shared per-user root is never purged. Guard test 5/5, sibling workflow guards 60 passed, 8/8 Fastfile Ruby tests, `ruby -c Fastfile` OK on the PR head (+204/-0, ticket-scoped, no scope creep).\n\n**Key Issues**: none blocking or important. Ranked digest (no threads — none passes the necessity test):\n1. `flutter_app/fastlane/Fastfile:615` — xcarchive nested inside the derived-data dir; a sibling dir would separate deliverable from build state, but no consumer reads the archive and `rm_rf` freshens both (no concrete cost).\n2. `test/workflow_ios_derived_data_guard_test.dart:59` — the `options` window slices from the FIRST `build_app(` occurrence; unambiguous today (single occurrence verified) and a future earlier occurrence would fail loudly, not silently.\n3. `.github/workflows/build-macos.yml` — the macOS lane shares the same per-user DerivedData root; author already flagged it as an out-of-scope follow-up (agreed).\n\n**Next Steps**:\n1. Merge — only digest-level findings remain; no rework round required.\n2. Track the macOS DerivedData follow-up the PR notes already describe."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Rework lap — audit reply to the automated review (APPROVE)\n\nVerified against the current PR head `3962a0fd2e` (branch refreshed with `origin/main` — merge of #2112 — and pushed; the PR diff remains exactly `flutter_app/fastlane/Fastfile` + `test/workflow_ios_derived_data_guard_test.dart`, +204/−0). No blocking or important findings exist on this PR — the three digest items below are audited against the head; none warrants a code change on this lap, for the reasons your own digest states.\n\n**1. `flutter_app/fastlane/Fastfile:615` — xcarchive nested inside the derived-data dir → no change (audit).**\nConfirmed harmless on the head: the deliverable consumed downstream is the IPA, not the xcarchive — `build_app` writes it to `output_directory: \"build/ios/ipa\"` (Fastfile:612, `fa.ipa`), and the only workflow consumer reads `flutter_app/build/ios/ipa/*.ipa` (`.github/workflows/build-mobile.yml:1254` upload-artifact), which is **outside** `archive-dd`. Nothing in the repo or workflows reads `fa.xcarchive`, and `FileUtils.rm_rf(derived_data)` (Fastfile:601) freshens both paths before every archive. Relocating the archive to a sibling dir would churn an already-approved line for zero behavioral gain (your finding: \"no concrete cost\").\n\n**2. `test/workflow_ios_derived_data_guard_test.dart:59` — options window sliced from the first `build_app(` → no change (audit).**\nRe-verified on the head: the Fastfile contains exactly **one** `build_app(` occurrence (line 607; `grep -c \"build_app(\" = 1`), so the slice window is unambiguous today. If a future earlier occurrence appeared, the `contains(...)` asserts inside the window would stop matching and the guard would fail loudly, not silently pass — which is the failure mode the guard is designed for. All 5 guard tests plus the sibling workflow guards pass on the head (34/34, see the run summary on the PR).\n\n**3. `.github/workflows/build-macos.yml` — macOS lane shares the per-user DerivedData root → out of scope, tracked.**\nAgreed with your verdict. The PR notes already flag it as a follow-up (the macOS desktop lane may hit the same corrupted-shared-state class); touching `build-macos.yml` here would expand a ticket-scoped +204/−0 iOS-archive PR into unrelated workflow surgery. Left for triage as a separate follow-up.\n\n**CI note (not thread-scoped, for completeness):** the red checks on the previous head `88940892` carry **no owned violations** for this PR (`ci_violations.json`: `owned: 0`). Attributed from the raw logs: the \"Golden suite (macOS baselines)\" red is `chat_image.png` 0.01% / 40px on the hosted macOS baseline (`flutter_app/test/golden/chat_golden_test.dart`, \"image attachment thumbnail renders inside the user bubble\") — a file this PR does not touch, and the same hosted-runner drift class the test file itself documents at line 125; the \"Quality gate\" red is only the aggregate platform-leg verdict from that same goldens red (`dart_ok` stayed `true`); \"Binaries smoke gate\" / \"JS engine integration\" logs are expired (404). The branch now re-runs CI on the refreshed head.\n\nNo code change accompanies this reply: every finding is digest-level, already-addressed or out-of-scope by your own assessment — audit-resolved per the review policy."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:721a8c18",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: gh-2125 fix verified — the gym archive is pinned to a workspace-local per-run derived-data path (`flutter_app/build/ios/archive-dd`) with `archive_path` beside it, both removed before every archive, and the shared per-user root is never purged. Guard test 5/5, sibling workflow guards 60 passed, 8/8 Fastfile Ruby tests, `ruby -c Fastfile` OK on the PR head (+204/-0, ticket-scoped, no scope creep).\n\n**Key Issues**: none blocking or important. Ranked digest (no threads — none passes the necessity test):\n1. `flutter_app/fastlane/Fastfile:615` — xcarchive nested inside the derived-data dir; a sibling dir would separate deliverable from build state, but no consumer reads the archive and `rm_rf` freshens both (no concrete cost).\n2. `test/workflow_ios_derived_data_guard_test.dart:59` — the `options` window slices from the FIRST `build_app(` occurrence; unambiguous today (single occurrence verified) and a future earlier occurrence would fail loudly, not silently.\n3. `.github/workflows/build-macos.yml` — the macOS lane shares the same per-user DerivedData root; author already flagged it as an out-of-scope follow-up (agreed).\n\n**Next Steps**:\n1. Merge — only digest-level findings remain; no rework round required.\n2. Track the macOS DerivedData follow-up the PR notes already describe."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:7a72d522",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Rework lap — audit reply to the automated review (APPROVE)\n\nVerified against the current PR head `3962a0fd2e` (branch refreshed with `origin/main` — merge of #2112 — and pushed; the PR diff remains exactly `flutter_app/fastlane/Fastfile` + `test/workflow_ios_derived_data_guard_test.dart`, +204/−0). No blocking or important findings exist on this PR — the three digest items below are audited against the head; none warrants a code change on this lap, for the reasons your own digest states.\n\n**1. `flutter_app/fastlane/Fastfile:615` — xcarchive nested inside the derived-data dir → no change (audit).**\nConfirmed harmless on the head: the deliverable consumed downstream is the IPA, not the xcarchive — `build_app` writes it to `output_directory: \"build/ios/ipa\"` (Fastfile:612, `fa.ipa`), and the only workflow consumer reads `flutter_app/build/ios/ipa/*.ipa` (`.github/workflows/build-mobile.yml:1254` upload-artifact), which is **outside** `archive-dd`. Nothing in the repo or workflows reads `fa.xcarchive`, and `FileUtils.rm_rf(derived_data)` (Fastfile:601) freshens both paths before every archive. Relocating the archive to a sibling dir would churn an already-approved line for zero behavioral gain (your finding: \"no concrete cost\").\n\n**2. `test/workflow_ios_derived_data_guard_test.dart:59` — options window sliced from the first `build_app(` → no change (audit).**\nRe-verified on the head: the Fastfile contains exactly **one** `build_app(` occurrence (line 607; `grep -c \"build_app(\" = 1`), so the slice window is unambiguous today. If a future earlier occurrence appeared, the `contains(...)` asserts inside the window would stop matching and the guard would fail loudly, not silently pass — which is the failure mode the guard is designed for. All 5 guard tests plus the sibling workflow guards pass on the head (34/34, see the run summary on the PR).\n\n**3. `.github/workflows/build-macos.yml` — macOS lane shares the per-user DerivedData root → out of scope, tracked.**\nAgreed with your verdict. The PR notes already flag it as a follow-up (the macOS desktop lane may hit the same corrupted-shared-state class); touching `build-macos.yml` here would expand a ticket-scoped +204/−0 iOS-archive PR into unrelated workflow surgery. Left for triage as a separate follow-up.\n\n**CI note (not thread-scoped, for completeness):** the red checks on the previous head `88940892` carry **no owned violations** for this PR (`ci_violations.json`: `owned: 0`). Attributed from the raw logs: the \"Golden suite (macOS baselines)\" red is `chat_image.png` 0.01% / 40px on the hosted macOS baseline (`flutter_app/test/golden/chat_golden_test.dart`, \"image attachment thumbnail renders inside the user bubble\") — a file this PR does not touch, and the same hosted-runner drift class the test file itself documents at line 125; the \"Quality gate\" red is only the aggregate platform-leg verdict from that same goldens red (`dart_ok` stayed `true`); \"Binaries smoke gate\" / \"JS engine integration\" logs are expired (404). The branch now re-runs CI on the refreshed head.\n\nNo code change accompanies this reply: every finding is digest-level, already-addressed or out-of-scope by your own assessment — audit-resolved per the review policy."
+    }
+  ]
+}
