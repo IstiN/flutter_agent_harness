@@ -755,4 +755,98 @@ void main() {
       expect(await pending(), isFalse);
     },
   );
+
+  test(
+    'a failed runtime dial re-arms the one-shot sync instead of '
+    'stranding it behind the 10s redial throttle (identity-race re-arm)',
+    () async {
+      // Resumed session memberships are invisible at boot (empty record
+      // view) and become visible only when replay flips the closure —
+      // the same shape the resume race hits in production.
+      // No boot hub URL: the resume shape — preferredBootMembership only
+      // yields a membership when the configured hub is not the default,
+      // so the runtime sync (not boot) owns this dial.
+      final replayed = <Map<String, Object?>>[];
+      final environment = <String, String>{
+        hub.envMasterSecret: 'test-master',
+        'DAP_KEY_PASSPHRASE': 'pass',
+      };
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final io = _IO();
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+      );
+      final dialCalls = <String>[];
+      host.scopedConnectOverride = (hubUrl) async {
+        dialCalls.add(hubUrl);
+        if (dialCalls.length == 1) {
+          // The identity-load race's loser: the scoped connect throws.
+          throw const PathNotFoundException(
+            'forced dial failure',
+            OSError('identity tmp rename lost', 2),
+          );
+        }
+      };
+      final context = PluginContext(
+        env: MemoryExecutionEnv(cwd: home.path),
+        io: io,
+        readSessionRecords: (type) async => List.of(replayed),
+      );
+      host.register(context);
+      await _waitUntil(() async => plugin.startCalls > 0);
+
+      // Replay: the resumed membership enters the runtime view now, and
+      // the session-ready listener (the production one-shot site) drives
+      // the sync — its dial fails through the override.
+      replayed.add(
+        DapChannelMembership(
+          hubUrl: _hubUrl,
+          channelId: 'resumed',
+          scope: DapChannelScope.session,
+          joinedAt: DateTime.utc(2026, 1, 1),
+          pub: 'pub',
+          priv: 'priv',
+          hubClientSecret: 'resume-client-secret',
+        ).toJson(),
+      );
+      for (final listener in context.sessionReadyListeners) {
+        listener();
+      }
+      await _waitUntil(
+        () async => io.text.contains('runtime membership sync failed'),
+      );
+      expect(dialCalls, [_hubUrl]);
+      expect(
+        io.text,
+        contains('runtime membership sync failed'),
+        reason: 'the dial failure must not be swallowed silently',
+      );
+
+      // Drive 2 — the very next wake tick (same wall instant, no 10s
+      // gate) must re-dial and land the join.
+      final channels = await HubPluginHost.joinedChannelsFor(plugin);
+      expect(
+        dialCalls.length,
+        2,
+        reason:
+            'failed dial must not throttle the retry: the next '
+            'driver re-dials immediately',
+      );
+      expect(channels, ['resumed']);
+    },
+  );
 }

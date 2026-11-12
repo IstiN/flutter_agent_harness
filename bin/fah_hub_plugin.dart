@@ -15,7 +15,14 @@ library;
 
 import 'dart:async';
 import 'dart:convert' show jsonEncode;
-import 'dart:io' show File, HttpClient, Platform, Process, ProcessStartMode;
+import 'dart:io'
+    show
+        File,
+        FileSystemException,
+        HttpClient,
+        Platform,
+        Process,
+        ProcessStartMode;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -332,7 +339,21 @@ final class HubPluginHost implements FahPlugin {
       // probe short-circuits to "empty" BEFORE the membership sync, so
       // the remote dial would never happen (deadlock found live on
       // resumed ai_kb/ai_conf). Drive the dial + joins right here.
-      unawaited(_syncRuntimeMemberships().catchError((Object _) {}));
+      //
+      // The failure is NOT swallowed silently: a lost dial (e.g. the
+      // identity-load race losing the shared <key>.tmp rename) used to
+      // strand the one-shot sync — `_runtimeSyncPending` stays armed (it
+      // is consumed only after a client exists) and the failed dial
+      // disarms the redial throttle, so the next wake tick re-drives it;
+      // surface the error instead of hiding it.
+      unawaited(
+        _syncRuntimeMemberships().catchError((Object e, StackTrace s) {
+          _pluginIo?.writeln(
+            '[hub] runtime membership sync failed — the next wake tick '
+            'retries it: $e',
+          );
+        }),
+      );
     });
     final connecting = _connect(context).catchError((Object e, StackTrace s) {
       context.io.writeln('[hub] connect failed: $e');
@@ -605,7 +626,19 @@ final class HubPluginHost implements FahPlugin {
       preferred.agentName,
       preferred.agentInstance,
     );
-    if (!throttled) await _ensureChannelConnection(preferred.hubUrl);
+    if (!throttled) {
+      try {
+        await _ensureChannelConnection(preferred.hubUrl);
+      } on Object {
+        // A FAILED dial connected nothing: the pre-dial throttle must not
+        // outlive it, or the still-armed one-shot sync sits behind a 10s
+        // gate that every wake tick keeps bouncing off (the swallowed
+        // identity-load race stranded the dial exactly there). Disarm so
+        // the next driver re-dials immediately.
+        _runtimeConnectNotBefore = null;
+        rethrow;
+      }
+    }
   }
 
   bool _runtimeDialThrottled() {
@@ -703,6 +736,54 @@ final class HubPluginHost implements FahPlugin {
     instanceId: _environment['DAP_AGENT_INSTANCE'],
   );
 
+  /// In-flight scoped identity loads, keyed by identity key path.
+  final Map<String, Future<hub.HubIdentity>> _scopedIdentityLoads = {};
+
+  /// Loads the instance-scoped identity at [keyPath] with at most ONE
+  /// `HubIdentity.load` per key path at a time.
+  ///
+  /// Boot connect and the session-ready runtime sync resolve the SAME
+  /// scoped key concurrently (the sync applies the credential into the
+  /// process env while boot is still reading it). `HubIdentity.load`
+  /// persists a fresh identity through a shared `<key>.tmp` rename: two
+  /// overlapping first loads write the same tmp path, one rename wins,
+  /// and the loser throws `PathNotFoundException` — which the one-shot
+  /// runtime sync used to swallow, permanently losing the resumed-agent
+  /// dial until the next idle probe. Sharing one in-flight load per path
+  /// guarantees a single load/write per key at a time, so both callers
+  /// get the same identity and the tmp rename can never collide.
+  Future<hub.HubIdentity> _loadScopedIdentity(String keyPath) {
+    final inFlight = _scopedIdentityLoads[keyPath];
+    if (inFlight != null) return inFlight;
+    final attempt = _loadScopedIdentityOnce(keyPath);
+    _scopedIdentityLoads[keyPath] = attempt;
+    // Clean the slot on completion so a later load re-reads the settled
+    // file; the tracked copy only consumes the outcome.
+    unawaited(
+      attempt
+          .whenComplete(() {
+            if (identical(_scopedIdentityLoads[keyPath], attempt)) {
+              _scopedIdentityLoads.remove(keyPath);
+            }
+          })
+          .then((_) {}, onError: (_) {}),
+    );
+    return attempt;
+  }
+
+  Future<hub.HubIdentity> _loadScopedIdentityOnce(String keyPath) async {
+    try {
+      return await hub.HubIdentity.load(keyPath);
+    } on FileSystemException {
+      // Belt-and-suspenders for overlaps this host cannot serialize
+      // (two CLI processes booting the same instance key): the winner
+      // already renamed its <key>.tmp into place, so a reload reads the
+      // settled file instead of compounding the loser's failure. Bounded
+      // to one retry; a genuinely broken path fails again and propagates.
+      return hub.HubIdentity.load(keyPath);
+    }
+  }
+
   /// Dials [normalized] with the process-local enrolled credential on a
   /// client THIS host owns (the vendored plugin's client keeps the
   /// secret it was constructed with — it can never learn a new one).
@@ -731,7 +812,7 @@ final class HubPluginHost implements FahPlugin {
     final scopedSecret = _environment['DAP_CLIENT_SECRET'] ?? '';
     final client = hub.HubClient(
       config: hub.HubConfig(url: normalized, name: settings.name),
-      identity: await hub.HubIdentity.load(
+      identity: await _loadScopedIdentity(
         _scopedIdentityPath(liveConfig, settings),
       ),
       channelStore: store,
@@ -1454,7 +1535,7 @@ final class HubPluginHost implements FahPlugin {
       home: _home,
     );
     await _hub.start(
-      identity: await hub.HubIdentity.load(
+      identity: await _loadScopedIdentity(
         _scopedIdentityPath(liveConfig, settings),
       ),
     );
