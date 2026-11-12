@@ -276,6 +276,35 @@ void main() {
       // Expand storm: read pair first, bash pair second (newest).
       await expandViaLoop(session, controller, 1, '3');
       await expandViaLoop(session, controller, 2, '6');
+      // gh-2097: the engine measures pressure on the SESSION PROJECTION
+      // at run start (the honest basis — a stale pre-run estimate was
+      // the bug), so the fixture's over-pressure must exist on the
+      // projection. A fat judged-hide pair plus padding (which pushes it
+      // outside the protected-tail window) lands the projection well
+      // over the 6000 trigger: the LRU re-hide evicts the OLDEST
+      // expansion, the judged hide takes the fat pair, and the run
+      // settles without a checkpoint (the summarizer stays unused, as
+      // this AC demands).
+      await session.appendMessage(
+        _assistant(
+          'fat pair',
+          calls: [ToolCall(id: 'c-fat', name: 'read', arguments: {})],
+        ),
+      );
+      await session.appendMessage(_result('c-fat', 'read', 'q' * 28000));
+      for (var i = 0; i < 10; i++) {
+        await session.appendMessage(_assistant('tail filler $i'));
+      }
+      final entries = await session.getEntries();
+      final fatCarrier = entries.firstWhere(
+        (r) =>
+            r is MessageRecord &&
+            r.message is AssistantMessage &&
+            (r.message as AssistantMessage).content.any(
+              (block) => block is ToolCall && block.id == 'c-fat',
+            ),
+      );
+      final fatSeq = RecordSeqIndex(entries).seqOf(fatCarrier.id);
       final afterExpand = await _viewOf(session);
       // Both expand artifacts are visible pairs on the branch.
       final branch = await session.getBranch();
@@ -304,7 +333,9 @@ void main() {
         window: 8000,
         settings: _settings,
         protectLastN: 2,
-        judge: (ledgerText, [token]) async => '[]',
+        // The judged hide takes the fat pair (its seq pick snaps to the
+        // whole group); the LRU pass owns the oldest expansion.
+        judge: (ledgerText, [token]) async => '["$fatSeq"]',
         summarize: (request) async =>
             SummarizationResult.failure('no checkpoint in this test'),
         checkpointPrompt: 'P',

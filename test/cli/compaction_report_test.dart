@@ -187,6 +187,64 @@ void main() {
     });
   });
 
+  group('formatCompactionReport: gh-2097 basis flip', () {
+    test(
+      'an upward basis jump renders as an explicit re-read, not 0 freed',
+      () {
+        // The incident line: a stale pre-run basis, then the post-append
+        // re-read lands ~170k above it — "0 freed · 0%" read the FIRST
+        // honest measurement as a regression.
+        final pass = AutoCompactorPass(
+          pass: 1,
+          tokensBefore: 1234,
+          tokensAfter: 171234,
+          fallback: 'structured·hide-fallback',
+          ok: true,
+          hiddenRecords: 12,
+          basisReadTokens: 170000,
+        );
+        expect(formatCompactionReport(pass, auto: true), [
+          'auto-compacted · structured·hide-fallback: '
+              '1234 → 171234 tokens (basis re-read: +170k)',
+        ]);
+      },
+    );
+
+    test('details: true renders the flip on the tokens line', () {
+      final pass = AutoCompactorPass(
+        pass: 2,
+        tokensBefore: 59496,
+        tokensAfter: 229496,
+        fallback: 'structured·ckpt',
+        ok: true,
+        summarizedMessages: 9,
+        basisReadTokens: 170000,
+      );
+      final lines = formatCompactionReport(pass, auto: false, details: true);
+      expect(lines.first, 'compacted · structured·ckpt · pass 2');
+      expect(lines[1], 'tokens: 59496 → 229496 (basis re-read: +170k)');
+      expect(lines.join(), isNot(contains('freed')));
+    });
+
+    test('a small restamp with no flip metadata keeps the 0 freed clamp', () {
+      // The classic engine's restamp jitter (a slightly larger
+      // after-count) carries NO basisReadTokens — its rendering is
+      // unchanged.
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 8451,
+        tokensAfter: 8481,
+        fallback: 'main=test-provider/test-model',
+        ok: true,
+        summary: 's',
+      );
+      expect(
+        formatCompactionReport(pass, auto: false).single,
+        contains('8451 → 8481 tokens (0 freed · 0%)'),
+      );
+    });
+  });
+
   group('manual /compact (UT-report)', () {
     late MemoryExecutionEnv env;
     late FakeCliIO io;

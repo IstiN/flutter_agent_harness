@@ -12,11 +12,33 @@ extension AgentCliDiagLog on AgentCli {
   /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
   /// TUI/stderr stay clean — the AutoCompactor hook streams progress to
   /// the user, the log captures everything for post-mortem.
+  ///
+  /// gh-2097: the append rides the serialized `_diagLogChain` — a burst
+  /// of diagnostics lands complete and in order, never racing itself on
+  /// the same file, and exit paths drain the chain so nothing is dropped
+  /// (the old unawaited fire-and-forget lost rapid bursts at process
+  /// exit).
   void _logDiagnostic(String message) {
     final path = _diagnosticLogPath;
     if (path == null) return;
-    unawaited(_appendDiagnosticLog(path, message));
+    _diagLogChain = _diagLogChain
+        .then((_) => _appendDiagnosticLog(path, message))
+        // The appender already swallows its own errors; this keeps the
+        // chain alive regardless so one failure can never drop every
+        // later line with it.
+        .catchError((Object _) {});
   }
+
+  /// gh-2097: drains the diagnostic-append chain — every exit path
+  /// awaits this so the process cannot die with pending lines in the
+  /// chain (the last thing the process does must never be a pending
+  /// log write).
+  Future<void> flushDiagnosticLog() => _diagLogChain;
+
+  /// Test seam: emit one diagnostic line exactly as production callers
+  /// do (gh-2097 burst/drop coverage).
+  @visibleForTesting
+  void logDiagnosticForTest(String message) => _logDiagnostic(message);
 
   /// Short session id for diagnostic log lines: parallel fa processes share
   /// one fa.log, so every lifecycle line names its session (post-mortem
