@@ -17,6 +17,9 @@
 ///   relieved transcript retried, the turn completes instead of dying.
 library;
 
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/task_models_store.dart';
@@ -224,6 +227,65 @@ void main() {
       // newest message is tiny), and the session keeps working.
       await service.sendText('ping');
       await service.waitForIdle();
+      expect(service.error, isNull);
+      expect(service.overWindowReliefCountForTest, 1);
+      expect(service.messages.last.content, 'r' * 1200);
+    });
+
+    test('the relief drains a pending persist before compacting (gh-2097 '
+        're-anchor)', () async {
+      final seen = <String>[];
+      final env = MemoryExecutionEnv();
+      // The app persists asynchronously (the crash-safe persister appends
+      // AS messages land, unawaited). The gh-2097 structured engine
+      // re-anchors the agent state on the session projection at run
+      // start, so a relief that compacts while a persist is still in
+      // flight re-anchors on a projection that lacks the just-sent
+      // message — the live context loses it and the local-trim valve
+      // finds nothing droppable (the newest remaining message alone
+      // busts the kept region). Cold/loaded schedules hit exactly that
+      // (the CI flutter-tests red on this file). The deterministic
+      // stand-in: hold the turn-3 record's append in flight until the
+      // relief had its chance — pre-fix the relief never waits for it,
+      // post-fix it joins the persist drain first.
+      final gate = Completer<void>();
+      var heldPingAppend = false;
+      final gatedFs = _GatedAppendFs(env, (content) {
+        if (!content.contains('"ping"') || heldPingAppend) return null;
+        heldPingAppend = true;
+        return gate.future;
+      });
+      final service = AgentService(
+        agent: _agent(
+          _failingSummarizer(seen, 'r' * 1200),
+          contextWindow: 512,
+        ),
+        env: env,
+        repo: JsonlSessionRepo(fs: gatedFs, sessionsRoot: '/sessions'),
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      // Same two-turn setup as IT-2 above: the transcript crosses the
+      // trigger, the failing summarizer surfaces the notice, and the
+      // session stays usable.
+      await service.sendText('a' * 200);
+      await service.waitForIdle();
+      await service.sendText('b' * 200);
+      await service.waitForIdle();
+      expect(service.overWindowReliefCountForTest, 0);
+
+      // Release the held append while the turn-3 relief is in flight.
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 50), gate.complete),
+      );
+      await service.sendText('ping');
+      await service.waitForIdle();
+
+      // The relief compacted on a basis that still held the just-sent
+      // message: the trim kept it, the retry carried it, the turn
+      // completed.
       expect(service.error, isNull);
       expect(service.overWindowReliefCountForTest, 1);
       expect(service.messages.last.content, 'r' * 1200);
@@ -470,4 +532,85 @@ void main() {
       );
     });
   });
+}
+
+/// In-memory [FileSystem] delegating to [env], whose `appendFile` can HOLD
+/// a chosen record's append in flight (test-local stand-in for the
+/// cold/loaded scheduling where the crash-safe persist has not drained
+/// yet). `holdWhere` returns the future to await before forwarding —
+/// `null` forwards immediately. Same decorator shape as the core's
+/// `FlakySessionFs` (test/session/flaky_session_fs.dart).
+final class _GatedAppendFs implements FileSystem {
+  _GatedAppendFs(this._env, this.holdWhere);
+
+  final MemoryExecutionEnv _env;
+  final Future<Object?>? Function(String content) holdWhere;
+
+  @override
+  String get cwd => _env.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _env.absolutePath(path);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) async {
+    final held = holdWhere(content);
+    if (held != null) {
+      await held;
+    }
+    return _env.appendFile(path, content);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _env.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _env.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _env.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _env.listDir(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _env.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _env.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _env.readTextFile(path);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _env.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _env.joinPath(parts);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _env.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _env.writeFile(path, content);
 }
