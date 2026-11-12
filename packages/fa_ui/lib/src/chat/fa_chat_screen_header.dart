@@ -79,7 +79,11 @@ extension _FaChatScreenHeader on _FaChatScreenState {
     final tokens = FaDesignTokens.of(context);
     return Padding(
       key: const ValueKey('faChatFloatingHeader'),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      // The canonical narrow bar strip: 6 + 91 + 6 (FaFloatingHeaderBar).
+      padding: const EdgeInsets.symmetric(
+        horizontal: FaFloatingHeaderBar.padHorizontal,
+        vertical: FaFloatingHeaderBar.padVertical,
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Title sizing retains the original side budget. The action row
@@ -129,12 +133,14 @@ extension _FaChatScreenHeader on _FaChatScreenState {
           );
           final builtAvatar = widget.avatarBuilder?.call(context, 'assistant');
           return SizedBox(
-            // 11 (identity air) + 36 (avatar) + 4 + 40 (pill): the avatar's
-            // center (11 + 18 = 29) sits ON the action row's center
-            // (Positioned top 9 + 40/2) — one centerline for the whole
-            // stacked glass header, and the circle clears the band's top
-            // edge (the old top-0 avatar read clipped at the window edge).
-            height: 91,
+            // FaFloatingHeaderBar.contentHeight: 11 (identity air) + 36
+            // (avatar) + 4 + 40 (pill): the avatar's center (11 + 18 = 29)
+            // sits ON the action row's center (Positioned top 9 + 40/2) —
+            // one centerline for the whole stacked glass header, and the
+            // circle clears the band's top edge (the old top-0 avatar read
+            // clipped at the window edge). Every narrow header strip shares
+            // this canonical bar geometry (see FaFloatingHeaderBar).
+            height: FaFloatingHeaderBar.contentHeight,
             child: Stack(
               // The vertical rail extends below the ordinary header without
               // inflating its measured extent or the transcript's top melt.
@@ -152,10 +158,12 @@ extension _FaChatScreenHeader on _FaChatScreenState {
                       // surface fill + hairline, ink1 glyph — not a third
                       // tinted-glass disc.
                       Padding(
-                        padding: const EdgeInsets.only(top: 11),
+                        padding: const EdgeInsets.only(
+                          top: FaFloatingHeaderBar.iconTop,
+                        ),
                         child: FaHeaderCircularAction(
                           key: const ValueKey('faChatHeaderAvatar'),
-                          dimension: 36,
+                          dimension: FaFloatingHeaderBar.actionDimension,
                           // Floating identity circle on the header
                           // backdrop: the glass underlay state.
                           glass: true,
@@ -168,7 +176,7 @@ extension _FaChatScreenHeader on _FaChatScreenState {
                               ),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: FaFloatingHeaderBar.iconTitleGap),
                       FaSurface(
                         key: const ValueKey('faChatHeaderTitlePill'),
                         glass: true,
@@ -179,7 +187,7 @@ extension _FaChatScreenHeader on _FaChatScreenState {
                         onTap: widget.onProjectTap,
                         child: SizedBox(
                           width: titleWidth,
-                          height: 40,
+                          height: FaFloatingHeaderBar.pillHeight,
                           child: Row(
                             children: [
                               Expanded(
@@ -236,10 +244,10 @@ extension _FaChatScreenHeader on _FaChatScreenState {
                 ),
                 if (showBack)
                   Positioned(
-                    top: 9,
+                    top: FaFloatingHeaderBar.actionBandTop,
                     left: 0,
-                    width: 40,
-                    height: 40,
+                    width: FaFloatingHeaderBar.pillHeight,
+                    height: FaFloatingHeaderBar.pillHeight,
                     child: _glassHeaderAction(
                       IconTheme.merge(
                         data: const IconThemeData(size: 18),
@@ -254,10 +262,10 @@ extension _FaChatScreenHeader on _FaChatScreenState {
                   ),
                 if (!duoRailActive)
                   Positioned(
-                    top: 9,
+                    top: FaFloatingHeaderBar.actionBandTop,
                     right: 0,
                     width: actionWidth,
-                    height: 40,
+                    height: FaFloatingHeaderBar.pillHeight,
                     child: FaAdaptiveHeader(
                       visualDensity: VisualDensity.compact,
                       overflowMenuKey: const ValueKey('faChatHeaderOverflow'),

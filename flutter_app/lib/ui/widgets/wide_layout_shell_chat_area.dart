@@ -16,7 +16,11 @@ extension _WideLayoutShellChatArea on _WideLayoutShellState {
   // Chat (center)
   // ---------------------------------------------------------------------------
 
-  Widget _buildChatArea(FahColors colors, {bool narrowRoute = false}) {
+  Widget _buildChatArea(
+    FahColors colors, {
+    bool narrowRoute = false,
+    BuildContext? narrowChatContext,
+  }) {
     final active = widget.manager.active;
     final networkEntry = _activeNetworkEntry;
     final pendingOpen = _pendingOpenId;
@@ -29,6 +33,10 @@ extension _WideLayoutShellChatArea on _WideLayoutShellState {
     if (active == null && networkEntry == null) {
       return _buildPlaceholder(colors);
     }
+    // Null (the inline wide center surface) resolves from the shell's own
+    // context, exactly as before; the pushed narrow chat route passes its
+    // route context so keyboard insets propagate (iOS keyboard contract).
+    final chatMedia = narrowChatContext ?? context;
     return MediaQuery(
       // The ONE adaptive header (issue #225): the old session row
       // (folder + label + model chip) merged into the chat bar — the
@@ -36,8 +44,19 @@ extension _WideLayoutShellChatArea on _WideLayoutShellState {
       // the chat renders everything in a single row above the
       // transcript. On macOS the traffic lights float over the bar, so
       // the header insets by the same top padding the session row used.
-      data: MediaQuery.of(context).copyWith(
-        padding: MediaQuery.paddingOf(context) + _chatAreaTopInset(narrowRoute),
+      //
+      // iOS KEYBOARD CONTRACT: this override must track the AMBIENT
+      // MediaQuery of where the chat actually renders. The narrow chat
+      // route ([_pushNarrowChat]) builds this widget inside a pushed
+      // route; resolving [MediaQuery] from the shell's own context there
+      // reads the covered route below, which only re-evaluates when the
+      // SHELL rebuilds — the route's copy froze viewInsets at the
+      // pre-keyboard values and the chat Scaffold never resized, leaving
+      // the composer buried behind the iOS keyboard. Resolving from
+      // [chatMedia] (the route's own context) registers the dependency
+      // on the route, so keyboard-inset changes rebuild it.
+      data: MediaQuery.of(chatMedia).copyWith(
+        padding: MediaQuery.paddingOf(chatMedia) + _chatAreaTopInset(narrowRoute),
       ),
       child: networkEntry != null
           ? _buildNetworkChatArea(networkEntry)

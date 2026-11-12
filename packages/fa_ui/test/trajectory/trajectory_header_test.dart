@@ -10,17 +10,26 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fixture.dart';
 
+/// Pumps the header alone. Wide by default: the narrow canvas (< 900)
+/// collapses the header to the canonical bar (see the narrow group below),
+/// which renders no stats/search/chips of its own.
 Future<void> _pump(
   WidgetTester tester,
   TrajectoryController controller, {
   VoidCallback? onClose,
-}) => tester.pumpWidget(
-  MaterialApp(
-    home: Scaffold(
-      body: TrajectoryHeader(controller: controller, onClose: onClose),
+  Size size = const Size(1280, 800),
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: TrajectoryHeader(controller: controller, onClose: onClose),
+      ),
     ),
-  ),
-);
+  );
+}
 
 void main() {
   testWidgets('renders title, stats cluster, search, and filter chips', (
@@ -182,5 +191,90 @@ void main() {
 
     expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
     controller.dispose();
+  });
+
+  group('narrow canvas (canonical bar)', () {
+    const narrowSize = Size(390, 844);
+
+    testWidgets('collapses to the canonical chat-bar extent', (tester) async {
+      final controller = fixtureController();
+      await _pump(tester, controller, size: narrowSize);
+
+      final bar = tester.getRect(find.byType(TrajectoryHeader));
+      // The chat floating glass header's strip: 6 + 91 + 6.
+      expect(bar.height, FaFloatingHeaderBar.barExtent);
+      expect(find.text('Trajectory'), findsOneWidget);
+      // The rich header's deck moved to the ledger's control rows.
+      expect(find.text('1 turn'), findsNothing);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Messages'), findsNothing);
+      controller.dispose();
+    });
+
+    testWidgets('keeps close reachable on the band', (tester) async {
+      final controller = fixtureController();
+      var closed = false;
+      await _pump(
+        tester,
+        controller,
+        onClose: () => closed = true,
+        size: narrowSize,
+      );
+
+      await tester.tap(find.byTooltip('Close trajectory'));
+      expect(closed, isTrue);
+      controller.dispose();
+    });
+
+    testWidgets('export menu still copies via the band button', (tester) async {
+      final clipboard = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (message) async {
+          if (message.method == 'Clipboard.setData') {
+            clipboard.add((message.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      final controller = fixtureController();
+      await _pump(tester, controller, size: narrowSize);
+
+      await tester.tap(find.byTooltip('Export trajectory'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy as JSON').last);
+      await tester.pumpAndSettle();
+      expect(clipboard.single, exportTrajectoryJson(controller.snapshot));
+      controller.dispose();
+    });
+
+    testWidgets('ledger control deck renders stats, search, and chips', (
+      tester,
+    ) async {
+      final controller = fixtureController();
+      tester.view.physicalSize = narrowSize;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: TrajectoryBody(controller: controller)),
+        ),
+      );
+
+      expect(find.text('Trajectory'), findsOneWidget);
+      expect(find.text('1 turn'), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
+      for (final chip in ['Messages', 'Tools', 'Errors', 'System']) {
+        expect(find.text(chip), findsOneWidget);
+      }
+      controller.dispose();
+    });
   });
 }

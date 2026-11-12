@@ -21,7 +21,6 @@
 /// surfaces; this suite pins that the claims match the registry reality.
 library;
 
-import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';

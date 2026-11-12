@@ -287,6 +287,11 @@ class _LocalSessionsPanelState extends State<LocalSessionsPanel> {
                                   folders: folders,
                                   iconResolver: widget.iconResolver,
                                   onOpen: widget.onSelectFolder,
+                                  bottomReserve: widget.compact
+                                      ? MessengerFloatingDockInsets.bottomOf(
+                                          context,
+                                        )
+                                      : 0,
                                 ))
                         : visibleSessions.isEmpty && _query.trim().isNotEmpty
                         ? sessionSearchEmptyState(
@@ -297,6 +302,9 @@ class _LocalSessionsPanelState extends State<LocalSessionsPanel> {
                             noMatches: context.l10n.listSearchNoMatches(_query),
                           )
                         : LocalFolderSessionList(
+                            bottomReserve: widget.compact
+                                ? MessengerFloatingDockInsets.bottomOf(context)
+                                : 0,
                             sessions: visibleSessions,
                             selectedSessionId: widget.selectedSessionId,
                             onOpenSession: widget.onOpenSession,
@@ -322,11 +330,16 @@ class _FolderList extends StatelessWidget {
     required this.folders,
     required this.iconResolver,
     required this.onOpen,
+    this.bottomReserve = 0,
   });
 
   final List<LocalSessionFolder> folders;
   final FolderIconResolver? iconResolver;
   final ValueChanged<String> onOpen;
+
+  /// Extra scroll padding under the floating phone dock (compact hosts
+  /// only; desktop passes 0 and keeps the plain 4pt inset).
+  final double bottomReserve;
 
   @override
   Widget build(BuildContext context) {
@@ -335,7 +348,7 @@ class _FolderList extends StatelessWidget {
       key: const ValueKey('localFoldersList'),
       padding: EdgeInsets.only(
         top: MessengerGlassBodyInsets.topOf(context) + 4,
-        bottom: 4,
+        bottom: 4 + bottomReserve,
       ),
       itemCount: folders.length,
       itemBuilder: (context, index) {
@@ -516,6 +529,7 @@ class LocalFolderSessionList extends StatelessWidget {
     this.emptyText,
     this.onLocalMenu,
     this.onVisibleSession,
+    this.bottomReserve = 0,
   });
 
   /// The folder's sessions, most recent first (the folder grouping's
@@ -536,6 +550,10 @@ class LocalFolderSessionList extends StatelessWidget {
   /// Lazy decoration request for a session row that reached the viewport.
   final ValueChanged<String>? onVisibleSession;
 
+  /// Extra scroll padding under the floating phone dock (compact hosts
+  /// only; desktop passes 0 and keeps the plain 4pt inset).
+  final double bottomReserve;
+
   @override
   Widget build(BuildContext context) {
     if (sessions.isEmpty) {
@@ -552,7 +570,7 @@ class LocalFolderSessionList extends StatelessWidget {
         left: 8,
         right: 8,
         top: MessengerGlassBodyInsets.topOf(context) + 4,
-        bottom: 4,
+        bottom: 4 + bottomReserve,
       ),
       itemCount: sessions.length,
       itemBuilder: (context, index) {

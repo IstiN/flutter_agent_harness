@@ -1,0 +1,55 @@
+name: 🖼 golden-regen
+# Re-capture the macOS golden baselines on the hosted runner the nightly
+# guard renders them on. Run when the SDK train moves (the baselines are
+# pixel-sensitive to the engine's text stack — see the Golden suite leg in
+# ci.yml): dispatch, download the goldens artifact, copy into
+# flutter_app/test/golden/goldens/, commit. TZ=UTC + bundled fonts are the
+# #1856 pinned-render contract; the capture host is the same macos-latest
+# image the enforcement legs use.
+# Runs when the 'golden-regen' label is added to a PR (the workflow file
+# lives on the PR branch; pull_request events execute the branch's copy
+# against the merge ref). Remove the label and re-add to re-capture.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  regen:
+    name: Golden regen (macOS capture)
+    runs-on: macos-latest
+    if: github.event.label.name == 'golden-regen'
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - uses: ./.github/actions/flutter-pub-get
+      - name: flutter test/golden --update-goldens (issue #1856 pinned-font env)
+        working-directory: flutter_app
+        shell: bash
+        env:
+          TZ: UTC
+        run: flutter test test/golden --update-goldens
+      - name: Upload re-captured goldens
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: goldens-macos-350
+          path: flutter_app/test/golden/goldens/
+          retention-days: 7

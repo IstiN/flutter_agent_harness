@@ -2,12 +2,20 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import '../chat/fa_adaptive_header.dart'
+    show FaFloatingHeaderBar, FaHeaderAction, FaHeaderCircularAction;
 import '../chat/fa_chat_screen.dart' show kWideLayoutBreakpoint;
 import '../theme/app_theme.dart';
+import '../theme/fa2_tokens.dart' show FaDesignTokens;
+import '../widgets/fa2_controls.dart' show FaSurface;
+import '../widgets/fa_icon_action_band.dart' show FaIconActionBand;
 import 'trajectory_controller.dart';
 import 'trajectory_details.dart';
 import 'trajectory_details_tabs.dart';
@@ -65,6 +73,7 @@ class TrajectoryView extends StatefulWidget {
     required this.controller,
     this.tableBuilder,
     this.timelineBuilder,
+    this.leadingControls,
     this.onRecordActivate,
   });
 
@@ -81,6 +90,11 @@ class TrajectoryView extends StatefulWidget {
 
   /// The timeline strip seam; null renders nothing.
   final TrajectoryTimelineBuilder? timelineBuilder;
+
+  /// Extra control deck rendered at the top of the feed, above the fold
+  /// toolbar. The narrow trajectory shell re-homes the stats/search/filter
+  /// deck here (the canonical bar cannot hold it); null on wide canvases.
+  final Widget? leadingControls;
 
   @override
   State<TrajectoryView> createState() => _TrajectoryViewState();
@@ -140,6 +154,7 @@ class _TrajectoryViewState extends State<TrajectoryView> {
       label: strings.viewTrajectory,
       child: Column(
         children: [
+          ?widget.leadingControls,
           TrajectoryToolbar(controller: controller),
           timeline,
           Expanded(
@@ -230,6 +245,12 @@ class TrajectoryBody extends StatelessWidget {
       tableBuilder: isWide
           ? (context, controller) => TrajectoryTable(controller: controller)
           : null,
+      // Narrow canvases: the canonical header bar cannot hold the stats,
+      // search, and filter deck, so it rides with the ledger's own control
+      // rows (above the fold toolbar) instead of inflating the header.
+      leadingControls: isWide
+          ? null
+          : _TrajectoryLedgerControls(controller: controller),
     );
     return Column(
       children: [
@@ -277,12 +298,22 @@ class TrajectoryHeader extends StatelessWidget {
     final strings = TrajectoryStrings.of(context);
     final colors = FahColors.of(context);
     final theme = Theme.of(context).textTheme;
+    // Narrow canvases collapse the header to the canonical floating bar
+    // (FaFloatingHeaderBar — the chat header's strip) so the trajectory
+    // pane reads as the same chrome system as chats and Apps on a phone;
+    // the stats/search/filter deck moves into the ledger's control rows
+    // (see [_TrajectoryLedgerControls]). Wide canvases keep the rich
+    // multi-row header unchanged.
+    final narrow = MediaQuery.sizeOf(context).width < kWideLayoutBreakpoint;
     return Semantics(
       container: true,
       label: strings.headerAria,
       child: ListenableBuilder(
         listenable: controller,
         builder: (context, _) {
+          if (narrow) {
+            return _buildNarrowBar(context, strings, controller);
+          }
           final stats = controller.stats;
           return Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
@@ -391,7 +422,7 @@ class TrajectoryHeader extends StatelessWidget {
                   children: [
                     for (final filter in TrajectoryLedgerFilter.values)
                       FilterChip(
-                        label: Text(_filterLabel(filter, strings)),
+                        label: Text(_trajectoryFilterLabel(filter, strings)),
                         selected: controller.filters.contains(filter),
                         showCheckmark: false,
                         visualDensity: VisualDensity.compact,
@@ -407,16 +438,280 @@ class TrajectoryHeader extends StatelessWidget {
     );
   }
 
-  String _filterLabel(
-    TrajectoryLedgerFilter filter,
+  /// The narrow canvas bar: the chat floating glass header's canonical
+  /// strip ([FaFloatingHeaderBar.barExtent] below the pane's top edge).
+  /// Same paddings, 36pt leading circle, 40pt centered title pill (with
+  /// the session stamp as the eyebrow line), and a 40pt glass action band
+  /// on the circle's centerline — export (when records exist) and close.
+  /// The rich header's stats pills, search field, and filter chips live
+  /// in the ledger's control deck instead ([_TrajectoryLedgerControls]).
+  Widget _buildNarrowBar(
+    BuildContext context,
     TrajectoryStrings strings,
-  ) => switch (filter) {
-    TrajectoryLedgerFilter.messages => strings.filterMessages,
-    TrajectoryLedgerFilter.tools => strings.filterTools,
-    TrajectoryLedgerFilter.errors => strings.filterErrors,
-    TrajectoryLedgerFilter.system => strings.filterSystem,
-  };
+    TrajectoryController controller,
+  ) {
+    final tokens = FaDesignTokens.of(context);
+    final stats = controller.stats;
+    final hasRecords = controller.snapshot.records.isNotEmpty;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final contentWidth = math.max(0.0, constraints.maxWidth);
+        final titleSideWidth = math.min(360.0, contentWidth * .38);
+        final titleWidth = math.min(
+          320.0,
+          math.max(200.0, contentWidth - 2 * (titleSideWidth + 12)),
+        );
+        return Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: FaFloatingHeaderBar.padHorizontal,
+            vertical: FaFloatingHeaderBar.padVertical,
+          ),
+          child: SizedBox(
+            height: FaFloatingHeaderBar.contentHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          top: FaFloatingHeaderBar.iconTop,
+                        ),
+                        child: FaHeaderCircularAction(
+                          key: const ValueKey('trajectoryBarIcon'),
+                          dimension: FaFloatingHeaderBar.actionDimension,
+                          glass: true,
+                          child: Icon(
+                            Icons.timeline,
+                            size: 18,
+                            color: tokens.ink1,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: FaFloatingHeaderBar.iconTitleGap),
+                      FaSurface(
+                        key: const ValueKey('trajectoryBarTitlePill'),
+                        glass: true,
+                        useBackdropGroup: true,
+                        color: tokens.surface1,
+                        borderRadius: BorderRadius.circular(14),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: SizedBox(
+                          width: titleWidth,
+                          height: FaFloatingHeaderBar.pillHeight,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (stats.startedAt case final startedAt?)
+                                Text(
+                                  strings.headerSession(
+                                    _formatStamp(startedAt),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: tokens.ink2,
+                                    fontSize: 10,
+                                    height: 1.2,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              Text(
+                                strings.viewTrajectory,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: tokens.ink1,
+                                  fontSize: 13,
+                                  height: 1.25,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  top: FaFloatingHeaderBar.actionBandTop,
+                  right: 0,
+                  height: FaFloatingHeaderBar.pillHeight,
+                  child: FaIconActionBand<String>(
+                    key: const ValueKey('trajectoryBarActions'),
+                    glass: true,
+                    actions: [
+                      ?_narrowExportAction(context, strings, hasRecords),
+                      if (onClose != null)
+                        FaHeaderAction(
+                          key: const ValueKey('trajectoryBarClose'),
+                          icon: Icons.close,
+                          label: strings.headerClose,
+                          onPressed: onClose,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Export keeps its format menu: the glass band button opens the same
+  /// json/markdown popup the wide header's `PopupMenuButton` shows.
+  FaHeaderAction? _narrowExportAction(
+    BuildContext context,
+    TrajectoryStrings strings,
+    bool hasRecords,
+  ) {
+    if (!hasRecords) return null;
+    return FaHeaderAction(
+      key: _narrowExportButtonKey,
+      icon: Icons.ios_share,
+      label: strings.headerExport,
+      onPressed: () => unawaited(_showNarrowExportMenu(context, strings)),
+    );
+  }
+
+  Future<void> _showNarrowExportMenu(
+    BuildContext context,
+    TrajectoryStrings strings,
+  ) async {
+    final box =
+        _narrowExportButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    if (box == null || !box.attached) return;
+    final center = box.localToGlobal(box.size.center(Offset.zero));
+    final format = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromCenter(center: center, width: 1, height: 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(value: 'json', child: Text(strings.exportCopyJson)),
+        PopupMenuItem(
+          value: 'markdown',
+          child: Text(strings.exportCopyMarkdown),
+        ),
+      ],
+    );
+    if (format == null) return;
+    await Clipboard.setData(
+      ClipboardData(
+        text: switch (format) {
+          'json' => exportTrajectoryJson(controller.snapshot),
+          _ => exportTrajectoryMarkdown(controller.snapshot),
+        },
+      ),
+    );
+  }
 }
+
+final GlobalKey _narrowExportButtonKey = GlobalKey();
+
+/// The ledger's narrow control deck: the stats pills, search field, and
+/// filter chips that the canonical bar cannot hold. They render at the
+/// top of the feed's control rows ([TrajectoryView.leadingControls]) —
+/// the pane's own control area, exactly where the fold toolbar already
+/// lives — instead of inflating the header past the chat bar height.
+class _TrajectoryLedgerControls extends StatelessWidget {
+  const _TrajectoryLedgerControls({required this.controller});
+
+  final TrajectoryController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final strings = TrajectoryStrings.of(context);
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final stats = controller.stats;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _StatPill(
+                    label: strings.statsTurns(stats.turnCount),
+                    colors: colors,
+                  ),
+                  if (stats.totalDuration > Duration.zero)
+                    _StatPill(
+                      label: strings.statsDuration(
+                        _formatDuration(stats.totalDuration),
+                      ),
+                      colors: colors,
+                    ),
+                  _StatPill(
+                    label: strings.statsTokensIn('${stats.inputTokens}'),
+                    colors: colors,
+                  ),
+                  _StatPill(
+                    label: strings.statsTokensOut('${stats.outputTokens}'),
+                    colors: colors,
+                  ),
+                  if (controller.snapshot.unknownRecordCount > 0)
+                    _StatPill(
+                      label: strings.statsUnknown(
+                        controller.snapshot.unknownRecordCount,
+                      ),
+                      colors: colors,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _TrajectorySearchField(controller: controller),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final filter in TrajectoryLedgerFilter.values)
+                    FilterChip(
+                      label: Text(_trajectoryFilterLabel(filter, strings)),
+                      selected: controller.filters.contains(filter),
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => controller.toggleFilter(filter),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The ledger filter chip's label (shared by the wide header and the
+/// narrow control deck).
+String _trajectoryFilterLabel(
+  TrajectoryLedgerFilter filter,
+  TrajectoryStrings strings,
+) => switch (filter) {
+  TrajectoryLedgerFilter.messages => strings.filterMessages,
+  TrajectoryLedgerFilter.tools => strings.filterTools,
+  TrajectoryLedgerFilter.errors => strings.filterErrors,
+  TrajectoryLedgerFilter.system => strings.filterSystem,
+};
 
 class _StatPill extends StatelessWidget {
   const _StatPill({required this.label, required this.colors});
@@ -563,7 +858,7 @@ class TrajectoryDetailsPane extends StatelessWidget {
 }
 
 String _formatStamp(DateTime time) {
-  final two = (int value) => value.toString().padLeft(2, '0');
+  String two(int value) => value.toString().padLeft(2, '0');
   return '${time.year}-${two(time.month)}-${two(time.day)} '
       '${two(time.hour)}:${two(time.minute)}';
 }

@@ -149,7 +149,7 @@ void main() {
     test('the leg builds on the pinned Flutter SDK (gh-1684 AC5)', () {
       expect(
         steps,
-        contains('flutter-version: 3.47.7'),
+        contains('flutter-version: 3.50.0'),
         reason:
             '#1431 exact-patch pin — every fa-extension.zip builder '
             'must stay comparable across legs',

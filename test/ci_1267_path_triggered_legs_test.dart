@@ -189,7 +189,7 @@ void main() {
       );
       expect(
         job,
-        contains("flutter-version: '3.47.x'"),
+        contains("flutter-version: '3.50.x'"),
         reason:
             'same pinned SDK as the nightly build-release legs (#281) '
             '— a floating SDK would smoke a different tree than ships',
