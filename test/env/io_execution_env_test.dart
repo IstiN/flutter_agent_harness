@@ -48,6 +48,24 @@ void main() {
       expect((await fs.exists('d')).valueOrNull, isFalse);
     });
 
+    test('entry names stay bare under Windows-style separators', () async {
+      // Windows: dart:io yields entity paths that mix the forward slashes
+      // the env joined with platform backslashes — `name` must still be a
+      // single segment (gh-2141: `apps\2048` ids broke the apps catalog).
+      await fs.createDir('d/sub2');
+      await fs.writeFile('d/f2.txt', 'x');
+      final infos = (await fs.listDir('d')).getOrThrow();
+      for (final info in infos) {
+        expect(info.name, isNot(contains('/')), reason: info.path);
+        expect(info.name, isNot(contains(r'\')), reason: info.path);
+      }
+      expect(infos.map((i) => i.name), containsAll(['sub2', 'f2.txt']));
+      final stat = (await fs.fileInfo('d/sub2')).getOrThrow();
+      expect(stat.name, 'sub2');
+      await fs.remove('d/sub2', recursive: true);
+      await fs.remove('d/f2.txt');
+    });
+
     test('readTextLines and missing-file errors', () async {
       await fs.writeFile('l.txt', 'a\nb\n');
       expect((await fs.readTextLines('l.txt')).getOrThrow(), ['a', 'b']);

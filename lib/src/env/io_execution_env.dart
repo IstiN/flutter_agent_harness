@@ -263,7 +263,12 @@ final class LocalFileSystem
       }
       return Ok(
         FileInfo(
-          name: resolved.split('/').last,
+          // Windows paths carry backslash segments (and dart:io mixes
+          // them with the forward slashes we joined) — split on both or
+          // `name` comes back as a whole multi-segment path (observed on
+          // Windows: listDir names like `apps\2048` broke the apps
+          // catalog and every other basename consumer).
+          name: resolved.split(RegExp(r'[/\\]')).last,
           path: resolved,
           kind: kind,
           size: stat.size,
