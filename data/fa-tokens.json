@@ -1,24 +1,4 @@
 {
-  "pr-1970": [
-    {
-      "leg": "rework",
-      "at": "2026-10-29T16:10:18Z",
-      "prompt": 264214,
-      "completion": 12346,
-      "total": 276560,
-      "cacheRead": 5505216,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-29T16:30:02Z",
-      "prompt": 79052,
-      "completion": 24391,
-      "total": 103443,
-      "cacheRead": 2794176,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-1972": [
     {
       "leg": "review",
@@ -2921,6 +2901,15 @@
       "completion": 37594,
       "total": 159593,
       "cacheRead": 2882432,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-12T16:48:21Z",
+      "prompt": 103050,
+      "completion": 35117,
+      "total": 138167,
+      "cacheRead": 4989056,
       "model": "glm-5.3-flash"
     }
   ],
