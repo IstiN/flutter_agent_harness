@@ -50,7 +50,8 @@ extension AgentCliLease on AgentCli {
   /// Claims the ownership lease for the CURRENT session after a
   /// drive-open. Free/expired → acquired (a dead owner is named in a
   /// printed warning); live → viewer mode; no store (or an unenforceable
-  /// backend) → today's unleased behavior.
+  /// backend) → today's unleased behavior; publish/verify failure on an
+  /// enforceable backend → LOUD refusal, never drive unleased (#2138).
   Future<void> _claimSessionLease() async {
     final store = config.leaseStore;
     final session = _session;
@@ -79,14 +80,28 @@ extension AgentCliLease on AgentCli {
       case LeaseBlocked(:final lease):
         await _enterViewerMode(lease: lease, meta: meta);
       case LeaseUnenforced():
-        // E4/E5 fail-open: a broken or non-atomic lease store never
-        // blocks opening a session — drive without enforcement.
+        // E5 fail-open: a backend WITHOUT atomic rename never blocks
+        // opening a session — drive without enforcement.
         break;
+      case LeaseRefused(:final reason):
+        // #2138: the store could not prove the session free on an
+        // enforceable backend — a second writer may be live. Refuse the
+        // drive loudly (the process dies loudly, gh-1197 policy).
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'the lease store failed to publish/verify; refusing to drive. '
+            'Fix the store (or clear a stale .owner.json) and reopen.',
+          ),
+        );
+        throw StateError('session lease refused: ${reason.name}');
     }
   }
 
   /// Headless claim (E7): no viewer mode exists here — returns the
   /// owner's live lease when blocked (the caller refuses), else null.
+  /// A publish/verify failure on an enforceable backend THROWS (#2138):
+  /// the runHeadless catch prints it and exits 1 — never drive unleased.
   Future<SessionLease?> _claimSessionLeaseHeadless() async {
     final store = config.leaseStore;
     final session = _session;
@@ -108,6 +123,11 @@ extension AgentCliLease on AgentCli {
         return lease;
       case LeaseUnenforced():
         return null;
+      case LeaseRefused(:final reason):
+        throw StateError(
+          'lease: cannot prove this session is free (${reason.name}) — '
+          'refusing to drive',
+        );
     }
   }
 
@@ -187,9 +207,7 @@ extension AgentCliLease on AgentCli {
   Future<void> _printViewerBannerIfAny() async {
     final viewer = _viewer;
     if (viewer == null) return;
-    io.writeln(
-      tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)),
-    );
+    io.writeln(tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)));
   }
 
   /// Viewer composer line → the owner's mailbox with CLI attribution.

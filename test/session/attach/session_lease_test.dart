@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -41,22 +42,16 @@ void main() {
       );
     }
     // mtime pins liveness: age=0 is a live owner, >15s is a dead one.
-    env.setMtime(
-      sidecar,
-      base.millisecondsSinceEpoch - age.inMilliseconds,
-    );
+    env.setMtime(sidecar, base.millisecondsSinceEpoch - age.inMilliseconds);
   }
 
   setUp(() async {
     env = MemoryExecutionEnv(cwd: '/work');
     store = FileSessionLeaseStore(env: env, now: () => base);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final session = await repo.create(
-      JsonlSessionCreateOptions(cwd: '/work'),
-    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     sessionPath = (await session.getMetadata()).path;
   });
-
 
   Future<LeaseAcquire> attempt({
     String bootId = 'mine',
@@ -71,27 +66,30 @@ void main() {
   );
 
   group('lease lifecycle (AC1)', () {
-    test('free lease acquires and the sidecar carries the full shape',
-        () async {
-      final result = await attempt(bootId: 'mine', pid: 1000);
-      expect(result, isA<LeaseAcquired>());
-      final sidecar = store.sidecarPath(sessionPath);
-      final json =
-          jsonDecode((await env.readTextFile(sidecar)).valueOrNull!)
-              as Map<String, dynamic>;
-      expect(json['host'], 'cli');
-      expect(json['sessionId'], 'sess-1');
-      expect(json['pid'], 1000);
-      expect(json['bootId'], 'mine');
-      expect(json['acquiredAt'], base.toIso8601String());
-      expect(json['heartbeatAt'], base.toIso8601String());
-      // No temp files survive a publish.
-      expect(
-        (await env.listDir('/sessions')).valueOrNull!
-            .where((f) => f.path.endsWith('.tmp')),
-        isEmpty,
-      );
-    });
+    test(
+      'free lease acquires and the sidecar carries the full shape',
+      () async {
+        final result = await attempt(bootId: 'mine', pid: 1000);
+        expect(result, isA<LeaseAcquired>());
+        final sidecar = store.sidecarPath(sessionPath);
+        final json =
+            jsonDecode((await env.readTextFile(sidecar)).valueOrNull!)
+                as Map<String, dynamic>;
+        expect(json['host'], 'cli');
+        expect(json['sessionId'], 'sess-1');
+        expect(json['pid'], 1000);
+        expect(json['bootId'], 'mine');
+        expect(json['acquiredAt'], base.toIso8601String());
+        expect(json['heartbeatAt'], base.toIso8601String());
+        // No temp files survive a publish.
+        expect(
+          (await env.listDir(
+            '/sessions',
+          )).valueOrNull!.where((f) => f.path.endsWith('.tmp')),
+          isEmpty,
+        );
+      },
+    );
 
     test('heartbeat refreshes liveness only for the owner (E3)', () async {
       await attempt(bootId: 'mine');
@@ -124,10 +122,7 @@ void main() {
       expect(blocked.lease.pid, 999);
       expect(blocked.lease.bootId, 'owner-boot');
       // The owner's sidecar is untouched.
-      expect(
-        (await store.inspect(sessionPath)).lease!.bootId,
-        'owner-boot',
-      );
+      expect((await store.inspect(sessionPath)).lease!.bootId, 'owner-boot');
     });
 
     test('property: no interleaving beats a fresh heartbeat (AC7)', () async {
@@ -256,4 +251,184 @@ void main() {
       expect(leaseOwnerLabel('extension'), 'Fa extension');
     });
   });
+
+  group('enforceable-backend failures refuse the drive (#2138)', () {
+    Future<(FileSessionLeaseStore, String, _GateLeaseEnv)> rig(
+      _GateLeaseEnv env,
+    ) async {
+      final store = FileSessionLeaseStore(env: env, now: () => base);
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final path = (await session.getMetadata()).path;
+      return (store, path, env);
+    }
+
+    test('HOLE-2: a rename failure on an enforceable backend REFUSES the '
+        'open — never drive unleased', () async {
+      final (store, sessionPath, env) = await rig(
+        _GateLeaseEnv()..failRenames = true,
+      );
+      final sidecar = store.sidecarPath(sessionPath);
+
+      final result = await store.acquire(
+        sessionFilePath: sessionPath,
+        sessionId: 'sess-refuse',
+        host: 'cli',
+        bootId: 'mine',
+        pid: 1000,
+      );
+
+      // Cannot prove the session is free → deny, not LeaseUnenforced.
+      expect(result, isA<LeaseRefused>());
+      expect((result as LeaseRefused).reason, LeaseRefuseReason.publishFailed);
+      // No half-published sidecar, no tmp litter.
+      expect((await env.readTextFile(sidecar)).valueOrNull, isNull);
+      expect(
+        (await env.listDir(
+          '/sessions',
+        )).valueOrNull!.where((f) => f.path.endsWith('.tmp')),
+        isEmpty,
+      );
+    });
+
+    test(
+      'HOLE-3: a persistently unreadable verify REFUSES the open after '
+      'bounded retries — the rename SUCCEEDED, only the read is broken',
+      () async {
+        final (store, sessionPath, _) = await rig(
+          _GateLeaseEnv()..failingSidecarReads = 99,
+        );
+
+        final result = await store.acquire(
+          sessionFilePath: sessionPath,
+          sessionId: 'sess-verify',
+          host: 'cli',
+          bootId: 'mine',
+          pid: 1000,
+        );
+
+        expect(result, isA<LeaseRefused>());
+        expect((result as LeaseRefused).reason, LeaseRefuseReason.verifyFailed);
+      },
+    );
+
+    test(
+      'HOLE-3: a flaky verify read heals inside the bounded retry',
+      () async {
+        final (store, sessionPath, _) = await rig(
+          // One failure feeds the initial inspect (read-side E4 fail-open),
+          // one feeds the first verify read; the retry heals the rest.
+          _GateLeaseEnv()..failingSidecarReads = 2,
+        );
+
+        final result = await store.acquire(
+          sessionFilePath: sessionPath,
+          sessionId: 'sess-flaky',
+          host: 'cli',
+          bootId: 'mine',
+          pid: 1000,
+        );
+
+        expect(result, isA<LeaseAcquired>());
+      },
+    );
+  });
+}
+
+/// A renamable env with injected publish/verify failures: [failRenames]
+/// breaks the atomic rename (hole-2 rig); [failingSidecarReads] makes the
+/// next N sidecar READS fail (hole-3 rig — one is usually eaten by the
+/// initial inspect, which stays read-side fail-open E4). Delegates to a
+/// [MemoryExecutionEnv] and keeps the rename capability so the store
+/// treats it as an ENFORCEABLE backend.
+final class _GateLeaseEnv implements ExecutionEnv, RenamableFileSystem {
+  _GateLeaseEnv() : _delegate = MemoryExecutionEnv(cwd: '/work');
+
+  final MemoryExecutionEnv _delegate;
+  bool failRenames = false;
+  int failingSidecarReads = 0;
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) async {
+    if (failRenames) {
+      return Err(const FileError(FileErrorCode.unknown, 'rename exploded'));
+    }
+    return _delegate.renamePath(from, to);
+  }
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    if (failingSidecarReads > 0 && path.endsWith('.owner.json')) {
+      failingSidecarReads--;
+      return Err(const FileError(FileErrorCode.unknown, 'sidecar read hiccup'));
+    }
+    return _delegate.readTextFile(path);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
 }

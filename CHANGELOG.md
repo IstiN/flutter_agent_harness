@@ -33,6 +33,23 @@ block a release again.
   checkpoints, escalation) stays at the turn boundaries — post-run and
   pre-flight — and the over-window funnel (issue #1085) survives as the
   backstop when the deterministic tier cannot free the window.
+- fix(gh-2138): session-ownership lease fail-open holes closed — a second
+  writer is no longer possible through an error path. On an enforceable
+  backend (atomic rename available) a lease publish failure or a
+  persistently failing ownership verify now REFUSES the drive-open
+  (`LeaseRefused` → the app throws `LeaseRefusedException` and the wide
+  shell refuses loudly; the CLI prints a loud refusal and aborts —
+  headless exits 1) instead of silently driving unleased; the verify
+  re-read retries a bounded 3× so a transient hiccup still acquires. The
+  only remaining fail-open is a backend with no atomic rename (E5, web),
+  and a store-less manager (now impossible on desktop: every app
+  bootstrap wires `defaultLeaseStore`) proceeds with a loud warning.
+  Every drive-open logs the resolved lease branch (acquired / blocked
+  owner / unenforced / refused / no-store). The wide shell gained the
+  attach surface: a live-lease open opens the attached view (transcript
+  follow + composer → owner mailbox via `AttachedSessionController`)
+  with a banner naming the owner (host + pid) instead of a dead-end
+  snack, and the transport's transcript poller is disposed on detach.
 - feat(gh-2098): the auto-compact trigger is user-configurable —
   `compaction.triggerRatio` / `compaction.reserveTokens` /
   `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project

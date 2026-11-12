@@ -847,6 +847,10 @@
       }
     }
   },
+  "leaseUnverified": "Couldn't verify session ownership — not driving. A live owner may hold this session; see the app log for details.",
+  "@leaseUnverified": {
+    "description": "Loud refusal when the lease store cannot prove a session is free on an enforceable backend (#2138) — never a silent second writer"
+  },
   "sessionTooLargeTitle": "Session ({size} MB) is over the instant-open budget and couldn't be opened safely.",
   "@sessionTooLargeTitle": {
     "description": "Fallback when an over-budget session cannot open windowed — the full open is refused (issue #381)",

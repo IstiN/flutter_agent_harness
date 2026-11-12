@@ -2265,6 +2265,10 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get leaseUnverified =>
+      'Не удалось подтвердить владение сессией — управление не включено. Сессию может вести другой процесс; подробности в журнале приложения.';
+
+  @override
   String sessionTooLargeTitle(String size) {
     return 'Сессия ($size МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.';
   }

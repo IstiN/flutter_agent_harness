@@ -16,9 +16,18 @@ import 'package:fa_ui/fa_ui.dart';
 /// The transport is injected (the interface trio from the core) — the
 /// file impl today, a network impl for remote attach later.
 class AttachedSessionScreen extends StatefulWidget {
-  const AttachedSessionScreen({super.key, required this.controller});
+  const AttachedSessionScreen({
+    super.key,
+    required this.controller,
+    this.ownerLease,
+  });
 
   final AttachedSessionController controller;
+
+  /// The live lease that blocked the drive-open (#2138 contract pt 4):
+  /// when set, a banner under the appbar names the owner (host + pid) —
+  /// the attached view always says WHO is driving.
+  final SessionLease? ownerLease;
 
   @override
   State<AttachedSessionScreen> createState() => _AttachedSessionScreenState();
@@ -76,6 +85,33 @@ class _AttachedSessionScreenState extends State<AttachedSessionScreen> {
       ),
       body: Column(
         children: [
+          if (widget.ownerLease case final lease?)
+            Material(
+              color: colors.panel,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 14, color: colors.teal),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.sessionDrivenElsewhere(
+                          leaseOwnerLabel(lease.host),
+                          lease.pid,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: colors.dim, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Expanded(
             child: AnimatedBuilder(
               animation: controller,

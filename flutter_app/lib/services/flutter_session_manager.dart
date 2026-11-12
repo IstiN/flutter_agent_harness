@@ -113,6 +113,33 @@ final class SessionDrivenElsewhereException implements Exception {
       '(pid ${lease.pid})';
 }
 
+/// Opening this session for DRIVE was REFUSED (#2138): on an enforceable
+/// backend the lease store could not PROVE the session is free (publish
+/// or verify failure) — no owner is known, so there is nobody to attach
+/// to; the app refuses loudly instead of becoming a possible second
+/// writer. A failed open is recoverable; a two-writer session is not.
+final class LeaseRefusedException implements Exception {
+  /// Creates the exception.
+  LeaseRefusedException(this.reason);
+
+  /// Which enforcement leg failed.
+  final LeaseRefuseReason reason;
+
+  @override
+  String toString() =>
+      'Session lease could not be verified (${reason.name}) — refusing to '
+      'drive';
+}
+
+/// The production lease-store policy for an app bootstrap (#2138
+/// HOLE-1): desktop/native builds ALWAYS wire the store — a manager
+/// without one drives with zero lease interaction, which is exactly how
+/// the app became a second writer on a live-leased session. Web has no
+/// atomic publish (E5) and stays unenforced by design. Every production
+/// construction site must pass `leaseStore: defaultLeaseStore(env)`.
+FileSessionLeaseStore? defaultLeaseStore(ExecutionEnv env) =>
+    kIsWeb ? null : FileSessionLeaseStore(env: env);
+
 final class FlutterSessionManager extends ChangeNotifier {
   /// Creates a session manager.
   FlutterSessionManager({
@@ -1032,10 +1059,23 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// A live lease throws [SessionDrivenElsewhereException] — no takeover
   /// exists; the caller opens the session as a viewer instead. Free or
   /// expired: acquired (a dead owner is only noted in the sidecar
-  /// history). Lease IO failures never block opening (fail-open, E4).
+  /// history). Since #2138 every branch logs what fired (AC1), a
+  /// publish/verify failure on an enforceable backend throws
+  /// [LeaseRefusedException] (never a second writer), and a null store —
+  /// possible only on web or a test-only construction now that every
+  /// bootstrap wires [defaultLeaseStore] — proceeds but LOUDLY.
   Future<void> _acquireDriveLease(SessionMetadata metadata) async {
     final store = leaseStore;
-    if (store == null) return;
+    if (store == null) {
+      // #2138 (hole-1): enforcement is ABSENT here. Web = by design (E5);
+      // anything else = a construction bug — never silent again.
+      debugPrint(
+        '[fah][lease] ${metadata.id}: no lease store wired — driving '
+        'WITHOUT ownership enforcement'
+        '${kIsWeb ? ' (web: no atomic publish, E5)' : ' (CONSTRUCTION BUG)'}',
+      );
+      return;
+    }
     final result = await store.acquire(
       sessionFilePath: metadata.path,
       sessionId: metadata.id,
@@ -1045,12 +1085,26 @@ final class FlutterSessionManager extends ChangeNotifier {
     );
     switch (result) {
       case LeaseAcquired():
+        debugPrint('[fah][lease] ${metadata.id}: acquired');
         _heldLeasePath = store.sidecarPath(metadata.path);
         _startLeaseHeartbeat();
-      case LeaseBlocked():
-        throw SessionDrivenElsewhereException(result.lease);
+      case LeaseBlocked(:final lease):
+        debugPrint(
+          '[fah][lease] ${metadata.id}: blocked — live owner '
+          '${leaseOwnerLabel(lease.host)} (pid ${lease.pid})',
+        );
+        throw SessionDrivenElsewhereException(lease);
       case LeaseUnenforced():
-        break;
+        debugPrint(
+          '[fah][lease] ${metadata.id}: unenforced — no atomic publish '
+          'backend (E5); driving without enforcement',
+        );
+      case LeaseRefused(:final reason):
+        debugPrint(
+          '[fah][lease] ${metadata.id}: REFUSED — lease store cannot '
+          'prove the session is free (${reason.name})',
+        );
+        throw LeaseRefusedException(reason);
     }
   }
 

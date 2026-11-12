@@ -4058,6 +4058,12 @@ abstract class AppLocalizations {
   /// **'Driven by {host} (pid {pid}) — you are viewing. Your messages are delivered to the live agent.'**
   String sessionDrivenElsewhere(String host, int pid);
 
+  /// Loud refusal when the lease store cannot prove a session is free on an enforceable backend (#2138) — never a silent second writer
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t verify session ownership — not driving. A live owner may hold this session; see the app log for details.'**
+  String get leaseUnverified;
+
   /// Fallback when an over-budget session cannot open windowed — the full open is refused (issue #381)
   ///
   /// In en, this message translates to:

@@ -27,6 +27,8 @@ import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/dap_binding_store.dart';
 import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/services/attached_session_controller.dart';
+import 'package:fa/services/cli_session_presence.dart';
 import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/activity/activity_surface.dart';
@@ -54,6 +56,7 @@ import 'package:fa/network/models.dart' show Channel;
 import 'package:fa/ui/chats/network_inbox_http_adapter.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
+import 'package:fa/ui/screens/attached_session_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/widgets/subagent_chat_badge.dart';
@@ -72,7 +75,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         SessionMetadata,
         createSessionId,
         isSubagentSession,
-        leaseOwnerLabel,
         subagentParentId;
 
 export 'package:fa/ui/widgets/fa_route_header.dart'
@@ -1883,9 +1885,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     } on SessionTooLargeException {
       _showSessionTooLarge(metadata);
     } on SessionDrivenElsewhereException catch (error) {
-      // Live lease (#428): never a second writer. The wide shell has no
-      // attach surface — say so instead of silently doing nothing.
-      _showDrivenElsewhere(metadata, error);
+      // Live lease (#428): never a second writer. #2138: the wide shell
+      // now HAS the attach surface — open the attached view (transcript
+      // follow + composer → owner mailbox) instead of a dead-end snack.
+      await _openAttachedSession(metadata, error);
+    } on LeaseRefusedException catch (error) {
+      // #2138: the lease store could not prove the session free on an
+      // enforceable backend — refuse the open loudly, never drive.
+      _showLeaseRefused(metadata, error);
     } on Object catch (error) {
       // A torn/corrupt session file must not crash the shell — the entry
       // just stays in the list.
@@ -1914,22 +1921,58 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  void _showDrivenElsewhere(
+  /// The wide shell's attach surface (#2138, contract pt 4): a
+  /// live-lease open lands in the attached view — the transcript follows
+  /// the JSONL 1:1 and the composer hands the message to the owner's
+  /// mailbox — and a banner names the owner (host + pid). Zero bytes are
+  /// ever written to the session file.
+  Future<void> _openAttachedSession(
     SessionMetadata metadata,
     SessionDrivenElsewhereException error,
-  ) {
-    debugPrint('[fah][shell] ${metadata.id} driven elsewhere: $error');
+  ) async {
+    debugPrint(
+      '[fah][shell] ${metadata.id} driven elsewhere '
+      '(${error.ownerLabel}, pid ${error.lease.pid}) — attaching',
+    );
     if (!mounted) return;
-    showFahErrorSnack(
-      context,
-      context.l10n.sessionDrivenElsewhere(
-        leaseOwnerLabel(error.lease.host),
-        error.lease.pid,
+    final manager = widget.manager;
+    final (root, slug) = sessionRootAndSlugForPath(
+      defaultRoot: manager.sessionsRoot,
+      sessionPath: metadata.path,
+      fallbackCwd: metadata.cwd,
+    );
+    final transport = fileAttachTransport(
+      env: manager.env,
+      sessionsRoot: root,
+      cwdSlug: slug,
+      resolvePath: (_) async => metadata.path,
+    );
+    final controller = AttachedSessionController(
+      sessionId: metadata.id,
+      title: widget.sessionNamesStore?.titleFor(metadata.id) ?? metadata.id,
+      transport: transport,
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AttachedSessionScreen(
+          controller: controller,
+          ownerLease: error.lease,
+        ),
       ),
     );
+    controller.dispose();
+    // The transcript watcher stops with the view — no poller tails a
+    // session nobody is watching.
+    await transport.dispose();
   }
 
-  /// Opens the shared quick model picker (the same two-step provider →
+  void _showLeaseRefused(SessionMetadata metadata, LeaseRefusedException e) {
+    debugPrint('[fah][shell] ${metadata.id} lease refused: $e');
+    if (!mounted) return;
+    showFahErrorSnack(context, context.l10n.leaseUnverified);
+  }
+
+  /// Session info dialog: the active session's name (renameable — same
   /// model flow the settings "Default chat model" row uses) — see
   /// [openQuickModelPicker].
   Future<void> _openModelPicker(FlutterManagedSession session) async {
