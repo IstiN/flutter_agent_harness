@@ -84,6 +84,11 @@ Rules:
   (at-least-once upstream of the ack), preserves per-sender order and
   stamps `seq` on persisted mail. The server never reads ciphertext
   content or keys (**relay-only invariant**).
+- **`msgId` IS the fanet1 frameId** for mail (§7): the HKDF salt, the
+  AAD segment and the dedup key are ONE string. Redelivery must carry
+  `msgId` byte-for-byte (any id rewrite breaks decryption — the AD
+  binding tripwire); the connector never mints a new `msgId` when
+  retrying from the outbox.
 - One device socket MAY carry mail for every network the device is a
   member of and every exposed local agent — that is the whole point
   (AC1/AC2).
@@ -136,8 +141,10 @@ Rules:
   mailbox as plain user text (existing `externalSteering` /
   `SessionInputChannel` semantics — zero agent-loop changes, AC4).
 - The connector ACL rejects: slash-commands, `/approval`, `/config`,
-  tool grants, takeover/admin payloads (negative tests in BOTH repos,
-  AC6).
+  tool grants, takeover/admin payloads. **Content ACL lives entirely
+  in the connector** (only it decrypts); server-side AC6 negatives
+  are STRUCTURAL only: non-exposed `to`, non-member network, wrong
+  ticket scope, DM routing to a foreign address (relay-only law).
 - The session file is written only by the local owner (lease
   invariant).
 
@@ -146,9 +153,13 @@ Rules:
 - DM channel id: `dm:user:<userId>:<agentName>@<deviceId>` (stable
   both directions).
 - Keys: the agent (via the connector) holds ONE x25519 keypair per
-  agent for DM (`dmPriv`/`dmPub`), in the device key store. `dmPub`
-  is published in the agent's roster entry. The user client uses its
-  existing dap identity keypair.
+  agent ADDRESS `agentName@deviceId` (`dmPriv`/`dmPub`), in the
+  device key store — an agent lives on one device at a time; moving
+  devices re-enrolls with a fresh `dmPub`, so roster readers key on
+  the agent address, never the bare agent name. `dmPub` is published
+  in the agent's roster entry. The user client uses its existing dap
+  identity keypair. The envelope `msgId` doubles as the fanet1
+  `frameId` (HKDF salt + AAD segment) — §3.
 - Frames are **fanet1 exactly**: `senderX` = user identity pub;
   `shared` = ECDH(user_priv, dmPub) = ECDH(dmPriv, senderX)
   (symmetric); per-frame key = HKDF-SHA256(shared, frameId,
