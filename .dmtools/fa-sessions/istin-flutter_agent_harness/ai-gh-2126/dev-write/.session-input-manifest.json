@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-12T09:14:57.095Z",
+  "ticketKey": "gh-2126",
+  "headSha": "6358a70b827f0ef686bd56264cb2fc58a4a05a09",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:72f43e387b76aa03",
+      "size": 80599
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:86bf3229d4e956f4",
+      "size": 162571
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:98a246d5c12b07ed",
+      "size": 536
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:bd273dc78101c18d",
+      "size": 12300
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:3bd478bfa481719d",
+      "size": 8278
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:2ba05940d738b6f1",
+      "size": 3378
+    },
+    "request.md": {
+      "hash": "fnv1a64:841d2d94494adb3c",
+      "size": 4367
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c988e380c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:46993aaf005d01be",
+      "size": 4474
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:841d2d94494adb3c",
+      "size": 4367
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:09c5411d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: Static gates red on the PR head — `unnecessary_cast` in the new guard test**\n\n`dart analyze --fatal-infos --fatal-warnings` fails on commit `152aebd6` (Static gates run\n[43177373775](https://github.com/IstiN/flutter_agent_harness/actions/runs/43177373775/job/131045393300),\nexit 2) with exactly one issue, in this PR's own new file:\n\n```\nwarning - test/ci_mobile_sdk_pin_guard_test.dart:77:28 - Unnecessary cast. Try removing the cast. - unnecessary_cast\n```\n\nThe cast at line 75 (`final uses = (step as Map)['uses'];`) already promotes the local `step`\nto `Map` via flow analysis, so the second `(step as Map)` here is provably redundant — the\nanalyzer reports it and `--fatal-infos` turns it into a hard gate failure.\n\nReproduced with full CI parity (root `dart pub get` + `dart pub get --directory=office_addin/dart`,\nthen the same `dart analyze --fatal-infos --fatal-warnings` invocation): the head tree reports\nexactly this 1 issue; removing the cast reports **\"No issues found!\"**:\n\n```dart\n// line 77 — `step` is already promoted to `Map` by the cast at line 75\nfinal withBlock = step['with'] as Map? ?? const {};\n```\n\nEverything else about this change verified clean, for the record:\n\n- the YAML-level guard itself passes all 3 ACs against the current `build-mobile.yml`\n  (`dart test test/ci_mobile_sdk_pin_guard_test.dart` → 3/3 green, fresh subprocess);\n- the `3.47.7` pin matches the committed `flutter_app/pubspec.lock` resolution\n  (`test_api 0.7.12` confirmed in the lockfile, and the pinned leg in the failing daily\n  run resolved it successfully under `--enforce-lockfile`);\n- the four pinned sites (build-android 167, submit-android 357, build-android-apks 467,\n  test-android-emulator 661) plus the self-hosted lane pin (build-mobile.yml:885) are\n  mutually consistent — AC1/AC2/AC3 all hold;\n- the `##[error]size budget regression` lines in the same CI log are unattributable\n  `/tmp` artifact churn (ownership census in `ci_violations.json`: owned 0 / unknown 4;\n  the gate's very next block marks the vendored `skwasm_new.wasm` line \"not gating\") —\n  a workflow pin + a static Dart test cannot move web-bundle sizes, and they are not\n  what red-ed this job.\n\nFix the one line and this PR is green end-to-end; the workflow change itself is correct\nas written."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:403f15dd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc62hijj` — 🚨 BLOCKING: `unnecessary_cast` in the new guard test\n\n**Fixed on head `6358a70b82`** (branch history `04f16994` → `45f51656` → `6358a70b`; the two `WIP auto-save` commits carry the edits, the last one squares their indentation).\n\n## The cast\n\nDropped exactly as prescribed — `test/ci_mobile_sdk_pin_guard_test.dart`, `selfHostedPins()`:\n\n```dart\n// line 82 — `step` is already promoted to `Map` by the cast above — a second\n// cast here trips unnecessary_cast under --fatal-infos.\nfinal withBlock = step['with'] as Map? ?? const {};\n```\n\nReproduced with full CI parity on the rework head (root `dart pub get` + `dart pub get --directory=office_addin/dart`, then `dart analyze --fatal-infos --fatal-warnings`): **RED** pre-fix — `exit 2`, exactly `test/ci_mobile_sdk_pin_guard_test.dart:77:28 - Unnecessary cast` — **GREEN** post-fix — `exit 0`, `No issues found!`.\n\n## What the guard caught on the rework head (and what this lap also fixed)\n\nThe merge of `origin/main` into this branch (#2112, \"iOS layout batch\") **regenerated `flutter_app/pubspec.lock` to the `flutter_test@3.50.0` resolution (`test_api 0.7.14`)** and bumped the self-hosted lane (`build-mobile.yml:885` → `3.50.0`) and the office-addin-suite to match. AC2 went red on the merged tree — `Expected: Set:['3.47.7'] / Actual: Set:['3.50.0']` — which is exactly the drift this AC exists to catch: with the lockfile now a 3.50.0 resolution, leaving the four hosted pins at `3.47.7` re-creates the gh-2126 skew in the opposite direction (flutter_test@3.47.7 pins `test_api 0.7.12` ≠ lockfile `0.7.14` → `--enforce-lockfile` fail-fasts the Android legs again).\n\nReconciled per the guard's own contract (\"bump ONLY together with a regenerated lockfile, in the same PR\" — #2112 regenerated it on main):\n\n- `.github/workflows/build-mobile.yml`: the four hosted `flutter-version` pins `3.47.7` → `3.50.0` (build-android, submit-android, build-android-apks, test-android-emulator) + the pin-comment blocks updated to the current lockfile resolution.\n- `test/ci_mobile_sdk_pin_guard_test.dart`: `expectedSdkLine` `'3.47.7'` → `'3.50.0'`, AC1 regex `^3\\.47\\.\\d+$` → `^3\\.50\\.\\d+$`, test name/reasons updated; cross-pointer comments between `expectedSdkLine` and the AC1 regex so the next bump updates both sites (pickup of the ranked-digest note).\n\n## Verification on head `6358a70b82`\n\n- `dart analyze --fatal-infos --fatal-warnings` → `No issues found!`, exit 0 (CI-parity setup).\n- `dart test test/ci_mobile_sdk_pin_guard_test.dart` → **3/3 green** (AC1/AC2/AC3).\n- 506 tests across the other workflow-structure guards that read `build-mobile.yml` (pub-get-retry, android-ndk, sign/cert, sqlite3 prewarm/hook/seed, dispatch-watch, release hygiene, selfhosted legs, iOS platform download, fetch shape, store automation/appearance, nightly desktop legs) — all green.\n- `scripts/check_lockfiles.sh` → **passed** (path-pin + pod-sync ok) after `flutter pub get --enforce-lockfile` under the installed 3.50.0; the committed `flutter_app/pubspec.lock` is untouched (`git status` clean).\n\n## The size-budget lines in the same CI log\n\nAgreed with the thread's census: `##[error]size budget regression in /tmp/.../art.zip` lines are `/tmp` artifact churn — the gate's own notice says `baseline initialized from this artifact — COMMIT .../base.tsv to arm the gate`, i.e. no committed baseline existed; ownership census: owned 0. A workflow pin + a static Dart test cannot move web-bundle sizes. The Golden-suite (macOS) red is a 1-of-332 pixel diff (`chat_golden_test.dart` \"user bubble attachments (issue #461) 1 image — light\", 40px / 0.01%) in `flutter_app` files this PR never touches — foreign to this PR's diff, noted in `outputs/response.md`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:f6f3dc04",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2126 fix itself is correct — all four hosted `build-mobile.yml` Flutter setups now pin the exact `3.47.7` patch matching the committed `flutter_app/pubspec.lock` (`test_api 0.7.12`), and the new YAML-level guard passes 3/3 ACs locally. One blocker: the PR's own new guard test fails the repo's `dart analyze --fatal-infos --fatal-warnings` gate (`unnecessary_cast` at `test/ci_mobile_sdk_pin_guard_test.dart:77:28`) — Static gates is red on head commit `152aebd6`, so this cannot merge until that one-line cast is dropped.\n\n**Key Issues**:\n- 🚨 `test/ci_mobile_sdk_pin_guard_test.dart:77` — redundant `(step as Map)` after line 75's cast already promotes `step` to `Map`; `--fatal-infos` fails Static gates (reproduced with CI parity; the one-line removal verified clean).\n\n**Ranked digest** (real, but not thread-worthy):\n- `.github/workflows/build-mobile.yml:159-166,349-356,459-466,653-660` — the identical 8-line pin comment duplicated 4× (~32 lines); a one-liner pointing at the guard test would carry the same context.\n- `test/ci_mobile_sdk_pin_guard_test.dart:45,105` — an SDK bump must update both `expectedSdkLine` and the AC1 `^3\\.47\\.\\d+$` regex; drift fails loudly but with no pointer to the second site.\n- `.github/workflows/browser-ext.yml:143-145` — pre-existing same-class floater (`channel: stable`, no pin) resolving `flutter_app` through the same committed lockfile; the PR notes' follow-up recommendation is endorsed.\n\n**Next Steps**:\n1. Drop the redundant cast at `test/ci_mobile_sdk_pin_guard_test.dart:77` → `step['with'] as Map? ?? const {}` (verified: analyzer then reports \"No issues found!\").\n2. Re-run Static gates; the daily-publish play leg should green on the next run.\n3. Follow up separately with the `browser-ext.yml` pin (already recommended in the PR notes)."
+    }
+  ]
+}
