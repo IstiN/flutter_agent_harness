@@ -1386,7 +1386,15 @@ jobs:
             exit 0
           fi
           mkdir -p test-results
-          dart test --tags integration --exclude-tags browser-ext,llm \
+          # gh-2120: watchdog — dart test's post-suite isolate exit-code
+          # handshake (`_waitForExitCode`) can hang FOREVER when a PTY
+          # spawn's orphaned grandchild holds the pipes (2026-11-12: shard 2
+          # spun `Attempt:2210` for 36 minutes on identical content that
+          # sibling runs pass in ~2.5). Root cause is a harness reaping fix
+          # (follow-up); until it lands, bound the blast radius — 20m is 8x
+          # the shard norm, a timeout fails the leg fast and the retry
+          # machinery heals it instead of a zombie job eating the pool.
+          timeout 20m dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
             --file-reporter="json:test-results/integration-shard-${{ matrix.shard }}.json" \
