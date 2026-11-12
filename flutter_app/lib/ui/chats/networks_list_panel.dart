@@ -387,18 +387,18 @@ class _NetworksEmptyState extends StatelessWidget {
               style: TextStyle(color: colors.dim, fontSize: 13),
             ),
             const SizedBox(height: 12),
-            FilledButton.icon(
+            FaButton(
               key: const ValueKey('joinFirstNetwork'),
               onPressed: onManage,
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(context.l10n.networkJoinFirst),
+              label: context.l10n.networkJoinFirst,
             ),
             if (onSignIn != null) ...[
               const SizedBox(height: 4),
-              TextButton(
+              FaButton(
                 key: const ValueKey('emptyStateSignIn'),
                 onPressed: onSignIn,
-                child: Text(context.l10n.networkSignInTitle),
+                label: context.l10n.networkSignInTitle,
+                variant: FaButtonVariant.secondary,
               ),
             ],
           ],
