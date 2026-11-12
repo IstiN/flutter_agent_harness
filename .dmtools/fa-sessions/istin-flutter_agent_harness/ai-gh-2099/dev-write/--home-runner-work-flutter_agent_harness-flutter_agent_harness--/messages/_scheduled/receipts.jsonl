@@ -1,0 +1,1 @@
+{"ts":"2026-11-12T21:36:24.944041Z","event":"scheduled","id":"1794519384935176_0000_s0i1l1","dueMs":1794521484935,"to":"main","text":"Check the CI rerun outcome for run 43298826800 (gh run view 43298826800 --json status,conclusion,jobs). Expected: Core tests shard 0/4, Golden suite (macOS), PTY gates all green → confirms the two red"}
