@@ -49,6 +49,7 @@ import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
 import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
 import '../compaction/compaction_engine.dart' show CompactionEngine;
+import '../compaction/tuning.dart' show CompactionTuning;
 import '../compaction/context_window_registry.dart' show ContextWindowRegistry;
 import '../config/config_service.dart';
 import '../cube/config/cube_spec.dart';
@@ -203,6 +204,12 @@ final class SubagentServices {
   final ModelRolesResolver? rolesResolver;
   final CompactionEngine? compactionEngine;
 
+  /// The `compaction:` yaml trigger tuning (gh-2098), applied over the
+  /// children's forWindow curve — the same trigger policy the host's
+  /// main agent rides. Null keeps the children byte-identically on the
+  /// gh-1742 curve.
+  final CompactionTuning? compactionTuning;
+
   /// The shared per-model context-window registry (gh-1742 invariant 2):
   /// the host publishes detections/pins here, children resolve from it.
   final ContextWindowRegistry? contextWindowRegistry;
@@ -264,6 +271,7 @@ final class SubagentServices {
     this.stallMinutes,
     this.rolesResolver,
     this.compactionEngine,
+    this.compactionTuning,
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
@@ -1082,6 +1090,9 @@ _WiredTaskSurface? _wireTaskSurface({
     subagentManager: manager,
     a2aManager: a2a,
     compactionEngine: bundle.compactionEngine,
+    // gh-2098: children ride the same `compaction:` trigger tuning the
+    // main agent's gate applies.
+    compactionTuning: bundle.compactionTuning,
     // gh-1742: children resolve the same registered windows the main
     // agent publishes (invariant 2), under the same owner cap.
     contextWindowRegistry: bundle.contextWindowRegistry,

@@ -436,6 +436,29 @@ void main() {
       );
     });
 
+    test('compaction.triggerRatio validates and persists (gh-2098)', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      final result = await service.set(
+        'compaction.triggerRatio',
+        '0.75',
+        scope: ConfigScope.global,
+      );
+      expect(result.file, _globalConfig);
+      expect(await read(_globalConfig), contains('triggerRatio: 0.75'));
+      await checkOrThrow(service);
+      // Out-of-range and mistyped values never persist — the same strict
+      // parser the boot uses runs BEFORE the write.
+      for (final bad in ['0', '1', '1.5', 'most']) {
+        await expectLater(
+          service.set('compaction.triggerRatio', bad),
+          throwsA(isA<ConfigException>()),
+          reason: 'triggerRatio: $bad must be rejected',
+        );
+      }
+      final text = await read(_globalConfig);
+      expect(text, contains('triggerRatio: 0.75'));
+    });
+
     test('rewrites only the touched line, comment included (E4)', () async {
       await env.writeFile(_projectConfig, _commentedProject);
       await service.set('memory.projectPath', './memory');

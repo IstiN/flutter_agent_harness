@@ -30,6 +30,7 @@ import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../compaction/compaction_engine.dart';
 import '../compaction/context_window_registry.dart';
+import '../compaction/tuning.dart';
 import '../a2a/a2a_manager.dart';
 import '../cancel_token.dart';
 import '../model.dart';
@@ -340,6 +341,7 @@ final class TaskToolConfig {
     this.childSessionOpener,
     this.a2aManager,
     this.compactionEngine,
+    this.compactionTuning,
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
@@ -419,6 +421,11 @@ final class TaskToolConfig {
   /// host's config choice rides to children — null resolves to structured.
   final CompactionEngine? compactionEngine;
 
+  /// The `compaction:` yaml trigger tuning (gh-2098) applied over the
+  /// children's forWindow curve (gh-1742 invariant 3 policy parity with
+  /// the main agent). Null = the curve stands (legacy behavior).
+  final CompactionTuning? compactionTuning;
+
   /// The shared per-model context-window registry (gh-1742 invariant 2):
   /// children resolve their compaction window and loop-guard basis from
   /// the same registered values the main agent publishes. Null = carried
@@ -469,6 +476,7 @@ final class TaskToolConfig {
     childSessionFactory: childSessionFactory,
     childSessionOpener: childSessionOpener,
     compactionEngine: compactionEngine,
+    compactionTuning: compactionTuning,
     contextWindowRegistry: contextWindowRegistry,
     contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,

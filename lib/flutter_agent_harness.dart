@@ -59,6 +59,7 @@ export 'src/cli/cli_config.dart'
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
+        loadProjectCompactionTuning,
         loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
@@ -140,6 +141,7 @@ export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/compaction/bench_trigger.dart';
+export 'src/compaction/tuning.dart';
 // gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
 // until a caller exists (gh-1232: the barrel is append-only — a
 // speculative export is the wrong order). The E1 discrimination it
