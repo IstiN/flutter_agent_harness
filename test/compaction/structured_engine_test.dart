@@ -342,6 +342,194 @@ void main() {
     expect(validateToolPairing(state.messages), isEmpty);
   });
 
+  group('gh-2097 run-start re-anchor', () {
+    test(
+      'a run re-anchors on the session projection before the trigger '
+      'math (in-memory tail cut — the incident shape)',
+      () async {
+        final (session, state) = await overWindowSession();
+        // Writer B: the live in-memory view is a TAIL CUT of the session
+        // file — the incident shape (the live view lacked records the
+        // session holds). The stale basis estimates UNDER the trigger
+        // while the session projection is over it: everything after the
+        // first carrier is missing from memory.
+        final full = await session.buildContextMessages();
+        final cut = full.sublist(0, 2);
+        state.messages = cut;
+        final stale = estimateRequestTokens(
+          cut,
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        );
+        final fresh = estimateRequestTokens(
+          full,
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        );
+        expect(
+          stale,
+          lessThan(600),
+          reason: 'fixture: stale basis under trigger',
+        );
+        expect(
+          fresh,
+          greaterThan(6000),
+          reason: 'fixture: session over trigger',
+        );
+
+        final passes = <StructuredCompactionPass>[];
+        final compactor = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          hooks: _CollectingHooks(passes),
+          judge: (ledger, [token]) async => '[]', // declines
+          summarize: (request) async =>
+              SummarizationResult.success('S'),
+          checkpointPrompt: 'P',
+        );
+        final ok = await compactor.run();
+
+        // gh-2097 RED: the stale basis gated the whole run off — zero
+        // passes while the session file was genuinely over pressure.
+        expect(ok, isTrue);
+        expect(passes, isNotEmpty,
+            reason: 'the run must see the fresh over-pressure basis, '
+                'not the stale in-memory one');
+        expect(passes.first.tokensBefore, greaterThan(6000),
+            reason: 'pass 1 measured the fresh session basis');
+        expect(passes.first.tokensBefore, isNot(stale));
+      },
+    );
+
+    test(
+      'records a second writer appended between runs re-baseline the '
+      'next run (two writers: messages + hidden ranges)',
+      () async {
+        final (session, state) = await overWindowSession();
+        // RUN 1 on a fresh compactor (the production shape — the factory
+        // rebuilds per run over the same state): relieves, state
+        // refreshed.
+        final compactor1 = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          judge: (ledger, [token]) async => '[]',
+          summarize: (request) async => SummarizationResult.success('S'),
+          checkpointPrompt: 'P',
+        );
+        expect(await compactor1.run(), isTrue);
+
+        // WRITER B appends between the runs: its own conversation
+        // records plus a hidden range covering its older turns (its own
+        // compaction) — the session projection grows far past the
+        // trigger while writer A's memory still holds run 1's relieved
+        // view.
+        for (var i = 0; i < 5; i++) {
+          await session.appendMessage(
+            _assistant('writer-b turn $i ${'detail ' * 600}'),
+          );
+        }
+        final bEntries = await session.getEntries();
+        final bIds = [
+          for (final r in bEntries)
+            if (r is MessageRecord &&
+                r.message is AssistantMessage &&
+                (r.message as AssistantMessage).content
+                    .whereType<TextContent>()
+                    .any((b) => b.text.startsWith('writer-b turn 0 ')))
+              r.id,
+        ];
+        await session.appendHiddenRange(recordIds: bIds);
+
+        final fresh2 = estimateRequestTokens(
+          await session.buildContextMessages(),
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        );
+        expect(
+          fresh2,
+          greaterThan(6000),
+          reason: 'fixture: writer B pushed the session back over the trigger',
+        );
+
+        // RUN 2 over the SAME state object (writer A never saw B's
+        // records).
+        final passes2 = <StructuredCompactionPass>[];
+        final compactor2 = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          hooks: _CollectingHooks(passes2),
+          judge: (ledger, [token]) async => '[]',
+          summarize: (request) async => SummarizationResult.success('S2'),
+          checkpointPrompt: 'P',
+        );
+        final ok2 = await compactor2.run();
+
+        // gh-2097 RED: run 2 gated off the stale (relieved) basis and
+        // did nothing — the next request would ride an over-window
+        // context.
+        expect(ok2, isTrue);
+        expect(passes2, isNotEmpty,
+            reason: 'run 2 must act on the fresh over-pressure basis');
+        expect(passes2.first.tokensBefore, greaterThan(6000));
+        // The first pass measured the FRESH projection, not run 1's
+        // relieved stale view — correct over on the first pass.
+        expect(passes2.first.tokensBefore, fresh2);
+      },
+    );
+
+    test(
+      'a mid-run second-writer append rides out as basisReadTokens '
+      'on the pass receipt (basis flip metadata)',
+      () async {
+        final (session, state) = await overWindowSession();
+        var appended = false;
+        final passes = <StructuredCompactionPass>[];
+        final compactor = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          hooks: _CollectingHooks(passes),
+          judge: (ledger, [token]) async => '[]',
+          summarize: (request) async {
+            // Writer B appends DURING the summarizer call — the gap
+            // between the pass's before-measurement and its
+            // post-append refresh. The append outweighs the fold so
+            // the after-count lands above the before-count.
+            if (!appended) {
+              appended = true;
+              await session.appendMessage(
+                UserMessage.text('writer-b mid-run ${'w' * 20000}'),
+              );
+            }
+            return SummarizationResult.success('S');
+          },
+          checkpointPrompt: 'P',
+        );
+        await compactor.run();
+
+        final flips = [
+          for (final p in passes)
+            if ((p.basisReadTokens ?? 0) > 0) p,
+        ];
+        expect(flips, isNotEmpty,
+            reason: 'the pass whose re-read landed above its before-count '
+                'must carry the basis flip count');
+        for (final p in flips) {
+          expect(p.tokensAfter, greaterThan(p.tokensBefore),
+              reason: 'a flip receipt only rides an upward re-read');
+          expect(p.ok, isTrue);
+        }
+      },
+    );
+  });
+
   group('classicTransform', () {
     MessageRecord rec(String id, String? parentId) => MessageRecord(
       id: id,
@@ -390,4 +578,18 @@ void main() {
       expect([for (final r in out) r.id], ['c', 'd']);
     });
   });
+}
+
+/// Collects the engine's structured pass receipts for the gh-2097
+/// assertions.
+final class _CollectingHooks implements StructuredCompactorHooks {
+  _CollectingHooks(this.passes);
+
+  final List<StructuredCompactionPass> passes;
+
+  @override
+  void onDelta(String delta) {}
+
+  @override
+  void onPass(StructuredCompactionPass pass) => passes.add(pass);
 }
