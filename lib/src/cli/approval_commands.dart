@@ -1123,9 +1123,20 @@ extension ApprovalCommands on AgentCli {
       case TurnStartEvent():
         _logDiagnostic('turn start sid=$_logSid');
       case ToolExecutionStartEvent(:final toolName):
-        _logDiagnostic('tool start sid=$_logSid name=$toolName');
+        // Issue #2117 scope 5: tool start/finish details are `debug` —
+        // off the default interactive console dial, still on fa.log
+        // (its `debug` file default keeps passing them).
+        _logDiagnostic(
+          'tool start sid=$_logSid name=$toolName',
+          level: LogLevel.debug,
+          category: LogCategory.tool,
+        );
       case ToolExecutionEndEvent(:final toolName, :final isError):
-        _logDiagnostic('tool end sid=$_logSid name=$toolName error=$isError');
+        _logDiagnostic(
+          'tool end sid=$_logSid name=$toolName error=$isError',
+          level: LogLevel.debug,
+          category: LogCategory.tool,
+        );
       case TurnEndEvent(:final message):
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
@@ -1474,9 +1485,10 @@ extension ApprovalCommands on AgentCli {
   /// other faces keep today's byte shape.
   void _onThinkingDelta(ThinkingDeltaEvent assistantMessageEvent) {
     if (_useTui && tuiChromeEnabled) {
-      final window =
-          _thinkingWindow ??=
-              (startedAt: DateTime.now(), buffer: StringBuffer());
+      final window = _thinkingWindow ??= (
+        startedAt: DateTime.now(),
+        buffer: StringBuffer(),
+      );
       window.buffer.write(_redactRendered(assistantMessageEvent.delta));
       return;
     }
@@ -1731,8 +1743,7 @@ extension ApprovalCommands on AgentCli {
     required bool isError,
   }) {
     final (started, startDetail, startArgs) =
-        _toolStarts.remove(toolCallId) ??
-        (null, '', const <String, dynamic>{});
+        _toolStarts.remove(toolCallId) ?? (null, '', const <String, dynamic>{});
     _waiting.toolCallEnded(toolCallId);
     // No offer may outlive its call (issue #1786): the call ending is the
     // last chance to clear a stale outstanding `b` affordance.
