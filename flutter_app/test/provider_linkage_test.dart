@@ -189,5 +189,63 @@ void main() {
       expect(service.providerKind, 'chatgpt-codex');
       expect(service.modelId, 'gpt-5-codex');
     });
+
+    test(
+      'a streaming turn is never interrupted — the next notify applies',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final service = await _service(registry);
+        addTearDown(service.dispose);
+        await pumpEventQueue();
+        final aiin = await registry.add(
+          name: 'AIIN',
+          baseUrl: _aiinUrl,
+          modelId: 'aiin_free_vision',
+        );
+        // The streaming bracket (issue #325 setter): a key arriving mid-turn
+        // must not swap the backend under a live run.
+        service.isStreaming = true;
+        registry.rememberKey(aiin.id, 'sk-aiin-40');
+        await pumpEventQueue();
+        expect(service.modelId, 'placeholder');
+
+        service.isStreaming = false;
+        registry.rememberKey(aiin.id, 'sk-aiin-40');
+        await pumpEventQueue();
+        expect(service.modelId, 'aiin_free_vision');
+      },
+    );
+
+    test('a refused linkage is caught and the linkage recovers', () async {
+      final registry = ProviderRegistry.inMemory();
+      final service = await _service(registry);
+      addTearDown(service.dispose);
+      await pumpEventQueue();
+      // An entry whose persisted kind dispatches to an unknown wire: the
+      // reconfigure throws — the catch must swallow it (a notify callback
+      // crash would kill the registry dispatch) and the busy flag must
+      // clear so a later valid provider still applies.
+      final broken = await registry.add(
+        name: 'Broken',
+        baseUrl: 'https://broken.example.com/v1',
+        modelId: 'broken-model',
+        kind: 'frobnicator',
+      );
+      registry.rememberKey(broken.id, 'sk-broken');
+      await pumpEventQueue();
+
+      // The refusal must not wedge the linkage: clear the broken row, and
+      // the next usable provider applies.
+      await registry.remove(broken.id);
+      final aiin = await registry.add(
+        name: 'AIIN',
+        baseUrl: _aiinUrl,
+        modelId: 'aiin_free_vision',
+      );
+      registry.rememberKey(aiin.id, 'sk-aiin-40');
+      await pumpEventQueue();
+      expect(service.modelId, 'aiin_free_vision');
+      expect(service.activeBaseUrl, _aiinUrl);
+    });
   });
 }

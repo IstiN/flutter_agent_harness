@@ -249,35 +249,63 @@ extension _ProviderLinkage on AgentService {
   /// turn is never interrupted — the next notify picks the change up.
   Future<void> _applyLinkedProvider() async {
     final registry = _providerRegistry;
-    final config = _config;
-    if (registry == null || config == null || _disposed) return;
-    final isPlaceholder =
-        config.modelId == 'placeholder' &&
-        config.baseUrl.isEmpty &&
-        config.apiKey.isEmpty &&
-        !AgentService._isOnDeviceKind(_providerKind);
-    if (!isPlaceholder ||
+    if (registry == null ||
+        _disposed ||
+        !_isPlaceholderConnection ||
         isStreaming ||
         reconfigureRefusedByAddFlow(false) ||
         _providerLinkageBusy) {
       return;
     }
-    final usable = [
-      for (final provider in registry.providers)
-        if (provider.modelId.isNotEmpty &&
-            (registry.keyFor(provider.id) ?? '').isNotEmpty)
-          provider,
-    ];
+    final usable = _usableLinkedProviders(registry);
     if (usable.length != 1) {
-      if (usable.length > 1) {
-        debugPrint(
-          '[Fa] provider linkage: ${usable.length} providers carry keys on '
-          'this surface — pick one under Settings → Default chat model',
-        );
-      }
+      _logAmbiguousLinkage(usable.length);
       return;
     }
-    final provider = usable.single;
+    await _linkProvider(registry, usable.single);
+  }
+
+  /// Whether the live connection is still the placeholder boot config —
+  /// the only state the linkage may replace (a chosen connection is never
+  /// hijacked; on-device engines serve fine without a baseUrl).
+  bool get _isPlaceholderConnection {
+    final config = _config;
+    if (config == null) return false;
+    return config.modelId == 'placeholder' &&
+        config.baseUrl.isEmpty &&
+        config.apiKey.isEmpty &&
+        !AgentService._isOnDeviceKind(_providerKind);
+  }
+
+  /// Registry providers that can serve the chat on this surface: a real
+  /// model id and a remembered key (keyless-by-design entries stay a
+  /// picker decision — the goal's rule is registry + key on THIS surface).
+  List<CustomProvider> _usableLinkedProviders(ProviderRegistry registry) => [
+    for (final provider in registry.providers)
+      if (provider.modelId.isNotEmpty &&
+          (registry.keyFor(provider.id) ?? '').isNotEmpty)
+        provider,
+  ];
+
+  /// The multi-provider outcome: never guess (the auto-select alternative
+  /// was retracted on the goal) — point at the picker so the state is
+  /// visible, not silent.
+  void _logAmbiguousLinkage(int count) {
+    if (count > 1) {
+      debugPrint(
+        '[Fa] provider linkage: $count providers carry keys on '
+        'this surface — pick one under Settings → Default chat model',
+      );
+    }
+  }
+
+  /// Reconfigures the chat onto [provider]; a refusal (the connection
+  /// guards) is logged, never crashes the registry notify, and clears the
+  /// busy flag so a later valid notify still applies.
+  Future<void> _linkProvider(
+    ProviderRegistry registry,
+    CustomProvider provider,
+  ) async {
     final linked = AgentConfig(
       providerKind: providerKindForEntry(provider.kind, provider.baseUrl),
       modelId: provider.modelId,
