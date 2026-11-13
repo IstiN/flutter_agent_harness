@@ -13,6 +13,25 @@ block a release again.
 
 ## Unreleased
 
+- ci(windows-release): daily Windows desktop app pipeline — new
+  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
+  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
+  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
+  cert `.cer` to the latest auto-release, and fa1.dev's download section
+  gains a Windows button whose "latest" link resolves through a static
+  `download/windows/latest` pointer file updated by the same workflow
+  (site tests extended to pin the new markup). The daily-publish
+  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
+  quality gate builds and attaches the Windows app exactly like the
+  TestFlight/macOS track, and the windows runner's product identity no
+  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
+  renamed to `Fa`).
+- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
+  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
+  packed with the Windows SDK makeappx, signed with a per-run
+  self-signed cert whose public `.cer` ships beside it) so dev/corporate
+  machines can install via Add-AppxPackage; a Microsoft Store submission
+  stays a separate Partner Center track.
 - feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier

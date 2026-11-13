@@ -1,0 +1,281 @@
+# Build Windows Release (Fa) — the flutter_app desktop build for
+# windows-x64, zipped and attached to the release train the same way the
+# macOS desktop DMGs are (build-macos.yml). Dispatched by the daily
+# auto-publish `windows` leg (daily-publish.yml), which is the Windows
+# counterpart of the TestFlight leg: one release-quality app build per
+# day, attached to the next derived tag.
+#
+# The asset is fa-app-windows-x64.zip — a STABLE name (no version suffix),
+# like fa-windows-x64.zip (the CLI) and fa-macos-*-mac.zip, so
+# releases/latest/download/ links on fa1.dev never rot. It is NOT in
+# scripts/release_required_assets.txt yet: the leg is young and a missed
+# daily must not block a tag train; promote it to required once the leg
+# has a green history.
+#
+# No signing/notarization: Windows runners cannot code-sign without a
+# purchased OV cert; the zip is the unsigned open-source artifact (same
+# class as the Android sideload APKs). SmartScreen may warn — the fa1.dev
+# copy is the full source to build from.
+#
+# The app bundles no vendored-framework restore (unlike the macOS leg's
+# WasmRun.xcframework): on Windows the wasm_run family resolves to the
+# vendored path packages (vendor/wasm_run*), which compile from source in
+# the native-assets hooks — nothing to download.
+#
+# Two artifacts ship:
+#   fa-app-windows-x64.zip  — portable bundle (Fa.exe + dlls), the
+#                             fa1.dev download button target;
+#   fa-app-windows-x64.msix — sideload package (AppxManifest + makeappx
+#                             + per-run self-signed cert, see
+#                             scripts/msix/make_msix.ps1) with the
+#                             public .cer beside it: import the cert
+#                             (Trusted People), then Add-AppxPackage.
+#                             Not Store-signed — a Partner Center MS
+#                             Store submission is a separate track.
+name: Build Windows Release (Fa)
+
+run-name: "build-windows (create_release=${{ inputs.create_release }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.0.2) or "auto" to increment patch'
+        default: 'auto'
+      create_release:
+        description: 'Create GitHub Release'
+        default: true
+        type: boolean
+
+# Release builds are never preempted (issue #194 pt 5, same principle as
+# ci.yml: tag/release runs must not be cancelled mid-flight).
+concurrency:
+  group: Build Windows Release (Fa)-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  # SEC-08 (#796): minimal default - release-attaching jobs grant
+  # contents:write explicitly.
+  contents: read
+
+jobs:
+  version:
+    name: Derive version
+    runs-on: ubuntu-latest
+    # Same bound as the build-macos version twin (gh-1477): the fetch is
+    # blobless and 20m is the seatbelt; the job only reads tags.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gh-1477: this job reads ONLY `git tag` — blobless keeps full
+          # tag/commit metadata without the blobs.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Derive build version
+        id: version
+        run: |
+          set -euo pipefail
+          # Same tag math as build-macos.yml — all release children derive
+          # the SAME next tag from the same latest tag, so the windows zip
+          # lands on the release the CLI/macOS legs attach to. A lost race
+          # on tag creation is fine: release_attach_or_create.sh uploads
+          # into the winner's release.
+          INPUT="${{ inputs.version }}"
+          if [ -z "$INPUT" ] || [ "$INPUT" = "auto" ]; then
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
+            if [ -z "$LATEST" ]; then
+              TAG="v0.0.1"
+              echo "No previous tag found — starting at $TAG"
+            else
+              MAJOR=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\1/')
+              MINOR=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\2/')
+              PATCH=$(echo "$LATEST" | sed 's/v\([0-9]*\)\.\([0-9]*\)\.\([0-9]*\)/\3/')
+              PATCH=$((PATCH + 1))
+              TAG="v${MAJOR}.${MINOR}.${PATCH}"
+              echo "Previous tag: $LATEST → auto-increment to $TAG"
+            fi
+          else
+            TAG="$INPUT"
+            [[ "$TAG" != v* ]] && TAG="v$TAG"
+            echo "Using manual version: $TAG"
+          fi
+          VERSION_CLEAN="${TAG#v}"
+          echo "version=$VERSION_CLEAN" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+  build-windows:
+    name: Build Windows app (x64 release)
+    runs-on: windows-latest
+    needs: version
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # EXACT patch pin (#1431 parity): the same SDK the nightly
+      # build-release windows row and the flutter_app PR legs render and
+      # build with — a floating patch re-resolves a new engine build.
+      # Bump it in the same PR that reseeds anything a real engine delta
+      # moved (goldens, size floors).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - name: Create placeholder firebase_options.dart
+        shell: bash
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # Shared composite action: --enforce-lockfile resolve + #726 retry +
+      # skew fail-fast, identical to every other flutter_app CI leg.
+      - uses: ./.github/actions/flutter-pub-get
+
+      - name: Build Windows release
+        working-directory: flutter_app
+        shell: bash
+        run: flutter build windows --release
+
+      # Fail loud BEFORE the zip: a build that silently skipped the exe
+      # (or landed under a renamed binary) must not ship an empty archive.
+      - name: Verify build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f flutter_app/build/windows/x64/runner/Release/Fa.exe
+          test -f flutter_app/build/windows/x64/runner/Release/flutter_windows.dll
+
+      - name: Zip the release bundle
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'flutter_app/build/windows/x64/runner/Release/*' `
+            -DestinationPath 'fa-app-windows-x64.zip' -Force
+          Get-Item fa-app-windows-x64.zip | Select-Object Name, Length
+
+      # MSIX sideload package (gh-2140 follow-up): same bundle, AppxManifest
+      # assembled + packed with the Windows SDK's makeappx, signed with a
+      # per-run self-signed cert. NOT Store-signed — the .cer ships beside
+      # it and the user imports it (Trusted People) before Add-AppxPackage.
+      # The version needs a 4-part form (x.y.z.0).
+      - name: Build MSIX sideload package
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $v = $env:APP_VERSION
+          $parts = $v.Split('.')
+          while ($parts.Count -lt 4) { $parts += '0' }
+          $msixVersion = ($parts[0..3] -join '.')
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/msix/make_msix.ps1 `
+            -BuildDir 'flutter_app/build/windows/x64/runner/Release' `
+            -Version $msixVersion `
+            -OutMsix 'fa-app-windows-x64.msix' `
+            -CerPath 'fa-app-windows.cer'
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fa-app-windows-x64
+          path: fa-app-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fa-app-windows-x64-msix
+          path: |
+            fa-app-windows-x64.msix
+            fa-app-windows.cer
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    if: inputs.create_release
+    runs-on: ubuntu-latest
+    needs: [version, build-windows]
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # scripts/release_attach_or_create.sh + release_draft_guard.sh
+        # come from the repo.
+
+      - name: Download build artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fa-app-windows-x64
+          path: asset
+
+      - name: Attach to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT (not the job token) so the tag push fires tag CI — same
+          # contract as the build-macos attach (release_attach_or_create.sh
+          # builds its push URL only when GH_TOKEN is set).
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          # gh-2050 policy (same as the macOS desktop attach): this is the
+          # daily NEXT-TAG-DRAFT pre-stager — when the sibling train
+          # publishes the derived tag while this leg is still running, the
+          # gate's PUBLISHED refusal would red this leg daily. The env
+          # turns that verdict into a loud whole-call skip; the next daily
+          # leg pre-stages the next version's draft with fresh assets.
+          RELEASE_GATE_PUBLISHED_SKIP: '1'
+        run: |
+          set -euo pipefail
+          ls -la asset/
+          bash scripts/release_attach_or_create.sh "$RELEASE_TAG" asset/fa-app-windows-x64.zip
+
+      - name: Download MSIX artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fa-app-windows-x64-msix
+          path: msix-asset
+
+      # The MSIX + its self-signed public cert ride the same release —
+      # a sideload user needs BOTH files (import the .cer, then
+      # Add-AppxPackage the .msix).
+      - name: Attach MSIX to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_GATE_PUBLISHED_SKIP: '1'
+        run: |
+          set -euo pipefail
+          ls -la msix-asset/
+          bash scripts/release_attach_or_create.sh "$RELEASE_TAG" msix-asset/fa-app-windows-x64.msix msix-asset/fa-app-windows.cer
+
+      # Draft lifecycle invariant (issue #282): a failed/cancelled run
+      # must delete its draft, never orphan it. Ownership-scoped: the
+      # guard deletes only a draft whose body carries THIS run+job's
+      # marker.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
