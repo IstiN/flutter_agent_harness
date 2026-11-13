@@ -363,6 +363,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get wideNavActivity => 'Activity';
 
   @override
+  String get wideNavDevices => 'Devices';
+
+  @override
   String get activityRunning => 'Running';
 
   @override

@@ -11,6 +11,66 @@ import 'package:fa_ui/fa_ui.dart' show FahColors;
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
 
+/// The §5 machine dot color (online teal / degraded pending / offline dim)
+/// — shared by the roster panel and the devices tree page.
+Color deviceMachineDotColor(FahColors colors, MachinePresence machine) =>
+    switch (machine) {
+      MachinePresence.online => colors.teal,
+      MachinePresence.degraded => colors.pending,
+      MachinePresence.offline => colors.dim,
+    };
+
+/// The agent dot color (live teal / busy pending / offline dim).
+Color deviceAgentDotColor(FahColors colors, AgentRunState state) =>
+    switch (state) {
+      AgentRunState.live => colors.teal,
+      AgentRunState.busy => colors.pending,
+      AgentRunState.offline => colors.dim,
+    };
+
+/// The exposed-session dot color (live teal / wake-on-DM pending /
+/// offline dim).
+Color deviceSessionDotColor(FahColors colors, ConnectorSessionPresence state) =>
+    switch (state) {
+      ConnectorSessionPresence.live => colors.teal,
+      ConnectorSessionPresence.wakeOnDm => colors.pending,
+      ConnectorSessionPresence.offline => colors.dim,
+    };
+
+/// The machine state label (degraded reads as Busy — the §5 degraded
+/// window means "socket lost, agents keep working").
+String deviceMachineLabel(BuildContext context, MachinePresence machine) =>
+    switch (machine) {
+      MachinePresence.online => context.l10n.networkPresenceOnline,
+      MachinePresence.degraded => context.l10n.networkPresenceBusy,
+      MachinePresence.offline => context.l10n.networkPresenceOffline,
+    };
+
+/// The agent state label.
+String deviceAgentLabel(BuildContext context, AgentRunState state) =>
+    switch (state) {
+      AgentRunState.live => context.l10n.networkPresenceOnline,
+      AgentRunState.busy => context.l10n.networkPresenceBusy,
+      AgentRunState.offline => context.l10n.networkPresenceOffline,
+    };
+
+/// The exposed-session state label.
+String deviceSessionLabel(
+  BuildContext context,
+  ConnectorSessionPresence state,
+) => switch (state) {
+  ConnectorSessionPresence.live => context.l10n.networkPresenceOnline,
+  ConnectorSessionPresence.wakeOnDm => context.l10n.networkPresenceWakeOnDm,
+  ConnectorSessionPresence.offline => context.l10n.networkPresenceOffline,
+};
+
+/// The agent NAME part of a §1 address (`goal_builder@macbook` →
+/// `goal_builder`).
+String deviceAgentName(String address) {
+  final at = address.indexOf('@');
+  return at <= 0 ? address : address.substring(0, at);
+}
+
 /// The 'My devices' roster panel (issue #2062 chunk 15): rendered at the
 /// TOP of the networks sidebar, above the memberships — devices with
 /// online/degraded/offline dots, nested agents (live/busy/offline) and
@@ -56,12 +116,12 @@ class DeviceRosterPanel extends StatelessWidget {
             switch (phase) {
               DeviceConnectorPhase.online => _OnlineRoster(service: service),
               DeviceConnectorPhase.preparing ||
-              DeviceConnectorPhase.connecting => _StatusLine(
+              DeviceConnectorPhase.connecting => DeviceRosterStatusLine(
                 key: const ValueKey('deviceRosterSkeleton'),
                 label: context.l10n.networkDeviceConnecting,
                 color: FahColors.of(context).dim.withValues(alpha: 0.5),
               ),
-              DeviceConnectorPhase.reconnecting => _StatusLine(
+              DeviceConnectorPhase.reconnecting => DeviceRosterStatusLine(
                 key: const ValueKey('deviceRosterReconnecting'),
                 label: context.l10n.networkDeviceReconnecting,
                 color: FahColors.of(context).pending,
@@ -95,46 +155,34 @@ class _OnlineRoster extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _RosterRow(
+            DeviceRosterRow(
               key: const ValueKey('deviceRow'),
               dotKey: const ValueKey('deviceDot'),
-              dotColor: switch (machine) {
-                MachinePresence.online => colors.teal,
-                MachinePresence.degraded => colors.pending,
-                MachinePresence.offline => colors.dim,
-              },
+              dotColor: deviceMachineDotColor(colors, machine),
               label: context.l10n.networkDeviceThisDevice,
-              stateLabel: _machineLabel(context, machine),
+              stateLabel: deviceMachineLabel(context, machine),
               stateColor: machine == MachinePresence.offline
                   ? colors.dim
                   : colors.teal,
             ),
             for (final entry in (presence?.agents ?? const {}).entries)
-              _RosterRow(
+              DeviceRosterRow(
                 key: ValueKey('agentRow:${entry.key}'),
                 dotKey: ValueKey('agentDot:${entry.key}'),
-                dotColor: switch (entry.value) {
-                  AgentRunState.live => colors.teal,
-                  AgentRunState.busy => colors.pending,
-                  AgentRunState.offline => colors.dim,
-                },
-                label: _agentName(entry.key),
-                stateLabel: _agentLabel(context, entry.value),
+                dotColor: deviceAgentDotColor(colors, entry.value),
+                label: deviceAgentName(entry.key),
+                stateLabel: deviceAgentLabel(context, entry.value),
                 stateColor: entry.value == AgentRunState.offline
                     ? colors.dim
                     : colors.teal,
               ),
             for (final entry in (presence?.sessions ?? const {}).entries)
-              _RosterRow(
+              DeviceRosterRow(
                 key: ValueKey('sessionRow:${entry.key}'),
                 dotKey: ValueKey('sessionDot:${entry.key}'),
-                dotColor: switch (entry.value) {
-                  ConnectorSessionPresence.live => colors.teal,
-                  ConnectorSessionPresence.wakeOnDm => colors.pending,
-                  ConnectorSessionPresence.offline => colors.dim,
-                },
+                dotColor: deviceSessionDotColor(colors, entry.value),
                 label: entry.key,
-                stateLabel: _sessionLabel(context, entry.value),
+                stateLabel: deviceSessionLabel(context, entry.value),
                 stateColor: entry.value == ConnectorSessionPresence.offline
                     ? colors.dim
                     : colors.teal,
@@ -144,39 +192,12 @@ class _OnlineRoster extends StatelessWidget {
       },
     );
   }
-
-  String _agentName(String address) {
-    final at = address.indexOf('@');
-    return at <= 0 ? address : address.substring(0, at);
-  }
-
-  String _machineLabel(BuildContext context, MachinePresence machine) =>
-      switch (machine) {
-        MachinePresence.online => context.l10n.networkPresenceOnline,
-        MachinePresence.degraded => context.l10n.networkPresenceBusy,
-        MachinePresence.offline => context.l10n.networkPresenceOffline,
-      };
-
-  String _agentLabel(BuildContext context, AgentRunState state) =>
-      switch (state) {
-        AgentRunState.live => context.l10n.networkPresenceOnline,
-        AgentRunState.busy => context.l10n.networkPresenceBusy,
-        AgentRunState.offline => context.l10n.networkPresenceOffline,
-      };
-
-  String _sessionLabel(BuildContext context, ConnectorSessionPresence state) =>
-      switch (state) {
-        ConnectorSessionPresence.live => context.l10n.networkPresenceOnline,
-        ConnectorSessionPresence.wakeOnDm =>
-          context.l10n.networkPresenceWakeOnDm,
-        ConnectorSessionPresence.offline => context.l10n.networkPresenceOffline,
-      };
 }
 
 /// One roster line: presence dot + name + a trailing state label (the
 /// membership tile's single-row shape).
-class _RosterRow extends StatelessWidget {
-  const _RosterRow({
+class DeviceRosterRow extends StatelessWidget {
+  const DeviceRosterRow({
     super.key,
     required this.dotKey,
     required this.dotColor,
@@ -221,8 +242,12 @@ class _RosterRow extends StatelessWidget {
 }
 
 /// The skeleton (connecting) / muted (reconnecting) one-line states.
-class _StatusLine extends StatelessWidget {
-  const _StatusLine({super.key, required this.label, required this.color});
+class DeviceRosterStatusLine extends StatelessWidget {
+  const DeviceRosterStatusLine({
+    super.key,
+    required this.label,
+    required this.color,
+  });
 
   final String label;
   final Color color;

@@ -365,6 +365,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get wideNavActivity => 'Активность';
 
   @override
+  String get wideNavDevices => 'Устройства';
+
+  @override
   String get activityRunning => 'В работе';
 
   @override

@@ -147,6 +147,10 @@
   "chatExpand": "Expand subagents",
   "chatCollapse": "Collapse",
   "wideNavActivity": "Activity",
+  "wideNavDevices": "Devices",
+  "@wideNavDevices": {
+    "description": "Wide-shell nav row — the DEVICES section (machine roster tree)"
+  },
   "activityRunning": "Running",
   "activityRecent": "Recent",
   "activityAll": "All activity",

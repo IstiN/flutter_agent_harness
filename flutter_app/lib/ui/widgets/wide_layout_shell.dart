@@ -14,6 +14,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -39,6 +40,7 @@ import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/fa_route_header.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/network/devices_page.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
@@ -154,7 +156,7 @@ class WideLayoutShell extends StatefulWidget {
 /// The sessions sidebar's resize handle (tests find it by this key).
 const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 
-enum _WideShellSection { chats, local, activity, apps, settings }
+enum _WideShellSection { chats, local, devices, activity, apps, settings }
 
 class _WideLayoutShellState extends State<WideLayoutShell>
     with TickerProviderStateMixin {
@@ -265,6 +267,22 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// the Local drill-down uses. The message column keeps the chat.
   /// Section switches close it, like a route pop.
   bool _networksSurfaceOpen = false;
+
+  /// The app-scope device connector (issue #2062 chunk 16): ONE upstream
+  /// socket shared by every device surface (AC1). Created lazily on first
+  /// entry to the DEVICES section — shells without network wiring (and
+  /// every signed-out or test-booted shell) never touch the enrollment
+  /// flow, and the service self-starts/stops on the manager's JWT flips.
+  DeviceConnectorService? _deviceConnector;
+
+  /// The [NetworkSessionManager]-bound connector, created on first use.
+  DeviceConnectorService get _devicesConnector {
+    final sessions = widget.networkSessions;
+    assert(sessions != null, 'the DEVICES surface requires networkSessions');
+    return _deviceConnector ??= DeviceConnectorService(
+      sessionManager: sessions!,
+    )..start();
+  }
 
   /// Lazily built resolver for folders' well-known icon files (cached
   /// per folder in memory).
@@ -636,6 +654,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     widget.networkSessions?.removeListener(_onNetworkSessionsChanged);
+    unawaited(_deviceConnector?.dispose());
+    _deviceConnector = null;
     _listenedService?.removeListener(_onServiceChanged);
     _listenedNamesStore?.removeListener(_onNamesChanged);
     _activityController.dispose();
@@ -802,6 +822,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _networksSurfaceOpen
             ? _buildNetworksSidebar()
             : _buildChatPanel(compact: true),
+      _WideShellSection.devices => _buildDevicesPanel(compact: true),
       _WideShellSection.local => _buildLocalPanel(compact: true),
       _WideShellSection.activity =>
         _narrowActivityDetailVisible
@@ -1346,6 +1367,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                             : _buildChatPanel(collapsed: collapsed),
                       _WideShellSection.activity || _WideShellSection.apps =>
                         _buildChatPanel(collapsed: collapsed),
+                      _WideShellSection.devices => _buildDevicesPanel(),
                       _WideShellSection.local => _buildLocalPanel(),
                       _WideShellSection.settings => _buildSettingsPanel(),
                     },
@@ -1468,6 +1490,17 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           setState(() => _networksSurfaceOpen = true);
         },
       ),
+      // The DEVICES section (issue #2062 chunk 16): signed-in accounts
+      // only — guests have no machines to show. Same rail semantics as
+      // Local/Activity (a root section destination).
+      if (widget.networkSessions?.hasJwt ?? false)
+        MessengerRailDestination(
+          rowKey: const ValueKey('messengerPrimaryNav-devices'),
+          icon: FaIconThemeData.of(context).resolve(FaSemanticIcon.devices),
+          label: context.l10n.wideNavDevices,
+          selected: _section == _WideShellSection.devices,
+          onTap: (_) => _selectSection(_WideShellSection.devices),
+        ),
       filterRow(
         ChatListFilter.channels,
         Icons.tag_rounded,

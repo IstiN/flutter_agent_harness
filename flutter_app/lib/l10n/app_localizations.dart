@@ -764,6 +764,12 @@ abstract class AppLocalizations {
   /// **'Activity'**
   String get wideNavActivity;
 
+  /// No description provided for @wideNavDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices'**
+  String get wideNavDevices;
+
   /// No description provided for @activityRunning.
   ///
   /// In en, this message translates to:

@@ -45,6 +45,17 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     );
   }
 
+  /// The DEVICES section (issue #2062 chunk 16): the machine roster tree
+  /// ([DevicesPage]) over the app-scope connector — one upstream socket
+  /// for every surface that shows it (AC1). The narrow form embeds the
+  /// same page in the section surface; the wide form takes the sidebar
+  /// column (the Local panel's slot) and keeps the message column.
+  Widget _buildDevicesPanel({bool compact = false}) {
+    final sessions = widget.networkSessions;
+    if (sessions == null || !sessions.hasJwt) return const SizedBox.shrink();
+    return DevicesPage(service: _devicesConnector);
+  }
+
   /// The sidebar channel-row tap: membership first, then the channel
   /// entry (channel-rail contract).
   Future<void> _openSidebarNetworkChannel(
@@ -153,8 +164,7 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     if (!mounted) return;
     _updateShell(() {
       _activeNetworkEntry =
-          entry ??
-          _standInNetworkChannelEntry(manager, networkId, channel);
+          entry ?? _standInNetworkChannelEntry(manager, networkId, channel);
     });
     // The row-open parity: the tap marks the projection row read.
     if (entry != null) await _chatController.markOpened(entry);

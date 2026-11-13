@@ -126,6 +126,10 @@
   "chatExpand": "Развернуть субагентов",
   "chatCollapse": "Свернуть",
   "wideNavActivity": "Активность",
+  "wideNavDevices": "Устройства",
+  "@wideNavDevices": {
+    "description": "Wide-shell nav row — the DEVICES section (machine roster tree)"
+  },
   "activityRunning": "В работе",
   "activityRecent": "Недавние",
   "activityAll": "Вся активность",

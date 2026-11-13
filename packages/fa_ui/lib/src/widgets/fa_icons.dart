@@ -17,6 +17,7 @@ enum FaSemanticIcon {
   checkCircle,
   phone,
   more,
+  devices,
 }
 
 /// Theme-owned glyph mapping for [FaIcon].
@@ -41,6 +42,7 @@ class FaIconThemeData extends ThemeExtension<FaIconThemeData> {
     FaSemanticIcon.checkCircle: Icons.check_circle,
     FaSemanticIcon.phone: Icons.phone_iphone,
     FaSemanticIcon.more: Icons.more_horiz_rounded,
+    FaSemanticIcon.devices: Icons.devices_outlined,
   };
 
   static FaIconThemeData of(BuildContext context) =>

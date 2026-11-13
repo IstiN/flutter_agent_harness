@@ -41,6 +41,7 @@ class NetworkHomePage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.manager,
+    this.deviceConnector,
   });
 
   /// The mode navigation state machine.
@@ -49,21 +50,33 @@ class NetworkHomePage extends StatefulWidget {
   /// The session manager (wallet, memberships, live sessions).
   final NetworkSessionManager manager;
 
+  /// An app-scope device connector injected by the host (issue #2062
+  /// chunk 16: the wide shell owns ONE instance and shares it, AC1).
+  /// When null the page creates its own for standalone use (legacy
+  /// narrow embedding).
+  final DeviceConnectorService? deviceConnector;
+
   @override
   State<NetworkHomePage> createState() => _NetworkHomePageState();
 }
 
 class _NetworkHomePageState extends State<NetworkHomePage> {
-  /// The device connector (issue #2062): one service per home page,
-  /// bound to the session manager — it self-starts on signed-in state
-  /// (including the restore-account notification) and stops on sign-out.
-  DeviceConnectorService? _deviceConnector;
+  /// The owned device connector (issue #2062): created only when the host
+  /// injected none (standalone use) — with an injected instance the shell
+  /// keeps ownership and disposal (chunk 16, AC1 single socket).
+  DeviceConnectorService? _ownedConnector;
+
+  /// The connector the sidebar panel renders: injected, else owned.
+  DeviceConnectorService? get _deviceConnector =>
+      widget.deviceConnector ?? _ownedConnector;
 
   @override
   void initState() {
     super.initState();
-    _deviceConnector = DeviceConnectorService(sessionManager: widget.manager)
-      ..start();
+    if (widget.deviceConnector == null) {
+      _ownedConnector = DeviceConnectorService(sessionManager: widget.manager)
+        ..start();
+    }
     widget.controller.addListener(_ensureSession);
     widget.manager.addListener(_onChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureSession());
@@ -73,8 +86,8 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
   void dispose() {
     widget.controller.removeListener(_ensureSession);
     widget.manager.removeListener(_onChanged);
-    unawaited(_deviceConnector?.dispose());
-    _deviceConnector = null;
+    unawaited(_ownedConnector?.dispose());
+    _ownedConnector = null;
     super.dispose();
   }
 

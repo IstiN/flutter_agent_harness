@@ -253,7 +253,10 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
       builder: (context, constraints) {
         return TweenAnimationBuilder<double>(
           tween: Tween(end: _sidebarCollapsed ? 1.0 : 0.0),
-          duration: FaMotion.duration(context, _WideLayoutShellState._sidebarCollapseDuration),
+          duration: FaMotion.duration(
+            context,
+            _WideLayoutShellState._sidebarCollapseDuration,
+          ),
           curve: Curves.easeInOutCubic,
           builder: (context, progress, _) =>
               _buildWideBodyGeometry(colors, tokens, constraints, progress),
@@ -273,7 +276,9 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
     double progress,
   ) {
     final sidebarWidth =
-        _sidebarWidth + (_WideLayoutShellState._collapsedSidebarWidth - _sidebarWidth) * progress;
+        _sidebarWidth +
+        (_WideLayoutShellState._collapsedSidebarWidth - _sidebarWidth) *
+            progress;
     final contentCollapsed = progress >= .5;
     // The glass card keeps 8pt floating margins on the window edges
     // (top, bottom, right) — the content must live INSIDE them,
@@ -283,7 +288,10 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
     // (owner: the rail↔sidebar gap halves to 8pt total), so the
     // leading margin is 0 and the content fills the rest.
     final contentWidth =
-        (contentCollapsed ? _WideLayoutShellState._collapsedSidebarWidth : _sidebarWidth) - 8;
+        (contentCollapsed
+            ? _WideLayoutShellState._collapsedSidebarWidth
+            : _sidebarWidth) -
+        8;
     final contentOpacity = contentCollapsed
         ? (progress - .5) * 2
         : 1 - progress * 2;
@@ -717,6 +725,9 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
   Widget _buildCenterSurface(FahColors colors) {
     return switch (_section) {
       _WideShellSection.chats => _buildChatArea(colors),
+      // The devices tree lives in the sidebar column (the Local panel's
+      // slot); the message column keeps the chat.
+      _WideShellSection.devices => _buildChatArea(colors),
       _WideShellSection.local => _buildChatArea(colors),
       _WideShellSection.activity => SafeArea(
         key: const ValueKey('wideDuoActivitySafeArea'),
