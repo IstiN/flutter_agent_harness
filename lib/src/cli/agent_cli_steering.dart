@@ -97,6 +97,9 @@ extension AgentCliSteering on AgentCli {
             _stallBannerLine(
               queued: queued,
               budgetOffer: hasOutstandingBudgetOffer,
+              // Issue #2119 AC3: same context-aware levers as the
+              // watchdog banner — the transcript is the signal.
+              hasImages: messagesContainImages(_agent.state.messages),
             ),
           ),
         );
@@ -364,7 +367,11 @@ extension AgentCliSteering on AgentCli {
   /// if the run wakes" copy that offered no recovery action. Every
   /// stall symptom — banner, panel label, busy row — reads the SAME
   /// classifier ([_runLooksWedged]).
-  String _stallBannerLine({int queued = 0, bool budgetOffer = false}) {
+  String _stallBannerLine({
+    int queued = 0,
+    bool budgetOffer = false,
+    bool hasImages = true,
+  }) {
     final last = _lastAgentEventAt;
     final seconds = last == null
         ? 0
@@ -378,6 +385,15 @@ extension AgentCliSteering on AgentCli {
         ? ' (${describeRunIdleWindow(window.window, window.source)} — '
               'the run keeps waiting)'
         : '';
+    // Issue #2119 AC3: the image levers are advice about IMAGE payloads —
+    // /compact and images.maxBytesPerRequest cannot unstick an image-free
+    // session, so the line names the cause (still waiting on the provider)
+    // and keeps the wait/abort/restart actions instead. With images in the
+    // context the levers stay byte-identical (the #1786 REG-3 shape).
+    final levers = hasImages
+        ? '/compact (drops image data) or a lower images.maxBytesPerRequest '
+              'may unstick it; '
+        : 'still waiting on the provider; ';
     // Issue #488 AC1a: when the caller knows the queue size (a fresh
     // wedged steer), the banner names the count instead of the single
     // "your message" copy. When no messages are queued, it is an
@@ -395,14 +411,12 @@ extension AgentCliSteering on AgentCli {
           ? '; press b to background the running call & deliver steering now'
           : '';
       return '⚠ agent stalled — no response for ${minutes}m$windowNote. '
-          '$saved: /compact (drops image data) or a lower '
-          'images.maxBytesPerRequest may unstick it; /restart delivers it '
+          '$saved: $levers/restart delivers it '
           'into a fresh run, esc aborts'
           '$budgetNote';
     }
     return 'info: agent stalled — no response for ${minutes}m$windowNote. '
-        '/compact (drops image data) or a lower images.maxBytesPerRequest '
-        'may unstick it; /restart starts a fresh run, esc aborts';
+        '$levers/restart starts a fresh run, esc aborts';
   }
 
   /// Pushes the stall state to every consumer (issue #514 AC1): the busy
@@ -417,6 +431,9 @@ extension AgentCliSteering on AgentCli {
       final line = _stallBannerLine(
         queued: queued,
         budgetOffer: hasOutstandingBudgetOffer,
+        // Issue #2119 AC3: the image levers render only when the session
+        // context actually carries images — the transcript is the signal.
+        hasImages: messagesContainImages(_agent.state.messages),
       );
       // Issue #2117: the banner obeys the console log dial — the queued
       // variant is warn-level (still visible at the default), the
@@ -642,6 +659,20 @@ extension AgentCliSteering on AgentCli {
   /// for the 2s inbox tick (issue #437 E4).
   @visibleForTesting
   void checkPendingSteeringHealthForTest() => _checkPendingSteeringHealth();
+
+  /// Test seam: the stall banner text for a given shape (issue #2119 AC3
+  /// variant coverage — the integration harness cannot put image blocks
+  /// into the live transcript, so the has-images side is pinned here).
+  @visibleForTesting
+  String stallBannerLineForTest({
+    int queued = 0,
+    bool budgetOffer = false,
+    bool hasImages = true,
+  }) => _stallBannerLine(
+    queued: queued,
+    budgetOffer: budgetOffer,
+    hasImages: hasImages,
+  );
 
   /// Test seam: the shared stall classifier state (issue #514 AC1) —
   /// `true` iff the watchdog currently pushes the run as stalled.
