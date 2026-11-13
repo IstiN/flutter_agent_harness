@@ -13,16 +13,33 @@ extension AgentCliDiagLog on AgentCli {
   /// TUI/stderr stay clean — the AutoCompactor hook streams progress to
   /// the user, the log captures everything for post-mortem.
   ///
+  /// Issue #2117: every call declares a [level] (default `info`) and a
+  /// [category] (default `lifecycle`); the FILE sink gate applies before
+  /// any work is queued, and the rendered line carries the level tag
+  /// (fa.log keeps its shape and destination beyond the level tags).
+  ///
   /// gh-2097: the append rides the serialized `_diagLogChain` — a burst
   /// of diagnostics lands complete and in order, never racing itself on
   /// the same file, and exit paths drain the chain so nothing is dropped
   /// (the old unawaited fire-and-forget lost rapid bursts at process
   /// exit).
-  void _logDiagnostic(String message) {
+  void _logDiagnostic(
+    String message, {
+    LogLevel level = LogLevel.info,
+    LogCategory category = LogCategory.lifecycle,
+  }) {
     final path = _diagnosticLogPath;
     if (path == null) return;
+    if (!config.logging.filePasses(level, category)) return;
     _diagLogChain = _diagLogChain
-        .then((_) => _appendDiagnosticLog(path, message))
+        .then(
+          (_) => _appendDiagnosticLog(
+            path,
+            message,
+            level: level,
+            category: category,
+          ),
+        )
         // The appender already swallows its own errors; this keeps the
         // chain alive regardless so one failure can never drop every
         // later line with it.
@@ -36,9 +53,14 @@ extension AgentCliDiagLog on AgentCli {
   Future<void> flushDiagnosticLog() => _diagLogChain;
 
   /// Test seam: emit one diagnostic line exactly as production callers
-  /// do (gh-2097 burst/drop coverage).
+  /// do (gh-2097 burst/drop coverage; the level/category ride through
+  /// for the #2117 sink tests).
   @visibleForTesting
-  void logDiagnosticForTest(String message) => _logDiagnostic(message);
+  void logDiagnosticForTest(
+    String message, {
+    LogLevel level = LogLevel.info,
+    LogCategory category = LogCategory.lifecycle,
+  }) => _logDiagnostic(message, level: level, category: category);
 
   /// Short session id for diagnostic log lines: parallel fa processes share
   /// one fa.log, so every lifecycle line names its session (post-mortem
@@ -49,11 +71,28 @@ extension AgentCliDiagLog on AgentCli {
     return id.length <= 8 ? id : id.substring(0, 8);
   }
 
-  /// Appends one timestamped [message] to [path], creating the log directory
-  /// on first use. Isolated from [_logDiagnostic] so the public entry point
+  /// Appends one rendered line to [path], creating the log directory on
+  /// first use. Isolated from [_logDiagnostic] so the public entry point
   /// stays small.
-  Future<void> _appendDiagnosticLog(String path, String message) async {
-    final line = '${DateTime.now().toIso8601String()} $message\n';
+  ///
+  /// Issue #2117: the line is REDACTED (every rendered line, every sink)
+  /// and carries the level tag after the timestamp — the default file
+  /// shape is today's `ISO message` with ` level` inserted; a configured
+  /// `logging.format` renders the pattern instead.
+  Future<void> _appendDiagnosticLog(
+    String path,
+    String message, {
+    required LogLevel level,
+    required LogCategory category,
+  }) async {
+    final settings = config.logging;
+    final safe = config.redactionPipeline?.redact(message) ?? message;
+    final line = settings.format == null
+        ? '${DateTime.now().toIso8601String()} ${level.name} $safe\n'
+        : '${settings.format!.render(
+            LogEvent(time: DateTime.now(), elapsed: DateTime.now().difference(_loggingBoot), sid: _logSid, level: level, category: category, message: safe),
+            timeFormat: settings.timeFormat,
+          )}\n';
     try {
       if (!_diagnosticLogDirEnsured) {
         _diagnosticLogDirEnsured = true;
