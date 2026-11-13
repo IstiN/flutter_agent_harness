@@ -215,6 +215,7 @@ class DeviceConnectorService {
   var _generation = 0;
   var _running = false;
   var _phase = DeviceConnectorPhase.signedOut;
+  String? _lastStartError;
   final _subscriptions = <StreamSubscription<Object?>>[];
 
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
@@ -225,6 +226,11 @@ class DeviceConnectorService {
 
   /// The current lifecycle phase.
   DeviceConnectorPhase get phase => _phase;
+
+  /// The last failed [start]'s error text (null after a clean start or a
+  /// fresh attempt) — the DEVICES surface renders it so enrollment/
+  /// keychain/WS failures are visible instead of a blank panel.
+  String? get lastStartError => _lastStartError;
 
   /// Fires on every phase transition.
   Stream<DeviceConnectorPhase> get phaseStream => _phases.stream;
@@ -263,11 +269,13 @@ class DeviceConnectorService {
   Future<void> start() async {
     if (_running) return;
     final generation = ++_generation;
+    _lastStartError = null;
     _setPhase(DeviceConnectorPhase.preparing);
     try {
       await _start(generation);
     } on Object catch (error) {
       onLog?.call('device connector start failed: $error');
+      _lastStartError = error.toString();
       if (generation != _generation) return;
       await _teardown();
       _setPhase(DeviceConnectorPhase.signedOut);

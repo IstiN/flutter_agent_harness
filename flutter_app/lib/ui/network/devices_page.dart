@@ -93,10 +93,6 @@ class _DevicesPageState extends State<DevicesPage> {
       initialData: widget.service.phase,
       builder: (context, snapshot) {
         final phase = snapshot.data ?? DeviceConnectorPhase.signedOut;
-        // Signed out → nothing at all (the nav row is already hidden).
-        if (phase == DeviceConnectorPhase.signedOut) {
-          return const SizedBox.shrink();
-        }
         return Column(
           key: const ValueKey('devicesPage'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -131,6 +127,39 @@ class _DevicesPageState extends State<DevicesPage> {
                         key: const ValueKey('devicesReconnecting'),
                         label: context.l10n.networkDeviceReconnecting,
                         color: colors.pending,
+                      ),
+                    // A failed start leaves the phase signed-out while the
+                    // section is still mounted (enrollment/keychain/WS
+                    // failure) — never blank: say so, show the error, tap
+                    // retries (issue #2062 field feedback).
+                    if (phase == DeviceConnectorPhase.signedOut)
+                      GestureDetector(
+                        key: const ValueKey('devicesNotRunning'),
+                        onTap: widget.service.start,
+                        child: _phaseLine(
+                          context,
+                          key: const ValueKey('devicesNotRunningLine'),
+                          label: context.l10n.networkDeviceNotRunning,
+                          color: colors.dim,
+                        ),
+                      ),
+                    if (phase == DeviceConnectorPhase.signedOut &&
+                        widget.service.lastStartError != null)
+                      Padding(
+                        key: const ValueKey('devicesStartError'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        child: Text(
+                          widget.service.lastStartError!,
+                          style: TextStyle(
+                            color: colors.dim.withValues(alpha: 0.7),
+                            fontSize: 11,
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     _OwnDeviceNode(service: widget.service),
                     for (final entry in _remote.entries)

@@ -1400,6 +1400,10 @@
   "@networkDeviceReconnecting": {
     "description": "Device roster muted line while the upstream link is down"
   },
+  "networkDeviceNotRunning": "Connector not running — tap to retry",
+  "@networkDeviceNotRunning": {
+    "description": "Device roster line when the connector failed or stopped; tapping restarts it"
+  },
   "networkPresenceWakeOnDm": "Wake on DM",
   "@networkPresenceWakeOnDm": {
     "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"

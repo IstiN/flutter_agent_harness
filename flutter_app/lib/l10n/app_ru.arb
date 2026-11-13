@@ -1101,6 +1101,10 @@
   "@networkDeviceReconnecting": {
     "description": "Device roster muted line while the upstream link is down"
   },
+  "networkDeviceNotRunning": "Коннектор не запущен — нажмите, чтобы повторить",
+  "@networkDeviceNotRunning": {
+    "description": "Device roster line when the connector failed or stopped; tapping restarts it"
+  },
   "networkPresenceWakeOnDm": "Разбудить в DM",
   "@networkPresenceWakeOnDm": {
     "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"

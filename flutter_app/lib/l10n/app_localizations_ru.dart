@@ -2731,6 +2731,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkDeviceReconnecting => 'Переподключение…';
 
   @override
+  String get networkDeviceNotRunning =>
+      'Коннектор не запущен — нажмите, чтобы повторить';
+
+  @override
   String get networkPresenceWakeOnDm => 'Разбудить в DM';
 
   @override

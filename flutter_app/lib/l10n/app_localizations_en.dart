@@ -2703,6 +2703,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDeviceReconnecting => 'Reconnecting…';
 
   @override
+  String get networkDeviceNotRunning => 'Connector not running — tap to retry';
+
+  @override
   String get networkPresenceWakeOnDm => 'Wake on DM';
 
   @override

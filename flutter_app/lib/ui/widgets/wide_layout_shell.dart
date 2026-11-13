@@ -281,6 +281,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     assert(sessions != null, 'the DEVICES surface requires networkSessions');
     return _deviceConnector ??= DeviceConnectorService(
       sessionManager: sessions!,
+      // Enrollment/keychain/WS failures surface in the app log — the
+      // connector has no other voice on this surface.
+      onLog: (line) => AppLog.i('devices', line),
     )..start();
   }
 

@@ -28,6 +28,7 @@ final class FakeDevicesService implements DeviceConnectorService {
   FakeDevicesService({
     DeviceConnectorPhase initialPhase = DeviceConnectorPhase.signedOut,
     this.deviceId,
+    this.lastStartError,
   }) : _phase = initialPhase;
 
   DeviceConnectorPhase _phase;
@@ -35,6 +36,18 @@ final class FakeDevicesService implements DeviceConnectorService {
   /// The enrolled device id the page filters its own frames by.
   @override
   final String? deviceId;
+
+  /// The simulated start failure the page should surface.
+  @override
+  final String? lastStartError;
+
+  /// How many times the page asked for a retry start.
+  int startCalls = 0;
+
+  @override
+  Future<void> start() async {
+    startCalls++;
+  }
 
   // Synchronous controllers (repo convention): broadcast delivery lands
   // within the same tester.pump().
@@ -132,7 +145,9 @@ FahColors paletteOf(WidgetTester tester) =>
     FahColors.of(tester.element(find.byKey(const ValueKey('devicesPage'))));
 
 void main() {
-  testWidgets('not signed in → nothing renders', (tester) async {
+  testWidgets('signed-out phase → not-running line + This device, tap retries', (
+    tester,
+  ) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.signedOut,
     );
@@ -140,8 +155,30 @@ void main() {
     await tester.pumpWidget(_wrap(DevicesPage(service: service)));
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('devicesPage')), findsNothing);
-    expect(find.text('MY DEVICES'), findsNothing);
+    // Never blank (issue #2062 field feedback): the header, the
+    // not-running line and the own-device node all render.
+    expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
+    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
+    expect(find.text('Connector not running — tap to retry'), findsOneWidget);
+    expect(find.text('This device'), findsOneWidget);
+
+    // Tap → the page asks the service for a retry start.
+    await tester.tap(find.byKey(const ValueKey('devicesNotRunning')));
+    expect(service.startCalls, 1);
+  });
+
+  testWidgets('signed-out phase shows the last start error', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.signedOut,
+      lastStartError: 'DeviceEnrollmentException: 401',
+    );
+
+    await tester.pumpWidget(_wrap(DevicesPage(service: service)));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('devicesStartError')), findsOneWidget);
+    expect(find.text('DeviceEnrollmentException: 401'), findsOneWidget);
   });
 
   testWidgets('connecting → skeleton line, no tree rows', (tester) async {

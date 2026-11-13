@@ -764,7 +764,7 @@ abstract class AppLocalizations {
   /// **'Activity'**
   String get wideNavActivity;
 
-  /// No description provided for @wideNavDevices.
+  /// Wide-shell nav row — the DEVICES section (machine roster tree)
   ///
   /// In en, this message translates to:
   /// **'Devices'**
@@ -4843,6 +4843,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reconnecting…'**
   String get networkDeviceReconnecting;
+
+  /// Device roster line when the connector failed or stopped; tapping restarts it
+  ///
+  /// In en, this message translates to:
+  /// **'Connector not running — tap to retry'**
+  String get networkDeviceNotRunning;
 
   /// Roster presence label for an exposed session with no live lease (a DM wakes it)
   ///
