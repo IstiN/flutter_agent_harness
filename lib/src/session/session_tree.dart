@@ -732,6 +732,9 @@ final class Session {
       ),
       path: path,
       entries: entries,
+      // The mixed shape: classic-folded records join the working set scan
+      // here too — the pure-classic branch forwards the same drop.
+      dropped: classicHidden,
     );
   }
 
