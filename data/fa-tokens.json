@@ -1,15 +1,6 @@
 {
   "pr-2006": [
     {
-      "leg": "rework",
-      "at": "2026-10-30T22:12:34Z",
-      "prompt": 2080880,
-      "completion": 70095,
-      "total": 2150975,
-      "cacheRead": 37439744,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-10-30T22:31:11Z",
       "prompt": 278160,
@@ -3033,6 +3024,15 @@
       "completion": 3059,
       "total": 10028,
       "cacheRead": 1361600,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-13T22:24:51Z",
+      "prompt": 158930,
+      "completion": 15999,
+      "total": 174929,
+      "cacheRead": 3666176,
       "model": "glm-5.3-flash"
     }
   ],
