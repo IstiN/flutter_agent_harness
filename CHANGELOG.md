@@ -32,6 +32,17 @@ block a release again.
   self-signed cert whose public `.cer` ships beside it) so dev/corporate
   machines can install via Add-AppxPackage; a Microsoft Store submission
   stays a separate Partner Center track.
+- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
+  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
+  threw `Unsupported operation` on platforms with no Firebase
+  registration (the template options register only android/ios/web/macos
+  — Windows/Linux throw before the `YOUR_` placeholder check could run),
+  killing boot before the first frame: the boot-watchdog fired and no
+  window ever opened. The read is now guarded — Firebase is
+  telemetry-only, so the services stage degrades with a debug print and
+  the app boots without it. Test: `bootServices degrades on platforms
+  with no Firebase registration` (windows-target override; previously
+  threw, now completes).
 - feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier
