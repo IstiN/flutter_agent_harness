@@ -131,6 +131,17 @@ extension AgentCliLease on AgentCli {
     return true;
   }
 
+  /// Boot gate (#2138): a refused claim aborts the boot loudly — the
+  /// process dies before anything can drive unleased (gh-1197 policy).
+  Future<void> _requireLeaseClaim() async {
+    if (!await _claimSessionLease()) {
+      throw StateError(
+        'session lease refused — the lease store cannot prove the '
+        'session is free; refusing to drive',
+      );
+    }
+  }
+
   /// Re-claims the lease after an in-process session switch (/reset,
   /// /session). A refused claim (#2138) restores [previousSession] and
   /// re-claims its just-released lease — no unleased drive may follow

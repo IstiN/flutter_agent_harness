@@ -2123,12 +2123,7 @@ class AgentCli {
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
     await _cubeBootRestore();
-    if (!await _claimSessionLease()) {
-      throw StateError(
-        'session lease refused — the lease store cannot prove the session '
-        'is free; refusing to drive',
-      );
-    }
+    await _requireLeaseClaim();
     // Restart honesty (issue #450): jobs in the manifest were left
     // running by the previous run — count them, then take the file over.
     await _waiting.captureLostJobs();
@@ -2141,12 +2136,7 @@ class AgentCli {
     _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
-    if (!await _claimSessionLease()) {
-      throw StateError(
-        'session lease refused — the lease store cannot prove the session '
-        'is free; refusing to drive',
-      );
-    }
+    await _requireLeaseClaim();
     // gh-1241: NO segment marker here — an idle owner boot must add zero
     // session bytes (issue #428 invariant); the marker lands lazily at the
     // first drive ([_runPrompt]) instead.
