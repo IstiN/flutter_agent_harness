@@ -146,32 +146,36 @@ extension AgentCliLease on AgentCli {
   /// /session). A refused claim (#2138) restores [previousSession] and
   /// re-claims its just-released lease — no unleased drive may follow
   /// the error panel. If even the restore refuses, the store cannot
-  /// enforce ownership at all: the process dies loudly (gh-1197 policy).
+  /// enforce ownership at all: the CLI prints the loud refusal and stops
+  /// CLEANLY (the contained-submit boundary swallows throws by design —
+  /// a thrown StateError would silently resume driving a session the
+  /// store cannot lease; stopping cannot).
   Future<void> _reclaimAfterSwitch(Session? previousSession) async {
     await _releaseSessionLease();
     if (await _claimSessionLease()) return;
-    if (previousSession == null) {
-      throw StateError(
-        'session lease refused — the lease store cannot prove the session '
-        'is free; refusing to drive',
-      );
-    }
-    _session = previousSession;
-    _notifyPluginSessionReady();
-    _syncMailboxPrefix();
-    _herdrSessionSwitched();
-    if (!await _claimSessionLease()) {
-      throw StateError(
-        'session lease refused: the lease store cannot enforce ownership '
-        '— refusing to drive',
-      );
+    if (previousSession != null) {
+      _session = previousSession;
+      _notifyPluginSessionReady();
+      _syncMailboxPrefix();
+      _herdrSessionSwitched();
+      if (await _claimSessionLease()) {
+        io.writeln(
+          tuiWarning(
+            'lease: the new session could not be claimed — staying on the '
+            'previous session',
+          ),
+        );
+        return;
+      }
     }
     io.writeln(
-      tuiWarning(
-        'lease: the new session could not be claimed — staying on the '
-        'previous session',
+      tuiError(
+        'lease: cannot enforce session ownership — the store refuses '
+        'every publish/verify; the CLI stops rather than drive unleased. '
+        'Fix the store and reopen.',
       ),
     );
+    _exited = true;
   }
 
   /// Headless claim (E7): no viewer mode exists here. Acquired → the run
