@@ -45,16 +45,49 @@ final class _ViewerAttachment {
 /// Transcript rows printed from the backlog before live tailing starts.
 const int _viewerBacklogCap = 5;
 
+/// The headless/wire-serve lease claim outcome (#428 + #2138).
+sealed class HeadlessLeaseClaim {
+  const HeadlessLeaseClaim();
+}
+
+/// The lease is ours — the run/serve drives.
+final class HeadlessLeaseClaimAcquired extends HeadlessLeaseClaim {
+  const HeadlessLeaseClaimAcquired();
+}
+
+/// A live owner blocked the claim: banner + exit 3 (never a second
+/// writer).
+final class HeadlessLeaseClaimBlocked extends HeadlessLeaseClaim {
+  const HeadlessLeaseClaimBlocked(this.lease);
+
+  /// The owner's live lease (banner material).
+  final SessionLease lease;
+}
+
+/// The store could not prove the session free on an enforceable backend:
+/// loud note + exit 4 (#2138) — never a crash-handler escape, never an
+/// unleased drive.
+final class HeadlessLeaseClaimRefused extends HeadlessLeaseClaim {
+  const HeadlessLeaseClaimRefused(this.reason);
+
+  /// Which enforcement leg failed.
+  final LeaseRefuseReason reason;
+}
+
 /// AgentCli lease/viewer half (private members of the CLI library).
 extension AgentCliLease on AgentCli {
   /// Claims the ownership lease for the CURRENT session after a
   /// drive-open. Free/expired → acquired (a dead owner is named in a
   /// printed warning); live → viewer mode; no store (or an unenforceable
-  /// backend) → today's unleased behavior.
-  Future<void> _claimSessionLease() async {
+  /// backend) → today's unleased behavior; publish/verify failure on an
+  /// enforceable backend → LOUD refusal, returns false (#2138) — the
+  /// caller must not let an unleased drive follow (boot aborts; an
+  /// in-process switch restores the previous session via
+  /// [_reclaimAfterSwitch]).
+  Future<bool> _claimSessionLease() async {
     final store = config.leaseStore;
     final session = _session;
-    if (store == null || session == null || _viewer != null) return;
+    if (store == null || session == null || _viewer != null) return true;
     final meta = await session.getMetadata();
     final result = await store.acquire(
       sessionFilePath: meta.path,
@@ -79,18 +112,82 @@ extension AgentCliLease on AgentCli {
       case LeaseBlocked(:final lease):
         await _enterViewerMode(lease: lease, meta: meta);
       case LeaseUnenforced():
-        // E4/E5 fail-open: a broken or non-atomic lease store never
-        // blocks opening a session — drive without enforcement.
+        // E5 fail-open: a backend WITHOUT atomic rename never blocks
+        // opening a session — drive without enforcement.
         break;
+      case LeaseRefused(:final reason):
+        // #2138: the store could not prove the session free on an
+        // enforceable backend — a second writer may be live. Refuse the
+        // drive loudly; the caller owns the no-unleased-drive follow-up.
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'the lease store failed to publish/verify; refusing to drive. '
+            'Fix the store (or clear a stale .owner.json) and reopen.',
+          ),
+        );
+        return false;
+    }
+    return true;
+  }
+
+  /// Boot gate (#2138): a refused claim aborts the boot loudly — the
+  /// process dies before anything can drive unleased (gh-1197 policy).
+  Future<void> _requireLeaseClaim() async {
+    if (!await _claimSessionLease()) {
+      throw StateError(
+        'session lease refused — the lease store cannot prove the '
+        'session is free; refusing to drive',
+      );
     }
   }
 
-  /// Headless claim (E7): no viewer mode exists here — returns the
-  /// owner's live lease when blocked (the caller refuses), else null.
-  Future<SessionLease?> _claimSessionLeaseHeadless() async {
+  /// Re-claims the lease after an in-process session switch (/reset,
+  /// /session). A refused claim (#2138) restores [previousSession] and
+  /// re-claims its just-released lease — no unleased drive may follow
+  /// the error panel. If even the restore refuses, the store cannot
+  /// enforce ownership at all: the CLI prints the loud refusal and stops
+  /// CLEANLY (the contained-submit boundary swallows throws by design —
+  /// a thrown StateError would silently resume driving a session the
+  /// store cannot lease; stopping cannot).
+  Future<void> _reclaimAfterSwitch(Session? previousSession) async {
+    await _releaseSessionLease();
+    if (await _claimSessionLease()) return;
+    if (previousSession != null) {
+      _session = previousSession;
+      _notifyPluginSessionReady();
+      _syncMailboxPrefix();
+      _herdrSessionSwitched();
+      if (await _claimSessionLease()) {
+        io.writeln(
+          tuiWarning(
+            'lease: the new session could not be claimed — staying on the '
+            'previous session',
+          ),
+        );
+        return;
+      }
+    }
+    io.writeln(
+      tuiError(
+        'lease: cannot enforce session ownership — the store refuses '
+        'every publish/verify; the CLI stops rather than drive unleased. '
+        'Fix the store and reopen.',
+      ),
+    );
+    _exited = true;
+  }
+
+  /// Headless claim (E7): no viewer mode exists here. Acquired → the run
+  /// drives; blocked → the owner's live lease (banner + exit 3);
+  /// refused → [HeadlessLeaseClaimRefused] (loud note + exit 4, #2138) —
+  /// never a throw into the crash handler, never an unleased drive.
+  Future<HeadlessLeaseClaim> _claimSessionLeaseHeadless() async {
     final store = config.leaseStore;
     final session = _session;
-    if (store == null || session == null) return null;
+    if (store == null || session == null) {
+      return const HeadlessLeaseClaimAcquired();
+    }
     final meta = await session.getMetadata();
     final result = await store.acquire(
       sessionFilePath: meta.path,
@@ -103,11 +200,36 @@ extension AgentCliLease on AgentCli {
     switch (result) {
       case LeaseAcquired():
         _heldLeasePath = meta.path;
-        return null;
+        return const HeadlessLeaseClaimAcquired();
       case LeaseBlocked(:final lease):
-        return lease;
+        return HeadlessLeaseClaimBlocked(lease);
       case LeaseUnenforced():
+        return const HeadlessLeaseClaimAcquired();
+      case LeaseRefused(:final reason):
+        return HeadlessLeaseClaimRefused(reason);
+    }
+  }
+
+  /// Resolves the headless/wire-serve lease gate (#428 + #2138):
+  /// acquired → null (the run drives on); blocked → exit code 3 with the
+  /// owner banner; refused → exit code 4 with the loud note. A non-null
+  /// result is the process exit code — the run must stop with it.
+  Future<int?> _resolveHeadlessLeaseGate() async {
+    final claim = await _claimSessionLeaseHeadless();
+    switch (claim) {
+      case HeadlessLeaseClaimAcquired():
         return null;
+      case HeadlessLeaseClaimBlocked(:final lease):
+        io.writeln(viewerBannerText(lease, stale: false));
+        return 3;
+      case HeadlessLeaseClaimRefused(:final reason):
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'refusing to drive (exit 4)',
+          ),
+        );
+        return 4;
     }
   }
 
@@ -187,9 +309,7 @@ extension AgentCliLease on AgentCli {
   Future<void> _printViewerBannerIfAny() async {
     final viewer = _viewer;
     if (viewer == null) return;
-    io.writeln(
-      tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)),
-    );
+    io.writeln(tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)));
   }
 
   /// Viewer composer line → the owner's mailbox with CLI attribution.

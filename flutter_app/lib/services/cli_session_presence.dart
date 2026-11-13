@@ -80,6 +80,10 @@ class SessionAttachTransport {
 
   final SessionEventSource events;
   final SessionInputChannel input;
+
+  /// Stops the transcript watch — the event source releases its pollers
+  /// (#2138: an attached view that detaches must not tail forever).
+  Future<void> dispose() => events.dispose();
 }
 
 /// Builds the file-backed attach transport: tails the session JSONL

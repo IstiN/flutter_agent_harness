@@ -65,6 +65,37 @@ void main() {
     await expectGolden(tester, 'attached_session_empty');
     controller.dispose();
   });
+
+  testWidgets('attached session screen: owner banner names host + pid '
+      '(#2138)', (tester) async {
+    // The wide-shell attach flow hands the blocking lease to the screen:
+    // the banner under the appbar names WHO drives (host + pid).
+    final controller = AttachedSessionController(
+      sessionId: 'sess-golden',
+      title: 'flutter_agent',
+      transport: _FixedTransport([
+        const AttachedMessage(role: AttachedMessageRole.user, text: 'status?'),
+      ]),
+    );
+    await pumpGolden(
+      tester,
+      AttachedSessionScreen(
+        controller: controller,
+        ownerLease: SessionLease(
+          host: 'cli',
+          sessionId: 'sess-golden',
+          pid: 85634,
+          bootId: 'owner-boot',
+          heartbeatAt: '2026-11-12T10:00:00Z',
+          acquiredAt: '2026-11-12T09:41:00Z',
+        ),
+      ),
+      size: goldenSizePhone,
+      wrap: (child) => child,
+    );
+    await expectGolden(tester, 'attached_session_owner_banner');
+    controller.dispose();
+  });
 }
 
 /// Replays a fixed backlog once, records input.
@@ -79,6 +110,9 @@ class _FixedTransport implements SessionAttachTransport {
 
   @override
   SessionInputChannel get input => _RecordingChannel(sent);
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _FixedSource implements SessionEventSource {

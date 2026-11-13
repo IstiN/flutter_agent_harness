@@ -179,20 +179,48 @@ final class LeaseBlocked extends LeaseAcquire {
 }
 
 /// This process opened for drive, but the lease could not be enforced
-/// (a write/rename/verify failure — E4): the drive proceeds WITHOUT a
-/// lease. Honest fail-open: nothing blocks a session over lease IO, and
-/// the caller may warn.
+/// because the backend has NO atomic rename (E5, pure web stores): the
+/// drive proceeds WITHOUT a lease — the only remaining fail-open. On
+/// backends that CAN publish atomically, a write/rename/verify failure
+/// is a [LeaseRefused] (#2138) — never a silent second writer.
 final class LeaseUnenforced extends LeaseAcquire {
   const LeaseUnenforced(this.lease);
 
-  /// The lease as attempted (not on disk, or unverifiable).
+  /// The lease as attempted (not on disk).
   final SessionLease lease;
 }
 
+/// Why an enforceable backend refused to prove the session free (#2138).
+enum LeaseRefuseReason {
+  /// The temp-write or atomic rename failed: no ownership sidecar was
+  /// published, so a live owner cannot be ruled out.
+  publishFailed,
+
+  /// The atomic publish succeeded but the ownership verify re-read kept
+  /// failing: the store cannot prove whose sidecar is on disk.
+  verifyFailed,
+}
+
+/// The store could not PROVE the session is free on an enforceable
+/// backend (#2138): the caller must NOT drive — a failed open is
+/// recoverable, a two-writer session is corruption. Stand down to the
+/// attach surface or refuse with a clear message.
+final class LeaseRefused extends LeaseAcquire {
+  const LeaseRefused(this.reason);
+
+  /// Which enforcement leg failed.
+  final LeaseRefuseReason reason;
+}
+
 /// File-backed ownership lease over an [ExecutionEnv]: the `_owner.json`
-/// sidecar next to the session JSONL. All failures are fail-open (E4): a
-/// lease that cannot be read is no lease; nothing here ever blocks
-/// opening a session for reading.
+/// sidecar next to the session JSONL. READ-side failures stay fail-open
+/// (E4): a lease that cannot be read is no lease; nothing here ever
+/// blocks opening a session for reading. The DRIVE-side acquire is the
+/// opposite (since #2138): on a backend that can publish atomically, a
+/// publish/verify failure REFUSES the drive ([LeaseRefused]) — a failed
+/// open is recoverable, a two-writer session is corruption. Only a
+/// backend with no atomic rename (E5, web) stays fail-open
+/// ([LeaseUnenforced]).
 final class FileSessionLeaseStore {
   /// Creates the store. [now] and [staleAfter] are injectable for tests;
   /// the heartbeat cadence lives with the owners (CLI ~4s on the inbox
@@ -209,6 +237,11 @@ final class FileSessionLeaseStore {
 
   /// How old a lease's last heartbeat may be before its owner is dead.
   final Duration staleAfter;
+
+  /// How many times the post-publish verify re-read may fail before the
+  /// acquire is refused (#2138): a transient read hiccup heals inside the
+  /// bound, a persistent outage cannot prove ownership.
+  static const _verifyReadAttempts = 3;
 
   /// The sidecar path for a session JSONL path:
   /// `<timestamp>_<sessionId>.jsonl` → `<timestamp>_<sessionId>.owner.json`.
@@ -261,7 +294,10 @@ final class FileSessionLeaseStore {
   /// never seized — the caller becomes a viewer ([LeaseBlocked]). A free
   /// or expired lease is (re-)acquired atomically (temp + rename, E5);
   /// the write is verified by re-reading: a racer that renamed last owns
-  /// it, the loser sees a foreign bootId and stands down.
+  /// it, the loser sees a foreign bootId and stands down. On an
+  /// enforceable backend a publish or verify failure REFUSES the drive
+  /// ([LeaseRefused], bounded verify retries); on a no-rename backend the
+  /// drive proceeds unleased ([LeaseUnenforced], E5).
   Future<LeaseAcquire> acquire({
     required String sessionFilePath,
     required String sessionId,
@@ -303,14 +339,24 @@ final class FileSessionLeaseStore {
     final write = await _env.writeFile(tmp, encoded);
     final renamed = write.isOk ? await renamable.renamePath(tmp, path) : write;
     if (renamed.isErr) {
-      // E4: a broken lease store never blocks opening a session — the
-      // drive proceeds without enforcement (the honest kind of fail-open).
       await _env.remove(tmp, force: true);
-      return LeaseUnenforced(lease);
+      // #2138 (hole-2): the backend CAN enforce (atomic publish exists)
+      // but the publish failed — the store cannot prove the session is
+      // free, so a second writer may be live. Refuse the drive: a failed
+      // open is recoverable, a two-writer session is corruption.
+      return LeaseRefused(LeaseRefuseReason.publishFailed);
     }
     // Verify ownership: the freshest rename wins; a loser stands down.
-    final verify = await _readLease(path);
-    if (verify == null) return LeaseUnenforced(lease);
+    // #2138 (hole-3): a hiccup in the verify re-read retries a bounded
+    // few times; if it keeps failing — with the publish SUCCEEDED, so the
+    // store demonstrably works — the store cannot prove whose sidecar is
+    // on disk and the drive is refused, never fail-opened.
+    SessionLease? verify;
+    for (var attempt = 0; attempt < _verifyReadAttempts; attempt++) {
+      verify = await _readLease(path);
+      if (verify != null) break;
+    }
+    if (verify == null) return LeaseRefused(LeaseRefuseReason.verifyFailed);
     if (verify.bootId != bootId) return LeaseBlocked(verify);
     return LeaseAcquired(verify, replaced: found.lease);
   }
