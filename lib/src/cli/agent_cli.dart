@@ -92,6 +92,7 @@ import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
 import 'reasoning_liveness.dart';
 import 'log_fidelity.dart';
+import '../logging/log_settings.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -368,6 +369,7 @@ part 'agent_cli_prompt.dart';
 part 'agent_cli_repl_boot.dart';
 part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
+part 'agent_cli_logging.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_plugin_records.dart';
@@ -2625,6 +2627,14 @@ class AgentCli {
   /// firing where no human can complete them. The settle path itself
   /// (issue #413) stays shared with the REPL.
   bool _headlessMode = false;
+
+  /// The live console log level set by `/log <level>` (issue #2117 AC4):
+  /// overrides the resolved [AgentCliConfig.logging] console level for
+  /// SUBSEQUENT lines, no restart. Null = the resolved level governs.
+  LogLevel? _liveConsoleLevel;
+
+  /// Process boot time — the `{elapsed}` pattern placeholder's origin.
+  final DateTime _loggingBoot = DateTime.now();
 
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
