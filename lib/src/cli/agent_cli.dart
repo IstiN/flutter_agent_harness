@@ -183,6 +183,7 @@ import '../providers/provider_common.dart'
         authExpiredProvider,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
+        messagesContainImages,
         providerConnectTimeout,
         providerStreamIdleTimeout,
         providerTimeoutsOverride,
@@ -2028,6 +2029,9 @@ class AgentCli {
   /// episode instead of one per watchdog tick.
   bool _runStalledPushed = false;
 
+  /// The last rendered provider-error dedup key (issue #2119 AC1).
+  String? _lastProviderErrorKey;
+
   /// The `(providerIdentity, modelId)` rows of the most recent `/model`
   /// listing, so `/model N` can select by number — each row carries its
   /// provider identity (gh-178 G1: a numbered pick of a cross-provider row
@@ -2513,9 +2517,7 @@ class AgentCli {
       // gh-1589: the run is over — settles from here do bookkeeping only
       // (the finally below still seals the file).
       _sealReactionRuns();
-      io.writeln(
-        _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
-      );
+      _renderRunModelError('$error');
       return 1;
     } finally {
       _headlessMode = false;

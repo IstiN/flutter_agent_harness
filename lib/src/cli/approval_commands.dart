@@ -1624,11 +1624,12 @@ extension ApprovalCommands on AgentCli {
           );
           return;
         }
-        io.writeln(
-          _keyStatusView.errorLine(
-            message.errorMessage ?? 'unknown error',
-            _agent.state.model.baseUrl,
-          ),
+        // Issue #2119: the classified + deduped render (raw payload to
+        // fa.log; ONE console line per failure episode).
+        _renderProviderError(
+          message.errorMessage ?? 'unknown error',
+          provider: message.provider,
+          model: message.model,
         );
       case StopReason.aborted:
         // A TTSR abort is a rule trigger, not a failure — the

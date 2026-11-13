@@ -143,6 +143,9 @@ extension AgentCliRun on AgentCli {
     // A fresh user text clears the over-window badge: the new run starts
     // clean, and only THIS run's folds may badge it (issue #438 E1).
     _autoFoldCount = 0;
+    // A fresh user action opens a NEW dedup episode (issue #2119 AC1): the
+    // user re-invoking the same request re-renders its failure honestly.
+    _lastProviderErrorKey = null;
     // One empty-reply nudge per logical turn (issue #1085 M2b).
     _emptyReplyNudgesLeft = 1;
     // The stuck-call nudge budget refills per turn (issue #1185 E2).
@@ -225,11 +228,57 @@ extension AgentCliRun on AgentCli {
     return true;
   }
 
+  /// Renders ONE provider-failure console line (issue #2119): the raw
+  /// payload lands in fa.log (AC4 — the console may classify, the log
+  /// never loses content), the line itself is classified
+  /// ([KeyStatusRenderer.errorLine] — category → human text → one matching
+  /// recovery), and the dedup gate (AC1) keeps ONE line per failure
+  /// episode: a stall-then-retry sequence re-dying with the same failure
+  /// prints no second raw dump, while DISTINCT concurrent failures (a
+  /// different key) always render.
+  ///
+  /// The two renderers that could print one failure twice —
+  /// `_onAssistantMessageEnd` (the message-record error line) and
+  /// `_handleRunError` (the thrown run-error line, plus the headless
+  /// catch) — all route HERE, so the episode key covers their overlap.
+  void _renderProviderError(
+    String rawMessage, {
+    String? provider,
+    String? model,
+    String? baseUrl,
+  }) {
+    final classified = classifyProviderFailure(
+      rawMessage,
+      provider: provider,
+      model: model,
+    );
+    _logDiagnostic('provider error raw sid=$_logSid: $rawMessage');
+    if (classified.key == _lastProviderErrorKey) return;
+    _lastProviderErrorKey = classified.key;
+    io.writeln(
+      _keyStatusView.errorLine(
+        rawMessage,
+        baseUrl ?? _agent.state.model.baseUrl,
+        provider: provider,
+        model: model,
+      ),
+    );
+  }
+
+  /// One-line render of a run-level provider error over the LIVE model
+  /// (the thrown-error call sites share it — the message-record path names
+  /// the message's own provider/model instead).
+  void _renderRunModelError(String raw) => _renderProviderError(
+    raw,
+    provider: _agent.state.model.provider,
+    model: _agent.state.model.id,
+  );
+
   /// Handles provider/runtime errors thrown outside the assistant stream.
   Future<void> _handleRunError(Object error) async {
     final message = '$error';
     if (await _maybeHandleCodeMieError(message)) return;
-    io.writeln(_keyStatusView.errorLine(message, _agent.state.model.baseUrl));
+    _renderRunModelError(message);
   }
 
   /// Shared handler for a detected CodeMie auth-session expiry: strips the
