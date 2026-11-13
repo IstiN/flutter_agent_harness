@@ -449,14 +449,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// kind.
   String _mediaSlotProviderKind(String? slot, String baseUrl) {
     if (slot != null) return 'openai-completions';
-    final kind = _entryKind;
-    if (kind != null) return kind;
-    if (isCopilotBaseUrl(baseUrl)) return 'copilot';
-    final preset = ProviderPreset.fromBaseUrl(baseUrl);
-    if (preset == ProviderPreset.dial) return 'dial';
-    if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
-    if (isChatGptCodexEndpoint(baseUrl)) return 'chatgpt-codex';
-    return 'openai-completions';
+    return providerKindForEntry(_entryKind, baseUrl);
   }
 
   /// Id fragments suggesting a media capability, matched case-insensitively
