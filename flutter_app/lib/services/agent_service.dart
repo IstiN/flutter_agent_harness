@@ -17,7 +17,8 @@ import 'package:fa_ui/fa_ui.dart'
         hostedProviderKeyName,
         hostedProviderPresets,
         isFaSystemNoticeContent,
-        providerForBaseUrl;
+        providerForBaseUrl,
+        providerKindForEntry;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -941,6 +942,16 @@ class AgentService extends ChangeNotifier
         if (value != null && value.isNotEmpty) _storeSecretNames.add(name);
       }
       _sessionKeys.addListener(_reconcileSessionKeySecrets);
+    }
+    // Issue #2156 P1: provider→live-model linkage. The office add-in
+    // (and every post-onboarding home) boots a placeholder session; a
+    // provider added to the registry afterwards (or its key, minted by a
+    // sign-in) never reached the live chat. Listen for the registry
+    // change — and check once at boot, so a restart with a keyed registry
+    // lands on the provider without a picker visit.
+    if (providerRegistry != null) {
+      providerRegistry.addListener(_applyLinkedProvider);
+      unawaited(_applyLinkedProvider());
     }
   }
 
@@ -2247,6 +2258,11 @@ class AgentService extends ChangeNotifier
   /// [reconfigure] refuses restore-shaped calls — the active connection
   /// is never hijacked mid-flow.
   int _providerAddFlowDepth = 0;
+
+  /// Guards the provider→live-model linkage (issue #2156) against
+  /// re-entrant runs: a registry notify landing inside the in-flight
+  /// reconfigure's await window returns instead of stacking switches.
+  bool _providerLinkageBusy = false;
 
   /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
   bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;

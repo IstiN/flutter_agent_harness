@@ -231,3 +231,69 @@ extension _AgentServiceSendGuard on AgentService {
         _missingCredential(registry, config, extensionHost: isExtensionHost());
   }
 }
+
+/// Provider→live-model linkage (issue #2156 P1): the office add-in host
+/// boots a placeholder session; a provider added to the registry (or its
+/// key, minted by a sign-in) after boot never reached the live chat — the
+/// registry mutated, the chat stayed dead, and the first turn died on a
+/// raw upstream error.
+extension _ProviderLinkage on AgentService {
+  /// Applies an unambiguous usable provider to a live chat still running
+  /// the placeholder boot config. Runs on every registry notify and once
+  /// at boot ([AgentService._withEnv]): a keyed registry row + placeholder
+  /// live model → the chat reconfigures onto it (the goal's
+  /// explicit-but-automatic-when-unambiguous rule). A chosen connection is
+  /// never hijacked; several usable rows stay a picker decision; the
+  /// add-flow latch defers mid-flow notifies (the flow's own
+  /// `fromProviderAddFlow` reconfigure applies the provider); a streaming
+  /// turn is never interrupted — the next notify picks the change up.
+  Future<void> _applyLinkedProvider() async {
+    final registry = _providerRegistry;
+    final config = _config;
+    if (registry == null || config == null || _disposed) return;
+    final isPlaceholder =
+        config.modelId == 'placeholder' &&
+        config.baseUrl.isEmpty &&
+        config.apiKey.isEmpty &&
+        !AgentService._isOnDeviceKind(_providerKind);
+    if (!isPlaceholder ||
+        isStreaming ||
+        reconfigureRefusedByAddFlow(false) ||
+        _providerLinkageBusy) {
+      return;
+    }
+    final usable = [
+      for (final provider in registry.providers)
+        if (provider.modelId.isNotEmpty &&
+            (registry.keyFor(provider.id) ?? '').isNotEmpty)
+          provider,
+    ];
+    if (usable.length != 1) {
+      if (usable.length > 1) {
+        debugPrint(
+          '[Fa] provider linkage: ${usable.length} providers carry keys on '
+          'this surface — pick one under Settings → Default chat model',
+        );
+      }
+      return;
+    }
+    final provider = usable.single;
+    final linked = AgentConfig(
+      providerKind: providerKindForEntry(provider.kind, provider.baseUrl),
+      modelId: provider.modelId,
+      baseUrl: provider.baseUrl,
+      apiKey: registry.keyFor(provider.id) ?? '',
+    );
+    _providerLinkageBusy = true;
+    try {
+      await reconfigure(linked);
+      debugPrint(
+        '[Fa] provider linkage: ${provider.name} is now the live chat model',
+      );
+    } on Object catch (error) {
+      debugPrint('[Fa] provider linkage refused: $error');
+    } finally {
+      _providerLinkageBusy = false;
+    }
+  }
+}
