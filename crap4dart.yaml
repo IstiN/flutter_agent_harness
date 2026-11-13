@@ -98,6 +98,13 @@ gates:
       - '**.freezed.dart'
       - '**.mocks.dart'
       - 'vendor/**'
+      # gen-l10n OUTPUT carries no .g.dart suffix, so the generated set
+      # above misses it — the comment above always said "app_localizations
+      # … excluded, not baselined" and flutter_app/crap4dart.yaml's own
+      # loc gate carries the same exclude; the ROOT one was missing the
+      # pattern (first fired on issue #2062 chunk 15, the first commit to
+      # STAGE the files).
+      - '**/l10n/app_localizations*.dart'
   test_coverage: {enabled: false} # own ≥80% coverage-gate job
   complexity: {enabled: false} # CRAP ratchet above already covers it
   method_size: {enabled: false}
