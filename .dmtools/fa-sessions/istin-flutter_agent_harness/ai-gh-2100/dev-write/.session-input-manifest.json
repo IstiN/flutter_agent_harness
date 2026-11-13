@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-13T21:36:19.977Z",
+  "ticketKey": "gh-2100",
+  "headSha": "2052f3a6a21ae243c85a68e4dfe8785bca18781e",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:b8b27240c5728e4d",
+      "size": 71007
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:8e3cb02bbedb4aa3",
+      "size": 139668
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:ade52190de71a3b5",
+      "size": 560
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:cb296cd4a6f2f6b5",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:ccb3429927dd6f65",
+      "size": 11408
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:6379cb057301efd6",
+      "size": 2680
+    },
+    "request.md": {
+      "hash": "fnv1a64:1973e2e04df6c513",
+      "size": 3900
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:766bd036c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f2da815d948aba65",
+      "size": 4001
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1973e2e04df6c513",
+      "size": 3900
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-13:faeb8329",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: flatten whitespace in rendered file paths — the goal line does, paths don't**\n\n`_goalLine` collapses whitespace so \"the block is one line per fact\":\n\n```dart\nfinal flat = recitation.goal.replaceAll(RegExp(r'\\s+'), ' ').trim();\n```\n\nbut file paths render verbatim:\n\n```dart\nif (kept.isNotEmpty) ...[_filesHeading, ...kept.map((p) => '- $p')],\n```\n\nA `path` argument containing `\\n` (legal in POSIX filenames, and model-emitted into tool arguments) renders multi-line inside the `<system-notice>` block. After a compaction these tool calls are hidden — the working-set block is the **only** place that string survives past the fold, so a newline-carrying path can inject arbitrary extra \"lines\" into a system-tagged block and spoof its structure (fake file entries, fake counting-tail lines). The budgets still hold (the char-budget loop drops offending files), so this is structure spoofing, not a budget bypass.\n\nMirror the goal line's treatment, e.g. flatten each path before rendering (`p.replaceAll(RegExp(r'\\s+'), ' ')`) or skip paths that contain whitespace control chars — one line, consistent hardening of the new surface."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-13:668da6c7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — ⚠️ IMPORTANT: the structured+classic mixed shape never joins the classic-folded paths into the working set\n\nFixed — the structured branch of `_projectMessages` now forwards `dropped: classicHidden`, exactly the one-liner the pure-classic branch at `session_tree.dart:721` already used.\n\n**Commit**: `ccea68d128` — `gh-210 rework: review thread 1 (IMPORTANT) — join classic-folded writes into the working set in the structured+classic mixed shape`\n\n```dart\n    return _withLevel0Blocks(\n      renderStructuredMessages(\n        path: path,\n        seqs: seqs,\n        projectEntry: (record) =>\n            _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),\n      ),\n      path: path,\n      entries: entries,\n      // The mixed shape: classic-folded records join the working set scan\n      // here too — the pure-classic branch forwards the same drop.\n      dropped: classicHidden,\n    );\n```\n\n(`lib/src/session/session_tree.dart`, structured branch of `_projectMessages`.)\n\n**Test** (RED first — it failed on the pre-fix tree with the working-set block absent entirely, because the kept path had no write calls left): `test/compaction/working_set_projection_test.dart` → *\"MIXED shape: classic-folded writes re-inject under structured hides too (the structured branch forwards the classic drop)\"*. It builds the exact reachable shape from the finding: a structured `HiddenRangeRecord` that survives the classic cut (sits after `firstKeptEntryId`, so the projection takes the structured branch), a classic `CompactionRecord` coexisting on the path (the structured→classic fall-through shape), and the `write lib/auth.dart` pair inside the folded region — then asserts the path renders in the files section (`- lib/auth.dart`), the counting heading is present, and `validateToolPairing` stays empty. The existing session-survival fixture (structured hide + classic compaction + recitation) still passes unchanged, and the whole `test/compaction/ + test/session/` surface (960 tests) is green on the fixed tree."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-13:3cef12bb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — 💡 SUGGESTION: flatten whitespace in rendered file paths — the goal line does, paths don't\n\nFixed — the one-line-per-fact rule now covers file paths too, mirroring `_goalLine`.\n\n**Commit**: `e2db4cf670` — `gh-210 rework: review thread 2 (SUGGESTION) — flatten whitespace in working-set file paths, one line per fact`\n\nApplied at the derivation point rather than inside `assemble()` — `recentlyTouchedPaths` (`lib/src/compaction/working_set.dart`) is the only source of rendered paths, and normalizing there additionally keeps spelling dedup consistent (`'a\\nb'` and `'a b'` collapse to one entry) and lets the char-budget loop measure the final strings:\n\n```dart\n      // One line per fact (the goal line's rule): a `\\n` is legal in\n      // POSIX filenames and model-emittable into tool arguments — verbatim\n      // rendering would inject block structure (fake entries, fake\n      // counting tails) into the system-tagged block. Whitespace\n      // collapses here so the render and the budgets measure the final\n      // strings, and spelling dedup stays consistent.\n      final flattened = argument.replaceAll(RegExp(r'\\s+'), ' ').trim();\n      if (flattened.isEmpty) continue;\n      lastMention[flattened] = i++;\n```\n\n**Test** (RED first — the pre-fix tree rendered the spoof verbatim, exactly as reported): `test/compaction/working_set_test.dart` → *\"whitespace-carrying paths render as ONE flattened line\"*. It uses the finding's own scenario: a `write` whose `path` argument is `'real.dart\\n… and 9 more touched files'`, post-boundary. It asserts the flattened form `- real.dart … and 9 more touched files` renders, exactly one `- ` line exists, and the fake counting tail never appears at a line start (`isNot(contains('\\n… and 9 more touched files'))`). Budget behavior is untouched (the budget loop still drops the oldest file until the block fits); the existing char-budget, max-paths, clip-marker and goal-flatten tests all pass unchanged."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-13:f5a927be",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One important issue: in the structured+classic mixed compaction shape the classic-folded write paths never join the working set (`dropped: classicHidden` is not forwarded), contradicting the PR's own \"classic-folded records all count\" contract. One suggestion: flatten whitespace in rendered paths like the goal line already does. Verified locally: the four new test files pass (46/46) and `dart analyze` is clean on every changed file.\n\n**Key Issues**:\n- ⚠️ `lib/src/session/session_tree.dart:734` — structured branch of `_projectMessages` omits `dropped: classicHidden` → when a classic `CompactionRecord` coexists with structured hides (reachable: structured→classic fall-through at `auto_compactor.dart:1160`, mid-session engine switch, import), folded paths are missing from the files section. Reachability is documented in-repo; contract bullet quoted from the PR description.\n- 💡 `lib/src/compaction/working_set.dart:242` — paths render verbatim (`'- $p'`); a newline inside a path argument renders extra lines inside the `<system-notice>` block post-fold (the goal line is flattened; paths are not).\n- Digest (ranked): `.gitignore:215-216` — `cov2/`+`cov3/` redundant under `cov*/` · `agent_cli_persist.dart:176-181` — empty-goal discovery branch duplicates the tool's discovery strings · `recite_goal` teaches only via its tool description (consider a line in `prompts/compaction/recall_hygiene.md`) · a goal below the `readCustomRecordsOfType` tail cap is invisible to the windowed fallback (accepted #48-class trade-off, shared with obligations) · path spellings not normalized (`./b.dart` ≠ `b.dart`).\n\n**Next Steps**:\n1. Forward `dropped: classicHidden` in the structured branch of `_projectMessages` and add a mixed-shape test (structured hide + classic compaction + a `write` inside the folded region).\n2. Flatten (or reject) whitespace-carrying path strings in `assemble()` to keep the block one-line-per-fact."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:1bbb6d5c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel c5d75c277a6305b060058969e7a9065bf36a4f0b — stale base at 2026-11-13T02:10:44.576Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:011f568c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 55fb615926eda1559953cafba9403272bb8cdcf1 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-13:4c187de6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the structured+classic mixed shape never joins the classic-folded paths into the working set**\n\n`_projectMessages`'s structured branch forwards `path`/`entries` to `_withLevel0Blocks` but **not `dropped: classicHidden`** (the pure-classic branch at `session_tree.dart:721` forwards it correctly):\n\n```dart\n    return _withLevel0Blocks(\n      renderStructuredMessages(\n        path: path,\n        seqs: seqs,\n        projectEntry: (record) =>\n            _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),\n      ),\n      path: path,\n      entries: entries,   // ← dropped: classicHidden is missing\n    );\n```\n\nWhen a branch carries structured hides **and** a classic `CompactionRecord` — a reachable shape: the structured engine's forced/cap-triggered zero-work run **falls through to the classic engine** (`auto_compactor.dart:1160`, \"the classic prefix compactor is the residual fallback\"), engines can be switched mid-session (`liveCompactionEngine`), and session import appends `CompactionRecord` — `renderWorkingSetBlock` receives `dropped: const []`, so every write path the classic fold removed is absent from the files section.\n\nThat contradicts this PR's own stated contract (\"hidden, checkpoint-covered, and **classic-folded records all count** — the fold removes content, not pointers\") for exactly the compaction class the files section exists to survive. The projection still renders (no crash, pairing intact) — but the post-compact continuity the card promises silently loses its oldest pointers.\n\nFix: forward `dropped: classicHidden` in this branch too (same one-liner the classic branch uses) and add a mixed-shape test (structured hide + fall-through classic compaction + a `write` inside the folded region → the path still renders).\n\n**Why ⚠️, not 🚨**: no regression of pre-existing behavior and no crash — the gap weakens the new feature's own contract in one reachable shape."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:7633ef5d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head c6df8a7c8ce50fa5a92b218557d7b2e9b5a486c7 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:f12e4362",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 2052f3a6a21ae243c85a68e4dfe8785bca18781e — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    }
+  ]
+}
