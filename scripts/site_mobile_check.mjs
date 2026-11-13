@@ -182,8 +182,11 @@ async function waitReady(port, budgetMs = 5000) {
 async function startServer() {
   const candidates = [Number(process.env.SITE_CHECK_PORT || 8937), 0];
   for (const port of candidates) {
+    // Windows boxes ship a broken WindowsApps `python3` alias (spawn exits
+    // 9009); PYTHON3 lets a contributor point at a real interpreter without
+    // PATH surgery. CI keeps the default `python3`.
     const proc = spawn(
-      'python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1'],
+      process.env.PYTHON3 || 'python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1'],
       { cwd: path.join(root, 'site'), stdio: ['ignore', 'ignore', 'pipe'] },
     );
     let bound = port;
