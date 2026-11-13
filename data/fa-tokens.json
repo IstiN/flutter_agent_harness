@@ -31,15 +31,6 @@
   "issue-1986": [
     {
       "leg": "rework",
-      "at": "2026-10-30T09:40:16Z",
-      "prompt": 376320,
-      "completion": 33874,
-      "total": 410194,
-      "cacheRead": 18404160,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-30T10:31:03Z",
       "prompt": 1397731,
       "completion": 38559,
@@ -3018,6 +3009,15 @@
       "completion": 2529,
       "total": 403738,
       "cacheRead": 728704,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-13T09:44:17Z",
+      "prompt": 368106,
+      "completion": 2827,
+      "total": 370933,
+      "cacheRead": 732288,
       "model": "glm-5.3-flash"
     }
   ],
