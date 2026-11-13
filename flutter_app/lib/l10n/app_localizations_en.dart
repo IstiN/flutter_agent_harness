@@ -2706,6 +2706,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDeviceNotRunning => 'Connector not running — tap to retry';
 
   @override
+  String get noSessionsHint => 'No sessions yet';
+
+  @override
   String get networkPresenceWakeOnDm => 'Wake on DM';
 
   @override

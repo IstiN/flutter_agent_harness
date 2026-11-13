@@ -1105,6 +1105,10 @@
   "@networkDeviceNotRunning": {
     "description": "Device roster line when the connector failed or stopped; tapping restarts it"
   },
+  "noSessionsHint": "Пока нет сессий",
+  "@noSessionsHint": {
+    "description": "Muted hint under an expanded device node that has no agents or sessions"
+  },
   "networkPresenceWakeOnDm": "Разбудить в DM",
   "@networkPresenceWakeOnDm": {
     "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"

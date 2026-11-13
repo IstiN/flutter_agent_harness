@@ -2735,6 +2735,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'Коннектор не запущен — нажмите, чтобы повторить';
 
   @override
+  String get noSessionsHint => 'Пока нет сессий';
+
+  @override
   String get networkPresenceWakeOnDm => 'Разбудить в DM';
 
   @override

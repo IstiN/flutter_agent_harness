@@ -49,11 +49,20 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
   /// ([DevicesPage]) over the app-scope connector — one upstream socket
   /// for every surface that shows it (AC1). The narrow form embeds the
   /// same page in the section surface; the wide form takes the sidebar
-  /// column (the Local panel's slot) and keeps the message column.
+  /// column (the Local panel's slot) and keeps the message column. The
+  /// This-device node enumerates the app's LOCAL chat sessions (the same
+  /// [ChatListController] the Local panel projects — no connector
+  /// involvement) and opens them through the shell's canonical open flow
+  /// (`_openLocalEntry`): live sessions switch in place, persisted ones
+  /// clone/relay. Remote device rows stay read-only.
   Widget _buildDevicesPanel({bool compact = false}) {
     final sessions = widget.networkSessions;
     if (sessions == null || !sessions.hasJwt) return const SizedBox.shrink();
-    return DevicesPage(service: _devicesConnector);
+    return DevicesPage(
+      service: _devicesConnector,
+      sessions: _chatController,
+      onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
+    );
   }
 
   /// The sidebar channel-row tap: membership first, then the channel

@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_session_folders.dart'
     show folderAvatarGradient;
 import 'dart:math' as math;
@@ -35,10 +37,26 @@ import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart
 /// Signed out → nothing at all; connecting → skeleton line; link lost →
 /// a muted reconnecting line over the last-known tree.
 class DevicesPage extends StatefulWidget {
-  const DevicesPage({super.key, required this.service});
+  const DevicesPage({
+    super.key,
+    required this.service,
+    this.sessions,
+    this.onOpenSession,
+  });
 
   /// The app-scope device connector service (one upstream socket, AC1).
   final DeviceConnectorService service;
+
+  /// The app's local chat list — the same controller the chat screen's
+  /// Local sessions panel projects. The This-device node ALWAYS lists its
+  /// sessions as children (no connector involvement); null renders the
+  /// node without local session rows.
+  final ChatListController? sessions;
+
+  /// The shell's canonical open-session flow (the Local panel's
+  /// onOpenSession): a live session switches in place, a persisted one
+  /// clones/relays. Null keeps the local session rows read-only.
+  final ValueChanged<ChatListEntry>? onOpenSession;
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
@@ -163,7 +181,11 @@ class _DevicesPageState extends State<DevicesPage> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    _OwnDeviceNode(service: widget.service),
+                    _OwnDeviceNode(
+                      service: widget.service,
+                      sessions: widget.sessions,
+                      onOpenSession: widget.onOpenSession,
+                    ),
                     for (final entry in _remote.entries)
                       _RemoteDeviceNode(
                         key: ValueKey('deviceNode:${entry.key}'),
@@ -195,15 +217,24 @@ class _DevicesPageState extends State<DevicesPage> {
 }
 
 /// The local machine's tree node: the presence frame's machine state
-/// drives the dot; agents and exposed sessions ride nested (§5).
+/// drives the dot (UNKNOWN before the first frame — the honest offline
+/// spec, never an online default); agents ride the frame while the
+/// session children come from the app's local chat list.
 class _OwnDeviceNode extends StatelessWidget {
-  const _OwnDeviceNode({required this.service});
+  const _OwnDeviceNode({
+    required this.service,
+    required this.sessions,
+    required this.onOpenSession,
+  });
 
   final DeviceConnectorService service;
+  final ChatListController? sessions;
+  final ValueChanged<ChatListEntry>? onOpenSession;
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<PresenceFrame?>(
+    final controller = sessions;
+    final tile = StreamBuilder<PresenceFrame?>(
       stream: service.presence,
       builder: (context, snapshot) {
         final frame = snapshot.data;
@@ -213,13 +244,28 @@ class _OwnDeviceNode extends StatelessWidget {
           avatarKey: const ValueKey('deviceAvatar'),
           dotKey: const ValueKey('deviceDot'),
           seed: service.deviceId ?? 'This device',
-          machine: frame?.machine ?? MachinePresence.online,
+          // No frame yet ⇒ machine state unknown ⇒ offline (§5 dim). The
+          // old online default claimed a link the connector never showed.
+          machine: frame?.machine ?? MachinePresence.offline,
           label: context.l10n.networkDeviceThisDevice,
           initiallyExpanded: true,
           agents: frame?.agents ?? const {},
-          sessions: frame?.sessions ?? const {},
+          // The connector's exposed-session view does NOT own this node's
+          // sessions — the app's local chat list does, frame or not.
+          sessions: const {},
+          localSessions: controller == null
+              ? const <ChatListEntry>[]
+              : deviceVisibleLocalSessions(controller),
+          onOpenSession: onOpenSession,
         );
       },
+    );
+    if (controller == null) return tile;
+    // The chat list notifies on loads/previews/pins — the node re-projects
+    // with it, exactly like the Local sessions panel's ListenableBuilder.
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => tile,
     );
   }
 }
@@ -266,6 +312,8 @@ class _DeviceNodeTile extends StatefulWidget {
     required this.label,
     required this.agents,
     required this.sessions,
+    this.localSessions = const [],
+    this.onOpenSession,
     this.initiallyExpanded = false,
   });
 
@@ -280,6 +328,15 @@ class _DeviceNodeTile extends StatefulWidget {
   final String label;
   final Map<String, AgentRunState> agents;
   final Map<String, ConnectorSessionPresence> sessions;
+
+  /// The app's local chat sessions (This device only) — rendered as
+  /// tappable rows keyed by their session id.
+  final List<ChatListEntry> localSessions;
+
+  /// The shell's open flow for [localSessions]; null keeps them read-only
+  /// (remote machines never carry local sessions).
+  final ValueChanged<ChatListEntry>? onOpenSession;
+
   final bool initiallyExpanded;
 
   @override
@@ -289,103 +346,158 @@ class _DeviceNodeTile extends StatefulWidget {
 class _DeviceNodeTileState extends State<_DeviceNodeTile> {
   late bool _expanded = widget.initiallyExpanded;
 
+  bool get _hasChildren =>
+      widget.agents.isNotEmpty ||
+      widget.sessions.isNotEmpty ||
+      widget.localSessions.isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    final hasChildren = widget.agents.isNotEmpty || widget.sessions.isNotEmpty;
     return Column(
       key: widget.rowKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
           key: ValueKey('deviceNodeToggle:${widget.label}'),
-          onTap: hasChildren
-              ? () => setState(() => _expanded = !_expanded)
-              : null,
+          // ALWAYS toggles: an empty machine still expands to the muted
+          // no-sessions hint, so the disclosure affordance never lies.
+          onTap: () => setState(() => _expanded = !_expanded),
           borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            height: 70,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Row(
-                children: [
-                  _DeviceAvatar(
-                    key: widget.avatarKey,
-                    dotKey: widget.dotKey,
-                    seed: widget.seed,
-                    dotColor: deviceMachineDotColor(colors, widget.machine),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      widget.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        height: 1.2,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    deviceMachineLabel(context, widget.machine),
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: widget.machine == MachinePresence.offline
-                          ? colors.dim
-                          : colors.teal,
-                    ),
-                  ),
-                  if (hasChildren)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 6),
-                      child: Transform.rotate(
-                        angle: _expanded ? math.pi : 0,
-                        child: FaIcon(
-                          FaSemanticIcon.expandMore,
-                          size: 16,
-                          color: colors.dim,
-                        ),
-                      ),
-                    ),
-                ],
+          child: _headerRow(context, colors),
+        ),
+        if (_expanded) ..._childRows(context, colors),
+      ],
+    );
+  }
+
+  /// The networks-list row shape: Ø50 letter-gradient avatar with the
+  /// vector device glyph, the 14/w600 name, the right-aligned presence
+  /// status and the disclosure chevron (always shown — every node
+  /// toggles, even the empty ones).
+  Widget _headerRow(BuildContext context, FahColors colors) => SizedBox(
+    height: 70,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(
+        children: [
+          _DeviceAvatar(
+            key: widget.avatarKey,
+            dotKey: widget.dotKey,
+            seed: widget.seed,
+            dotColor: deviceMachineDotColor(colors, widget.machine),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              widget.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
               ),
             ),
           ),
-        ),
-        if (_expanded) ...[
-          for (final entry in widget.agents.entries)
-            Padding(
-              padding: const EdgeInsets.only(left: 72),
-              child: DeviceRosterRow(
-                key: ValueKey('agentRow:${entry.key}'),
-                dotKey: ValueKey('agentDot:${entry.key}'),
-                dotColor: deviceAgentDotColor(colors, entry.value),
-                label: deviceAgentName(entry.key),
-                stateLabel: deviceAgentLabel(context, entry.value),
-                stateColor: entry.value == AgentRunState.offline
-                    ? colors.dim
-                    : colors.teal,
+          Text(
+            deviceMachineLabel(context, widget.machine),
+            style: TextStyle(
+              fontSize: 12.5,
+              color: widget.machine == MachinePresence.offline
+                  ? colors.dim
+                  : colors.teal,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Transform.rotate(
+              angle: _expanded ? math.pi : 0,
+              child: FaIcon(
+                FaSemanticIcon.expandMore,
+                size: 16,
+                color: colors.dim,
               ),
             ),
-          for (final entry in widget.sessions.entries)
-            Padding(
-              padding: const EdgeInsets.only(left: 72),
-              child: DeviceRosterRow(
-                key: ValueKey('sessionRow:${entry.key}'),
-                dotKey: ValueKey('sessionDot:${entry.key}'),
-                dotColor: deviceSessionDotColor(colors, entry.value),
-                label: entry.key,
-                stateLabel: deviceSessionLabel(context, entry.value),
-                stateColor: entry.value == ConnectorSessionPresence.offline
-                    ? colors.dim
-                    : colors.teal,
-              ),
-            ),
+          ),
         ],
-      ],
+      ),
+    ),
+  );
+
+  /// The nested children: agents (frame presence), the local chat
+  /// sessions (tappable), the connector's exposed sessions (read-only) —
+  /// or the single muted hint when the node has neither.
+  List<Widget> _childRows(BuildContext context, FahColors colors) {
+    if (!_hasChildren) {
+      return [
+        Padding(
+          key: const ValueKey('deviceNoSessionsHint'),
+          padding: const EdgeInsets.only(left: 72, right: 16, top: 2),
+          child: Text(
+            context.l10n.noSessionsHint,
+            style: TextStyle(color: colors.dim, fontSize: 12),
+          ),
+        ),
+      ];
+    }
+    return [
+      for (final entry in widget.agents.entries)
+        Padding(
+          padding: const EdgeInsets.only(left: 72),
+          child: DeviceRosterRow(
+            key: ValueKey('agentRow:${entry.key}'),
+            dotKey: ValueKey('agentDot:${entry.key}'),
+            dotColor: deviceAgentDotColor(colors, entry.value),
+            label: deviceAgentName(entry.key),
+            stateLabel: deviceAgentLabel(context, entry.value),
+            stateColor: entry.value == AgentRunState.offline
+                ? colors.dim
+                : colors.teal,
+          ),
+        ),
+      for (final entry in widget.localSessions)
+        Padding(
+          padding: const EdgeInsets.only(left: 72),
+          child: _localSessionRow(context, colors, entry),
+        ),
+      for (final entry in widget.sessions.entries)
+        Padding(
+          padding: const EdgeInsets.only(left: 72),
+          child: DeviceRosterRow(
+            key: ValueKey('sessionRow:${entry.key}'),
+            dotKey: ValueKey('sessionDot:${entry.key}'),
+            dotColor: deviceSessionDotColor(colors, entry.value),
+            label: entry.key,
+            stateLabel: deviceSessionLabel(context, entry.value),
+            stateColor: entry.value == ConnectorSessionPresence.offline
+                ? colors.dim
+                : colors.teal,
+          ),
+        ),
+    ];
+  }
+
+  /// One local chat session row: the chat list's presence colors it, the
+  /// tap routes through the shell's open flow (null ⇒ read-only).
+  Widget _localSessionRow(
+    BuildContext context,
+    FahColors colors,
+    ChatListEntry entry,
+  ) {
+    final id = entry.id.value;
+    final dotColor = deviceLocalSessionDotColor(colors, entry.presence);
+    return DeviceRosterRow(
+      key: ValueKey('sessionRow:$id'),
+      dotKey: ValueKey('sessionDot:$id'),
+      dotColor: dotColor,
+      label: entry.title,
+      stateLabel: deviceLocalSessionLabel(context, entry.presence),
+      stateColor: dotColor,
+      onTap: widget.onOpenSession == null
+          ? null
+          : () => widget.onOpenSession!(entry),
     );
   }
 }

@@ -4850,6 +4850,12 @@ abstract class AppLocalizations {
   /// **'Connector not running — tap to retry'**
   String get networkDeviceNotRunning;
 
+  /// Muted hint under an expanded device node that has no agents or sessions
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions yet'**
+  String get noSessionsHint;
+
   /// Roster presence label for an exposed session with no live lease (a DM wakes it)
   ///
   /// In en, this message translates to:

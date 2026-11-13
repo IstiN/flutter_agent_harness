@@ -77,6 +77,7 @@ lib/apps/fa_chat_overlay.dart 1
 lib/apps/fa_work_bar.dart 1
 lib/apps/js_app_view.dart 5
 lib/apps/widgets_catalog_sheet.dart 1
+lib/ui/network/devices_page.dart 1
 lib/ui/network/networks_sidebar.dart 1
 lib/ui/screens/app_launcher_screen.dart 4
 lib/ui/screens/attached_session_screen.dart 2

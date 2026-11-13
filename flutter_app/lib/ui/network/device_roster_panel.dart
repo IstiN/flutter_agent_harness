@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa_ui/fa_ui.dart' show FahColors;
 // The presence payload model is pure Dart in the connector core.
 // ignore: implementation_imports
@@ -63,6 +65,47 @@ String deviceSessionLabel(
   ConnectorSessionPresence.wakeOnDm => context.l10n.networkPresenceWakeOnDm,
   ConnectorSessionPresence.offline => context.l10n.networkPresenceOffline,
 };
+
+/// The LOCAL chat session's dot color — the chat list's own presence, not
+/// the connector's: a streaming session reads busy (pending), a live one
+/// teal, everything else dim.
+Color deviceLocalSessionDotColor(FahColors colors, ChatPresence? presence) =>
+    switch (presence) {
+      ChatPresence.live => colors.teal,
+      ChatPresence.busy => colors.pending,
+      ChatPresence.offline || null => colors.dim,
+    };
+
+/// The local chat session's state label (same vocabulary as the roster).
+String deviceLocalSessionLabel(BuildContext context, ChatPresence? presence) =>
+    switch (presence) {
+      ChatPresence.live => context.l10n.networkPresenceOnline,
+      ChatPresence.busy => context.l10n.networkPresenceBusy,
+      ChatPresence.offline || null => context.l10n.networkPresenceOffline,
+    };
+
+/// The This-device tree's local-session projection: the app's canonical
+/// enumeration ([ChatListController.localEntries]) with the messenger
+/// list's visibility rule — a subagent session whose parent chat is still
+/// projected rides that parent's badge instead of a roster row; orphaned
+/// subagents stay visible. Mirrors chat_list_panel's
+/// `_isSubagentWithLiveParent` (kept in step by its test).
+List<ChatListEntry> deviceVisibleLocalSessions(ChatListController controller) {
+  final entries = controller.localEntries;
+  final parentIds = {for (final entry in entries) entry.id.value};
+  return [
+    for (final entry in entries)
+      if (!_ridesParentBadge(parentIds, entry)) entry,
+  ];
+}
+
+/// True when [entry] is a subagent session whose parent chat is still in
+/// the projection.
+bool _ridesParentBadge(Set<String> parentIds, ChatListEntry entry) {
+  if (!entry.isSubagent) return false;
+  final parent = entry.parentId;
+  return parent != null && parentIds.contains(parent);
+}
 
 /// The agent NAME part of a §1 address (`goal_builder@macbook` →
 /// `goal_builder`).
@@ -204,6 +247,7 @@ class DeviceRosterRow extends StatelessWidget {
     required this.label,
     required this.stateLabel,
     required this.stateColor,
+    this.onTap,
   });
 
   final Key dotKey;
@@ -212,10 +256,14 @@ class DeviceRosterRow extends StatelessWidget {
   final String stateLabel;
   final Color stateColor;
 
+  /// When set, the whole row is tappable (the This-device tree's local
+  /// session rows open their chat); the remote roster rows stay read-only.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Row(
         children: [
@@ -237,6 +285,12 @@ class DeviceRosterRow extends StatelessWidget {
           Text(stateLabel, style: TextStyle(fontSize: 11, color: stateColor)),
         ],
       ),
+    );
+    if (onTap == null) return row;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: row,
     );
   }
 }
