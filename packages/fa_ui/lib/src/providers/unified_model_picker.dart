@@ -129,15 +129,8 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
   /// entry's persisted identity wins; Google endpoints need the Gemini
   /// adapter (inlineData, not image_url); DIAL and Copilot have their own
   /// dialects; Codex rides the codex wire.
-  String _providerKindFor(String? kind, String baseUrl) {
-    if (kind != null) return kind;
-    final preset = ProviderPreset.fromBaseUrl(baseUrl);
-    if (preset == ProviderPreset.dial) return 'dial';
-    if (isCopilotBaseUrl(baseUrl)) return 'copilot';
-    if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
-    if (isChatGptCodexEndpoint(baseUrl)) return 'chatgpt-codex';
-    return 'openai-completions';
-  }
+  String _providerKindFor(String? kind, String baseUrl) =>
+      providerKindForEntry(kind, baseUrl);
 
   @override
   void initState() {
