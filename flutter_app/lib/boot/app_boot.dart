@@ -574,6 +574,9 @@ Future<void> bootExtensionRelay({
   final manager = FlutterSessionManager(
     env: resolvedEnv,
     sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+    // #2138 HOLE-1: desktop builds ALWAYS enforce ownership (null = web,
+    // where no atomic publish exists — E5).
+    leaseStore: defaultLeaseStore(resolvedEnv),
   );
   try {
     final relay = await (createRelay ?? RelayAgentService.create)();

@@ -83,11 +83,26 @@ extension WireServeBoot on AgentCli {
     await _waiting.captureLostJobs();
     _session = await _initializeSession();
     _notifyPluginSessionReady();
-    final leaseBlocked = await _claimSessionLeaseHeadless();
-    if (leaseBlocked != null) {
-      io.writeln(viewerBannerText(leaseBlocked, stale: false));
-      pumpSub();
-      return null;
+    final claim = await _claimSessionLeaseHeadless();
+    switch (claim) {
+      case HeadlessLeaseClaimAcquired():
+        break;
+      case HeadlessLeaseClaimBlocked(:final lease):
+        io.writeln(viewerBannerText(lease, stale: false));
+        pumpSub();
+        return null;
+      case HeadlessLeaseClaimRefused(:final reason):
+        // #2138: the store cannot prove the session free on an
+        // enforceable backend — the serve refuses loudly, never an
+        // unleased drive.
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'refusing to serve',
+          ),
+        );
+        pumpSub();
+        return null;
     }
     // gh-1241: NO eager marker — a serve boot that never serves a turn
     // must leave the chain byte-untouched (same invariant as the REPL);
