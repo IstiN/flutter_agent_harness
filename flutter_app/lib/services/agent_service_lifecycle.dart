@@ -171,6 +171,7 @@ extension AgentServiceLifecycle on AgentService {
     _liveActivityEndTimer?.cancel();
     _sessionWatchTimer?.cancel();
     _sessionKeys?.removeListener(_reconcileSessionKeySecrets);
+    _providerRegistry?.removeListener(_applyLinkedProvider);
     fsRevision.dispose();
     externalSessionRevision.dispose();
     _trajectory.dispose();
