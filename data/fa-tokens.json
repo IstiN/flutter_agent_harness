@@ -2,15 +2,6 @@
   "pr-1981": [
     {
       "leg": "review",
-      "at": "2026-10-29T23:46:42Z",
-      "prompt": 128284,
-      "completion": 32072,
-      "total": 160356,
-      "cacheRead": 4559232,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-30T01:02:40Z",
       "prompt": 131270,
       "completion": 32585,
@@ -2982,6 +2973,15 @@
       "completion": 7400,
       "total": 58302,
       "cacheRead": 875072,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-13T00:25:38Z",
+      "prompt": 159155,
+      "completion": 10226,
+      "total": 169381,
+      "cacheRead": 1612288,
       "model": "glm-5.3-flash"
     }
   ],
