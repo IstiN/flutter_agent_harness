@@ -869,6 +869,19 @@ jobs:
           fi
           echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
 
+      # gh-2152: the m5 box's one disk is shared by up to three concurrent
+      # runner registrations (gh-2026) and the 3.50.0 SDK slot install
+      # needs ~8 GB of transient headroom (archive + extraction) while the
+      # superseded tree sits under the slot GC drain — run 43371287393
+      # died with a WORKER-level ENOSPC (`No space left on device` writing
+      # the runner's own _diag log: no step log at all, the ticket read
+      # "(no failed-step log available)"). Diagnose df, reclaim the
+      # repo-known consumers (abandoned SDK stages, flip-drained
+      # superseded SDK trees, stale gym logs), and fail FAST under the
+      # floor with a quotable ::error:: instead of an unlogable crash.
+      - name: Disk preflight + bounded reclaim (gh-2152)
+        run: bash scripts/runner_disk_preflight.sh "$GITHUB_WORKSPACE" "$HOME/actions-runner-yoloit"
+
       # Persistent pinned SDK (issue #354): subosito/flutter-action with
       # cache: true on this PERSISTENT runner cost 5m39s setup (untar ~1GB
       # archive) + 8m47s POST (re-tar the whole SDK) per job — 14.5 of

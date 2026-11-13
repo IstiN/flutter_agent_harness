@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2152): daily-publish testflight leg survives the self-hosted m5
+  box's disk squeeze — the 3.47.7→3.50.0 SDK slot install (run
+  43371287393) hit a worker-level ENOSPC (no step log survived: the
+  runner died writing its own _diag file). Both self-hosted macOS build
+  legs (build-mobile.yml build-ios, build-macos.yml build-macos) now run
+  `scripts/runner_disk_preflight.sh` between checkout and the SDK
+  setup: df diagnosis in every run's log, a bounded flip-aware reclaim
+  of repo-known consumers under the floor (abandoned SDK `.stage.*`
+  download dirs, flip-drained superseded SDK trees, stale gym logs),
+  and a quotable `::error::` fail-fast with exact free/floor MB instead
+  of an unlogable crash. sdk_slot.py hardening: `flip` to the
+  already-live target is a true no-op (the symlink mtime stays the
+  last-version-CHANGE clock) and `gc` measures the superseded-tree
+  drain on that flip clock, not the tree's install mtime — a bump day
+  no longer gc-deletes the old tree under a concurrent sibling leg that
+  SKIP-resolved it minutes earlier (the gh-2134 cross-registration
+  deletion class, SDK-flavored).
 - feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier

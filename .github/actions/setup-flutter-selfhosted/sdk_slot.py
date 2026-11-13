@@ -176,9 +176,17 @@ def cmd_flip(target, link):
     `current` sees either the previous complete version or the new one,
     never a missing link (rm-then-mv, as the pre-#357 code did, is
     exactly the window where a marker can end up pointing at a deleted
-    SDK). Flipping to the already-live target is a no-op, so concurrent
-    legs of a matrix run converge on the same link.
+    SDK). Flipping to the already-live target is a TRUE no-op (gh-2152):
+    the symlink is left untouched so its mtime keeps meaning «the last
+    time the target CHANGED» — the flip clock cmd_gc (and the disk
+    preflight's superseded-tree reclaim) measure the in-flight drain on.
+    Replacing the link anyway would refresh the clock on every setup run
+    and the drain would never elapse; concurrent legs converge on the
+    same link either way.
     """
+    if os.path.islink(link) and os.readlink(link) == target:
+        print(f'current -> {target} (unchanged, no-op)')
+        return
     tmp = f'{link}.flip.{os.getpid()}'
     if os.path.lexists(tmp):
         os.remove(tmp)
@@ -191,26 +199,48 @@ def cmd_gc(root, keep, min_age_days):
     """Reclaim superseded version trees and stale download stages.
 
     Only directories other than the live target (`keep`) are eligible,
-    and only after a drain window: an in-flight job that already
-    resolved an older version through `current` keeps a complete tree
-    beneath its open files. Version dirs carry their unzip mtime, so a
-    fresh concurrent install is never eligible; staging dirs left by a
-    job that died mid-download go after one day.
+    and only after a drain window. gh-2152: the superseded-tree drain is
+    measured on the FLIP clock — the `current` symlink's own mtime, the
+    last time the target CHANGED — never on the tree's install mtime.
+    The old tree-mtime reading was exactly backwards on pin-bump day:
+    the superseded tree had been installed weeks earlier, so the FIRST
+    flip made it eligible instantly, deleting it under any concurrent
+    sibling leg that had SKIP-resolved it through `current` minutes
+    earlier (the arm64+x86_64 matrix legs share this ONE runner — the
+    gh-2134 cross-registration deletion class, SDK-flavored). With the
+    flip clock a bump protects the superseded tree for the full drain;
+    once no live leg can still hold it (job ceilings are 90–150m ≪ the
+    2-day default), it goes. A tree with no `current` symlink at all
+    falls back to its own mtime (the pre-gh-2152 semantics — a fresh
+    concurrent install is still never eligible), and staging dirs left
+    by a job that died mid-download go after one day (a live download
+    keeps its mtime fresh).
     """
     now = time.time()
+    flip_mtime = None
+    current_link = os.path.join(root, 'current')
+    if os.path.islink(current_link):
+        try:
+            flip_mtime = os.lstat(current_link).st_mtime
+        except OSError:
+            flip_mtime = None
     for name in os.listdir(root):
         path = os.path.join(root, name)
         try:
-            age_days = (now - os.stat(path).st_mtime) / 86400.0
+            tree_mtime = os.stat(path).st_mtime
         except OSError:
             continue
-        if name.startswith('.stage.') and age_days >= 1:
+        if name.startswith('.stage.') \
+                and (now - tree_mtime) / 86400.0 >= 1:
             shutil.rmtree(path, ignore_errors=True)
-        elif VERSION_RE.match(name) and path != keep \
-                and age_days >= min_age_days:
-            print(f'gc: removed superseded SDK {name} '
-                  f'(older than {min_age_days:g}d)')
-            shutil.rmtree(path, ignore_errors=True)
+        elif VERSION_RE.match(name) and path != keep:
+            # gh-2152: the drain clock is the flip when one exists; a
+            # current-less root keeps the legacy tree-mtime fallback.
+            clock = flip_mtime if flip_mtime is not None else tree_mtime
+            if (now - clock) / 86400.0 >= min_age_days:
+                print(f'gc: removed superseded SDK {name} '
+                      f'(flip older than {min_age_days:g}d)')
+                shutil.rmtree(path, ignore_errors=True)
 
 
 def normalise_arch(host_arch):

@@ -135,11 +135,15 @@ runs:
         fi
 
         # Publish the slot with one atomic symlink swap — idempotent
-        # under concurrency (both matrix legs flip to the same target).
+        # under concurrency (both matrix legs flip to the same target;
+        # an unchanged target is a true no-op, so the symlink mtime stays
+        # the flip CLOCK — see sdk_slot.py cmd_flip, gh-2152).
         # Readers resolve `current` per use, so they observe either the
         # previous complete tree or this one, never a missing or
         # half-populated SDK; superseded trees are only gc'd after a
-        # 2-day drain window, so in-flight legs keep a complete tree.
+        # 2-day drain measured on that flip clock, so in-flight legs
+        # keep a complete tree (a tree-mtime drain deleted the old tree
+        # under live siblings on pin-bump day — gh-2152).
         python3 "$SLOT" flip "$DEST" "$CURRENT"
         echo "$VER" > "$MARKER"
         echo "Pinned Flutter $VER at $CURRENT -> $DEST"

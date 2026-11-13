@@ -67,6 +67,30 @@ Directory makeSdkRoot() {
   return sdk;
 }
 
+/// Backdate a path — or a symlink ITSELF, never its target (Dart has no
+/// symlink-utime API; python3 is already this suite's fixture tool).
+void backdatePath(String path, {double days = 3}) {
+  final res = Process.runSync('python3', [
+    '-c',
+    'import os, sys, time; t = time.time() - $days * 86400; '
+        'os.utime(sys.argv[1], (t, t), follow_symlinks=False)',
+    path,
+  ]);
+  expect(res.exitCode, 0, reason: res.stderr);
+}
+
+/// Age of a symlink's OWN mtime in days (the gh-2152 flip clock).
+double symlinkAgeDays(String linkPath) {
+  final res = Process.runSync('python3', [
+    '-c',
+    'import os, sys; print(os.stat(sys.argv[1], follow_symlinks=False).st_mtime)',
+    linkPath,
+  ]);
+  expect(res.exitCode, 0, reason: res.stderr);
+  final mtime = double.parse(res.stdout.toString().trim());
+  return (DateTime.now().millisecondsSinceEpoch / 1000.0 - mtime) / 86400.0;
+}
+
 void main() {
   group('decision logic — the six #357 review scenarios', () {
     test('1. wildcard spec, marker at the newest stable match -> SKIP', () {
@@ -295,14 +319,99 @@ void main() {
         }
         final result = runSlot(['gc', sdk.path, '${sdk.path}/3.47.4', '2']);
         expect(result.exitCode, 0, reason: result.stderr);
-        expect(
-          Directory('${sdk.path}/3.47.4/bin').existsSync(),
+        expect(Directory('${sdk.path}/3.47.4/bin').existsSync(),
           isTrue,
           reason: 'the live target is never eligible',
         );
         expect(Directory('${sdk.path}/3.46.0').existsSync(), isFalse);
         expect(Directory('${sdk.path}/.stage.dead').existsSync(), isFalse);
         expect(Directory('${sdk.path}/.stage.fresh').existsSync(), isTrue);
+      },
+    );
+
+    // gh-2152 — bump-day hazard: gc used to measure the superseded-tree
+    // drain on the TREE's install mtime. On pin-bump day the old tree was
+    // installed weeks ago, so the FIRST flip to the new version made it
+    // gc-eligible immediately — while a concurrent sibling leg that
+    // SKIP-resolved the old SDK through `current` minutes earlier (the
+    // arm64+x86_64 matrix legs run CONCURRENTLY on the ONE self-hosted
+    // runner) could still be building against it: cross-registration
+    // live-tree deletion, the gh-2134 class, SDK-flavored. The drain is
+    // now measured on the FLIP clock (the `current` symlink's own mtime,
+    // = the last time the target CHANGED), with the tree mtime only as
+    // the no-current fallback and freshness guard.
+    test(
+      'gc (gh-2152): a fresh flip protects the superseded tree even when '
+      'its own mtime is ancient',
+      () {
+        final sdk = makeSdkRoot();
+        for (final v in ['3.46.0', '3.47.4']) {
+          Directory('${sdk.path}/$v/bin').createSync(recursive: true);
+          File('${sdk.path}/$v/bin/flutter').writeAsStringSync(v);
+        }
+        // Old tree installed 30d ago; `current` flipped to 3.47.4 just now
+        // (bump day).
+        backdatePath('${sdk.path}/3.46.0', days: 30);
+        Link('${sdk.path}/current').createSync('${sdk.path}/3.47.4');
+        final result = runSlot(['gc', sdk.path, '${sdk.path}/3.47.4', '2']);
+        expect(result.exitCode, 0, reason: result.stderr);
+        expect(
+          Directory('${sdk.path}/3.46.0/bin').existsSync(),
+          isTrue,
+          reason: 'the flip happened seconds ago — a concurrent sibling '
+              'leg may still hold this tree; the drain must run on the '
+              'flip clock, not the tree clock',
+        );
+      },
+    );
+
+    test(
+      'gc (gh-2152): once the flip ages past the drain the tree goes',
+      () {
+        final sdk = makeSdkRoot();
+        for (final v in ['3.46.0', '3.47.4']) {
+          Directory('${sdk.path}/$v/bin').createSync(recursive: true);
+          File('${sdk.path}/$v/bin/flutter').writeAsStringSync(v);
+        }
+        backdatePath('${sdk.path}/3.46.0', days: 30);
+        final link = Link('${sdk.path}/current')
+          ..createSync('${sdk.path}/3.47.4');
+        backdatePath(link.path, days: 3); // flipped 3d ago (> the 2d drain)
+        final result = runSlot(['gc', sdk.path, '${sdk.path}/3.47.4', '2']);
+        expect(result.exitCode, 0, reason: result.stderr);
+        expect(
+          Directory('${sdk.path}/3.46.0').existsSync(),
+          isFalse,
+          reason: 'flip older than the drain — no live leg can still '
+              'resolve this tree (job ceilings are 90–150m)',
+        );
+      },
+    );
+
+    // The flip clock only works if flipping to the ALREADY-LIVE target is
+    // a true no-op: the action runs flip on EVERY setup, so a
+    // replace-the-symlink-anyway flip refreshes its mtime daily and the
+    // drain never elapses (the docstring already claims no-op semantics).
+    test(
+      'flip (gh-2152): same-target flip is a no-op — the symlink mtime '
+      '(the gc flip clock) is preserved',
+      () {
+        final sdk = makeSdkRoot();
+        Directory('${sdk.path}/3.47.4/bin').createSync(recursive: true);
+        final link = Link('${sdk.path}/current')
+          ..createSync('${sdk.path}/3.47.4');
+        backdatePath(link.path, days: 5);
+        final result = runSlot(
+          ['flip', '${sdk.path}/3.47.4', '${sdk.path}/current'],
+        );
+        expect(result.exitCode, 0, reason: result.stderr);
+        expect(result.stdout, contains('unchanged'));
+        expect(
+          symlinkAgeDays(link.path),
+          greaterThan(4.0),
+          reason: 're-pointing `current` at its existing target must not '
+              'refresh the flip clock',
+        );
       },
     );
   });

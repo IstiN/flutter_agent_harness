@@ -315,6 +315,18 @@ jobs:
               || echo "::warning::could not restore the $ARCH build cache — it will be rebuilt from scratch (gh-1600)"
           fi
 
+      # gh-2152: disk preflight + bounded reclaim — same rationale as
+      # build-mobile.yml's build-ios (the 3.50.0 SDK slot install needs
+      # ~8 GB of transient headroom on a box whose one disk is shared by
+      # up to three concurrent runner registrations; run 43371292694's
+      # arm64 leg died at exactly this setup step with a worker-level
+      # ENOSPC — "runner lost communication"). Diagnose df, reclaim the
+      # repo-known consumers, fail FAST under the floor with a quotable
+      # ::error::. Runs AFTER the checkout's build-cache restore (the
+      # cache eats disk too) and BEFORE the SDK install.
+      - name: Disk preflight + bounded reclaim (gh-2152)
+        run: bash scripts/runner_disk_preflight.sh "$GITHUB_WORKSPACE" "$HOME/actions-runner-yoloit"
+
       # Persistent pinned SDK (issue #354): same rationale as
       # build-mobile.yml — on a persistent self-hosted runner the
       # flutter-action cache costs a ~1GB untar on setup plus a whole-SDK
