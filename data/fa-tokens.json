@@ -60,15 +60,6 @@
   "pr-1989": [
     {
       "leg": "review",
-      "at": "2026-10-30T09:02:16Z",
-      "prompt": 69339,
-      "completion": 25623,
-      "total": 94962,
-      "cacheRead": 1338880,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-30T10:57:19Z",
       "prompt": 110322,
       "completion": 17728,
@@ -3038,6 +3029,15 @@
       "completion": 38866,
       "total": 238873,
       "cacheRead": 5279232,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-13T09:21:49Z",
+      "prompt": 159070,
+      "completion": 31063,
+      "total": 190133,
+      "cacheRead": 3057344,
       "model": "glm-5.3-flash"
     }
   ],
