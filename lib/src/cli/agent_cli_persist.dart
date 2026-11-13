@@ -167,6 +167,52 @@ extension AgentCliPersist on AgentCli {
         : ObligationsLedger.fromPayload(records.last.data);
   }
 
+  /// The `recite_goal` write path (gh-210): appends one goal-recitation
+  /// snapshot — latest-wins, append-only, no record ever rewritten. An
+  /// empty [goal] is the discovery mode: reports the current slot
+  /// content (raw-file scan, the #488-class fallback) without writing.
+  /// Failures are RETURNED — the agent must see that its recite did not
+  /// land (the same contract as [closeObligation]).
+  Future<String> reciteGoal(String goal) async {
+    final session = _session;
+    if (session == null) return 'no session is open — no goal slot';
+    if (goal.isEmpty) {
+      final current = await currentGoalRecitation();
+      return current == null
+          ? 'no goal recited — call with {"goal": "..."} to set one.'
+          : 'current goal: ${current.goal}';
+    }
+    try {
+      // Deliberate agent-visible write: bypasses the persist window —
+      // the recite must land NOW. The tool clips before calling, but the
+      // persist path re-bounds so direct callers cannot overshoot either.
+      await session.appendCustomEntry(
+        customType: goalRecitationRecordType,
+        data: goalRecitationPayload(reciteGoalForStorage(goal)),
+      );
+    } on Exception catch (error) {
+      return 'reciting the goal failed — the snapshot did not persist '
+          '($error); try again';
+    }
+    return 'goal recited — it renders at the context tail and survives '
+        'every compaction hide.';
+  }
+
+  /// The current slot content over the session's full file chain, or
+  /// null when no recitation exists yet.
+  Future<GoalRecitation?> currentGoalRecitation() async {
+    final session = _session;
+    final repo = _repo;
+    if (session == null || repo is! JsonlSessionRepo) return null;
+    final records = await repo.readCustomRecordsOfType(
+      await session.getMetadata(),
+      {goalRecitationRecordType},
+    );
+    return records.isEmpty
+        ? null
+        : goalRecitationFromPayload(records.last.data);
+  }
+
   /// The `session_search` host path (issue #1380 A2): one archive search
   /// over the LIVE session's file chain through the repo's streamed scan.
   /// A memory-backed repo (no file) degrades to an honest cannot-search

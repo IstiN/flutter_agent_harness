@@ -12,6 +12,7 @@ library;
 import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
 import '../compaction/token_estimation.dart';
+import '../compaction/working_set.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../session_seal.dart';
@@ -152,6 +153,27 @@ final class Session {
     return _obligationsFromScan = records.isEmpty
         ? const ObligationsLedger([])
         : ObligationsLedger.fromPayload(records.last.data);
+  }
+
+  /// Cached result of the one-time goal-recitation scan fallback (gh-210):
+  /// null means "not scanned yet" — a scanned-empty result caches the
+  /// sentinel so cold projections do not re-scan on every rebuild.
+  /// Resident appends always win over it, so no invalidation is needed.
+  GoalRecitation? _goalRecitationFromScan;
+  bool _goalRecitationScanDone = false;
+
+  /// The latest goal recitation from the raw scan fallback, or null when
+  /// no scan hook exists / was already consulted and found nothing. Runs
+  /// at most once per session instance.
+  Future<GoalRecitation?> _scanGoalRecitation() async {
+    if (_goalRecitationScanDone) return _goalRecitationFromScan;
+    _goalRecitationScanDone = true;
+    final scan = customRecordScan;
+    if (scan == null) return null;
+    final records = await scan({goalRecitationRecordType});
+    return _goalRecitationFromScan = records.isEmpty
+        ? null
+        : goalRecitationFromPayload(records.last.data);
   }
 
   /// The session metadata (from the file header).
@@ -681,27 +703,86 @@ final class Session {
     );
     if (!hasStructured) {
       if (classicHidden.isEmpty) {
-        return _withObligationsBlock([
+        return _withLevel0Blocks([
           for (final entry in path) ..._entryToMessages(entry),
-        ]);
+        ], path: path);
       }
       final seqs = RecordSeqIndex(await getEntries());
-      return _withObligationsBlock([
-        for (final entry in path)
-          ..._entryToMessages(entry, classicHidden: classicHidden, seqs: seqs),
-      ]);
+      return _withLevel0Blocks(
+        [
+          for (final entry in path)
+            ..._entryToMessages(
+              entry,
+              classicHidden: classicHidden,
+              seqs: seqs,
+            ),
+        ],
+        path: path,
+        dropped: classicHidden,
+      );
     }
     final entries = await getEntries();
     final seqs = RecordSeqIndex(entries);
-    return _withObligationsBlock(
+    return _withLevel0Blocks(
       renderStructuredMessages(
         path: path,
         seqs: seqs,
         projectEntry: (record) =>
             _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
       ),
+      path: path,
       entries: entries,
     );
+  }
+
+  /// Appends the gh-210 level-0 blocks at the context tail: the
+  /// obligations ledger first (issue #1380), then the bounded working-set
+  /// block (the goal recitation + the touched-file references) as the
+  /// tail-most message. Both are additive projection output — neither is
+  /// ever written as a session record, so every hide path (judge,
+  /// deterministic fallback, LRU re-hide, agent hide, checkpoint fold)
+  /// walks records it cannot see and the slot cannot be sunk.
+  Future<List<Message>> _withLevel0Blocks(
+    List<Message> messages, {
+    required List<SessionRecord> path,
+    List<SessionRecord> dropped = const [],
+    List<SessionRecord>? entries,
+  }) async {
+    final withObligations = await _withObligationsBlock(
+      messages,
+      entries: entries,
+    );
+    return _withWorkingSetBlock(
+      withObligations,
+      path: path,
+      dropped: dropped,
+      entries: entries,
+    );
+  }
+
+  /// Appends the bounded working-set block (gh-210) as the tail-most
+  /// message. Presence-gated on a `goal_recitation` snapshot or a
+  /// compaction boundary on the path — a session with neither (a fresh
+  /// session, pre-gh-210 shape) projects exactly as before. The block is
+  /// derived on every rebuild, so a cleared slot (an empty goal string)
+  /// stops rendering without any tombstone.
+  Future<List<Message>> _withWorkingSetBlock(
+    List<Message> messages, {
+    required List<SessionRecord> path,
+    List<SessionRecord> dropped = const [],
+    List<SessionRecord>? entries,
+  }) async {
+    var recitation = latestGoalRecitationIn(entries ?? await getEntries());
+    if (recitation == null && _storage is WindowedSessionStorage) {
+      recitation = await _scanGoalRecitation();
+    }
+    final block = renderWorkingSetBlock(
+      path,
+      recitation: recitation,
+      dropped: dropped,
+    );
+    if (block.isEmpty) return messages;
+    return [...messages, UserMessage.text(block)];
   }
 
   /// Appends the obligations ledger block (issue #1380 A1) at level 0 —

@@ -58,6 +58,7 @@ const knownToolIds = <String>{
   'ask',
   'request_secret',
   'obligations',
+  'recite_goal',
   'task',
   'checkpoint',
   'rewind',
@@ -126,6 +127,7 @@ const coreToolFamilies = <String, Set<String>>{
   'ask': {'ask'},
   'request_secret': {'request_secret'},
   'obligations': {'obligation_mark_done'},
+  'recite_goal': {'recite_goal'},
   'session_search': {'session_search'},
   'task': {
     'task',

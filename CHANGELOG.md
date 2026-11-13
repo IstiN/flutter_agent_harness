@@ -13,6 +13,21 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-210): post-compaction continuity — a bounded working set
+  re-injects at the context tail after any compaction (structured hide,
+  checkpoint, or classic fold): the recited goal first, then recently
+  touched files as path references (content re-reads on demand). Budgets
+  are enforced with explicit markers (`… and N more touched files`,
+  `[clipped at N chars]`) — never silent cuts. The goal rides the new
+  `recite_goal` tool (latest-wins append-only `goal_recitation`
+  snapshots, write-side bounding) and the slot is protected from every
+  hide path by construction: the block is additive projection output,
+  never a session record, so judge / deterministic / LRU / agent hide /
+  checkpoint fold cannot see it. A fixture proves session survival: an
+  old (large) session loads unchanged and every new write is an
+  append-only tail extension — byte-identical prefix. Sessions without a
+  recitation or a compaction boundary project exactly as before
+  (#2100)
 - feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier

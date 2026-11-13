@@ -633,6 +633,8 @@ class AgentCli {
           ),
         ],
         obligationsClose: (id, status) => closeObligation(id, status),
+        goalRecite: (goal) => reciteGoal(goal),
+        goalReciteCurrent: currentGoalRecitation,
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
         // (constructed inside the builder) may not exist yet.
