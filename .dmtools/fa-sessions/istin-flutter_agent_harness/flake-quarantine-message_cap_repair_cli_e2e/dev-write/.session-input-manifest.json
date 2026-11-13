@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-13T10:44:16.971Z",
+  "ticketKey": "pr-2145",
+  "headSha": "3d1fe9830f4d7dc7c759b8ed74d688d9c1780d7b",
+  "baseBranch": "main",
+  "reviewDecision": "APPROVED",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:20d2c5e50c24b968",
+      "size": 663
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:17eb214b01aef15a",
+      "size": 4324
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:a22e167914875be2",
+      "size": 3448
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:465446b5ed784078",
+      "size": 921
+    },
+    "request.md": {
+      "hash": "fnv1a64:c4fe8e0560198a1a",
+      "size": 546
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:51c664915ae5489f",
+      "size": 641
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:72c5dbbec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:45e8b9cebc485d2d",
+      "size": 600
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:c4fe8e0560198a1a",
+      "size": 546
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Clean machine-generated flake quarantine (gh-1199 AC6). The new `scripts/test_quarantine.json` entry for `test/integration/message_cap_repair_cli_e2e_test.dart` matches the machine-proposed entry in flake-tracker issue #2144 verbatim (2 proving runs, 2 distinct SHAs), passes the static gate, and follows the documented quarantine workflow. No findings.\n\n**Key Issues**: None. Verified:\n- JSON valid; entry schema identical to the 12 existing entries (`file`/`test`/`issue`/`since`/`runs`, ≥2 distinct runs)\n- `python3 scripts/apply_quarantine.py --check` → exit 0 (\"Quarantine list OK: 13 entr(ies)\")\n- File exists, tagged `integration`, target path is dropped by the gate pipe (`ci.yml:1083`, `ci.yml:1382`) with a `::warning::` — non-quarantined targets pass through\n- `test` field exactly equals the file's `group` + `test` name; issue #2144 is open, `flake`-labelled, and cites the same runs 43283621987 / 43275753721 with distinct SHAs\n- Nightly supervision untouched (un-quarantine path per gh-1199 AC4 preserved); no secrets, no scope creep\n\n**Next Steps**: Merge as-is. The fix for the underlying flake is tracked in #2144; un-quarantine requires the AC4 nightly repeat-run proof."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 1adf67df3f2b0c3379323bf3a0c56ad2c062d168 — stale base at 2026-11-12T23:16:23.539Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "thread-3",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 16017b9acfe205f6033a3a6139d434c39ab14e2f — stale base at 2026-11-13T02:08:41.321Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "thread-4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4d37871b7f3e0481d1ca5bc044651b665d534eb3 — stale base at 2026-11-13T08:11:11.181Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-12:faffeafc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Clean machine-generated flake quarantine (gh-1199 AC6). The new `scripts/test_quarantine.json` entry for `test/integration/message_cap_repair_cli_e2e_test.dart` matches the machine-proposed entry in flake-tracker issue #2144 verbatim (2 proving runs, 2 distinct SHAs), passes the static gate, and follows the documented quarantine workflow. No findings.\n\n**Key Issues**: None. Verified:\n- JSON valid; entry schema identical to the 12 existing entries (`file`/`test`/`issue`/`since`/`runs`, ≥2 distinct runs)\n- `python3 scripts/apply_quarantine.py --check` → exit 0 (\"Quarantine list OK: 13 entr(ies)\")\n- File exists, tagged `integration`, target path is dropped by the gate pipe (`ci.yml:1083`, `ci.yml:1382`) with a `::warning::` — non-quarantined targets pass through\n- `test` field exactly equals the file's `group` + `test` name; issue #2144 is open, `flake`-labelled, and cites the same runs 43283621987 / 43275753721 with distinct SHAs\n- Nightly supervision untouched (un-quarantine path per gh-1199 AC4 preserved); no secrets, no scope creep\n\n**Next Steps**: Merge as-is. The fix for the underlying flake is tracked in #2144; un-quarantine requires the AC4 nightly repeat-run proof."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-12:04019e8a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-12",
+      "updatedAt": "2026-11-12",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 1adf67df3f2b0c3379323bf3a0c56ad2c062d168 — stale base at 2026-11-12T23:16:23.539Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:c8ab8a6b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 16017b9acfe205f6033a3a6139d434c39ab14e2f — stale base at 2026-11-13T02:08:41.321Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-13:ffb3a4ff",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-13",
+      "updatedAt": "2026-11-13",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4d37871b7f3e0481d1ca5bc044651b665d534eb3 — stale base at 2026-11-13T08:11:11.181Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
