@@ -30,15 +30,6 @@
   ],
   "pr-1989": [
     {
-      "leg": "rework",
-      "at": "2026-10-30T11:39:57Z",
-      "prompt": 157690,
-      "completion": 20362,
-      "total": 178052,
-      "cacheRead": 4223488,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-10-30T12:14:14Z",
       "prompt": 119904,
@@ -3076,6 +3067,15 @@
       "completion": 9522,
       "total": 243788,
       "cacheRead": 1958848,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-13T11:45:42Z",
+      "prompt": 295859,
+      "completion": 22034,
+      "total": 317893,
+      "cacheRead": 3475584,
       "model": "glm-5.3-flash"
     }
   ],
