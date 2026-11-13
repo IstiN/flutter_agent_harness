@@ -1,83 +1,5 @@
 {
-  "issue-2003": [
-    {
-      "leg": "dev",
-      "at": "2026-10-30T19:17:46Z",
-      "prompt": 2430062,
-      "completion": 55601,
-      "total": 2485663,
-      "cacheRead": 50573312,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-30T20:26:09Z",
-      "prompt": 40654,
-      "completion": 12005,
-      "total": 52659,
-      "cacheRead": 1097984,
-      "model": "kimi-for-coding"
-    }
-  ],
-  "pr-2005": [
-    {
-      "leg": "review",
-      "at": "2026-10-30T19:32:58Z",
-      "prompt": 99639,
-      "completion": 7863,
-      "total": 107502,
-      "cacheRead": 684224,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-30T19:48:00Z",
-      "prompt": 42269,
-      "completion": 0,
-      "total": 42269,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-10-30T20:04:32Z",
-      "prompt": 42938,
-      "completion": 0,
-      "total": 42938,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    }
-  ],
-  "issue-2004": [
-    {
-      "leg": "dev",
-      "at": "2026-10-30T19:45:35Z",
-      "prompt": 1369600,
-      "completion": 123502,
-      "total": 1493102,
-      "cacheRead": 38108928,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
-      "at": "2026-10-30T20:43:33Z",
-      "prompt": 212159,
-      "completion": 30721,
-      "total": 242880,
-      "cacheRead": 7858688,
-      "model": "kimi-for-coding"
-    }
-  ],
   "pr-2006": [
-    {
-      "leg": "review",
-      "at": "2026-10-30T21:10:33Z",
-      "prompt": 162492,
-      "completion": 42739,
-      "total": 205231,
-      "cacheRead": 11038912,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-30T22:12:34Z",
@@ -3482,6 +3404,15 @@
       "completion": 21455,
       "total": 82879,
       "cacheRead": 1158336,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-13T21:28:39Z",
+      "prompt": 101042,
+      "completion": 13186,
+      "total": 114228,
+      "cacheRead": 1574848,
       "model": "glm-5.3-flash"
     }
   ],
