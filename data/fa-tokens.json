@@ -30,17 +30,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-2002": [
-    {
-      "leg": "rework",
-      "at": "2026-10-30T15:15:28Z",
-      "prompt": 1222759,
-      "completion": 51880,
-      "total": 1274639,
-      "cacheRead": 37770624,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-2003": [
     {
       "leg": "dev",
@@ -3007,6 +2996,15 @@
       "completion": 6869,
       "total": 376937,
       "cacheRead": 2180608,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-13T15:34:35Z",
+      "prompt": 384237,
+      "completion": 7143,
+      "total": 391380,
+      "cacheRead": 2145984,
       "model": "glm-5.3-flash"
     }
   ],
