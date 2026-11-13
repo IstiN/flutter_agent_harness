@@ -2,11 +2,13 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// DevicesPage widget tests (issue #2062 chunk 16): the machine roster
-/// tree — the three §5 presence levels nested under machine nodes, the
-/// tree expansion, the "This device only" empty state and the phase
-/// gates. Driven by a fake service's streams (no connector, no sockets),
-/// mirroring the chunk-15 panel test harness.
+/// DevicesPage widget tests (issue #2062 chunk 16, master-rail pass): the
+/// NETWORKS-strip avatar rail beside the selected device's pane — the
+/// rail renders one avatar cell per machine (own dot ONLINE LOCALLY,
+/// remote dots from their frames), a tap switches the pane, local
+/// sessions open as channel cards, remote cards stay read-only, and the
+/// empty pane shows the muted hint. Driven by a fake service's streams
+/// (no connector, no sockets), mirroring the chunk-15 panel test harness.
 library;
 
 import 'dart:async';
@@ -143,6 +145,25 @@ Color dotColor(WidgetTester tester, Key key) {
   return color;
 }
 
+/// The keyed avatar Container's decoration (the rail avatar's gradient
+/// box — the shape fields carry the circle↔squircle selection state).
+BoxDecoration avatarDecoration(WidgetTester tester, Key key) {
+  final container = tester.widget<Container>(
+    find
+        .descendant(
+          of: find.byKey(key),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Container &&
+                widget.decoration is BoxDecoration &&
+                widget.key == null,
+          ),
+        )
+        .first,
+  );
+  return container.decoration! as BoxDecoration;
+}
+
 /// A chat list controller over the given static entries — the same
 /// projection the Local sessions panel rides (the app's canonical local
 /// session enumeration).
@@ -193,8 +214,43 @@ FahColors paletteOf(WidgetTester tester) =>
     FahColors.of(tester.element(find.byKey(const ValueKey('devicesPage'))));
 
 void main() {
+  testWidgets('master-rail split: the networks rail geometry beside the '
+      'pane (SizedBox rail + VerticalDivider + Expanded)', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    // The network_center Row anatomy: fixed rail column, hairline
+    // divider, expanded pane.
+    expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
+    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('deviceRail'))).width,
+      DevicesPage.railWidth,
+    );
+    expect(find.byType(VerticalDivider), findsOneWidget);
+    // The rail is a COLUMN of avatar-only cells: no inline full-width
+    // device rows anywhere (no disclosure chevrons, no status words).
+    expect(find.byType(VerticalDivider), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is FaIcon && widget.icon == FaSemanticIcon.expandMore,
+      ),
+      findsNothing,
+    );
+    expect(find.text('Online'), findsNothing);
+    expect(find.text('Offline'), findsNothing);
+  });
+
   testWidgets(
-    'signed-out phase → not-running line + This device, tap retries',
+    'signed-out phase → not-running line + This device rail cell (own dot '
+    'teal locally), tap retries',
     (tester) async {
       final service = FakeDevicesService(
         initialPhase: DeviceConnectorPhase.signedOut,
@@ -204,12 +260,26 @@ void main() {
       await tester.pump();
 
       // Never blank (issue #2062 field feedback): the header, the
-      // not-running line and the own-device node all render.
+      // not-running line and the own-device rail cell + pane all render.
       expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
       expect(find.text('MY DEVICES'), findsOneWidget);
       expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
       expect(find.text('Connector not running — tap to retry'), findsOneWidget);
       expect(find.text('This device'), findsOneWidget);
+      // The own rail cell is ONLINE LOCALLY even while the connector is
+      // down: the dot says "the app is running on this machine"; the
+      // banner above tells the connector's story.
+      expect(
+        dotColor(tester, const ValueKey('deviceDot')),
+        paletteOf(tester).teal,
+      );
+      expect(find.byKey(const ValueKey('deviceAvatar')), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is FaIcon && widget.icon == FaSemanticIcon.devices,
+        ),
+        findsOneWidget,
+      );
 
       // Tap → the page asks the service for a retry start.
       await tester.tap(find.byKey(const ValueKey('devicesNotRunning')));
@@ -230,7 +300,7 @@ void main() {
     expect(find.text('DeviceEnrollmentException: 401'), findsOneWidget);
   });
 
-  testWidgets('connecting → skeleton line, no tree rows', (tester) async {
+  testWidgets('connecting → skeleton line, no rail', (tester) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.connecting,
     );
@@ -242,10 +312,11 @@ void main() {
     expect(find.text('MY DEVICES'), findsOneWidget);
     expect(find.byKey(const ValueKey('devicesSkeleton')), findsOneWidget);
     expect(find.text('Connecting…'), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
     expect(find.text('This device'), findsNothing);
   });
 
-  testWidgets('reconnecting → muted line over the (empty) tree', (
+  testWidgets('reconnecting → muted banner over the rail + pane', (
     tester,
   ) async {
     final service = FakeDevicesService(
@@ -257,10 +328,14 @@ void main() {
 
     expect(find.byKey(const ValueKey('devicesReconnecting')), findsOneWidget);
     expect(find.text('Reconnecting…'), findsOneWidget);
+    // The last-known rail stays mounted under the banner.
+    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+    expect(find.text('This device'), findsOneWidget);
   });
 
-  testWidgets('online → This device node: honest offline dot until the '
-      'first frame, then frame agents + LOCAL chat sessions', (tester) async {
+  testWidgets('online → This device rail cell: teal dot WITHOUT a frame, '
+      'avatar-only cell; pane shows frame agents + LOCAL chat session '
+      'cards', (tester) async {
     final opened = <String>[];
     final controller = chatListOf([
       localEntry('sess-main', title: 'Main chat', presence: ChatPresence.busy),
@@ -284,13 +359,8 @@ void main() {
     await tester.pump();
     final palette = paletteOf(tester);
 
-    // No presence frame yet: the machine state is UNKNOWN — the honest
-    // offline spec (dim dot, muted label), never the old online default.
-    expect(find.text('This device'), findsOneWidget);
-    expect(dotColor(tester, const ValueKey('deviceDot')), palette.dim);
-    // The node's presence label is the only 'Offline': the session cards'
-    // subtitle is the last-activity timestamp now, not the state word.
-    expect(find.text('Offline'), findsOneWidget);
+    // No presence frame yet: the dot is already teal — ONLINE LOCALLY,
+    // the app is running on this machine (never the old offline default).
     expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceAvatar')), findsOneWidget);
     expect(
@@ -303,24 +373,31 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(dotColor(tester, const ValueKey('deviceDot')), palette.teal);
+    // The default selection is the rail's first device: its pane header.
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsOneWidget);
+    expect(find.text('This device'), findsOneWidget);
 
+    // The frame does NOT drive this dot — a frame even claiming the
+    // machine OFFLINE leaves it teal (the connector's link state stays
+    // the banners' story). Only the nested agents ride the frame; the
+    // connector's exposed-session view must NOT drive the own pane
+    // ('sess-exposed' never renders under This device).
     service.emitPresence(
       _frame(
-        machine: MachinePresence.online,
+        machine: MachinePresence.offline,
         agents: const {
           'goal_builder@dev-1': AgentRunState.busy,
           'scout@dev-1': AgentRunState.live,
         },
-        // The connector's exposed-session view must NOT drive this node:
-        // 'sess-exposed' never renders under This device.
         sessions: const {'sess-exposed': ConnectorSessionPresence.wakeOnDm},
       ),
     );
     await tester.pump();
 
-    // The own node's dot follows the frame's machine state; the nested
-    // rows carry the agent dots and the LOCAL chat session rows.
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.teal);
+    // The pane carries the agent roster rows and the LOCAL chat session
+    // cards.
     expect(find.text('goal_builder'), findsOneWidget);
     expect(find.text('scout'), findsOneWidget);
     expect(
@@ -346,7 +423,7 @@ void main() {
       palette.dim,
     );
 
-    // The local session rows route through the shell's open flow.
+    // The local session cards route through the shell's open flow.
     await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
     expect(opened, ['sess-main']);
   });
@@ -372,8 +449,78 @@ void main() {
     expect(find.byKey(const ValueKey('sessionRow:orphan-1')), findsOneWidget);
   });
 
-  testWidgets('every node toggles; an empty expanded node shows the muted '
-      'no-sessions hint', (tester) async {
+  testWidgets('remote frame adds a rail cell; tapping it switches the '
+      'pane; remote dot reads the frame (degraded pending, then offline '
+      'dim)', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    final palette = paletteOf(tester);
+
+    service.emitEnvelope(
+      _envelope(
+        machine: MachinePresence.degraded,
+        deviceId: 'dev-remote',
+        agents: const {'agent@dev-remote': AgentRunState.live},
+        msgId: 'p-remote',
+      ),
+    );
+    await tester.pump();
+
+    // BOTH devices render in the rail (own first, remote second); the
+    // remote cell keys per device and carries its own frame-driven dot
+    // (degraded ⇒ pending).
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('deviceAvatar:dev-remote')),
+      findsOneWidget,
+    );
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      palette.pending,
+    );
+
+    // The pane still shows the default (first) device — stream updates
+    // never hijack the selection.
+    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('agent'), findsNothing);
+
+    // Tap the remote rail cell → the pane switches to its children.
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
+    await tester.pump();
+
+    expect(find.text('dev-remote'), findsOneWidget);
+    expect(find.text('agent'), findsOneWidget);
+    expect(
+      dotColor(tester, const ValueKey('agentDot:agent@dev-remote')),
+      palette.teal,
+    );
+
+    // Remote presence stays frame-based: the LATEST frame's machine
+    // state drives the dot (an offline frame ⇒ the dim dot) while the
+    // selection persists across the stream update.
+    service.emitEnvelope(
+      _envelope(
+        machine: MachinePresence.offline,
+        deviceId: 'dev-remote',
+        msgId: 'p-remote-offline',
+      ),
+    );
+    await tester.pump();
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      palette.dim,
+    );
+    expect(find.text('dev-remote'), findsOneWidget);
+  });
+
+  testWidgets('selection persists while frames stream updates (a new '
+      'remote arrival does not reset the pane)', (tester) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -382,32 +529,60 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    // The own node starts expanded with no children: the hint renders.
+    service.emitEnvelope(_envelope(deviceId: 'dev-a', msgId: 'p-a'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-a')));
+    await tester.pump();
+    expect(find.text('dev-a'), findsOneWidget);
+
+    // Another machine arrives: the pane stays on the selected device.
+    service.emitEnvelope(
+      _envelope(
+        deviceId: 'dev-b',
+        agents: const {'x@dev-b': AgentRunState.live},
+        msgId: 'p-b',
+      ),
+    );
+    await tester.pump();
+
+    // The rail now carries three cells; the pane is untouched.
+    expect(find.byKey(const ValueKey('deviceRow:dev-b')), findsOneWidget);
+    expect(find.text('dev-a'), findsOneWidget);
+    expect(find.text('x'), findsNothing);
+
+    // …and tapping back returns to This device's pane.
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pump();
+    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('dev-a'), findsNothing);
+  });
+
+  testWidgets('empty devices show the muted no-sessions hint in the pane', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    // The default (This device) pane with no children: the hint renders.
     expect(find.text('No sessions yet'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceNoSessionsHint')), findsOneWidget);
 
-    // The toggle always works — collapse hides the hint, re-expand shows it.
-    await tester.tap(
-      find.byKey(const ValueKey('deviceNodeToggle:This device')),
-    );
-    await tester.pump();
-    expect(find.text('No sessions yet'), findsNothing);
-
-    await tester.tap(
-      find.byKey(const ValueKey('deviceNodeToggle:This device')),
-    );
-    await tester.pump();
-    expect(find.text('No sessions yet'), findsOneWidget);
-
-    // A remote node with no children behaves the same once expanded.
+    // Switching to the empty remote swaps the pane's hint in for its
+    // children (exactly one hint at a time — the pane is per device).
     service.emitEnvelope(_envelope(deviceId: 'dev-empty', msgId: 'p-empty'));
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('deviceNodeToggle:dev-empty')));
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-empty')));
     await tester.pump();
-    expect(find.text('No sessions yet'), findsNWidgets(2));
+    expect(find.text('No sessions yet'), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceNoSessionsHint')), findsOneWidget);
   });
 
-  testWidgets('remote device session rows stay read-only; only local rows '
+  testWidgets('remote session cards stay read-only; only local cards '
       'carry the open tap', (tester) async {
     final opened = <String>[];
     final controller = chatListOf([localEntry('sess-main')]);
@@ -436,13 +611,9 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('deviceNodeToggle:dev-remote')));
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
 
-    final localRow = tester.widget<DeviceSessionCard>(
-      find.byKey(const ValueKey('sessionRow:sess-main')),
-    );
-    expect(localRow.onTap, isNotNull);
     final remoteRow = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-remote')),
     );
@@ -451,8 +622,6 @@ void main() {
     // Tapping the remote row routes nowhere (no callback attached).
     await tester.tap(find.byKey(const ValueKey('sessionRow:sess-remote')));
     expect(opened, isEmpty);
-    await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
-    expect(opened, ['sess-main']);
 
     // The remote card is the same channel-card anatomy but carries NO
     // chevron — it is not navigable.
@@ -466,6 +635,14 @@ void main() {
       ),
       findsNothing,
     );
+
+    // Back on This device, the local card opens and carries the chevron.
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pump();
+    final localRow = tester.widget<DeviceSessionCard>(
+      find.byKey(const ValueKey('sessionRow:sess-main')),
+    );
+    expect(localRow.onTap, isNotNull);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('sessionRow:sess-main')),
@@ -476,11 +653,13 @@ void main() {
       ),
       findsOneWidget,
     );
+    await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
+    expect(opened, ['sess-main']);
   });
 
   testWidgets('channel-card anatomy: the open session carries the accent '
-      'fill, the white chat-glyph tile and the timestamp subtitle; the '
-      'expanded node keys like the selected network', (tester) async {
+      'fill and the timestamp subtitle; the selected rail cell carries '
+      'the capsule + squircle avatar', (tester) async {
     final controller = chatListOf([
       localEntry('sess-open', title: 'Open chat', createdAt: DateTime.now()),
       localEntry('sess-idle', title: 'Idle chat', createdAt: DateTime.now()),
@@ -520,7 +699,6 @@ void main() {
     // stays the quiet panel card.
     final element = tester.element(find.byKey(const ValueKey('devicesPage')));
     final tokens = FaDesignTokens.of(element);
-    final colors = FahColors.of(element);
     Material cardMaterial(Key key) => tester.widget<Material>(
       find
           .descendant(of: find.byKey(key), matching: find.byType(Material))
@@ -529,10 +707,6 @@ void main() {
     expect(
       cardMaterial(const ValueKey('sessionRow:sess-open')).color,
       tokens.accent,
-    );
-    expect(
-      cardMaterial(const ValueKey('sessionRow:sess-idle')).color,
-      colors.panelAlt,
     );
 
     // The card's white icon tile carries the vector chat glyph and the
@@ -547,45 +721,33 @@ void main() {
       findsOneWidget,
     );
 
-    // The expanded This-device row keys like the selected network: the
-    // tinted rounded-10 fill and the avatar's accent ring.
-    final isLight = Theme.of(element).brightness == Brightness.light;
-    final headerMaterial = tester.widget<Material>(
-      find
-          .descendant(
-            of: find.byKey(const ValueKey('deviceRow')),
-            matching: find.byType(Material),
-          )
-          .first,
+    // The selected rail cell keys like the networks strip: the accent
+    // capsule flush to the rail's left edge, and the avatar squares up
+    // (radius ~25%) — the unselected remote cell later stays a circle.
+    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsOneWidget);
+    final capsule = tester.widget<Container>(
+      find.byKey(const ValueKey('deviceSelectedCapsule')),
     );
+    expect((capsule.decoration! as BoxDecoration).color, tokens.accent);
+    expect(capsule.constraints?.maxWidth, DevicesPage.capsuleWidth);
     expect(
-      headerMaterial.color,
-      isLight ? const Color(0xFFEEF2FF) : colors.panelAlt,
+      (avatarDecoration(tester, const ValueKey('deviceAvatar')).borderRadius),
+      BorderRadius.circular(DevicesPage.railAvatarSize * 0.25),
     );
-    final avatarDecoration = tester
-        .widget<Container>(
-          find
-              .descendant(
-                of: find.byKey(const ValueKey('deviceAvatar')),
-                matching: find.byWidgetPredicate(
-                  (widget) =>
-                      widget is Container &&
-                      widget.decoration is BoxDecoration &&
-                      widget.key == null,
-                ),
-              )
-              .first,
-        )
-        .decoration!;
+
+    service.emitEnvelope(_envelope(deviceId: 'dev-rest', msgId: 'p-rest'));
+    await tester.pump();
     expect(
-      (avatarDecoration as BoxDecoration).border,
-      Border.all(color: colors.indigo, width: 2),
+      (avatarDecoration(
+        tester,
+        const ValueKey('deviceAvatar:dev-rest'),
+      ).borderRadius),
+      BorderRadius.circular(DevicesPage.railAvatarSize / 2),
     );
   });
 
-  testWidgets('online with no remote frames → only the This device node', (
-    tester,
-  ) async {
+  testWidgets('online with no remote frames → only the This device rail '
+      'cell', (tester) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -594,75 +756,13 @@ void main() {
     await tester.pumpWidget(_wrap(DevicesPage(service: service)));
     await tester.pump();
 
-    expect(find.text('This device'), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceNode:dev-remote')), findsNothing);
-  });
-
-  testWidgets('a foreign deviceId-tagged presence frame adds a remote '
-      'machine node, collapsed until tapped', (tester) async {
-    final service = FakeDevicesService(
-      initialPhase: DeviceConnectorPhase.online,
-      deviceId: 'dev-1',
-    );
-
-    await tester.pumpWidget(_wrap(DevicesPage(service: service)));
-    await tester.pump();
-    final palette = paletteOf(tester);
-
-    service.emitEnvelope(
-      _envelope(
-        machine: MachinePresence.degraded,
-        deviceId: 'dev-remote',
-        agents: const {'agent@dev-remote': AgentRunState.live},
-        msgId: 'p-remote',
-      ),
-    );
-    await tester.pump();
-
-    // The remote node renders with its own degraded dot, children
-    // collapsed, same networks-list row shape (round avatar + vector
-    // glyph, keyed per device). The own device's frames (no foreign
-    // deviceId) are ignored by the remote accumulator.
-    expect(find.byKey(const ValueKey('deviceNode:dev-remote')), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('deviceAvatar:dev-remote')),
-      findsOneWidget,
-    );
-    final avatarDecoration = tester
-        .widget<Container>(
-          find
-              .descendant(
-                of: find.byKey(const ValueKey('deviceAvatar:dev-remote')),
-                matching: find.byWidgetPredicate(
-                  (widget) =>
-                      widget is Container &&
-                      widget.decoration is BoxDecoration &&
-                      widget.key == null,
-                ),
-              )
-              .first,
-        )
-        .decoration!;
-    expect((avatarDecoration as BoxDecoration).shape, BoxShape.circle);
-    expect(
-      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
-      palette.pending,
-    );
-    expect(find.text('agent'), findsNothing);
-
-    await tester.tap(find.byKey(const ValueKey('deviceNodeToggle:dev-remote')));
-    await tester.pump();
-
-    expect(find.text('agent'), findsOneWidget);
-    expect(
-      dotColor(tester, const ValueKey('agentDot:agent@dev-remote')),
-      palette.teal,
-    );
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsNothing);
+    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsOneWidget);
   });
 
   testWidgets("the own device's envelope (matching deviceId) never becomes "
-      'a remote node', (tester) async {
+      'a remote rail cell', (tester) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -681,6 +781,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('dev-1'), findsNothing);
+    expect(find.byKey(const ValueKey('deviceRow:dev-1')), findsNothing);
     expect(find.text('This device'), findsOneWidget);
   });
 }
