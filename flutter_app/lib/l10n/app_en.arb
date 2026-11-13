@@ -1380,6 +1380,26 @@
   "@networkPresenceBusy": {
     "description": "Roster presence label for a busy member"
   },
+  "networkDevicesTitle": "My devices",
+  "@networkDevicesTitle": {
+    "description": "Sidebar top section header: the signed-in user's device roster"
+  },
+  "networkDeviceThisDevice": "This device",
+  "@networkDeviceThisDevice": {
+    "description": "The local machine's row in the device roster"
+  },
+  "networkDeviceConnecting": "Connecting…",
+  "@networkDeviceConnecting": {
+    "description": "Device roster skeleton line while the connector dials"
+  },
+  "networkDeviceReconnecting": "Reconnecting…",
+  "@networkDeviceReconnecting": {
+    "description": "Device roster muted line while the upstream link is down"
+  },
+  "networkPresenceWakeOnDm": "Wake on DM",
+  "@networkPresenceWakeOnDm": {
+    "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"
+  },
   "networkMemberOwner": "Owner",
   "@networkMemberOwner": {
     "description": "Roster member class: owner"

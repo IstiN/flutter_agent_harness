@@ -2716,6 +2716,21 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkPresenceBusy => 'Занят';
 
   @override
+  String get networkDevicesTitle => 'Мои устройства';
+
+  @override
+  String get networkDeviceThisDevice => 'Это устройство';
+
+  @override
+  String get networkDeviceConnecting => 'Подключение…';
+
+  @override
+  String get networkDeviceReconnecting => 'Переподключение…';
+
+  @override
+  String get networkPresenceWakeOnDm => 'Разбудить в DM';
+
+  @override
   String get networkMemberOwner => 'Владелец';
 
   @override

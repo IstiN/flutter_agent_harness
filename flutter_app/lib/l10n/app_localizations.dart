@@ -4814,6 +4814,36 @@ abstract class AppLocalizations {
   /// **'Busy'**
   String get networkPresenceBusy;
 
+  /// Sidebar top section header: the signed-in user's device roster
+  ///
+  /// In en, this message translates to:
+  /// **'My devices'**
+  String get networkDevicesTitle;
+
+  /// The local machine's row in the device roster
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get networkDeviceThisDevice;
+
+  /// Device roster skeleton line while the connector dials
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get networkDeviceConnecting;
+
+  /// Device roster muted line while the upstream link is down
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting…'**
+  String get networkDeviceReconnecting;
+
+  /// Roster presence label for an exposed session with no live lease (a DM wakes it)
+  ///
+  /// In en, this message translates to:
+  /// **'Wake on DM'**
+  String get networkPresenceWakeOnDm;
+
   /// Roster member class: owner
   ///
   /// In en, this message translates to:

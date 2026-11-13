@@ -1081,6 +1081,26 @@
   "networkPresenceOnline": "В сети",
   "networkPresenceOffline": "Не в сети",
   "networkPresenceBusy": "Занят",
+  "networkDevicesTitle": "Мои устройства",
+  "@networkDevicesTitle": {
+    "description": "Sidebar top section header: the signed-in user's device roster"
+  },
+  "networkDeviceThisDevice": "Это устройство",
+  "@networkDeviceThisDevice": {
+    "description": "The local machine's row in the device roster"
+  },
+  "networkDeviceConnecting": "Подключение…",
+  "@networkDeviceConnecting": {
+    "description": "Device roster skeleton line while the connector dials"
+  },
+  "networkDeviceReconnecting": "Переподключение…",
+  "@networkDeviceReconnecting": {
+    "description": "Device roster muted line while the upstream link is down"
+  },
+  "networkPresenceWakeOnDm": "Разбудить в DM",
+  "@networkPresenceWakeOnDm": {
+    "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"
+  },
   "networkMemberOwner": "Владелец",
   "networkMemberAdmin": "Администратор",
   "networkMemberMember": "Участник",

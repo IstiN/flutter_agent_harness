@@ -219,6 +219,7 @@ class DeviceConnectorService {
 
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast();
+  final _presence = StreamController<PresenceFrame>.broadcast();
   final _wakeHints = StreamController<NetworkEnvelope>.broadcast();
   final _phases = StreamController<DeviceConnectorPhase>.broadcast();
 
@@ -233,6 +234,11 @@ class DeviceConnectorService {
 
   /// Presence frames from the server (network-wide presence view).
   Stream<NetworkEnvelope> get presenceFrames => _presenceFrames.stream;
+
+  /// Presence frames PARSED to their payload model (§5) — the stable
+  /// stream the roster UI binds (a StreamBuilder over a per-build
+  /// `.map()` would resubscribe on every rebuild and drop state).
+  Stream<PresenceFrame> get presence => _presence.stream;
 
   /// Wake hints (§8).
   Stream<NetworkEnvelope> get wakeHints => _wakeHints.stream;
@@ -282,6 +288,7 @@ class DeviceConnectorService {
     await stop();
     await _rosterFrames.close();
     await _presenceFrames.close();
+    await _presence.close();
     await _wakeHints.close();
     await _phases.close();
   }
@@ -302,11 +309,12 @@ class DeviceConnectorService {
       _setPhase(DeviceConnectorPhase.signedOut);
       return;
     }
-    _credentials = await _resolveCredentials();
+    final credentials = await _resolveCredentials();
+    _credentials = credentials;
     if (generation != _generation) return;
 
     final registry = DeviceRegistry();
-    final personal = _credentials!.personalNetworkId ?? 'personal';
+    final personal = credentials.personalNetworkId ?? 'personal';
     registry.configureNetwork(personal, NetworkKind.personal);
     final agentAddress = _localAgentAddress();
     for (final sessionId in sessionManager.sessions.keys) {
@@ -319,8 +327,8 @@ class DeviceConnectorService {
       url: _deviceWsUrl(),
       transport: _transport,
       ticketProvider: () => _mintTicket(),
-      deviceId: _credentials!.deviceId,
-      deviceToken: _credentials!.deviceToken,
+      deviceId: credentials.deviceId,
+      deviceToken: credentials.deviceToken,
       idFactory: idFactory,
       onLog: onLog,
     );
@@ -410,7 +418,13 @@ class DeviceConnectorService {
   /// streams and maps link states to UI phases.
   void _wireForwarding(MachineConnector connector) {
     _subscriptions.add(connector.rosterFrames.listen(_rosterFrames.add));
-    _subscriptions.add(connector.presenceFrames.listen(_presenceFrames.add));
+    _subscriptions.add(
+      connector.presenceFrames.listen((envelope) {
+        _presenceFrames.add(envelope);
+        final frame = PresenceFrame.fromEnvelope(envelope);
+        if (frame != null) _presence.add(frame);
+      }),
+    );
     _subscriptions.add(connector.wakeHints.listen(_wakeHints.add));
     _subscriptions.add(
       connector.upstream.stateChanges.listen((state) {

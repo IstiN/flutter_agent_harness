@@ -8,6 +8,7 @@ import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -53,9 +54,16 @@ class NetworkHomePage extends StatefulWidget {
 }
 
 class _NetworkHomePageState extends State<NetworkHomePage> {
+  /// The device connector (issue #2062): one service per home page,
+  /// bound to the session manager — it self-starts on signed-in state
+  /// (including the restore-account notification) and stops on sign-out.
+  DeviceConnectorService? _deviceConnector;
+
   @override
   void initState() {
     super.initState();
+    _deviceConnector = DeviceConnectorService(sessionManager: widget.manager)
+      ..start();
     widget.controller.addListener(_ensureSession);
     widget.manager.addListener(_onChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureSession());
@@ -65,6 +73,8 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
   void dispose() {
     widget.controller.removeListener(_ensureSession);
     widget.manager.removeListener(_onChanged);
+    unawaited(_deviceConnector?.dispose());
+    _deviceConnector = null;
     super.dispose();
   }
 
@@ -165,6 +175,7 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
       return NetworksSidebar(
         controller: widget.controller,
         manager: widget.manager,
+        deviceConnector: _deviceConnector,
       );
     }
     final session = widget.manager.sessions[networkId];

@@ -2688,6 +2688,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkPresenceBusy => 'Busy';
 
   @override
+  String get networkDevicesTitle => 'My devices';
+
+  @override
+  String get networkDeviceThisDevice => 'This device';
+
+  @override
+  String get networkDeviceConnecting => 'Connecting…';
+
+  @override
+  String get networkDeviceReconnecting => 'Reconnecting…';
+
+  @override
+  String get networkPresenceWakeOnDm => 'Wake on DM';
+
+  @override
   String get networkMemberOwner => 'Owner';
 
   @override
