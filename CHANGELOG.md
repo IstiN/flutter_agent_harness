@@ -67,6 +67,18 @@ block a release again.
   follow + composer → owner mailbox via `AttachedSessionController`)
   with a banner naming the owner (host + pid) instead of a dead-end
   snack, and the transport's transcript poller is disposed on detach.
+- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
+  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
+  threw `Unsupported operation` on platforms with no Firebase
+  registration (the template options register only android/ios/web/macos
+  — Windows/Linux throw before the `YOUR_` placeholder check could run),
+  killing boot before the first frame: the boot-watchdog fired and no
+  window ever opened. The read is now guarded — Firebase is
+  telemetry-only, so the services stage degrades with a debug print and
+  the app boots without it. Test: `bootServices degrades on platforms
+  with no Firebase registration` (windows-target override; previously
+  threw, now completes).
+
 - feat(gh-2098): the auto-compact trigger is user-configurable —
   `compaction.triggerRatio` / `compaction.reserveTokens` /
   `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
