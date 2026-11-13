@@ -697,6 +697,9 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       final manager = FlutterSessionManager(
         env: env,
         sessionsRoot: defaultSessionsRoot(env.sessionCwd),
+        // #2138 HOLE-1: desktop builds ALWAYS enforce ownership — a
+        // store-less manager drove live-leased sessions unchecked.
+        leaseStore: defaultLeaseStore(env),
       );
       BootSteps.mark('restore:manager');
       // Resume the day's session (or an untouched empty one) instead of
@@ -969,6 +972,8 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
       final manager = FlutterSessionManager(
         env: env,
         sessionsRoot: defaultSessionsRoot(env.sessionCwd),
+        // #2138 HOLE-1: desktop builds ALWAYS enforce ownership.
+        leaseStore: defaultLeaseStore(env),
       );
       await manager.createSession(
         config: _EmptyManagerHome.placeholderConfig,
@@ -1105,6 +1110,9 @@ class SetupScreen extends StatelessWidget {
     final manager = FlutterSessionManager(
       env: resolvedEnv,
       sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+      // #2138 HOLE-1: desktop builds ALWAYS enforce ownership (null =
+      // web, where no atomic publish exists — E5).
+      leaseStore: defaultLeaseStore(resolvedEnv),
     );
     // Inside the extension panel the relay serves the chat (no local
     // agent, no keys in the UI); null keeps the plain-web local path.

@@ -2123,7 +2123,7 @@ class AgentCli {
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
     await _cubeBootRestore();
-    await _claimSessionLease();
+    await _requireLeaseClaim();
     // Restart honesty (issue #450): jobs in the manifest were left
     // running by the previous run — count them, then take the file over.
     await _waiting.captureLostJobs();
@@ -2136,7 +2136,7 @@ class AgentCli {
     _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
-    await _claimSessionLease();
+    await _requireLeaseClaim();
     // gh-1241: NO segment marker here — an idle owner boot must add zero
     // session bytes (issue #428 invariant); the marker lands lazily at the
     // first drive ([_runPrompt]) instead.
@@ -2359,11 +2359,8 @@ class AgentCli {
     // wake loops reopen interactively instead of fighting the owner.
     // Restart honesty (issue #450): detached jobs from the previous run.
     await _waiting.captureLostJobs();
-    final leaseBlocked = await _claimSessionLeaseHeadless();
-    if (leaseBlocked != null) {
-      io.writeln(viewerBannerText(leaseBlocked, stale: false));
-      return 3;
-    }
+    final leaseExit = await _resolveHeadlessLeaseGate();
+    if (leaseExit != null) return leaseExit;
     // gh-1241: the owner opens a usage segment (viewer never appends).
     await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST

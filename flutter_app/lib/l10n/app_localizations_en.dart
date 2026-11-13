@@ -2244,6 +2244,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get leaseUnverified =>
+      'Couldn\'t verify session ownership — not driving. A live owner may hold this session; see the app log for details.';
+
+  @override
   String sessionTooLargeTitle(String size) {
     return 'Session ($size MB) is over the instant-open budget and couldn\'t be opened safely.';
   }
