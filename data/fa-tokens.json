@@ -1,25 +1,5 @@
 {
-  "pr-2006": [
-    {
-      "leg": "review",
-      "at": "2026-10-30T22:31:11Z",
-      "prompt": 278160,
-      "completion": 17756,
-      "total": 295916,
-      "cacheRead": 3172800,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-1985": [
-    {
-      "leg": "dev",
-      "at": "2026-10-30T23:38:44Z",
-      "prompt": 3592494,
-      "completion": 161277,
-      "total": 3753771,
-      "cacheRead": 152408640,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-10-31T00:52:01Z",
@@ -3475,6 +3455,17 @@
       "completion": 28717,
       "total": 127646,
       "cacheRead": 2686912,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2169": [
+    {
+      "leg": "dev",
+      "at": "2026-11-13T23:43:26Z",
+      "prompt": 1095376,
+      "completion": 49805,
+      "total": 1145181,
+      "cacheRead": 53347200,
       "model": "glm-5.3-flash"
     }
   ]
