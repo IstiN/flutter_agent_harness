@@ -77,7 +77,7 @@ export 'src/logging/log_pattern.dart'
         formatLogElapsed,
         formatLogTime;
 export 'src/logging/log_settings.dart'
-    show LoggingConfig, ResolvedLogSettings, resolveLogSettings;
+    show LoggingConfig, ResolvedLogSettings, logLinePasses, resolveLogSettings;
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'

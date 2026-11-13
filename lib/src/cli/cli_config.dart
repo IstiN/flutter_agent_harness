@@ -70,6 +70,9 @@ LoggingConfig? parseLoggingSection(Object? node, {required String label}) {
     if (value is! String) {
       throw ConfigException('"logging.$key" must be a string ($label)');
     }
+    // A blank string is UNSET (issue #2117 review) — an empty format
+    // would render blank lines, never a useful line.
+    if (value.trim().isEmpty) return null;
     return value;
   }
 

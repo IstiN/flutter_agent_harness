@@ -41,12 +41,20 @@ final class LoggingConfig {
 
   /// Emits the section for `saveCliConfig` round-trips; '' when nothing
   /// is set (defaults are never written — the file stays minimal).
+  /// String values are single-quoted with `'` doubled (YAML escape), so
+  /// a format like `it's {msg}` survives the save intact.
   String toYaml() {
     final buffer = StringBuffer()
       ..write(console == null ? '' : '  console: ${console!.name}\n')
       ..write(file == null ? '' : '  file: ${file!.name}\n')
-      ..write(format == null ? '' : "  format: '$format'\n")
-      ..write(timeFormat == null ? '' : "  timeFormat: '$timeFormat'\n");
+      ..write(
+        format == null ? '' : "  format: '${format!.replaceAll("'", "''")}'\n",
+      )
+      ..write(
+        timeFormat == null
+            ? ''
+            : "  timeFormat: '${timeFormat!.replaceAll("'", "''")}'\n",
+      );
     return buffer.isEmpty ? '' : 'logging:\n$buffer';
   }
 }
@@ -87,23 +95,23 @@ final class ResolvedLogSettings {
   /// `off` — off stays off).
   final bool keysFloor;
 
-  /// Whether a console line at [level]/[category] renders.
-  bool consolePasses(LogLevel level, LogCategory category) =>
-      _passes(consoleLevel, level, category, applyKeysFloor: true);
-
   /// Whether a fa.log line at [level]/[category] is written.
   bool filePasses(LogLevel level, LogCategory category) =>
-      _passes(fileLevel, level, category, applyKeysFloor: false);
+      logLinePasses(fileLevel, level, category);
 }
 
-bool _passes(
+/// The shared threshold core (issue #2117 review): a line passes when
+/// the ordinal compare admits it; an explicit `off` threshold passes
+/// nothing; the `keys=debug` alias floor lifts keys-category lines to
+/// `debug` but never resurrects `off` and never admits past `debug`.
+bool logLinePasses(
   LogLevel threshold,
   LogLevel line,
   LogCategory category, {
-  required bool applyKeysFloor,
+  bool keysFloor = false,
 }) {
   if (threshold == LogLevel.off) return false;
-  if (applyKeysFloor &&
+  if (keysFloor &&
       category == LogCategory.keys &&
       threshold.index < LogLevel.debug.index) {
     threshold = LogLevel.debug;

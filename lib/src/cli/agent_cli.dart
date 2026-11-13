@@ -2789,17 +2789,3 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
     _cli._persistModelCaps();
   }
 }
-
-/// One AC3 post-tool narration segment (gh-1433): the text deltas that
-/// streamed after ONE tool-call block of the current message. [toolCallId]
-/// is stamped by the block's `ToolCallEndEvent` — the same id the
-/// execution events carry — so the segment flushes after that call's
-/// result row (positional even for parallel/multi-call messages).
-final class _PostToolNarrationHold {
-  /// The held narration deltas, in stream order.
-  final StringBuffer text = StringBuffer();
-
-  /// The tool call this segment follows; null until the call's
-  /// `ToolCallEndEvent` stamps it (or never, on a degenerate stream).
-  String? toolCallId;
-}

@@ -150,25 +150,30 @@ void main() {
   group('per-sink gating (issue #2117 AC1)', () {
     const warnConsole = ResolvedLogSettings();
 
+    /// The console gate's pure half (the live/headless wrapper lives on
+    /// [AgentCli]): the same shared core both sinks ride.
+    bool consolePasses(ResolvedLogSettings s, LogLevel l, LogCategory c) =>
+        logLinePasses(s.consoleLevel, l, c, keysFloor: s.keysFloor);
+
     test('console warn passes error/warn, hides info/debug/trace', () {
       expect(
-        warnConsole.consolePasses(LogLevel.error, LogCategory.lifecycle),
+        consolePasses(warnConsole, LogLevel.error, LogCategory.lifecycle),
         isTrue,
       );
       expect(
-        warnConsole.consolePasses(LogLevel.warn, LogCategory.lifecycle),
+        consolePasses(warnConsole, LogLevel.warn, LogCategory.lifecycle),
         isTrue,
       );
       expect(
-        warnConsole.consolePasses(LogLevel.info, LogCategory.lifecycle),
+        consolePasses(warnConsole, LogLevel.info, LogCategory.lifecycle),
         isFalse,
       );
       expect(
-        warnConsole.consolePasses(LogLevel.debug, LogCategory.tool),
+        consolePasses(warnConsole, LogLevel.debug, LogCategory.tool),
         isFalse,
       );
       expect(
-        warnConsole.consolePasses(LogLevel.trace, LogCategory.provider),
+        consolePasses(warnConsole, LogLevel.trace, LogCategory.provider),
         isFalse,
       );
     });
@@ -187,7 +192,10 @@ void main() {
 
       const loud = ResolvedLogSettings(fileLevel: LogLevel.trace);
       expect(loud.filePasses(LogLevel.trace, LogCategory.provider), isTrue);
-      expect(loud.consolePasses(LogLevel.info, LogCategory.lifecycle), isFalse);
+      expect(
+        consolePasses(loud, LogLevel.info, LogCategory.lifecycle),
+        isFalse,
+      );
     });
 
     test('file off silences fa.log; console off silences the console', () {
@@ -198,7 +206,7 @@ void main() {
       );
       const offConsole = ResolvedLogSettings(consoleLevel: LogLevel.off);
       expect(
-        offConsole.consolePasses(LogLevel.error, LogCategory.lifecycle),
+        consolePasses(offConsole, LogLevel.error, LogCategory.lifecycle),
         isFalse,
       );
     });
@@ -206,19 +214,19 @@ void main() {
     test('the keys floor lifts keys-category lines to debug, never past '
         'it, and never resurrects off', () {
       const floored = ResolvedLogSettings(keysFloor: true);
-      expect(floored.consolePasses(LogLevel.debug, LogCategory.keys), isTrue);
+      expect(consolePasses(floored, LogLevel.debug, LogCategory.keys), isTrue);
       expect(
-        floored.consolePasses(LogLevel.debug, LogCategory.lifecycle),
+        consolePasses(floored, LogLevel.debug, LogCategory.lifecycle),
         isFalse,
         reason: 'the floor is keys-scoped',
       );
-      expect(floored.consolePasses(LogLevel.trace, LogCategory.keys), isFalse);
+      expect(consolePasses(floored, LogLevel.trace, LogCategory.keys), isFalse);
       const off = ResolvedLogSettings(
         consoleLevel: LogLevel.off,
         keysFloor: true,
       );
       expect(
-        off.consolePasses(LogLevel.error, LogCategory.keys),
+        consolePasses(off, LogLevel.error, LogCategory.keys),
         isFalse,
         reason: 'off stays off',
       );
@@ -317,6 +325,13 @@ void main() {
       expect(parseLoggingSection(null, label: 'test'), isNull);
     });
 
+    test('a blank format/timeFormat is UNSET, never an empty pattern '
+        '(issue #2117 review)', () {
+      final c = parse('logging:\n  format: ""\n  timeFormat: "  "\n');
+      expect(c?.format, isNull, reason: 'empty would render blank lines');
+      expect(c?.timeFormat, isNull);
+    });
+
     test(
       'CliConfig round-trips a hand-written section through saveCliConfig',
       () {
@@ -331,6 +346,17 @@ void main() {
         expect(reloaded.logging?.format, '{msg}');
       },
     );
+
+    test("an apostrophe in the format survives the save (issue #2117 "
+        "review — ' doubled, never corrupting the yaml)", () {
+      const format = "it's {msg}";
+      final config = CliConfig(
+        logging: LoggingConfig(format: format, timeFormat: "HH:mm"),
+      );
+      final reloaded = CliConfig.fromYaml(loadYaml(config.toYaml()) as YamlMap);
+      expect(reloaded.logging?.format, format);
+      expect(reloaded.logging?.timeFormat, 'HH:mm');
+    });
   });
 
   group('loadProjectLoggingSection', () {

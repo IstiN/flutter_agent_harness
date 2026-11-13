@@ -23,15 +23,12 @@ extension AgentCliLogging on AgentCli {
     if (_headlessMode && !settings.consoleExplicit && live == null) {
       return true;
     }
-    var threshold = live ?? settings.consoleLevel;
-    if (category == LogCategory.keys &&
-        settings.keysFloor &&
-        threshold != LogLevel.off &&
-        threshold.index < LogLevel.debug.index) {
-      threshold = LogLevel.debug;
-    }
-    if (threshold == LogLevel.off) return false;
-    return level.index <= threshold.index;
+    return logLinePasses(
+      live ?? settings.consoleLevel,
+      level,
+      category,
+      keysFloor: settings.keysFloor,
+    );
   }
 
   /// Emits one gated console log line (issue #2117): redaction ALWAYS
