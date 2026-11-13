@@ -304,6 +304,39 @@ void main() {
       );
     });
 
+    test('--log-level parses the dial (issue #2117)', () {
+      final args =
+          parseCliArgs(const ['--log-level', 'info', '-p', 'hi']) as CliArgs;
+      expect(args.logLevel, LogLevel.info);
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('--log-level rejects an unknown level at parse time', () {
+      expect(
+        () => parseCliArgs(const ['--log-level', 'loud']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--log-level must be one of'),
+          ),
+        ),
+      );
+    });
+
+    test('--log-level with a missing value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--log-level']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--log-level requires a value'),
+          ),
+        ),
+      );
+    });
+
     test('--cube with a missing value is an error', () {
       expect(
         () => parseCliArgs(const ['--cube']),

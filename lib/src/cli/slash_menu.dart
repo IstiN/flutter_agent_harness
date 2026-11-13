@@ -158,6 +158,7 @@ const builtinSlashCommands = <String, String>{
       '[<duration|epoch-ms>|clear] — session deadline countdown '
       '(25m, 90s, 1h30m)',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
+  '/log': '[level] — console log dial: off|error|warn|info|debug|trace',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
@@ -184,8 +185,7 @@ const builtinSlashCommands = <String, String>{
   '/session': '[name] — show current or switch/create a named session',
   '/session-new': '<name> — create a new named session',
   '/sessions': 'list all sessions across workspaces',
-  '/import':
-      'import omp/claude sessions recorded for this folder into fa',
+  '/import': 'import omp/claude sessions recorded for this folder into fa',
   '/resume': 'switch to the most recent session',
   '/rename-session': '<name> — rename the current session',
   '/trajectory': '[view|cost|tail|inspect <n>] — session trajectory ledger',
