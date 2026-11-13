@@ -111,6 +111,7 @@ lib/ui/network/add_agent_dialog.dart 5
 lib/ui/network/channel_key_import_dialog.dart 3
 lib/ui/network/channel_rail.dart 15
 lib/ui/network/create_network_dialog.dart 4
+lib/ui/network/devices_page.dart 4
 lib/ui/network/join_sheet.dart 7
 lib/ui/network/network_center.dart 3
 lib/ui/network/network_chat_page.dart 7

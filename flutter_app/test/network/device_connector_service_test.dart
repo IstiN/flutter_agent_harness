@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/key_wallet.dart';
@@ -337,6 +338,78 @@ void main() {
     expect(service.isRunning, isFalse);
     expect(service.phase, DeviceConnectorPhase.signedOut);
     expect(transport.sockets.first.closed, isTrue);
+  });
+
+  test('renameOwnDevice updates the label, empty clears it, and refresh '
+      'restores the account roster name', () async {
+    final http = FakeHttpClient()
+      ..respond(200, body: _enrollBody)
+      ..respond(200, body: '{"ticket":"tk-rename"}');
+    final (service, _, _, _, _) = await buildService(httpClient: http);
+    addTearDown(service.dispose);
+    await service.start();
+    await pumpUntilOnline(service);
+    final labels = <String?>[];
+    final subscription = service.ownDeviceStream.listen(
+      (device) => labels.add(device?.friendlyName),
+    );
+    addTearDown(subscription.cancel);
+
+    http.respond(200, body: '{"deviceId":"dev-1","friendlyName":"Studio"}');
+    expect(await service.renameOwnDevice('Studio'), 'Studio');
+    expect(service.ownFriendlyName, 'Studio');
+    expect(service.ownDevice?.deviceId, 'dev-1');
+    final rename = http.requests.last;
+    expect(rename.method, 'PATCH');
+    expect(rename.url.path, '/api/devices/dev-1/name');
+    expect(rename.headers['authorization'], 'Bearer jwt-1');
+    expect(jsonDecode(rename.body), {'name': 'Studio'});
+
+    http.respond(200, body: '{"deviceId":"dev-1","friendlyName":""}');
+    expect(await service.renameOwnDevice(''), isNull);
+    expect(service.ownFriendlyName, isNull);
+    expect(jsonDecode(http.requests.last.body), {'name': ''});
+
+    http.respond(
+      200,
+      body:
+          '{"devices":[{"deviceId":"dev-1","name":"MacBook",'
+          '"friendlyName":"Restored",'
+          '"createdAt":"2026-01-02T03:04:05Z"}]}',
+    );
+    final refreshed = await service.refreshOwnDevice();
+    expect(refreshed?.name, 'MacBook');
+    expect(service.ownFriendlyName, 'Restored');
+    expect(http.requests.last.method, 'GET');
+    expect(http.requests.last.url.path, '/api/devices');
+    await Future<void>.delayed(Duration.zero);
+    expect(labels, ['Studio', null, 'Restored']);
+  });
+
+  test('listNetworkDevices fetches the enrolled personal network with the '
+      'account JWT', () async {
+    final http = FakeHttpClient()
+      ..respond(200, body: _enrollBody)
+      ..respond(200, body: '{"ticket":"tk-roster"}');
+    final (service, _, _, _, _) = await buildService(httpClient: http);
+    addTearDown(service.dispose);
+    await service.start();
+    await pumpUntilOnline(service);
+    http.respond(
+      200,
+      body:
+          '{"devices":[{"deviceId":"dev-remote","name":"thinkpad",'
+          '"friendlyName":"Desk","presence":"offline"}]}',
+    );
+
+    final devices = await service.listNetworkDevices();
+
+    expect(devices.single.displayName, 'Desk');
+    expect(devices.single.presence, 'offline');
+    final request = http.requests.last;
+    expect(request.method, 'GET');
+    expect(request.url.path, '/api/networks/net-personal/devices');
+    expect(request.headers['authorization'], 'Bearer jwt-1');
   });
 
   test('an enrollment failure leaves the service stopped with a logged '

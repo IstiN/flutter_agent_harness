@@ -1105,6 +1105,35 @@
   "@networkDeviceNotRunning": {
     "description": "Device roster line when the connector failed or stopped; tapping restarts it"
   },
+  "networkDeviceRenameAction": "Переименовать устройство",
+  "@networkDeviceRenameAction": {
+    "description": "Own-device edit action and long-press accessibility label"
+  },
+  "networkDeviceRenameTitle": "Переименовать устройство",
+  "@networkDeviceRenameTitle": {
+    "description": "Friendly-name dialog title"
+  },
+  "networkDeviceNameLabel": "Понятное имя",
+  "@networkDeviceNameLabel": {
+    "description": "Friendly-name text field label"
+  },
+  "networkDeviceNameClearHint": "Оставьте пустым, чтобы использовать имя устройства по умолчанию.",
+  "@networkDeviceNameClearHint": {
+    "description": "Hint explaining that an empty friendly name clears it"
+  },
+  "networkDeviceNameTooLong": "Имя устройства должно содержать не более 64 символов.",
+  "@networkDeviceNameTooLong": {
+    "description": "Validation error when the friendly name exceeds 64 Unicode runes"
+  },
+  "networkDeviceRenameError": "Не удалось переименовать устройство: {error}",
+  "@networkDeviceRenameError": {
+    "description": "Friendly-name dialog server or connectivity error",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "noSessionsHint": "Пока нет сессий",
   "@noSessionsHint": {
     "description": "Muted hint under an expanded device node that has no agents or sessions"

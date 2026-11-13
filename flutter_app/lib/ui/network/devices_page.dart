@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
@@ -98,15 +99,18 @@ class _DevicesPageState extends State<DevicesPage> {
   /// no enrolled device id yet (the avatar hue seed + selection id).
   static const _ownFallbackId = 'This device';
 
-  /// Remote machines accumulated from deviceId-taged presence frames,
-  /// keyed by device id (latest frame wins).
-  final _remote = <String, PresenceFrame>{};
+  /// Remote machines keyed by stable id. REST roster data supplies names and
+  /// an offline-first entry; the latest live presence frame merges into the
+  /// same node instead of creating a duplicate rail cell.
+  final _remote = <String, _RemoteDeviceNode>{};
 
   /// The selected device id; null = the first device (This device, the
   /// rail's constant first entry).
   String? _selectedDeviceId;
 
   StreamSubscription<NetworkEnvelope>? _framesSubscription;
+  StreamSubscription<NetworkEnvelope>? _rosterSubscription;
+  var _fetchingRoster = false;
 
   @override
   void initState() {
@@ -122,13 +126,66 @@ class _DevicesPageState extends State<DevicesPage> {
 
   void _subscribe() {
     unawaited(_framesSubscription?.cancel());
-    _framesSubscription = widget.service.presenceFrames.listen(_onFrame);
+    unawaited(_rosterSubscription?.cancel());
+    final service = widget.service;
+    _remote.clear();
+    _fetchingRoster = false;
+    _framesSubscription = service.presenceFrames.listen(_onFrame);
+    _rosterSubscription = service.rosterFrames.listen((_) {
+      unawaited(_refreshOwnDevice(service));
+      unawaited(_refreshRoster(service));
+    });
+    // The REST roster is authoritative for names and includes machines whose
+    // live presence frame has not arrived. A roster frame is the invalidation
+    // signal for subsequent refreshes; opening the page always refreshes too.
+    unawaited(_refreshOwnDevice(service));
+    unawaited(_refreshRoster(service));
+  }
+
+  Future<void> _refreshOwnDevice(DeviceConnectorService service) async {
+    try {
+      await service.refreshOwnDevice();
+    } on Object {
+      // The existing connector phase/banners own connectivity errors. A stale
+      // local label remains useful while the account roster is unavailable.
+    }
+  }
+
+  Future<void> _refreshRoster(DeviceConnectorService service) async {
+    if (_fetchingRoster) return;
+    _fetchingRoster = true;
+    try {
+      final devices = await service.listNetworkDevices();
+      if (!mounted || !identical(service, widget.service)) return;
+      final ownId = service.deviceId;
+      final remote = [
+        for (final device in devices)
+          if (device.deviceId.isNotEmpty && device.deviceId != ownId) device,
+      ];
+      if (remote.isEmpty) return;
+      setState(() {
+        for (final device in remote) {
+          final previous = _remote[device.deviceId];
+          _remote[device.deviceId] = _RemoteDeviceNode(
+            roster: device,
+            presence: previous?.presence,
+          );
+        }
+      });
+    } on Object {
+      // Presence remains a working offline/degraded data source when the REST
+      // roster is temporarily unavailable (or predates this deployed route).
+    } finally {
+      if (identical(service, widget.service)) _fetchingRoster = false;
+    }
   }
 
   @override
   void dispose() {
     unawaited(_framesSubscription?.cancel());
+    unawaited(_rosterSubscription?.cancel());
     _framesSubscription = null;
+    _rosterSubscription = null;
     super.dispose();
   }
 
@@ -141,7 +198,22 @@ class _DevicesPageState extends State<DevicesPage> {
     if (deviceId == widget.service.deviceId) return;
     final frame = PresenceFrame.fromEnvelope(envelope);
     if (frame == null) return;
-    setState(() => _remote[deviceId] = frame);
+    setState(() {
+      _remote[deviceId] = _RemoteDeviceNode(
+        roster: _remote[deviceId]?.roster,
+        presence: frame,
+      );
+    });
+  }
+
+  Future<void> _renameOwnDevice() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _RenameDeviceDialog(
+        initialName: widget.service.ownFriendlyName ?? '',
+        onRename: widget.service.renameOwnDevice,
+      ),
+    );
   }
 
   @override
@@ -247,31 +319,43 @@ class _DevicesPageState extends State<DevicesPage> {
   /// projects the controller the same way the Local panel does).
   Widget _railBody(BuildContext context) {
     final controller = widget.sessions;
-    Widget body = StreamBuilder<PresenceFrame?>(
-      stream: widget.service.presence,
-      builder: (context, snapshot) {
-        final devices = _deviceEntries(context, snapshot.data);
-        final selected = _resolveSelected(devices);
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: DevicesPage.railWidth,
-              child: _DeviceRail(
-                devices: devices,
-                selectedId: selected.id,
-                onSelect: (id) => setState(() => _selectedDeviceId = id),
-              ),
-            ),
-            VerticalDivider(width: 1, color: FahColors.of(context).border),
-            Expanded(
-              child: _DevicePane(
-                device: selected,
-                onOpenSession: widget.onOpenSession,
-                selectedSessionId: widget.selectedSessionId,
-              ),
-            ),
-          ],
+    Widget body = StreamBuilder<DeviceInfo?>(
+      stream: widget.service.ownDeviceStream,
+      initialData: widget.service.ownDevice,
+      builder: (context, ownSnapshot) {
+        return StreamBuilder<PresenceFrame?>(
+          stream: widget.service.presence,
+          builder: (context, snapshot) {
+            final devices = _deviceEntries(
+              context,
+              snapshot.data,
+              ownSnapshot.data,
+            );
+            final selected = _resolveSelected(devices);
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: DevicesPage.railWidth,
+                  child: _DeviceRail(
+                    devices: devices,
+                    selectedId: selected.id,
+                    onSelect: (id) => setState(() => _selectedDeviceId = id),
+                    onRenameOwn: () => unawaited(_renameOwnDevice()),
+                  ),
+                ),
+                VerticalDivider(width: 1, color: FahColors.of(context).border),
+                Expanded(
+                  child: _DevicePane(
+                    device: selected,
+                    onOpenSession: widget.onOpenSession,
+                    selectedSessionId: widget.selectedSessionId,
+                    onRenameOwn: () => unawaited(_renameOwnDevice()),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -291,12 +375,20 @@ class _DevicesPageState extends State<DevicesPage> {
   List<_DeviceEntry> _deviceEntries(
     BuildContext context,
     PresenceFrame? ownFrame,
+    DeviceInfo? ownDevice,
   ) {
     final controller = widget.sessions;
+    final defaultOwnLabel = context.l10n.networkDeviceThisDevice;
+    final ownFriendlyName = ownDevice?.friendlyName;
     return [
       _DeviceEntry(
         id: widget.service.deviceId ?? _ownFallbackId,
-        label: context.l10n.networkDeviceThisDevice,
+        label: ownFriendlyName ?? defaultOwnLabel,
+        subtitle: ownFriendlyName == null
+            ? null
+            : (ownDevice?.name.isNotEmpty == true
+                  ? ownDevice!.name
+                  : defaultOwnLabel),
         isOwn: true,
         // The app is running on this machine — ONLINE locally, the
         // connector's link state stays the banners' story above.
@@ -309,13 +401,16 @@ class _DevicesPageState extends State<DevicesPage> {
       for (final entry in _remote.entries)
         _DeviceEntry(
           id: entry.key,
-          label: entry.key,
+          label: entry.value.roster?.displayName ?? entry.key,
+          subtitle: entry.value.roster?.friendlyName == null
+              ? null
+              : entry.value.roster!.name,
           dotColor: deviceMachineDotColor(
             FahColors.of(context),
             entry.value.machine,
           ),
-          agents: entry.value.agents,
-          exposedSessions: entry.value.sessions,
+          agents: entry.value.presence?.agents ?? const {},
+          exposedSessions: entry.value.presence?.sessions ?? const {},
         ),
     ];
   }
@@ -345,13 +440,28 @@ class _DevicesPageState extends State<DevicesPage> {
   );
 }
 
-/// One device's rail+pane view model: identity (id + label), the §5
-/// presence dot color, and the pane children (agents, this machine's
-/// local chat sessions, or a remote machine's exposed sessions).
+/// The merge point for one remote machine's REST identity and live presence.
+/// Before either source reports a state, the honest fallback is offline.
+class _RemoteDeviceNode {
+  const _RemoteDeviceNode({this.roster, this.presence});
+
+  final DeviceInfo? roster;
+  final PresenceFrame? presence;
+
+  MachinePresence get machine =>
+      presence?.machine ??
+      MachinePresence.tryParse(roster?.presence ?? '') ??
+      MachinePresence.offline;
+}
+
+/// One device's rail+pane view model: identity (id + label + optional raw
+/// host-name subtitle), the §5 presence dot color, and the pane children
+/// (agents, this machine's local chat sessions, or exposed sessions).
 class _DeviceEntry {
   const _DeviceEntry({
     required this.id,
     required this.label,
+    this.subtitle,
     required this.dotColor,
     this.isOwn = false,
     this.agents = const {},
@@ -363,6 +473,9 @@ class _DeviceEntry {
   /// device falls back to its display id).
   final String id;
   final String label;
+
+  /// The enrollment host name shown in L2 when a friendly name is set.
+  final String? subtitle;
 
   /// True for This device (the `deviceRow`/`deviceAvatar`/`deviceDot`
   /// unsuffixed keys).
@@ -383,11 +496,13 @@ class _DeviceRail extends StatelessWidget {
     required this.devices,
     required this.selectedId,
     required this.onSelect,
+    required this.onRenameOwn,
   });
 
   final List<_DeviceEntry> devices;
   final String selectedId;
   final ValueChanged<String> onSelect;
+  final VoidCallback onRenameOwn;
 
   @override
   Widget build(BuildContext context) {
@@ -406,6 +521,7 @@ class _DeviceRail extends StatelessWidget {
               device: device,
               selected: device.id == selectedId,
               onTap: onSelect,
+              onLongPress: device.isOwn ? onRenameOwn : null,
             ),
         ],
       ),
@@ -422,11 +538,13 @@ class _DeviceRailCell extends StatelessWidget {
     required this.device,
     required this.selected,
     required this.onTap,
+    this.onLongPress,
   });
 
   final _DeviceEntry device;
   final bool selected;
   final ValueChanged<String> onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -438,11 +556,16 @@ class _DeviceRailCell extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: () => onTap(device.id),
+          onLongPress: onLongPress,
           child: Stack(
             alignment: Alignment.center,
             children: [
               Tooltip(
                 message: device.label,
+                // Own-avatar long press is rename, not tooltip reveal.
+                triggerMode: onLongPress == null
+                    ? null
+                    : TooltipTriggerMode.manual,
                 child: Semantics(
                   button: true,
                   selected: selected,
@@ -571,9 +694,11 @@ class _DevicePane extends StatelessWidget {
     required this.device,
     this.onOpenSession,
     this.selectedSessionId,
+    this.onRenameOwn,
   });
 
   final _DeviceEntry device;
+  final VoidCallback? onRenameOwn;
 
   /// The shell's open flow for [_DeviceEntry.localSessions]; null keeps
   /// them read-only (remote machines never carry local sessions).
@@ -594,17 +719,52 @@ class _DevicePane extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-          child: Text(
-            device.label,
-            key: const ValueKey('devicePaneTitle'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colors.text,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      device.label,
+                      key: const ValueKey('devicePaneTitle'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (device.subtitle case final subtitle?)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          subtitle,
+                          key: const ValueKey('devicePaneSubtitle'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: colors.dim, fontSize: 11),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (device.isOwn)
+                IconButton(
+                  key: const ValueKey('renameOwnDeviceButton'),
+                  onPressed: onRenameOwn,
+                  tooltip: context.l10n.networkDeviceRenameAction,
+                  visualDensity: VisualDensity.compact,
+                  icon: FaIcon(
+                    FaSemanticIcon.edit,
+                    size: 17,
+                    color: colors.dim,
+                  ),
+                ),
+            ],
           ),
         ),
         Expanded(
@@ -689,6 +849,134 @@ class _DevicePane extends StatelessWidget {
       ),
       selected: id == selectedSessionId,
       onTap: onOpenSession == null ? null : () => onOpenSession!(entry),
+    );
+  }
+}
+
+/// Friendly-name editor. Validation is rune-based to match the deployed
+/// server contract (a 64-emoji name is valid despite 128 UTF-16 code units).
+class _RenameDeviceDialog extends StatefulWidget {
+  const _RenameDeviceDialog({
+    required this.initialName,
+    required this.onRename,
+  });
+
+  final String initialName;
+  final Future<String?> Function(String name) onRename;
+
+  @override
+  State<_RenameDeviceDialog> createState() => _RenameDeviceDialogState();
+}
+
+class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
+  late final TextEditingController _name;
+  var _busy = false;
+  var _tooLong = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    final name = _name.text;
+    if (name.runes.length > 64) {
+      setState(() {
+        _tooLong = true;
+        _error = null;
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _tooLong = false;
+      _error = null;
+    });
+    try {
+      await widget.onRename(name);
+      if (mounted) Navigator.of(context).pop();
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = context.l10n.networkDeviceRenameError(error.toString());
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return AlertDialog(
+      title: Text(context.l10n.networkDeviceRenameTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            key: const ValueKey('renameDeviceName'),
+            controller: _name,
+            autofocus: true,
+            enabled: !_busy,
+            maxLines: 1,
+            decoration: InputDecoration(
+              labelText: context.l10n.networkDeviceNameLabel,
+              helperText: context.l10n.networkDeviceNameClearHint,
+              errorText: _tooLong
+                  ? context.l10n.networkDeviceNameTooLong
+                  : null,
+              counter: Text(
+                '${_name.text.runes.length}/64',
+                key: const ValueKey('renameDeviceNameCounter'),
+                style: TextStyle(
+                  color: _tooLong ? colors.error : colors.dim,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+            onChanged: (_) => setState(() {
+              if (_tooLong && _name.text.runes.length <= 64) _tooLong = false;
+              _error = null;
+            }),
+            onSubmitted: (_) => unawaited(_submit()),
+          ),
+          if (_error case final error?)
+            Padding(
+              key: const ValueKey('renameDeviceError'),
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                error,
+                style: TextStyle(color: colors.error, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: Text(context.l10n.commonCancel),
+        ),
+        FilledButton(
+          key: const ValueKey('renameDeviceConfirm'),
+          onPressed: _busy ? null : () => unawaited(_submit()),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(context.l10n.networkRename),
+        ),
+      ],
     );
   }
 }

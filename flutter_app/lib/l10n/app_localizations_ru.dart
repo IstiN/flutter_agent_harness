@@ -2735,6 +2735,28 @@ class AppLocalizationsRu extends AppLocalizations {
       'Коннектор не запущен — нажмите, чтобы повторить';
 
   @override
+  String get networkDeviceRenameAction => 'Переименовать устройство';
+
+  @override
+  String get networkDeviceRenameTitle => 'Переименовать устройство';
+
+  @override
+  String get networkDeviceNameLabel => 'Понятное имя';
+
+  @override
+  String get networkDeviceNameClearHint =>
+      'Оставьте пустым, чтобы использовать имя устройства по умолчанию.';
+
+  @override
+  String get networkDeviceNameTooLong =>
+      'Имя устройства должно содержать не более 64 символов.';
+
+  @override
+  String networkDeviceRenameError(String error) {
+    return 'Не удалось переименовать устройство: $error';
+  }
+
+  @override
   String get noSessionsHint => 'Пока нет сессий';
 
   @override

@@ -2706,6 +2706,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDeviceNotRunning => 'Connector not running — tap to retry';
 
   @override
+  String get networkDeviceRenameAction => 'Rename device';
+
+  @override
+  String get networkDeviceRenameTitle => 'Rename device';
+
+  @override
+  String get networkDeviceNameLabel => 'Friendly name';
+
+  @override
+  String get networkDeviceNameClearHint =>
+      'Leave empty to use the default device name.';
+
+  @override
+  String get networkDeviceNameTooLong =>
+      'Device names can be at most 64 characters.';
+
+  @override
+  String networkDeviceRenameError(String error) {
+    return 'Couldn’t rename the device: $error';
+  }
+
+  @override
   String get noSessionsHint => 'No sessions yet';
 
   @override

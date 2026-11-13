@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
@@ -35,9 +36,24 @@ final class FakeDevicesService implements DeviceConnectorService {
     DeviceConnectorPhase initialPhase = DeviceConnectorPhase.signedOut,
     this.deviceId,
     this.lastStartError,
-  }) : _phase = initialPhase;
+    DeviceInfo? ownDevice,
+    this.rosterDevices = const [],
+  }) : _phase = initialPhase {
+    _ownDevice = ownDevice;
+  }
 
   DeviceConnectorPhase _phase;
+  DeviceInfo? _ownDevice;
+
+  /// Scripted REST roster returned on page open and roster invalidations.
+  List<DeviceInfo> rosterDevices;
+
+  /// Optional rename failure/transformation seam.
+  Future<String?> Function(String name)? renameHandler;
+
+  final renameRequests = <String>[];
+  var rosterFetchCalls = 0;
+  var ownRefreshCalls = 0;
 
   /// The enrolled device id the page filters its own frames by.
   @override
@@ -55,6 +71,53 @@ final class FakeDevicesService implements DeviceConnectorService {
     startCalls++;
   }
 
+  @override
+  DeviceInfo? get ownDevice => _ownDevice;
+
+  @override
+  String? get ownFriendlyName => _ownDevice?.friendlyName;
+
+  final _ownDeviceController = StreamController<DeviceInfo?>.broadcast(
+    sync: true,
+  );
+
+  @override
+  Stream<DeviceInfo?> get ownDeviceStream => _ownDeviceController.stream;
+
+  void setOwnDevice(DeviceInfo device) {
+    _ownDevice = device;
+    _ownDeviceController.add(device);
+  }
+
+  @override
+  Future<DeviceInfo?> refreshOwnDevice() async {
+    ownRefreshCalls++;
+    return _ownDevice;
+  }
+
+  @override
+  Future<List<DeviceInfo>> listNetworkDevices() async {
+    rosterFetchCalls++;
+    return rosterDevices;
+  }
+
+  @override
+  Future<String?> renameOwnDevice(String name) async {
+    renameRequests.add(name);
+    final friendly = renameHandler == null
+        ? (name.isEmpty ? null : name)
+        : await renameHandler!(name);
+    final current = _ownDevice;
+    setOwnDevice(
+      DeviceInfo(
+        deviceId: deviceId ?? 'dev-1',
+        name: current?.name ?? 'test-host',
+        friendlyName: friendly,
+      ),
+    );
+    return friendly;
+  }
+
   // Synchronous controllers (repo convention): broadcast delivery lands
   // within the same tester.pump().
   final _phaseController = StreamController<DeviceConnectorPhase>.broadcast(
@@ -64,6 +127,7 @@ final class FakeDevicesService implements DeviceConnectorService {
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast(
     sync: true,
   );
+  final _rosterFrames = StreamController<NetworkEnvelope>.broadcast(sync: true);
 
   /// Emits a phase transition.
   void setPhase(DeviceConnectorPhase phase) {
@@ -77,6 +141,9 @@ final class FakeDevicesService implements DeviceConnectorService {
   /// Emits a raw network-wide presence envelope (remote machines).
   void emitEnvelope(NetworkEnvelope envelope) => _presenceFrames.add(envelope);
 
+  /// Emits the connector invalidation that triggers a REST roster refresh.
+  void emitRoster(NetworkEnvelope envelope) => _rosterFrames.add(envelope);
+
   @override
   DeviceConnectorPhase get phase => _phase;
 
@@ -88,6 +155,9 @@ final class FakeDevicesService implements DeviceConnectorService {
 
   @override
   Stream<NetworkEnvelope> get presenceFrames => _presenceFrames.stream;
+
+  @override
+  Stream<NetworkEnvelope> get rosterFrames => _rosterFrames.stream;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -783,5 +853,199 @@ void main() {
     expect(find.text('dev-1'), findsNothing);
     expect(find.byKey(const ValueKey('deviceRow:dev-1')), findsNothing);
     expect(find.text('This device'), findsOneWidget);
+  });
+
+  testWidgets('own friendly name drives tooltip, semantics and the L2 '
+      'host-name subtitle', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      ownDevice: const DeviceInfo(
+        deviceId: 'dev-1',
+        name: 'MacBook-Pro',
+        friendlyName: 'Studio',
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    expect(find.text('Studio'), findsOneWidget);
+    expect(find.text('MacBook-Pro'), findsOneWidget);
+    expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsOneWidget);
+    expect(find.text('This device'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Tooltip && widget.message == 'Studio',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == 'Studio',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsOneWidget);
+  });
+
+  testWidgets('REST roster adds an offline remote before presence and live '
+      'frames update the same friendly-named node', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      rosterDevices: const [
+        DeviceInfo(
+          deviceId: 'dev-remote',
+          name: 'thinkpad',
+          friendlyName: 'Workstation',
+          presence: 'offline',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    expect(service.rosterFetchCalls, 1);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      paletteOf(tester).dim,
+    );
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
+    await tester.pump();
+    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('thinkpad'), findsOneWidget);
+
+    service.emitEnvelope(
+      _envelope(deviceId: 'dev-remote', msgId: 'remote-online'),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      paletteOf(tester).teal,
+    );
+    expect(find.text('Workstation'), findsOneWidget);
+
+    service.rosterDevices = const [
+      DeviceInfo(
+        deviceId: 'dev-remote',
+        name: 'thinkpad',
+        friendlyName: 'Desk',
+        presence: 'online',
+      ),
+    ];
+    service.emitRoster(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.roster,
+        msgId: 'roster-refresh',
+        ts: rfc3339Timestamp(DateTime.utc(2026, 11, 12)),
+      ),
+    );
+    await tester.pump();
+    expect(service.rosterFetchCalls, 2);
+    expect(find.text('Desk'), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+  });
+
+  testWidgets('rename dialog validates 64 runes and submits a friendly name '
+      'from the own-avatar long press', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    await tester.longPress(find.byKey(const ValueKey('deviceAvatar')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename device'), findsOneWidget);
+    expect(find.byKey(const ValueKey('renameDeviceName')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('renameDeviceName')),
+      'a' * 65,
+    );
+    await tester.tap(find.byKey(const ValueKey('renameDeviceConfirm')));
+    await tester.pump();
+    expect(
+      find.text('Device names can be at most 64 characters.'),
+      findsOneWidget,
+    );
+    expect(find.text('65/64'), findsOneWidget);
+    expect(service.renameRequests, isEmpty);
+
+    final sixtyFourEmoji = '😀' * 64;
+    await tester.enterText(
+      find.byKey(const ValueKey('renameDeviceName')),
+      sixtyFourEmoji,
+    );
+    await tester.tap(find.byKey(const ValueKey('renameDeviceConfirm')));
+    await tester.pumpAndSettle();
+
+    expect(service.renameRequests, [sixtyFourEmoji]);
+    expect(find.byKey(const ValueKey('renameDeviceName')), findsNothing);
+    expect(service.ownFriendlyName, sixtyFourEmoji);
+    expect(find.text('64/64'), findsNothing);
+  });
+
+  testWidgets('submitting an empty friendly name clears back to This device', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      ownDevice: const DeviceInfo(
+        deviceId: 'dev-1',
+        name: 'MacBook-Pro',
+        friendlyName: 'Studio',
+      ),
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('renameOwnDeviceButton')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('renameDeviceName')), '');
+    await tester.tap(find.byKey(const ValueKey('renameDeviceConfirm')));
+    await tester.pumpAndSettle();
+
+    expect(service.renameRequests, ['']);
+    expect(service.ownFriendlyName, isNull);
+    expect(find.text('This device'), findsOneWidget);
+    expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsNothing);
+  });
+
+  testWidgets('rename server errors stay in the dialog and can be edited', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    )..renameHandler = (_) async => throw StateError('server offline');
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('renameOwnDeviceButton')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('renameDeviceName')),
+      'New name',
+    );
+    await tester.tap(find.byKey(const ValueKey('renameDeviceConfirm')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('renameDeviceName')), findsOneWidget);
+    expect(find.byKey(const ValueKey('renameDeviceError')), findsOneWidget);
+    expect(find.textContaining('server offline'), findsOneWidget);
+    expect(service.renameRequests, ['New name']);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('renameDeviceName')))
+          .enabled,
+      isTrue,
+    );
   });
 }

@@ -46,6 +46,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_agent_harness/io.dart';
 
 import 'device_outbox_store.dart';
+import 'fa_network_client.dart';
 import 'network_session_manager.dart';
 
 /// The service-level lifecycle state the UI renders.
@@ -210,6 +211,7 @@ class DeviceConnectorService {
   void Function(String message)? onLog;
 
   DeviceCredentials? _credentials;
+  DeviceInfo? _ownDevice;
   MachineConnector? _connector;
   DeviceRegistry? _registry;
   var _generation = 0;
@@ -223,6 +225,7 @@ class DeviceConnectorService {
   final _presence = StreamController<PresenceFrame>.broadcast();
   final _wakeHints = StreamController<NetworkEnvelope>.broadcast();
   final _phases = StreamController<DeviceConnectorPhase>.broadcast();
+  final _ownDeviceChanges = StreamController<DeviceInfo?>.broadcast();
 
   /// The current lifecycle phase.
   DeviceConnectorPhase get phase => _phase;
@@ -262,6 +265,93 @@ class DeviceConnectorService {
   /// The enrolled device id while running (or persisted), null before.
   String? get deviceId => _credentials?.deviceId;
 
+  /// The personal network provisioned at enrollment, when the server sent it.
+  String? get personalNetworkId => _credentials?.personalNetworkId;
+
+  /// The latest account-roster information for this machine. In particular,
+  /// [DeviceInfo.friendlyName] is the local label source after a rename.
+  DeviceInfo? get ownDevice => _ownDevice;
+
+  /// Convenience accessor for the own rail's friendly label (null = default).
+  String? get ownFriendlyName => _ownDevice?.friendlyName;
+
+  /// Re-emits this machine's account-roster state after refresh/rename.
+  Stream<DeviceInfo?> get ownDeviceStream => _ownDeviceChanges.stream;
+
+  /// Reloads this machine's friendly/enrollment name from `GET /api/devices`.
+  /// Returns null before enrollment or when the id is absent from the roster.
+  Future<DeviceInfo?> refreshOwnDevice() async {
+    final id = deviceId;
+    if (id == null || id.isEmpty) return null;
+    final client = await sessionManager.accountClient();
+    if (client == null) {
+      throw StateError('not signed in — cannot load the device roster');
+    }
+    final devices = await client.listDevices();
+    DeviceInfo? own;
+    for (final device in devices) {
+      if (device.deviceId == id) {
+        own = device;
+        break;
+      }
+    }
+    _setOwnDevice(own);
+    return own;
+  }
+
+  /// Sets or clears this machine's friendly name through the account JWT.
+  /// Returns the normalized local label (null after clearing). The local
+  /// update happens only after the server accepts the PATCH.
+  Future<String?> renameOwnDevice(String name) async {
+    if (name.runes.length > 64) {
+      throw ArgumentError.value(
+        name,
+        'name',
+        'Device friendly names are limited to 64 runes',
+      );
+    }
+    final id = deviceId;
+    if (id == null || id.isEmpty) {
+      throw StateError('device not enrolled — cannot rename it');
+    }
+    final client = await sessionManager.accountClient();
+    if (client == null) {
+      throw StateError('not signed in — cannot rename the device');
+    }
+    final result = await client.renameDevice(id, name);
+    final friendly = result.friendlyName.isEmpty ? null : result.friendlyName;
+    final current = _ownDevice;
+    _setOwnDevice(
+      DeviceInfo(
+        deviceId: id,
+        name: current?.name ?? id,
+        friendlyName: friendly,
+        createdAt: current?.createdAt,
+        revokedAt: current?.revokedAt,
+        presence: current?.presence,
+        userId: current?.userId,
+      ),
+    );
+    return friendly;
+  }
+
+  /// Fetches the personal network's authoritative machine roster. Older
+  /// enrollments without a personal network id have no REST roster to fetch.
+  Future<List<DeviceInfo>> listNetworkDevices() async {
+    final networkId = personalNetworkId;
+    if (networkId == null || networkId.isEmpty) return const [];
+    final client = await sessionManager.accountClient();
+    if (client == null) {
+      throw StateError('not signed in — cannot load network devices');
+    }
+    return client.listNetworkDevices(networkId);
+  }
+
+  void _setOwnDevice(DeviceInfo? device) {
+    _ownDevice = device;
+    if (!_ownDeviceChanges.isClosed) _ownDeviceChanges.add(device);
+  }
+
   /// Starts the connector on signed-in state. Idempotent: concurrent or
   /// repeated calls share the one in-flight start; a signed-out call is
   /// a silent no-op. Failures log, tear down and leave the service
@@ -299,6 +389,7 @@ class DeviceConnectorService {
     await _presence.close();
     await _wakeHints.close();
     await _phases.close();
+    await _ownDeviceChanges.close();
   }
 
   void _onManagerChanged() {

@@ -81,6 +81,88 @@ class DeviceEnrollmentResult {
   final String? personalNetworkId;
 }
 
+/// One machine returned by the account or network device-list routes.
+///
+/// The account route supplies [createdAt]/[revokedAt], while the network
+/// route additionally supplies [presence]/[userId]. Keeping one tolerant
+/// model lets the UI merge either source with live connector presence.
+final class DeviceInfo {
+  const DeviceInfo({
+    required this.deviceId,
+    required this.name,
+    this.friendlyName,
+    this.createdAt,
+    this.revokedAt,
+    this.presence,
+    this.userId,
+  });
+
+  /// Stable server-minted device id.
+  final String deviceId;
+
+  /// Host name captured during enrollment.
+  final String name;
+
+  /// Owner-set display name; null when unset or cleared.
+  final String? friendlyName;
+
+  /// Enrollment time, supplied by `GET /api/devices`.
+  final DateTime? createdAt;
+
+  /// Revocation time, supplied by `GET /api/devices` when revoked.
+  final DateTime? revokedAt;
+
+  /// Last server-side machine state, supplied by the network roster.
+  final String? presence;
+
+  /// Owner account id, supplied by the network roster.
+  final String? userId;
+
+  /// Friendly name first, then enrollment name, then the stable id.
+  String get displayName {
+    final friendly = friendlyName;
+    if (friendly != null && friendly.isNotEmpty) return friendly;
+    return name.isEmpty ? deviceId : name;
+  }
+
+  /// Parses one wire row. Empty friendly names mean "cleared".
+  factory DeviceInfo.fromJson(Map<String, Object?> json) {
+    final id = json['deviceId'];
+    if (id is! String || id.isEmpty) {
+      throw const FormatException('device row lacks a string "deviceId"');
+    }
+    final name = json['name'];
+    final friendly = json['friendlyName'];
+    final createdAt = json['createdAt'];
+    final revokedAt = json['revokedAt'];
+    final presence = json['presence'];
+    final userId = json['userId'];
+    return DeviceInfo(
+      deviceId: id,
+      name: name is String ? name : '',
+      friendlyName: friendly is String && friendly.isNotEmpty ? friendly : null,
+      createdAt: createdAt is String ? DateTime.tryParse(createdAt) : null,
+      revokedAt: revokedAt is String ? DateTime.tryParse(revokedAt) : null,
+      presence: presence is String && presence.isNotEmpty ? presence : null,
+      userId: userId is String && userId.isNotEmpty ? userId : null,
+    );
+  }
+}
+
+/// The result of `PATCH /api/devices/{deviceId}/name`.
+final class DeviceRenameResult {
+  const DeviceRenameResult({
+    required this.deviceId,
+    required this.friendlyName,
+  });
+
+  /// The renamed device.
+  final String deviceId;
+
+  /// The new friendly name; the empty string means it was cleared.
+  final String friendlyName;
+}
+
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
 ///
 /// Pure `package:http` — web-safe, no dart:io. Inject [httpClient] for
@@ -531,6 +613,64 @@ class FaNetworkClient {
           ? personalId
           : null,
     );
+  }
+
+  /// `PATCH /api/devices/{deviceId}/name` — sets this account device's
+  /// friendly name. An empty [name] clears it. This is a management route:
+  /// only the ai-native account JWT is sent, never a member/device token.
+  Future<DeviceRenameResult> renameDevice(String deviceId, String name) async {
+    final res = await _request(
+      'PATCH',
+      '/api/devices/${Uri.encodeComponent(deviceId)}/name',
+      body: {'name': name},
+      management: true,
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final responseId = json['deviceId'];
+    final friendlyName = json['friendlyName'];
+    if (responseId is! String || responseId.isEmpty) {
+      throw const FormatException('renameDevice: no string "deviceId"');
+    }
+    if (friendlyName is! String) {
+      throw const FormatException('renameDevice: no string "friendlyName"');
+    }
+    return DeviceRenameResult(deviceId: responseId, friendlyName: friendlyName);
+  }
+
+  /// `GET /api/devices` — this account's enrolled machines, oldest first.
+  Future<List<DeviceInfo>> listDevices() async {
+    final res = await _request(
+      'GET',
+      '/api/devices',
+      management: true,
+      expected: {200},
+    );
+    return _decodeDevices(res);
+  }
+
+  /// `GET /api/networks/{networkId}/devices` — the network's authoritative
+  /// machine roster. The app calls this through its account client, so the
+  /// request deliberately uses the account JWT rather than a session token.
+  Future<List<DeviceInfo>> listNetworkDevices(String networkId) async {
+    final res = await _request(
+      'GET',
+      '/api/networks/${Uri.encodeComponent(networkId)}/devices',
+      management: true,
+      expected: {200},
+    );
+    return _decodeDevices(res);
+  }
+
+  List<DeviceInfo> _decodeDevices(http.Response response) {
+    final devices = _decodeMap(response)['devices'];
+    if (devices is! List) {
+      throw const FormatException('device list: no "devices" array');
+    }
+    return List.unmodifiable([
+      for (final device in devices)
+        if (device is Map) DeviceInfo.fromJson(device.cast<String, Object?>()),
+    ]);
   }
 
   /// `POST /api/ws-ticket` (issue #2062 §4/§9) — mints the single-use

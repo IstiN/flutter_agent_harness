@@ -4850,6 +4850,42 @@ abstract class AppLocalizations {
   /// **'Connector not running — tap to retry'**
   String get networkDeviceNotRunning;
 
+  /// Own-device edit action and long-press accessibility label
+  ///
+  /// In en, this message translates to:
+  /// **'Rename device'**
+  String get networkDeviceRenameAction;
+
+  /// Friendly-name dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Rename device'**
+  String get networkDeviceRenameTitle;
+
+  /// Friendly-name text field label
+  ///
+  /// In en, this message translates to:
+  /// **'Friendly name'**
+  String get networkDeviceNameLabel;
+
+  /// Hint explaining that an empty friendly name clears it
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to use the default device name.'**
+  String get networkDeviceNameClearHint;
+
+  /// Validation error when the friendly name exceeds 64 Unicode runes
+  ///
+  /// In en, this message translates to:
+  /// **'Device names can be at most 64 characters.'**
+  String get networkDeviceNameTooLong;
+
+  /// Friendly-name dialog server or connectivity error
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t rename the device: {error}'**
+  String networkDeviceRenameError(String error);
+
   /// Muted hint under an expanded device node that has no agents or sessions
   ///
   /// In en, this message translates to:

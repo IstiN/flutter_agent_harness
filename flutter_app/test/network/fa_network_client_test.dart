@@ -9,6 +9,7 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 /// A recorded outgoing request.
 class _RecordedRequest {
@@ -137,6 +138,105 @@ void main() {
       expect(await client.health(), isTrue);
       expect(httpClient.requests.single.method, 'GET');
     });
+
+    test(
+      'renameDevice patches the encoded id with the account JWT only',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"deviceId":"dev/1","friendlyName":"Studio"}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final result = await deviceClient.renameDevice('dev/1', 'Studio');
+
+        expect(result.deviceId, 'dev/1');
+        expect(result.friendlyName, 'Studio');
+        expect(captured.method, 'PATCH');
+        expect(captured.url.path, '/api/devices/dev%2F1/name');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(captured.headers['content-type'], contains('application/json'));
+        expect(jsonDecode(captured.body), {'name': 'Studio'});
+      },
+    );
+
+    test(
+      'listDevices decodes the account envelope and revocation metadata',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"devices":[{"deviceId":"dev-1","name":"MacBook",'
+            '"friendlyName":"Studio","createdAt":"2026-01-02T03:04:05Z"},'
+            '{"deviceId":"dev-2","name":"Pixel",'
+            '"createdAt":"2026-01-03T03:04:05Z",'
+            '"revokedAt":"2026-01-04T03:04:05Z"}]}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final devices = await deviceClient.listDevices();
+
+        expect(captured.method, 'GET');
+        expect(captured.url.path, '/api/devices');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(devices, hasLength(2));
+        expect(devices.first.displayName, 'Studio');
+        expect(devices.first.createdAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
+        expect(devices.last.friendlyName, isNull);
+        expect(devices.last.displayName, 'Pixel');
+        expect(devices.last.revokedAt, DateTime.utc(2026, 1, 4, 3, 4, 5));
+      },
+    );
+
+    test(
+      'listNetworkDevices decodes friendly name and offline presence',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"devices":[{"deviceId":"dev-remote","name":"thinkpad",'
+            '"friendlyName":"Workstation","presence":"offline",'
+            '"userId":"user-1"}]}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final devices = await deviceClient.listNetworkDevices('net/personal');
+
+        expect(captured.method, 'GET');
+        expect(captured.url.path, '/api/networks/net%2Fpersonal/devices');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(devices.single.deviceId, 'dev-remote');
+        expect(devices.single.displayName, 'Workstation');
+        expect(devices.single.name, 'thinkpad');
+        expect(devices.single.presence, 'offline');
+        expect(devices.single.userId, 'user-1');
+      },
+    );
 
     test(
       'createNetwork posts name+password and parses joinCredentials',
