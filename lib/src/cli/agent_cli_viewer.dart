@@ -195,6 +195,29 @@ extension AgentCliLease on AgentCli {
     }
   }
 
+  /// Resolves the headless/wire-serve lease gate (#428 + #2138):
+  /// acquired → null (the run drives on); blocked → exit code 3 with the
+  /// owner banner; refused → exit code 4 with the loud note. A non-null
+  /// result is the process exit code — the run must stop with it.
+  Future<int?> _resolveHeadlessLeaseGate() async {
+    final claim = await _claimSessionLeaseHeadless();
+    switch (claim) {
+      case HeadlessLeaseClaimAcquired():
+        return null;
+      case HeadlessLeaseClaimBlocked(:final lease):
+        io.writeln(viewerBannerText(lease, stale: false));
+        return 3;
+      case HeadlessLeaseClaimRefused(:final reason):
+        io.writeln(
+          tuiError(
+            'lease: cannot prove this session is free (${reason.name}) — '
+            'refusing to drive (exit 4)',
+          ),
+        );
+        return 4;
+    }
+  }
+
   /// This instance becomes a viewer: tail the transcript, route composed
   /// input to the owner's mailbox. Prints nothing here — the REPLs print
   /// the banner after their own banner ([_printViewerBannerIfAny]).

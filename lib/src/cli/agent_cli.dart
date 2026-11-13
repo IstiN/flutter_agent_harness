@@ -2369,25 +2369,8 @@ class AgentCli {
     // wake loops reopen interactively instead of fighting the owner.
     // Restart honesty (issue #450): detached jobs from the previous run.
     await _waiting.captureLostJobs();
-    final claim = await _claimSessionLeaseHeadless();
-    switch (claim) {
-      case HeadlessLeaseClaimAcquired():
-        break;
-      case HeadlessLeaseClaimBlocked(:final lease):
-        io.writeln(viewerBannerText(lease, stale: false));
-        return 3;
-      case HeadlessLeaseClaimRefused(:final reason):
-        // #2138: the store cannot prove the session free on an
-        // enforceable backend — refuse loudly INSIDE the guarded boot
-        // (exit 4, never the crash handler, never an unleased drive).
-        io.writeln(
-          tuiError(
-            'lease: cannot prove this session is free (${reason.name}) — '
-            'refusing to drive (exit 4)',
-          ),
-        );
-        return 4;
-    }
+    final leaseExit = await _resolveHeadlessLeaseGate();
+    if (leaseExit != null) return leaseExit;
     // gh-1241: the owner opens a usage segment (viewer never appends).
     await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
