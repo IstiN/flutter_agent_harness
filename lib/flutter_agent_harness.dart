@@ -61,11 +61,23 @@ export 'src/cli/cli_config.dart'
         loadProjectCompactionEngine,
         loadProjectCompactionTuning,
         loadProjectContextWindowCap,
+        loadProjectLoggingSection,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         loadProjectTrajectorySection,
+        parseLoggingSection,
         parseProviderTimeouts,
         resolveStartupCubeSource;
+export 'src/logging/log_level.dart' show LogCategory, LogLevel;
+export 'src/logging/log_pattern.dart'
+    show
+        LogEvent,
+        LogPattern,
+        defaultLogTimeFormat,
+        formatLogElapsed,
+        formatLogTime;
+export 'src/logging/log_settings.dart'
+    show LoggingConfig, ResolvedLogSettings, logLinePasses, resolveLogSettings;
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'

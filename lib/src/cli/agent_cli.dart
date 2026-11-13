@@ -92,6 +92,7 @@ import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
 import 'reasoning_liveness.dart';
 import 'log_fidelity.dart';
+import '../logging/log_settings.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -368,6 +369,7 @@ part 'agent_cli_prompt.dart';
 part 'agent_cli_repl_boot.dart';
 part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
+part 'agent_cli_logging.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_plugin_records.dart';
@@ -2628,6 +2630,14 @@ class AgentCli {
   /// (issue #413) stays shared with the REPL.
   bool _headlessMode = false;
 
+  /// The live console log level set by `/log <level>` (issue #2117 AC4):
+  /// overrides the resolved [AgentCliConfig.logging] console level for
+  /// SUBSEQUENT lines, no restart. Null = the resolved level governs.
+  LogLevel? _liveConsoleLevel;
+
+  /// Process boot time — the `{elapsed}` pattern placeholder's origin.
+  final DateTime _loggingBoot = DateTime.now();
+
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
@@ -2780,18 +2790,4 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
     _cli._modelCaps.learnFromRefusal(model, refusal);
     _cli._persistModelCaps();
   }
-}
-
-/// One AC3 post-tool narration segment (gh-1433): the text deltas that
-/// streamed after ONE tool-call block of the current message. [toolCallId]
-/// is stamped by the block's `ToolCallEndEvent` — the same id the
-/// execution events carry — so the segment flushes after that call's
-/// result row (positional even for parallel/multi-call messages).
-final class _PostToolNarrationHold {
-  /// The held narration deltas, in stream order.
-  final StringBuffer text = StringBuffer();
-
-  /// The tool call this segment follows; null until the call's
-  /// `ToolCallEndEvent` stamps it (or never, on a degenerate stream).
-  String? toolCallId;
 }

@@ -16,6 +16,7 @@ import '../compaction/compaction_engine.dart';
 import '../config/config_service.dart';
 import '../exceptions.dart';
 import '../import/harness_adapter.dart';
+import '../logging/log_settings.dart';
 import '../redact/redaction_types.dart';
 import '../session_deadline.dart';
 import '../tools/availability.dart';
@@ -119,6 +120,7 @@ final class CliArgs extends CliArgsResult {
     this.noStreamThinking = false,
     this.timer,
     this.deadline,
+    this.logLevel,
   }) : super._();
 
   /// `--model <id>`.
@@ -327,6 +329,14 @@ final class CliArgs extends CliArgsResult {
   /// timestamp. Sets the SAME single session clock the host env var and
   /// `/timer` write; wins over the env. Alias of [timer].
   final String? deadline;
+
+  /// `--log-level <level>` (issue #2117): the console log dial —
+  /// `off|error|warn|info|debug|trace`. Parsed at flag time (a bad
+  /// string is a usage error); wins over `FA_LOG_LEVEL`, the project and
+  /// user `logging:` sections, and the `warn` interactive default. In a
+  /// headless run this flag is the ONLY way (besides the env) the
+  /// console filter engages — the pinned headless contract.
+  final LogLevel? logLevel;
 
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
@@ -1273,6 +1283,7 @@ const _valueFlags = <String, _ValueFlag>{
   '--prompt-file': ('--prompt-file', _setPromptFile),
   '--tools': ('--tools', _setTools),
   '--compaction-engine': ('--compaction-engine', _setCompactionEngine),
+  '--log-level': ('--log-level', _setLogLevel),
   '--log-file': ('--log-file', _setLogFile),
   '--output': ('--output', _setOutput),
   '--output-format': ('--output-format', _setOutputFormat),
@@ -1382,6 +1393,16 @@ void _setCompactionEngine(_CliArgValues v, String value) {
   }
 }
 
+/// `--log-level` (issue #2117): parsed at flag time so a bad string is a
+/// usage error, never a silently wrong dial.
+void _setLogLevel(_CliArgValues v, String value) {
+  try {
+    v.logLevel = LogLevel.parse(value, label: '--log-level');
+  } on ConfigException catch (error) {
+    throw CliArgsException(error.message);
+  }
+}
+
 void _setLogFile(_CliArgValues v, String value) => v.logFile = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 void _setPromptFile(_CliArgValues v, String value) => v.promptFile = value;
@@ -1432,6 +1453,7 @@ final class _CliArgValues {
   String? cubeConfigPath;
   ToolsConfig? tools;
   CompactionEngine? compactionEngine;
+  LogLevel? logLevel;
   RedactionConfig? redact;
   String? prompt;
   String? promptFile;
@@ -1489,6 +1511,7 @@ final class _CliArgValues {
       cubeConfigPath: cubeConfigPath,
       tools: tools,
       compactionEngine: compactionEngine,
+      logLevel: logLevel,
       redact: redact,
       promptFile: promptFile,
       logFile: logFile,
