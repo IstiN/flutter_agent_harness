@@ -1298,8 +1298,11 @@ jobs:
       - name: Build CLI bundle
         run: |
           version="${{ needs.version.outputs.version }}"
-          dart build cli --target=bin/fah.dart --output=build/out
-          mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+          # gh-2120 follow-up: the entry is BUILT as `fa` (bin/fa.dart), not
+          # renamed — on Dart >=3.14 (native linux) the bundle is split
+          # (thin launcher + libdartaot<exe>.so) and a post-build mv
+          # desyncs the pair (`dartaotruntime: not an AOT snapshot`).
+          dart build cli --target=bin/fa.dart --output=build/out
           chmod +x build/out/bundle/bin/fa
           echo "$version" > build/out/bundle/version.txt
 
