@@ -50,6 +50,14 @@ import 'token_estimation.dart';
 export '../compaction/compaction_engine.dart'
     show CompactionEngine, resolveCompactionEngine;
 export '../user_text.dart' show isSyntheticUserText, userMessageText;
+export 'working_set.dart'
+    show
+        GoalRecitation,
+        goalRecitationBudgetChars,
+        goalRecitationFromPayload,
+        goalRecitationPayload,
+        goalRecitationRecordType,
+        reciteGoalForStorage;
 export '../compaction/structured/expand_tool.dart'
     show CompactExpandController, compactExpandToolName;
 export '../prompts/prompts.g.dart'

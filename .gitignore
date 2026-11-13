@@ -212,3 +212,6 @@ agents/
 # gh-2096 leg: coverage2/ scratch run swept by a WIP auto-save — same
 # artifact class as coverage/ (gh-1033 lineage).
 coverage2/
+cov*/
+cov2/
+cov3/
