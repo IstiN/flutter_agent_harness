@@ -1,47 +1,89 @@
 # Changelog
 
-Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) вЂ” moved out
+Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
 on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
 CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
 bounded recent window and `scripts/check_changelog_size.sh` fails fast when the cap is
 approached. Since gh-1522 this file is CURATED-ONLY: add new lines under
 `## Unreleased` and the release folds them into the tag's section at
-publish-staging time вЂ” the published artifact's changelog is generated
+publish-staging time — the published artifact's changelog is generated
 (and trimmed under the cap by `stamp_staged_release.sh`), and the
 publish job only WARNS on this repo file, so this file's size can never
 block a release again.
 
 ## Unreleased
 
-- feat(gh-209): two-tier compaction engine вЂ” the mid-turn relief paths
+- fix: `fileInfo().name` returns the bare entry name on Windows — the
+  abspath resolution previously glued the drive-letter absolute path onto
+  the returned name (`C:\dirC:\dir\file.txt`), breaking the file browser
+  listings and any consumer that joins `dir` + `name` back into a path.
+- fix(flutter_app): the Windows desktop app can pick a project folder —
+  a file-selector-backed `ProjectFolderOps` (the folder dialog through
+  `file_selector_windows`) for Windows/Linux instead of the macOS-only
+  method channel, the desktop env layers the project-mount wrapper on
+  every desktop platform (the mount previously existed on macOS only, so
+  a picked folder never reached the agent env), and the Windows runner
+  identity is real (window title "Fa", `CompanyName` "Fa" — the support
+  dir moves from `%APPDATA%\com.example\...` to `%APPDATA%\Fa\...`).
+- ci(windows-release): daily Windows desktop app pipeline — new
+  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
+  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
+  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
+  cert `.cer` to the latest auto-release, and fa1.dev's download section
+  gains a Windows button whose "latest" link resolves through a static
+  `download/windows/latest` pointer file updated by the same workflow
+  (site tests extended to pin the new markup). The daily-publish
+  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
+  quality gate builds and attaches the Windows app exactly like the
+  TestFlight/macOS track, and the windows runner's product identity no
+  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
+  renamed to `Fa`).
+- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
+  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
+  packed with the Windows SDK makeappx, signed with a per-run
+  self-signed cert whose public `.cer` ships beside it) so dev/corporate
+  machines can install via Add-AppxPackage; a Microsoft Store submission
+  stays a separate Partner Center track.
+- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
+  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
+  threw `Unsupported operation` on platforms with no Firebase
+  registration (the template options register only android/ios/web/macos
+  — Windows/Linux throw before the `YOUR_` placeholder check could run),
+  killing boot before the first frame: the boot-watchdog fired and no
+  window ever opened. The read is now guarded — Firebase is
+  telemetry-only, so the services stage degrades with a debug print and
+  the app boots without it. Test: `bootServices degrades on platforms
+  with no Firebase registration` (windows-target override; previously
+  threw, now completes).
+- feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier
   (`EmergencyRelief`): re-anchor from the session projection, dedup
   repeated reads of the same path (the newest successful copy stays
   live), keep-N-recent per tool class stalest-first (read 2 / exec 4 /
-  other 8 вЂ” `defaultEmergencyKeepRecent`), then the local trim valve вЂ”
+  other 8 — `defaultEmergencyKeepRecent`), then the local trim valve —
   plus the buster rule: a tool result that ALONE overflows the window
   folds regardless of the class budgets (marker-reopenable; pinned
   expansions still veto).
-  Seconds, bounded, ZERO language-model calls on any path вЂ” a dead or
+  Seconds, bounded, ZERO language-model calls on any path — a dead or
   slow judge can no longer turn an in-turn overflow into the declared
-  в‰¤15 min silent stall. All quality-tier invariants hold: whole pair
+  ≤15 min silent stall. All quality-tier invariants hold: whole pair
   groups hide atomically (#85/D6), real user turns / protected tail /
   pinned expansions never hide (F8/#1379), hides are lossless appends
   (every id stays expandable behind its marker), and the relieved turn
-  continues visibly (`[resuming] вЂ¦`). The quality tier (judge,
-  checkpoints, escalation) stays at the turn boundaries вЂ” post-run and
-  pre-flight вЂ” and the over-window funnel (issue #1085) survives as the
+  continues visibly (`[resuming] …`). The quality tier (judge,
+  checkpoints, escalation) stays at the turn boundaries — post-run and
+  pre-flight — and the over-window funnel (issue #1085) survives as the
   backstop when the deterministic tier cannot free the window.
-- fix(gh-2138): session-ownership lease fail-open holes closed вЂ” a second
+- fix(gh-2138): session-ownership lease fail-open holes closed — a second
   writer is no longer possible through an error path. On an enforceable
   backend (atomic rename available) a lease publish failure or a
   persistently failing ownership verify now REFUSES the drive-open
-  (`LeaseRefused` в†’ the app throws `LeaseRefusedException` and the wide
-  shell refuses loudly; the CLI prints a loud refusal вЂ” boot aborts, an
+  (`LeaseRefused` → the app throws `LeaseRefusedException` and the wide
+  shell refuses loudly; the CLI prints a loud refusal — boot aborts, an
   in-process switch restores the previous session, headless/serve exit
-  4/blocked-serve вЂ” instead of silently driving unleased); the verify
-  re-read re-runs up to 3Г— with no backoff вЂ” fail-closed is the
+  4/blocked-serve — instead of silently driving unleased); the verify
+  re-read re-runs up to 3× with no backoff — fail-closed is the
   guarantee, not fast recovery. The
   only remaining fail-open is a backend with no atomic rename (E5, web),
   and a store-less manager (now impossible on desktop: every app
@@ -49,34 +91,22 @@ block a release again.
   Every drive-open logs the resolved lease branch (acquired / blocked
   owner / unenforced / refused / no-store). The wide shell gained the
   attach surface: a live-lease open opens the attached view (transcript
-  follow + composer в†’ owner mailbox via `AttachedSessionController`)
+  follow + composer → owner mailbox via `AttachedSessionController`)
   with a banner naming the owner (host + pid) instead of a dead-end
   snack, and the transport's transcript poller is disposed on detach.
-- fix: `fileInfo().name` returns the bare entry name on Windows вЂ” the
-  abspath resolution previously glued the drive-letter absolute path onto
-  the returned name (`C:\dirC:\dir\file.txt`), breaking the file browser
-  listings and any consumer that joins `dir` + `name` back into a path.
-- fix(flutter_app): the Windows desktop app can pick a project folder вЂ”
-  a file-selector-backed `ProjectFolderOps` (the folder dialog through
-  `file_selector_windows`) for Windows/Linux instead of the macOS-only
-  method channel, the desktop env layers the project-mount wrapper on
-  every desktop platform (the mount previously existed on macOS only, so
-  a picked folder never reached the agent env), and the Windows runner
-  identity is real (window title "Fa", `CompanyName` "Fa" вЂ” the support
-  dir moves from `%APPDATA%\com.example\...` to `%APPDATA%\Fa\...`).
-- feat(gh-2098): the auto-compact trigger is user-configurable вЂ”
+- feat(gh-2098): the auto-compact trigger is user-configurable —
   `compaction.triggerRatio` / `compaction.reserveTokens` /
   `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
   `.fah/config.yaml` (per-key deepest scope wins) override the gh-1742
   `forWindow` curves; absent keys stay byte-identical (golden-pinned).
-  `triggerRatio` (0 < r < 1) pins the trigger line at r Г— window
-  (reserve = window в€’ floor(rВ·window)) so every window-derived consumer
-  moves together вЂ” both trigger channels (estimate + the gh-1742
+  `triggerRatio` (0 < r < 1) pins the trigger line at r × window
+  (reserve = window − floor(r·window)) so every window-derived consumer
+  moves together — both trigger channels (estimate + the gh-1742
   observed anchor), the structured engine's gate and fragile-band
   escalation, the ctx meter, the spill budget, and task children (the
   CLI threads the merged section through the executor). `reserveTokens`
-  sets the headroom directly (mutually exclusive with `triggerRatio` вЂ”
-  strict named `ConfigException`s, also enforced at `fa config set` вЂ”
+  sets the headroom directly (mutually exclusive with `triggerRatio` —
+  strict named `ConfigException`s, also enforced at `fa config set` —
   nothing persists that the next boot would reject); `keepRecentTokens`
   overrides the post-pass kept region. Degenerate guards mirror
   forWindow (reserve > window/2 clamps to window/4, keep > window
@@ -89,15 +119,15 @@ block a release again.
   curve stays the default (byte-identical contract + pass-frequency
   cost), 0.80 is the informed opt-in. Stale doc comment fixed: the CLI
   settings field described a ratio-based default
-  ("ratio 0.7, reserve 50000, keep 80000") that never shipped вЂ” the
+  ("ratio 0.7, reserve 50000, keep 80000") that never shipped — the
   field now says what it does and points at [compactionTuning].
-- fix(gh-2097): auto-compact measures honestly вЂ” no more stale pre-run
-  estimates or В«0 freedВ» basis flips. (1) `StructuredCompactor.run()`
+- fix(gh-2097): auto-compact measures honestly — no more stale pre-run
+  estimates or «0 freed» basis flips. (1) `StructuredCompactor.run()`
   re-anchors the agent state from the session projection BEFORE any
   trigger/before/over math: the in-memory transcript can lag the session
   file (an in-memory tail cut, a second writer appending to the same
-  session between runs), and the stale basis computed `over` в‰€ 1.4k
-  where ~177k was needed вЂ” the deterministic hide under-sized every
+  session between runs), and the stale basis computed `over` ≈ 1.4k
+  where ~177k was needed — the deterministic hide under-sized every
   pass and the run paid extra passes/minutes; one projection build
   bounded by the ledger cache (O(changed records)) now starts every
   run. (2) Pass reports render an upward basis jump explicitly:
@@ -105,29 +135,29 @@ block a release again.
   (a pass appends only shrinkers, so an after-count above its
   before-count is a second writer's records entering the projection,
   never a regression) and `formatCompactionReport` prints
-  `basis re-read: +Nk` instead of a clamped `0 freed В· 0%`; the small
+  `basis re-read: +Nk` instead of a clamped `0 freed · 0%`; the small
   restamp jitter (no flip metadata) keeps its `0 freed` clamp. (3) The
   compaction hooks' diagnostic lines (`auto-compact pass/retry/done`)
   now carry `sid=` like every other compaction lifecycle line, and the
   diagnostic appends run through one serialized in-order chain
   (`flushDiagnosticLog()`, awaited by the REPL teardown and the
-  headless finally) вЂ” bursts land complete instead of being dropped by
+  headless finally) — bursts land complete instead of being dropped by
   unawaited fire-and-forget appends racing the process exit. AC: a
   two-writer fixture asserts correct first-pass sizing; golden tests
   pin the basis-flip rendering; log tests pin sid presence and
   no-dropped-lines. (4) The app's over-window relief
   (`AgentService._relieveOverWindow`) now drains the pending persist
-  BEFORE compacting вЂ” the same ordering the run-end funnel and the CLI
+  BEFORE compacting — the same ordering the run-end funnel and the CLI
   already enforce: the structured engine's run-start re-anchor rewrites
   the live transcript from the session projection, so a relief that
   compacted while the crash-safe persister still had the just-sent
   message in flight re-anchored onto a projection without it (the live
   context silently lost the newest message and the trim valve found
-  nothing droppable вЂ” the turn died on the guard error instead of
+  nothing droppable — the turn died on the guard error instead of
   being relieved). AC: a gated-persist IT-2 fixture holds the newest
   record's append in flight across the relief and asserts the turn
   still completes.
-- fix(gh-2132): the shipped non-sandboxed macOS app is real now вЂ” the
+- fix(gh-2132): the shipped non-sandboxed macOS app is real now — the
   orphaned `ReleaseNoSandbox.entitlements`/`DebugNoSandbox.entitlements`
   are pruned to EXACTLY {cs.allow-jit, network.client, network.server}
   (the stale personal-information/healthkit/homekit claims are
@@ -144,20 +174,20 @@ block a release again.
 - fix(gh-2096): auto-compact no longer re-pays the judge budget on every
   run when the configured smol class cannot answer within it, and a judge
   timeout no longer kills the retry. Three engine changes: (1) the
-  judge call runs under a PER-CALL child cancel token вЂ” a budget expiry
+  judge call runs under a PER-CALL child cancel token — a budget expiry
   aborts only the in-flight call while the retry and the later LM stages
   keep the run-wide token live (previously the first timeout cancelled
   the shared token and the retry died born-cancelled in ~75 ms); (2) the
   consecutive judge-failure counter is persisted per session as additive
-  `structured_judge_health` custom records (newest wins; no migrations вЂ”
+  `structured_judge_health` custom records (newest wins; no migrations —
   old sessions load byte-identical), so the #541 deterministic fallback
   latches ACROSS runs: while latched, auto-compact skips the judge
   entirely (deterministic hide, receipt says "budget unwinnable for the
   configured class") and pays ONE probe call per `judgeProbeAfter`
-  window (default 10 min; a changed model class probes at once) вЂ” the
+  window (default 10 min; a changed model class probes at once) — the
   probe unlatches on success, failure re-arms; (3) the named judge
-  timeout line (#541 AC3) now carries the attempt shape вЂ” input entries,
-  est. tokens, elapsed вЂ” so a slow-reasoning class is distinguishable
+  timeout line (#541 AC3) now carries the attempt shape — input entries,
+  est. tokens, elapsed — so a slow-reasoning class is distinguishable
   from a wedged endpoint in logs alone; the pass reports gain
   `judgeInputEntries`/`judgeInputTokens`/`judgeElapsedMs`/`judgeLatched`.
   Docs: the smol/judge model-class rule (a class that answers within the
@@ -165,13 +195,13 @@ block a release again.
 - fix(gh-2120): the release toolchain no longer floats on unpinned SDKs.
   Two `sdk: stable` / `channel: stable` consumers broke simultaneously
   when the Dart/Flutter stable channel moved on 2026-11-11
-  (Dart 3.13.5 в†’ 3.14.0, Flutter 3.47.7 в†’ 3.50.0). (1) The ci.yml
+  (Dart 3.13.5 → 3.14.0, Flutter 3.47.7 → 3.50.0). (1) The ci.yml
   `binaries` release job now pins `setup-dart` to `3.13.5`: the floated
   SDK changed `dart build cli`'s output layout mid-stream
-  (self-contained `bin/fa` в†’ thin dartaotruntime-style binary +
+  (self-contained `bin/fa` → thin dartaotruntime-style binary +
   `lib/libdartaotfah.so`), and the v1.0.709 bundle built on it broke
   every machine-loop fa launch (`dartaotruntime: not an AOT snapshot`,
-  exit 255 at agent startup вЂ” dev/review legs dead since). (2) The
+  exit 255 at agent startup — dev/review legs dead since). (2) The
   `office-addin-suite` CI leg now pins Flutter to `3.47.7`: the floated
   SDK fails `flutter pub get --enforce-lockfile` against the committed
   flutter_app lock (deterministic skew reds the required Quality gate
@@ -184,30 +214,30 @@ block a release again.
   package:sqlite3 native-assets hook's single un-retried build-time
   download. The `build-macos.yml` app-build and CLI-bundle steps now
   pre-warm the hook's digest-checked cache via the ONE shared tool
-  (`scripts/sqlite3_hook_prewarm.dart`, gh-2074 вЂ” the same contract
+  (`scripts/sqlite3_hook_prewarm.dart`, gh-2074 — the same contract
   build-mobile.yml + ci.yml already ride) after pub/config resolution and
   before the build; a brownout fails there in seconds with a named
   `::error::` instead of killing a release build ~20 minutes in. The
   interim bash seeder (`scripts/seed_sqlite3_native_assets.sh` + selftest)
-  is removed вЂ” round-2 review flagged it as a second implementation of the
+  is removed — round-2 review flagged it as a second implementation of the
   same hook-cache contract; the lane wiring + the single-mechanism
   invariant are pinned by `test/ci_sqlite3_native_asset_seed_guard_test.dart`.
 
 - fix(gh-2074): the daily-publish `play` leg no longer reds on a GitHub
   release-download brownout. Three build-mobile.yml Android jobs died in
   package:sqlite3's native-assets build hook with `Bad state: Hash of
-  downloaded file libsqlite3.x64.android.so is bef140a1вЂ¦` вЂ” the hook
-  (released в‰¤3.9.1; the lockfile pins 3.7.0, the root floats 3.9.1)
+  downloaded file libsqlite3.x64.android.so is bef140a1…` — the hook
+  (released ≤3.9.1; the lockfile pins 3.7.0, the root floats 3.9.1)
   hashes the download WITHOUT honoring the HTTP status, so GitHub's 504
   page (a constant hash, upstream simolus3/sqlite3.dart#435) failed the
   pin check and the build exited 255. The assets themselves were intact;
   ci.yml had solved this exact class for itself on 2026-09-21 by caching
   `.dart_tool/hooks_runner/shared`, but build-mobile.yml never got the
-  protection. Cure: new `scripts/sqlite3_hook_prewarm.dart` вЂ” derives the
+  protection. Cure: new `scripts/sqlite3_hook_prewarm.dart` — derives the
   release tag + pinned hashes from the RESOLVED sqlite3 package (no
   second pin), gates on the HTTP status before hashing, bounded-retries
   with backoff, verifies SHA-256 before any cache write (tmp+rename),
-  skips idempotently on a verified cache hit вЂ” wired as the
+  skips idempotently on a verified cache hit — wired as the
   `Native-assets hook cache` + `Pre-warm sqlite3 hook assets` steps in
   the two Android build jobs (both roots, `hooks-shared-mobile-` keys)
   and inside `assert-builtin-skills` for the root host asset (the step
@@ -217,25 +247,25 @@ block a release again.
   `test/scripts/sqlite3_hook_prewarm_test.dart`.
   Rework (2026-11-09, the PR's own CI run): five reds, two root causes,
   both fixed. (1) `expandTargets` accepted its `hostOs`/`hostArch`
-  injection but ignored it вЂ” `expandTargets('host', hostOs: 'linux',
+  injection but ignored it — `expandTargets('host', hostOs: 'linux',
   hostArch: 'x64')` resolved against the REAL machine and failed on the
   ubuntu-24.04-arm Core-tests shard; a fully injected platform now never
   consults the host (unit-provable on x64 and arm64 alike). (2) The
-  pre-warm was wired as plain `dart run` вЂ” which executes the whole
+  pre-warm was wired as plain `dart run` — which executes the whole
   package graph's build hooks BEFORE the script's main(), so on exactly
   the gh-2074 conditions (cold cache + brownout) the pre-warm died before
   it could pre-warm (proven live; the pty-visual red was this same shape).
   Every invocation is now `dart --disable-dart-dev` (no hook machinery)
-  and the script is self-contained (no `package:` imports вЂ” SHA-256
+  and the script is self-contained (no `package:` imports — SHA-256
   inlined) so that mode can load it. The same protection extended to
   ci.yml: the lanes whose first hook consumer is a plain dart command
   (`test-core`, `integration-mock`, `hostile-env`, `fa-aot-build`,
-  `pty-integration-linux`, `binaries-pr`, `pty-visual` вЂ” the last had no
+  `pty-integration-linux`, `binaries-pr`, `pty-visual` — the last had no
   hooks cache at all) now restore `hooks-shared-` + pre-warm the host
   asset after pub get and before that consumer; the guard pins it as
   AC6/AC7.
 
-- feat(gh-2059): browser-extension compaction parity with CLI вЂ” over-window
+- feat(gh-2059): browser-extension compaction parity with CLI — over-window
   relief, `/compact` with visible receipts, and the shared under-window
   guarantee ride the same `CompactionHostWiring` resolution as the CLI and
   app (`resolveExtensionCompactionWiring`); receipts are durable across
@@ -255,16 +285,16 @@ block a release again.
   no-`--fail` curl, and one transient reset (curl 56 at ~3 MB/92.7 MB)
   left the Podfile `nm -gU` symbol check with no
   macos-arm64_x86_64/libwasm_run_dart.a to read. The guard now keys on
-  `WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a` вЂ” the exact
-  path the Podfile force_loads and nm-checks вЂ” so the block is a no-op
+  `WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a` — the exact
+  path the Podfile force_loads and nm-checks — so the block is a no-op
   whenever the restore step (or a previous run) put the framework in
   place, and the fallback download for a truly cold tree carries
   `--fail` AND aborts the block at the curl step on failure
-  (`|| { echo "wasm_run download failed" >&2; exit 1; }` вЂ” a swallowed
+  (`|| { echo "wasm_run download failed" >&2; exit 1; }` — a swallowed
   status fell through to unzip/truncate residue and masked the root cause
   behind the Podfile `nm` diagnostic; review round 1 on this PR), and the
   podspec now assigns the backtick result and raises "wasm_run framework
-  fetch failed" unless `$?.success?` вЂ” Ruby ignores a bare backtick's
+  fetch failed" unless `$?.success?` — Ruby ignores a bare backtick's
   exit status, so pod install would otherwise have sailed past the failed
   fetch to the downstream `nm` diagnostic (review round 2). Linted
   behaviorally (stubbed curl, no network; POSIX-gated sandbox, plus a
@@ -275,9 +305,9 @@ block a release again.
   macOS attach arrived after a sibling train had already PUBLISHED the
   derived tag (the same-tag convergence race: mobile leg drafts + the tag
   train publishes ~25 min after dispatch while the serialized self-hosted
-  mac builds need ~66 min вЂ” v1.0.685: draft 05:22:46, published 05:44:52,
+  mac builds need ~66 min — v1.0.685: draft 05:22:46, published 05:44:52,
   mac leg attached 06:28:53). `scripts/release_asset_gate.sh` gains a
-  caller-declared pre-stage policy вЂ” `RELEASE_GATE_PUBLISHED_SKIP=1` вЂ”
+  caller-declared pre-stage policy — `RELEASE_GATE_PUBLISHED_SKIP=1` —
   that turns the PUBLISHED+unattached-fa-* verdict into a loud whole-call
   skip (`::warning::`, exit 0, nothing uploaded, no twin create, no flip;
   all-or-nothing so `latest-mac.yml` can never land alone on a release
@@ -291,11 +321,11 @@ block a release again.
 
 - fix(gh-2044): the auto-compact fragile-band escalation could fold the
   ENTIRE visible projection when the remaining path fit inside
-  `keepRecentTokens` вЂ” the keep-recent walk defaulted to folding
+  `keepRecentTokens` — the keep-recent walk defaulted to folding
   everything when its budget never exhausted, swallowing the live tail
   (the newest user ask and assistant turn included). Real-world trigger:
   resumed subagent runs ended with no assistant message at all
-  (`subagent produced no assistant message` вЂ” CI cores shards 1/4 and
+  (`subagent produced no assistant message` — CI cores shards 1/4 and
   3/4, hostile-env, both red). `_pickCheckpointRange` now declines the
   fold when the whole foldable path fits the keep-recent region and
   still carries live records; all-marker paths keep the lossless
@@ -309,33 +339,33 @@ block a release again.
   moved tiny-transcript runs to the classic residual engine, where an
   EMPTY summarizable region folded zero #729 chunks into a blank
   summary that still landed as a junk CompactionRecord and a hollow
-  `success: true` through the no-work terminal вЂ” `compactSession` now
+  `success: true` through the no-work terminal — `compactSession` now
   refuses that empty-region blank fold (gh-1743's failure-verdict
   contract kept; a dialed blank answer over a real region still lands
   as a record, issue #578 unchanged). Third CI red on the same branch
   (flutter-app over-window relief, both shards): the whole-world decline
   lived in the shared `_pickCheckpointRange`, so it also starved the
-  checkpoint LADDER вЂ” a tool-result-heavy transcript whose every ledger
+  checkpoint LADDER — a tool-result-heavy transcript whose every ledger
   token fits `keepRecentTokens` (the request estimate is far over the
   trigger) lost its only summarizer-based relief, and the hosted app's
   over-window guard ended the turn instead of continuing it. The decline
   is now escalation-only: ladder passes run over the trigger, where the
-  fold IS the relief (the escalation still declines вЂ” semantic 5 вЂ” and
+  fold IS the relief (the escalation still declines — semantic 5 — and
   its pass body was extracted below the CRAP ratchet's 12.00).
   (gh-2044 rework, UT-ESC-13)
 
 - fix(gh-2003): the Copilot picker filter is tier-aware. Individual-tier
   `/models` responses omit `model_picker_enabled` entirely, so phase 1
-  dropped every such entry as В«picker flag absentВ» and individual/OAuth
+  dropped every such entry as «picker flag absent» and individual/OAuth
   accounts still listed zero usable models. When the response comes from
-  the individual tier вЂ” the individual host (`api.githubcopilot.com` or
+  the individual tier — the individual host (`api.githubcopilot.com` or
   pi-mono's `api.individual.githubcopilot.com` spelling) or a
-  no-proxy-ep token (individual by design) вЂ” an ABSENT flag is now
-  selectable: absence в‰  an explicit `false`, which still drops
+  no-proxy-ep token (individual by design) — an ABSENT flag is now
+  selectable: absence ≠ an explicit `false`, which still drops
   everywhere (embeddings, completion-only). Business/enterprise answers
   keep the strict picker list unchanged, and the keep is never silent:
-  the fetch note names it (В«2 of 2 models kept via the individual-tier
-  fallback (picker flag absent)В») through the existing `fetch notes:`
+  the fetch note names it («2 of 2 models kept via the individual-tier
+  fallback (picker flag absent)») through the existing `fetch notes:`
   surfacing. pi-mono parity: the trigger mirrors `allowPolicyFallback =
   baseUrl === "https://api.individual.githubcopilot.com"` in
   `packages/ai/src/auth/oauth/github-copilot.ts`.
@@ -343,13 +373,13 @@ block a release again.
   empty list again. Every silent-empty exit names its branch through the
   new `fetchModelsForEndpointReport` dispatch (`ModelsFetchReport` +
   `ModelsFetchDiagnostic`): the token-exchange HTTP status (with the
-  OAuth device-flow / fine-grained PAT remedies for classic `ghp_вЂ¦`
+  OAuth device-flow / fine-grained PAT remedies for classic `ghp_…`
   keys), the `/models` HTTP status or timeout (with the seat + per-tier
   host hint), proxy-ep-less individual tokens aimed at a business/
   enterprise configured host (the tier-misrouting hint), and the picker
   filter with per-model drop reasons (`picker flag absent`, `picker flag
-  false`, `policy disabled`, `no tool_calls`, `endpoint unsupported`) вЂ”
-  В«12 models fetched, 12 filtered (picker flag absent)В». A failed
+  false`, `policy disabled`, `no tool_calls`, `endpoint unsupported`) —
+  «12 models fetched, 12 filtered (picker flag absent)». A failed
   primary credential path retries the other path ONCE before declaring
   empty (dual-path fallback, gh-1606): an exchange-401 classic PAT tries
   PAT-direct (the provenance note names which path answered), a
@@ -361,26 +391,26 @@ block a release again.
   the field, and the Copilot connect sheet shows the reason above the
   manual model id. The legacy `fetchModelsForEndpoint` answers are
   unchanged (parity); the filter criteria themselves are unchanged
-  (pi-mono parity вЂ” only the reporting is new). Review round 2: the
+  (pi-mono parity — only the reporting is new). Review round 2: the
   `fetch notes:` wiring covers the unsaved sibling paths too (the
   active-catalog and env-keyed Copilot fetches surface the same named
   failure instead of a silent seed fallback), the connect flow's
   `no models:` line reuses `ModelsFetchReport.reasonText` (the last
-  hand-rolled `message вЂ” hint` join), and the `ModelsFetchReport`
+  hand-rolled `message — hint` join), and the `ModelsFetchReport`
   docs scope the diagnostic contract to the dialects that name their
   failure branches.
-- feat(network): channel payload sender block вЂ” app members' channel
-  messages carry `{"text": вЂ¦, "sender": {"name": вЂ¦, "id": вЂ¦}}` (public
+- feat(network): channel payload sender block — app members' channel
+  messages carry `{"text": …, "sender": {"name": …, "id": …}}` (public
   base64 JSON and keyed fanet1 plaintext alike), so DAP agents can
   attribute the HUMAN author behind the fa_network relay's hub id. The
   harness unwraps it tolerantly (raw text passes through), rides the
   name as `AgentMessage.fromName` through the fabric, and the CLI
   steering line greets people again: `from Uladzimir (<relay id>) in
-  #channel: hello` instead of `from 3cfaee1aa054fe6eвЂ¦`. The app falls
+  #channel: hello` instead of `from 3cfaee1aa054fe6e…`. The app falls
   back to the payload sender for bubble names when the envelope carries
   none; DMs also name hub peers from the whois cache. Legacy payloads
   without the block decode exactly as before.
-- feat(gh-1956): reply auto-spill вЂ” oversized child `reply` / `agent_message`
+- feat(gh-1956): reply auto-spill — oversized child `reply` / `agent_message`
   payloads spill to an `agent://` artifact automatically; the parent receives a
   bounded excerpt + pointer + completeness marker with char AND byte counts.
   Manual chunking degrades to a documented fallback, restorable across parent
@@ -397,9 +427,9 @@ block a release again.
   into a finished subagent's mailbox. A background shell job started by a
   CHILD registered its settle continuation inside the child's subagent
   zone; when the job settled after the child's run ended, the CLI's
-  settle-wake (`_onShellJobSettled` в†’ `_startRun`) started MAIN's reaction
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
   run still carrying the finished child's `activeSubagentId()`, and every
-  identity consumer of that run misattributed it вЂ” the reported shape was
+  identity consumer of that run misattributed it — the reported shape was
   a self-reminder scheduled "in <session>/<child>" that auto-resumed the
   completed child (duplicate-release risk). Three layers: the
   `ShellJobRegistry` now binds its settle continuation to the
@@ -407,7 +437,7 @@ block a release again.
   `scheduleSenderMailbox` wiring trusts the zone scope only while the
   child is genuinely in flight on the session executor
   (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
-  the record carries вЂ” an explicit `to:` used to be shadowed in the reply
+  the record carries — an explicit `to:` used to be shadowed in the reply
   by the sender's mailbox, which read as "the override was ignored" even
   when it was honored. E2E repro drives the real AgentCli
   (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
@@ -416,25 +446,25 @@ block a release again.
   instead of crashing with an uncaught `SessionException` on the
   `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
   flushes each child's transcript incrementally at every turn boundary
-  (the JSONL exists and grows mid-run вЂ” also crash-resilience for
+  (the JSONL exists and grows mid-run — also crash-resilience for
   aborted children), `task_observe` resolves a placeholder handle's real
   session file from the sessions tree (the same `agent: subagent` /
   `parent:` / `id:` header scan the boot adoption uses) and heals the
   handle onto the found path, and every read failure degrades to a
   structured "transcript unavailable" / "no transcript available yet"
   message instead of an uncaught tool error. The child-transcript reader
-  rides the transient-ENOENT retry (issue #427) вЂ” it reads while the
+  rides the transient-ENOENT retry (issue #427) — it reads while the
   executor appends.
 - fix(#1941): the selected CodeMie project now rides EVERY model request.
   The header is baked into `Model.headers` only by the connect-time
   switches (gh-1809), so every other rebuild silently dropped
-  `x-codemie-project` вЂ” and the backend bills a header-less request against
+  `x-codemie-project` — and the backend bills a header-less request against
   the user's DEFAULT project (codemie-code `header-injection.plugin.ts`
   contract): the reported symptom is limit-exhausted from the exhausted
   default project despite picking a budgeted one. Rebuilds now re-resolve
   the project from the saved entry through one helper
   (`projectHeaderForBaseUrl`): the boot folder-state restore (JWT entries
-  previously booted header-less вЂ” the SSO cookie patch was the only boot
+  previously booted header-less — the SSO cookie patch was the only boot
   carrier), the session-resume re-apply (`_buildRestoredModel`), the
   roles-chain failover (`ModelRef.project`, mirroring the #964 authHeader
   leg), the roles-mode `/model` + settings-flow pins, and the generic
@@ -445,38 +475,38 @@ block a release again.
   endpoint) for the restored and failed-over models.
 - feat(network): private networks created outside the app surface after
   sign-in. `GET /api/networks/mine` (fa_network#16) is synced into the
-  wallet after OAuth/dev sign-in and both restore paths вЂ” best-effort,
+  wallet after OAuth/dev sign-in and both restore paths — best-effort,
   silent on older backends (404) and any failure, and never destructive.
   Synced memberships keep the server's name/class, preserve local
   passwords/join facts, and land without a password (the endpoint never
-  returns one) until the first join. Entering such a network вЂ” sidebar,
-  вЊK/вЊ3-9, or a restored selection вЂ” opens the join sheet prefilled with
+  returns one) until the first join. Entering such a network — sidebar,
+  ⌘K/⌘3-9, or a restored selection — opens the join sheet prefilled with
   the network id instead of a resume error or endless spinner; joining by
   name now keys the wallet/session by the echoed canonical id and migrates
   legacy name-keyed rows (password + channel keys) instead of duplicating
   them. A malformed `/mine` row is skipped, not the whole list.
 - fix(gh-1931): one render per tool call on the non-TUI console. Line mode
-  and the headless `-p` log printed every executed call twice вЂ” a start row
-  (`вЂў bash В· cmd`, no elapsed) followed by the end row (`вњ“/вњ— bash В· cmd
+  and the headless `-p` log printed every executed call twice — a start row
+  (`• bash · cmd`, no elapsed) followed by the end row (`✓/✗ bash · cmd
   0s`). The duplicate start-row print is gone from `_onToolExecutionStart`;
   the end row (command, status glyph, elapsed, failure news) is the single
   render per call. The TUI keeps its running card + settled card, start
   bookkeeping stays (`_toolStarts` feeds the end row's detail/elapsed, the
   waiting coordinator still arms per-call liveness), and persisted
-  artifacts (session JSONL, trajectory records) are untouched вЂ”
+  artifacts (session JSONL, trajectory records) are untouched —
   rendering-only change. Long foreground calls keep the gh-1055 liveness
   reminders past `waiting.toolLivenessSeconds` (default 60s).
 - fix(gh-1929): esc during the pre-flight auto-compaction no longer crashes
   the CLI. The compaction layer's deliberate abort (#1085) used to escape
   `_runPrompt` outside its guarded body and reach the root zone handler via
-  an unlistened `whenComplete` chain вЂ” `fa crashed: CancelledException` +
+  an unlistened `whenComplete` chain — `fa crashed: CancelledException` +
   crash.log + a lost session view. The pre-flight window (submit on an
   over-window transcript) now translates the cancel into a user-cancel
   outcome: neutral dim `submission cancelled` receipt (never `error:`), the
   TUI composer hands the typed text back (`sendInputText`) so a resubmit is
   one Enter away, headless exits 130 with the same receipt, and the next
   prompt works (the funnel's local-trim recovery or a retried compaction).
-  Cancels DURING the run вЂ” in-flight relief, settle funnel вЂ” keep their
+  Cancels DURING the run — in-flight relief, settle funnel — keep their
   pinned loud-abort surfaces, and the post-run window keeps its
   `compaction interrupted` receipt via the shared `_renderUserCancel`
   helper.
@@ -484,7 +514,7 @@ block a release again.
   an UNPRODUCTIVE provider submit (zero bytes, or silent past the steering
   stall window) now cancels the attempt via a `SteeringInterruptFire`
   cancel, injects the pending steering into the rebuilt request, and
-  resubmits вЂ” the #1916-class submit stalls can no longer queue user or
+  resubmits — the #1916-class submit stalls can no longer queue user or
   agent mail invisibly. Productive streams keep next-boundary semantics;
   the interrupt never consumes a retry attempt, and the run latch re-arms
   in place so watchdog replays and user aborts keep working. `task_resume`
@@ -492,10 +522,10 @@ block a release again.
   background; video polling honors soft-yield checkpoints (remote render
   never restarted, honest hand-back text) and media generation honors run
   cancellation; SLO-breached undelivered child mail surfaces in
-  `task_status` (`UNDELIVERED вЂ¦ past the 2s delivery SLO`); the TUI prints
-  `steering queued вЂ” provider stalled Ns, interrupting to deliver` plus the
+  `task_status` (`UNDELIVERED … past the 2s delivery SLO`); the TUI prints
+  `steering queued — provider stalled Ns, interrupting to deliver` plus the
   delivered ack.
-- feat(1916): image-heavy submits no longer livelock вЂ” byte-based
+- feat(1916): image-heavy submits no longer livelock — byte-based
   `images.maxBytesPerRequest` (default 8MB, layered onto the count cap;
   `/images` names both drop reasons), legacy text-embedded data-URL
   screenshots in history fold into the once-only registry instead of
@@ -505,7 +535,7 @@ block a release again.
   repeated identical-payload stalls fire ONE actionable /compact +
   image-budget advice. TUI stall banner + docs/images.md carry the
   image-heavy playbook.
-- fix(gh-1912): Add an agent в†’ DAP now turns a retired hub's unknown
+- fix(gh-1912): Add an agent → DAP now turns a retired hub's unknown
   `enroll_create` response into an actionable upgrade message instead of
   exposing `bad_frame`. Independent enrollment never falls back to the
   legacy same-name credential rotation endpoint, and existing credentials
@@ -542,13 +572,13 @@ block a release again.
   members are removable too via DELETE /api/networks/{id}/members/{id}
   (sessions revoked server-side); owner/admin/self rows stay protected.
 
-- feat(gh-1825): channel/network management in the app вЂ” rename a channel
+- feat(gh-1825): channel/network management in the app — rename a channel
   (PATCH), delete a channel or an owned network (REST DELETE with
   confirmation and state/navigation cleanup), and unnamed CLI/hub-created
   channels show a short friendly label instead of the raw 64-char id.
 
 - feat(gh-1825): pasting a DAP invite no longer demands a passphrase on
-  macOS вЂ” importing NEW channel secrets auto-provisions a random
+  macOS — importing NEW channel secrets auto-provisions a random
   passphrase into the per-channel Keychain item (decryption of existing
   envelopes never auto-generates; env/prompt/headless behavior unchanged),
   and passphrase warnings now name the concrete recovery (re-paste the
@@ -556,12 +586,12 @@ block a release again.
 
 - feat(gh-1825): the network online counter opens a live-first roster
   sheet (names, member class, presence), and the channel composer offers
-  roster-filtered @-mention autocomplete вЂ” the draft keeps the literal
+  roster-filtered @-mention autocomplete — the draft keeps the literal
   @displayName for DAP agents and the envelope carries the resolved
   member ids. On the CLI side the DAP channel notice names the agent's
   own identity (display name + agentId), and inbound channel mail that
-  @-mentions that name (case-insensitive, word-boundary вЂ” no email or
-  @name2 false positives) is marked "[mentions you вЂ” you are @name]".
+  @-mentions that name (case-insensitive, word-boundary — no email or
+  @name2 false positives) is marked "[mentions you — you are @name]".
 
 - fix(gh-1825): the app's network roster no longer reads as permanently
   empty ("0 online"): fa_network sends roster.snapshot with an OBJECT
@@ -571,21 +601,21 @@ block a release again.
   names web alongside CLI/macOS/iOS (plain-web join is supported).
 
 - fix(gh-1825): resumed CLI sessions rejoin their DAP channels and
-  receive channel mail again вЂ” session replay now re-arms membership
+  receive channel mail again — session replay now re-arms membership
   synchronization (plugin session-ready listeners on boot/resume and
   in-process switches) and idle channel probes complete deferred joins
   before inbox peek/drain. The post-replay sync also dials the
   membership's OWN hub with its enrolled credential before joining:
   a resumed session-scoped agent used to stay on the zero-config local
   URL forever, and because a disconnected fabric probe short-circuits
-  before the sync, the remote dial never happened вЂ” the session-ready
+  before the sync, the remote dial never happened — the session-ready
   listener now drives it directly (throttled to one attempt per 10 s).
   App channel history no longer flashes raw
   payloads on first open: decoding waits for startup's channel listing
   instead of caching an undecoded guess until a manual switch.
 
 - feat(gh-1825): the fa app consumes the same DAP enrollment block as the
-  CLI вЂ” paste it into the agent chat composer (macOS/iOS/Android; the
+  CLI — paste it into the agent chat composer (macOS/iOS/Android; the
   smart-paste .txt chip path included) and the channel join happens
   without the block ever reaching `sendText`, analytics, or session
   records. Native joins ride the live agent-fabric hub repository:
@@ -611,7 +641,7 @@ block a release again.
   without those fields create no phantom members. `roster.snapshot`/REST
   contents are logged for decisive presence debugging.
 
-- feat(gh-1825): `/network` + scoped DAP channel membership вЂ” join by
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
   paste (invite url / url+keys / bare channel id / whole `fa dap import`
   command) with session/project/global scopes, live join without
   restart, per-scope leave + copy invite, and the composer-paste
@@ -622,9 +652,9 @@ block a release again.
   `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
   `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
   prompts, plaintext or encrypted privs mixed. Passphrase chain:
-  env в†’ per-channel macOS Keychain item в†’ one prompt with save default.
+  env → per-channel macOS Keychain item → one prompt with save default.
 - feat(gh-1844): media slots never fall back to the main connection
-  implicitly вЂ” SDK/CLI, app store, and the JS bridge resolve a slot
+  implicitly — SDK/CLI, app store, and the JS bridge resolve a slot
   without an override as UNCONFIGURED with an actionable
   "configure the slot" error; the main connection serves a slot only via
   the explicit per-slot `useMainConnection: true` opt-in (YAML
@@ -635,13 +665,13 @@ block a release again.
   OpenRouter endpoints (`input_references` + declared/probed
   `input_modalities` gate; unsupported endpoints fail before any network
   call); the OpenRouter video job API is a first-class video dialect
-  (submit в†’ poll в†’ mp4). New `decide` tool: structured decisions via
-  OpenRouter's Decisions API (`/v1/systemone`) вЂ” bool/choice/score
+  (submit → poll → mp4). New `decide` tool: structured decisions via
+  OpenRouter's Decisions API (`/v1/systemone`) — bool/choice/score
   questions with calibrated probabilities, structured error results, no
   streaming.
 
 - feat(gh-1834): the FinalizeGate contract counts a parity/conformance
-  claim as verified only with negative + combination self-checks вЂ” new
+  claim as verified only with negative + combination self-checks — new
   numbered step 2.6 in `prompts/cli/finalize_gate.md` (refused
   incompatible/mutually exclusive options, empty/corrupt inputs, boundary
   values, must-NOT-work cases, alongside happy paths; a blanket
@@ -652,39 +682,39 @@ block a release again.
   scripted IT-4 replay (real CLI + real bash) whose persisted
   `task_ledger` carries the rejection rows.
 
-- fix(gh-1832): release v1.0.635 published without `fa-extension.zip` вЂ” the
+- fix(gh-1832): release v1.0.635 published without `fa-extension.zip` — the
   landing-page download 404'd. The extension's only producer (the daily
   `build-macos.yml` build-extension leg) derives its tag as "latest+1 at its
   own dispatch moment"; on 2026-10-24 the `v1.0.635` tag was cut by
   `auto_release` before those legs ran, so the extension (and the DMGs)
   landed on an orphaned `v1.0.636` draft while the tag train published
-  v1.0.635 вЂ” every leg green, nothing asserted the published asset set.
+  v1.0.635 — every leg green, nothing asserted the published asset set.
   Now `scripts/release_required_assets.txt` is the single source of truth,
   `scripts/assert_release_assets.sh` gates the `release-provenance` publish
   flip (a missing asset leaves the release a draft and fails the run
   loudly) and a new `release-asset-smoke` ci.yml job post-publish probes
   every landing-page release link + the full required set (red on non-200).
   Remediation: the exact-tag `fa-extension.zip` (built from the v1.0.635
-  tree by run 40064876732) was uploaded to release v1.0.635 вЂ” the landing
+  tree by run 40064876732) was uploaded to release v1.0.635 — the landing
   link serves 200 again.
 
 - fix(gh-1820): the arm64 DMG leg's stale size floor is reseeded onto the
-  shipped v1.0.634 shape вЂ” run 4004758753 (post-#1815 SPM-lane adoption)
+  shipped v1.0.634 shape — run 4004758753 (post-#1815 SPM-lane adoption)
   passed the min-platform gate and the full build, then failed the
   `size_manifest.py` +5% budget on `App.framework/App` +5.1%
-  (25,020,112 в†’ 26,284,144, the accumulated Dart AOT of #1793/#1794/
+  (25,020,112 → 26,284,144, the accumulated Dart AOT of #1793/#1794/
   #1796/#1805/#1806); the committed `scripts/size_budget/fa-macos-arm64.tsv`
   was still the pre-#1096-diet floor (TOTAL 210.5 MB vs the artifact's
   116.4 MB), so the documented intentional-growth remediation applies:
   the floor is now the exact `--reseed` output for the failing run's
-  artifact manifest (26 rows в‰Ґ 64 KiB + TOTAL 116,386,369, from the run
-  log's printed table вЂ” the zip never uploaded past the gate), locking in
-  Fa 23.4в†’18.6 MB, quickjs_bridge 950в†’844 KB; new
+  artifact manifest (26 rows ≥ 64 KiB + TOTAL 116,386,369, from the run
+  log's printed table — the zip never uploaded past the gate), locking in
+  Fa 23.4→18.6 MB, quickjs_bridge 950→844 KB; new
   `test/ci_1820_macos_arm64_size_floor_test.dart` gates the shape green
   through the REAL `size_manifest.py check` and pins the committed floor
   byte-identical to a `--reseed` round-trip.
 
-- fix(gh-1814): the desktop DMG lane ADOPTS the SwiftPM lane вЂ” Flutter
+- fix(gh-1814): the desktop DMG lane ADOPTS the SwiftPM lane — Flutter
   3.47.7 removed the FLUTTER_SWIFT_PACKAGE_MANAGER disable knob
   (flutter/flutter#193978), so the gh-180 pure-CocoaPods pin became a no-op
   and the min-platform gate (which forbade any SwiftPM state) failed both
@@ -692,41 +722,41 @@ block a release again.
   #1813 escape (pin 3.47.4) is unreachable on the ~60kB/s runner link.
   `scripts/assert_macos_min_platform.sh` now ASSERTS the SPM lane instead:
   SwiftPM state expected after `flutter build macos --config-only`,
-  generated package floor в‰Ґ the app floor (the silent bump must not skip вЂ”
+  generated package floor ≥ the app floor (the silent bump must not skip —
   the original gh-180 killer), no SwiftPM product above the app minimum,
   vendored inappwebview manifest floored at 14.0 if it ever reappears.
-  Floors were audited and need no raising: Runner pbxproj 3Г—14.0, Podfile
+  Floors were audited and need no raising: Runner pbxproj 3×14.0, Podfile
   `:osx, '14.0'`, generated floor 14.0 on 3.47.7, vendored podspec 14.0
-  (its Package.swift stays deleted вЂ” the plugin rides the CocoaPods half of
+  (its Package.swift stays deleted — the plugin rides the CocoaPods half of
   the hybrid lane via Podfile.lock). The dead env pin left the build-macos
   job env; the SDK pin reverts #1813 back to 3.47.7. The ci.yml macOS debug
   leg gets the same treatment (gh-1814 review): its
-  FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin вЂ” a silent no-op on the floating
-  3.47.x stable it resolves past the knob's removal вЂ” is removed and the
+  FLUTTER_SWIFT_PACKAGE_MANAGER=0 pin — a silent no-op on the floating
+  3.47.x stable it resolves past the knob's removal — is removed and the
   lane comment corrected; the leg rides SPM enabled as it already has been
   (run 399572012 green).
 - fix(gh-1805): modifier chords no longer type their base letter into the
-  composer while the slash menu is open вЂ” the vendored dart_tui decoder
+  composer while the slash menu is open — the vendored dart_tui decoder
   puts the base letter into the keystroke's `text` for control bytes
-  (Ctrl+S в†’ `ctrl+s` with text `s`), and the slash-menu edit cluster was
+  (Ctrl+S → `ctrl+s` with text `s`), and the slash-menu edit cluster was
   the one insert surface missing the `_isCommandKeystroke` guard, so a
   chord pressed mid-menu poisoned the typed prefix (`/memory` landed as
   `/smemory`). Plain letters and Shift+letters still type and filter.
-- feat(1515): ONE model-limits settings surface вЂ” the settings hub's
+- feat(1515): ONE model-limits settings surface — the settings hub's
   standalone "Model parameters" row is retired and bare `/model-edit`
-  (TUI) aliases into `/settings` в†’ Model capabilities, pre-focused on the
+  (TUI) aliases into `/settings` → Model capabilities, pre-focused on the
   active model. The caps flow gains the model-edit preset ladders +
-  CustomвЂ¦ free input for context window / max output (a preset pick
-  writes `models.overrides` AND rebuilds the active model on the spot вЂ”
+  Custom… free input for context window / max output (a preset pick
+  writes `models.overrides` AND rebuilds the active model on the spot —
   the old flow's live-mutation semantics, now durable), every field row
   shows the current EFFECTIVE value with its source layer (`pinned` /
   `role override` / `catalog`), the thinking row is an omp-style selector
   (only levels the model supports, per-rung budget metadata, current
   level preselected), and the hub row describes the effective summary
-  (`200K ctx В· 16K out В· thinking off`) instead of a pin count. The
+  (`200K ctx · 16K out · thinking off`) instead of a pin count. The
   scripted `/model-edit <field> <n>` form and the line-mode limits print
   are unchanged.
-- feat(gh-1746): opt-in session disk retention вЂ” `sessions.retention` in
+- feat(gh-1746): opt-in session disk retention — `sessions.retention` in
   `~/.fah/config.yaml` caps the sessions root and sweeps whole session
   units (transcript + sidecars) oldest-last-used-first at boot, exempting
   live, named, young, and the current session; nothing is EVER
@@ -745,38 +775,38 @@ block a release again.
   `FA_PROTECTED_PIDS`) and the invoking shell from the child's own kills
   while legitimate victims (stuck test runners, background servers) are
   still terminated, and headless `SIGTERM` aborts now log
-  `fa: SIGTERM received вЂ¦` so a child-issued kill never masquerades as a
+  `fa: SIGTERM received …` so a child-issued kill never masquerades as a
   user Ctrl+C (exit code contract unchanged: 130 graceful, 143 escalate).
 
 - fix(gh-1778): the release gate no longer reds a fully-green shard when
   GitHub's cache service degrades. v1.0.621's `Core tests (shard 2/4)` was
-  killed by its own `timeout-minutes: 12` with 2535/2761 tests green вЂ” both
+  killed by its own `timeout-minutes: 12` with 2535/2761 tests green — both
   cache steps had stalled ~133 s on keys that existed (degraded service,
   not eviction), cold `pub get` + native-asset hook builds delayed the
   first test to ~5 min, and the shard needed ~14 min against a budget
   sized for the warm ~8.8 min wall. The job budget is now 20 min (sibling
   test-leg band), and both `test-core` cache steps are best-effort
-  (`timeout-minutes: 2` + `continue-on-error: true`) вЂ” a failed restore is
+  (`timeout-minutes: 2` + `continue-on-error: true`) — a failed restore is
   slower setup, never a red shard. `test/ci_core_shard_timeout_guard_test.dart`
   pins the budget and the best-effort cache contract (RED-first on the old
   YAML).
 
 - feat(#1761): the 32KB project-context budget never cuts silently again.
   A file truncated to its head excerpt now carries an extended
-  `<!-- From: path вЂ” N bytes, only the first M shown -->` marker plus an
+  `<!-- From: path — N bytes, only the first M shown -->` marker plus an
   explicit MUST-read-the-full-file instruction (offset/limit/ranges,
   prompt copy in `prompts/context/project_context_read_full.md`); a file
   dropped entirely leaves a one-line tombstone naming its path instead of
   vanishing; and the user gets a dim boot line per truncated/dropped file
   (CLI line mode prints directly, TUI re-prints after the banner, the app
   logs through its AppLog boot-notice seam). New `projectContext:` config
-  section: `maxBytes` (default 32768) вЂ” `0` disables the section entirely
+  section: `maxBytes` (default 32768) — `0` disables the section entirely
   and reads no files (fast boot); unknown keys are tolerated with a note.
   Leaf-first allocation is unchanged.
 
 - fix(gh-1757): the Android build no longer re-enters the sdkmanager
   download roulette for CMake. v1.0.619's `build-android` leg died at
-  `:jni:configureCMakeDebug[arm64-v8a]` вЂ” the `:jni` module (transitive
+  `:jni:configureCMakeDebug[arm64-v8a]` — the `:jni` module (transitive
   `jni` package via path_provider_android) wires externalNativeBuild.cmake
   with no version, so AGP auto-installed its default `cmake;3.22.1`
   mid-configuration and one corrupt archive ("Archive is not a ZIP
@@ -785,25 +815,25 @@ block a release again.
   pre-installs `cmake;3.22.1` with bounded retry + idempotent skip (same
   hardening the NDK path already carries); the guard test pins the new
   AC6 assertions and the AGP-version coupling (AC7).
-- feat(#1750): per-model image caps вЂ” the outbound request never carries
+- feat(#1750): per-model image caps — the outbound request never carries
   more unique images than the target model accepts. `Model` gains an
   optional `maxImages` (catalog-seeded: `gemini-4-argon: 10`, measured);
   `images.perModel.<modelId>` config overrides it (strict `images:`
   section, user truth wins); the registry resolves
   `perModel > catalog > images.maxPerRequest` (first present wins, the
-  issue-#1554 shape). A Google-shaped `too many images вЂ¦ maximum allowed
+  issue-#1554 shape). A Google-shaped `too many images … maximum allowed
   for model <id> is <n>` 400 is classified (`image_overflow.dart`, the
   overflow.ts twin), latches the learned cap for the (provider, model)
   pair for the run, and re-sends ONCE through the registry at the
-  smaller cap вЂ” current-first-then-newest drops with the existing
+  smaller cap — current-first-then-newest drops with the existing
   never-silent notices naming the learned cap; a second refusal
   surfaces exactly as today. JSONL is never rewritten;
   `images.registry: false` keeps the byte-identical legacy shape
   including the recovery-off behavior.
 - feat(gh-1760): oversized user-message intake spills to a file instead of
-  blowing the context window. Any incoming user message вЂ” headless
+  blowing the context window. Any incoming user message — headless
   `-p`/positional, TUI first/mid-session, steering/follow-up drain,
-  external inbox вЂ” whose text passes the new relative threshold (a
+  external inbox — whose text passes the new relative threshold (a
   `spills.userFraction` of the live window budget minus the compaction
   reserve, floored by `spills.userThreshold` bytes) is redacted and
   written verbatim to `.fah/spills/<sessionId>/user-<n>.md` (the #678
@@ -819,48 +849,48 @@ block a release again.
   watchdog (the factory's 300s `totalBudget`) no longer aborts the
   live session. `AutoCompactorFactory.run()` now applies the
   mechanical local-trim fallback (keepRecentTokens, pairing-repaired,
-  `[context trimmed locally]` marker вЂ” the same valve the classic
+  `[context trimmed locally]` marker — the same valve the classic
   pass ladder ends on) instead of failing fast; the honest
   both-roles-failed verdict is kept only when nothing is droppable.
 
 - fix(gh-1636): auto-compaction stops dumping the internal checkpoint
-  summary into the console вЂ” the default report is ONE marker line
-  (`в—Џ auto-compacted В· engine: N в†’ M tokens (F freed В· P%)`); the records
+  summary into the console — the default report is ONE marker line
+  (`● auto-compacted · engine: N → M tokens (F freed · P%)`); the records
   line + fenced summary moved behind the new `tui.showCompactionDetails`
   opt-in (default false), and the manual `/compact` still prints the full
   block. The headless log face no longer streams the summarizer deltas by
   default (the gh-1433 E4 live stream is part of the same opt-in; the
-  gh-1430 `вЂ¦ reasoning` liveness line still covers the window). Nothing
-  is lost вЂ” the summary stays in the session file, reachable via
+  gh-1430 `… reasoning` liveness line still covers the window). Nothing
+  is lost — the summary stays in the session file, reachable via
   `compact_expand`.
 
-- fix(test): gh-1732 вЂ” the `wrap_ansi_line_perf_test` sustained-contention
+- fix(test): gh-1732 — the `wrap_ansi_line_perf_test` sustained-contention
   validation leg spikes 3 of the 5 doubled runs per attempt instead of 4
   (CI run 39546301132, core shard 2/4: the old shape left exactly ONE
   real-wall-clock-timed doubled sample per attempt, and real jitter on
-  that single sample вЂ” the very shape being modeled вЂ” inflated all three
+  that single sample — the very shape being modeled — inflated all three
   attempts' min ratios to a 3.30x best against the 3.2 bound while the
   real 500k growth legs on the same runner stayed green). 3-of-5 is the
-  documented live-red shape ("в‰Ґ3 of the 5 timed runs"): median-of-5
+  documented live-red shape ("≥3 of the 5 timed runs"): median-of-5
   [c,c,s] is still a spiked value, so the leg still proves the
   pre-gh-1532 median harness fails, and the min harness now rides two
   clean doubled samples per attempt.
 
-- fix(#1705): CLI fresh-install boarding asks the provider choice FIRST вЂ”
-  the same list the `/add-provider` picker shows (presets, `Custom` last) вЂ”
+- fix(#1705): CLI fresh-install boarding asks the provider choice FIRST —
+  the same list the `/add-provider` picker shows (presets, `Custom` last) —
   and only `Custom` continues into the api-type wizard; a preset opens its
   own flow with the api type prefilled. Previously boarding opened the
   custom wizard directly, cold-asking "api type" before any provider was
   chosen.
-- feat(providers): gh-1704 вЂ” first-class Codex/ChatGPT credential export,
+- feat(providers): gh-1704 — first-class Codex/ChatGPT credential export,
   CI refresh action, and Provider Queue integration (Copilot-export
   parity). `fa provider export <name> [--check]` resolves the saved
   ChatGPT login's OAuth blob from its secure-store slot, refreshes it when
   stale, and prints the shell lines (`OPENAI_API_KEY` + `OPENAI_BASE_URL`
-  = the Codex backend вЂ” these tokens never serve api.openai.com); the
+  = the Codex backend — these tokens never serve api.openai.com); the
   refresh token never prints and `--check` reports credential health with
   the SSO caveat. `/provider chatgpt import [path]` adopts an existing
-  `codex login` session (`~/.codex/auth.json`) into the same slot вЂ” no
+  `codex login` session (`~/.codex/auth.json`) into the same slot — no
   browser round-trip. `.github/actions/chatgpt-codex-auth` mints a fresh
   access token from a `CHATGPT_REFRESH_TOKEN` secret in CI (direct curl,
   no third-party action); invalid_grant fails fast and loudly.
@@ -868,13 +898,13 @@ block a release again.
   resolves the Keychain slot automatically (in-memory refresh), a new
   `refreshTokenEnv:` field mints the initial access token on slot
   activation, and a raw Bearer token in `apiKeyEnv` is tolerated by
-  `chatgpt_codex.dart` (no more FormatException вЂ” proactive/reactive
+  `chatgpt_codex.dart` (no more FormatException — proactive/reactive
   refresh degrade, a 401 surfaces as the auth death the queue fails over
   on).
 
-- feat(bench): gh-1681 вЂ” leaderboard submission readiness. ATIF
+- feat(bench): gh-1681 — leaderboard submission readiness. ATIF
   trajectories: new `exportAtifJson` whole-snapshot exporter
-  (`lib/src/trajectory/atif_export.dart`, ATIF-v1.7 вЂ” the schema harbor
+  (`lib/src/trajectory/atif_export.dart`, ATIF-v1.7 — the schema harbor
   0.23.0's flagship adapters emit) behind a headless `fa trajectory
   export [--format atif] [--output path]` verb; the harbor adapter runs
   it as a bounded best-effort exec after the agent phase on every
@@ -886,47 +916,47 @@ block a release again.
   cross-validated against harbor's pydantic `Trajectory` +
   `validate_trajectory` in `test_atif_contract.py`. Workflow: a
   `submission: true` dispatch input turns the submission rules into hard
-  setup preflights (full task coverage, в‰Ґ5 attempts/task, no
+  setup preflights (full task coverage, ≥5 attempts/task, no
   agent-timeout override, pinned dataset) and makes the new per-shard
   ATIF presence gate fail hard; default runs gain only a warn-only scan
   (artifact flow unchanged). Runbook: docs/leaderboard-submission.md
   (pinned dataset + @latest content-hash recording, quota-window runner
   policy, lb CLI steps).
-- fix(headless): gh-1589 вЂ” the headless session becomes a SEALED artifact:
+- fix(headless): gh-1589 — the headless session becomes a SEALED artifact:
   no session-JSONL writes land after the run's agent phase ends. New
   `Session.seal()` (state in the writer, no file-format change): raised in
   `runHeadless`' finally and the REPL teardown as the LAST session action
-  (close order: drain в†’ usage fold в†’ seal в†’ exit, one implementation both
-  paths вЂ” REG-2), it makes every writer (`_persistMessages`,
+  (close order: drain → usage fold → seal → exit, one implementation both
+  paths — REG-2), it makes every writer (`_persistMessages`,
   `shell_job_registry` snapshots, compaction, any `appendCustomEntry`,
   leaf moves) drop late appends with exactly ONE stderr warning per
-  writer class вЂ” never a throw into an unhandled zone; the exit code
+  writer class — never a throw into an unhandled zone; the exit code
   stays the turn's terminal outcome (issue #413 semantics untouched). The
-  settleв†’reaction path is sealed with the file (I2): the drain wrap-up
+  settle→reaction path is sealed with the file (I2): the drain wrap-up
   raises a fence (`_reactionRunsSealed`) so a background-shell settle or
-  task completion arriving after the final answer's drain вЂ” including the
+  task completion arriving after the final answer's drain — including the
   registry's one-turn-deferred listener racing `_finishHeadlessDrain`'s
-  check-to-return window (the 65gGW7b 10:13:42вЂ“10:14:00 burst) вЂ” does
+  check-to-return window (the 65gGW7b 10:13:42–10:14:00 burst) — does
   board bookkeeping only: no `_startRun`, no model request, no record.
-  An honest drain's records (final answer в†’ seal) stay legal (E7); the
+  An honest drain's records (final answer → seal) stay legal (E7); the
   seal is per-run state, so resume/replay/`session_repair` are unchanged.
   Adapter side (bench/harbor_fa, I3/AC4+AC7): `run()`/`perform_task`
-  returns only after the fa process exited on EVERY path вЂ” the ladder
-  kill became terminate-and-reap (SIGTERM в†’ bounded exec await в†’ SIGKILL
-  escalation в†’ pgrep confirm), and the external-cancel paths (harbor's
+  returns only after the fa process exited on EVERY path — the ladder
+  kill became terminate-and-reap (SIGTERM → bounded exec await → SIGKILL
+  escalation → pgrep confirm), and the external-cancel paths (harbor's
   own wait_for firing first, the no-knobs exec, external-cap-only mode)
   now fire the kill + bounded reap before propagating, with a loud
   `agent-phase exit guarantee degraded` stderr note when fa survives both
   signals (never a silent proceed, never an unbounded hang).
-- fix(bench): gh-1643 вЂ” a trial killed mid-stream no longer reports 0/None
+- fix(bench): gh-1643 — a trial killed mid-stream no longer reports 0/None
   usage. The fold read only FINALIZED assistant messages, so a run killed
   before its first assistant message (the costliest rows) folded to silent
   zeros. Both folds now price a dangling `model_request_summary` at its
   KNOWN request-side volume (system prompt + outbound message chars at the
   shared chars/4 rate, estimated input; output unknown) and mark the usage
-  incomplete instead: `UsageChainScan.usageIncomplete` в†’ `usage.json`
+  incomplete instead: `UsageChainScan.usageIncomplete` → `usage.json`
   (`usageIncomplete: true`, written only when set so completed folds stay
-  byte-identical), `SessionUsage.usage_incomplete` в†’ the tb adapter's
+  byte-identical), `SessionUsage.usage_incomplete` → the tb adapter's
   `usage-guard.json` row and harbor's `agent_result.metadata`, and the
   post-mortem stamps `usage_incomplete` on every results.json row it
   patches from a partial fold. Harbor also exports the run outcome class
@@ -936,38 +966,38 @@ block a release again.
   superseded by another summary is flushed instead of silently dropped on
   both sides. Never-started trials keep the gh-1638/gh-1576 audit-only
   precedence (no fake usage).
-- fix(stuck-calls): gh-1632 вЂ” a stuck tool call in an interactive session now
+- fix(stuck-calls): gh-1632 — a stuck tool call in an interactive session now
   escalates like everywhere else. `effectiveStuckTool()` defaulted every
   non-headless host to `StuckFollowUpMode.advisory` when no explicit
   `agent.stuckTool:` was configured, so the fa 1.0.580 incident session (a
   dead `git fetch` in the REPL) fired its `tool_stuck` flag at the 300 s
-  threshold and then hung for 27 more minutes вЂ” advisory mode never cancels,
+  threshold and then hung for 27 more minutes — advisory mode never cancels,
   retries, or converts; only the owner's manual steering broke the deadlock.
-  The autonomous default (cancel в†’ retry once в†’ background-convert, then a
+  The autonomous default (cancel → retry once → background-convert, then a
   session-visible escalation) now applies in EVERY mode; `advisory` remains
   an explicit opt-out (`agent.stuckTool.followUp: advisory`), never an
   implicit default.
-- fix(bindings): gh-1624 вЂ” the gh-1570 binding preflight no longer kills
+- fix(bindings): gh-1624 — the gh-1570 binding preflight no longer kills
   translating-proxy factories. `_validateModelEndpoint`'s vendor-prefix
   verdict was fatal on ANY endpoint, so `FA_PROVIDER_TYPE=anthropic` +
   bifrost's `/anthropic` path + `zai/glm-5.3` exit-64'd every boot on
   1.0.576 (the prefix is a routing key on a translating proxy, not a
   dialect declaration). The vendor-prefix check now fires ONLY on the
-  endpoints that carry a dialect verdict вЂ” the three family-exclusive
+  endpoints that carry a dialect verdict — the three family-exclusive
   canonical vendor endpoints (api.anthropic.com, api.openai.com,
   generativelanguage), mirroring the family verdict's scope: those keep
-  the gh-1570 fail-fast, ROUTERS (OpenRouter/Copilot/DIAL/kimi вЂ” the
+  the gh-1570 fail-fast, ROUTERS (OpenRouter/Copilot/DIAL/kimi — the
   prefix is a routing key there too; OpenRouter's canonical ids are
   `anthropic/claude-*`) and unknown/private endpoints carry the mismatch
   as a `ProviderModelBinding.warnings` entry, never exit 64. The warning
   is rendered on EVERY resolve path (gh-1624 review): the `FA_PROVIDER_*`
   boot notice, the provider queue (per entry at boot, on queue reload,
   and in `/provider queue test`), and the `--model`/`--base-url` flag
-  revalidation вЂ” a rider never boots silently.
+  revalidation — a rider never boots silently.
   **Breaking-change note for 1.0.576 upgraders behind proxy
-  factories: the migration is the `wire:` FA_PROVIDER_CONFIG key** вЂ”
+  factories: the migration is the `wire:` FA_PROVIDER_CONFIG key** —
   documented now (README env-preconfig section,
-  docs/agents/providers.md В§Translating proxies, `--help`) with its
+  docs/agents/providers.md §Translating proxies, `--help`) with its
   caveat: the override engages only when the declared wire DIFFERS from
   the provider record's own kind (`record anthropic + wire: anthropic`
   still runs the checks). REG matrix (AC1/AC2/AC3) pinned in
@@ -977,7 +1007,7 @@ block a release again.
 - gh-1596: the first-run wizard (`site/setup.sh`) no longer crashes or
   corrupts input under `curl | sh` on dash (Ubuntu sh) or busybox ash
   (Alpine): `scripts/gen_installers.dart` now renders the provider/mode/
-  approval menus from the live provider catalog into plain POSIX sh вЂ” the
+  approval menus from the live provider catalog into plain POSIX sh — the
   bashisms that killed dash (`printf -v`, `read -p`) and silently corrupted
   busybox ash are gone; the hidden API-key prompt uses `stty -echo` + a
   by-name `read` (dash has no `read -s`) and the key never rides printf
@@ -987,7 +1017,7 @@ block a release again.
   path). A new path-triggered `installer-portability` CI leg proves the
   script under dash + busybox ash (ubuntu) and bash (macOS) on every
   `site/**` or generator change.
-- fix(cli): gh-1572 вЂ” `fa` boot no longer rewrites `~/.fah/config.yaml`
+- fix(cli): gh-1572 — `fa` boot no longer rewrites `~/.fah/config.yaml`
   from a lossy config. `persistConfig` (bin/fah_runapp.dart) built a
   fresh `CliConfig` carrying only some fields and `persistConfig()` ran
   unconditionally at boot, so every launch silently dropped the user's
@@ -1003,7 +1033,7 @@ block a release again.
   `toYaml` (new `SpillsConfig.toYaml`) and `agent.misuseBreaker: false`
   persists too; an unchanged save no longer rewrites the file at all.
   Rework round: the boot snapshot re-syncs from disk after every
-  sanctioned mid-session settings write (`onUserConfigFileChanged` вЂ” a
+  sanctioned mid-session settings write (`onUserConfigFileChanged` — a
   cleared context cap, an `auto_update` key drop or a global compaction
   pick is no longer resurrected/overwritten by the next save in the
   same session); `validateAgentSection` (the strict `fa config check` /
@@ -1015,15 +1045,15 @@ block a release again.
   block (no typed renderer) joins the disk backstop so a save can never
   silently delete the user's queue. Rework round 2 (merge + guards):
   `validateAgentSection`'s per-key switch became the `_agentKeyValidators`
-  table (the two gh-1572 keys pushed the switch form to complexity 13 вЂ”
+  table (the two gh-1572 keys pushed the switch form to complexity 13 —
   over the repo's CRAP ratchet; the table keeps the mirror complete at
-  complexity 4), and the last two direct USER-config writers вЂ”
-  `_writeTtsrSection` and `_writeMcpSection` вЂ” fire the re-sync hook, so
+  complexity 4), and the last two direct USER-config writers —
+  `_writeTtsrSection` and `_writeMcpSection` — fire the re-sync hook, so
   a mid-session ttsr rule toggle or mcp server edit survives the next
   persist too (the writer roster in `settings_flow_config_sync.dart` is
   now exhaustive).
 - gh-1606: the `copilot` provider accepts fine-grained PATs
-  (`github_pat_вЂ¦`) directly вЂ” PAT mode skips the `copilot_internal/v2/token`
+  (`github_pat_…`) directly — PAT mode skips the `copilot_internal/v2/token`
   exchange entirely (GitHub 404s every PAT exchange) and sends the raw PAT
   as the Bearer against the configured Copilot base URL with the official
   Copilot CLI's first-party identity headers
@@ -1038,7 +1068,7 @@ block a release again.
   on several entries; the token never prints to the transcript).
 
 - gh-1575: macOS clipboard paste fixed for TIFF-only pasteboards + the
-  Ctrl+V text fallback. `_readMacos` probes `В«class TIFFВ»` after PNGf/JPEG
+  Ctrl+V text fallback. `_readMacos` probes `«class TIFF»` after PNGf/JPEG
   miss and converts via `sips -s format png` (a Preview/browser copy used
   to dead-end on `clipboard holds no image`; a failed conversion keeps the
   unavailable fall-through and every scratch file is cleaned up); new
@@ -1046,7 +1076,7 @@ block a release again.
   Get-Clipboard) behind the same injectable `ProcessRunner`/`platform:`
   seam, and Ctrl+V with a TEXT clipboard now inserts the clipboard text
   into the composer instead of printing the image probe's dead-end reason
-  вЂ” bracketed-paste routing, gesture pairing and silent-failure semantics
+  — bracketed-paste routing, gesture pairing and silent-failure semantics
   unchanged. Review pass: the Windows `Get-Clipboard` read pins UTF-8
   console output and normalizes embedded `\r\n` (OEM-code-page mojibake),
   the Linux text backends pin `text/plain;charset=utf-8` (an image-only
@@ -1066,12 +1096,12 @@ block a release again.
   with the tail-anchored windowed session; the boot cap owns over-window
   residue); and the headless `fa trajectory` resolver opens windowed,
   reading the whole ledger for the cost/inspect views through the new
-  `SessionTree.ensureWholeLedgerResident` вЂ” a sequential forward scan in
+  `SessionTree.ensureWholeLedgerResident` — a sequential forward scan in
   bounded strips (`WindowedSessionStorage.loadAllOlder`), not the
   boundary-walk's doubling strips (whose per-strip record cap measured
   ~13x read/parse amplification over the whole file). The same change
   block-prepends paged chunks in `_indexChunk` (one `insertAll` per
-  list), removing an O(nВІ) the suspended-eviction walk paid per record.
+  list), removing an O(n²) the suspended-eviction walk paid per record.
   Trajectory export streaming (AC3a), split-and-retain rotation
   activation (W2), and the opt-in write-side caps (W3) remain follow-up
   work.
@@ -1081,7 +1111,7 @@ block a release again.
   verified when it survives the grader's own invocation: the checklist
   must re-run each produced entry point from a different working
   directory in a fresh subprocess with a clean env, capture stdout/
-  stderr/exit code, and diff against the earlier in-session run вЂ” any
+  stderr/exit code, and diff against the earlier in-session run — any
   divergence (different output, relative-path artifacts, locale/
   encoding-dependent output) is a `fail` ledger item, never a pass.
   Closes the modernize-scientific-stack__nwbgy7a near-miss (every
@@ -1090,27 +1120,27 @@ block a release again.
   the parity procedure catches cwd- and env-dependent entry points and
   does not false-positive cwd-independent ones
   (`test/agent/finalize_gate_grader_parity_test.dart`), and an IT replays
-  the evidence shape end-to-end вЂ” divergence detected and persisted as a
+  the evidence shape end-to-end — divergence detected and persisted as a
   `fail` ledger item before finalize.
 
 - gh-1603: unattended runs can no longer end as a clean success on empty
   model responses. Loop: from the second empty-hiccup retry on, the request
   carries a continuation nudge user message ("your last reply was
-  empty/truncated вЂ” continue the task"; exact-text constant
+  empty/truncated — continue the task"; exact-text constant
   `emptyContinuationNudge`, emitted with MessageStart/End so the transcript
-  stays truthful) вЂ” a cap-truncated reasoning model re-streamed verbatim
+  stays truthful) — a cap-truncated reasoning model re-streamed verbatim
   repeats the empty outcome, the nudge breaks the symmetry; the classifier
   treats that exact message as transparent, so the turn's partial-content
   window (gh-1577) survives a nudged retry. Headless: the empty-reply nudge
-  budget rises to `AgentCliConfig.headlessEmptyReplyNudges` (default 2 вЂ” the
+  budget rises to `AgentCliConfig.headlessEmptyReplyNudges` (default 2 — the
   session ends only after 3 consecutive unrecoverable empties; interactive
   keeps the #1085 M2b one-nudge semantics), and a run that still settles
-  empty prints the explicit `__FA_INCOMPLETE` marker and exits 1 вЂ” a
+  empty prints the explicit `__FA_INCOMPLETE` marker and exits 1 — a
   distinguishable failure for the bench adapter, never a silent exit 0.
 
 - gh-1577: an empty assistant completion after partial content (assistant
   text, tool activity, or a truncation signal earlier in the turn) is a
-  bounded-retry provider hiccup вЂ” up to `emptyHiccupRetries` (default 3)
+  bounded-retry provider hiccup — up to `emptyHiccupRetries` (default 3)
   re-streams with exponential backoff (`emptyHiccupBaseDelay`,
   `emptyHiccupMaxBackoff`, both threaded through the `Agent` facade,
   `AgentWiringSpec`, and the CLI config), and exhaustion ends the run with
@@ -1121,28 +1151,28 @@ block a release again.
   any empty shape (the exit-contract race is pinned by tests), and the
   backoff sleep is cancellation-aware.
 
-- gh-1574: SQLite reads work on installed binaries вЂ” bundle libs land where
+- gh-1574: SQLite reads work on installed binaries — bundle libs land where
   the binary looks. The AOT binary's native-assets resolver reads
   `<exe_dir>/../lib/<name>` (the `dart build cli` bundle layout), but every
   POSIX installer copied the bundle libs beside the binary
   (`<install_dir>/lib`), so `read path=x.db` died with a raw FFI dump
-  (`Couldn't resolve native function 'sqlite3_initialize' вЂ¦ Failed to load
+  (`Couldn't resolve native function 'sqlite3_initialize' … Failed to load
   dynamic library '~/.local/lib/libsqlite3.dylib'`); it only worked on machines
   with a manual symlink in `~/.local/lib`. Fixed the layout in all three
-  install paths вЂ” `site/install.sh` (incl. the quarantine-xattr pass and the
+  install paths — `site/install.sh` (incl. the quarantine-xattr pass and the
   source-build advice), `install_local.sh`, and `fa update`
   (`bin/self_manage.dart` `copyBundleLibs`, now public and layout-pinned by
   tests; also aligns Windows `fa update` with `install.ps1`, which was
-  already correct) вЂ” plus clean degradation in the FFI engine:
+  already correct) — plus clean degradation in the FFI engine:
   `Sqlite3Engine.openReadOnly` classifies the dart:ffi resolver's
   library-load failure (`isSqliteDynamicLibraryLoadFailure`) and throws a
-  clean `SQLite is unavailable вЂ” reinstall or run fa update` note instead of
+  clean `SQLite is unavailable — reinstall or run fa update` note instead of
   the raw resolver dump; a Dart-level system-library fallback is impossible
   with package:sqlite3 native assets (build-time asset mapping, no loader
   override). Installs already broken by the old layout self-heal: on the
   bundled library's first failed load the binary moves the stale
   `<exe_dir>/libsqlite3.*` into `<exe_dir>/../lib/` and retries the load
-  (`repairStaleSqliteBundleLayout`) вЂ” so one `fa update` suffices (the
+  (`repairStaleSqliteBundleLayout`) — so one `fa update` suffices (the
   successor binary repairs on its first SQLite read; a pre-fix binary cannot
   repair itself), and the stale `<bin>/lib` leftovers disappear as they
   migrate. The POSIX installers also report a failed lib copy instead of
@@ -1154,24 +1184,24 @@ block a release again.
   Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
   wrapped so a kill failure can never replace the `TimeoutError` (the
   pre-fix self-matching `pkill` classified TB 2.0 ladder kills as agent
-  crashes вЂ” a SOLVED task scored 0); progress-watch (stall-gap 360s per
+  crashes — a SOLVED task scored 0); progress-watch (stall-gap 360s per
   the gh-1430 watchdog invariant, flat abs ceiling 3600s) is the
   bench-harbor.yml default on every shard, with the harbor adapter
   picking the gap-aware `ProgressWatch` for parity with the
   terminal-bench adapter; the aggregate counts completeness by
   `result.json` presence (errored trials report as their own breakdown
   line; exit 1 only on genuinely lost trials) and renders the full
-  report вЂ” table, errored breakdown, ledger row вЂ” to
+  report — table, errored breakdown, ledger row — to
   `$GITHUB_STEP_SUMMARY` (TB1 parity). Both bench adapters export
-  `FA_DEADLINE_EPOCH_MS` (effective cap в€’ 120s wrap-up margin) into the
-  agent session and audit the exact value. fa core: deadline awareness вЂ”
+  `FA_DEADLINE_EPOCH_MS` (effective cap − 120s wrap-up margin) into the
+  agent session and audit the exact value. fa core: deadline awareness —
   `FA_DEADLINE_EPOCH_MS` / `--timer`/`--deadline` / `/timer` write one
   session clock, the per-turn context carries a `time-left:` line while
   armed, and one-shot system notices steer wrap-up at ~50%, T-3min
   (drain background jobs), and T-30s; absent deadline = byte-for-byte
   today's behavior.
 
-- gh-1522: tag-sourced versions вЂ” the git tag is the single source of
+- gh-1522: tag-sourced versions — the git tag is the single source of
   truth. The release-bot file bumps are retired: cutting a release = a
   tag + GitHub Release (zero commits to main, zero file mutations).
   Both pubspecs carry the fixed `0.0.0-dev` placeholder (CI guards
@@ -1182,14 +1212,14 @@ block a release again.
   (`pubspec.lock` stops churning across releases), and
   `install_local.sh` stamps `version.txt` from `git describe`.
 
-- feat(usage): gh-1460 вЂ” the `fa-tokens:` segment-close line carries the
+- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
   session's model id, so every token row the factory publishes is
   attributable to a model and therefore priceable. The fold now captures
   each segment's LAST-SEEN model id (the model that served the final
-  request, the same string settings/UI display вЂ” mid-session fallback
+  request, the same string settings/UI display — mid-session fallback
   take-overs attribute the segment to the model that actually finished it;
   zero-filled fallbacks never clobber a seen model) and the pinned line
-  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` вЂ” omitted
+  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
   when no model was observed, so legacy lines parse unchanged and the
   pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
   shapes. usage.json's schema is untouched (the model is rebuildable from
@@ -1197,59 +1227,59 @@ block a release again.
   and the repo's single strict consumer (the pinned constant) is updated
   in the same change.
 
-- fix(test): gh-1460 rework вЂ” the `wrap_ansi_line_perf_test` growth-shape
+- fix(test): gh-1460 rework — the `wrap_ansi_line_perf_test` growth-shape
   legs measure the doubling ratio with the MINIMUM over 9 runs instead of
   the median of 5 (CI run 38112524699, core shard 0/4: a scheduling pause
-  inflated the doubled-size median вЂ” 12.09ms against a true ~7ms вЂ” and
+  inflated the doubled-size median — 12.09ms against a true ~7ms — and
   tripped the 3.2 bound at 3.65x on a genuinely linear wrap). Runner
   jitter only ever inflates a wall-clock sample, so the min converges on
   the true compute time; genuine superlinearity still trips the ratio
   (the gh-1496 quadratic candidates measure ~4x by min). The absolute-
-  budget legs keep the median вЂ” their gh-1357 headroom already prices in
+  budget legs keep the median — their gh-1357 headroom already prices in
   jitter. A synthetic regression test pins the pause-proof property.
 
 ## 1.0.506
 
-- fix(#1044): AIIN mobile/macOS add-provider вЂ” sign-in completes but the provider is never added (#1194)
-- fix(ci): pass flutter-version explicitly вЂ” awf no longer defaults a toolchain (#1205)
+- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
+- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
 
 ## 1.0.507
 
-- gh-1208 [BENCH] fix-git task image broken on CI runners вЂ” docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
+- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
 - gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
-- gh-1209 [BENCH] usage fold skips failed trials вЂ” agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
+- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
 
 ## 1.0.508
 
-- fix(cli): gh-1459 вЂ” headless `fa -p` no longer orphans live background
+- fix(cli): gh-1459 — headless `fa -p` no longer orphans live background
   shell jobs. `_awaitHeadlessBackgroundJobs` drained only in-flight
   subagent jobs, so a run whose model was still waiting on a
   `bash background:true` command (gh-1440's full test suite) printed the
-  detach summary and exited, killing the job with the container вЂ” the
+  detach summary and exited, killing the job with the container — the
   result it was explicitly waiting for never reached anyone. Live shell
   jobs now drain exactly like subagents: the settles ride the existing
   `_onShellJobSettled` fresh-turn path (steered into reaction runs the
   drain awaits, loop capped at 10 rounds), suppressed jobs
-  (`suppressSettleNotification` вЂ” result already landed in-turn) are not
+  (`suppressSettleNotification` — result already landed in-turn) are not
   awaited, and a settle landing outside a round still gets its reaction
   run awaited before exit. BOTH loops share ONE wall-clock ceiling, the
   new `headless:` config section (`shellJobDrainMs`, default 30 min,
-  strict parse; `0` restores the detach-immediately behavior) вЂ” a
+  strict parse; `0` restores the detach-immediately behavior) — a
   never-settling watch-loop detaches with an observable
-  `вЏі вЂ¦ drain ceiling вЂ¦ вЂ” detaching` line instead of hanging headless,
+  `⏳ … drain ceiling … — detaching` line instead of hanging headless,
   and the detach summary stays the documented degradation, never the
-  default path. The drain prints a `вЏі waiting: вЂ¦` line (#1055 parity)
+  default path. The drain prints a `⏳ waiting: …` line (#1055 parity)
   naming what the run stays alive for. While it waits, the drain also
   steers interim liveness notices (gh-1459 ask #4): every
   `headless.shellJobQuietMs` (default 5 min; `0` = off) of a
   still-running awaited shell job, ONE compact system-notice
-  (`job <id> running В· <elapsed> elapsed В· tail: вЂ¦` plus the bash_job
+  (`job <id> running · <elapsed> elapsed · tail: …` plus the bash_job
   output/stop escape hatch) keeps the model able to wait, inspect, or
   kill instead of blocking blindly to the ceiling; a crossing the model
   probed itself (`bash_job status/output` bumps the entry's probe
   generation) is skipped, one steer budget per threshold, never a spam
   loop.
-- feat(providers): issue #1398 вЂ” stall-recovery tuning becomes per-provider
+- feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
   and data-driven. Registry entries (`customProviders:`, `models.custom:`,
   roles chain entries, `providersQueue:` entries) accept optional
   `connectTimeoutMs`/`streamIdleTimeoutMs` (strict positive-int parsing);
@@ -1258,21 +1288,21 @@ block a release again.
   at boot. The wire seams (`sendWatchedProviderRequest` connect watchdog,
   `createSseIterator` idle watchdog) resolve per request URL, so all
   adapters inherit the tuning; runs without entries are byte-identical
-  (AC6). Also: the retry backoff contract вЂ” a parseable delta-seconds
+  (AC6). Also: the retry backoff contract — a parseable delta-seconds
   `Retry-After` wins over the ladder for that attempt, hard-capped at the
   60 s ceiling (the clamp names the advertised value; `0` counts as
   absent, malformed/HTTP-date headers fall back to the ladder with a trace
-  note) вЂ” and the dual retry budgets (connection-class cap 4, stream-class
+  note) — and the dual retry budgets (connection-class cap 4, stream-class
   cap 3, independent counters, the terminal story carries both). Trace
   lines pin the format `budget=<connection|stream> attempt=<n>/<cap>
   delay=<ladder|server|clamp>`; the tuning report prints per-model
   p50/p95 inter-chunk gap + watchdog-fire counts with the
-  `streamIdleTimeoutMs в‰€ 2Г— p95` recipe (the production feeder lands with
+  `streamIdleTimeoutMs ≈ 2× p95` recipe (the production feeder lands with
   #1392's LatencyMeter).
-- feat(hosts): gh-1322 вЂ” the wireAgentCore host-adoption gaps: an embed
+- feat(hosts): gh-1322 — the wireAgentCore host-adoption gaps: an embed
   guide (`docs/embedding.md`, with the explicit "hosts ride wireAgentCore,
   never adk_dart" rule), the host-facing key-slot resolver
-  (`AgentCoreServices.resolveKey` + `HostKeyResolver` вЂ” the effective slot
+  (`AgentCoreServices.resolveKey` + `HostKeyResolver` — the effective slot
   NAME, pinned-twin drift hints identical to the CLI's migration notes,
   registry-leg `knownSlotNames`, injected env/store readers only), and
   lifecycle telemetry for in-process hosts (`AgentCoreServices.telemetry`:
@@ -1280,14 +1310,14 @@ block a release again.
   `lib/io.dart`; requestStart/firstToken/turn/tool/run records with
   durations and the provider HTTP status).
 - chore(ci): document the sm-kicker head-completeness codeless-head crash
-  (upstream awf#15) вЂ” the factory job's `gh api` calls put `--jq` before
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
   `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
   files: a routine branch-sync merge with no content diff) crashes the
-  job with `accepts 1 arg(s), received 4` вЂ” even when CI is fully green
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
   on that head, and the job's own rescue dispatch can never heal exactly
   those heads. Workaround until the upstream fix: keep the branch head
   code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
-- fix(messaging): gh-1180 вЂ” `schedule_message` self-chains no longer die
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
   silently at the agent-chatter wake cap. The idle inbox-wake gate
   (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
   delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
@@ -1302,14 +1332,14 @@ block a release again.
   wake_attempted / turn_started / wake_refused. A failed scheduler scan
   (transient `listDir` error) now re-arms at `failureBackoff` with an
   `onError` log instead of silently disarming the delivery heartbeat.
-- fix(messaging): gh-1180 review round вЂ” refusal receipts and the
+- fix(messaging): gh-1180 review round — refusal receipts and the
   visible refusal line are gated once per refusal EPISODE (the latch
   lives in `InboxWakePolicy` next to the streak and re-arms on the same
   resets), so a held gate no longer appends per-tick `wake_attempted`
   rows (~43k duplicate lines/day) and a repeat episode after user input
   is announced and receipted again. The app host receipts its wake path
   (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
-  trail вЂ” AC4 is no longer CLI-only. A self-reminder adopted across a
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
   session-id change delivers FROM the live mailbox (from re-addressed
   alongside to), so the resumed chain stays self-shaped and exempt
   instead of falling back to the capped chatter lane. Plugin-only
@@ -1321,13 +1351,13 @@ block a release again.
 ## 1.0.509
 
 
-- chore(pin): awf workflows track @main вЂ” always-latest policy (owner
+- chore(pin): awf workflows track @main — always-latest policy (owner
   directive 2026-10-04). All five machine-loop stubs (teammate, SM,
   merge, sm-kicker, merge-trigger) flip from immutable SHA pins to
   `dmtools-agentic-workflows@main`, so awf fixes (kicker real ticks
   awf#13, per-SHA concurrency awf#14, teammate defaults awf#12) go live
   on merge with no re-pin ceremony. Security trade-off (owner-accepted):
-  a mutable ref executes whatever sits at the awf main head вЂ” mitigated
+  a mutable ref executes whatever sits at the awf main head — mitigated
   by awf main being review-gated, by
   `test/machine_kit/factory_stub_ref_test.dart` now guarding ALL FIVE
   `uses:` refs resolve to exactly `main` (never a stale SHA, never a
@@ -1343,24 +1373,24 @@ block a release again.
 
 ## 1.0.510
 
-- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding вЂ” copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
 - gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
-- feat(1101): Agent Wire Protocol v1 вЂ” web reference client (sdk/web), conformance runner, browser example (#1228)
-- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead вЂ” 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
 ## 1.0.511
 
 - gh-1164 [GOAL] built-in js-apps skill (promoted from app asset, decisive apps-vs-widget routing) + JS render/runtime errors reported back to the authoring agent as failures (blocked by #1151) (#1246)
-- gh-1244 [FLAKE] PTY integration: secret_sheet_test В«IT-mask: masked from the first keystrokeВ» waits for exactly 5 bullets while typing races ahead (red main, run 37232401938) (#1245)
+- gh-1244 [FLAKE] PTY integration: secret_sheet_test «IT-mask: masked from the first keystroke» waits for exactly 5 bullets while typing races ahead (red main, run 37232401938) (#1245)
 - gh-1241 [GOAL] Session token-usage ledger: resume-aware usage.json fold over the session chain (provider-reported, estimated marked) (#1243)
 - ci(quarantine): skip scheduled_indicator_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1252) (#1253)
-- gh-1077 [GOAL] flutter_app compaction parity with CLI вЂ” mobile sessions never compact (roles/smol absent, wrong context window, silent failure, no over-window relief) (#1239)
+- gh-1077 [GOAL] flutter_app compaction parity with CLI — mobile sessions never compact (roles/smol absent, wrong context window, silent failure, no over-window relief) (#1239)
 - ci(quarantine): skip job_board_stability_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1250) (#1251)
 - gh-1235 Wire jsr.openUrl + webView host into the app JS engine (js_widget_runtime = 0.4.154) (#1238)
-- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding вЂ” copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
 - gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
-- feat(1101): Agent Wire Protocol v1 вЂ” web reference client (sdk/web), conformance runner, browser example (#1228)
-- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead вЂ” 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
 ## 1.0.513
 
@@ -1369,85 +1399,85 @@ block a release again.
 ## 1.0.514
 
 
-- fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) вЂ” a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps
+- fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) — a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps
 
 ## 1.0.515
 
 - gh-1292 fa-tokens line must reach stdout in headless/CI runs (ledger emission invisible to the GH log) (#1295)
-- gh-1296 [BUG] iOS build red in CocoaPods layer: package:sqlite3 build_hook fails вЂ” Podfile.lock drift (pods cache re-rolls weekly) never-again: ALL lockfiles committed + enforced (#1298)
-- feat(1096): mac size diet вЂ” wasm_run_flutter.framework + never-loaded assets, ratcheted (#1227)
+- gh-1296 [BUG] iOS build red in CocoaPods layer: package:sqlite3 build_hook fails — Podfile.lock drift (pods cache re-rolls weekly) never-again: ALL lockfiles committed + enforced (#1298)
+- feat(1096): mac size diet — wasm_run_flutter.framework + never-loaded assets, ratcheted (#1227)
 - chore(merge-trigger): track awf @main + map_pr_labels: true (#1285)
 - ci(quarantine): skip secret_sheet_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1283) (#1284)
 - fix(1280): CLI arch matrix gates the merge; release binaries boot-smoked (#1282)
 - gh-1276 [BUG] iOS: memory_search returns garbage + memory_list hides user-scope notes (agent fell back to memory_delete by exact text) (#1281)
 - ci(quarantine): test/integration/theme_readability_pty_test.dart (flake) (#1255)
-- gh-1274 [BUG] iOS sandbox bash: relative paths resolve to a nonexistent CWD вЂ” files written in the sandbox are invisible to relative-path commands (still broken on 1.0.512 after #1225) (#1279)
-- gh-1266 [BUG] nightly red: macOS flutter_app suite вЂ” 5-test cluster around apps panel / open_app launcher / dynamic_message tiles (suspects #1139, #1173) (#1278)
-- gh-1275 [BUG] Built-in skills (#1151) not packaged into the apps: iOS ships EMPTY skill dirs (create-goal/fa-self-config/js-apps exist, SKILL.md missing) вЂ” verify macOS/Android too (#1277)
-- gh-1272 [BUG] [URGENT] 1.0.512 TestFlight (build 205): EVERY JS widget dead вЂ” engine eval error 'Unterminated regular expression literal /[ в‡Ґ' on all widgets (source corruption in assembly/catalog path) (#1273)
-- gh-1265 [BUG] nightly red 5 nights: native desktop builds broken by a TRANSITIVE flutter_inappwebview nobody declares вЂ” linux WPE missing + windows MSVC 14.51 STL1011 (lockfile not committed) (#1268)
-- gh-1261 [BUG] Play listing deploy fails: clear_images! HTTP 400 вЂ” invalid image_type "images" for en-US/phoneScreenshots (daily-publish Play leg red) (#1264)
-- feat(#1079): SDK slice 2 вЂ” live agent-stack wiring (wireAgentCore); CLI converts to the shared builder (#1230)
+- gh-1274 [BUG] iOS sandbox bash: relative paths resolve to a nonexistent CWD — files written in the sandbox are invisible to relative-path commands (still broken on 1.0.512 after #1225) (#1279)
+- gh-1266 [BUG] nightly red: macOS flutter_app suite — 5-test cluster around apps panel / open_app launcher / dynamic_message tiles (suspects #1139, #1173) (#1278)
+- gh-1275 [BUG] Built-in skills (#1151) not packaged into the apps: iOS ships EMPTY skill dirs (create-goal/fa-self-config/js-apps exist, SKILL.md missing) — verify macOS/Android too (#1277)
+- gh-1272 [BUG] [URGENT] 1.0.512 TestFlight (build 205): EVERY JS widget dead — engine eval error 'Unterminated regular expression literal /[ ⇥' on all widgets (source corruption in assembly/catalog path) (#1273)
+- gh-1265 [BUG] nightly red 5 nights: native desktop builds broken by a TRANSITIVE flutter_inappwebview nobody declares — linux WPE missing + windows MSVC 14.51 STL1011 (lockfile not committed) (#1268)
+- gh-1261 [BUG] Play listing deploy fails: clear_images! HTTP 400 — invalid image_type "images" for en-US/phoneScreenshots (daily-publish Play leg red) (#1264)
+- feat(#1079): SDK slice 2 — live agent-stack wiring (wireAgentCore); CLI converts to the shared builder (#1230)
 - gh-1197 [BUG] TUI fixes (recovered dev leg) (#1263)
 - ci(quarantine): skip dap_wake_hang_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1248) (#1249)
-- gh-1073 Session JSONL grows unboundedly (12 GiB ledger records) в†’ resume fails with 'Failed to read session' + heap-exhaustion crash (#1247)
+- gh-1073 Session JSONL grows unboundedly (12 GiB ledger records) → resume fails with 'Failed to read session' + heap-exhaustion crash (#1247)
 - fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
 
 ## 1.0.516
 
-- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock вЂ” new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
 
 ## 1.0.517
 
-- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock вЂ” new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
 
 ## 1.0.518
 
-- gh-1307 [BUG] nightly macOS suite red: js_app_error_capture_test вЂ” load error NOT captured (empty list) regression from #1273's engine fix, merged green through the PR exclusion-zone hole (#1309)
+- gh-1307 [BUG] nightly macOS suite red: js_app_error_capture_test — load error NOT captured (empty list) regression from #1273's engine fix, merged green through the PR exclusion-zone hole (#1309)
 - fix(918): omp_ref reference fixtures captured on PTY host + nerd-glyph parity wiring (#1231)
-- gh-1310 [CI] Tag CI for v1.0.513 red вЂ” 4+ jobs fail (Android APK, web debug, Hostile ambient env, PTY screenshots) в†’ release asset-less, legs fall back to v1.0.511 (#1312)
-- gh-1303 [CI] Pages 'Build landing + web demo' red on main вЂ” '41 packages have newer versions incompatible with dependency constraints' (blocks publish + merge-trigger) (#1305)
-- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock вЂ” new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+- gh-1310 [CI] Tag CI for v1.0.513 red — 4+ jobs fail (Android APK, web debug, Hostile ambient env, PTY screenshots) → release asset-less, legs fall back to v1.0.511 (#1312)
+- gh-1303 [CI] Pages 'Build landing + web demo' red on main — '41 packages have newer versions incompatible with dependency constraints' (blocks publish + merge-trigger) (#1305)
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
 
 ## 1.0.520
 
 - fix(1250): assert frozen-row invariant, not an unsampleable mid-drain frame (#1286)
-- gh-1300 [ENH] PTY integration tests: pay toolchain+boot ONCE per shard, not per test (~30s spawn overhead Г— N tests) вЂ” boot-once + reset between tests (owner design), FA_BIN AOT seam as the cheap first cut (#1306)
+- gh-1300 [ENH] PTY integration tests: pay toolchain+boot ONCE per shard, not per test (~30s spawn overhead × N tests) — boot-once + reset between tests (owner design), FA_BIN AOT seam as the cheap first cut (#1306)
 
 ## 1.0.521
 
-- fix(1248): dart_tui guard misfires ghost mail-wake turns вЂ” log-and-keep-running (#1289)
+- fix(1248): dart_tui guard misfires ghost mail-wake turns — log-and-keep-running (#1289)
 - gh-1257 [FLAKE] PTY integration: convert the 5 residual exact-bullet-count anchors (secret_sheet_residual_test / password_prompt_pty_test) to the gh-1244 property anchor (#1287)
 
 ## 1.0.522
 
 - fix(ci): play edit-commit sets changesNotSentForReview (#1367)
 - fix(1339): surface recovered trials, terminal failure modes, and model ids in the bench summary (#1351)
-- feat(1331): iOS size diet вЂ” IPA dSYM strip + never-loaded fixture prune + ratchet (#1333)
+- feat(1331): iOS size diet — IPA dSYM strip + never-loaded fixture prune + ratchet (#1333)
 
 ## 1.0.523
 
-- gh-1341 Bump js_widget_runtime pin to 9d57570 / ^0.4.156 вЂ” flutter_js hostCall/capture channel fix (fa-craft lag, voxel-sandbox spinner) (#1366)
+- gh-1341 Bump js_widget_runtime pin to 9d57570 / ^0.4.156 — flutter_js hostCall/capture channel fix (fa-craft lag, voxel-sandbox spinner) (#1366)
 - fix(1349): deny bare long foreground sleeps; enrich liveness reminders with the background hint (#1355)
 - fix(1293): dap start exit-0 guarantees the dial credential is durably on disk (#1354)
 
 ## 1.0.524
 
 - ci(quarantine): skip shell_job_countdown_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1365) (#1347)
-- fix(1368): pub.dev publish вЂ” push-tag-only OIDC path, dart-only gate, verify waits instead of false-alarming (#1370)
-- fix(1339): review hardening вЂ” session-archive traversal guard on every branch (#1369)
-- fix(1323): live thinking streams in the TUI вЂ” reasoning deltas commit the transient-retry attempt (#1325)
+- fix(1368): pub.dev publish — push-tag-only OIDC path, dart-only gate, verify waits instead of false-alarming (#1370)
+- fix(1339): review hardening — session-archive traversal guard on every branch (#1369)
+- fix(1323): live thinking streams in the TUI — reasoning deltas commit the transient-retry attempt (#1325)
 
 ## 1.0.525
 
 - ci(quarantine): skip subagent_integration_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1372) (#1373)
 - fix(1254): quarantine dracula theme-flake + wait headroom for starved shard (#1288)
-- fix(1234): whole-tree CRAP ratchet 12в†’8, loc-gate migration, all top offenders fixed (#1291)
+- fix(1234): whole-tree CRAP ratchet 12→8, loc-gate migration, all top offenders fixed (#1291)
 - fix(1252): widen scheduled-indicator reminder window past loaded-runner pre-check (#1290)
 
 ## 1.0.526
 
-- feat(1322): wireAgentCore host-adoption gaps вЂ” embed guide, host key resolver, lifecycle telemetry (#1327)
+- feat(1322): wireAgentCore host-adoption gaps — embed guide, host key resolver, lifecycle telemetry (#1327)
 - fix(1319): route paging history notifies through the guarded bridge (follow-up to #1320) (#1324)
 
 ## 1.0.527
@@ -1456,17 +1486,17 @@ block a release again.
 
 ## 1.0.528
 
-- feat(1379): Compaction 2.0 second tier вЂ” agent-initiated hide, LRU re-hide, per-segment pins (#1383)
+- feat(1379): Compaction 2.0 second tier — agent-initiated hide, LRU re-hide, per-segment pins (#1383)
 - fix(1402): pre-flight Play listing language gate + edit-discard on commit failure (#1405)
-- feat(1380): obligations ledger substrate вЂ” verbatim entries + level-0 context block (A1 slice 1) (#1382)
+- feat(1380): obligations ledger substrate — verbatim entries + level-0 context block (A1 slice 1) (#1382)
 
 ## 1.0.529
 
-- feat(1377): auto_update tri-state flag вЂ” notify banner, autonomous verified self-update, /update (#1384)
+- feat(1377): auto_update tri-state flag — notify banner, autonomous verified self-update, /update (#1384)
 
 ## 1.0.531
 
-- fix(1406): bench ConnTrace dark inside tmux вЂ” launch-line env + loud-empty guard (#1416)
+- fix(1406): bench ConnTrace dark inside tmux — launch-line env + loud-empty guard (#1416)
 
 ## 1.0.532
 
@@ -1475,13 +1505,13 @@ block a release again.
 
 ## 1.0.533
 
-- gh-1412 [GOAL] Near-miss elimination: FinalizeGate contract + TaskLedger вЂ” the agent verifies produced state against task text before declaring done (#1418)
+- gh-1412 [GOAL] Near-miss elimination: FinalizeGate contract + TaskLedger — the agent verifies produced state against task text before declaring done (#1418)
 - gh-1403 [daily-publish] testflight leg failed (#1424)
 - feat(bench): per-task test-budget override table + planner fairness guard (gh-1407) (#1417)
 
 ## 1.0.534
 
-- fix(1408): harness-induced bench failures вЂ” isolated job logs, redacted at rest, shape-only bash interceptor (AC1вЂ“AC3; AC4 documented) (#1410)
+- fix(1408): harness-induced bench failures — isolated job logs, redacted at rest, shape-only bash interceptor (AC1–AC3; AC4 documented) (#1410)
 - gh-1415 [GOAL] Subagent status line-language: one compact live row per subagent in the CLI TUI (omp-density, ten named deltas) (#1420)
 
 ## 1.0.535
@@ -1489,8 +1519,8 @@ block a release again.
 
 - gh-1426 [GOAL] Model capability negotiation (rework): the resolver's loud
   notes now ride the built `Model` (`capabilityNotes`) and render on the
-  status surfaces вЂ” `/model-edit` prints them next to the resolved triple,
-  and the single-model boot prints them in the boot notice вЂ” so a gated
+  status surfaces — `/model-edit` prints them next to the resolved triple,
+  and the single-model boot prints them in the boot notice — so a gated
   pin (E3), an override-vs-endpoint divergence (E1), and a catalog-miss
   override (E4) are never silent. Also: `applicationNote('models')` says
   "applies live to the next model build" (the flow live-applies; "next
@@ -1501,17 +1531,17 @@ block a release again.
   `resolveModelRefCapabilities` export is dropped, and the resolver's
   ceiling-table lookup and documented wire field both read the same
   effective api (`api ?? spec?.api`).
-- **Behavior change (gh-1426, deliberate вЂ” AC6)**: pre-existing
+- **Behavior change (gh-1426, deliberate — AC6)**: pre-existing
   `thinkingLevel` pins (a `roles:` chain entry, the `FA_PROVIDER_CONFIG`
   preconfig, or a `models.overrides` pin) now reach the wire for the first
   time on the openai-completions family (`reasoning_effort`) and google
   (`thinkingConfig`); on `origin/main` they were carried but wire-silent
-  there. Consequences: (1) REG-1's "no overrides в†’ byte-identical payload"
-  corpus holds only for sessions with NO thinking pin at all вЂ” a session
+  there. Consequences: (1) REG-1's "no overrides → byte-identical payload"
+  corpus holds only for sessions with NO thinking pin at all — a session
   with a bare roles pin changes payloads by design; (2) an endpoint that
   rejects `reasoning_effort` (strict gateways, o-series rung spelling) can
-  now 400 where it previously worked вЂ” unpin the level (`/settings в†’ Model
-  capabilities в†’ thinking level в†’ off`) or pin `omitMaxOutputTokens` where
+  now 400 where it previously worked — unpin the level (`/settings → Model
+  capabilities → thinking level → off`) or pin `omitMaxOutputTokens` where
   the max-output field is the problem. The boot note that claimed the
   openai-completions adapter "is not wired" to the config-carried level is
   corrected and now fires only for the genuinely unwired adapters (dial,
@@ -1519,16 +1549,16 @@ block a release again.
 
 ## 1.0.537
 
-- feat(1374): animated two-tone kaomoji thinking indicator вЂ” app + web TUI (#1419)
+- feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
 
 ## 1.0.538
 
-- gh-1433 [GOAL] Workflow log fidelity: non-interactive headless renders EVERYTHING the model says вЂ” thinking deltas AND assistant text, default-on (the post-hoc log IS the UI) (#1437)
-- gh-1425 [GOAL] Resume loses structured-compaction folds вЂ” marathon session reopens at 143% of window make fold projection resume-equivalent and cap every detonation path (#1427)
-- gh-1430 [GOAL] Headless stream-liveness: fa must heartbeat provably-alive reasoning streams, and the bench stall-gap must defer to fa's own watchdog (round-4 RCA: 13 tasks в‰€ 16% killed mid-thinking) (#1436)
+- gh-1433 [GOAL] Workflow log fidelity: non-interactive headless renders EVERYTHING the model says — thinking deltas AND assistant text, default-on (the post-hoc log IS the UI) (#1437)
+- gh-1425 [GOAL] Resume loses structured-compaction folds — marathon session reopens at 143% of window make fold projection resume-equivalent and cap every detonation path (#1427)
+- gh-1430 [GOAL] Headless stream-liveness: fa must heartbeat provably-alive reasoning streams, and the bench stall-gap must defer to fa's own watchdog (round-4 RCA: 13 tasks ≈ 16% killed mid-thinking) (#1436)
 - chore(1431): reseed fa-extension size baseline for the 3.47.7 engine rev (#1432)
-- gh-1409 [GOAL] Compaction-pinned skill operative lines вЂ” instructions must survive folding (image-carrier precedent) (#1428)
-- feat(1374): animated two-tone kaomoji thinking indicator вЂ” app + web TUI (#1419)
+- gh-1409 [GOAL] Compaction-pinned skill operative lines — instructions must survive folding (image-carrier precedent) (#1428)
+- feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
 
 ## 1.0.539
 
@@ -1536,13 +1566,13 @@ block a release again.
 
 ## 1.0.540
 
-- gh-1441 Voxel nodes render as the вЂњVoxel worldвЂќ placeholder вЂ” Fa app builds JsonWidgetRenderer without voxelWorld (fa-craft 0.2.18, voxel-sandbox 1.0.0) (#1445)
+- gh-1441 Voxel nodes render as the “Voxel world” placeholder — Fa app builds JsonWidgetRenderer without voxelWorld (fa-craft 0.2.18, voxel-sandbox 1.0.0) (#1445)
 
 ## 1.0.541
 
-- feat(1079): SDK slice 6 вЂ” IT-5 record-level runtime parity for extension hosts (YoClip scenario) (#1456)
+- feat(1079): SDK slice 6 — IT-5 record-level runtime parity for extension hosts (YoClip scenario) (#1456)
 - gh-1449 [GOAL] Orphan-result notices: reported once, never a user turn, always identifies the call (#1451)
-- gh-1439 [GOAL] Live-follow etiquette: scrolling up while the agent works never yanks the user back down (TUI + app + web: follow-mode contract + В«jump to liveВ» affordance) (#1443)
+- gh-1439 [GOAL] Live-follow etiquette: scrolling up while the agent works never yanks the user back down (TUI + app + web: follow-mode contract + «jump to live» affordance) (#1443)
 
 ## 1.0.542
 
@@ -1559,15 +1589,15 @@ block a release again.
 ## 1.0.546
 
 - chore(factory): flip engine pin to agents-rel-20261009-181034 (206a8c62) (#1474)
-- gh-1477 [BUG] build-mobile Derive version: fetch-depth:0 checkout outgrew its own 10-min timeout вЂ” daily leg cancelled mid-fetch (time bomb, grows with every tag) (#1482)
+- gh-1477 [BUG] build-mobile Derive version: fetch-depth:0 checkout outgrew its own 10-min timeout — daily leg cancelled mid-fetch (time bomb, grows with every tag) (#1482)
 - gh-1444 [GOAL] iOS sandbox ergonomics: skills resolve, networks fail loudly, secrets prove presence, timeouts tell the truth (#1453)
 
 ## 1.0.547
 
 - gh-1446 [GOAL] TUI chrome diet: textless fold rule, running/lost-only jobs line, live activity animation in the reserved _ Fa brand slot (#1454)
-- fix(1431): size gate survives Flutter rev-hash churn вЂ” normalize 20+hex rev dirs, vendored carve-out, exact-patch SDK pin (#1486)
+- fix(1431): size gate survives Flutter rev-hash churn — normalize 20+hex rev dirs, vendored carve-out, exact-patch SDK pin (#1486)
 - gh-1471 [GOAL] bench.yml: provider selection for tbench runs (zai-glm default, kimi-for-coding) with a dedicated bench key (#1475)
-- gh-1452 Release blocked: CHANGELOG.md exceeds pub.dev 256 KiB cap (262 672 B on main) вЂ” v1.0.538 not on pub.dev trim + pre-flight guard needed (#1462)
+- gh-1452 Release blocked: CHANGELOG.md exceeds pub.dev 256 KiB cap (262 672 B on main) — v1.0.538 not on pub.dev trim + pre-flight guard needed (#1462)
 
 ## 1.0.548
 
@@ -1575,12 +1605,12 @@ block a release again.
 
 ## 1.0.549
 
-- chore: pin factory_ref to agents-rel-20261010-170624 (fb32c3c8) вЂ” brings gh-843 ghost fix + gh-840 sweep to the fa tick; live: #1457 ghost #2 BLOCKED with green-on-head (previously cost ~2h) (#1513)
+- chore: pin factory_ref to agents-rel-20261010-170624 (fb32c3c8) — brings gh-843 ghost fix + gh-840 sweep to the fa tick; live: #1457 ghost #2 BLOCKED with green-on-head (previously cost ~2h) (#1513)
 
 ## 1.0.550
 
-- chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) вЂ” minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
+- chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
 
 ## 1.0.551
 
-- gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) вЂ” must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
+- gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
