@@ -217,7 +217,12 @@ jobs:
         if: matrix.target == 'android'
         with:
           distribution: 'temurin'
-          java-version: '17'
+          # JDK 21 floor (gh-2153): AGP 9.3.x bundled lint is compiled for the
+          # JDK 21 class library — on the JDK 17 daemon lintVitalAnalyzeRelease
+          # crashed with NoSuchMethodError List.removeLast() (JEP 431), red'ing
+          # every release gradle build. Pinned by
+          # test/ci_android_gradle_jdk_guard_test.dart.
+          java-version: '21'
           cache: 'gradle'
 
       # gh-1655: same NDK pre-install as ci.yml build-android, on the
