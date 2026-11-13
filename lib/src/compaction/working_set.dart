@@ -130,8 +130,10 @@ GoalRecitation? latestGoalRecitationIn(List<SessionRecord> entries) {
 
 /// The recently touched file paths over a branch path, NEWEST-LAST,
 /// distinct — a path's recency is its LAST mention, so a re-touched file
-/// moves to the newest position. Pure: hidden and checkpoint-covered
-/// records count (the fold removes content, not pointers).
+/// moves to the newest position. Paths are one-line strings (whitespace
+/// collapses — a `\n` inside a tool argument must never become block
+/// structure). Pure: hidden and checkpoint-covered records count (the
+/// fold removes content, not pointers).
 List<String> recentlyTouchedPaths(List<SessionRecord> path) {
   final lastMention = <String, int>{};
   var i = 0;
@@ -145,9 +147,15 @@ List<String> recentlyTouchedPaths(List<SessionRecord> path) {
       }
       final argument = block.arguments['path'];
       if (argument is! String) continue;
-      final trimmed = argument.trim();
-      if (trimmed.isEmpty) continue;
-      lastMention[trimmed] = i++;
+      // One line per fact (the goal line's rule): a `\n` is legal in
+      // POSIX filenames and model-emittable into tool arguments — verbatim
+      // rendering would inject block structure (fake entries, fake
+      // counting tails) into the system-tagged block. Whitespace
+      // collapses here so the render and the budgets measure the final
+      // strings, and spelling dedup stays consistent.
+      final flattened = argument.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (flattened.isEmpty) continue;
+      lastMention[flattened] = i++;
     }
   }
   final paths = lastMention.keys.toList()
