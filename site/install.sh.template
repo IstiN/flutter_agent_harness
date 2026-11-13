@@ -197,8 +197,8 @@ if [ "$dl_ok" != true ]; then
   say "  To build from source (requires the Dart SDK):"
   say "    git clone https://github.com/$REPO"
   say "    cd flutter_agent_harness"
-  say "    dart build cli --target=bin/fah.dart --output=build/out"
-  say "    cp build/out/bundle/bin/fah ~/.local/bin/fa"
+  say "    dart build cli --target=bin/fa.dart --output=build/out"
+  say "    cp build/out/bundle/bin/fa ~/.local/bin/fa"
   say "    cp -r build/out/bundle/lib ~/.local/  # bundle libs, gh-1574"
   say ""
   exit 1
