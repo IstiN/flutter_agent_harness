@@ -267,8 +267,12 @@ final class LocalFileSystem
           // them with the forward slashes we joined) — split on both or
           // `name` comes back as a whole multi-segment path (observed on
           // Windows: listDir names like `apps\2048` broke the apps
-          // catalog and every other basename consumer).
-          name: resolved.split(RegExp(r'[/\\]')).last,
+          // catalog and every other basename consumer). POSIX is the
+          // opposite: backslash is a LEGAL name byte (`weird\name.txt`
+          // is one file), so only '/' separates there.
+          name: Platform.isWindows
+              ? resolved.split(RegExp(r'[/\\]')).last
+              : resolved.split('/').last,
           path: resolved,
           kind: kind,
           size: stat.size,

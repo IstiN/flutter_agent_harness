@@ -66,6 +66,20 @@ void main() {
       await fs.remove('d/f2.txt');
     });
 
+    test('POSIX keeps backslashes in names (legal name byte)', () async {
+      // On POSIX a backslash is an ordinary name byte: `weird\name.txt` is
+      // ONE file and `name` must not be truncated to `name.txt`. Windows
+      // splits on both separators (gh-2141), so this assertion is
+      // POSIX-only.
+      if (Platform.isWindows) return;
+      await fs.writeFile(r'weird\name.txt', 'x');
+      final info = (await fs.fileInfo(r'weird\name.txt')).getOrThrow();
+      expect(info.name, r'weird\name.txt');
+      final infos = (await fs.listDir('.')).getOrThrow();
+      expect(infos.map((i) => i.name), contains(r'weird\name.txt'));
+      await fs.remove(r'weird\name.txt');
+    });
+
     test('readTextLines and missing-file errors', () async {
       await fs.writeFile('l.txt', 'a\nb\n');
       expect((await fs.readTextLines('l.txt')).getOrThrow(), ['a', 'b']);
