@@ -32,17 +32,35 @@ class _GatedStream {
     );
     final stream = AssistantMessageEventStream();
     final events = turns.removeAt(0);
-    void emit() {
-      for (final event in events) {
+    var done = false;
+    void emit(List<AssistantMessageEvent> turn) {
+      if (done) return;
+      done = true;
+      for (final event in turn) {
         stream.push(event);
       }
       stream.end();
     }
 
     if (calls == gateOnCall) {
-      unawaited(gate.future.then((_) => emit()));
+      // gh-2168: the provider contract — a cancelled token surfaces as an
+      // aborted completion, whichever lands first (the gate or the abort).
+      unawaited(gate.future.then((_) => emit(events)));
+      unawaited(
+        cancelToken?.onCancel.then(
+          (_) => emit([
+            ErrorEvent(
+              reason: StopReason.aborted,
+              error: testAssistant(
+                stopReason: StopReason.aborted,
+                errorMessage: 'Request was aborted',
+              ),
+            ),
+          ]),
+        ),
+      );
     } else {
-      emit();
+      emit(events);
     }
     return stream;
   }
@@ -241,14 +259,16 @@ void main() {
   );
 
   test(
-    'line-mode /exit during a run settles the run before teardown',
+    'line-mode /exit during a run aborts the run and exits bounded '
+    '(gh-2168 bounded-exit)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // Regression anchor: slash commands execute while a run streams, so
-      // `/exit` marks the exit mid-run and the line REPL breaks its loop
-      // immediately. The guarantee is `_teardownAfterRepl`'s
-      // `await _settled`: run() may not return until the in-flight turn
-      // has settled and persisted. This test pins that interleaving.
+      // Regression anchor: `/exit` mid-run fires the in-flight run's
+      // cancel token (pi's shutdown semantics — quitting never waits out
+      // the stream), the teardown drains the aborted settle with the
+      // normal close order (drain → usage fold → seal → exit), and run()
+      // returns bounded. The gate never opens: the abort alone must
+      // settle the run. `bye` stays the observable farewell.
       final stream = _GatedStream([textTurn('slow answer')], gateOnCall: 1);
       final cli = AgentCli(
         config: AgentCliConfig(
@@ -270,33 +290,21 @@ void main() {
       await waitForIt(() => stream.calls >= 1);
       await waitForIt(() => cli.isBusy, reason: 'gated run in flight');
 
+      final wall = Stopwatch()..start();
       io.sendLine('/exit');
       await waitForIt(() => io.out.toString().contains('bye'));
+      await run; // must return bounded — the gate never opened
+      wall.stop();
 
-      // run() must still be inside the REPL: the gated turn has not
-      // settled, so the process may not exit (and may not tear down) yet.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(cli.isBusy, isFalse, reason: 'the run aborted on exit');
       expect(
-        cli.isBusy,
-        isTrue,
-        reason: '/exit during a run waits for the in-flight turn',
+        wall.elapsed,
+        lessThan(const Duration(seconds: 20)),
+        reason: 'exit settles bounded — the watchdog floor is 8 minutes',
       );
-
-      stream.gate.complete();
-      await waitForIt(() => !cli.isBusy, reason: 'run settles after the gate');
-      await run;
-
-      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-      final session = await repo.open((await repo.list(cwd: '/work')).first);
-      final answers = (await session.buildContextMessages())
-          .whereType<AssistantMessage>()
-          .expand((m) => m.content.whereType<TextContent>().map((c) => c.text))
-          .toList();
-      expect(
-        answers.join('\n'),
-        contains('slow answer'),
-        reason: 'the turn completed and persisted before teardown',
-      );
+      final session = cli.sessionForTest;
+      expect(session, isNotNull);
+      expect(session!.isSealed, isTrue, reason: 'the quit seals the session');
     },
   );
 }
