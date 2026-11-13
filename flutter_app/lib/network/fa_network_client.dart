@@ -59,6 +59,28 @@ FaNetworkException _independentEnrollmentError(FaNetworkException error) {
   );
 }
 
+/// The device enrollment result of `POST /api/devices/enroll` (issue
+/// #2062 §9): the stable device identity pair plus the personal network
+/// the server auto-provisioned (null on older backends / re-enroll).
+class DeviceEnrollmentResult {
+  const DeviceEnrollmentResult({
+    required this.deviceId,
+    required this.deviceToken,
+    this.personalNetworkId,
+  });
+
+  /// Stable device id minted at enroll (contract §1).
+  final String deviceId;
+
+  /// Opaque bearer bound to (userId, deviceId) — persist securely,
+  /// never log.
+  final String deviceToken;
+
+  /// The personal network id the server provisioned for the owner, when
+  /// the response carries one.
+  final String? personalNetworkId;
+}
+
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
 ///
 /// Pure `package:http` — web-safe, no dart:io. Inject [httpClient] for
@@ -474,6 +496,63 @@ class FaNetworkClient {
       expected: {202},
     );
     return Envelope.fromJson(_decodeMap(res));
+  }
+
+  // ---------------------------------------------------------------- devices
+
+  /// `POST /api/devices/enroll` (issue #2062 §9) — enrolls THIS device
+  /// into the machine-connector fabric (ai-native JWT management route).
+  /// The server auto-provisions the owner's personal network on first
+  /// enroll (§2) and returns the stable {deviceId, deviceToken} pair the
+  /// host persists (deviceToken never logged). Tolerates 200 and 201.
+  Future<DeviceEnrollmentResult> enrollDevice() async {
+    final res = await _request(
+      'POST',
+      '/api/devices/enroll',
+      body: const <String, Object?>{},
+      management: true,
+      expected: {200, 201},
+    );
+    final json = _decodeMap(res);
+    final deviceId = json['deviceId'];
+    final deviceToken = json['deviceToken'];
+    if (deviceId is! String || deviceId.isEmpty) {
+      throw const FormatException('enrollDevice: no string "deviceId"');
+    }
+    if (deviceToken is! String || deviceToken.isEmpty) {
+      throw const FormatException('enrollDevice: no string "deviceToken"');
+    }
+    final personal = json['personalNetwork'];
+    final personalId = personal is Map ? personal['id'] : null;
+    return DeviceEnrollmentResult(
+      deviceId: deviceId,
+      deviceToken: deviceToken,
+      personalNetworkId: personalId is String && personalId.isNotEmpty
+          ? personalId
+          : null,
+    );
+  }
+
+  /// `POST /api/ws-ticket` (issue #2062 §4/§9) — mints the single-use
+  /// device WS ticket (TTL 60 s) with the [deviceToken] bearer. The
+  /// deviceToken rides as an explicit header (auth: false — the client's
+  /// JWT/session tokens must never leak onto a device-scoped call, the
+  /// same pattern as [authUser]). Returns the ticket string.
+  Future<String> wsTicket({required String deviceToken}) async {
+    final res = await _request(
+      'POST',
+      '/api/ws-ticket',
+      body: const <String, Object?>{},
+      auth: false,
+      headers: {'authorization': 'Bearer $deviceToken'},
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final ticket = json['ticket'];
+    if (ticket is! String || ticket.isEmpty) {
+      throw const FormatException('wsTicket: no string "ticket"');
+    }
+    return ticket;
   }
 
   // ---------------------------------------------------------------- agents

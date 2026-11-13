@@ -46,6 +46,10 @@ final class NetworkSessionManager extends ChangeNotifier {
 
   final Uri _baseUrl;
 
+  /// The fa_network REST base the manager was built with — the device
+  /// connector service derives the device WS URL from it (issue #2062).
+  Uri get baseUrl => _baseUrl;
+
   /// The ai-native auth service base (null = the client's default
   /// https://ai-native.cloud).
   final Uri? _authBaseUrl;

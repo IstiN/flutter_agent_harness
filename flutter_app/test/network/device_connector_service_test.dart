@@ -1,0 +1,360 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
+/// DeviceConnectorService lifecycle tests (issue #2062 chunk 14): fakes
+/// for the transport and the REST client — NO real sockets, NO
+/// path_provider (the outbox is injected). Covers start/stop/restart
+/// idempotence, enrollment persistence (skip re-enroll), the WS ticket
+/// wiring, the roster/presence/wake passthrough streams, the phase
+/// mapping and the sign-out auto-stop.
+library;
+
+import 'dart:async';
+
+import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/key_wallet.dart';
+import 'package:fa/network/network_session_manager.dart';
+import 'package:flutter_agent_harness/src/network/connector/device_registry.dart';
+import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/offline_outbox.dart';
+import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'fakes.dart';
+
+const _enrollBody =
+    '{"deviceId":"dev-1","deviceToken":"dt-secret",'
+    '"personalNetwork":{"id":"net-personal"}}';
+
+/// The in-memory device token store (test stand-in for the keychain).
+final class MemoryDeviceTokenStore implements DeviceTokenStore {
+  DeviceCredentials? stored;
+  var writes = 0;
+
+  @override
+  Future<DeviceCredentials?> read() async => stored;
+
+  @override
+  Future<void> write(DeviceCredentials credentials) async {
+    stored = credentials;
+    writes++;
+  }
+
+  @override
+  Future<void> clear() async {
+    stored = null;
+  }
+}
+
+/// A fake upstream socket: auto-answers hello_ok for the handshake,
+/// hands the test [serverSends] for passthrough assertions.
+final class FakeUpstreamSocket implements ConnectorSocket {
+  final _frames = StreamController<NetworkEnvelope>.broadcast();
+  final sent = <NetworkEnvelope>[];
+  var closed = false;
+
+  @override
+  Stream<NetworkEnvelope> get frames => _frames.stream;
+
+  @override
+  bool get isOpen => !closed;
+
+  @override
+  Future<void> send(NetworkEnvelope envelope) async {
+    if (closed) throw StateError('socket closed');
+    sent.add(envelope);
+    if (envelope.kind == NetworkEnvelopeKind.hello) {
+      _frames.add(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.helloOk,
+          msgId: 'ok-${sent.length}',
+          refId: envelope.msgId,
+          ts: rfc3339Timestamp(DateTime.now().toUtc()),
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    await _frames.close();
+  }
+
+  void serverSends(NetworkEnvelope envelope) => _frames.add(envelope);
+}
+
+/// The fake transport: records dials and hands back fresh sockets.
+final class FakeTransport implements ConnectorTransport {
+  final dials = <({Uri url, String ticket})>[];
+  final sockets = <FakeUpstreamSocket>[];
+
+  @override
+  Future<ConnectorSocket> dial(Uri url, String ticket) async {
+    final socket = FakeUpstreamSocket();
+    dials.add((url: url, ticket: ticket));
+    sockets.add(socket);
+    return socket;
+  }
+}
+
+Future<NetworkSessionManager> _manager({
+  required FakeHttpClient httpClient,
+  String? jwt,
+}) async => NetworkSessionManager(
+  baseUrl: testBase,
+  wallet: await KeyWallet.load(MemoryWalletBackend()),
+  httpClient: httpClient,
+  jwtToken: jwt,
+);
+
+/// Builds the service with every seam faked (the outbox is always
+/// injected — the default would touch path_provider).
+Future<
+  (
+    DeviceConnectorService,
+    NetworkSessionManager,
+    FakeHttpClient,
+    FakeTransport,
+    MemoryDeviceTokenStore,
+  )
+>
+buildService({
+  String? jwt = 'jwt-1',
+  required FakeHttpClient httpClient,
+  FakeTransport? transport,
+  MemoryDeviceTokenStore? tokenStore,
+  OutboxStore? outbox,
+}) async {
+  final manager = await _manager(httpClient: httpClient, jwt: jwt);
+  final usedTransport = transport ?? FakeTransport();
+  final usedTokens = tokenStore ?? MemoryDeviceTokenStore();
+  final service = DeviceConnectorService(
+    sessionManager: manager,
+    tokenStore: usedTokens,
+    transport: usedTransport,
+    outbox: outbox ?? MemoryOutboxStore(),
+  );
+  return (service, manager, httpClient, usedTransport, usedTokens);
+}
+
+Future<void> pumpUntilOnline(DeviceConnectorService service) => service
+    .phaseStream
+    .firstWhere((phase) => phase == DeviceConnectorPhase.online)
+    .timeout(const Duration(seconds: 5));
+
+void main() {
+  late FakeHttpClient httpClient;
+  setUp(() {
+    httpClient = FakeHttpClient()
+      ..respond(200, body: _enrollBody)
+      ..respond(200, body: '{"ticket":"tk-1"}')
+      ..respond(200, body: '{"ticket":"tk-2"}');
+  });
+
+  test('signed-out start is a silent no-op', () async {
+    final (service, _, http, transport, _) = await buildService(
+      jwt: null,
+      httpClient: httpClient,
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+
+    expect(service.phase, DeviceConnectorPhase.signedOut);
+    expect(service.isRunning, isFalse);
+    expect(service.connector, isNull);
+    expect(transport.dials, isEmpty);
+    expect(
+      http.requests.where((r) => r.url.path == '/api/devices/enroll'),
+      isEmpty,
+    );
+  });
+
+  test('start enrolls, persists credentials, dials with the ticket and '
+      'reaches online', () async {
+    final (service, manager, http, transport, tokens) = await buildService(
+      httpClient: httpClient,
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+    await pumpUntilOnline(service);
+
+    // Enrollment: management route with the JWT bearer.
+    final enroll = http.requests.singleWhere(
+      (r) => r.url.path == '/api/devices/enroll',
+    );
+    expect(enroll.method, 'POST');
+    expect(enroll.headers['authorization'], 'Bearer jwt-1');
+
+    // Credentials persisted from the response.
+    expect(tokens.stored?.deviceId, 'dev-1');
+    expect(tokens.stored?.deviceToken, 'dt-secret');
+    expect(tokens.stored?.personalNetworkId, 'net-personal');
+
+    // One dial: /ws with the minted single-use ticket.
+    expect(transport.dials, hasLength(1));
+    expect(
+      transport.dials.first.url.scheme,
+      testBase.scheme == 'http' ? 'ws' : 'wss',
+    );
+    expect(transport.dials.first.url.path, '/ws');
+    expect(transport.dials.first.url.queryParameters['ticket'], 'tk-1');
+    expect(transport.dials.first.ticket, 'tk-1');
+
+    // The hello carried the enrolled deviceId.
+    final hello = transport.sockets.first.sent.firstWhere(
+      (e) => e.kind == NetworkEnvelopeKind.hello,
+    );
+    expect(hello.payload['deviceId'], 'dev-1');
+
+    expect(service.phase, DeviceConnectorPhase.online);
+    expect(service.isRunning, isTrue);
+    expect(service.connector, isNotNull);
+    expect(service.deviceId, 'dev-1');
+    // The personal network is registered personal (exposure opt-out).
+    expect(
+      service.connector!.registry.kindOf('net-personal'),
+      NetworkKind.personal,
+    );
+    // The manager is untouched as the integration point.
+    expect(manager.hasJwt, isTrue);
+  });
+
+  test('roster/presence/wake_hint frames pass through to the service '
+      'streams', () async {
+    final (service, _, _, transport, _) = await buildService(
+      httpClient: httpClient,
+    );
+    addTearDown(service.dispose);
+
+    final rosters = <NetworkEnvelope>[];
+    final presences = <NetworkEnvelope>[];
+    final wakes = <NetworkEnvelope>[];
+    service.rosterFrames.listen(rosters.add);
+    service.presenceFrames.listen(presences.add);
+    service.wakeHints.listen(wakes.add);
+
+    await service.start();
+    await pumpUntilOnline(service);
+
+    transport.sockets.first
+      ..serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.roster,
+          msgId: 'r-1',
+          ts: rfc3339Timestamp(DateTime.now().toUtc()),
+          payload: {'networks': const <Object?>[]},
+        ),
+      )
+      ..serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.presence,
+          msgId: 'p-1',
+          ts: rfc3339Timestamp(DateTime.now().toUtc()),
+          payload: {'machine': 'online'},
+        ),
+      )
+      ..serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.wakeHint,
+          msgId: 'w-1',
+          ts: rfc3339Timestamp(DateTime.now().toUtc()),
+          payload: {'type': 'extension'},
+        ),
+      );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(rosters.map((e) => e.msgId), ['r-1']);
+    expect(presences.map((e) => e.msgId), ['p-1']);
+    expect(wakes.map((e) => e.msgId), ['w-1']);
+  });
+
+  test(
+    'start is idempotent: two calls share one enrollment and one dial',
+    () async {
+      final (service, _, http, transport, _) = await buildService(
+        httpClient: httpClient,
+      );
+      addTearDown(service.dispose);
+
+      await Future.wait([service.start(), service.start()]);
+      await pumpUntilOnline(service);
+
+      expect(
+        http.requests.where((r) => r.url.path == '/api/devices/enroll'),
+        hasLength(1),
+      );
+      expect(transport.dials, hasLength(1));
+    },
+  );
+
+  test('stop then restart skips re-enroll (valid token exists) and dials '
+      'fresh', () async {
+    final (service, _, http, transport, tokens) = await buildService(
+      httpClient: httpClient,
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+    await pumpUntilOnline(service);
+    await service.stop();
+
+    expect(service.isRunning, isFalse);
+    expect(service.connector, isNull);
+    expect(service.phase, DeviceConnectorPhase.signedOut);
+
+    await service.start();
+    await pumpUntilOnline(service);
+
+    expect(
+      http.requests.where((r) => r.url.path == '/api/devices/enroll'),
+      hasLength(1),
+      reason: 'the persisted credentials skip a second enrollment',
+    );
+    expect(tokens.writes, 1);
+    expect(transport.dials, hasLength(2));
+    expect(transport.dials.last.url.queryParameters['ticket'], 'tk-2');
+    expect(service.phase, DeviceConnectorPhase.online);
+  });
+
+  test('sign-out stops the service', () async {
+    final (service, manager, _, transport, _) = await buildService(
+      httpClient: httpClient,
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+    await pumpUntilOnline(service);
+    expect(service.isRunning, isTrue);
+
+    await manager.signOut();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.isRunning, isFalse);
+    expect(service.phase, DeviceConnectorPhase.signedOut);
+    expect(transport.sockets.first.closed, isTrue);
+  });
+
+  test('an enrollment failure leaves the service stopped with a logged '
+      'reason', () async {
+    final failing = FakeHttpClient()..respond(401, body: 'unauthorized');
+    final logs = <String>[];
+    final (service, _, _, transport, tokens) = await buildService(
+      httpClient: failing,
+    );
+    addTearDown(service.dispose);
+    service.onLog = logs.add;
+
+    await service.start();
+
+    expect(service.isRunning, isFalse);
+    expect(service.phase, DeviceConnectorPhase.signedOut);
+    expect(tokens.stored, isNull);
+    expect(transport.dials, isEmpty);
+    expect(logs, isNotEmpty);
+  });
+}
