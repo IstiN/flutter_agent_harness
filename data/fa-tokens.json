@@ -73,15 +73,6 @@
   "pr-2002": [
     {
       "leg": "review",
-      "at": "2026-10-30T13:06:09Z",
-      "prompt": 214520,
-      "completion": 41278,
-      "total": 255798,
-      "cacheRead": 5872640,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-30T14:33:28Z",
       "prompt": 161015,
       "completion": 19800,
@@ -3423,6 +3414,17 @@
       "completion": 38920,
       "total": 158780,
       "cacheRead": 2514688,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2161": [
+    {
+      "leg": "review",
+      "at": "2026-11-13T13:09:24Z",
+      "prompt": 55520,
+      "completion": 9098,
+      "total": 64618,
+      "cacheRead": 756672,
       "model": "glm-5.3-flash"
     }
   ]
