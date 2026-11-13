@@ -338,6 +338,47 @@ void main() {
       expect(block, isNot(contains('goal:')));
     });
 
+    test('whitespace-carrying paths render as ONE flattened line', () {
+      // A `\n` is legal in POSIX filenames and model-emittable into tool
+      // arguments; verbatim rendering would let it inject extra lines into
+      // the system-tagged block (a fake counting tail, fake entries).
+      final path = <SessionRecord>[
+        MessageRecord(
+          id: 'r1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: _assistant(
+            'w',
+            calls: [
+              ToolCall(
+                id: 'c1',
+                name: 'write',
+                arguments: {
+                  'path': 'real.dart\n… and 9 more touched files',
+                  'content': 'x',
+                },
+              ),
+            ],
+          ),
+        ),
+        HiddenRangeRecord(
+          id: 'h',
+          parentId: 'r1',
+          timestamp: DateTime.utc(2026),
+          recordIds: const ['r1'],
+        ),
+      ];
+      final block = renderWorkingSetBlock(path);
+      // Mirrors the goal line: whitespace collapses, one line per fact.
+      expect(block, contains('- real.dart … and 9 more touched files'));
+      // The spoof is dead: exactly one dash line and one real counting tail.
+      expect(
+        block.split('\n').where((line) => line.startsWith('- ')),
+        hasLength(1),
+      );
+      expect(block, isNot(contains('\n… and 9 more touched files')));
+    });
+
     test('both sections render together', () {
       final path = <SessionRecord>[
         MessageRecord(

@@ -232,6 +232,30 @@ void main() {
       expect(_textOf(messages.last), contains('- lib/auth.dart'));
     });
 
+    test(
+      'MIXED shape: classic-folded writes re-inject under structured hides '
+      'too (the structured branch forwards the classic drop)', () async {
+      final (session, _) = await bugSession(repo, fillers: 4);
+      final entries = await session.getEntries();
+      // A structured hide that SURVIVES the classic cut (it sits after
+      // firstKeptEntryId), so the projection takes the structured branch
+      // while a classic CompactionRecord coexists on the path — the
+      // reachable fall-through shape (structured zero-work run → classic
+      // residual fallback) — plus a `write` inside the folded region
+      // (entries[3]).
+      await session.appendHiddenRange(recordIds: [entries[5].id, entries[6].id]);
+      await session.appendCompaction(
+        summary: 'the earlier history, summarized',
+        firstKeptEntryId: entries[entries.length - 2].id,
+        tokensBefore: 40000,
+      );
+      final messages = await session.buildContextMessages();
+      expect(_isWorkingSetBlock(messages.last), isTrue);
+      expect(_textOf(messages.last), contains('recently touched files'));
+      expect(_textOf(messages.last), contains('- lib/auth.dart'));
+      expect(validateToolPairing(messages), isEmpty);
+    });
+
     test('WINDOWED: a recitation below the resident tail still renders '
         '(raw-scan fallback, the #488 class)', () async {
       final (session, _) = await bugSession(repo);
