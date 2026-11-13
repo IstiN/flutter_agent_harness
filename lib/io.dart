@@ -40,3 +40,7 @@ export 'src/session/attach/pid_probe_io.dart';
 export 'src/telemetry/file_agent_telemetry_sink.dart';
 export 'src/tools/sqlite/sqlite3_engine_stub.dart'
     if (dart.library.io) 'src/tools/sqlite/sqlite3_engine.dart';
+// Machine connector IO surface (issue #2062): the dart:io WS transport +
+// device enrollment/ticket client. Connector core stays pure Dart — this
+// never enters lib/flutter_agent_harness.dart.
+export 'src/network/connector/device_transport_io.dart';
