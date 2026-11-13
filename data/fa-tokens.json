@@ -2,15 +2,6 @@
   "pr-1981": [
     {
       "leg": "review",
-      "at": "2026-10-30T01:02:40Z",
-      "prompt": 131270,
-      "completion": 32585,
-      "total": 163855,
-      "cacheRead": 5680640,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-30T08:49:33Z",
       "prompt": 156862,
       "completion": 11352,
@@ -3022,6 +3013,17 @@
       "completion": 39103,
       "total": 168411,
       "cacheRead": 5522240,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2100": [
+    {
+      "leg": "dev",
+      "at": "2026-11-13T01:06:59Z",
+      "prompt": 2791383,
+      "completion": 124844,
+      "total": 2916227,
+      "cacheRead": 149057280,
       "model": "glm-5.3-flash"
     }
   ]
