@@ -3238,6 +3238,15 @@
       "total": 180757,
       "cacheRead": 1874304,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-13T07:26:46Z",
+      "prompt": 10988,
+      "completion": 3275,
+      "total": 14263,
+      "cacheRead": 2156608,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-2151": [
