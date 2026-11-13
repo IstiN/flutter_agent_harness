@@ -128,6 +128,16 @@
         41196649826,
         41191984311
       ]
+    },
+    {
+      "file": "test/integration/message_cap_repair_cli_e2e_test.dart",
+      "test": "gh-1680 message-cap repair through the real CLI learned-cap refusal heals: persist, compact via relief, retry once",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/2144",
+      "since": "2026-11-13",
+      "runs": [
+        43283621987,
+        43275753721
+      ]
     }
   ]
 }
