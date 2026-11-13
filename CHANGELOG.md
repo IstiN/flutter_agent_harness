@@ -13,6 +13,30 @@ block a release again.
 
 ## Unreleased
 
+- feat(2117): console logging dial — `lib/src/logging/` levels
+  (`off < error < warn < info < debug < trace`), categories
+  (`keys/lifecycle/tool/provider/compaction/messaging`), and the
+  `{time} {elapsed} {sid} {level} {cat} {msg}` line pattern with
+  `logging.timeFormat`, rendered only when `logging.format` is set (the
+  current shapes stay otherwise). The INTERACTIVE console filters at the
+  resolved level (default `warn`); `fa.log` filters at its own level
+  (default `debug` — every existing diagnostic line still lands, now
+  with a level tag) and every rendered line on every sink passes the
+  redaction pipeline. Sources: `--log-level` flag > `FA_LOG_LEVEL` env >
+  project `.fah/config.yaml` `logging:` > user `~/.fah/config.yaml`
+  `logging:` > default; invalid levels fail loudly at boot;
+  `--debug-secrets`/`FA_DEBUG_KEYS` stay as the `keys=debug` alias
+  (a keys-category floor, never resurrecting an explicit `off`).
+  `/log <level>` switches the console sink live in the REPL. The
+  headless stdout contract is PINNED byte-identical: HEP/stream-json/
+  wire-serve/plain-run output never routes through the filter unless the
+  flag or the env makes the level explicit. The passive `info: agent
+  stalled` banner is the first reassigned noise class (it obeys the
+  dial — hidden at the interactive default, shown from `info` up); tool
+  start/finish diagnostics reassign to `debug`/`tool` (fa.log keeps
+  passing them at its `debug` default). Background-chatter and echo
+  reassignment follow in #2118's follow-up.
+
 - fix(gh-2115): Russian (non-ASCII) typing works in the Windows line REPL.
   A legacy RU-locale console delivers keystrokes in two broken shapes —
   CP-6501 translation mojibake ('п' arrives as the UTF-8 of 'ï') and raw

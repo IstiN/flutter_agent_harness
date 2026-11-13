@@ -42,6 +42,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/power': (cli, rest) async => cli._powerSlash(),
   '/quota': (cli, rest) async => cli._quotaSlash(rest),
   '/timer': (cli, rest) async => cli._handleTimerCommand(rest),
+  '/log': (cli, rest) async => cli._handleLogCommand(rest),
   // Hidden (issue #735): not in the slash menu — a diagnostics dump of
   // the live tty's termios state for steering-freeze triage.
   '/termios': (cli, rest) async => cli._printTermiosDump(),

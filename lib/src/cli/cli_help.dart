@@ -120,6 +120,17 @@ OPTIONS
                                warn when config-referenced keys resolve
                                nothing — diagnose a keyless-after-launch
                                boot. Same effect as FA_DEBUG_KEYS=1
+  --log-level <level>           Console log dial (issue #2117):
+                               off|error|warn|info|debug|trace. Filters
+                               the INTERACTIVE console (default warn)
+                               and fa.log independently; precedence
+                               flag > FA_LOG_LEVEL env > project
+                               .fah/config.yaml logging: > user
+                               ~/.fah/config.yaml logging: > default.
+                               /log <level> switches the console live.
+                               Headless stdout is never filtered unless
+                               this flag or the env is passed (the
+                               pinned HEP/stream-json contract)
   --no-format                   Render assistant markdown raw, even on a
                                color TTY (issue #774). Same effect as
                                the FA_NO_FORMAT env var; piped or
@@ -730,9 +741,13 @@ CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
                        modelOverrides:, retry:, ttsr:, models:, cube:,
-                       output:, and tools: sections. Invalid roles/ttsr/
-                       prompts/models/cube/tools sections fail loudly at
-                       startup.
+                       output:, logging:, and tools: sections. Invalid
+                       roles/ttsr/prompts/models/cube/tools/logging
+                       sections fail loudly at startup.
+  .fah/config.yaml     project overrides: memory:, cube:, spills:,
+                       compaction:, and logging: (console/file log dial,
+                       issue #2117) travel with the repo; the project
+                       section wins over the user one
   .fah/cubes/          cube sandbox manifests (--cube <name> and /cube use
                        resolve <name>.yaml here); the project .fah/
                        config.yaml cube: section picks the startup default

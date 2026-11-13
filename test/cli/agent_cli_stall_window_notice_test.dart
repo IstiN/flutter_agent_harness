@@ -81,14 +81,21 @@ void main() {
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         steeringStaleAfter: const Duration(milliseconds: 80),
+        // Issue #2117: the passive `info:` stall banner obeys the console
+        // dial — these tests pin its CONTENT, so they boot at `info`
+        // (the default `warn` hides it; covered by
+        // console_log_dial_test.dart).
+        logging: const ResolvedLogSettings(consoleLevel: LogLevel.info),
       ),
       io: io,
       streamFunction: wedgedCall,
     );
     final run = cli.run();
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await waitForIt(() async => (await repo.list(cwd: '/work')).isNotEmpty,
-        reason: 'session persisted');
+    await waitForIt(
+      () async => (await repo.list(cwd: '/work')).isNotEmpty,
+      reason: 'session persisted',
+    );
     io.sendLine('start');
     await waitForIt(() => cli.isBusy, reason: 'run started');
     // Cleanup even when an assertion fails mid-test: a dangling wedged
