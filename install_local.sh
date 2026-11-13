@@ -16,7 +16,7 @@ cd "$REPO_ROOT"
 
 echo "→ Building Fa CLI bundle..."
 dart pub get >/dev/null 2>&1 || dart pub get
-dart build cli --target=bin/fah.dart --output=fa-local
+dart build cli --target=bin/fa.dart --output=fa-local
 
 # gh-1522: the committed pubspec carries the 0.0.0-dev placeholder (the git
 # tag is the single source of truth) — stamp the build version from git
@@ -29,7 +29,7 @@ echo "$VERSION" > "$BUNDLE_DIR/version.txt"
 echo "→ Built fa v$VERSION"
 
 echo "→ Installing to $INSTALL_DIR..."
-cp "$BUNDLE_DIR/bin/fah" "$INSTALL_DIR/fa"
+cp "$BUNDLE_DIR/bin/fa" "$INSTALL_DIR/fa"
 chmod +x "$INSTALL_DIR/fa"
 # macOS ARM kills unsigned native executables; ad-hoc sign so the copied
 # binary is allowed to run from ~/.local/bin.

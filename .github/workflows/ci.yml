@@ -1226,7 +1226,7 @@ jobs:
       - uses: ./.github/actions/sqlite3-native-assets-prewarm
       - name: dart build cli (AOT bundle, same shape install_local.sh ships)
         run: |
-          dart build cli --target=bin/fah.dart --output=fa-local
+          dart build cli --target=bin/fa.dart --output=fa-local
           # The installer writes version.txt into the bundle; mirror it so
           # `fa --version` from the AOT binary reports the real version
           # (the _packageVersion() fallback chain reads bundle/version.txt).
@@ -1237,7 +1237,7 @@ jobs:
           version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
           version="${version#v}"
           echo "$version" > fa-local/bundle/version.txt
-          ./fa-local/bundle/bin/fah --version
+          ./fa-local/bundle/bin/fa --version
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fa-aot-bin
@@ -1353,18 +1353,18 @@ jobs:
       # error default), so this chmod only ever touches the verified
       # bundle the fa-aot-build job produced.
       - name: Restore exec bit (artifact zips drop permissions)
-        run: chmod +x fa-local/bundle/bin/fah
+        run: chmod +x fa-local/bundle/bin/fa
       - name: Smoke the AOT binary (fail loud, never JIT-fallback)
         run: |
-          test -x fa-local/bundle/bin/fah
-          ./fa-local/bundle/bin/fah --version
+          test -x fa-local/bundle/bin/fa
+          ./fa-local/bundle/bin/fa --version
       - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
         env:
           # gh-1300 FA_BIN seam: every CLI spawn (pty_harness + the
           # headless helpers via faCliCommand) runs the AOT binary —
           # ~1 s per spawn instead of the JIT VM+CFE compile (~30 s on
           # loaded ARM runners). Per-test isolation is unchanged.
-          FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
+          FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fa
           # Issue #1391: stretch every PTY-harness wait budget 2x on this
           # merge-blocking leg. SM dispatch waves pack the hosted-arm pool
           # (refresh waves supersede PR heads mid-run), and drilled reds
@@ -4387,15 +4387,13 @@ jobs:
           # gh-1522: the bundle version rides the TAG (GITHUB_REF_NAME), not
           # the committed placeholder pubspec.
           version="${GITHUB_REF_NAME#v}"
-          # dart build cli produces: <output>/bundle/{bin/fah, lib/*.dylib}
-          # We rename the executable to `fa`, write version.txt, then archive
-          # the whole bundle so the installer can extract bin/ + lib/ together.
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            dart build cli --target=bin/fah.dart --output=build/out
-            mv build/out/bundle/bin/fah.exe build/out/bundle/bin/fa.exe
-          else
-            dart build cli --target=bin/fah.dart --output=build/out
-            mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+          # dart build cli produces: <output>/bundle/{bin/fa, lib/*.dylib}.
+          # gh-2120 follow-up: the entry is BUILT as `fa` (bin/fa.dart), not
+          # renamed — on Dart >=3.14 (native linux) the bundle is split
+          # (thin launcher + libdartaot<exe>.so) and a post-build mv desyncs
+          # the pair (`dartaotruntime: not an AOT snapshot`, v1.0.709).
+          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi
           echo "$version" > build/out/bundle/version.txt
@@ -5150,12 +5148,10 @@ jobs:
       - name: Build CLI bundle
         shell: bash
         run: |
-          # Same bundle layout as the release job: bundle/bin/fa (+ lib/).
-          dart build cli --target=bin/fah.dart --output=build/out
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            mv build/out/bundle/bin/fah.exe build/out/bundle/bin/fa.exe
-          else
-            mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+          # Same bundle layout as the release job: bundle/bin/fa (+ lib/),
+          # built (not renamed) as `fa` — gh-2120 follow-up, see binaries.
+          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi
           # gh-1522: the committed pubspec is the 0.0.0-dev placeholder —

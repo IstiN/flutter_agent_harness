@@ -34,7 +34,7 @@ environment:
 
 executables:
   fah: fah
-  fa: fah
+  fa: fa
 
 dependencies:
   archive: ^4.0.9
