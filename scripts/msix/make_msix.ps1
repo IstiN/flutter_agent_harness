@@ -80,7 +80,6 @@ try {
         BackgroundColor="transparent"
         Square150x150Logo="assets\Square150x150Logo.png"
         Square44x44Logo="assets\Square44x44Logo.png">
-        <uap:DefaultTile Wide310x150Logo="assets\Square150x150Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>

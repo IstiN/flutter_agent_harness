@@ -18,9 +18,9 @@ block a release again.
   runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
   `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
   cert `.cer` to the latest auto-release, and fa1.dev's download section
-  gains a Windows button whose "latest" link resolves through a static
-  `download/windows/latest` pointer file updated by the same workflow
-  (site tests extended to pin the new markup). The daily-publish
+  gains a Windows button pointing at the stable-name
+  `releases/latest/download/fa-app-windows-x64.zip` asset (the pinned
+  download-block golden covers the new markup). The daily-publish
   orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
   quality gate builds and attaches the Windows app exactly like the
   TestFlight/macOS track, and the windows runner's product identity no
