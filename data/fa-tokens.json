@@ -61,15 +61,6 @@
   ],
   "pr-2001": [
     {
-      "leg": "review",
-      "at": "2026-10-30T12:43:22Z",
-      "prompt": 131584,
-      "completion": 37587,
-      "total": 169171,
-      "cacheRead": 5223232,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-30T16:13:51Z",
       "prompt": 126908,
@@ -3103,6 +3094,15 @@
       "completion": 7319,
       "total": 146895,
       "cacheRead": 1883200,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-13T12:56:32Z",
+      "prompt": 7347,
+      "completion": 3422,
+      "total": 10769,
+      "cacheRead": 1150656,
       "model": "glm-5.3-flash"
     }
   ],
