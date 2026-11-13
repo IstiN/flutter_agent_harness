@@ -12,8 +12,8 @@ library;
 import 'dart:async';
 
 import 'package:fa/network/device_connector_service.dart';
-import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/devices_page.dart';
+import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 // ignore: implementation_imports
@@ -145,28 +145,29 @@ FahColors paletteOf(WidgetTester tester) =>
     FahColors.of(tester.element(find.byKey(const ValueKey('devicesPage'))));
 
 void main() {
-  testWidgets('signed-out phase → not-running line + This device, tap retries', (
-    tester,
-  ) async {
-    final service = FakeDevicesService(
-      initialPhase: DeviceConnectorPhase.signedOut,
-    );
+  testWidgets(
+    'signed-out phase → not-running line + This device, tap retries',
+    (tester) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.signedOut,
+      );
 
-    await tester.pumpWidget(_wrap(DevicesPage(service: service)));
-    await tester.pump();
+      await tester.pumpWidget(_wrap(DevicesPage(service: service)));
+      await tester.pump();
 
-    // Never blank (issue #2062 field feedback): the header, the
-    // not-running line and the own-device node all render.
-    expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('MY DEVICES'), findsOneWidget);
-    expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
-    expect(find.text('Connector not running — tap to retry'), findsOneWidget);
-    expect(find.text('This device'), findsOneWidget);
+      // Never blank (issue #2062 field feedback): the header, the
+      // not-running line and the own-device node all render.
+      expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
+      expect(find.text('MY DEVICES'), findsOneWidget);
+      expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
+      expect(find.text('Connector not running — tap to retry'), findsOneWidget);
+      expect(find.text('This device'), findsOneWidget);
 
-    // Tap → the page asks the service for a retry start.
-    await tester.tap(find.byKey(const ValueKey('devicesNotRunning')));
-    expect(service.startCalls, 1);
-  });
+      // Tap → the page asks the service for a retry start.
+      await tester.tap(find.byKey(const ValueKey('devicesNotRunning')));
+      expect(service.startCalls, 1);
+    },
+  );
 
   testWidgets('signed-out phase shows the last start error', (tester) async {
     final service = FakeDevicesService(
@@ -221,9 +222,23 @@ void main() {
     await tester.pump();
     final palette = paletteOf(tester);
 
-    // No presence frame yet: the machine node renders (link up ⇒ online).
+    // No presence frame yet: the machine node renders (link up ⇒ online),
+    // in the networks-list row shape — Ø50 round avatar with the vector
+    // device glyph inside, 70pt pitch row (chunk 17 restyle).
     expect(find.text('This device'), findsOneWidget);
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.teal);
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceAvatar')), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('deviceAvatar'))),
+      const Size(50, 50),
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is FaIcon && widget.icon == FaSemanticIcon.devices,
+      ),
+      findsOneWidget,
+    );
 
     service.emitPresence(
       _frame(
@@ -298,9 +313,32 @@ void main() {
     await tester.pump();
 
     // The remote node renders with its own degraded dot, children
-    // collapsed. The own device's frames (no foreign deviceId) are
-    // ignored by the remote accumulator.
+    // collapsed, same networks-list row shape (round avatar + vector
+    // glyph, keyed per device). The own device's frames (no foreign
+    // deviceId) are ignored by the remote accumulator.
     expect(find.byKey(const ValueKey('deviceNode:dev-remote')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('deviceAvatar:dev-remote')),
+      findsOneWidget,
+    );
+    final avatarDecoration =
+        tester
+            .widget<Container>(
+              find
+                  .descendant(
+                    of: find.byKey(const ValueKey('deviceAvatar:dev-remote')),
+                    matching: find.byWidgetPredicate(
+                      (widget) =>
+                          widget is Container &&
+                          widget.decoration is BoxDecoration &&
+                          widget.key == null,
+                    ),
+                  )
+                  .first,
+            )
+            .decoration!;
+    expect((avatarDecoration as BoxDecoration).shape, BoxShape.circle);
     expect(
       dotColor(tester, const ValueKey('deviceDot:dev-remote')),
       palette.pending,

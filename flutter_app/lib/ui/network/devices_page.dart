@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
+import 'package:fa/ui/chats/local_session_folders.dart'
+    show folderAvatarGradient;
 import 'dart:math' as math;
 
 import 'package:fa_ui/fa_ui.dart';
@@ -207,7 +209,10 @@ class _OwnDeviceNode extends StatelessWidget {
         final frame = snapshot.data;
         return _DeviceNodeTile(
           key: const ValueKey('deviceNode:This device'),
+          rowKey: const ValueKey('deviceRow'),
+          avatarKey: const ValueKey('deviceAvatar'),
           dotKey: const ValueKey('deviceDot'),
+          seed: service.deviceId ?? 'This device',
           machine: frame?.machine ?? MachinePresence.online,
           label: context.l10n.networkDeviceThisDevice,
           initiallyExpanded: true,
@@ -232,7 +237,10 @@ class _RemoteDeviceNode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => _DeviceNodeTile(
+    rowKey: ValueKey('deviceRow:$deviceId'),
+    avatarKey: ValueKey('deviceAvatar:$deviceId'),
     dotKey: ValueKey('deviceDot:$deviceId'),
+    seed: deviceId,
     machine: frame.machine,
     label: deviceId,
     agents: frame.agents,
@@ -240,13 +248,20 @@ class _RemoteDeviceNode extends StatelessWidget {
   );
 }
 
-/// One expandable machine row + its nested agent/session rows (the tree
-/// container: a hand-rolled disclosure — dot + name + trailing state,
-/// chevron rotates, children indent like the panel's rows).
+/// One expandable machine row + its nested agent/session rows. The row
+/// itself is the NETWORKS-LIST row pattern (owner restyle): the Ø50 round
+/// letter-gradient avatar with a vector device glyph, the 14/w600 name,
+/// the right-aligned presence status, the disclosure chevron — the same
+/// geometry as the networks page rows (70pt pitch, 10pt inset, 12pt gap).
+/// Children indent to the name's leading edge, like the sidebar's channels
+/// under their network.
 class _DeviceNodeTile extends StatefulWidget {
   const _DeviceNodeTile({
     super.key,
+    required this.rowKey,
+    required this.avatarKey,
     required this.dotKey,
+    required this.seed,
     required this.machine,
     required this.label,
     required this.agents,
@@ -254,7 +269,13 @@ class _DeviceNodeTile extends StatefulWidget {
     this.initiallyExpanded = false,
   });
 
+  final Key rowKey;
+  final Key avatarKey;
   final Key dotKey;
+
+  /// The avatar hue seed (the device id; the own device falls back to its
+  /// display label).
+  final String seed;
   final MachinePresence machine;
   final String label;
   final Map<String, AgentRunState> agents;
@@ -273,6 +294,7 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
     final colors = FahColors.of(context);
     final hasChildren = widget.agents.isNotEmpty || widget.sessions.isNotEmpty;
     return Column(
+      key: widget.rowKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
@@ -281,57 +303,62 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
               ? () => setState(() => _expanded = !_expanded)
               : null,
           borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              children: [
-                Container(
-                  key: widget.dotKey,
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: deviceMachineDotColor(colors, widget.machine),
-                    shape: BoxShape.circle,
+          child: SizedBox(
+            height: 70,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                children: [
+                  _DeviceAvatar(
+                    key: widget.avatarKey,
+                    dotKey: widget.dotKey,
+                    seed: widget.seed,
+                    dotColor: deviceMachineDotColor(colors, widget.machine),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    widget.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colors.text, fontSize: 13),
-                  ),
-                ),
-                Text(
-                  deviceMachineLabel(context, widget.machine),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: widget.machine == MachinePresence.offline
-                        ? colors.dim
-                        : colors.teal,
-                  ),
-                ),
-                if (hasChildren)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Transform.rotate(
-                      angle: _expanded ? math.pi : 0,
-                      child: FaIcon(
-                        FaSemanticIcon.expandMore,
-                        size: 16,
-                        color: colors.dim,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
                       ),
                     ),
                   ),
-              ],
+                  Text(
+                    deviceMachineLabel(context, widget.machine),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: widget.machine == MachinePresence.offline
+                          ? colors.dim
+                          : colors.teal,
+                    ),
+                  ),
+                  if (hasChildren)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Transform.rotate(
+                        angle: _expanded ? math.pi : 0,
+                        child: FaIcon(
+                          FaSemanticIcon.expandMore,
+                          size: 16,
+                          color: colors.dim,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
         if (_expanded) ...[
           for (final entry in widget.agents.entries)
             Padding(
-              padding: const EdgeInsets.only(left: 20),
+              padding: const EdgeInsets.only(left: 72),
               child: DeviceRosterRow(
                 key: ValueKey('agentRow:${entry.key}'),
                 dotKey: ValueKey('agentDot:${entry.key}'),
@@ -345,7 +372,7 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
             ),
           for (final entry in widget.sessions.entries)
             Padding(
-              padding: const EdgeInsets.only(left: 20),
+              padding: const EdgeInsets.only(left: 72),
               child: DeviceRosterRow(
                 key: ValueKey('sessionRow:${entry.key}'),
                 dotKey: ValueKey('sessionDot:${entry.key}'),
@@ -359,6 +386,70 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
             ),
         ],
       ],
+    );
+  }
+}
+
+/// The device avatar: the networks row's round letter-gradient avatar
+/// ([folderAvatarGradient] seeded by the device id) carrying a vector
+/// device glyph in the letter's on-color spec (WHITE @ 95%) instead of a
+/// letter, plus the §5 presence dot as the badge. No SVG assets ship in
+/// the app bundle, so the glyph is the theme-resolved [FaSemanticIcon]
+/// vector (the ratchet allows no `Icons.*` literals in Fa files).
+class _DeviceAvatar extends StatelessWidget {
+  const _DeviceAvatar({
+    super.key,
+    required this.dotKey,
+    required this.seed,
+    required this.dotColor,
+  });
+
+  final Key dotKey;
+  final String seed;
+  final Color dotColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final (start, end) = folderAvatarGradient(seed);
+    return SizedBox(
+      width: 50,
+      height: 50,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [start, end],
+              ),
+            ),
+            alignment: Alignment.center,
+            child: FaIcon(
+              FaSemanticIcon.devices,
+              size: 22,
+              color: Colors.white.withValues(alpha: .95),
+            ),
+          ),
+          Positioned(
+            bottom: 1,
+            right: 1,
+            child: Container(
+              key: dotKey,
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
