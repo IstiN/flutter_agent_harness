@@ -111,40 +111,51 @@ final class ClassifiedProviderError {
 /// The `Retry-After` hint a provider may quote inline (`retry after 12
 /// seconds`, `try again in 30s`, `retry after 2 hours`). The structured
 /// header rides ErrorEvents only and never reaches the rendered
-/// AssistantMessage, so the console hint parses the text — absent hint, no
-/// time claim (issue #2119 border case). Longest unit words first in the
-/// alternation: `s` alone must not swallow the `s` of `hours` (that
-/// mis-parse rendered hour-scale hints as seconds — the review bug).
+/// AssistantMessage, so the console hint parses the text. Known units map
+/// to s/m/h factors (word-anchored: `m\b` cannot swallow the `m` of
+/// `months`, and the bare `s` of the first revision cannot swallow the
+/// `s` of `hours`); any OTHER trailing unit word (`days`, `weeks`) is
+/// captured as unknown and OMITS the time claim entirely — a wrong unit
+/// claim is worse than none (issue #2119 review round 2). A bare number
+/// (no unit — header-style) is seconds by the header's own unit.
 final RegExp _retryAfterPattern = RegExp(
   r'(?:retry.?after|try again in)[:\s]*(\d+)\s*'
-  r'(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)?',
+  r'(?:(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b|([a-z]+))?',
   caseSensitive: false,
 );
 
-/// The parsed `Retry-After` hint: the captured value in its unit, or null
-/// when the text carries no parseable hint.
-({int totalSeconds, String display})? _parseRetryAfter(String text) {
+/// The parsed `Retry-After` display, or null when the text carries no
+/// parseable hint OR names an unknown unit (`2 days`) — no claim beats a
+/// wrong claim.
+String? _parseRetryAfter(String text) {
   final hint = _retryAfterPattern.firstMatch(text);
   final value = hint?.group(1);
   if (value == null) return null;
   final amount = int.parse(value);
-  final unit = hint?.group(2);
-  // Longest-word alternation guarantees the real unit matched; `null`
-  // (bare number, header-style) is seconds — the header's own unit.
-  final factor = switch (unit == null ? 's' : unit[0].toLowerCase()) {
+  final knownUnit = hint?.group(2);
+  // Group 3 is a captured-but-UNKNOWN unit word (`days`, `weeks`): the
+  // known-word alternation plus word boundary rejected it — claim nothing.
+  if (knownUnit == null) {
+    return hint?.group(3) != null ? null : _formatDuration(amount);
+  }
+  final factor = switch (knownUnit[0].toLowerCase()) {
     'h' => 3600,
     'm' => 60,
     _ => 1,
   };
-  final totalSeconds = amount * factor;
-  return (totalSeconds: totalSeconds, display: _formatDuration(totalSeconds));
+  return _formatDuration(amount * factor);
 }
 
 /// Renders a retry budget honestly at its own scale: hour-scale hints
-/// print hours (`~2h`, `~1.5h`), minute-scale minutes (`~10m`), the rest
-/// seconds — never a `3600s`-style bare-second dump.
+/// print hours (`~2h`, `~1.5h`), minute-scale minutes (`~10m`, `~1.7m` —
+/// one decimal, never a raw float), the rest seconds — never a
+/// `3600s`-style bare-second dump.
 String _formatDuration(int totalSeconds) {
-  String trim(double v) => v == v.roundToDouble() ? v.toInt().toString() : '$v';
+  String trim(double v) {
+    final fixed = v.toStringAsFixed(1);
+    return fixed.endsWith('.0') ? fixed.substring(0, fixed.length - 2) : fixed;
+  }
+
   if (totalSeconds >= 3600) return '~${trim(totalSeconds / 3600)}h';
   if (totalSeconds >= 60) return '~${trim(totalSeconds / 60)}m';
   return '~${totalSeconds}s';
@@ -191,7 +202,7 @@ ClassifiedProviderError classifyProviderFailure(
 
   if (matchesRateLimitWording(compact)) {
     final hint = _parseRetryAfter(compact);
-    final wait = hint == null ? '' : ' — retry after ${hint.display}';
+    final wait = hint == null ? '' : ' — retry after $hint';
     return ClassifiedProviderError._(
       ProviderErrorCategory.rateLimit,
       line(

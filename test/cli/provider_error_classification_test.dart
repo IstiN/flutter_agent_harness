@@ -102,6 +102,44 @@ void main() {
       );
     });
 
+    test('a scaled hint renders at ONE decimal, never a raw float '
+        '(review round 2: 100s must not print ~1.6666666666666667m)', () {
+      expect(
+        classifyProviderFailure(
+          '429: rate limit — retry after 100 seconds',
+        ).consoleLine,
+        contains('retry after ~1.7m'),
+      );
+      expect(
+        classifyProviderFailure(
+          '429: rate limit — retry after 100 seconds',
+        ).consoleLine,
+        isNot(contains('1.66')),
+      );
+    });
+
+    test('an UNKNOWN unit (`2 days`, `weeks`) claims NO time — no claim '
+        'beats a wrong claim (review round 2)', () {
+      for (final hint in [
+        '429: daily quota reached. try again in 2 days',
+        '429: quota — retry after 3 weeks',
+        '429: quota — try again in 2 months',
+      ]) {
+        final c = classifyProviderFailure(hint);
+        expect(c.category, ProviderErrorCategory.rateLimit, reason: hint);
+        expect(
+          c.consoleLine,
+          isNot(contains('retry after ~')),
+          reason: '$hint must omit the time claim entirely',
+        );
+        expect(
+          c.consoleLine,
+          contains('wait it out or switch provider/model'),
+          reason: hint,
+        );
+      }
+    });
+
     test('a bare-number hint (header-style) stays seconds; a bare '
         '3600-class value upgrades to hours', () {
       expect(
