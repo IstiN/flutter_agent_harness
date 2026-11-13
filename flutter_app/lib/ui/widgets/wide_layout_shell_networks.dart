@@ -62,6 +62,10 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
       service: _devicesConnector,
       sessions: _chatController,
       onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
+      // The open session's card carries the accent-fill selected state
+      // (the same ONE selected id the Local panel's rows compare
+      // against — pending wins, then live, then persisted).
+      selectedSessionId: _selectedSessionId,
     );
   }
 

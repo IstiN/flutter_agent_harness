@@ -161,25 +161,29 @@ ChatListEntry localEntry(
   ChatPresence? presence,
   bool isSubagent = false,
   String? parentId,
+  DateTime? createdAt,
 }) => ChatListEntry(
   id: ChatEntryId.local(id),
   kind: ChatListEntryKind.localAgent,
   title: title,
-  createdAt: DateTime.utc(2026, 11, 12),
+  createdAt: createdAt ?? DateTime.utc(2026, 11, 12),
   presence: presence,
   isSubagent: isSubagent,
   parentId: parentId,
 );
 
 /// The DevicesPage under test, optionally wired with the local chat list
-/// and an open-session callback that records the tapped entries.
+/// and an open-session callback that records the tapped entries; [selected]
+/// pins the shell's open-session id (the accent-fill card).
 Widget devicesPage(
   FakeDevicesService service, {
   ChatListController? sessions,
   void Function(ChatListEntry)? onOpen,
+  String? selected,
 }) => DevicesPage(
   service: service,
   sessions: sessions,
+  selectedSessionId: selected,
   onOpenSession: onOpen == null ? null : (entry) => onOpen(entry),
 );
 
@@ -284,7 +288,9 @@ void main() {
     // offline spec (dim dot, muted label), never the old online default.
     expect(find.text('This device'), findsOneWidget);
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.dim);
-    expect(find.text('Offline'), findsNWidgets(2)); // node + idle session
+    // The node's presence label is the only 'Offline': the session cards'
+    // subtitle is the last-activity timestamp now, not the state word.
+    expect(find.text('Offline'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceAvatar')), findsOneWidget);
     expect(
@@ -325,7 +331,9 @@ void main() {
       dotColor(tester, const ValueKey('agentDot:scout@dev-1')),
       palette.teal,
     );
-    expect(find.text('Busy'), findsNWidgets(2)); // agent + streaming session
+    // The streaming agent is the only 'Busy' label; the streaming local
+    // session's card shows its timestamp subtitle instead.
+    expect(find.text('Busy'), findsOneWidget);
     expect(find.byKey(const ValueKey('sessionRow:sess-exposed')), findsNothing);
     expect(find.byKey(const ValueKey('sessionRow:sess-main')), findsOneWidget);
     expect(
@@ -431,11 +439,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deviceNodeToggle:dev-remote')));
     await tester.pump();
 
-    final localRow = tester.widget<DeviceRosterRow>(
+    final localRow = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-main')),
     );
     expect(localRow.onTap, isNotNull);
-    final remoteRow = tester.widget<DeviceRosterRow>(
+    final remoteRow = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-remote')),
     );
     expect(remoteRow.onTap, isNull);
@@ -445,6 +453,134 @@ void main() {
     expect(opened, isEmpty);
     await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
     expect(opened, ['sess-main']);
+
+    // The remote card is the same channel-card anatomy but carries NO
+    // chevron — it is not navigable.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('sessionRow:sess-remote')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is FaIcon && widget.icon == FaSemanticIcon.chevronRight,
+        ),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('sessionRow:sess-main')),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is FaIcon && widget.icon == FaSemanticIcon.chevronRight,
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('channel-card anatomy: the open session carries the accent '
+      'fill, the white chat-glyph tile and the timestamp subtitle; the '
+      'expanded node keys like the selected network', (tester) async {
+    final controller = chatListOf([
+      localEntry('sess-open', title: 'Open chat', createdAt: DateTime.now()),
+      localEntry('sess-idle', title: 'Idle chat', createdAt: DateTime.now()),
+    ]);
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+
+    await tester.pumpWidget(
+      _wrap(
+        devicesPage(
+          service,
+          sessions: controller,
+          onOpen: (_) {},
+          selected: 'sess-open',
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final openCard = tester.widget<DeviceSessionCard>(
+      find.byKey(const ValueKey('sessionRow:sess-open')),
+    );
+    expect(openCard.selected, isTrue);
+    expect(openCard.onTap, isNotNull);
+    // The subtitle is the LAST-ACTIVITY TIMESTAMP (a fresh session reads
+    // 'now'), never the presence word.
+    expect(openCard.subtitle, 'now');
+    final idleCard = tester.widget<DeviceSessionCard>(
+      find.byKey(const ValueKey('sessionRow:sess-idle')),
+    );
+    expect(idleCard.selected, isFalse);
+
+    // Selected = the accent fill (the messenger row's state); unselected
+    // stays the quiet panel card.
+    final element = tester.element(find.byKey(const ValueKey('devicesPage')));
+    final tokens = FaDesignTokens.of(element);
+    final colors = FahColors.of(element);
+    Material cardMaterial(Key key) => tester.widget<Material>(
+      find
+          .descendant(of: find.byKey(key), matching: find.byType(Material))
+          .first,
+    );
+    expect(
+      cardMaterial(const ValueKey('sessionRow:sess-open')).color,
+      tokens.accent,
+    );
+    expect(
+      cardMaterial(const ValueKey('sessionRow:sess-idle')).color,
+      colors.panelAlt,
+    );
+
+    // The card's white icon tile carries the vector chat glyph and the
+    // presence dot badge rides it (sessionDot key above).
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('sessionRow:sess-open')),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is FaIcon && widget.icon == FaSemanticIcon.chat,
+        ),
+      ),
+      findsOneWidget,
+    );
+
+    // The expanded This-device row keys like the selected network: the
+    // tinted rounded-10 fill and the avatar's accent ring.
+    final isLight = Theme.of(element).brightness == Brightness.light;
+    final headerMaterial = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('deviceRow')),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(
+      headerMaterial.color,
+      isLight ? const Color(0xFFEEF2FF) : colors.panelAlt,
+    );
+    final avatarDecoration = tester
+        .widget<Container>(
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('deviceAvatar')),
+                matching: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Container &&
+                      widget.decoration is BoxDecoration &&
+                      widget.key == null,
+                ),
+              )
+              .first,
+        )
+        .decoration!;
+    expect(
+      (avatarDecoration as BoxDecoration).border,
+      Border.all(color: colors.indigo, width: 2),
+    );
   });
 
   testWidgets('online with no remote frames → only the This device node', (

@@ -8,7 +8,8 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
-import 'package:fa_ui/fa_ui.dart' show FahColors;
+import 'package:fa_ui/fa_ui.dart'
+    show FahColors, FaDesignTokens, FaIcon, FaSemanticIcon;
 // The presence payload model is pure Dart in the connector core.
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
@@ -325,6 +326,157 @@ class DeviceRosterStatusLine extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colors.dim, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One session child row — the Networks channel-card shape (owner pass):
+/// a rounded-12 card with the white glyph tile (chat icon + presence dot
+/// badge), the bold session title, a muted subtitle (the local chat's
+/// last-activity timestamp, or the connector presence label for remote
+/// rows) and the trailing chevron when the row opens. The selected state
+/// is the accent fill — the messenger list row's selected treatment.
+/// [onTap] null keeps the card read-only (remote exposed sessions).
+class DeviceSessionCard extends StatelessWidget {
+  const DeviceSessionCard({
+    super.key,
+    required this.dotKey,
+    required this.dotColor,
+    required this.title,
+    required this.subtitle,
+    this.selected = false,
+    this.onTap,
+  });
+
+  /// The presence dot badge's key (the `sessionDot:<id>` contract).
+  final Key dotKey;
+  final Color dotColor;
+  final String title;
+  final String subtitle;
+
+  /// The currently open session's card (accent fill).
+  final bool selected;
+
+  /// The shell's open flow; null renders the read-only card (no chevron).
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final ink = selected ? tokens.accentInk : colors.text;
+    final subdued = selected
+        ? tokens.accentInk.withValues(alpha: .82)
+        : colors.dim;
+    return Material(
+      color: selected ? tokens.accent : colors.panelAlt,
+      shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              _SessionGlyphTile(
+                dotKey: dotKey,
+                dotColor: dotColor,
+                accent: tokens.accent,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: ink,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: subdued, fontSize: 11.5),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (onTap != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: FaIcon(
+                    FaSemanticIcon.chevronRight,
+                    size: 16,
+                    color: subdued,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The channel-card's icon tile: the Ø30 white rounded square with the
+/// vector chat glyph in the accent ink, plus the §5 presence dot as the
+/// badge (the device avatar's badge convention). The theme-resolved
+/// [FaSemanticIcon] keeps the no-`Icons.*` ratchet.
+class _SessionGlyphTile extends StatelessWidget {
+  const _SessionGlyphTile({
+    required this.dotKey,
+    required this.dotColor,
+    required this.accent,
+  });
+
+  final Key dotKey;
+  final Color dotColor;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 30,
+      height: 30,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: FaIcon(FaSemanticIcon.chat, size: 16, color: accent),
+          ),
+          Positioned(
+            bottom: -1,
+            right: -1,
+            child: Container(
+              key: dotKey,
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+              ),
             ),
           ),
         ],

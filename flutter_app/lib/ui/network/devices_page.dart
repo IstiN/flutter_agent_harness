@@ -11,6 +11,7 @@ import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_session_folders.dart'
     show folderAvatarGradient;
 import 'dart:math' as math;
@@ -27,8 +28,10 @@ import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart
 /// degraded / offline dot), nested agents (live / busy / offline) and
 /// exposed sessions (live / wake-on-DM / offline) under it. Same §5
 /// three-level model the sidebar panel shows, but as a full section: the
-/// row components are the panel's [DeviceRosterRow]s, only the tree
-/// container is new.
+/// agent rows reuse the panel's [DeviceRosterRow], the session level is
+/// the panel's [DeviceSessionCard] (the channel-card shape), and the
+/// device level is the membership-tile row; only the tree container is
+/// new.
 ///
 /// Data: [DeviceConnectorService.presence] (the local machine's own
 /// heartbeat view) + [DeviceConnectorService.presenceFrames] (network-wide
@@ -42,6 +45,7 @@ class DevicesPage extends StatefulWidget {
     required this.service,
     this.sessions,
     this.onOpenSession,
+    this.selectedSessionId,
   });
 
   /// The app-scope device connector service (one upstream socket, AC1).
@@ -57,6 +61,11 @@ class DevicesPage extends StatefulWidget {
   /// onOpenSession): a live session switches in place, a persisted one
   /// clones/relays. Null keeps the local session rows read-only.
   final ValueChanged<ChatListEntry>? onOpenSession;
+
+  /// The shell's ONE selected session id (pending wins, then live, then
+  /// persisted) — the currently open local session's card carries the
+  /// accent-fill selected state. Null highlights nothing.
+  final String? selectedSessionId;
 
   @override
   State<DevicesPage> createState() => _DevicesPageState();
@@ -185,6 +194,7 @@ class _DevicesPageState extends State<DevicesPage> {
                       service: widget.service,
                       sessions: widget.sessions,
                       onOpenSession: widget.onOpenSession,
+                      selectedSessionId: widget.selectedSessionId,
                     ),
                     for (final entry in _remote.entries)
                       _RemoteDeviceNode(
@@ -225,11 +235,13 @@ class _OwnDeviceNode extends StatelessWidget {
     required this.service,
     required this.sessions,
     required this.onOpenSession,
+    required this.selectedSessionId,
   });
 
   final DeviceConnectorService service;
   final ChatListController? sessions;
   final ValueChanged<ChatListEntry>? onOpenSession;
+  final String? selectedSessionId;
 
   @override
   Widget build(BuildContext context) {
@@ -257,6 +269,7 @@ class _OwnDeviceNode extends StatelessWidget {
               ? const <ChatListEntry>[]
               : deviceVisibleLocalSessions(controller),
           onOpenSession: onOpenSession,
+          selectedSessionId: selectedSessionId,
         );
       },
     );
@@ -295,12 +308,13 @@ class _RemoteDeviceNode extends StatelessWidget {
 }
 
 /// One expandable machine row + its nested agent/session rows. The row
-/// itself is the NETWORKS-LIST row pattern (owner restyle): the Ø50 round
+/// itself is the membership-tile anatomy (owner restyle): the Ø50 round
 /// letter-gradient avatar with a vector device glyph, the 14/w600 name,
-/// the right-aligned presence status, the disclosure chevron — the same
-/// geometry as the networks page rows (70pt pitch, 10pt inset, 12pt gap).
-/// Children indent to the name's leading edge, like the sidebar's channels
-/// under their network.
+/// the right-aligned presence status, the rotating disclosure chevron —
+/// the sidebar's selected-network keying when expanded (the tinted
+/// rounded-10 row fill plus the avatar's accent ring). The children are
+/// the channel-card level: session cards aligned under the avatar rail,
+/// agent rows keeping the roster-row form (presence-only, not navigable).
 class _DeviceNodeTile extends StatefulWidget {
   const _DeviceNodeTile({
     super.key,
@@ -314,6 +328,7 @@ class _DeviceNodeTile extends StatefulWidget {
     required this.sessions,
     this.localSessions = const [],
     this.onOpenSession,
+    this.selectedSessionId,
     this.initiallyExpanded = false,
   });
 
@@ -330,12 +345,15 @@ class _DeviceNodeTile extends StatefulWidget {
   final Map<String, ConnectorSessionPresence> sessions;
 
   /// The app's local chat sessions (This device only) — rendered as
-  /// tappable rows keyed by their session id.
+  /// channel-card rows keyed by their session id.
   final List<ChatListEntry> localSessions;
 
   /// The shell's open flow for [localSessions]; null keeps them read-only
   /// (remote machines never carry local sessions).
   final ValueChanged<ChatListEntry>? onOpenSession;
+
+  /// The currently open session's id — its card renders the accent fill.
+  final String? selectedSessionId;
 
   final bool initiallyExpanded;
 
@@ -358,27 +376,42 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
       key: widget.rowKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        InkWell(
-          key: ValueKey('deviceNodeToggle:${widget.label}'),
-          // ALWAYS toggles: an empty machine still expands to the muted
-          // no-sessions hint, so the disclosure affordance never lies.
-          onTap: () => setState(() => _expanded = !_expanded),
-          borderRadius: BorderRadius.circular(8),
-          child: _headerRow(context, colors),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          child: Material(
+            // Expanded keys the row like the sidebar's selected network:
+            // the tinted rounded-10 fill (the membership tile's state).
+            color: _expanded ? _selectedRowFill(context, colors) : null,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              key: ValueKey('deviceNodeToggle:${widget.label}'),
+              // ALWAYS toggles: an empty machine still expands to the
+              // muted no-sessions hint, so the affordance never lies.
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(10),
+              child: _headerRow(context, colors),
+            ),
+          ),
         ),
         if (_expanded) ..._childRows(context, colors),
       ],
     );
   }
 
-  /// The networks-list row shape: Ø50 letter-gradient avatar with the
-  /// vector device glyph, the 14/w600 name, the right-aligned presence
-  /// status and the disclosure chevron (always shown — every node
-  /// toggles, even the empty ones).
+  /// The sidebar's selected-network fill (light indigo tint, dark panel).
+  Color _selectedRowFill(BuildContext context, FahColors colors) =>
+      Theme.of(context).brightness == Brightness.light
+      ? const Color(0xFFEEF2FF)
+      : colors.panelAlt;
+
+  /// The membership-tile row shape: Ø50 letter-gradient avatar with the
+  /// vector device glyph (accent-ringed while expanded), the 14/w600
+  /// name, the right-aligned presence status and the rotating disclosure
+  /// chevron (always shown — every node toggles, even the empty ones).
   Widget _headerRow(BuildContext context, FahColors colors) => SizedBox(
     height: 70,
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
           _DeviceAvatar(
@@ -386,6 +419,7 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
             dotKey: widget.dotKey,
             seed: widget.seed,
             dotColor: deviceMachineDotColor(colors, widget.machine),
+            accented: _expanded,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -426,15 +460,18 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
     ),
   );
 
-  /// The nested children: agents (frame presence), the local chat
-  /// sessions (tappable), the connector's exposed sessions (read-only) —
-  /// or the single muted hint when the node has neither.
+  /// The nested children: agents (frame presence, the roster-row form),
+  /// the local chat sessions (channel cards, tappable), the connector's
+  /// exposed sessions (channel cards, read-only) — or the single muted
+  /// hint when the node has neither. Cards align under the avatar rail
+  /// (no wide left gutter); the hint text lines up with the roster
+  /// labels.
   List<Widget> _childRows(BuildContext context, FahColors colors) {
     if (!_hasChildren) {
       return [
         Padding(
           key: const ValueKey('deviceNoSessionsHint'),
-          padding: const EdgeInsets.only(left: 72, right: 16, top: 2),
+          padding: const EdgeInsets.only(left: 48, right: 16, top: 2),
           child: Text(
             context.l10n.noSessionsHint,
             style: TextStyle(color: colors.dim, fontSize: 12),
@@ -445,7 +482,7 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
     return [
       for (final entry in widget.agents.entries)
         Padding(
-          padding: const EdgeInsets.only(left: 72),
+          padding: const EdgeInsets.only(left: 14, bottom: 2),
           child: DeviceRosterRow(
             key: ValueKey('agentRow:${entry.key}'),
             dotKey: ValueKey('agentDot:${entry.key}'),
@@ -459,28 +496,27 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
         ),
       for (final entry in widget.localSessions)
         Padding(
-          padding: const EdgeInsets.only(left: 72),
+          padding: const EdgeInsets.only(left: 14, right: 14, bottom: 2),
           child: _localSessionRow(context, colors, entry),
         ),
       for (final entry in widget.sessions.entries)
         Padding(
-          padding: const EdgeInsets.only(left: 72),
-          child: DeviceRosterRow(
+          padding: const EdgeInsets.only(left: 14, right: 14, bottom: 2),
+          child: DeviceSessionCard(
             key: ValueKey('sessionRow:${entry.key}'),
             dotKey: ValueKey('sessionDot:${entry.key}'),
             dotColor: deviceSessionDotColor(colors, entry.value),
-            label: entry.key,
-            stateLabel: deviceSessionLabel(context, entry.value),
-            stateColor: entry.value == ConnectorSessionPresence.offline
-                ? colors.dim
-                : colors.teal,
+            title: entry.key,
+            subtitle: deviceSessionLabel(context, entry.value),
           ),
         ),
     ];
   }
 
-  /// One local chat session row: the chat list's presence colors it, the
-  /// tap routes through the shell's open flow (null ⇒ read-only).
+  /// One local chat session card: the chat list's presence colors the
+  /// glyph-tile badge, the subtitle is the last-activity timestamp, and
+  /// the tap routes through the shell's open flow (null ⇒ read-only).
+  /// The shell's currently open session renders the accent fill.
   Widget _localSessionRow(
     BuildContext context,
     FahColors colors,
@@ -488,13 +524,16 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
   ) {
     final id = entry.id.value;
     final dotColor = deviceLocalSessionDotColor(colors, entry.presence);
-    return DeviceRosterRow(
+    return DeviceSessionCard(
       key: ValueKey('sessionRow:$id'),
       dotKey: ValueKey('sessionDot:$id'),
       dotColor: dotColor,
-      label: entry.title,
-      stateLabel: deviceLocalSessionLabel(context, entry.presence),
-      stateColor: dotColor,
+      title: entry.title,
+      subtitle: chatListRelativeTime(
+        context,
+        entry.lastActivity ?? entry.createdAt,
+      ),
+      selected: id == widget.selectedSessionId,
       onTap: widget.onOpenSession == null
           ? null
           : () => widget.onOpenSession!(entry),
@@ -502,23 +541,29 @@ class _DeviceNodeTileState extends State<_DeviceNodeTile> {
   }
 }
 
-/// The device avatar: the networks row's round letter-gradient avatar
+/// The device avatar: the membership row's round letter-gradient avatar
 /// ([folderAvatarGradient] seeded by the device id) carrying a vector
 /// device glyph in the letter's on-color spec (WHITE @ 95%) instead of a
-/// letter, plus the §5 presence dot as the badge. No SVG assets ship in
-/// the app bundle, so the glyph is the theme-resolved [FaSemanticIcon]
-/// vector (the ratchet allows no `Icons.*` literals in Fa files).
+/// letter, plus the §5 presence dot as the badge. [accented] — the
+/// expanded node's selected-network keying — rings the gradient in the
+/// accent color. No SVG assets ship in the app bundle, so the glyph is
+/// the theme-resolved [FaSemanticIcon] vector (the ratchet allows no
+/// `Icons.*` literals in Fa files).
 class _DeviceAvatar extends StatelessWidget {
   const _DeviceAvatar({
     super.key,
     required this.dotKey,
     required this.seed,
     required this.dotColor,
+    this.accented = false,
   });
 
   final Key dotKey;
   final String seed;
   final Color dotColor;
+
+  /// The expanded node's accent ring (the selected network's treatment).
+  final bool accented;
 
   @override
   Widget build(BuildContext context) {
@@ -539,6 +584,9 @@ class _DeviceAvatar extends StatelessWidget {
                 end: Alignment.bottomRight,
                 colors: [start, end],
               ),
+              border: accented
+                  ? Border.all(color: FahColors.of(context).indigo, width: 2)
+                  : null,
             ),
             alignment: Alignment.center,
             child: FaIcon(
