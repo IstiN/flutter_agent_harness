@@ -97,6 +97,18 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async {
   return LoopbackOAuthReceiver.bind();
 }
 
+/// Reads the link that launched a fresh mobile process. Desktop boots do not
+/// touch AppLinks; retrieval is best-effort because boot must never block on
+/// a platform-channel failure.
+Future<Uri?> getOAuthInitialLinkImpl() async {
+  if (!Platform.isIOS && !Platform.isAndroid) return null;
+  try {
+    return await AppLinks().getInitialLink();
+  } on Object {
+    return null;
+  }
+}
+
 /// Opens [authUrl] in the system browser (production seam for the flow).
 Future<void> openAuthUrlImpl(Uri authUrl) async {
   final launched = await url_launcher.launchUrl(

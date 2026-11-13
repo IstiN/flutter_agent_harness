@@ -13,3 +13,6 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async =>
 /// Fallback opener for the same unsupported platforms.
 Future<void> openAuthUrlImpl(Uri authUrl) async =>
     throw UnsupportedError('OAuth sign-in is unavailable on this platform');
+
+/// Unsupported platforms have no process-launch OAuth link.
+Future<Uri?> getOAuthInitialLinkImpl() async => null;

@@ -14,11 +14,11 @@
 library;
 
 import 'dart:async';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/firebase_options.dart';
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/network/auth_pending_store.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -34,19 +34,14 @@ import 'package:fa/services/leftover_model_cleanup.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/image_preview_store.dart';
-import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/last_connection.dart';
-import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/platform_http_client.dart';
-import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/quota_store.dart';
-import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/settings_env.dart';
 import 'package:fa/services/skills_access_store.dart';
-import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/services/web/sandbox_url_strategy.dart';
@@ -316,11 +311,13 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     authBaseUrl: Uri.parse(faAuthBaseUrl),
     wallet: networkWallet,
     httpClient: createPlatformHttpClient(),
+    pendingStore: FilePendingOAuthStore(env),
   );
-  // Restore the persisted ai-native account (issue #955 iteration 3):
-  // an unexpired token becomes the JWT, an expired one is refreshed
-  // silently. Fire-and-forget — boot never blocks on the network.
-  unawaited(networkSessions.restoreAccount());
+  // A mobile browser handoff can relaunch the process after the dialog and
+  // its in-flight Future are gone. Resume that callback BEFORE the ordinary
+  // wallet restore; a fresh process has no account to restore otherwise.
+  // Both paths remain fire-and-forget — boot never blocks on the network.
+  unawaited(_restoreNetworkAccountAtBoot(networkSessions));
   // Provider quota (issue #823): the shared store reads keys through the
   // persisted registry; the changes stream drives the app surfaces.
   QuotaStore.instance.attachRegistry(registry);
@@ -342,6 +339,13 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     networkSessions: networkSessions,
     quotas: QuotaStore.instance,
   );
+}
+
+Future<void> _restoreNetworkAccountAtBoot(
+  NetworkSessionManager networkSessions,
+) async {
+  final resumed = await networkSessions.resumeOAuthSignInFromInitialLink();
+  if (!resumed) await networkSessions.restoreAccount();
 }
 
 /// The fa_network REST base URL; overridable with

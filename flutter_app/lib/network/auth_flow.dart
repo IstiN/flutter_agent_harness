@@ -5,6 +5,7 @@
 // ignore_for_file: prefer_initializing_formals — named private
 // parameters cannot be initializing formals in Dart.
 
+import 'auth_pending_store.dart';
 import 'fa_network_client.dart';
 import 'models.dart';
 
@@ -53,9 +54,17 @@ abstract interface class OAuthCallbackReceiver {
 /// 5. `POST /api/oauth-proxy/exchange` swaps the temporary code for the
 ///    token bundle.
 final class NetworkAuthFlow {
-  const NetworkAuthFlow({required FaNetworkClient client}) : _client = client;
+  NetworkAuthFlow({
+    required FaNetworkClient client,
+    PendingOAuthStore? pendingStore,
+    DateTime Function()? clock,
+  }) : _client = client,
+       _pendingStore = pendingStore,
+       _clock = clock ?? DateTime.now;
 
   final FaNetworkClient _client;
+  final PendingOAuthStore? _pendingStore;
+  final DateTime Function() _clock;
 
   /// Runs the flow and returns the token bundle. Throws
   /// [AuthFlowException] on a callback error/state mismatch/missing code,
@@ -68,6 +77,8 @@ final class NetworkAuthFlow {
     required Future<void> Function(Uri authUrl) openUrl,
   }) async {
     final receiver = await startReceiver();
+    final pendingStore = _pendingStore;
+    PendingOAuthFlow? pending;
     try {
       final initiated = await _client.oauthInitiate(
         provider: provider,
@@ -75,6 +86,17 @@ final class NetworkAuthFlow {
         clientType: clientType,
         environment: environment,
       );
+      // The browser handoff may kill the app. Persist everything the next
+      // process needs BEFORE launching it; the code itself arrives later.
+      pending = PendingOAuthFlow(
+        provider: provider,
+        clientType: clientType,
+        environment: environment,
+        redirectUri: receiver.redirectUri,
+        state: initiated.state,
+        createdAt: _clock().toUtc(),
+      );
+      await pendingStore?.save(pending);
       await openUrl(initiated.authUrl);
       final callback = await receiver.callback;
       final error = callback.queryParameters['error'];
@@ -93,9 +115,17 @@ final class NetworkAuthFlow {
       if (code == null || code.isEmpty) {
         throw const AuthFlowException('the sign-in callback carried no code');
       }
-      return await _client.oauthExchange(code: code, state: initiated.state);
+      return await _client.oauthExchange(
+        code: code,
+        state: initiated.state,
+        now: _clock(),
+      );
     } finally {
       receiver.close();
+      // Covers success, callback errors/state mismatches, browser-launch
+      // failures, and the receiver's timeout. A process killed by the OS
+      // cannot run this finally; boot expiry removes that orphaned record.
+      if (pending != null) await pendingStore?.clear();
     }
   }
 }
