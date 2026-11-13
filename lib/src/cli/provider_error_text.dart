@@ -109,14 +109,46 @@ final class ClassifiedProviderError {
 }
 
 /// The `Retry-After` hint a provider may quote inline (`retry after 12
-/// seconds`, `try again in 30s`). The structured header rides ErrorEvents
-/// only and never reaches the rendered AssistantMessage, so the console
-/// hint parses the text — absent hint, no time claim (issue #2119 border
-/// case).
+/// seconds`, `try again in 30s`, `retry after 2 hours`). The structured
+/// header rides ErrorEvents only and never reaches the rendered
+/// AssistantMessage, so the console hint parses the text — absent hint, no
+/// time claim (issue #2119 border case). Longest unit words first in the
+/// alternation: `s` alone must not swallow the `s` of `hours` (that
+/// mis-parse rendered hour-scale hints as seconds — the review bug).
 final RegExp _retryAfterPattern = RegExp(
-  r'(?:retry.?after|try again in)[:\s]*(\d+)\s*(s|sec|seconds|m|min|minutes)?',
+  r'(?:retry.?after|try again in)[:\s]*(\d+)\s*'
+  r'(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)?',
   caseSensitive: false,
 );
+
+/// The parsed `Retry-After` hint: the captured value in its unit, or null
+/// when the text carries no parseable hint.
+({int totalSeconds, String display})? _parseRetryAfter(String text) {
+  final hint = _retryAfterPattern.firstMatch(text);
+  final value = hint?.group(1);
+  if (value == null) return null;
+  final amount = int.parse(value);
+  final unit = hint?.group(2);
+  // Longest-word alternation guarantees the real unit matched; `null`
+  // (bare number, header-style) is seconds — the header's own unit.
+  final factor = switch (unit == null ? 's' : unit[0].toLowerCase()) {
+    'h' => 3600,
+    'm' => 60,
+    _ => 1,
+  };
+  final totalSeconds = amount * factor;
+  return (totalSeconds: totalSeconds, display: _formatDuration(totalSeconds));
+}
+
+/// Renders a retry budget honestly at its own scale: hour-scale hints
+/// print hours (`~2h`, `~1.5h`), minute-scale minutes (`~10m`), the rest
+/// seconds — never a `3600s`-style bare-second dump.
+String _formatDuration(int totalSeconds) {
+  String trim(double v) => v == v.roundToDouble() ? v.toInt().toString() : '$v';
+  if (totalSeconds >= 3600) return '~${trim(totalSeconds / 3600)}h';
+  if (totalSeconds >= 60) return '~${trim(totalSeconds / 60)}m';
+  return '~${totalSeconds}s';
+}
 
 /// Classifies a raw provider error message into the console category and
 /// one-line text (issue #2119 AC2), reusing the ladders' taxonomy.
@@ -158,14 +190,8 @@ ClassifiedProviderError classifyProviderFailure(
   }
 
   if (matchesRateLimitWording(compact)) {
-    final hint = _retryAfterPattern.firstMatch(compact);
-    final seconds = hint?.group(1);
-    final unit = hint?.group(2);
-    final wait = seconds == null
-        ? ''
-        // A minute-scale hint keeps its unit; anything second-shaped
-        // (bare, `s`, `sec`, `seconds`) prints as `s`.
-        : ' — retry after ~$seconds${unit != null && unit.startsWith('m') ? 'm' : 's'}';
+    final hint = _parseRetryAfter(compact);
+    final wait = hint == null ? '' : ' — retry after ${hint.display}';
     return ClassifiedProviderError._(
       ProviderErrorCategory.rateLimit,
       line(

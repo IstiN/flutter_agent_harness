@@ -61,6 +61,59 @@ void main() {
       expect(c.consoleLine, contains('retry after ~12s'));
     });
 
+    test('an HOUR-scale Retry-After hint renders hours, never seconds '
+        '(review: the unit-group miss made ~2h read as ~2s)', () {
+      final c = classifyProviderFailure(
+        '429: daily quota reached. try again in 2 hours',
+      );
+      expect(c.category, ProviderErrorCategory.rateLimit);
+      expect(c.consoleLine, contains('retry after ~2h'));
+      expect(c.consoleLine, isNot(contains('2s')));
+    });
+
+    test('a compact hour hint (`1h`) and a fractional render honestly', () {
+      expect(
+        classifyProviderFailure('429: quota — retry after 1h').consoleLine,
+        contains('retry after ~1h'),
+      );
+      expect(
+        classifyProviderFailure(
+          '429: quota — retry after 5400 seconds',
+        ).consoleLine,
+        contains('retry after ~1.5h'),
+      );
+    });
+
+    test('a MINUTE-scale Retry-After hint renders minutes; past the hour '
+        'boundary the budget reads in hours (one honest scale)', () {
+      expect(
+        classifyProviderFailure(
+          '429: rate limit — try again in 10 min',
+        ).consoleLine,
+        contains('retry after ~10m'),
+      );
+      // 90 minutes IS 1.5 hours — the magnitude, not the quoted word,
+      // picks the unit, so no `3600s`-style dumps ever render.
+      expect(
+        classifyProviderFailure(
+          '429: rate limit exceeded — retry after 90 minutes',
+        ).consoleLine,
+        contains('retry after ~1.5h'),
+      );
+    });
+
+    test('a bare-number hint (header-style) stays seconds; a bare '
+        '3600-class value upgrades to hours', () {
+      expect(
+        classifyProviderFailure('429: quota — retry after 30').consoleLine,
+        contains('retry after ~30s'),
+      );
+      expect(
+        classifyProviderFailure('429: quota — retry-after 3600').consoleLine,
+        contains('retry after ~1h'),
+      );
+    });
+
     test('rate limit without a Retry-After hint claims no time', () {
       final c = classifyProviderFailure('429: too many requests');
       expect(c.category, ProviderErrorCategory.rateLimit);
