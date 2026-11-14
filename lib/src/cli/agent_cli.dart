@@ -292,6 +292,7 @@ import '../env/process_probe_stub.dart'
     if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
+import 'host_shell_stub.dart' if (dart.library.io) 'host_shell_io.dart';
 import 'jsr_cli.dart';
 import 'prompt_templates.dart';
 // The one-provider transfer container codec (issue #2090) and its `.fahx`

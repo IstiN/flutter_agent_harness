@@ -122,24 +122,21 @@ void main() {
       );
     });
 
-    test(
-      'Windows cmd /c: double quotes — single quotes are LITERAL there '
-      'and used to ride into the file name, so the editor could never '
-      'open the real digest (gh-2102 review)',
-      () {
-        final command = handoffEditorCommand(
-          'code --wait',
-          r'C:\work\.fah\handoff-digest-1.md',
-          isWindows: true,
-        );
-        expect(
-          command,
-          r'code --wait "C:\work\.fah\handoff-digest-1.md"',
-        );
-        expect(command.contains("'"), isFalse,
-            reason: 'no single quote may reach the cmd /c argv');
-      },
-    );
+    test('Windows cmd /c: double quotes — single quotes are LITERAL there '
+        'and used to ride into the file name, so the editor could never '
+        'open the real digest (gh-2102 review)', () {
+      final command = handoffEditorCommand(
+        'code --wait',
+        r'C:\work\.fah\handoff-digest-1.md',
+        isWindows: true,
+      );
+      expect(command, r'code --wait "C:\work\.fah\handoff-digest-1.md"');
+      expect(
+        command.contains("'"),
+        isFalse,
+        reason: 'no single quote may reach the cmd /c argv',
+      );
+    });
   });
 
   /// The .jsonl session file paths of the '/work' folder, sorted — via the

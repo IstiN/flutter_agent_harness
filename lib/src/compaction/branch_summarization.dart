@@ -288,9 +288,7 @@ Future<BranchSummaryResult> generateBranchSummary(
         SummarizationRequest(prompt: prompt, cancelToken: cancelToken),
       );
     } catch (error) {
-      return SummarizationResult.failure(
-        'Branch summarization failed: $error',
-      );
+      return SummarizationResult.failure('Branch summarization failed: $error');
     }
   }
 
@@ -300,9 +298,7 @@ Future<BranchSummaryResult> generateBranchSummary(
       ..write(conversation)
       ..write('\n</conversation>\n');
     if (prior != null) {
-      buffer.write(
-        '<previous-checkpoint>\n$prior\n</previous-checkpoint>\n',
-      );
+      buffer.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n');
     }
     buffer
       ..write('\n')
@@ -312,7 +308,8 @@ Future<BranchSummaryResult> generateBranchSummary(
 
   final full = build(serializeConversation(preparation.messages), null);
   String text;
-  if (maxPromptTokens == null || estimateStringTokens(full) <= maxPromptTokens) {
+  if (maxPromptTokens == null ||
+      estimateStringTokens(full) <= maxPromptTokens) {
     final result = await runOne(full);
     if (result.isAborted) return const BranchSummaryResult(aborted: true);
     text = result.text ?? '';
@@ -374,12 +371,8 @@ const _chunkPlanReserveTokens = 4096;
 /// Everything around the conversation in a fold prompt (tags, the
 /// previous-checkpoint block, the instructions), measured — the envelope
 /// [truncateForSummaryBudget] subtracts from the budget.
-int _foldEnvelopeChars({
-  required String prior,
-  required String instructions,
-}) {
-  final prompt = StringBuffer()
-    ..write('<conversation>\n</conversation>\n');
+int _foldEnvelopeChars({required String prior, required String instructions}) {
+  final prompt = StringBuffer()..write('<conversation>\n</conversation>\n');
   if (prior.isNotEmpty) {
     prompt.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n');
   }

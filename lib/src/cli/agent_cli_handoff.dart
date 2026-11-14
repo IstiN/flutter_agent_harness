@@ -14,10 +14,22 @@ part of 'agent_cli.dart';
 /// after the flow).
 const _handoffDigestFilePattern = 'handoff-digest';
 
-/// Composes the external-editor invocation for the digest file:
-/// `<editor> '<path>'` with POSIX single-quote escaping of the path.
-String handoffEditorCommand(String editor, String path) =>
-    "$editor '${path.replaceAll("'", r"'\''")}'";
+/// Composes the external-editor invocation for the digest file, quoted for
+/// the HOST shell the env's `exec` runs it under (gh-2102 review):
+/// POSIX `sh -c` wraps the path in single quotes (the `'\''` escape);
+/// Windows `cmd /c` gets DOUBLE quotes — single quotes are literal
+/// characters there, so the POSIX form handed the editor a quoted
+/// (nonexistent) file name and the edit step silently never worked.
+/// [isWindows] pins the shell flavour (unit tests; the CI runners cannot
+/// exercise the Windows arm in situ).
+String handoffEditorCommand(String editor, String path, {bool? isWindows}) {
+  if (isWindows ?? hostShellIsWindows) {
+    // cmd strips the double quotes; embedded double quotes double up
+    // (defensive only — `"` is a reserved character in Windows file names).
+    return '$editor "${path.replaceAll('"', '""')}"';
+  }
+  return "$editor '${path.replaceAll("'", r"'\''")}'";
+}
 
 /// `/handoff` (gh-2102) — the edit-then-start flow.
 extension HandoffSlashCommand on AgentCli {
