@@ -257,6 +257,7 @@ export 'src/session/attach/session_attachment.dart';
 export 'src/session/attach/session_presence.dart';
 export 'src/session/attach/session_lease.dart';
 export 'src/session/obligations_ledger.dart';
+export 'src/session/record_quarantine.dart';
 export 'src/session_deadline.dart';
 export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';

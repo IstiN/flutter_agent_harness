@@ -17,6 +17,7 @@ import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import '../session_io_retry.dart';
 import '../session_line_scanner.dart';
+import 'record_quarantine.dart';
 import 'session_record.dart';
 import 'uuid.dart';
 
@@ -243,7 +244,21 @@ SessionHeader parseSessionHeaderLine(String line, String filePath) {
     _invalidSession(filePath, 'first line is not a valid session header');
   }
   try {
-    return SessionHeader.fromJson(parsed);
+    final header = SessionHeader.fromJson(parsed);
+    // gh-2178 E1: a degraded header timestamp opens the session anyway —
+    // the report names it once so the user can repair.
+    if (header.timestampDegraded) {
+      final raw = parsed['timestamp'];
+      SessionQuarantine.reportRecord(
+        QuarantinedRecord(
+          filePath: filePath,
+          lineNumber: 1,
+          recordId: header.id,
+          rawTimestamp: raw is String ? raw : '',
+        ),
+      );
+    }
+    return header;
   } on FormatException catch (error) {
     _invalidSession(filePath, error.message, error);
   }
@@ -273,10 +288,18 @@ SessionRecord? parseShallowCustomRecord(String line) {
     if (decoded['id'] is! String) return null;
     if (decoded['timestamp'] is! String) return null;
     if (decoded['customType'] is! String) return null;
+    // gh-2178 site 3: the raw scan degrades a malformed timestamp IN
+    // PLACE (the record quarantines like any other) instead of falling
+    // back to a full decode whose bare parse threw. The fallback remains
+    // for the other malformed-prefix classes.
+    final decodedTimestamp = parseRecordTimestamp(
+      decoded['timestamp'] as String,
+    );
     return CustomRecord(
       id: decoded['id'] as String,
       parentId: decoded['parentId'] as String?,
-      timestamp: DateTime.parse(decoded['timestamp'] as String),
+      timestamp: decodedTimestamp.value,
+      timestampDegraded: decodedTimestamp.degraded,
       customType: decoded['customType'] as String,
       data: null,
     );
@@ -325,7 +348,22 @@ SessionRecord parseSessionEntryLine(
     _invalidEntry(filePath, lineNumber, 'is not a valid session entry');
   }
   try {
-    return SessionRecord.fromJson(parsed);
+    final record = SessionRecord.fromJson(parsed);
+    // gh-2178 site 2 (the incident's crash site): the timestamp degraded
+    // instead of throwing — report the quarantine coordinates once (the
+    // record carries the degraded flag; the walks exclude it).
+    if (record.timestampDegraded) {
+      final raw = parsed['timestamp'];
+      SessionQuarantine.reportRecord(
+        QuarantinedRecord(
+          filePath: filePath,
+          lineNumber: lineNumber,
+          recordId: record.id,
+          rawTimestamp: raw is String ? raw : '',
+        ),
+      );
+    }
+    return record;
   } on FormatException catch (error) {
     _invalidEntry(filePath, lineNumber, error.message, error);
   }
@@ -1861,12 +1899,19 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         code: SessionErrorCode.notFound,
       );
     }
+    var walked = 0;
     while (current != null) {
-      path.add(current);
+      // gh-2178 quarantine: a degraded record is treated as ABSENT on
+      // the branch — excluded from the path, never a fatal walk — while
+      // its children stay usable (the walk continues through its own
+      // parentId, the same semantics the hard-cap drops give #1114).
+      if (!current.timestampDegraded) path.add(current);
       // An adversarial file can carry a parentId cycle (a→b→a); a
       // legitimate root path can never exceed the record count, so stop
-      // there instead of spinning (issue #858 round-1 review).
-      if (path.length > _entries.length) break;
+      // there instead of spinning (issue #858 round-1 review). The guard
+      // counts WALKED records, not path entries — an all-degraded cycle
+      // must terminate too.
+      if (++walked > _entries.length) break;
       final parentId = current.parentId;
       if (parentId == null) break;
       final parent = _byId[parentId];
