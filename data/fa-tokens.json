@@ -1,15 +1,4 @@
 {
-  "issue-2013": [
-    {
-      "leg": "dev",
-      "at": "2026-10-31T08:36:06Z",
-      "prompt": 549253,
-      "completion": 37219,
-      "total": 586472,
-      "cacheRead": 16718848,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-2014": [
     {
       "leg": "review",
@@ -3506,6 +3495,15 @@
       "completion": 36714,
       "total": 177002,
       "cacheRead": 7723072,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-14T08:53:39Z",
+      "prompt": 416454,
+      "completion": 53170,
+      "total": 469624,
+      "cacheRead": 23104448,
       "model": "glm-5.3-flash"
     }
   ],
