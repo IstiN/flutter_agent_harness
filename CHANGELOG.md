@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2101): cache-aware compaction calls + pass metrics — one
+  compaction run is now ONE provider-cache family: the judge and digest
+  adapters share a run-scoped routing session id (`prompt_cache_key` /
+  `x-session-id`) with a deliberate per-call-class `short` retention
+  (`CompactionCachePolicy`, `lib/src/compaction/cache_policy.dart`), so
+  each pass's request prefix is served from the cache the previous pass
+  wrote instead of the legacy blanket `cacheRetention: 'none'` +
+  fresh-per-call ids; the id is never the session's id (the session's
+  cache bucket stays untouched) and providers without cache knobs degrade
+  to uncached behavior. Hides stay batched per pass (one `hidden_range`
+  append per pass). Pass reports gain metrics: the one-liner carries the
+  pass duration (`… tokens (N freed · P%) · 12.4s`); the details view
+  renders the metered LLM line (`llm: 2 calls · 18.2s · $0.0412 · cache
+  87% (45k/51.7k tok)`) folded from the providers' `Usage` — absent
+  (never fake zero) when no usage is reported, with cache 0% kept visible
+  as the regression signal. Legacy runs render byte-identically
+  (#2101)
+
 - feat(gh-210): post-compaction continuity — a bounded working set
   re-injects at the context tail after any compaction (structured hide,
   checkpoint, or classic fold): the recited goal first, then recently

@@ -41,9 +41,9 @@ import '../prompts/prompt_overrides.dart';
 import '../prompts/prompts.g.dart';
 import '../session/session_record.dart';
 import '../session/session_tree.dart';
-import '../session/uuid.dart';
 import '../types.dart';
 import '../user_text.dart';
+import 'cache_policy.dart';
 import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
@@ -804,19 +804,30 @@ typedef SummarizeFn =
 /// aborted stop reasons map to failure results (errors-as-events contract);
 /// a throwing [StreamFunction] is defensive-converted into a failure.
 ///
-/// Summaries are standalone requests, so every call runs with
-/// `cacheRetention: 'none'` and a fresh routing session id (uuidv7) via
-/// [StreamCacheRouting]: summarization never writes to nor routes through
-/// the session's prompt cache (pi's compaction `callCompleteSimple`).
+/// Summaries are standalone requests, so every call runs under the
+/// [CompactionCachePolicy] (gh-2101): the default affine policy routes all
+/// of a compaction run's calls through ONE run-scoped routing session id
+/// with the `short` retention ([CompactionCachePolicy.digestRetention]) —
+/// providers with session affinity/cache markers serve each call's request
+/// prefix from the cache the previous call wrote. The id is still not the
+/// parent conversation's id, so summaries never read from nor write to the
+/// session's prompt-cache bucket. [CompactionCachePolicy.isolated]
+/// reproduces the legacy `cacheRetention: 'none'` + fresh-id-per-call
+/// shape. Adapters without cache knobs ignore the override (degrade to
+/// uncached). [onUsage] — when given — receives every call's
+/// provider-reported usage for the pass metrics.
 SummarizeFn streamFunctionSummarizer(
   StreamFunction streamFunction,
   Model model, {
   CompactionPrompts prompts = defaultCompactionPrompts,
   void Function(String delta)? onDelta,
+  CompactionCachePolicy? cachePolicy,
+  void Function(Usage usage)? onUsage,
 }) {
+  final policy = cachePolicy ?? CompactionCachePolicy.affine();
   return (SummarizationRequest request) async {
     try {
-      final stream = StreamCacheRouting.runWith(
+      final stream = policy.runWith(
         () => streamFunction(
           model,
           Context(
@@ -825,8 +836,7 @@ SummarizeFn streamFunctionSummarizer(
           ),
           cancelToken: request.cancelToken,
         ),
-        sessionId: uuidv7(),
-        cacheRetention: 'none',
+        CompactionCallClass.digest,
       );
       // Surface streaming deltas (text + thinking) to the host UI while the
       // result future resolves: EventStream buffers until listened, and
@@ -843,6 +853,7 @@ SummarizeFn streamFunctionSummarizer(
         });
       }
       final response = await stream.result;
+      _reportCallUsage(response, onUsage);
       return switch (response.stopReason) {
         StopReason.aborted => SummarizationResult.failure(
           response.errorMessage ?? 'Summarization aborted',
@@ -862,6 +873,21 @@ SummarizeFn streamFunctionSummarizer(
       return SummarizationResult.failure('Summarization failed: $error');
     }
   };
+}
+
+/// Forwards one call's provider-reported usage to the pass metrics
+/// (gh-2101). Zero usage (a provider that reports nothing) reports nothing;
+/// a null sink is a no-op.
+void _reportCallUsage(AssistantMessage response, void Function(Usage)? sink) {
+  if (sink == null) return;
+  final usage = response.usage;
+  if (usage.totalTokens == 0 &&
+      usage.input == 0 &&
+      usage.cacheRead == 0 &&
+      usage.cacheWrite == 0) {
+    return;
+  }
+  sink(usage);
 }
 
 Future<String> _runSummarization({
