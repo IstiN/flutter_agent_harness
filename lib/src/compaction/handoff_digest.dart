@@ -16,6 +16,7 @@ library;
 
 import '../cancel_token.dart';
 import '../session/session_record.dart';
+import '../session/session_storage.dart';
 import '../session/session_tree.dart';
 import 'branch_summarization.dart';
 import 'compaction.dart';
@@ -69,7 +70,33 @@ final class HandoffDigestResult {
 /// Collect every entry of [session]'s CURRENT branch (leaf → root,
 /// chronological) for the digest — the branch-digest walk without a tree
 /// move: the whole conversation is what a handoff carries over.
-Future<List<SessionRecord>> collectEntriesForHandoff(Session session) async {
+///
+/// A resumed/booted CLI session is opened WINDOWED (`_repo.open(metadata,
+/// windowed: true)`) and the resume walk keeps only the parity-budget tail
+/// resident — reading the branch directly would digest just that tail and
+/// seed the fresh session with it as a COMPLETE checkpoint, silently
+/// (gh-2102 review, BLOCKING). The whole ledger is therefore primed first
+/// ([Session.ensureWholeLedgerResident] — the read-everything escape hatch
+/// the trajectory surfaces use). Past the whole-ledger backstop the priming
+/// refuses with the `tooLarge` [SessionException] BEFORE any scan: hosts
+/// catch it and degrade LOUDLY ([collectResidentBranchForHandoff] is the
+/// partial-coverage fallback), never silently.
+Future<List<SessionRecord>> collectEntriesForHandoff(
+  Session session, {
+  int maxWholeLedgerBytes = defaultMaxFullOpenBytes,
+}) async {
+  await session.ensureWholeLedgerResident(
+    maxWholeLedgerBytes: maxWholeLedgerBytes,
+  );
+  return collectResidentBranchForHandoff(session);
+}
+
+/// The RESIDENT branch only (no whole-ledger priming): the loud-degrade
+/// fallback for [collectEntriesForHandoff]'s tooLarge refusal, when the
+/// host chose to digest the resident tail with a visible note.
+Future<List<SessionRecord>> collectResidentBranchForHandoff(
+  Session session,
+) async {
   final leafId = await session.getLeafId();
   if (leafId == null) return const [];
   return session.getBranch(fromId: leafId);
@@ -79,12 +106,21 @@ Future<List<SessionRecord>> collectEntriesForHandoff(Session session) async {
 /// [collectEntriesForHandoff]) — the branch-digest generation with the
 /// handoff preamble. Never throws: failures surface on the result.
 ///
+/// [summarizerWindow] (gh-2102 review, issue #729 parity) bounds the
+/// outbound digest prompt to [summarizationPayloadBudget] of the DIGEST
+/// MODEL's own window: an over-budget branch is summarized chunk-wise with
+/// the fold (the whole conversation still feeds the digest), instead of one
+/// provider-overflowing call on exactly the long sessions a handoff exists
+/// for. `null` leaves the payload unbounded (legacy behavior).
+///
 /// LOSSLESS: nothing is appended to any session; the digest lives only on
 /// the returned result until the host seeds the continuation session.
 Future<HandoffDigestResult> generateHandoffDigest(
   List<SessionRecord> entries, {
   required SummarizeFn summarize,
   int tokenBudget = 0,
+  int? summarizerWindow,
+  CompactionSettings settings = defaultCompactionSettings,
   CancelToken? cancelToken,
 }) async {
   if (entries.isEmpty) {
@@ -106,6 +142,9 @@ Future<HandoffDigestResult> generateHandoffDigest(
     tokenBudget: tokenBudget,
     cancelToken: cancelToken,
     preamble: handoffDigestPreamble,
+    maxPromptTokens: summarizerWindow == null
+        ? null
+        : summarizationPayloadBudget(summarizerWindow, settings),
   );
   if (result.aborted) return const HandoffDigestResult(aborted: true);
   if (result.summary == null) {

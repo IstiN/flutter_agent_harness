@@ -29,7 +29,25 @@ extension HandoffSlashCommand on AgentCli {
     await _settled;
     // The SESSION branch is the authority — not `_agent.state.messages`,
     // which a resumed session only rebuilds at its first drive.
-    final entries = await collectEntriesForHandoff(session);
+    // gh-2102 review (BLOCKING): a resumed session is opened windowed and
+    // the resume walk keeps only the parity-budget tail resident —
+    // [collectEntriesForHandoff] primes whole-ledger residency first; the
+    // tooLarge backstop refusal degrades LOUDLY here: the digest then
+    // covers only the resident tail and the note says so (the old session
+    // keeps the full history — nothing is lost, the digest is partial).
+    List<SessionRecord> entries;
+    try {
+      entries = await collectEntriesForHandoff(session);
+    } on SessionException catch (error) {
+      if (error.code != SessionErrorCode.tooLarge) rethrow;
+      io.writeln(
+        'handoff: the session ledger exceeds the whole-ledger residency '
+        'bound — the digest will cover only the resident tail; the old '
+        'session keeps the full history',
+      );
+      io.writeln(_style.dim(error.message));
+      entries = await collectResidentBranchForHandoff(session);
+    }
     if (entries.isEmpty) {
       io.writeln('nothing to hand off — this session has no conversation');
       return;
@@ -48,6 +66,12 @@ extension HandoffSlashCommand on AgentCli {
       digest = await generateHandoffDigest(
         entries,
         summarize: streamFunctionSummarizer(slot.stream, slot.model),
+        // gh-2102 review (IMPORTANT): bound the digest payload to the
+        // DIGEST MODEL's own window (the #729 parity guard the compaction
+        // digest rides) — an over-budget branch chunk-folds instead of
+        // overflowing the summarizer with one giant prompt.
+        summarizerWindow: slot.model.contextWindow,
+        settings: _effectiveCompactionSettings,
       );
     } finally {
       _waiting.compactionLivenessEnd();

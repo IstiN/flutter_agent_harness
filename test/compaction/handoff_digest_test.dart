@@ -94,6 +94,58 @@ void main() {
       final session = await newSession();
       expect(await collectEntriesForHandoff(session), isEmpty);
     });
+
+    test(
+      'a windowed (resumed) session collects the WHOLE branch, not just '
+      'the resident tail — the resume walk must never silently truncate '
+      'the digest input (gh-2102 review, BLOCKING)',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 800; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        // The resume path: every CLI resume/boot opens WINDOWED, and the
+        // parity-budget walk leaves only the tail resident.
+        final meta = await session.getMetadata();
+        final resumed = await repo.open(meta, windowed: true);
+        await resumed.ensureCompactionBoundaryResident(tokenBudget: 50);
+        final residentBranch = await resumed.getBranch();
+        // Bug precondition: the windowed branch IS partial before the fix
+        // (the reviewer reproduced 3 of 40 records this way).
+        expect(residentBranch.length, lessThan(800));
+
+        final entries = await collectEntriesForHandoff(resumed);
+
+        // The whole conversation is what a handoff carries over: the
+        // collect must prime whole-ledger residency first.
+        expect(entries, hasLength(800));
+      },
+    );
+
+    test(
+      'a ledger past the whole-ledger bound refuses with the tooLarge '
+      'SessionException — hosts degrade loudly, never silently digest a '
+      'partial tail (gh-2102 review)',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 800; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final meta = await session.getMetadata();
+        final resumed = await repo.open(meta, windowed: true);
+
+        await expectLater(
+          collectEntriesForHandoff(resumed, maxWholeLedgerBytes: 1),
+          throwsA(
+            isA<SessionException>().having(
+              (e) => e.code,
+              'code',
+              SessionErrorCode.tooLarge,
+            ),
+          ),
+        );
+      },
+    );
   });
 
   group('generateHandoffDigest', () {
@@ -225,6 +277,116 @@ void main() {
 
       expect(await session.getEntries(), hasLength(before));
     });
+
+    test(
+      'a summarizer window bounds the digest prompt: an over-budget branch '
+      'is summarized chunk-wise (fold), every outbound prompt within the '
+      'payload budget (gh-2102 review, IMPORTANT)',
+      () async {
+        final session = await newSession();
+        // One read op (file lists must survive the fold) + a branch whose
+        // serialized conversation (~21k tokens) overflows a 32k-window
+        // smol role's payload budget (32768 - 16384 reserve).
+        await session.appendMessage(UserMessage.text('read /src/one.dart'));
+        await session.appendMessage(
+          _toolCalls([_readCall('/src/one.dart')]),
+        );
+        for (var i = 0; i < 200; i++) {
+          await session.appendMessage(UserMessage.text('u$i-${'a' * 380}'));
+        }
+        final entries = await collectEntriesForHandoff(session);
+        final budget = summarizationPayloadBudget(
+          32768,
+          defaultCompactionSettings,
+        );
+        expect(
+          estimateStringTokens(serializeConversation(entries.map((entry) {
+            return entry is MessageRecord ? entry.message : null;
+          }).whereType<Message>().toList())),
+          greaterThan(budget),
+        ); // genuinely over-budget
+
+        final summarizer = _FakeSummarizer('FOLD');
+        final result = await generateHandoffDigest(
+          entries,
+          summarize: summarizer.call,
+          summarizerWindow: 32768,
+        );
+
+        expect(result.isSuccess, isTrue);
+        expect(summarizer.prompts, hasLength(greaterThan(1)));
+        // The #729 invariant, now on the handoff path too: every outbound
+        // prompt fits the summarizer's payload budget.
+        for (final prompt in summarizer.prompts) {
+          expect(
+            estimateStringTokens(prompt),
+            lessThanOrEqualTo(budget),
+            reason: 'outbound digest payload exceeded the budget',
+          );
+        }
+        // The fold threads: every chunk after the first carries the prior
+        // summary as <previous-checkpoint>.
+        for (final prompt in summarizer.prompts.sublist(1)) {
+          expect(prompt, contains('<previous-checkpoint>'));
+          expect(prompt, contains('FOLD'));
+        }
+        // The composed digest keeps the handoff preamble + the fold + the
+        // file lists (file ops accumulate across ALL entries even when
+        // the conversation rides chunks).
+        expect(result.summary, startsWith(handoffDigestPreamble));
+        expect(result.summary, contains('FOLD'));
+        expect(result.summary, contains('<read-files>'));
+        expect(result.readFiles, ['/src/one.dart']);
+      },
+    );
+
+    test(
+      'a summarizer window over an under-budget branch is a no-op: the '
+      'single prompt is byte-identical to the unbounded path '
+      '(gh-2102 review)',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(UserMessage.text('small branch'));
+        final entries = await collectEntriesForHandoff(session);
+
+        final bounded = _FakeSummarizer('digest');
+        await generateHandoffDigest(
+          entries,
+          summarize: bounded.call,
+          summarizerWindow: 200000,
+        );
+        final unbounded = _FakeSummarizer('digest');
+        await generateHandoffDigest(entries, summarize: unbounded.call);
+
+        expect(bounded.prompts, hasLength(1));
+        expect(unbounded.prompts, hasLength(1));
+        expect(bounded.prompts.single, unbounded.prompts.single);
+      },
+    );
+
+    test(
+      'a single message bigger than the budget is truncated with the '
+      'explicit note, never silently (gh-2102 review)',
+      () async {
+        final session = await newSession();
+        await session.appendMessage(UserMessage.text('g' * 8000));
+        final entries = await collectEntriesForHandoff(session);
+
+        final summarizer = _FakeSummarizer('FOLD');
+        final result = await generateHandoffDigest(
+          entries,
+          summarize: summarizer.call,
+          summarizerWindow: 2000, // budget = 1000 tokens
+        );
+
+        expect(result.isSuccess, isTrue);
+        expect(summarizer.prompts, hasLength(1)); // one oversized chunk
+        expect(
+          summarizer.prompts.single,
+          contains('more characters truncated'),
+        );
+      },
+    );
   });
 
   group('seedHandoffRecord', () {
