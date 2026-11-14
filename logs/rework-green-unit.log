@@ -8557,3 +8557,1067 @@ TAG=state-management
 ✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) pre-start register sets name + capabilities on the first hello; a live re-register re-announces
 ✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) a failed live re-announce never breaks register
 ✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) a link drop fails pending whois/presence waiters (no hang)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC1: loopback fixture — no credential and wrong credential → 401
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC1: lan fixture — the master bearer is the relay credential
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) fail closed: a hub with no secret at all serves nothing
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) REG: fail closed over the wire — a null credential answers 401, never proxies (issue #792 AC5)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC3: metadata / loopback / private destinations are denied before any outbound attempt
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC4: a redirect into denied space is refused by the hop verdict; a disallowed origin is a 403 with the upstream untouched
+hub: --bind lan requires a master secret — pass --secret <secret> or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC2: --bind lan without a secret refuses to start (named)
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC1: a hung upstream does NOT delay a second, independent request
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC2: an oversized body is a named 413 and the worker is released
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC2 paced: an over-cap upload is cut off at the cap — the 413 does not wait for the upload (no whole-upload worker pin)
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: REG gh-2065: a pump tick landing after the close-only 413 RST must not leak a write-side socket error
+hub [relay-1]: upstream idle timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC3: a client disconnect mid-relay never pins the worker past the idle window
+✅ test/hub/dap_macos_keychain_test.dart: MacOsDapChannelKeychain.read returns null when the security CLI is unavailable
+AC3 counter: kernel did not report the reset on this platform (upstreamChunks kept flowing into the void) — bound test covers the guarantee
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC3 counter: a reset peer aborts the upstream where the kernel reports write errors
+hub [relay-3]: relay worker queue full (1 waiters) — 503
+hub [relay-2]: queued relay dropped (client gone or hub stopping)
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: queue overflow is a named 503 backpressure answer
+hub [relay-1]: upstream connect timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: a hung upstream is a named 504 after the connect window
+hub [relay-1]: upstream idle timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: a mid-stream upstream stall ends the relay within the idle window (SSE truncation, not a hang)
+hub [relay-1]: relay request stalled → 408
+✅ test/hub/local_hub_relay_concurrency_test.dart: a stalled client body is a named 408 (no slowloris worker pin)
+✅ test/hub/payload_crypto_test.dart: hkdfSha256 matches RFC 5869 test case 1 (SHA-256)
+✅ test/hub/payload_crypto_test.dart: payload encrypt/decrypt round-trip (DM shape)
+✅ test/hub/payload_crypto_test.dart: tampered ciphertext is rejected
+✅ test/hub/payload_crypto_test.dart: wrong AAD target is rejected
+✅ test/hub/dap_env_channels_test.dart: null/empty env → no channels, no warnings
+✅ test/hub/dap_env_channels_test.dart: plaintext priv + keyless public + mixed set joins together (AC15)
+✅ test/hub/dap_env_channels_test.dart: per-entry hubUrl wins over the default (E3)
+✅ test/hub/dap_env_channels_test.dart: malformed entries warn loudly and are skipped, valid ones join
+✅ test/hub/dap_env_channels_test.dart: entry without any hub is skipped with a warning, never guessed
+✅ test/hub/dap_env_channels_test.dart: garbage JSON and non-list shapes degrade to one loud warning
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing an int priv is skipped with a warning, valid entries still join
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing a list-typed pub is skipped (YAML-ism pasted into the CI secret)
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing null pub/priv stay keyless (public) — tolerated, not skipped
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown matches the fa_hub_client teardown marker
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown rejects other StateError messages — real bugs stay fatal
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown rejects other error types with the same text
+✅ test/hub/silent_hub_test.dart: BUG 1: silent presence_query must not hang peers() (socket alive)
+✅ test/hub/repository_test.dart: repository delivers inbound to the steering source and drains once
+✅ test/hub/repository_test.dart: peek is non-consuming; drain takes the whole inbox
+✅ test/hub/repository_test.dart: send maps #channel to channel sends and agent ids to DMs
+✅ test/hub/repository_test.dart: directory maps hub presence onto mailbox entries
+✅ test/hub/silent_hub_test.dart: BUG 1: silent whois must not hang sendDm() (socket alive)
+✅ test/hub/silent_hub_test.dart: BUG 2: error-answered presence_query must not hang peers()
+✅ test/hub/silent_hub_test.dart: BUG 3: concurrent presenceQuery must not orphan the first caller (poller vs tool clobber — hub answers INSTANTLY)
+✅ test/hub/silent_hub_test.dart: BUG 4: concurrent whois of the same target must not orphan the first caller (inbound-DM sender resolution vs sendDm)
+✅ test/hub/silent_hub_test.dart: BUG 5: an unsolicited presence broadcast must not satisfy a pending full-roster query (live: "only self online" every other restart)
+✅ test/hub/repository_test.dart: HubPlugin: config wiring, persisted 0600 key, steering delivery
+✅ test/hub/repository_test.dart: HubPlugin.connectTo: bare host + name + channel → new identity on hub 2, lobby joined, url/name/channels persisted
+✅ test/hub/plain_repro_test.dart: PLAIN: after connectTo(name:) the agent still receives DMs
+✅ test/hub/plain_repro_test.dart: mismatched x25519pub line in a key file must not deafen the agent
+✅ test/hub/plain_repro_test.dart: identity round-trip: derived pub equals generated pub; stable id
+✅ test/hub/plain_repro_test.dart: torn x25519pub line does not break load
+✅ test/hub/dap_identity_path_test.dart: scoped identities are per project and stable across restarts
+✅ test/hub/dap_identity_path_test.dart: null and empty instances preserve the exact legacy project path
+✅ test/hub/dap_identity_path_test.dart: a nonempty instance is stable across projects and distinct by value
+✅ test/hub/dap_identity_path_test.dart: an explicit keyPath is respected verbatim, even with an instance
+✅ test/hub/zero_config_test.dart: settings precedence: env > yaml > ~/.dap/config.json > defaults; fah key dir, shared channels file
+✅ test/hub/zero_config_test.dart: auto-keygen: first send persists keys; a second instance picks them up, auto-joins, and decrypts
+✅ test/hub/zero_config_test.dart: invite: chankey E2E DM auto-persists + joins + notices on the steering source; later channel sends decrypt
+✅ test/hub/zero_config_test.dart: HubPlugin zero-config: no yaml url/keyPath defaults still work — fah key dir (mkdir -p, 0600), DAP_CHANNELS_FILE store
+✅ test/hub/fah_hub_serve_test.dart: watchHubTerminateSignals (Windows SIGTERM guard) host without SIGTERM (the Windows shape): SIGINT only, no throw
+✅ test/hub/fah_hub_serve_test.dart: watchHubTerminateSignals (Windows SIGTERM guard) default guard matches the host (POSIX: SIGTERM + SIGINT)
+DAP hub on ws://127.0.0.1:42551/ws (password-protected)
+LAN: ws://10.1.0.246:42551/ws + password
+LAN: ws://172.17.0.1:42551/ws + password
+✅ test/hub/fah_hub_serve_test.dart: hubServe --bind lan (issue #402 AC4 pairing surface) lists LAN URLs for each non-loopback IPv4 address
+✅ test/hub/fah_hub_serve_test.dart: hubServe refuses a secretless LAN start (issue #792 AC2) the named refusal fires only for lan + no secret
+hub: --bind lan requires a master secret — pass --secret <secret> or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)
+✅ test/hub/fah_hub_serve_test.dart: hubServe refuses a secretless LAN start (issue #792 AC2) hubServe exits 1 without binding or serving
+✅ test/hub/network_wizard_test.dart: join via args defaults to session scope + trust notice (AC1/AC8)
+✅ test/hub/network_wizard_test.dart: E4: garbage invite → inline error, nothing stored, no join
+✅ test/hub/network_wizard_test.dart: menu flow: Join → paste → project scope → encrypted .fah/dap.json (AC6)
+✅ test/hub/network_wizard_test.dart: bare channel id joins on the configured hub (AC1 form 3)
+✅ test/hub/dap_membership_test.dart: DapChannelMembership json round-trip preserves all fields
+✅ test/hub/dap_membership_test.dart: DapChannelMembership keyless (public channel) round-trip omits keys
+✅ test/hub/dap_membership_test.dart: DapChannelMembership malformed records fail loudly
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion same channel at two scopes → one effective membership
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion scopesOf lists every scope for the badges
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion same channel id on DIFFERENT hubs stays separate (E3)
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion E1: leave(session) keeps global; leaving the last stops it
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion effective output is deterministic (sorted by key)
+✅ test/hub/network_wizard_test.dart: composer-prefilled form: the whole fa dap import command parses (AC7 same wizard)
+✅ test/hub/network_wizard_test.dart: legacy enrollment clears a previously applied instance
+✅ test/hub/pending_invite_test.dart: config back-compat: missing/non-array invites → [], persist replaces authoritatively and keeps other keys
+✅ test/hub/pending_invite_test.dart: dapHostOf: scheme and trailing /ws stripped for connect lines
+✅ test/hub/pending_invite_test.dart: arm: unknown name does not error — channel auto-created + joined at arm time, invite persisted (deduped), connect line returned
+✅ test/hub/pending_invite_test.dart: online name: immediate chankey DM (case-insensitive), nothing armed in config
+✅ test/hub/pending_invite_test.dart: 16-hex agent id: immediate chankey DM on the explicit channel
+✅ test/hub/pending_invite_test.dart: ambiguous name: honest error listing both ids, nothing armed
+✅ test/hub/pending_invite_test.dart: poller tick: invitee connects later → chankey DM, joins, keypair persisted, pending removed, notice surfaced
+✅ test/hub/pending_invite_test.dart: shared-config self-invite guard: own name never self-delivers
+✅ test/hub/pending_invite_test.dart: welcome-time redelivery: a fresh inviter instance delivers without waiting a tick
+✅ test/hub/pending_invite_test.dart: HubPlugin.inviteTo: pending result, invites persisted under ~/.dap/config.json, StateError before start
+✅ test/hub/network_wizard_test.dart: channels menu: copy invite round-trips; leave(session) tombstones (AC4/E6)
+✅ test/hub/network_wizard_test.dart: the AGENT learns about the joined channel and the write path (agent_message to: #channel) via the notice inbox
+✅ test/hub/hub_fallback_drill_test.dart: AC6 E2E-drill: kill mid-conversation, file carries on, restart drains with zero loss/dupe and order preserved
+✅ test/hub/hub_fallback_drill_test.dart: AC2 UT-fallback: hub down → file inbox; hub back → drains once; inbound mail sent while suspended flushes on rejoin
+✅ test/hub/network_wizard_test.dart: boot notice: existing memberships are announced to the agent on the first drain (resume awareness)
+✅ test/hub/network_wizard_test.dart: the full app DAP one-liner joins with the enrolled credential (name-bound secret stored encrypted, honest NOT-live verdict)
+✅ test/hub/network_wizard_test.dart: headless /network prints a one-line status, no menus (AC10)
+✅ test/hub/io_hub_identity_test.dart: load creates a fresh identity on first boot (load-or-create)
+✅ test/hub/io_hub_identity_test.dart: a saved identity reloads with the same address
+✅ test/hub/io_hub_identity_test.dart: save locks the file to owner-only where the OS supports it
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos returns immediately when n hellos were already seen
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos times out when no client ever says hello
+✅ test/hub/dap_scoped_passphrase_test.dart: import auto-provisions a random Keychain passphrase without a prompt and encrypts every new secret
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos resolves once a real client says hello
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) resolves when a late hello lands past the first chunk window
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) times out at the ceiling, not at the first chunk, when nobody ever says hello
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) returns immediately when n hellos were already seen
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) asserts when chunk is zero or negative
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) asserts when ceiling is zero or negative
+✅ test/hub/dap_scoped_passphrase_test.dart: a second run decrypts with the auto-provisioned Keychain item, without prompting or replacing it
+✅ test/hub/dap_scoped_passphrase_test.dart: decrypting with a missing Keychain item still prompts and never auto-creates a replacement passphrase
+✅ test/hub/dap_scoped_passphrase_test.dart: DAP_KEY_PASSPHRASE wins over Keychain and import auto-provisioning
+✅ test/hub/dap_scoped_passphrase_test.dart: without a Keychain, import keeps the interactive prompt fallback
+✅ test/hub/dap_scoped_passphrase_test.dart: headless import without Keychain or prompt stays memory-only and prints recovery without exposing secrets
+✅ test/hub/dap_scoped_passphrase_test.dart: missing decryption passphrase warns with recovery and no secrets
+✅ test/hub/dap_key_envelope_test.dart: round-trip: encrypt → decrypt restores the plaintext key
+✅ test/hub/dap_key_envelope_test.dart: envelope carries kdf params and version (self-describing)
+✅ test/hub/dap_key_envelope_test.dart: same input + different random → different envelopes
+✅ test/hub/dap_key_envelope_test.dart: wrong passphrase → clear FormatException, never silent garbage
+✅ test/hub/dap_key_envelope_test.dart: tampered ciphertext rejected (AEAD)
+✅ test/hub/dap_key_envelope_test.dart: plaintext priv passes through (pure-env CI path, AC15)
+✅ test/hub/dap_key_envelope_test.dart: malformed envelopes fail loudly
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) iter above the max is rejected BEFORE any KDF work
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) iter below 1 is rejected too
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) just above the cap maps to the single FormatException warning path (AC15: one clear warning, primary job proceeds)
+✅ test/hub/dap_scoped_passphrase_test.dart: failed decryption warns with recovery and no secret values
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-directory: hub peers merge with name, presence and [hub] marker
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-roundtrip: agent_message-shaped send by NAME rides sendDm; the reply lands in the sender inbox at the drain boundary (E5)
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-dedup: a duplicated-delivery primary yields exactly one message (at-least-once + dedup by id and by sender|ts|body)
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-fallback: hub down — mail to a hub peer queues in the file inbox (no throw), directory degrades, and a hub restart forwards the queue exactly once (AC2, E2)
+✅ test/hub/dap_scoped_memberships_test.dart: AC8/AC14: session+project joins store ENCRYPTED priv, runtime decrypts, no plaintext key bytes in any stored file
+✅ test/hub/dap_scoped_memberships_test.dart: AC2: project scope is invisible from a sibling folder; session scope is invisible to a second CLI (different records)
+✅ test/hub/dap_scoped_memberships_test.dart: AC4/E1: leave(session) keeps project; leaving the last scope stops delivery (acceptsChannel=false)
+✅ test/hub/dap_scoped_memberships_test.dart: AC3: session resume folds join/leave tombstones in order
+✅ test/hub/dap_scoped_memberships_test.dart: global join uses the legacy ~/.dap files (REG: fa dap import semantics) and global leave stops legacy auto-join
+✅ test/hub/dap_scoped_memberships_test.dart: global-scope plaintext persistence is announced in the join warnings (review: deviation from the encrypted-stores table must be loud, not silent)
+✅ test/hub/dap_scoped_memberships_test.dart: AC13: prompt once with save → later service reads Keychain, no second prompt; item is per-channel unique
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential master already set in env — nothing seeded, env untouched
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential client env set, master unset — master mirrors the client value
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential both env credentials set — nothing seeded
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential env clean + persisted config clientSecret — seeded from config
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential env clean + config without clientSecret — nothing seeded
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential env clean + empty-string clientSecret — nothing seeded
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential env clean + null config — nothing seeded (never opted in)
+✅ test/hub/hub_boot_credential_test.dart: seedHubBootCredential env vars with whitespace-only values count as unset
+✅ test/hub/dap_scoped_memberships_test.dart: AC15: wrong passphrase → loud warning, keyless join, no throw
+✅ test/hub/dap_scoped_memberships_test.dart: headless join without any passphrase keeps the key in memory only — nothing plaintext at rest
+✅ test/hub/dap_scoped_memberships_test.dart: AC10/AC15: env channels join at boot with plaintext + encrypted mixed set and no stores touched
+✅ test/hub/dap_scoped_memberships_test.dart: E6: copyInvite round-trips through the parser (private) and produces the keyless form for public channels
+✅ test/hub/local_hub_relay_test.dart: POST /relay proxies the upstream status, content-type and streamed SSE body to the taskpane origin
+✅ test/hub/local_hub_relay_test.dart: CORS preflight answers allowlisted taskpane origins only
+✅ test/hub/local_hub_relay_test.dart: upstream failures pass through with their status and body
+✅ test/hub/local_hub_relay_test.dart: a lan-bound protected hub requires the master bearer on /relay
+✅ test/hub/local_hub_relay_test.dart: every relay request carries a secret — an ephemeral hub still refuses the credential-less (issue #792 AC1)
+✅ test/hub/local_hub_relay_test.dart: denied destinations answer 403 before any outbound attempt (issue #792 AC3)
+✅ test/hub/local_hub_relay_test.dart: the provider allowlist admits known hosts (and their subdomains), denies strangers; dev opt-in lifts it
+hub [relay-2]: redirect loop (>5 hops) → 502
+✅ test/hub/local_hub_relay_test.dart: redirects are followed manually: a same-host hop lands, a redirect loop is capped (issue #792 AC4)
+✅ test/hub/local_hub_relay_test.dart: a cross-host redirect drops credentials and 303 demotes the method (issue #792 AC4)
+✅ test/hub/local_hub_relay_test.dart: a disallowed Origin is a 403 rejection — the upstream is never touched (issue #792 AC4)
+✅ test/hub/local_hub_relay_test.dart: a non-http(s) or missing url is a clean 400
+✅ test/hub/dap_scoped_memberships_test.dart: dedup: a full-invite join and a bare-id join on the same hub produce ONE membership (hubUrl channel-query normalization)
+✅ test/hub/dap_scoped_memberships_test.dart: join with an enrolled hub credential: session store encrypts the secret, runtime decrypts it, boot membership carries it
+✅ test/hub/dap_scoped_memberships_test.dart: global scope keeps the hub credential in memory only (legacy files have no per-hub credential field), with a warning
+✅ test/hub/dap_scoped_memberships_test.dart: headless without a passphrase: the credential stays in memory, never plaintext in the session record
+✅ test/hub/dap_scoped_memberships_test.dart: preferredBootHub: a remote membership wins over the zero-config local default, but never over an explicitly configured hub
+✅ test/hub/dap_scoped_memberships_test.dart: project store resilience (review: one bad record must not drop them all) one malformed project entry warns and keeps the rest
+✅ test/hub/dap_scoped_memberships_test.dart: project store resilience (review: one bad record must not drop them all) a wholly unreadable project file still degrades to empty (no throw), like before
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) cleanupOverlay deletes the overlay file (best-effort)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) cleanupOverlay tolerates a runtime dir that never existed
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) cleanupOverlay preserves the shared overlay while another live agent owns a guard, then removes it after that agent exits
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) cleanupOverlay keeps an old guard while its pid is alive: no wall-clock TTL may delete a long-running sibling's keys
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) a live owner past 24h with a matching process-start identity keeps the overlay (issue #1898)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) a live pid whose guard identity differs is a recycled pid and no longer pins the overlay (issue #1898)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) an identity probe failure preserves the overlay (keep-on-doubt)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) an unparseable guard identity shape is kept on doubt, never reclaimed (issue #1917 review)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) an unparseable CURRENT identity is kept on doubt too (issue #1917 review)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) the boot guard records pid + identity token, never key material
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) psLstartIdentity (issue #1917 review: real output shape) parses real macOS `ps -o lstart=` output
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) psLstartIdentity (issue #1917 review: real output shape) parses space-padded single-digit days
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) psLstartIdentity (issue #1917 review: real output shape) tolerates surrounding whitespace/newline
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) psLstartIdentity (issue #1917 review: real output shape) non-C-locale month names and junk return null (keep-on-doubt)
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) sweepLegacyOverlays removes pid files of dead processes only
+✅ test/hub/dap_scoped_memberships_test.dart: runtime overlay hygiene (review: no unbounded plaintext-key accumulation) sweepLegacyOverlays tolerates a missing runtime dir
+✅ test/hub/keepalive_test.dart: keepalive: silent peer (no pongs) is torn down; reconnect loop takes over
+✅ test/hub/keepalive_test.dart: keepalive: answering peer survives ping cycles and stays usable
+✅ test/hub/keepalive_test.dart: disconnect() disarms keepalive and reconnect machinery
+✅ test/hub/keepalive_test.dart: honest failure: sendToChannel/sendDm while disconnected throw
+✅ test/hub/keepalive_test.dart: error surfacing: hub error frame is exposed, never silent
+✅ test/hub/hub_config_test.dart: parseYaml reads the hub: section with nesting and comments
+✅ test/hub/hub_config_test.dart: HubConfig.fromYaml builds channel maps
+✅ test/hub/hub_config_test.dart: environment overrides win: DAP_HUB_URL / DAP_KEY_PATH / DAP_AGENT_NAME
+✅ test/hub/hub_config_test.dart: HubConfig.fromMap reads PluginContext-shaped maps
+✅ test/hub/hub_config_test.dart: missing hub section yields empty config
+✅ test/hub/hub_state_test.dart: defaultHubStateFile DAP_HUB_STATE_FILE wins outright
+✅ test/hub/hub_state_test.dart: defaultHubStateFile home override builds ~/.dap/hub.json
+✅ test/hub/hub_state_test.dart: defaultHubStateFile a trailing-slash home is not doubled
+✅ test/hub/hub_state_test.dart: readHubState / readHubStateSecret missing file = empty state
+✅ test/hub/hub_state_test.dart: readHubState / readHubStateSecret invalid json = empty state
+✅ test/hub/hub_state_test.dart: readHubState / readHubStateSecret non-map json = empty state
+✅ test/hub/hub_state_test.dart: readHubState / readHubStateSecret valid state round-trips through writeHubState
+✅ test/hub/hub_state_test.dart: readHubState / readHubStateSecret non-string client values are dropped
+✅ test/hub/hub_state_test.dart: hubUpgradeCredential no header and no token = null
+✅ test/hub/hub_state_test.dart: hubUpgradeCredential Bearer header wins over the query token
+✅ test/hub/hub_state_test.dart: hubUpgradeCredential query token alone (browser path)
+✅ test/hub/hub_state_test.dart: hubUpgradeCredential malformed header falls through to the query token
+✅ test/hub/hub_state_test.dart: hubUpgradeCredential empty values count as absent
+✅ test/hub/hub_state_test.dart: hubAuthVerdict open hub allows everything (never master)
+✅ test/hub/hub_state_test.dart: hubAuthVerdict the master password is allowed and marked master
+✅ test/hub/hub_state_test.dart: hubAuthVerdict an enrolled client secret is allowed but not master
+✅ test/hub/hub_state_test.dart: hubAuthVerdict unknown or missing credentials are rejected
+✅ test/hub/hub_state_test.dart: hubEnrollDecision open hub issues a ceremonial secret, nothing to persist
+✅ test/hub/hub_state_test.dart: hubEnrollDecision protected hub master enroll issues + persists
+✅ test/hub/hub_state_test.dart: hubEnrollDecision protected hub non-master enroll is refused
+✅ test/hub/retarget_race_test.dart: a cycle parked mid-connect by a retarget never hellos when released
+✅ test/hub/retarget_race_test.dart: an undecryptable inbound DM surfaces a marker, never silence
+✅ test/hub/dap_join_bundle_test.dart: bare invite link still parses, no credential
+✅ test/hub/dap_join_bundle_test.dart: the app one-liner: import && env assignments + trailing fa
+✅ test/hub/dap_join_bundle_test.dart: the multi-line DAP tab block (one assignment per line)
+✅ test/hub/dap_join_bundle_test.dart: a bare fa dap import command without env works
+✅ test/hub/dap_join_bundle_test.dart: env assignments without an invite get an actionable error
+✅ test/hub/dap_join_bundle_test.dart: a malformed invite never leaks the secret into the error
+✅ test/hub/dap_join_bundle_test.dart: a private invite keeps its keypair alongside the credential
+✅ test/hub/hub_fabric_repository_test.dart: outbound fabric mail rides the hub as the sender identity
+✅ test/hub/hub_fabric_repository_test.dart: inbound hub mail drains through the fabric with sender attribution
+✅ test/hub/hub_fabric_repository_test.dart: PUBLIC channel: fabric sends the raw base64({"text":…}) contract, keyless members decode it, and #channel inboxes drain
+✅ test/hub/hub_fabric_repository_test.dart: a private channel with an UNRESOLVED key refuses loudly instead of downgrading to plaintext or auto-keygen (gh-1888 review)
+✅ test/hub/hub_fabric_repository_test.dart: PRIVATE channel: fabric sends a fanet1 frame, not RAW dap/1
+✅ test/hub/hub_fabric_repository_test.dart: resolveTarget answers the roster; channels pass through
+✅ test/hub/hub_fabric_repository_test.dart: directory maps the hub roster onto mailbox entries
+✅ test/hub/hub_fabric_repository_test.dart: directory falls back to empty when the hub drops mid-query
+✅ test/hub/hub_fabric_repository_test.dart: the adapter serves exactly one inbox — the hub identity's; the COMPOSITE guards which fabric mailbox reaches it
+✅ test/hub/hub_fabric_repository_test.dart: disconnected adapter resolves nothing and reads empty
+✅ test/hub/dap_local_hub_state_test.dart: dapHubPidFileFor places the pid file under <home>/.dap
+✅ test/hub/dap_local_hub_state_test.dart: renderDapLocalHubState escapes hostile secrets (issue #792 review)
+✅ test/hub/dap_local_hub_state_test.dart: parseDapLocalHubState round-trips a rendered state
+✅ test/hub/dap_local_hub_state_test.dart: parseDapLocalHubState a pre-#792 file without relaySecret parses with null
+✅ test/hub/dap_local_hub_state_test.dart: parseDapLocalHubState null on missing, invalid or incomplete content (E4 no zombie)
+✅ test/hub/dap_local_hub_state_test.dart: parseDapLocalHubState a missing startedAt defaults to empty, not a parse failure
+✅ test/hub/dap_secret_redaction_test.dart: every DAP env secret is registered with the legacy redactor — an env dump masks all of them (AC8 byte-scan)
+✅ test/hub/dap_secret_redaction_test.dart: the layered pipeline receives the same values (issue #24 parity)
+✅ test/hub/dap_secret_redaction_test.dart: runtime-resolved secrets (decrypted privs, auto-provisioned passphrases, memory-only hub credentials) register too
+✅ test/hub/dap_secret_redaction_test.dart: absent/empty env names are skipped; short values are ignored by BOTH systems (the shared false-positive guard)
+✅ test/hub/dap_resume_membership_test.dart: resumed session membership joins before channel mail wakes the idle agent
+✅ test/hub/dap_resume_membership_test.dart: resumed project membership joins before channel mail wakes the idle agent
+✅ test/hub/dap_resume_membership_test.dart: resumed session membership dials its own hub when boot had no DAP_HUB_URL
+✅ test/hub/canonical_test.dart: canonicalJson sorts keys recursively, no whitespace
+✅ test/hub/canonical_test.dart: signingPayload matches the spec formula
+✅ test/hub/canonical_test.dart: signFrame/verifyFrame round-trip, and tamper detection
+✅ test/hub/canonical_test.dart: hexEncode and randomHex
+✅ test/hub/canonical_test.dart: newFrameId is uuid-v4 shaped and unique
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap args (no interactive host) no args prints the disabled one-liner without a master secret
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — full URL forms url without keys (public channel)
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — full URL forms url with keypair fragment (private channel)
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — bare channel id uses the configured hub
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — bare channel id accepts a leading # and dashes/underscores
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — bare channel id bare id without a configured hub is a clear error
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — bare channel id whitespace/garbage rejected, nothing partially accepted
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — pasted fa dap import command single-quoted invite
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — pasted fa dap import command double-quoted invite
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — pasted fa dap import command unquoted invite
+✅ test/hub/dap_invite_flexible_test.dart: parseDapInviteFlexible — pasted fa dap import command command with garbage args rejected
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap args (no interactive host) no args prints the disconnected status with a master secret
+✅ test/hub/hub_messaging_frames_test.dart: joined frame completes joinChannel; PUBLIC channel mail drains
+✅ test/hub/hub_messaging_frames_test.dart: an access_denied error frame fails the pending join with a clear error
+✅ test/hub/hub_messaging_frames_test.dart: keyed channel mail (gh-1888 review: fanet1 first, dap1 fallback) a fanet1 frame from the CLI fabric decrypts with the channel key alone (no whois needed)
+✅ test/hub/hub_messaging_frames_test.dart: keyed channel mail (gh-1888 review: fanet1 first, dap1 fallback) a legacy dap1 frame still decrypts via whois (interop back)
+✅ test/hub/hub_messaging_frames_test.dart: keyed channel mail (gh-1888 review: fanet1 first, dap1 fallback) a fanet1-SHAPED but legacy payload falls back instead of being dropped (nonce[0] == 1 collision)
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap args (no interactive host) start generates the session secret and fails the local spawn gracefully
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) cancelled pick stays quiet
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) status choice prints the disconnected line
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) about choice prints the about text
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) secret choice sets the session secret and reconnects
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) connect choice without a master secret hints at the secret step
+✅ test/ci_macos_keychain_serialization_guard_test.dart: AC1 — build-macos matrix is serialized (max-parallel: 1, host-saturation, gh-2013)
+✅ test/ci_macos_keychain_serialization_guard_test.dart: AC2 — audit: no multi-leg matrix job mutates keychain state (gh-1852 class)
+✅ test/store_metadata_version_guard_test.dart: store screenshots dispatch requires an explicit release version
+✅ test/store_metadata_version_guard_test.dart: both Apple deploy legs receive BUILD_NAME from that version
+✅ test/store_metadata_version_guard_test.dart: version sync reuses an editable version or creates a missing one
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("a") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("abc") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("abcd") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("test") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("hello world") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("0123456789abcde") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("0123456789abcdef") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("abcdefghijklmnopqrstuvwxyz") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 xxh32("The quick brown fox jumps over the lazy dog") matches the reference value
+✅ test/hashline/xxhash32_test.dart: xxHash32 hashes bytes, not characters (UTF-8 input)
+✅ test/hashline/xxhash32_test.dart: xxHash32 seed changes the result
+✅ test/hashline/xxhash32_test.dart: computeFileHash matches Bun ground-truth collision pair
+✅ test/hashline/xxhash32_test.dart: computeFileHash is a 4-character uppercase hex tag
+✅ test/hashline/xxhash32_test.dart: computeFileHash ignores trailing spaces, tabs, and CR line endings
+✅ test/hashline/xxhash32_test.dart: computeFileHash is content-sensitive
+✅ test/hashline/xxhash32_test.dart: format helpers formatHashlineHeader
+✅ test/hashline/xxhash32_test.dart: format helpers formatNumberedLine(s)
+✅ test/hashline/xxhash32_test.dart: format helpers describeAnchorExamples
+✅ test/hashline/tokenizer_test.dart: parseLid parses a bare line number
+✅ test/hashline/tokenizer_test.dart: parseLid rejects malformed input with anchor examples
+✅ test/hashline/tokenizer_test.dart: tryParseHunkHeader: MV destination forms bare destination
+✅ test/hashline/tokenizer_test.dart: tryParseHunkHeader: MV destination forms double-quoted destination with spaces
+✅ test/hashline/tokenizer_test.dart: tryParseHunkHeader: MV destination forms single-quoted destination
+✅ test/hashline/tokenizer_test.dart: tryParseHunkHeader: MV destination forms quoted destination with an escaped quote
+✅ test/hashline/tokenizer_test.dart: tryParseHunkHeader: MV destination forms unterminated or trailing-garbage quotes are not a move
+✅ test/hashline/tokenizer_test.dart: classification helpers isHashlineOp
+✅ test/hashline/tokenizer_test.dart: classification helpers isHashlineHeader
+✅ test/hashline/tokenizer_test.dart: classification helpers isHashlineEnvelopeMarker
+✅ test/hashline/tokenizer_test.dart: splitHashlineLines empty input yields one empty line
+✅ test/hashline/tokenizer_test.dart: splitHashlineLines splits LF and strips one trailing CR per line
+✅ test/hashline/tokenizer_test.dart: splitHashlineLines a lone trailing CR on the final line is stripped
+✅ test/hashline/tokenizer_test.dart: splitHashlineLines no trailing newline keeps the last line
+✅ test/hashline/tokenizer_test.dart: tryParseHeader edge cases rejects empty and hash-in-path headers
+✅ test/hashline/tokenizer_test.dart: tryParseHeader edge cases uppercases a lowercase tag
+✅ test/hashline/tokenizer_test.dart: tryParseHeader edge cases a path with spaces keeps its tag suffix
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) start choice runs the one-step bring-up
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap menu (interactive host) stop choice stops quietly when nothing is running
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap start pipeline (hermetic) one step: generates the secret, prompts, persists the hub password, spawns, and connects
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap start pipeline (hermetic) a saved hub password is reused without prompting and never re-spawns a running hub
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap start pipeline (hermetic) a failed spawn reports the error and never connects
+✅ test/hub/hub_plugin_menu_flow_test.dart: /dap start pipeline (hermetic) a read-only environment refuses with the export hint and does nothing else
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools dap_status reports the disconnected state
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools dap_peers surfaces the not-connected error
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools dap_dm rejects an unknown peer and lists the roster
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools dap_invite surfaces the not-started error
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools dap_connect surfaces the dial error
+✅ test/hub/hub_plugin_menu_flow_test.dart: dap_* tools the registry pins names, approval tiers, and required params
+✅ test/hub/hub_plugin_menu_flow_test.dart: publicChannelFor returns false with no effective memberships
+✅ test/hub/hub_plugin_menu_flow_test.dart: /network args bare /network on a headless host lists the channel count
+✅ test/hub/hub_plugin_menu_flow_test.dart: /network args an unknown subcommand prints the usage line
+✅ test/hub/hub_plugin_menu_flow_test.dart: /network args join without an invite prints the usage line
+✅ test/hashline/types_test.dart: hashline types debug output anchors, cursors, edits, and ranges render readably
+✅ test/hashline/types_test.dart: hashline types debug output HashlineApplyResult carries warnings
+✅ test/hub/hub_plugin_menu_flow_test.dart: /network channels + leave (menu path) a single-scope channel leaves directly and records the tombstone
+✅ test/hub/hub_plugin_menu_flow_test.dart: /network channels + leave (menu path) a multi-scope leave asks which scope; cancelling keeps every scope
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting single section with tag
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting multiple sections split on headers
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting lowercase tags are normalized to uppercase
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting sections without a tag parse (the patcher rejects them later)
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting paths may contain whitespace
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting empty sections (no ops) are dropped
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting envelope markers wrap the whole patch
+✅ test/hashline/input_test.dart: HashlinePatch.parse: section splitting leading blank lines are skipped
+✅ test/hashline/input_test.dart: HashlinePatch.parse: same-path merging consecutive sections for one path merge into one batch
+✅ test/hashline/input_test.dart: HashlinePatch.parse: same-path merging interleaved sections for one path merge, order by first occurrence
+✅ test/hashline/input_test.dart: HashlinePatch.parse: same-path merging conflicting tags for one path are rejected
+✅ test/hashline/input_test.dart: HashlinePatch.parse: same-path merging a tagless section adopts the tag of a tagged twin
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback apply_patch noise is stripped from the path
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback hybrid *** prefix is stripped
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback quoted paths are unquoted
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback a `#` inside the path body is malformed
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback short tags are malformed, not silently accepted
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback missing header on the first line is a focused error
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback unified-diff contamination on the first line
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback fallbackPath wraps a headerless body that has ops
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback fallbackPath is ignored when a header is present
+✅ test/hashline/input_test.dart: HashlinePatch.parse: header recovery and fallback fallbackPath is ignored for bodies without ops
+✅ test/hashline/input_test.dart: HashlinePatchSection parse() is cached
+✅ test/hashline/input_test.dart: HashlinePatchSection hasAnchorScopedEdit: HEAD/TAIL inserts do not count
+✅ test/hashline/input_test.dart: HashlinePatchSection collectAnchorLines dedups and sorts
+✅ test/hashline/input_test.dart: HashlinePatchSection applyTo applies without tag validation and merges warnings
+✅ test/hashline/input_test.dart: HashlinePatchSection withPath rebinds and preserves the parse cache
+✅ test/hashline/input_test.dart: containsRecognizableHashlineOperations detects ops
+✅ test/hashline/input_test.dart: HashlinePatch.parse: more edge cases a header whose path normalizes to empty is malformed
+✅ test/hashline/input_test.dart: HashlinePatch.parse: more edge cases a >120-char first line is preview-truncated in the error
+✅ test/hashline/input_test.dart: HashlinePatch.parse: more edge cases the warnings getter surfaces parse warnings
+✅ test/hashline/messages_test.dart: HashlineFormatException toString renders the message
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path applies a SWAP against the tagged content
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path commit records a fresh snapshot usable for a chained edit
+✅ test/hashline/messages_test.dart: formatAnchoredContext marks anchors and shows ±2 lines of context
+✅ test/hashline/messages_test.dart: formatAnchoredContext clamps at file edges
+✅ test/hashline/messages_test.dart: formatAnchoredContext out-of-range anchors contribute nothing
+✅ test/hashline/messages_test.dart: formatAnchoredContext separates non-adjacent runs with ...
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path INS.HEAD/TAIL with a stale tag applies with a drift warning
+✅ test/hashline/messages_test.dart: formatLineRanges compresses runs and dedups
+✅ test/hashline/messages_test.dart: unseenLinesMessage empty reveal points at a ranged re-read
+✅ test/hashline/messages_test.dart: unseenLinesMessage truncated reveal keeps the re-read guidance
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path parse warnings flow into the section result
+✅ test/hashline/messages_test.dart: unseenLinesMessage full reveal says a straight retry succeeds
+✅ test/hashline/messages_test.dart: other messages missingSnapshotTagMessage
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path CRLF content round-trips as CRLF
+✅ test/hashline/messages_test.dart: other messages pathRecoveredFromTagMessage
+✅ test/hashline/messages_test.dart: stripBom strips a leading UTF-8 BOM
+✅ test/hashline/messages_test.dart: stripBom leaves BOM-less text untouched
+✅ test/hashline/patcher_test.dart: HashlinePatcher: happy path a UTF-8 BOM survives the edit
+✅ test/hashline/patcher_test.dart: HashlinePatcher: missing tag / file a section without a tag is rejected
+✅ test/hashline/patcher_test.dart: HashlinePatcher: missing tag / file a missing file points at the write tool
+✅ test/hashline/patcher_test.dart: HashlinePatcher: missing tag / file a bare filename recovers onto the tagged in-session file
+✅ test/hashline/patcher_test.dart: HashlinePatcher: missing tag / file path recovery declines ambiguous matches
+✅ test/hashline/patcher_test.dart: HashlinePatcher: stale tag rejection (drift) anchored edits on drifted content reject BEFORE any write
+✅ test/hashline/patcher_test.dart: HashlinePatcher: stale tag rejection (drift) the mismatch error names the drifted anchor lines
+✅ test/hashline/patcher_test.dart: HashlinePatcher: stale tag rejection (drift) an unrecognized tag says it is not from this session
+✅ test/hashline/patcher_test.dart: HashlinePatcher: stale tag rejection (drift) the fresh tag in a mismatch message is immediately usable
+✅ test/hashline/patcher_test.dart: HashlinePatcher: stale tag rejection (drift) a tag from a prior session version still validates by content
+✅ test/hashline/patcher_test.dart: HashlinePatcher: seen-line guard anchors on lines a partial read never displayed are rejected
+✅ test/hashline/patcher_test.dart: HashlinePatcher: seen-line guard a full reveal merges the lines so a straight retry succeeds
+✅ test/hashline/patcher_test.dart: HashlinePatcher: seen-line guard no provenance recorded → the guard is skipped
+✅ test/hashline/patcher_test.dart: HashlinePatcher: seen-line guard enforceSeenLines: false disables the guard
+✅ test/hashline/patcher_test.dart: HashlinePatcher: no-op and multi-section single-section no-op returns a noop result and writes nothing
+✅ test/hashline/patcher_test.dart: HashlinePatcher: no-op and multi-section multi-section applies all files in order
+✅ test/hashline/patcher_test.dart: HashlinePatcher: no-op and multi-section multi-section is all-or-nothing: a stale section blocks every write
+✅ test/hashline/patcher_test.dart: HashlinePatcher: no-op and multi-section multi-section no-op section fails the batch before any write
+✅ test/hashline/patcher_test.dart: HashlinePatcher: no-op and multi-section sections merged for one path apply as one batch
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases two sections resolving to one canonical path are rejected
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases a non-notFound read error surfaces as a StateError
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases a mid-batch write failure reports written and pending sections
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases a >512-column unseen line truncates the reveal and blocks merging
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases an out-of-range unseen anchor reveals nothing and tells to re-read
+✅ test/hashline/patcher_test.dart: HashlinePatcher: edge cases a trailing-slash authored path still basename-matches for recovery
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording record derives the tag from whole-file content
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording identical re-reads fuse onto one snapshot and union seenLines
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording new content unshifts a fresh version; head is newest
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording byHash returns the most recent colliding version
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording recordSeenLines merges into the tagged version
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: recording record without seenLines leaves provenance absent
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance findByHash spans paths
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance invalidate drops one path
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance relocate moves history and seen-lines provenance
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance relocate into an existing destination dedups by tag
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance relocate a path without history is a no-op
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: lookup and maintenance clear drops everything
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: eviction bounds per-path history is capped
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: eviction bounds least-recently-used paths age out past maxPaths
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: eviction bounds total retained text is capped
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: eviction bounds re-recording a non-head version promotes it to head
+✅ test/hashline/snapshots_test.dart: HashlineSnapshotStore: eviction bounds relocate caps the merged history at maxVersionsPerPath
+✅ test/hashline/parser_test.dart: hashline parser: SWAP single-line replace lowers to replacement inserts + one delete
+✅ test/hashline/parser_test.dart: hashline parser: SWAP range replace with multi-line body keeps parse order
+✅ test/hashline/parser_test.dart: hashline parser: SWAP bare range separator variants parse
+✅ test/hashline/parser_test.dart: hashline parser: SWAP stray dot before colon is tolerated (GLM 5.2 shape)
+✅ test/hashline/parser_test.dart: hashline parser: SWAP permuted :=: / =: trailers are tolerated
+✅ test/hashline/parser_test.dart: hashline parser: SWAP empty SWAP body lowers to a pure range deletion (omp semantics)
+✅ test/hashline/parser_test.dart: hashline parser: SWAP reversed range is rejected
+✅ test/hashline/parser_test.dart: hashline parser: DEL single line and range
+✅ test/hashline/parser_test.dart: hashline parser: DEL DEL with a trailing colon is contamination, not a hunk
+✅ test/hashline/parser_test.dart: hashline parser: DEL DEL with a body row is rejected
+✅ test/hashline/parser_test.dart: hashline parser: DEL overlapping deletes from two hunks are rejected
+✅ test/hashline/parser_test.dart: hashline parser: INS INS.PRE / INS.POST anchor on the named line
+✅ test/hashline/parser_test.dart: hashline parser: INS INS.HEAD / INS.TAIL
+✅ test/hashline/parser_test.dart: hashline parser: INS INS without a body is rejected
+✅ test/hashline/parser_test.dart: hashline parser: INS stray dot before colon is tolerated (INS.POST 2.:)
+✅ test/hashline/parser_test.dart: hashline parser: body rows `+` alone adds a blank line
+✅ test/hashline/parser_test.dart: hashline parser: body rows literal rows keep leading whitespace and sigils verbatim
+✅ test/hashline/parser_test.dart: hashline parser: body rows a `-` body row is rejected with the Markdown hint
+✅ test/hashline/parser_test.dart: hashline parser: body rows bare rows are auto-prefixed with a warning
+✅ test/hashline/parser_test.dart: hashline parser: body rows interior blank rows are body content; trailing blanks are layout
+✅ test/hashline/parser_test.dart: hashline parser: body rows uniform N: prefixes on bare rows are stripped (read paste)
+✅ test/hashline/parser_test.dart: hashline parser: body rows mixed bare rows keep their digits: text (genuine content)
+✅ test/hashline/parser_test.dart: hashline parser: body rows numeric-keyed dict bodies are not stripped
+✅ test/hashline/parser_test.dart: hashline parser: body rows payload without a preceding hunk header is rejected
+✅ test/hashline/parser_test.dart: hashline parser: body rows comment lines between sections are skippable
+✅ test/hashline/parser_test.dart: hashline parser: contamination detection apply_patch sentinels are rejected with guidance
+✅ test/hashline/parser_test.dart: hashline parser: contamination detection unified-diff hunk headers are rejected
+✅ test/hashline/parser_test.dart: hashline parser: contamination detection bare @@ brackets are rejected
+✅ test/hashline/parser_test.dart: hashline parser: contamination detection a bare line number needs a verb
+✅ test/hashline/parser_test.dart: hashline parser: contamination detection a bare range needs a verb
+✅ test/hashline/parser_test.dart: hashline parser: unsupported ops (recognized, rejected) REM
+✅ test/hashline/parser_test.dart: hashline parser: unsupported ops (recognized, rejected) MV dest
+✅ test/hashline/parser_test.dart: hashline parser: unsupported ops (recognized, rejected) SWAP.BLK / DEL.BLK / INS.BLK.POST
+✅ test/hashline/parser_test.dart: hashline parser: envelope and line splitting envelope markers are consumed; End Patch terminates
+✅ test/hashline/parser_test.dart: hashline parser: envelope and line splitting abort sentinel terminates parsing
+✅ test/hashline/parser_test.dart: hashline parser: envelope and line splitting CRLF input is split cleanly
+✅ test/hashline/parser_test.dart: hashline parser: edge cases a bracket line inside a body flushes the pending hunk
+✅ test/hashline/parser_test.dart: hashline parser: edge cases whitespace-only rows inside a body count as blank rows
+✅ test/hashline/parser_test.dart: hashline parser: edge cases a whitespace-only line outside a hunk is ignored
+✅ test/hashline/parser_test.dart: hashline parser: edge cases a plain garbage line outside a hunk is rejected
+✅ test/hashline/parser_test.dart: hashline parser: edge cases a comment line followed by payload re-surfaces as an error
+✅ test/hashline/parser_test.dart: hashline parser: edge cases long contamination lines are preview-truncated
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops SWAP replaces an inclusive range with the body
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops SWAP can expand one line into many
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops DEL removes the inclusive range
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops INS.PRE / INS.POST land around the anchor line
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops INS.HEAD / INS.TAIL
+✅ test/hashline/apply_test.dart: applyHashlineEdits: basic ops empty edits are a no-op
+✅ test/hashline/apply_test.dart: applyHashlineEdits: line-number semantics anchors refer to ORIGINAL lines; hunks do not shift each other
+✅ test/hashline/apply_test.dart: applyHashlineEdits: line-number semantics later hunks at the same line apply in patch order
+✅ test/hashline/apply_test.dart: applyHashlineEdits: line-number semantics insert before and after the same line keeps patch order per side
+✅ test/hashline/apply_test.dart: applyHashlineEdits: line-number semantics SWAP + INS around one line compose
+✅ test/hashline/apply_test.dart: applyHashlineEdits: line-number semantics out-of-bounds anchors are rejected
+✅ test/hashline/apply_test.dart: applyHashlineEdits: trailing-newline phantom line INS.TAIL on a newline-terminated file inserts before the phantom
+✅ test/hashline/apply_test.dart: applyHashlineEdits: trailing-newline phantom line a DEL spanning into the phantom strips no extra content
+✅ test/hashline/apply_test.dart: applyHashlineEdits: trailing-newline phantom line the phantom line is addressable for inserts
+✅ test/hashline/apply_test.dart: applyHashlineEdits: empty-file edge cases INS.HEAD / INS.TAIL on an empty file produce the body
+✅ test/hashline/apply_test.dart: applyHashlineEdits: empty-file edge cases INS.HEAD + INS.TAIL compose on an empty file
+✅ test/hashline/apply_test.dart: applyHashlineEdits: firstChangedLine tracks the earliest change across hunks
+✅ test/hashline/apply_test.dart: applyHashlineEdits: firstChangedLine INS.TAIL reports the inserted landing line
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) UT-PIN-1: list of strings parses into manifest.operative
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) UT-PIN-1: junk sibling keys still land in notes, skill loads
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) F4/REG-PIN-1: no operative key → empty list, zero pins downstream
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) E1: empty operative list → zero pins
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) E4/UT-PIN-2: line over the 512-char cap is rejected with a note
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) a 512-char line exactly at the cap is kept
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) a non-list scalar operative value becomes a single line
+✅ test/skills/operative_manifest_test.dart: operative frontmatter (gh-1409 AC1) blank list entries are dropped
+✅ test/skills/builtin_js_apps_skill_test.dart: js-apps is a user-invocable package builtin
+✅ test/skills/builtin_js_apps_skill_test.dart: prompt-injection scenario: calculator request routes to apps/<id>
+✅ test/skills/builtin_js_apps_skill_test.dart: skill teaches test reuse and the pre-flight no-fake-success gate
+✅ test/skills/builtin_js_apps_skill_test.dart: builtin renders clean on every host (no platform-filter markers)
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillContentViolations — the packaged-artifact check flags an EMPTY SKILL.md — the exact shipped 1.0.512 shape
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillContentViolations — the packaged-artifact check flags whitespace-only and frontmatter-only stubs
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillContentViolations — the packaged-artifact check multi-item map: reports only the broken skills
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillContentViolations — the packaged-artifact check flags a completely empty artifact (generator never ran)
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillContentViolations — the packaged-artifact check passes the REAL packaged artifact (compiled builtinSkillFiles)
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillMdByteViolations — the single-read byte-level core flags empty and whitespace-only bytes
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillMdByteViolations — the single-read byte-level core flags bytes below the floor, reporting the inspected count
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillMdByteViolations — the single-read byte-level core passes content at or above the floor
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillMdByteViolations — the single-read byte-level core labels the verdict with the source path when given
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillSourceViolations — the on-disk source check current tree passes: every prompts/skills/<name>/SKILL.md is full
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillSourceViolations — the on-disk source check fixture (RED of #1275): directory structure WITHOUT the SKILL.md content fails — one verdict per hollow skill
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillSourceViolations — the on-disk source check fixture: a dotted skill dir name survives the source scan intact (basename, not the uri.pathSegments idiom)
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillSourceViolations — the on-disk source check fixture: prompts/skills missing entirely fails loudly
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillNameParityViolations — packaging misses entries flags a packaged artifact missing a source skill
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillNameParityViolations — packaging misses entries flags packaged entries with no on-disk source
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillNameParityViolations — packaging misses entries full parity is clean
+✅ test/skills/builtin_skill_packaging_guard_test.dart: builtinSkillNameParityViolations — packaging misses entries packaged map embeds EXACTLY the on-disk sources, byte-identical
+✅ test/skills/builtin_skill_packaging_guard_test.dart: verifyBuiltinSkills — the composed gate the workflows run current tree passes end to end
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget accepts the seeder shape (single URI + trailing newline)
+✅ test/skills/fa_self_config_manifest_test.dart: builtin is discovered and its repo pointer is materialized
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget accepts a URI without the trailing newline
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget refuses a foreign scheme (file://)
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget refuses an unknown builtin skill name
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget refuses a target pointing at a DIFFERENT skill directory
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget refuses a corrupt multi-line body
+✅ test/skills/skill_pointer_test.dart: validateSkillPointerTarget refuses a non-SKILL.md resource inside the builtin namespace
+✅ test/skills/fa_self_config_manifest_test.dart: frontmatter is valid with deliberate invocation flags
+✅ test/skills/skill_pointer_test.dart: followSkillPointer resolves to the same bytes as the builtin URI (AC1)
+✅ test/skills/fa_self_config_manifest_test.dart: allowed-tools are plain, real tool ids (grantable per turn)
+✅ test/skills/skill_pointer_test.dart: followSkillPointer every compiled-in builtin skill resolves through its pointer
+✅ test/skills/skill_pointer_test.dart: followSkillPointer a foreign-target pointer is refused loudly (E1)
+✅ test/skills/skill_pointer_test.dart: followSkillPointer a missing pointer is absent, not an error
+✅ test/skills/skill_pointer_test.dart: followSkillPointer a throwing pointer read degrades to absent
+✅ test/skills/skill_pointer_test.dart: followSkillPointer every builtin skill name is a single URI segment
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) UT-PIN-3: same window + manifests → identical pins (P2)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) pins carry owner-skill provenance into every render
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) UT-PIN-4: content key is sha256 over exact UTF-8 bytes (E10)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) E3: duplicate identical lines in two skills → one pin, dual provenance, single content key
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) UT-PIN-7: budget overflow drops lowest priority with notices (P6)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) empty skills list / empty operative lists → zero pins, empty block (E1)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.build (gh-1409) REG-PIN-4: hostile corpus renders inert, capped, provenance-tagged
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff (gh-1409 P4/P5) UT-PIN-4/IT-PIN-5: editing a line supersedes with a notice
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff (gh-1409 P4/P5) IT-PIN-6/P4: deleting a skill drops its pins with a notice
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff (gh-1409 P4/P5) unchanged registries diff clean
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) E6: no compaction boundary in the window → unchanged list
+✅ test/skills/app_bundle_drift_test.dart: every first-party skill ships as a builtin or a bundled app asset
+✅ test/skills/app_bundle_drift_test.dart: bundled SKILL.md copies are byte-identical to the source skill
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) AC2: carrier rides verbatim right after the compaction boundary
+✅ test/skills/app_bundle_drift_test.dart: AgentService._seedBundledSkills no longer seeds any bundled skill
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) E1: no operative lines → no carrier block even after a fold
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) P6 drop notice surfaces through onNotice
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) AC3 repair: pin absent from the whole window is restored and reported
+✅ test/skills/operative_pins_test.dart: carrier injection (gh-1409 AC2/E6) pin present in the window (summary kept it) → no repair notice
+✅ test/skills/operative_pins_test.dart: isPinRenumberingBoundary — boundary variants classic compaction summary prefix
+✅ test/skills/operative_pins_test.dart: isPinRenumberingBoundary — boundary variants branch summary prefix
+✅ test/skills/operative_pins_test.dart: isPinRenumberingBoundary — boundary variants structured hidden/checkpoint marker text
+✅ test/skills/operative_pins_test.dart: isPinRenumberingBoundary — boundary variants local trim valve note
+✅ test/skills/operative_pins_test.dart: isPinRenumberingBoundary — boundary variants ordinary messages are not boundaries
+✅ test/skills/operative_pins_test.dart: REG-PIN-5 — consent inheritance (F7) an unconsented third-party skill contributes zero pins — pins inherit exactly the discovery consent state
+✅ test/skills/operative_pins_test.dart: window-membership probe surfaces (review round 2: CC/coverage) a pin quoted by an ASSISTANT text block counts as present — no repair
+✅ test/skills/operative_pins_test.dart: window-membership probe surfaces (review round 2: CC/coverage) a pin quoted by a TOOL RESULT text block counts as present
+✅ test/skills/operative_pins_test.dart: window-membership probe surfaces (review round 2: CC/coverage) a pin quoted in a list-content USER message counts as present
+✅ test/skills/operative_pins_test.dart: window-membership probe surfaces (review round 2: CC/coverage) message kinds with no text surface (non-text blocks only) count as absent → the repair fires
+✅ test/skills/operative_pins_test.dart: readSkillPathsInWindow — branch matrix (review round 2) non-`read` tool calls never count as skill reads
+✅ test/skills/operative_pins_test.dart: readSkillPathsInWindow — branch matrix (review round 2) non-String `path` arguments are ignored
+✅ test/skills/operative_pins_test.dart: readSkillPathsInWindow — branch matrix (review round 2) paths outside the skill set are ignored
+✅ test/skills/operative_pins_test.dart: readSkillPathsInWindow — branch matrix (review round 2) a real skill read is reported (the P6 priority class)
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) a changed content key supersedes with a notice naming the NEW line (P5)
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) a vanished pin-owning skill drops with a notice (P4)
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) an unchanged registry diffs clean — no repeat notices
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) ALL skills gone at once still reports the last pin drops (round 3: the empty-list corner)
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) an empty-window or disabled turn never touches the baseline (round 3: kill-switch stays inert)
+✅ test/skills/operative_pins_test.dart: P4/P5 lifecycle notices through injection (review round 2) the lifecycle diff fires while OTHER pins keep flowing (the dropped skill does not silence the rest)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff — successor selection (review round 2) a multi-pin skill's supersede names the CHANGED line, not the skill's first pin
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff — successor selection (review round 2) a line the owner skill no longer declares drops (not supersede-mislabeled)
+✅ test/skills/operative_pins_test.dart: SkillOperativePins.diff — successor selection (review round 2) two simultaneous line edits name DIFFERENT successors — each new-key pin is claimed at most once (round 3)
+✅ test/skills/builtin_skills_test.dart: builtinSkills the first batch parses with real manifests
+✅ test/skills/builtin_skills_test.dart: builtinSkills is not gated by the third-party skills-access consent
+✅ test/skills/builtin_skills_test.dart: discoverSkills builtins merge builtins resolve in a project with NO .fah/skills
+✅ test/skills/builtin_skills_test.dart: discoverSkills builtins merge a project skill of the same name shadows the builtin
+✅ test/skills/builtin_skills_test.dart: discoverSkills builtins merge builtins survive allowedSources restricted to first-party
+✅ test/skills/builtin_skills_test.dart: rendering and read access from the embedded copy renderSkillBody works without a backing file
+✅ test/skills/skills_test.dart: discoverSkills finds <name>/SKILL.md with frontmatter and flat <name>.md
+✅ test/skills/builtin_skills_test.dart: rendering and read access from the embedded copy builtinSkillTextAt serves the virtual read path
+✅ test/skills/skills_test.dart: discoverSkills an empty frontmatter fence loads with fallbacks, not a skip
+✅ test/skills/skills_test.dart: discoverSkills project wins a name clash with the user scope
+✅ test/skills/skills_test.dart: discoverSkills ignores missing roots and a bare top-level SKILL.md
+✅ test/skills/skills_test.dart: discoverSkills discovers claude/copilot/codex roots with their sources
+✅ test/skills/skills_test.dart: discoverSkills allowedSources filters out third-party roots
+✅ test/skills/skills_test.dart: discoverSkills discovers .claude/commands flat files as skills
+✅ test/skills/builtin_skills_test.dart: rendering and read access from the embedded copy the read tool serves the builtin:// path
+✅ test/skills/skills_test.dart: discoverSkills parses the full multi-format frontmatter into the manifest
+✅ test/skills/skills_test.dart: discoverSkills boolean spellings yes/on/1 and no/off/0 parse
+✅ test/skills/skills_test.dart: path matching no patterns → always matches
+✅ test/skills/skills_test.dart: path matching glob patterns match touched paths (absolute and relative)
+✅ test/skills/skills_test.dart: path matching copilot applyTo participates too
+✅ test/skills/skills_test.dart: formatSkillsForPrompt renders the available_skills block with metadata only
+✅ test/skills/skills_test.dart: formatSkillsForPrompt disable-model-invocation skills are hidden from the model catalog
+✅ test/skills/skills_test.dart: skills access label round-trip (unknown/absent → granted, discovery is opt-out)
+✅ test/skills/skills_test.dart: skills access discovery allowed only when granted
+✅ test/skills/skills_test.dart: skills access skillSourceIsThirdParty marks claude/copilot/codex
+✅ test/skills/retired_seed_frozen_test.dart: every retired-seed fingerprint matches the repo copy byte-for-byte
+✅ test/skills/retired_seed_frozen_test.dart: every retired-BUNDLED-seed fingerprint matches a per-platform variant of the frozen raw bytes (gh-1164 js-apps)
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection missing roots are stable; an unchanged tree keeps the value
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection adding a skill entry changes the fingerprint
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection removing an entry changes it; renaming is replace, not duplicate
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection an mtime bump on a flat skill file changes it (edit detection)
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection a change under one root leaves other roots untouched
+✅ test/skills/skills_freshness_test.dart: UT-1: fingerprint stability and change detection stamp math is content-free (names + kinds + sizes + mtimes only)
+✅ test/skills/skills_freshness_test.dart: UT-2: freshness rendering determinism (AC1, AC7) no scannedAt renders the legacy shape byte-identically
+✅ test/skills/skills_freshness_test.dart: UT-2: freshness rendering determinism (AC1, AC7) compose vs re-compose after an unchanged fingerprint ⇒ byte-identical
+✅ test/skills/skills_freshness_test.dart: UT-2: freshness rendering determinism (AC1, AC7) mid-session entries carry the added mid-session flag with source
+✅ test/skills/skills_freshness_test.dart: UT-2: freshness rendering determinism (AC1, AC7) liveRediscovery off renders the staleness footer; on the stamp
+✅ test/skills/skills_freshness_test.dart: UT-2: freshness rendering determinism (AC1, AC7) no skills ⇒ empty section, even with a stamp
+✅ test/skills/skills_freshness_test.dart: UT-4: /skill: resolution decision table indexed / on-disk-unindexed / disabled-by-toggle / nowhere — only the last says unknown skill
+✅ test/skills/skill_availability_test.dart: SkillsConfig.fromYaml parses per-skill boolean entries, skipping reserved keys
+✅ test/skills/skill_availability_test.dart: SkillsConfig.fromYaml a malformed value throws ConfigException naming the skill
+✅ test/skills/skill_availability_test.dart: SkillsConfig.fromYaml yaml 1.2 string spellings on/off coerce like booleans
+✅ test/skills/skill_availability_test.dart: SkillsConfig.fromYaml toYaml round-trips through fromYaml
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability defaults every skill to enabled
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability the project scope turns a skill off
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability global off + project on resolves on (deepest wins)
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability project off wins over global on
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability matching is case-insensitive; unknown ids are collected
+✅ test/skills/skill_availability_test.dart: resolveSkillAvailability enabledSkills filters disabled skills preserving order
+✅ test/skills/fa_self_config_accuracy_test.dart: the skill description advertises theme management (issue #279)
+✅ test/skills/fa_self_config_accuracy_test.dart: every documented top-level key is read by the config parsers
+✅ test/skills/fa_self_config_accuracy_test.dart: every documented nested key is pinned and really parsed
+✅ test/skills/fa_self_config_accuracy_test.dart: documented redaction layers, roles and slots are the real ids
+✅ test/skills/fa_self_config_accuracy_test.dart: documented config file paths appear in the loading code
+✅ test/skills/fa_self_config_accuracy_test.dart: the documented config-tool ops are the ops the tool implements
+✅ test/skills/cli_parity_test.dart: every registry command is classified (settings vs not)
+✅ test/skills/cli_parity_test.dart: classified commands exist in the real registry (no stale entries)
+✅ test/skills/cli_parity_test.dart: every settings command is documented in the skill
+✅ test/skills/cli_parity_test.dart: the skill documents no phantom commands
+✅ test/skills/cli_parity_test.dart: the skill marker covers only classified settings commands
+✅ test/skills/cli_parity_test.dart: every fa config verb is documented in the skill (no phantom verbs)
+✅ test/skills/skill_renderer_test.dart: argument substitution $ARGUMENTS and positional $0/$1/$ARGUMENTS[0]
+✅ test/skills/skill_renderer_test.dart: argument substitution named arguments from the frontmatter list
+✅ test/skills/skill_renderer_test.dart: argument substitution no placeholder → args appended as ARGUMENTS:
+✅ test/skills/skill_renderer_test.dart: argument substitution escaped \$1.00 stays literal
+✅ test/skills/skill_renderer_test.dart: argument substitution CLAUDE_* variables resolve
+✅ test/skills/skill_renderer_test.dart: argument substitution quoted multi-word argument stays one token
+✅ test/skills/skill_renderer_test.dart: shell injection inline !`cmd` is replaced with command output
+✅ test/skills/skill_renderer_test.dart: shell injection fenced ```! block runs as one command
+✅ test/skills/skill_renderer_test.dart: shell injection a failing command aborts the invocation
+✅ test/skills/skill_renderer_test.dart: shell injection a killed injection surfaces the captured partial output
+✅ test/skills/skill_renderer_test.dart: shell injection a killed injection tail-caps the captured partial output
+✅ test/skills/skill_renderer_test.dart: shell injection a failing injection tail-caps the embedded output (exit path)
+✅ test/skills/skill_renderer_test.dart: shell injection disabled shell execution renders the placeholder
+✅ test/skills/skill_renderer_test.dart: splitSkillArguments plain and quoted tokens
+✅ test/skills/skill_renderer_test.dart: splitSkillArguments backslash escapes inside quotes
+✅ test/skills/skill_renderer_test.dart: splitSkillArguments empty quotes and multiple spaces produce expected tokens
+✅ test/skills/skill_renderer_test.dart: splitSkillArguments trailing backslash inside quotes is preserved
+✅ test/apps/js_app_error_feedback_test.dart: JsAppErrorEvent fromLogJson parses the bootstrap wire format
+✅ test/apps/js_app_error_feedback_test.dart: JsAppErrorEvent fromLogJson maps every capture kind
+✅ test/apps/js_app_error_feedback_test.dart: JsAppErrorEvent fromLogJson rejects malformed records
+✅ test/apps/js_app_error_feedback_test.dart: JsAppErrorEvent unknown kinds fall back to onerror; fingerprint wins the dedup key
+✅ test/ci_2088_macos_arm64_size_floor_test.dart: arm64 size floor gates the v1.0.702 artifact shape green (gh-2088)
+✅ test/ci_2088_macos_arm64_size_floor_test.dart: committed floor is the byte-exact --reseed output for that shape (gh-2088)
+✅ test/providers/shared_http_client_test.dart: sharedProviderHttpClient returns one shared keep-alive instance (no per-call churn)
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) empty registry + no global override resolves to the defaults
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) global providerTimeouts override wins over the defaults
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) a registry entry wins over the global override, per field
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) baseUrl prefix match: entry base matches request URL under it
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) port and scheme are significant; path prefix must align
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) precedence: longest base path wins; same-baseUrl tie → last wins
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) malformed entry baseUrls never match any request URL
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) explicit name lookup wins over baseUrl matching
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) per-URL helpers agree with the resolver
+✅ test/providers/provider_tuning_test.dart: AC1/UT — per-provider timeout resolution (provider > global > default) describe names the effective values and their sources
+✅ test/providers/provider_tuning_test.dart: 1554/UT — scoped precedence chain (role > customProviders > models > global > default), per FIELD per-field fall-through across same-base entries: the deeper registration wins its field, the other falls to the lower entry
+✅ test/providers/provider_tuning_test.dart: 1554/UT — scoped precedence chain (role > customProviders > models > global > default), per FIELD same-field collision: the later-registered (higher) surface wins — customProviders over models.custom over nothing
+✅ test/providers/provider_tuning_test.dart: 1554/UT — scoped precedence chain (role > customProviders > models > global > default), per FIELD unmatched fields fall to global, then default
+✅ test/providers/provider_tuning_test.dart: 1554/UT — scoped precedence chain (role > customProviders > models > global > default), per FIELD wire helpers walk the same chain per field
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) no header → the ladder step for that attempt
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) ladder doubles 5→10→20→40→60 and holds the 60s cap
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) Retry-After: 12 → 12s backoff on that attempt, source server
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) Retry-After: 300 → clamped to the 60s ceiling, source clamp
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) E2: Retry-After: 0 is treated as absent (ladder applies)
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) E3: malformed (non-numeric) → ladder + malformed note
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) E3: HTTP-date form counts as malformed for the stall ladder
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) blank header → ladder, not malformed
+✅ test/providers/provider_tuning_test.dart: AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap) negative value is malformed, never a negative delay
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) five connect-class failures exhaust connection only
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) stream exhaustion never consumes the connection budget
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) caps are injectable; defaults are 4 and 3
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) E5: the terminal story carries BOTH counters
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) terminal story renders partial spend truthfully
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) terminal story names WHICH budget exhausted on mixed spend
+✅ test/providers/provider_tuning_test.dart: AC3/UT — dual retry budgets (connection 4 / stream 3, independent) terminal story keeps the exhausted headline when BOTH are spent
+✅ test/providers/provider_tuning_test.dart: AC4/UT — retry trace line format contract ladder delay line names budget, attempt and source
+✅ test/providers/provider_tuning_test.dart: AC4/UT — retry trace line format contract server delay line
+✅ test/providers/provider_tuning_test.dart: AC4/UT — retry trace line format contract clamp line names the ceiling AND the advertised value
+✅ test/providers/provider_tuning_test.dart: AC4/UT — retry trace line format contract malformed header appends the malformed note
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) empty recorder renders an empty report
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) percentiles are nearest-rank over recorded gaps
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) watchdog fires are counted per model
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) report renders p50/p95, fire counts and the recipe line
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) unsorted insertion order still yields sorted percentiles
+✅ test/providers/provider_tuning_test.dart: AC5/UT — tuning report (p50/p95 inter-chunk gap + watchdog fires) per-model samples are bounded (no unbounded process growth)
+✅ test/providers/provider_tuning_test.dart: AC1/UT — the adapter path inherits the per-provider idle timeout streamOpenAICompletions surfaces the entry-tuned idle watchdog
+✅ test/providers/models_endpoint_test.dart: parseModelsResponse parses the OpenAI/OpenRouter {"data": [{"id": ...}]} shape
+✅ test/providers/models_endpoint_test.dart: parseModelsResponse parses the gateway {"models": [{"alias": ...}]} dialect
+✅ test/providers/models_endpoint_test.dart: parseModelsResponse empty data yields empty results, never throws
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) happy path: one send, no retry, no notice
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) stalls twice then answers: retried transparently to success
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) exhaustion: 2 retries then the same watchdog error as before
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) mid-stream silence is NOT retried at the connect layer
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) cancel during the backoff sleep aborts instead of retrying
+✅ test/providers/connect_stall_retry_test.dart: connect-stall retry (issue #1121) a LATE answer to an abandoned attempt is announced and detached
+✅ test/providers/real_client_watchdog_test.dart: real IOClient + black-hole endpoint: the connect watchdog surfaces as the named TimeoutException, not a cast failure
+✅ test/providers/real_client_watchdog_test.dart: a watchdog-cancelled zero-byte send replays on a FRESH connection of the SAME shared client — the dead socket is never re-used
+✅ test/providers/openrouter_oauth_test.dart: PKCE generation verifier uses only RFC 7636 characters
+✅ test/providers/openrouter_oauth_test.dart: PKCE generation challenge is base64url SHA-256 without padding
+✅ test/providers/openrouter_oauth_test.dart: PKCE generation different verifiers produce different challenges
+✅ test/providers/openrouter_oauth_test.dart: buildOpenRouterAuthUrl includes challenge, method, callback and label
+✅ test/providers/openrouter_oauth_test.dart: buildOpenRouterAuthUrl omits callback_url and key_label when null/empty
+✅ test/providers/openrouter_oauth_test.dart: buildOpenRouterAuthUrl includes state when provided
+✅ test/providers/openrouter_oauth_test.dart: buildOpenRouterAuthUrl omits state when null/empty
+✅ test/providers/openrouter_oauth_test.dart: exchangeOpenRouterCode returns key and sha256 hash on success
+✅ test/providers/openrouter_oauth_test.dart: exchangeOpenRouterCode throws ConfigException on 403 invalid code
+✅ test/providers/openrouter_oauth_test.dart: exchangeOpenRouterCode throws ConfigException when response body lacks key
+✅ test/providers/openrouter_oauth_test.dart: exchangeOpenRouterCode throws ConfigException on network failure
+✅ test/providers/openrouter_oauth_test.dart: sha256Hex matches known SHA-256 hex
+[conn-trace] stall payload dumped to /tmp/sentinel-utYLWFMV/stall-2026-11-14T08-29-51-314293Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) payload bytes byte-identical; auth header masked in meta
+[conn-trace] stall payload dumped to /tmp/sentinel-utDGDOMH/stall-2026-11-14T08-29-51-359388Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) no record (unwrapped client): metadata-only dump, never throws
+[conn-trace] stall payload dumped to /tmp/sentinel-utCYKEHL/stall-2026-11-14T08-29-51-361828Z-connect/meta.json
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) the dump line is emitted even with the trace off (AC3 signal)
+[conn-trace] stall payload dumped to /tmp/sentinel-utYKDMZC/stall-2026-11-14T08-29-51-365234Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) BLOCKING (security): the allowlist masks EVERY credential carrier — x-goog-api-key and custom authHeader names included
+[conn-trace] stall payload dumped to /tmp/sentinel-utIXETRC/stall-2026-11-14T08-29-51-369379Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) bodySha256 is the real SHA-256 digest (the replay integrity check verifies bytes, not a length)
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall payload dumped to /tmp/fake-meta.json
+[conn-trace] stall dump budget spent (8 dumps) — further payloads skipped this process
+✅ test/providers/stall_sentinel_test.dart: dump serialization (UT) the per-process dump budget caps the writes (a black-holed endpoint cannot fill the disk); the sentinel opt-out skips dumps AND body retention
+[conn-trace] stall payload dumped to /tmp/sentinel-itGGQAIZ/stall-2026-11-14T08-29-51-769420Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: AC3 IT — dump before abort on the production stack idle watchdog fire dumps the outbound payload first
+[conn-trace] stall payload dumped to /tmp/sentinel-replayMOFIWJ/stall-2026-11-14T08-29-51-789331Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: replay script — byte-identical replay, same stall signature wedged endpoint → exit 2 (stall signature)
+replay wedged: 2 stalled: no response within 1s (same stall signature)
+ 
+[conn-trace] stall payload dumped to /tmp/sentinel-replaySTYPVB/stall-2026-11-14T08-29-52-990443Z-stream-idle/meta.json
+✅ test/providers/stall_sentinel_test.dart: replay script — byte-identical replay, same stall signature healthy endpoint → exit 0 (stall exonerated downstream)
+✅ test/providers/transient_retry_stream_test.dart: isTransientNetworkError matches the socket-level wordings
+✅ test/providers/transient_retry_stream_test.dart: isTransientNetworkError rejects non-transient failures
+✅ test/providers/transient_retry_stream_test.dart: isTransientNetworkError a cut stream (no finish_reason) is transport (issue #312)
+✅ test/providers/transient_retry_stream_test.dart: isTransientNetworkError budget/spending exhaustion is never transient (issue #926)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a reset-then-recover call retries and succeeds
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a non-transient error is forwarded without any retry
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a budget error is terminal — verbatim, no retries (issue #926)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction an exhausted budget forwards the last failure
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a failure AFTER content is never replayed (observable-output guard)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction transientRetryBufferThinking (the #964 escape hatch) a thinking-only drop replays — nothing user-visible was emitted (issue #964)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction transientRetryBufferThinking (the #964 escape hatch) a thinking-only success flushes the buffered reasoning (issue #964)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a drop after visible content still stands despite thinking deltas (issue #964 AC4)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a cancel during the retry sleep aborts instead of replaying
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction providerStreamFunction wraps every kind with the retry
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a vendor finish_reason classified transient replays (issue #312)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a TERMINAL finish_reason never replays (safety)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction an UNKNOWN vendor finish_reason defaults transient
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a classified failure AFTER content stands (no replay)
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a stream closing without any terminal event flushes the buffer
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a natural stop with nothing committed flushes and ends
+✅ test/providers/transient_retry_stream_test.dart: transientRetryStreamFunction a post-commit non-error terminal stands verbatim
+✅ test/providers/transient_retry_stream_test.dart: issue #1323 — live thinking: the first reasoning delta commits thinking deltas stream live before any text exists
+✅ test/providers/transient_retry_stream_test.dart: issue #1323 — live thinking: the first reasoning delta commits a mid-reasoning transport death resumes from the streamed thinking — the tail continues it, never duplicates it
+✅ test/providers/transient_retry_stream_test.dart: issue #1323 — live thinking: the first reasoning delta commits a mid-reasoning auth failure stands verbatim — the streamed thinking and the error surface
+✅ test/providers/transient_retry_stream_test.dart: issue #290 — gateway 5xx coverage (the retry-free hole) classifies the verbatim incident 500 and the 5xx family
+✅ test/providers/transient_retry_stream_test.dart: issue #290 — gateway 5xx coverage (the retry-free hole) still rejects rate limits, overflow, auth, watchdog wording (AC6)
+✅ test/providers/transient_retry_stream_test.dart: issue #290 — gateway 5xx coverage (the retry-free hole) verbatim incident 500 is retried and the turn completes (AC1)
+✅ test/providers/transient_retry_stream_test.dart: issue #290 — gateway 5xx coverage (the retry-free hole) exhausted budget tells the retry story, not a raw dump (AC2)
+✅ test/providers/transient_retry_stream_test.dart: issue #290 — gateway 5xx coverage (the retry-free hole) post-commit 500 is a clean mid-answer error, never replayed (AC4)
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix AC1: a mid-stream abort after completed content resumes from the prefix and completes — one logical message, no duplicate content
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix E1: an abort mid-toolcall-delta drops the in-flight call from the anchor and shifts the tail indices — the call is never duplicated
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix an abort inside the first unfinished block stands loud — nothing completed to resume from
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix AC2: repeated aborts exhaust the budget and die loud with the full partial content preserved
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix AC3: a user abort after content stands — never enters the retry path
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix E3: a run-idle-watchdog cancel (TimeoutException reason) is a machine abort — it resumes from the prefix
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S1: a user abort during the tail, after a watchdog resume, is honored — it stands with the streamed prefix preserved
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S2: a completed tool call before the abort never rides the anchor — strict-provider pairing holds, host-visible content survives
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S2b: an abort whose only completed block is a tool call sends the tail on the original context — no empty anchor
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S3: the chain dying on a non-abort tail failure at budget end keeps the streamed prefix in the terminal message
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S4: a post-commit non-abort failure on the resumed path keeps the mid-answer hygiene wrap and the streamed prefix
+✅ test/providers/transient_retry_stream_test.dart: issue #1126 — mid-stream abort resumes from the completed prefix S5: a plain TimeoutException cancel (a compaction budget kill) is host intent — it stands, never resumes
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix the owner wording classifies as transient
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix a mid-answer Operation timed out resumes and completes one logical message
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix repeated connection failures exhaust the budget loud - error reason, full prefix preserved
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix an auth failure after completed content stands verbatim
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix a user-cancelled token outranks the transport class
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix a pre-commit connection-closed cut (stripped ClientException) replays
+✅ test/providers/transient_retry_stream_test.dart: issue #1168 - mid-stream connection failures resume from the prefix a watchdog-fired cancel does not outrank the transport class
+✅ test/providers/provider_tuning_loopback_test.dart: AC1/IT — per-provider stream-idle watchdog on the wire registered entry fires at ~1.5s; unregistered host stays default
+✅ test/providers/rate_limit_info_test.dart: parseRateLimitInfo — ChatGPT-Codex usage-limit payload (AC1) the verbatim clip payload decodes into the structured info
+✅ test/providers/rate_limit_info_test.dart: parseRateLimitInfo — ChatGPT-Codex usage-limit payload (AC1) non-429 statuses never parse (rendering stays unchanged)
+✅ test/providers/rate_limit_info_test.dart: parseRateLimitInfo — ChatGPT-Codex usage-limit payload (AC1) codex header resets feed the info when the body is silent
+✅ test/providers/rate_limit_info_test.dart: parseRateLimitInfo — ChatGPT-Codex usage-limit payload (AC1) string-serialized numeric fields still surface the reset
+✅ test/providers/rate_limit_info_test.dart: formatRateLimitMessage — the human line (AC2) en: names the plan, human reset units, next step — never raw
+✅ test/providers/rate_limit_info_test.dart: formatRateLimitMessage — the human line (AC2) ru: the goal wording family with human units
+✅ test/providers/rate_limit_info_test.dart: formatRateLimitMessage — the human line (AC2) a branded adapter enriches the plan title (codex surfaces)
+✅ test/providers/rate_limit_info_test.dart: formatRateLimitMessage — the human line (AC2) a blank or whitespace brand renders without stray spaces
+✅ test/providers/rate_limit_info_test.dart: formatRateLimitMessage — the human line (AC2) eligible promo gets its one-line mention
+✅ test/providers/rate_limit_info_test.dart: formatHumanCountdown — magnitude table (E1) ru
+✅ test/providers/rate_limit_info_test.dart: formatHumanCountdown — magnitude table (E1) en
+✅ test/providers/rate_limit_info_test.dart: formatResetStamp ru day-month + 24h clock
+✅ test/providers/rate_limit_info_test.dart: formatResetStamp en month-day + 24h clock
+✅ test/providers/rate_limit_info_test.dart: degrade paths (AC4) bare 429 with only Retry-After renders retry minutes
+✅ test/providers/rate_limit_info_test.dart: degrade paths (AC4) an HTTP-date Retry-After degrades the same way
+✅ test/providers/rate_limit_info_test.dart: degrade paths (AC4) a 429 with nothing usable renders the generic message
+✅ test/providers/rate_limit_info_test.dart: degrade paths (AC4) an HTML 429 body never leaks markup into the message
+✅ test/providers/rate_limit_info_test.dart: clock skew (E2) the countdown comes from the server, not the device clock
+✅ test/providers/rate_limit_info_test.dart: secondary-window-only reset (E3) still one clear message, limit kind named
+✅ test/providers/rate_limit_info_test.dart: render surfaces (AC5) formatProviderError renders the human line with the 429 prefix
+✅ test/providers/rate_limit_info_test.dart: render surfaces (AC5) non-429 provider errors are unchanged (REG)
+✅ test/providers/rate_limit_info_test.dart: render surfaces (AC5) the raw payload rides the message JSON, not the rendered text
+✅ test/providers/rate_limit_info_test.dart: render surfaces (AC5) an empty rawBody round-trips without an empty-string key
+✅ test/providers/rate_limit_info_test.dart: parseRetryAfter (moved verbatim, issue #867) delta seconds and HTTP dates still parse
+✅ test/providers/provider_tuning_loopback_test.dart: AC1/IT — per-provider connect watchdog on the wire entry budget kills the black hole early; default stays 180s
+✅ test/providers/stream_trace_test.dart: marks are dropped silently while no trace is active
+✅ test/providers/stream_trace_test.dart: one line per mark with elapsed, +delta, seq, mark, detail
+✅ test/providers/stream_trace_test.dart: elapsed and delta grow monotonically with real time
+✅ test/providers/stream_trace_test.dart: marks after stop are dropped
+✅ test/providers/stream_trace_test.dart: stop clears the active trace
+✅ test/providers/stream_trace_test.dart: starting a second trace replaces the first (one active trace)
+✅ test/providers/stream_trace_test.dart: all three marks are named net, emit, render
+✅ test/providers/stream_trace_test.dart: emit marks fire once per delta — wrapper hops stay silent a stream constructed with traced: false drops emit marks
+✅ test/providers/stream_trace_test.dart: emit marks fire once per delta — wrapper hops stay silent one emit per delta through transientRetryStreamFunction
+✅ test/providers/provider_tuning_loopback_test.dart: 1554/AC1/IT — model-scoped (roles chain entry) watchdogs on the wire the role entry window fires for its model only; another model in the same session keeps the global window
+✅ test/providers/openai_completions_ain_url_test.dart: streamOpenAICompletions (AIIN base URL) normalizes a scheme-less AIIN base URL before sending
+✅ test/providers/provider_tuning_loopback_test.dart: 1554/AC1/IT — model-scoped (roles chain entry) watchdogs on the wire model-scoped connect window kills the black hole early and the stall line names the scope; the URL helper stays default
+✅ test/providers/codemie_sso_test.dart: codeMieApiBase appends the API path to a bare org URL
+✅ test/providers/codemie_sso_test.dart: codeMieApiBase is idempotent
+✅ test/providers/codemie_sso_test.dart: buildCodeMieSsoUrl embeds the callback port in the login path
+✅ test/providers/codemie_sso_test.dart: isCodeMieBaseUrl matches the API path with and without /v1
+✅ test/providers/codemie_sso_test.dart: codeMieOrgUrl strips the API suffix from a stored provider base URL
+✅ test/providers/codemie_sso_test.dart: decodeCodeMieSsoToken decodes the base64 JSON cookies object
+✅ test/providers/codemie_sso_test.dart: decodeCodeMieSsoToken rejects malformed tokens
+✅ test/providers/codemie_sso_test.dart: deriveCodeMieExpiresAt reads the exp claim of codemie_access_token
+✅ test/providers/codemie_sso_test.dart: deriveCodeMieExpiresAt falls back to ~24h without a usable JWT
+✅ test/providers/codemie_sso_test.dart: CodeMieSsoCredentials authToken joins all cookies into key=value;key=value
+✅ test/providers/codemie_sso_test.dart: CodeMieSsoCredentials authToken works with codemie_access_token cookie too
+✅ test/providers/codemie_sso_test.dart: fetchCodeMieModels sends the cookie header and parses all id field variants
+✅ test/providers/codemie_sso_test.dart: fetchCodeMieModels 401 raises a re-login hint
+✅ test/providers/codemie_sso_test.dart: fetchCodeMieProjects merges and deduplicates application fields
+✅ test/providers/codemie_sso_test.dart: fetchCodeMieProjects non-2xx throws ConfigException
+✅ test/providers/codemie_sso_test.dart: fetchCodeMieProjects non-object response returns empty list
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml accepts http/https/socks5 URLs with optional fields
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml rejects inline credentials in the URL (secrets by env only)
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml rejects unknown fields
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml rejects unsupported schemes and empty proxies
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml rejects non-map nodes and bad scalar fields
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml proxyUsername without proxyPasswordEnv is rejected
+✅ test/providers/proxy_config_test.dart: ProviderNetworkConfig.fromYaml error text carries the owning provider label
+✅ test/providers/proxy_config_test.dart: port range out-of-range port is rejected with a named config error
+✅ test/providers/proxy_config_test.dart: credential half-validation proxyUsername without proxyPasswordEnv is rejected
+✅ test/providers/proxy_config_test.dart: credential half-validation proxyPasswordEnv without proxyUsername is rejected (dead config)
+✅ test/providers/proxy_config_test.dart: proxyPasswordEnv resolution resolves via the lookup when set
+✅ test/providers/proxy_config_test.dart: proxyPasswordEnv resolution null when no env name configured
+✅ test/providers/proxy_config_test.dart: proxyPasswordEnv resolution missing env → actionable error naming proxyPasswordEnv + request_secret
+✅ test/providers/proxy_config_test.dart: proxyRoute decision table explicit ports win
+✅ test/providers/proxy_config_test.dart: proxyRoute decision table default ports: http 80, https 443, socks5 1080
+✅ test/providers/proxy_config_test.dart: proxyRoute decision table IPv6 literal host keeps its address (brackets re-added by io)
+✅ test/providers/proxy_config_test.dart: fail-closed error text proxyFailureText carries the card contract
+✅ test/providers/proxy_config_test.dart: fail-closed error text proxyReasonOf collapses multi-line socket errors to one line
+✅ test/providers/proxy_config_test.dart: providers: config section parses blocks keyed by provider name
+✅ test/providers/proxy_config_test.dart: providers: config section a null-valued entry is rejected, not silently dropped
+✅ test/providers/proxy_config_test.dart: providers: config section absent section parses to an empty map
+✅ test/providers/proxy_config_test.dart: providers: config section rejects unknown per-provider keys
+✅ test/providers/proxy_config_test.dart: providers: config section rejects non-map sections and entries
+✅ test/providers/proxy_config_test.dart: providers: config section toYaml writes the section back verbatim (config edits never drop the binding)
+✅ test/providers/proxy_config_test.dart: providers: config section toYaml omits the section entirely when unbound
+✅ test/providers/provider_tuning_loopback_test.dart: 1554/AC1/IT — model-scoped (roles chain entry) watchdogs on the wire per-leg scope labels: an idle-only override never cites its scope on a connect-stall note; a connect-scoped model cites it there
+✅ test/providers/provider_tuning_loopback_test.dart: AC3/IT — dual budgets over loopback failure classes connect-class kills spend connectionRetries only; the idle-class stall still draws the full stream budget
+✅ test/providers/provider_tuning_loopback_test.dart: AC6/REG — empty registry keeps byte-identical defaults resolution falls straight through to the untouched getters
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex streams text deltas, usage and a done event
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex streams tool calls and ends with toolUse
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex sends Codex transport headers and store:false body
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex a 401 refreshes, persists and retries with the new token
+✅ test/providers/conn_trace_test.dart: line-format contract (UT) conn open (fresh, port P)
+✅ test/providers/conn_trace_test.dart: line-format contract (UT) conn open (reused, port P)
+✅ test/providers/conn_trace_test.dart: line-format contract (UT) first byte after Ns
+✅ test/providers/conn_trace_test.dart: line-format contract (UT) idle watchdog FIRED after Ns (conn age, port P)
+✅ test/providers/conn_trace_test.dart: line-format contract (UT) connect watchdog line is DISTINCT from the idle line (E1)
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex a connected-but-silent SSE stream errors under the stream idle watchdog, never hangs (#1036)
+✅ test/providers/conn_trace_test.dart: structured events traced client emits conn open + first byte as structured events and lines
+✅ test/providers/conn_trace_test.dart: structured events request registry maps a response to its outbound payload (sentinel lookup)
+✅ test/providers/conn_trace_test.dart: structured events E4: FA_CONN_DEBUG off — zero trace overhead: the SAME response object is returned unwrapped and nothing is recorded
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex 1554: a streamIdleTimeoutMs-only registry entry scopes the codex bypass idle leg (the tuned lookup the SSE iterator uses)
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex replays learned Cloudflare cookies on a challenge retry
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex a challenge replay cannot clear fails with Cloudflare guidance
+✅ test/providers/chatgpt_codex_test.dart: streamChatGptCodex refreshes proactively when the access token is expired
+✅ test/providers/chatgpt_codex_test.dart: request body construction serializes assistant messages with text and tool calls
+✅ test/providers/chatgpt_codex_test.dart: request body construction serializes tool result messages as function_call_output
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) gemini-authored history switches to responses without a 400 and re-shapes tool calls to top-level items
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) image-only tool result degrades to the named note and the following turn also succeeds
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) converter matrix: google/anthropic/completions records convert to grammar-valid responses items
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) a grammar-shaped 400 surfaces the suspect item and a recovery hint, never a bare loop
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) grammar validator names the poisoned content part
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) grammar validator covers every invalid item shape
+✅ test/providers/chatgpt_codex_test.dart: provider switch sanitize (#705) adversarial corpus: every authored/poisoned/degenerate shape converts grammar-valid (#858 AC1)
+✅ test/providers/chatgpt_codex_test.dart: choke-point guard (#858 AC4) the outbound input array is assembled only through responsesInputItems in chatgpt_codex.dart
+✅ test/providers/chatgpt_codex_test.dart: sse event coverage response.incomplete keeps partial text and ends as a terminal error
+✅ test/providers/chatgpt_codex_test.dart: sse event coverage output_item.added pre-binds the tool call block
+✅ test/providers/chatgpt_codex_test.dart: sse event coverage reasoning deltas stream as a thinking block
+✅ test/providers/chatgpt_codex_test.dart: error handling response.failed keeps partial text and ends as a terminal error
+✅ test/providers/chatgpt_codex_test.dart: error handling response.failed with no error message uses default
+✅ test/providers/chatgpt_codex_test.dart: error handling a 429 error message speaks human and carries the structured reset
+✅ test/providers/chatgpt_codex_test.dart: error handling both windows advertised: the label names the window it came from
+✅ test/providers/chatgpt_codex_test.dart: error handling canonical Retry-After casing reaches both parses identically
+✅ test/providers/chatgpt_codex_test.dart: error handling a /responses send that never completes errors fast with a timeout naming the endpoint instead of hanging (issue #1036)
+✅ test/providers/chatgpt_codex_test.dart: raw bearer credentials a plain access token is sent as the Bearer without refreshing
+✅ test/providers/chatgpt_codex_test.dart: raw bearer credentials a 401 on a raw bearer surfaces as the auth death (no refresh)
+✅ test/providers/chatgpt_codex_test.dart: raw bearer credentials a partial OAuth blob degrades to its own access token
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) metered quota round-trips
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) requests unit round-trips
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) unmetered round-trips and keeps its unit
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) unknown and unmetered are distinct states
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) fromJson tolerates missing optional fields
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) fromJson falls back to epoch when updatedAt is absent
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) unknown unit strings fall back to currencyUsd
+✅ test/providers/quota_test.dart: UT-1 ProviderQuota serialization (AC1) toString renders via the shared formatters
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) currency renders $48.20/$150
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) requests render 1840/2000
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) tokens render plain integers
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) reset countdown renders 11d / hours / minutes
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) overdue reset renders reset overdue (E4)
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) null reset renders empty, never a null literal (E2)
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) badge renders [OR $48/$150 · 11d] for a metered provider
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) badge renders ellipsis on cold cache, silent for unmetered
+✅ test/providers/quota_test.dart: UT-2 rendered strings (AC4/E2) badge renders unlimited, used-only, and requests forms
+✅ test/providers/quota_test.dart: UT-3 null-limit semantics (AC2) used with null limit renders no cap
+✅ test/providers/quota_test.dart: UT-3 null-limit semantics (AC2) neither used nor limit renders unlimited
+✅ test/providers/quota_test.dart: UT-3 null-limit semantics (AC2) unknown usage under a known limit never renders null (E2)
+✅ test/providers/quota_test.dart: UT-3 null-limit semantics (AC2) depletion and remaining derivation
+✅ test/providers/quota_test.dart: UT-3 null-limit semantics (AC2) reset overdue detection for cache invalidation (E4)
+✅ test/providers/quota_test.dart: UT-4 QuotaUnit persisted-name contract (issue #1999) every unit round-trips through its pinned JSON name
+✅ test/providers/quota_test.dart: UT-4 QuotaUnit persisted-name contract (issue #1999) JSON names are pinned literals (rename-safe)
+✅ test/providers/quota_test.dart: UT-4 QuotaUnit persisted-name contract (issue #1999) non-string units degrade to currencyUsd, never crash
+✅ test/providers/thinking_test.dart: clampThinkingLevel folds xhigh and max to high
+✅ test/providers/thinking_test.dart: clampThinkingLevel passes known levels through unchanged
+✅ test/providers/thinking_test.dart: clampThinkingLevel leaves unknown strings alone
+✅ test/providers/thinking_test.dart: clampThinkingLevel null stays null
+✅ test/providers/thinking_test.dart: normalizeConfigThinkingLevel (issue #734) known rungs pass through unchanged
+✅ test/providers/thinking_test.dart: normalizeConfigThinkingLevel (issue #734) xhigh and max fold to high
+✅ test/providers/thinking_test.dart: normalizeConfigThinkingLevel (issue #734) unknown values return null for the caller to reject
+✅ test/providers/thinking_test.dart: normalizeConfigThinkingLevel (issue #734) the config rung list names the ladder in order
+✅ test/providers/thinking_test.dart: thinkingBudgetForLevel ladder values are exact
+✅ test/providers/thinking_test.dart: thinkingBudgetForLevel xhigh and max ride the top rung
+✅ test/providers/thinking_test.dart: thinkingBudgetForLevel null level budgets nothing
+✅ test/providers/thinking_test.dart: thinkingBudgetForLevel unknown level throws ArgumentError
+✅ test/providers/thinking_test.dart: thinkingBudgetForLevel custom budgets override only their rung
+✅ test/providers/thinking_test.dart: clampThinkingBudgetToAnswerRoom clamps to ceiling minus the answer floor
+✅ test/providers/thinking_test.dart: adjustMaxTokensForThinking pi parity rows
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys both keys parse to durations
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys absent keys stay null
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys zero / negative / non-int values are hard parse errors
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys values above the 1 h sanity bound are hard parse errors
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys the yaml writer round-trips the keys
+✅ test/providers/provider_tuning_config_test.dart: config — customProviders entries carry the tuning keys the /provider edit wizard carries the hand-configured fields
+✅ test/providers/provider_tuning_config_test.dart: config — models.custom entries carry the tuning keys both keys parse; unknown fields stay strict
+✅ test/providers/provider_tuning_config_test.dart: config — roles chain entries carry the tuning keys map-form chain entries parse the keys
+✅ test/providers/provider_tuning_config_test.dart: config — providersQueue entries carry the tuning keys provider_config keys parse to durations
+✅ test/providers/provider_tuning_config_test.dart: boot seeding — registry entries reach the tuning table seedProviderTuning registers every entry with overrides
+✅ test/providers/provider_tuning_config_test.dart: boot seeding — registry entries reach the tuning table 1554/AC3 — seed order makes customProviders outrank models.custom and role entries outrank both
+✅ test/providers/provider_tuning_config_test.dart: boot seeding — registry entries reach the tuning table re-seeding replaces a changed entry (E4: next request wins)
+✅ test/providers/provider_tuning_config_test.dart: boot seeding — registry entries reach the tuning table reset: true clears removed entries (host reload semantics)
+✅ test/providers/provider_tuning_config_test.dart: boot seeding — registry entries reach the tuning table queue-lane entries render boot notices (never a silent override)
+✅ test/providers/provider_tuning_config_test.dart: boot wiring — runapp prints tuning notices AFTER queue seeding fah_runapp.dart captures the notices after the queue pass
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a 302 to another host FAILS: exactly one request, never re-sent
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) the failure formats as the familiar redirect/SSO diagnosis
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a cross-origin 3xx on a GET fails the same way (no silent auto-follow)
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a same-origin 302 is followed verbatim: method, body, auth
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a same-origin 303 See Other downgrades to GET and drops the body
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a relative same-origin Location resolves against the request
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) the same-origin follow loop is capped (5 hops, then an error)
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a 3xx without a Location fails as a provider error
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) the 200-with-HTML SSO guard still applies after a followed hop
+✅ test/providers/redirect_auth_strip_test.dart: sendProviderRequest — cross-origin redirect auth-stripping (SEC-01) a plain 200 event stream still validates as before
+✅ test/providers/proxy_connect_it_test.dart: http:// proxy (native CONNECT) AC2: SSE arrives via the proxy; zero direct egress
+✅ test/providers/proxy_connect_it_test.dart: http:// proxy (native CONNECT) AC2: an https target tunnels through CONNECT (hostname unresolved, real target TLS)
+✅ test/providers/proxy_connect_it_test.dart: http:// proxy (native CONNECT) AC4: proxy refused → immediate actionable error, zero direct egress
+✅ test/providers/proxy_connect_it_test.dart: http:// proxy (native CONNECT) AC4/E2: 407 → credentialed retry carries Basic auth, succeeds
+✅ test/providers/proxy_connect_it_test.dart: http:// proxy (native CONNECT) AC6/E2: 407 with a wrong password → actionable error naming proxyPasswordEnv; the password never prints
+✅ test/providers/proxy_connect_it_test.dart: https:// proxy (TLS transport) E6: CONNECT rides a TLS transport to the proxy; SSE completes
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) AC3: remote DNS — the hostname is sent unresolved to the proxy and the SSE stream completes
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) E4: RFC1929 user/pass rides the handshake when configured
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) AC4: wrong SOCKS5 password → actionable error naming proxyPasswordEnv; password never prints
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) AC4: SOCKS5 proxy refused → immediate actionable error
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) AC4/E3: proxy up but target refused through it → proxy-path error, no direct retry
+✅ test/providers/proxy_connect_it_test.dart: socks5:// proxy (loopback relay) E4: two providers with different proxies get isolated clients
+✅ test/providers/proxy_connect_it_test.dart: fail-closed behaviors E1: proxy dies mid-stream → the stream ends fail-closed with the actionable text
+✅ test/providers/proxy_connect_it_test.dart: fail-closed behaviors E5: retries after a proxy failure stay on the proxy (zero direct egress)
+✅ test/providers/proxy_connect_it_test.dart: fail-closed behaviors AC6: byte-scan — the password appears nowhere in the event stream text of success or failure paths
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant posts client_id + scope with a JSON accept header and parses
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant uses the pinned VS Code Copilot client id by default
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant a 404 JSON error surfaces endpointDisabled naming the client id
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant a non-JSON error body surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant a socket-level failure surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: requestCopilotDeviceGrant a 200 body without the device fields surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant polls with the device-code grant_type and JSON accept
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant pending then success returns the GitHub token
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant slow_down grows the interval by 5s cumulatively
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant expired_token surfaces the expired error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant access_denied surfaces the denied error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant the wait is bounded by expires_in even while pending
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant a 404 from the poll endpoint surfaces endpointDisabled
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant a non-JSON poll body surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant a 200 without token or error surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant an unknown OAuth error surfaces a transport error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant transient socket failures retry on cadence and the grant completes
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant a transport that fails forever ends in the expired error
+✅ test/providers/copilot_device_flow_test.dart: pollCopilotDeviceGrant reports waiting status lines through onStatus
+✅ test/providers/copilot_device_flow_test.dart: CopilotDeviceFlowError renders its message
+✅ test/providers/copilot_dispatch_test.dart: providerKind copilot drives the whole dispatch chain: role fallback takeover, inspect_image, /models limits override
+✅ test/providers/copilot_dispatch_test.dart: models refresh fallback: no advertised limits keeps catalog defaults
+✅ test/providers/gh1602_rate_limit_repro_test.dart: REG gh-1602: a scripted 429-then-200 provider is retried and the call completes — no terminal rate-limit error
+✅ test/providers/codex_transport_test.dart: isAllowedChatgptHost allows the exact apex hosts
+✅ test/providers/codex_transport_test.dart: isAllowedChatgptHost allows subdomains of chatgpt.com and chatgpt-staging.com
+✅ test/providers/codex_transport_test.dart: isAllowedChatgptHost rejects subdomains of chat.openai.com
+✅ test/providers/codex_transport_test.dart: isAllowedChatgptHost rejects suffix tricks and unknown hosts
+✅ test/providers/codex_transport_test.dart: isAllowedChatgptHost is case-insensitive
+✅ test/providers/codex_transport_test.dart: isAllowedCloudflareCookieName allows every codex-rs allowlisted name
+✅ test/providers/codex_transport_test.dart: isAllowedCloudflareCookieName allows cf_chl_ prefixed challenge cookies
+✅ test/providers/codex_transport_test.dart: isAllowedCloudflareCookieName rejects everything else
+✅ test/providers/codex_transport_test.dart: codexRequestHeaders emits every header when all parameters are given
+✅ test/providers/codex_transport_test.dart: codexRequestHeaders omits account id, honors custom originator, when minimal
+✅ test/providers/codex_transport_test.dart: CodexCookieJar keeps allowlisted cookies and drops the rest (live fixture)
+✅ test/providers/codex_transport_test.dart: CodexCookieJar splits joined cookies without splitting Expires commas
+✅ test/providers/codex_transport_test.dart: CodexCookieJar reads multiple set-cookie entries case-insensitively
+✅ test/providers/codex_transport_test.dart: CodexCookieJar ignores non-https storage and lookups
+✅ test/providers/codex_transport_test.dart: CodexCookieJar ignores storage on disallowed hosts and leaks nothing across hosts
+✅ test/providers/codex_transport_test.dart: CodexCookieJar scopes cookies to their path at a slash boundary
+✅ test/providers/codex_transport_test.dart: CodexCookieJar defaults the path to root so every path matches
+✅ test/providers/codex_transport_test.dart: CodexCookieJar Max-Age<=0 and empty values delete stored cookies
+✅ test/providers/codex_transport_test.dart: CodexCookieJar re-set replaces the stored value
+✅ test/providers/codex_transport_test.dart: CodexCookieJar ignores the Domain attribute and stays host-keyed
+✅ test/providers/codex_transport_test.dart: CodexCookieJar malformed cookie strings are skipped
+✅ test/providers/codex_transport_test.dart: parseCodexRateLimits parses the full header set, case-insensitively
+✅ test/providers/codex_transport_test.dart: parseCodexRateLimits returns null when no codex headers are present
+✅ test/providers/codex_transport_test.dart: parseCodexRateLimits treats garbage numbers as absent fields
+✅ test/providers/codex_transport_test.dart: parseCodexRateLimits a window needs a non-zero field beyond used percent
+✅ test/providers/codex_transport_test.dart: parseCodexRateLimits keeps limits alive on limit name or a single window alone
