@@ -181,10 +181,7 @@ void main() {
     );
     final run = cli.run();
     io.sendLine('/help');
-    await waitForIt(
-      () => io.out.toString().contains('/tasks'),
-      reason: 'REPL is up',
-    );
+    await io.out.waitUntilContains('/tasks', reason: 'REPL is up');
     return (cli, run);
   }
 
@@ -292,8 +289,8 @@ void main() {
 
       // AC2: the routing is real — a task_send record lands in the
       // child's fabric inbox, and the main agent reports back.
-      await waitForIt(
-        () => io.out.toString().contains('передал fix503'),
+      await io.out.waitUntilContains(
+        'передал fix503',
         reason: 'the main agent reports the routing back to the owner',
       );
       final pending = await cli.subagentManager.pendingInbox('fix503');

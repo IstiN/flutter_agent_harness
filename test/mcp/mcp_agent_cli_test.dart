@@ -99,8 +99,8 @@ void main() {
     expect(cli.systemPrompt, contains('`fake` (connected): 1 tool(s)'));
 
     io.sendLine('call the echo tool');
-    await waitForIt(
-      () => io.out.toString().contains('the server said hi'),
+    await io.out.waitUntilContains(
+      'the server said hi',
       reason: 'final answer printed',
     );
     // The tool result the model received in its second turn came from the

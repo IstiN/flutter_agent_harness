@@ -94,8 +94,8 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('run a bash call');
-      await waitForIt(
-        () => io.out.toString().contains('done'),
+      await io.out.waitUntilContains(
+        'done',
         reason: 'the turn settled with the final text',
       );
 
@@ -122,7 +122,11 @@ void main() {
       // real run, not a synthetic event).
       expect(shell.commands, contains('echo hi'));
 
-      await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+      // Graceful shutdown: /exit runs the real teardown path (bye →
+      // settle → seal); bounded-exit guarantees `await run` returns.
+      io.sendLine('/exit');
+      await io.out.waitUntilContains('bye');
+      await run;
       await io.close();
     },
   );
@@ -145,8 +149,8 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('run a failing bash call');
-      await waitForIt(
-        () => io.out.toString().contains('done'),
+      await io.out.waitUntilContains(
+        'done',
         reason: 'the turn settled with the final text',
       );
 
@@ -164,7 +168,11 @@ void main() {
       ], reason: '--- console output ---\n${io.out}');
       expect(io.out.toString().contains('│ • '), isFalse);
 
-      await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+      // Graceful shutdown: /exit runs the real teardown path (bye →
+      // settle → seal); bounded-exit guarantees `await run` returns.
+      io.sendLine('/exit');
+      await io.out.waitUntilContains('bye');
+      await run;
       await io.close();
     },
   );
@@ -278,8 +286,8 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('run two bash calls');
-      await waitForIt(
-        () => io.out.toString().contains('done'),
+      await io.out.waitUntilContains(
+        'done',
         reason: 'the turn settled with the final text',
       );
 
@@ -307,7 +315,11 @@ void main() {
         ),
       ], reason: '--- console output ---\n${io.out}');
 
-      await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+      // Graceful shutdown: /exit runs the real teardown path (bye →
+      // settle → seal); bounded-exit guarantees `await run` returns.
+      io.sendLine('/exit');
+      await io.out.waitUntilContains('bye');
+      await run;
       await io.close();
     },
   );
@@ -327,11 +339,15 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('!echo bang-marker');
-      await waitForIt(
-        () => io.out.toString().contains('bang-marker'),
+      await io.out.waitUntilContains(
+        'bang-marker',
         reason: 'the local exec printed its stdout',
       );
-      await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+      // Graceful shutdown: /exit runs the real teardown path (bye →
+      // settle → seal); bounded-exit guarantees `await run` returns.
+      io.sendLine('/exit');
+      await io.out.waitUntilContains('bye');
+      await run;
       await io.close();
 
       final out = io.out.toString();

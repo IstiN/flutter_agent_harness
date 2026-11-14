@@ -88,11 +88,15 @@ void main() {
         streamFunction: FakeStreamFunction([textTurn('done')]).call,
       );
       final run = cli.run();
-      // Give boot every chance to (wrongly) acquire at session open.
-      await until(
-        () =>
-            io.out.toString().contains('fa boot') ||
-            runner.acquisitions.isNotEmpty,
+      // Give boot every chance to (wrongly) acquire at session open:
+      // readiness = the boot session is persisted. The old probe here
+      // waited for 'fa boot' in io.out — that line is a DIAGNOSTIC log
+      // entry (_logDiagnostic), never written to the visible output, so
+      // the probe burned its silent 25s cap per run.
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await waitForIt(
+        () async => (await repo.list(cwd: '/work')).isNotEmpty,
+        reason: 'session persisted',
       );
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(

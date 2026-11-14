@@ -236,7 +236,11 @@ void main() {
       final exitCode = await cli.runHeadless('count the words');
       await io.close();
 
-      expect(exitCode, 0, reason: 'the task continued on the compacted context');
+      expect(
+        exitCode,
+        0,
+        reason: 'the task continued on the compacted context',
+      );
       // Tool turn + the funnel's bounded pass + the continuation.
       expect(fake.calls, 3, reason: 'bounded retry: no third LM compaction');
       final output = io.out.toString();
@@ -441,8 +445,8 @@ void main() {
         reason: 'the funnel compaction started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('interrupted by user'),
+      await io.out.waitUntilContains(
+        'interrupted by user',
         reason: 'the abort surfaces as an error line',
       );
       // No retry after the abort: give a would-be second pass ample time to
@@ -543,16 +547,13 @@ void main() {
       final output = io.out.toString();
       expect(output, contains('[resuming]'));
       expect(output, contains('nudged continuation fine'));
-      expect(
-        fake.calls,
-        4,
-        reason: 'tool, funnel pass, empty, nudge',
-      );
+      expect(fake.calls, 4, reason: 'tool, funnel pass, empty, nudge');
       // The fourth request is the NUDGE ('continue'), not the original
       // user text — the M2b contract: auto-continued runs get the nudge
       // like any run; the old exclusion stopped at the empty reply and
       // went silent.
-      final nudgePrompt = fake.contexts[3].messages.whereType<UserMessage>()
+      final nudgePrompt = fake.contexts[3].messages
+          .whereType<UserMessage>()
           .last;
       expect(nudgePrompt.content as String, 'continue');
     },
@@ -618,8 +619,8 @@ void main() {
         reason: 'the manual compaction summarizer started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('compaction interrupted'),
+      await io.out.waitUntilContains(
+        'compaction interrupted',
         reason: 'the compaction-only interrupt prints its dim receipt',
       );
       fake.hangFromCall = 1 << 30; // re-arm: the follow-up turn must play out
@@ -703,8 +704,8 @@ void main() {
         reason: 'turn 1 completed and the post-run compaction started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('compaction interrupted'),
+      await io.out.waitUntilContains(
+        'compaction interrupted',
         reason: 'the post-run compaction interrupt prints its dim receipt',
       );
       fake.hangFromCall = 1 << 30; // re-arm: the follow-up turn must play out

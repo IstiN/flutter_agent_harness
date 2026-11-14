@@ -215,9 +215,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider openrouter oauth --no-browser');
-    await waitForIt(
-      () => io.out.toString().contains(browserLaunchSkippedMessage),
-    );
+    await io.out.waitUntilContains(browserLaunchSkippedMessage);
     final authUrl = authorizationUrlFrom(io.out.toString());
     expect(authUrl, startsWith('https://openrouter.ai/auth?'));
 
@@ -230,13 +228,9 @@ void main() {
     );
     expect(response.statusCode, 200);
 
-    await waitForIt(
-      () => io.out.toString().contains('provider name [openrouter.ai]'),
-    );
+    await io.out.waitUntilContains('provider name [openrouter.ai]');
     io.sendLine('my-openrouter');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openrouter'),
-    );
+    await io.out.waitUntilContains('switched provider to openrouter');
     io.sendLine('/exit');
     await run;
 
@@ -245,63 +239,63 @@ void main() {
     expect(store.map[entry!.keyName], 'sk-or-manual');
   });
 
-  test('/provider codemie sso --no-browser prints the URL and completes via a '
-      'manual token callback', () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final store = FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final registry = CustomProviderRegistry([]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      secureKeys: cache,
-      customProviders: registry,
-      codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async =>
-          'codemie-model-1',
-    );
-    final run = cli.run();
+  test(
+    '/provider codemie sso --no-browser prints the URL and completes via a manual token callback',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async =>
+            'codemie-model-1',
+      );
+      final run = cli.run();
 
-    io.sendLine('/provider codemie sso --no-browser');
-    await waitForIt(
-      () => io.out.toString().contains(browserLaunchSkippedMessage),
-    );
-    final ssoUrl = authorizationUrlFrom(io.out.toString());
-    expect(
-      ssoUrl,
-      startsWith(
-        'https://codemie.lab.epam.com/code-assistant-api/v1/auth/login/',
-      ),
-    );
+      io.sendLine('/provider codemie sso --no-browser');
+      await io.out.waitUntilContains(browserLaunchSkippedMessage);
+      final ssoUrl = authorizationUrlFrom(io.out.toString());
+      expect(
+        ssoUrl,
+        startsWith(
+          'https://codemie.lab.epam.com/code-assistant-api/v1/auth/login/',
+        ),
+      );
 
-    // Play the browser: the organization redirects back with the token.
-    final portMatch = RegExp(r'/auth/login/(\d+)').firstMatch(ssoUrl);
-    expect(portMatch, isNotNull, reason: 'sso URL carries the port');
-    final response = await http.get(
-      Uri.parse(
-        'http://127.0.0.1:${portMatch!.group(1)}/?token=${codeMieToken()}',
-      ),
-    );
-    expect(response.statusCode, 200);
+      // Play the browser: the organization redirects back with the token.
+      final portMatch = RegExp(r'/auth/login/(\d+)').firstMatch(ssoUrl);
+      expect(portMatch, isNotNull, reason: 'sso URL carries the port');
+      final response = await http.get(
+        Uri.parse(
+          'http://127.0.0.1:${portMatch!.group(1)}/?token=${codeMieToken()}',
+        ),
+      );
+      expect(response.statusCode, 200);
 
-    await waitForIt(
-      () => io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-    );
-    io.sendLine('my-codemie');
-    await waitForIt(() => io.out.toString().contains('saved provider'));
-    io.sendLine('/exit');
-    await run;
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
+      io.sendLine('my-codemie');
 
-    final output = io.out.toString();
-    expect(output, contains('CodeMie authorized'));
-    final entry = registry.find('my-codemie');
-    expect(entry, isNotNull);
-    expect(
-      entry!.baseUrl,
-      'https://codemie.lab.epam.com/code-assistant-api/v1',
-    );
-    expect(store.map[entry.keyName], startsWith('codemie_access_token='));
-  });
+      await io.out.waitUntilContains('saved provider');
+
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('CodeMie authorized'));
+      final entry = registry.find('my-codemie');
+      expect(entry, isNotNull);
+      expect(
+        entry!.baseUrl,
+        'https://codemie.lab.epam.com/code-assistant-api/v1',
+      );
+      expect(store.map[entry.keyName], startsWith('codemie_access_token='));
+    },
+  );
 
   test('/provider aiin --no-browser runs the real connect flow without a '
       'browser launch', () async {
@@ -321,13 +315,11 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin --no-browser');
-    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
+    await io.out.waitUntilContains('AIIN (aiin.by) sign-in');
     io.sendLine('1'); // browser connect
-    await waitForIt(() => io.out.toString().contains('AIIN sign-in provider'));
+    await io.out.waitUntilContains('AIIN sign-in provider');
     io.sendLine('1'); // google
-    await waitForIt(
-      () => io.out.toString().contains(browserLaunchSkippedMessage),
-    );
+    await io.out.waitUntilContains(browserLaunchSkippedMessage);
     final authUrl = authorizationUrlFrom(io.out.toString());
     expect(authUrl, contains('client_redirect_uri='));
 
@@ -344,15 +336,11 @@ void main() {
     );
     expect(callbackResponse.statusCode, 200);
 
-    await waitForIt(
-      () => io.out.toString().contains('provider name [user@aiin.by]'),
-    );
+    await io.out.waitUntilContains('provider name [user@aiin.by]');
     io.sendLine(''); // keep the email-derived name
-    await waitForIt(() => io.out.toString().contains('AIIN model'));
+    await io.out.waitUntilContains('AIIN model');
     io.sendLine('1'); // m1
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to aiin'),
-    );
+    await io.out.waitUntilContains('switched provider to aiin');
     io.sendLine('/exit');
     await run;
 
@@ -371,17 +359,13 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider chatgpt oauth --no-browser extra');
-    await waitForIt(() => io.out.toString().contains('usage:'));
+    await io.out.waitUntilContains('usage:');
     io.sendLine('/provider codemie sso --no-browser not-a-url');
-    await waitForIt(
-      () => io.out.toString().contains('usage: /provider codemie'),
-    );
+    await io.out.waitUntilContains('usage: /provider codemie');
     io.sendLine('/provider openrouter oauth bogus');
-    await waitForIt(
-      () => io.out.toString().contains('usage: /provider openrouter'),
-    );
+    await io.out.waitUntilContains('usage: /provider openrouter');
     io.sendLine('/provider aiin --no-browser extra');
-    await waitForIt(() => io.out.toString().contains('usage: /provider aiin'));
+    await io.out.waitUntilContains('usage: /provider aiin');
     io.sendLine('/exit');
     await run;
 

@@ -86,7 +86,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('power:'));
+        await io.out.waitUntilContains('power:');
         io.sendLine('/exit');
         await run;
 
@@ -122,23 +122,15 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startPowerFlow();
-        await waitForIt(
-          () => io.out.toString().contains('Sleep prevention level'),
-        );
+        await io.out.waitUntilContains('Sleep prevention level');
         io.sendLine('1'); // the level
-        await waitForIt(
-          () => io.out.toString().contains(
-            'sleepPrevention off|idle|display|system (empty keeps',
-          ),
+        await io.out.waitUntilContains(
+          'sleepPrevention off|idle|display|system (empty keeps',
         );
         io.sendLine('display');
-        await waitForIt(
-          () => io.out.toString().contains('power.sleepPrevention = display'),
-        );
+        await io.out.waitUntilContains('power.sleepPrevention = display');
         io.sendLine('2'); // the hold toggle: per-run → session
-        await waitForIt(
-          () => io.out.toString().contains('power.hold = session'),
-        );
+        await io.out.waitUntilContains('power.hold = session');
         io.sendLine('3'); // done
         await flow;
         io.sendLine('/exit');
@@ -189,13 +181,11 @@ void main() {
         );
 
         final flow = cli.startPowerFlow();
-        await waitForIt(
-          () => io.out.toString().contains('Sleep prevention level'),
-        );
+        await io.out.waitUntilContains('Sleep prevention level');
         io.sendLine('1'); // the level
-        await waitForIt(() => io.out.toString().contains('(empty keeps'));
+        await io.out.waitUntilContains('(empty keeps');
         io.sendLine('display');
-        await waitForIt(() => io.out.toString().contains('(applies live'));
+        await io.out.waitUntilContains('(applies live');
         await waitForIt(() => runner.acquisitions.length == 2);
         // The boot assertion released; the re-armed session hold keeps
         // the new level held while the flow is still open.
@@ -226,11 +216,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startPowerFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Sleep prevention level'),
-      );
+      await io.out.waitUntilContains('Sleep prevention level');
       io.sendLine('1'); // the level
-      await waitForIt(() => io.out.toString().contains('(empty keeps'));
+      await io.out.waitUntilContains('(empty keeps');
       io.sendLine('turbo'); // invalid → the parser's verbatim message
       await waitForIt(
         () =>
@@ -270,16 +258,12 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startPowerFlow();
-        await waitForIt(
-          () => io.out.toString().contains('Sleep prevention level'),
-        );
+        await io.out.waitUntilContains('Sleep prevention level');
         // The parser defaults are offered.
         expect(io.out.toString(), contains("now 'idle'"));
         expect(io.out.toString(), contains('per-run → session'));
         io.sendLine('2'); // hold toggle → a fresh block lands at the end
-        await waitForIt(
-          () => io.out.toString().contains('power.hold = session'),
-        );
+        await io.out.waitUntilContains('power.hold = session');
         io.sendLine('3'); // done
         await flow;
         io.sendLine('/exit');
@@ -307,14 +291,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startPowerFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Sleep prevention level'),
-      );
+      await io.out.waitUntilContains('Sleep prevention level');
       io.sendLine('2'); // the hold toggle → the write path reads the config
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -328,13 +307,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startPowerFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Sleep prevention level'),
-      );
+      await io.out.waitUntilContains('Sleep prevention level');
       io.sendLine('2');
-      await waitForIt(
-        () => io.out.toString().contains('no user config on this host'),
-      );
+      await io.out.waitUntilContains('no user config on this host');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -349,11 +324,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startPowerFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Sleep prevention level'),
-      );
+      await io.out.waitUntilContains('Sleep prevention level');
       io.sendLine('1'); // the level
-      await waitForIt(() => io.out.toString().contains('(empty keeps'));
+      await io.out.waitUntilContains('(empty keeps');
       // A concurrent edit lands while the prompt sits open.
       await env.writeFile(
         '/home/u/.fah/config.yaml',
@@ -361,9 +334,7 @@ void main() {
             '  hold: session\n',
       );
       io.sendLine('display');
-      await waitForIt(
-        () => io.out.toString().contains('power.sleepPrevention = display'),
-      );
+      await io.out.waitUntilContains('power.sleepPrevention = display');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -390,9 +361,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startPowerFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Sleep prevention level'),
-      );
+      await io.out.waitUntilContains('Sleep prevention level');
       io.interrupt();
       await flow;
       io.sendLine('/exit');

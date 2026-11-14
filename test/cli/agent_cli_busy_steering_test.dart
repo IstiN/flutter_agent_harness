@@ -279,8 +279,8 @@ void main() {
       io.sendLine('start');
       await waitForIt(() => stream.calls >= 1 && cli.isBusy);
       io.sendLine('/help exit');
-      await waitForIt(
-        () => io.out.toString().contains('/exit'),
+      await io.out.waitUntilContains(
+        '/exit',
         reason: 'the slash command executes immediately, mid-run',
       );
       expect(cli.isBusy, isTrue, reason: 'the run keeps streaming');
@@ -392,8 +392,8 @@ void main() {
       io.sendLine('start');
       await waitForIt(() => stream.calls >= 1 && cli.isBusy);
       io.sendLine('!echo bang-ran-now');
-      await waitForIt(
-        () => io.out.toString().contains('bang-ran-now'),
+      await io.out.waitUntilContains(
+        'bang-ran-now',
         reason: 'the bang command runs immediately, mid-run',
       );
       expect(cli.isBusy, isTrue, reason: 'the run keeps streaming');
@@ -428,8 +428,8 @@ void main() {
       await waitForSessions(env);
 
       io.sendLine('!echo idle-ran');
-      await waitForIt(
-        () => io.out.toString().contains('idle-ran'),
+      await io.out.waitUntilContains(
+        'idle-ran',
         reason: 'the idle bang command runs immediately',
       );
       expect(stream.calls, 0, reason: 'a notice never wakes the agent');

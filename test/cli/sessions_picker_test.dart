@@ -58,8 +58,8 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/sessions list');
-    await waitForIt(
-      () => io.out.toString().contains('+1 agents'),
+    await io.out.waitUntilContains(
+      '+1 agents',
       reason: '/sessions list tree output',
     );
     final out = io.out.toString();

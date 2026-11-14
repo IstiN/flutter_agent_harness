@@ -292,7 +292,7 @@ void main() {
 
       final wall = Stopwatch()..start();
       io.sendLine('/exit');
-      await waitForIt(() => io.out.toString().contains('bye'));
+      await io.out.waitUntilContains('bye');
       await run; // must return bounded — the gate never opened
       wall.stop();
 

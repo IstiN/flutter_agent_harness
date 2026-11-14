@@ -94,8 +94,8 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/session widgets');
-    await waitForIt(
-      () => io.out.toString().contains("Several sessions named 'widgets'"),
+    await io.out.waitUntilContains(
+      "Several sessions named 'widgets'",
       reason: 'the ambiguity question lists the candidates',
     );
     // Both rows carry their folder + id; answer with the number of the
@@ -109,8 +109,8 @@ void main() {
         .firstWhere((line) => line.contains(second.id));
     final number = RegExp(r'^\s*(\d+)\)').firstMatch(row)!.group(1)!;
     io.sendLine(number);
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'widgets'"),
+    await io.out.waitUntilContains(
+      "switched to session 'widgets'",
       reason: 'the chosen session loads',
     );
     io.sendLine('/exit');

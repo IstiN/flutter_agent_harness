@@ -45,7 +45,7 @@ void main() {
   test('/models lists numbered candidates with the switch hint', () async {
     final (cli, run) = await boot();
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('use /model <n> or'));
+    await io.out.waitUntilContains('use /model <n> or');
 
     final out = io.out.toString();
     expect(out, contains('models (provider/model):'));
@@ -60,7 +60,7 @@ void main() {
   test('/models with an unknown filter reports no models', () async {
     final (cli, run) = await boot();
     io.sendLine('/models zzz-no-such-model-filter');
-    await waitForIt(() => io.out.toString().contains('no models available'));
+    await io.out.waitUntilContains('no models available');
 
     io.sendLine('/exit');
     await run;

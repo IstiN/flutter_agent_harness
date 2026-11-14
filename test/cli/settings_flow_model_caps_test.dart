@@ -75,56 +75,40 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('1'); // pin or edit an override
-    await waitForIt(
-      () => io.out.toString().contains('model capabilities — provider'),
-    );
+    await io.out.waitUntilContains('model capabilities — provider');
     io.sendLine('${providerRow('zai')}'); // the zai catalog row
     // zai fetches /models now that it declares the completions wire
     // (issue #2068); the stub answers empty, so the flow drops straight
     // to manual entry.
-    await waitForIt(() => io.out.toString().contains("model id (empty keeps"));
+    await io.out.waitUntilContains("model id (empty keeps");
     io.sendLine('glm-5.3-flash');
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
     io.sendLine('2'); // max output tokens
-    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    await io.out.waitUntilContains('maxTokens in tokens');
     io.sendLine('5'); // the 65536 preset (4096…65536, Custom… last)
-    await waitForIt(
-      () => io.out.toString().contains('models.overrides.zai.glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('models.overrides.zai.glm-5.3-flash');
     // The caps menu re-renders with the pinned value as the EFFECTIVE one,
     // sourced 'pinned' (issue #1515 AC3: effective value + source layer).
-    await waitForIt(
-      () => io.out.toString().contains('Max output tokens — 65536 (pinned)'),
-    );
+    await io.out.waitUntilContains('Max output tokens — 65536 (pinned)');
     io.sendLine('3'); // thinking level
-    await waitForIt(() => io.out.toString().contains('thinking level'));
+    await io.out.waitUntilContains('thinking level');
     // The omp-style selector: per-level budget metadata and the CURRENT
     // level preselected (nothing pinned yet — `off` carries the marker).
-    await waitForIt(
-      () => io.out.toString().contains('16384-token thinking budget'),
-    );
-    await waitForIt(
-      () => io.out.toString().contains('Off — no thinking requested (current)'),
-    );
+    await io.out.waitUntilContains('16384-token thinking budget');
+    await io.out.waitUntilContains('Off — no thinking requested (current)');
     io.sendLine('5'); // high
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.'
-        'zai.glm-5.3-flash.thinkingLevel = high',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.'
+      'zai.glm-5.3-flash.thinkingLevel = high',
     );
-    await waitForIt(() => io.out.toString().contains('Thinking level — high'));
+    await io.out.waitUntilContains('Thinking level — high');
     // The omit row names its adapter scope (gh-1426 rework): the flag is
     // read by the openai-completions adapter only — a google/anthropic pin
     // would do nothing.
-    await waitForIt(
-      () => io.out.toString().contains(
-        'Omit max-output field — off (openai-completions only)',
-      ),
+    await io.out.waitUntilContains(
+      'Omit max-output field — off (openai-completions only)',
     );
     io.sendLine('6'); // done (caps loop — 5 is Remove now, Done shifted)
     // The flow menu re-renders identical text: match the second render.
@@ -172,34 +156,24 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      await io.out.waitUntilContains('model capabilities');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('model capabilities — provider'),
-      );
+      await io.out.waitUntilContains('model capabilities — provider');
       io.sendLine('${providerRow('zai')}');
       // zai fetches /models now that it declares the completions wire
       // (issue #2068); the stub answers empty, so the flow drops straight
       // to manual entry.
-      await waitForIt(
-        () => io.out.toString().contains("model id (empty keeps"),
-      );
+      await io.out.waitUntilContains("model id (empty keeps");
       io.sendLine('glm-5.3-flash');
-      await waitForIt(
-        () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-      );
+      await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
       io.sendLine('1'); // context window
-      await waitForIt(
-        () => io.out.toString().contains('contextWindow in tokens'),
-      );
+      await io.out.waitUntilContains('contextWindow in tokens');
       io.sendLine(
         '7',
       ); // Custom… (floor-trimmed ladder: 6 presets, then free input)
-      await waitForIt(
-        () => io.out.toString().contains('contextWindow in tokens (min 16384'),
-      );
+      await io.out.waitUntilContains('contextWindow in tokens (min 16384');
       io.sendLine('100'); // below the 16384 reserve
-      await waitForIt(() => io.out.toString().contains('not saved'));
+      await io.out.waitUntilContains('not saved');
       io.sendLine('5'); // done (caps loop — no entry pinned, Done is row 5)
       // The flow menu re-renders identical text: match the second render.
       await waitForCount('Pin or edit', 2);
@@ -238,28 +212,21 @@ note: second
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('1'); // pin or edit an override
-    await waitForIt(
-      () => io.out.toString().contains('model capabilities — provider'),
-    );
+    await io.out.waitUntilContains('model capabilities — provider');
     io.sendLine('${providerRow('zai')}');
     // zai fetches /models now that it declares the completions wire
     // (issue #2068); the stub answers empty, so the flow drops straight
     // to manual entry.
-    await waitForIt(() => io.out.toString().contains('model id (empty keeps'));
+    await io.out.waitUntilContains('model id (empty keeps');
     io.sendLine('glm-5.3-flash');
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
     io.sendLine('2'); // max output tokens
-    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    await io.out.waitUntilContains('maxTokens in tokens');
     io.sendLine('5'); // the 65536 preset
-    await waitForIt(
-      () => io.out.toString().contains('Duplicate mapping key'),
-      reason: 'the parse guard names the yaml error',
-    );
-    await waitForIt(() => io.out.toString().contains('not saved:'));
+    await io.out.waitUntilContains('Duplicate mapping key');
+    await io.out.waitUntilContains('not saved:');
     io.sendLine('5'); // done (caps loop — no entry pinned, Done is row 5)
     await waitForCount('Pin or edit', 2);
     io.sendLine('2'); // done (flow menu)
@@ -293,16 +260,12 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the zai/glm-5.3-flash entry row
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
     io.sendLine('5'); // remove this override
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.zai.glm-5.3-flash removed',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.zai.glm-5.3-flash removed',
     );
     // The remove returns to the flow menu (second render of the title).
     await waitForCount('Pin or edit', 2);
@@ -344,24 +307,18 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the zai/glm-5.3-flash entry row
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
     io.sendLine('3'); // thinking level
-    await waitForIt(() => io.out.toString().contains('thinking level'));
+    await io.out.waitUntilContains('thinking level');
     io.sendLine('1'); // off → the FIELD remove (the entry survives)
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.zai.glm-5.3-flash.thinkingLevel removed',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.zai.glm-5.3-flash.thinkingLevel removed',
     );
     // The caps menu re-renders with the field shown unpinned — the
     // effective level with its source layer (issue #1515 AC3).
-    await waitForIt(
-      () => io.out.toString().contains('Thinking level — off (default)'),
-    );
+    await io.out.waitUntilContains('Thinking level — off (default)');
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
     io.sendLine('3'); // done (flow menu)
@@ -409,18 +366,14 @@ models:
       final run = cli.run();
 
       final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      await io.out.waitUntilContains('model capabilities');
       io.sendLine('2'); // the entry row
-      await waitForIt(
-        () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-      );
+      await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
       io.sendLine('3'); // thinking level
-      await waitForIt(() => io.out.toString().contains('thinking level'));
+      await io.out.waitUntilContains('thinking level');
       io.sendLine('1'); // off → the remove hits the missing config path
-      await waitForIt(
-        () => io.out.toString().contains(
-          'model capabilities: no user config on this host — not saved',
-        ),
+      await io.out.waitUntilContains(
+        'model capabilities: no user config on this host — not saved',
       );
       io.sendLine('6'); // done (caps loop — the pin is still there)
       await waitForCount('Pin or edit', 2);
@@ -455,18 +408,13 @@ models:
       final run = cli.run();
 
       final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      await io.out.waitUntilContains('model capabilities');
       io.sendLine('2'); // the entry row
-      await waitForIt(
-        () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-      );
+      await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
       io.sendLine('3'); // thinking level
-      await waitForIt(() => io.out.toString().contains('thinking level'));
+      await io.out.waitUntilContains('thinking level');
       io.sendLine('1'); // off → the read error path
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('6'); // done (caps loop)
       await waitForCount('Pin or edit', 2);
       io.sendLine('3'); // done (flow menu)
@@ -512,19 +460,15 @@ models:
       final run = cli.run();
 
       final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      await io.out.waitUntilContains('model capabilities');
       io.sendLine('2'); // the entry row
-      await waitForIt(
-        () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-      );
+      await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
       io.sendLine('3'); // thinking level
-      await waitForIt(() => io.out.toString().contains('thinking level'));
+      await io.out.waitUntilContains('thinking level');
       io.sendLine('1'); // off → the post-remove validation rejects the file
-      await waitForIt(() => io.out.toString().contains('not saved:'));
+      await io.out.waitUntilContains('not saved:');
       // The caps menu re-renders with the level STILL pinned.
-      await waitForIt(
-        () => io.out.toString().contains('Thinking level — high'),
-      );
+      await io.out.waitUntilContains('Thinking level — high');
       io.sendLine('6'); // done (caps loop)
       await waitForCount('Pin or edit', 2);
       io.sendLine('3'); // done (flow menu)
@@ -584,21 +528,14 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the test-provider/test-model entry row
-    await waitForIt(
-      () =>
-          io.out.toString().contains('capabilities — test-provider/test-model'),
-    );
+    await io.out.waitUntilContains('capabilities — test-provider/test-model');
     io.sendLine('1'); // context window
-    await waitForIt(
-      () => io.out.toString().contains('contextWindow in tokens'),
-    );
+    await io.out.waitUntilContains('contextWindow in tokens');
     io.sendLine('4'); // the 131072 preset (floor-trimmed ladder, row 4)
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.test-provider.test-model.contextWindow = 131072',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.test-provider.test-model.contextWindow = 131072',
     );
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
@@ -614,7 +551,7 @@ models:
     );
     // ...and the ACTIVE model carries it right now (no reboot).
     io.sendLine('/model-edit');
-    await waitForIt(() => io.out.toString().contains('contextWindow 131072'));
+    await io.out.waitUntilContains('contextWindow 131072');
     io.sendLine('/exit');
     await run;
   });
@@ -659,23 +596,16 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the zai/glm-5.3-flash entry row
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    await io.out.waitUntilContains('capabilities — zai/glm-5.3-flash');
     // The row shows the ROLE window as the effective one.
-    await waitForIt(
-      () =>
-          io.out.toString().contains('Context window — 500000 (role override)'),
-    );
+    await io.out.waitUntilContains('Context window — 500000 (role override)');
     io.sendLine('2'); // max output tokens
-    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    await io.out.waitUntilContains('maxTokens in tokens');
     io.sendLine('5'); // the 65536 preset
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.zai.glm-5.3-flash.maxTokens = 65536',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.zai.glm-5.3-flash.maxTokens = 65536',
     );
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
@@ -683,8 +613,8 @@ models:
     await flow;
     // The live rebuild kept the ROLE window and moved only maxTokens.
     io.sendLine('/model-edit');
-    await waitForIt(() => io.out.toString().contains('contextWindow 500000'));
-    await waitForIt(() => io.out.toString().contains('maxTokens 65536'));
+    await io.out.waitUntilContains('contextWindow 500000');
+    await io.out.waitUntilContains('maxTokens 65536');
     io.sendLine('/exit');
     await run;
   });
@@ -711,17 +641,12 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the entry row
-    await waitForIt(
-      () =>
-          io.out.toString().contains('capabilities — test-provider/test-model'),
-    );
+    await io.out.waitUntilContains('capabilities — test-provider/test-model');
     io.sendLine('5'); // remove this override (returns to the flow menu)
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.test-provider.test-model removed',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.test-provider.test-model removed',
     );
     await waitForCount('Pin or edit', 2);
     io.sendLine('2'); // done (flow menu — the entry row is gone)
@@ -732,7 +657,7 @@ models:
     // pin that no longer stands).
     expect(cli.contextWindowRegistry.windowFor(testModel), isNull);
     io.sendLine('/model-edit');
-    await waitForIt(() => io.out.toString().contains('contextWindow 128000'));
+    await io.out.waitUntilContains('contextWindow 128000');
     io.sendLine('/exit');
     await run;
   });
@@ -762,18 +687,14 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the google/gemini-4-argon entry row
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — google/gemini-4-argon'),
-    );
+    await io.out.waitUntilContains('capabilities — google/gemini-4-argon');
     io.sendLine('2'); // max output tokens
-    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    await io.out.waitUntilContains('maxTokens in tokens');
     io.sendLine('5'); // the 65536 preset
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.google.gemini-4-argon.maxTokens = 65536',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.google.gemini-4-argon.maxTokens = 65536',
     );
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
@@ -810,21 +731,14 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the entry row
-    await waitForIt(
-      () =>
-          io.out.toString().contains('capabilities — test-provider/test-model'),
-    );
+    await io.out.waitUntilContains('capabilities — test-provider/test-model');
     io.sendLine('1'); // context window
-    await waitForIt(
-      () => io.out.toString().contains('contextWindow in tokens'),
-    );
+    await io.out.waitUntilContains('contextWindow in tokens');
     io.sendLine('1'); // 16384 — the compaction reserve itself
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.test-provider.test-model.contextWindow = 16384',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.test-provider.test-model.contextWindow = 16384',
     );
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
@@ -876,18 +790,14 @@ models:
     final run = cli.run();
 
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    await io.out.waitUntilContains('model capabilities');
     io.sendLine('2'); // the copilot/gemini-4-argon entry row
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — copilot/gemini-4-argon'),
-    );
+    await io.out.waitUntilContains('capabilities — copilot/gemini-4-argon');
     io.sendLine('2'); // max output tokens
-    await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+    await io.out.waitUntilContains('maxTokens in tokens');
     io.sendLine('5'); // the 65536 preset
-    await waitForIt(
-      () => io.out.toString().contains(
-        'models.overrides.copilot.gemini-4-argon.maxTokens = 65536',
-      ),
+    await io.out.waitUntilContains(
+      'models.overrides.copilot.gemini-4-argon.maxTokens = 65536',
     );
     io.sendLine('6'); // done (caps loop)
     await waitForCount('Pin or edit', 2);
@@ -951,24 +861,16 @@ models:
       final run = cli.run();
 
       final flow = cli.startModelCapsFlow();
-      await waitForIt(() => io.out.toString().contains('model capabilities'));
+      await io.out.waitUntilContains('model capabilities');
       io.sendLine('2'); // the entry row
-      await waitForIt(
-        () => io.out.toString().contains(
-          'capabilities — test-provider/test-model',
-        ),
-      );
+      await io.out.waitUntilContains('capabilities — test-provider/test-model');
       // The display advertises the CARRIED window before any edit.
-      await waitForIt(
-        () => io.out.toString().contains('Context window — 5000 (carried)'),
-      );
+      await io.out.waitUntilContains('Context window — 5000 (carried)');
       io.sendLine('2'); // max output tokens
-      await waitForIt(() => io.out.toString().contains('maxTokens in tokens'));
+      await io.out.waitUntilContains('maxTokens in tokens');
       io.sendLine('5'); // the 65536 preset
-      await waitForIt(
-        () => io.out.toString().contains(
-          'models.overrides.test-provider.test-model.maxTokens = 65536',
-        ),
+      await io.out.waitUntilContains(
+        'models.overrides.test-provider.test-model.maxTokens = 65536',
       );
       io.sendLine('6'); // done (caps loop)
       await waitForCount('Pin or edit', 2);
@@ -976,8 +878,8 @@ models:
       await flow;
       // The rebuild moved ONLY maxTokens — the carried window survives.
       io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('contextWindow 5000'));
-      await waitForIt(() => io.out.toString().contains('maxTokens 65536'));
+      await io.out.waitUntilContains('contextWindow 5000');
+      await io.out.waitUntilContains('maxTokens 65536');
       io.sendLine('/exit');
       await run;
     },

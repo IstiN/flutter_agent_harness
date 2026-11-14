@@ -69,7 +69,7 @@ void main() {
       final stream = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
       final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
+      await io.out.waitUntilContains('fa>');
 
       io.sendLine('hello');
       await waitForIt(() => stream.calls >= 1);
@@ -82,9 +82,7 @@ void main() {
       // must be byte-identical to the boot schema.
       for (final pick in ['3', '1']) {
         final flow = cli.startLoadModeFlow();
-        await waitForIt(
-          () => io.out.toString().contains('Load mode (tool schema preset)'),
-        );
+        await io.out.waitUntilContains('Load mode (tool schema preset)');
         io.sendLine(pick);
         await waitForIt(() {
           final current = cli.agent.state.tools.map((t) => t.name).toSet();
@@ -135,7 +133,7 @@ void main() {
           streamFunction: stream.call,
         );
         final run = cli.run();
-        await waitForIt(() => cliIo.out.toString().contains('fa>'));
+        await cliIo.out.waitUntilContains('fa>');
         cliIo.sendLine('hello');
         await waitForIt(() => stream.calls >= 1, reason: '$mode turn');
         cliIo.sendLine('/exit');
@@ -173,7 +171,7 @@ void main() {
       ]);
       final cli = cliFor(stream.call, AgentLoadMode.omp);
       final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
+      await io.out.waitUntilContains('fa>');
       io.sendLine('use lsp');
       await waitForIt(() => stream.calls >= 2);
       io.sendLine('/exit');
@@ -252,7 +250,7 @@ void main() {
 
         cli = cliFor(streamFn, AgentLoadMode.omp);
         final run = cli.run();
-        await waitForIt(() => io.out.toString().contains('fa>'));
+        await io.out.waitUntilContains('fa>');
         io.sendLine('list and mount');
         await waitForIt(() => calls >= 3);
         io.sendLine('and now');
@@ -297,12 +295,10 @@ void main() {
         final stream = FakeStreamFunction([textTurn('ok')]);
         final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
         final run = cli.run();
-        await waitForIt(() => io.out.toString().contains('fa>'));
+        await io.out.waitUntilContains('fa>');
 
         final flow = cli.startLoadModeFlow();
-        await waitForIt(
-          () => io.out.toString().contains('Load mode (tool schema preset)'),
-        );
+        await io.out.waitUntilContains('Load mode (tool schema preset)');
         io.sendLine('3'); // omp
         await waitForIt(
           () => cli.agent.state.tools.any((t) => t.name == 'discover_tools'),
@@ -330,7 +326,7 @@ void main() {
         final stream = FakeStreamFunction([textTurn('ok')]);
         final cli = cliFor(stream.call, AgentLoadMode.defaultMode);
         final run = cli.run();
-        await waitForIt(() => io.out.toString().contains('fa>'));
+        await io.out.waitUntilContains('fa>');
         Set<String> names() => cli.agent.state.tools.map((t) => t.name).toSet();
 
         // default boot: no discover_tools.
@@ -372,9 +368,7 @@ void main() {
           ),
         ]) {
           final flow = cli.startLoadModeFlow();
-          await waitForIt(
-            () => io.out.toString().contains('Load mode (tool schema preset)'),
-          );
+          await io.out.waitUntilContains('Load mode (tool schema preset)');
           io.sendLine(pick);
           await waitForIt(settled, reason: 'switch on pick $pick');
           io.sendLine('4'); // done

@@ -67,10 +67,7 @@ void main() {
         streamFunction: stream.call,
       );
       final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('fa>'),
-        reason: 'boot prompt',
-      );
+      await io.out.waitUntilContains('fa>', reason: 'boot prompt');
       io.sendLine(helloPrompt);
       await waitForIt(() => stream.calls >= 1, reason: 'hello turn');
       io.sendLine('/exit');

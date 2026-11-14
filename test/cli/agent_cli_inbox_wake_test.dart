@@ -201,8 +201,14 @@ void main() {
       cli.inboxWakeStreakForTest = 10;
 
       await sendForeignMail(id, 'ping from a peer agent');
-      // The watcher ticks every 2s; wait out three ticks of refusal.
-      await Future<void>.delayed(const Duration(seconds: 6));
+      // Three ticks, not one: the refusal never consumes the mail — it
+      // stays pending, so every tick re-evaluates the cap. Three ticks
+      // prove the anti-storm steady state (the cap never erodes across
+      // repeated exposure), not just a single decision.
+      await cli.inboxWakeTickForTest();
+      await cli.inboxWakeTickForTest();
+      await cli.inboxWakeTickForTest();
+
       expect(
         fake.calls,
         baseline,
@@ -235,8 +241,14 @@ void main() {
 
     await sendForeignMail(id, 'ping from a peer agent');
     await waitForTrue(() async => io.out.toString().contains('wake refused'));
-    // Hold the gate across three more watcher ticks.
-    await Future<void>.delayed(const Duration(seconds: 6));
+    // Three more ticks: the gate is held, so each tick re-refuses — and
+    // the once-per-episode latch must keep the receipts at exactly one
+    // (the ~43k duplicate-lines/day guard is about REPEATED ticks; one
+    // tick could not distinguish a latch from a lone fire).
+    await cli.inboxWakeTickForTest();
+    await cli.inboxWakeTickForTest();
+    await cli.inboxWakeTickForTest();
+
     final attempted = (await receipts()).where(
       (event) => event['event'] == 'wake_attempted',
     );
@@ -280,7 +292,10 @@ void main() {
       // Episode #2: burn the freshly reset cap with chatter again.
       cli.inboxWakeStreakForTest = 10;
       await sendForeignMail(id, 'ping 2');
-      await Future<void>.delayed(const Duration(seconds: 6));
+      // Tick 1 re-arms and announces the second episode; tick 2 proves
+      // the announcement did not double the receipts.
+      await cli.inboxWakeTickForTest();
+      await cli.inboxWakeTickForTest();
       expect(
         'wake refused'.allMatches(io.out.toString()).length,
         2,

@@ -143,7 +143,7 @@ void main() {
     final cli = cliFor(fake.call, env: env, io: io);
     final run = cli.run();
     io.sendLine('install the thing');
-    await waitForIt(() => io.out.toString().contains('[password]'));
+    await io.out.waitUntilContains('[password]');
     io.sendLine(answer);
     await waitForIt(() => fake.calls == 2);
     io.sendLine('/exit');

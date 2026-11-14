@@ -52,9 +52,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/key set MY_KEY');
-      await waitForIt(() => io.out.toString().contains('value for MY_KEY:'));
+      await io.out.waitUntilContains('value for MY_KEY:');
       io.sendLine('secret-value');
-      await waitForIt(() => io.out.toString().contains('saved MY_KEY'));
+      await io.out.waitUntilContains('saved MY_KEY');
       io.sendLine('/exit');
       await run;
 
@@ -81,9 +81,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/key set MY_KEY');
-      await waitForIt(() => io.out.toString().contains('value for MY_KEY:'));
+      await io.out.waitUntilContains('value for MY_KEY:');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('cancelled'));
+      await io.out.waitUntilContains('cancelled');
       io.sendLine('/exit');
       await run;
     });
@@ -96,13 +96,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('contextWindow'));
+      await io.out.waitUntilContains('contextWindow');
       // Issue #1515: the standalone editing surface is retired — the
       // line-mode print points at the merged Model capabilities flow.
-      await waitForIt(
-        () => io.out.toString().contains(
-          'interactive editing: /settings → Model capabilities',
-        ),
+      await io.out.waitUntilContains(
+        'interactive editing: /settings → Model capabilities',
       );
       io.sendLine('/exit');
       await run;
@@ -114,9 +112,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit contextWindow 128000');
-      await waitForIt(
-        () => io.out.toString().contains('model context window set to 128000'),
-      );
+      await io.out.waitUntilContains('model context window set to 128000');
       io.sendLine('/exit');
       await run;
     });
@@ -127,9 +123,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit maxTokens 8192');
-      await waitForIt(
-        () => io.out.toString().contains('model max tokens set to 8192'),
-      );
+      await io.out.waitUntilContains('model max tokens set to 8192');
       io.sendLine('/exit');
       await run;
     });
@@ -168,15 +162,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/model-edit');
-        await waitForIt(
-          () => io.out.toString().contains(
-            'caps source: models.overrides pin (out 65536)',
-          ),
+        await io.out.waitUntilContains(
+          'caps source: models.overrides pin (out 65536)',
         );
-        await waitForIt(
-          () => io.out.toString().contains(
-            'note: capability override wins over the endpoint report',
-          ),
+        await io.out.waitUntilContains(
+          'note: capability override wins over the endpoint report',
         );
         io.sendLine('/exit');
         await run;
@@ -189,10 +179,8 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit badfield 100');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'usage: /model-edit <contextWindow|maxTokens> <n>',
-        ),
+      await io.out.waitUntilContains(
+        'usage: /model-edit <contextWindow|maxTokens> <n>',
       );
       io.sendLine('/exit');
       await run;

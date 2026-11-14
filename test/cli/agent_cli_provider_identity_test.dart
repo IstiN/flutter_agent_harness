@@ -226,10 +226,8 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider chatgpt oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('ChatGPT OAuth (headless)'),
-        );
-        await waitForIt(() => io.out.toString().contains('redirect URL:'));
+        await io.out.waitUntilContains('ChatGPT OAuth (headless)');
+        await io.out.waitUntilContains('redirect URL:');
         final authUrlLine = io.out
             .toString()
             .split('\n')
@@ -239,11 +237,9 @@ void main() {
           'http://127.0.0.1:1455/auth/callback?code=auth-code-xyz&state=$state',
         );
         // Accept the default account name.
-        await waitForIt(() => io.out.toString().contains('provider name ['));
+        await io.out.waitUntilContains('provider name [');
         io.sendLine('');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to chatgpt'),
-        );
+        await io.out.waitUntilContains('switched provider to chatgpt');
         io.sendLine('/exit');
         await run;
 
@@ -292,10 +288,8 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider chatgpt oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('ChatGPT OAuth (headless)'),
-        );
-        await waitForIt(() => io.out.toString().contains('redirect URL:'));
+        await io.out.waitUntilContains('ChatGPT OAuth (headless)');
+        await io.out.waitUntilContains('redirect URL:');
         final authUrlLine = io.out
             .toString()
             .split('\n')
@@ -304,12 +298,10 @@ void main() {
         io.sendLine(
           'http://127.0.0.1:1455/auth/callback?code=auth-code-xyz&state=$state',
         );
-        await waitForIt(() => io.out.toString().contains('provider name ['));
+        await io.out.waitUntilContains('provider name [');
         // Accept the default: it must resolve onto the existing entry.
         io.sendLine('');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to chatgpt'),
-        );
+        await io.out.waitUntilContains('switched provider to chatgpt');
         io.sendLine('/exit');
         await run;
 
@@ -363,10 +355,8 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider chatgpt oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('ChatGPT OAuth (headless)'),
-        );
-        await waitForIt(() => io.out.toString().contains('redirect URL:'));
+        await io.out.waitUntilContains('ChatGPT OAuth (headless)');
+        await io.out.waitUntilContains('redirect URL:');
         final authUrlLine = io.out
             .toString()
             .split('\n')
@@ -375,19 +365,17 @@ void main() {
         io.sendLine(
           'http://127.0.0.1:1455/auth/callback?code=cross-backend&state=$state',
         );
-        await waitForIt(() => io.out.toString().contains('provider name ['));
+        await io.out.waitUntilContains('provider name [');
         // The default name (`chatgpt.com`, the host) clashes with the
         // proxy entry on another endpoint — the prompt must RETRY...
         io.sendLine('');
-        await waitForIt(
-          () => io.out.toString().contains('already used by'),
+        await io.out.waitUntilContains(
+          'already used by',
           reason: 'name-only twin must not silently receive the login',
         );
         // ...and the typed name mints a separate same-domain record.
         io.sendLine('codex-main');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to chatgpt'),
-        );
+        await io.out.waitUntilContains('switched provider to chatgpt');
         io.sendLine('/exit');
         await run;
 
@@ -424,9 +412,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider chatgpt-codex');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to chatgpt'),
-      );
+      await io.out.waitUntilContains('switched provider to chatgpt');
       io.sendLine('/exit');
       await run;
 
@@ -467,9 +453,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model codex');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to codex'),
-      );
+      await io.out.waitUntilContains('switched model to codex');
       io.sendLine('/exit');
       await run;
 
@@ -489,9 +473,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider anthropic');
-      await waitForIt(
-        () => io.out.toString().contains('unknown provider: anthropic'),
-      );
+      await io.out.waitUntilContains('unknown provider: anthropic');
       io.sendLine('/exit');
       await run;
 
@@ -508,9 +490,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider from-the-future');
-        await waitForIt(
-          () => io.out.toString().contains('unknown provider: from-the-future'),
-        );
+        await io.out.waitUntilContains('unknown provider: from-the-future');
         io.sendLine('/exit');
         await run;
 

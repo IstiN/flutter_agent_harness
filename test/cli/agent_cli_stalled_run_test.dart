@@ -210,7 +210,7 @@ void main() {
     await waitForSessions(env);
 
     io.sendLine('/restart');
-    await waitForIt(() => io.out.toString().contains('nothing to restart'));
+    await io.out.waitUntilContains('nothing to restart');
 
     io.sendLine('/exit');
     await run;

@@ -118,19 +118,15 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
+    await io.out.waitUntilContains('AIIN (aiin.by) sign-in');
     io.sendLine('1'); // the browser connect
-    await waitForIt(() => io.out.toString().contains('AIIN sign-in provider'));
+    await io.out.waitUntilContains('AIIN sign-in provider');
     io.sendLine('1'); // google (sorted first)
-    await waitForIt(
-      () => io.out.toString().contains('provider name [user@aiin.by]'),
-    );
+    await io.out.waitUntilContains('provider name [user@aiin.by]');
     io.sendLine(''); // keep the email-derived name
-    await waitForIt(() => io.out.toString().contains('AIIN model'));
+    await io.out.waitUntilContains('AIIN model');
     io.sendLine('1'); // m1
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to aiin'),
-    );
+    await io.out.waitUntilContains('switched provider to aiin');
     io.sendLine('/exit');
     await run;
 
@@ -167,13 +163,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider aiin key sk-aiin-manual');
-      await waitForIt(() => io.out.toString().contains('provider name'));
+      await io.out.waitUntilContains('provider name');
       io.sendLine('my-aiin');
-      await waitForIt(() => io.out.toString().contains('AIIN model'));
+      await io.out.waitUntilContains('AIIN model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to aiin'),
-      );
+      await io.out.waitUntilContains('switched provider to aiin');
       io.sendLine('/exit');
       await run;
 
@@ -195,10 +189,10 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
+    await io.out.waitUntilContains('AIIN (aiin.by) sign-in');
     io.sendLine('2'); // paste an existing key
     io.sendLine(''); // empty answer
-    await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
+    await io.out.waitUntilContains('AIIN setup cancelled');
     io.sendLine('/exit');
     await run;
 
@@ -216,9 +210,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.interrupt(); // cancel the menu
-    await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
+    await io.out.waitUntilContains('AIIN setup cancelled');
     io.sendLine('/exit');
     await run;
 
@@ -237,11 +231,11 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
+    await io.out.waitUntilContains('AIIN (aiin.by) sign-in');
     io.sendLine('1'); // the browser connect
-    await waitForIt(() => io.out.toString().contains('AIIN sign-in provider'));
+    await io.out.waitUntilContains('AIIN sign-in provider');
     io.interrupt(); // cancel the provider pick
-    await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
+    await io.out.waitUntilContains('AIIN setup cancelled');
     io.sendLine('/exit');
     await run;
 
@@ -281,17 +275,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider aiin');
-      await waitForIt(
-        () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
-      );
+      await io.out.waitUntilContains('AIIN (aiin.by) sign-in');
       io.sendLine('1'); // the browser connect
       // The provider list is empty -> the google fallback. The canned
       // connect returns null -> the flow reports a cancel, nothing applied.
-      await waitForIt(
-        () => io.out.toString().contains('AIIN sign-in provider'),
-      );
+      await io.out.waitUntilContains('AIIN sign-in provider');
       io.sendLine('1');
-      await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
+      await io.out.waitUntilContains('AIIN setup cancelled');
       io.sendLine('/exit');
       await run;
 

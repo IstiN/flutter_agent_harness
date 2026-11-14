@@ -55,7 +55,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('images:'));
+        await io.out.waitUntilContains('images:');
         io.sendLine('/exit');
         await run;
 
@@ -91,28 +91,17 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startImagesFlow();
-        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        await io.out.waitUntilContains('Toggle registry');
         io.sendLine('1'); // kill switch on → off
-        await waitForIt(
-          () => io.out.toString().contains('images.registry = false'),
-        );
+        await io.out.waitUntilContains('images.registry = false');
         io.sendLine('2'); // the cap
-        await waitForIt(
-          () => io.out.toString().contains("per-request cap (empty keeps '20'"),
-        );
+        await io.out.waitUntilContains("per-request cap (empty keeps '20'");
         io.sendLine('5');
-        await waitForIt(
-          () => io.out.toString().contains('images.maxPerRequest = 5'),
-        );
+        await io.out.waitUntilContains('images.maxPerRequest = 5');
         io.sendLine('3'); // the byte budget (#1916)
-        await waitForIt(
-          () => io.out.toString().contains('per-request image budget'),
-        );
+        await io.out.waitUntilContains('per-request image budget');
         io.sendLine('1048576');
-        await waitForIt(
-          () =>
-              io.out.toString().contains('images.maxBytesPerRequest = 1048576'),
-        );
+        await io.out.waitUntilContains('images.maxBytesPerRequest = 1048576');
         io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
@@ -154,12 +143,9 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startImagesFlow();
-        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        await io.out.waitUntilContains('Toggle registry');
         io.sendLine('1'); // registry off
-        await waitForIt(
-          () =>
-              io.out.toString().contains('(applies to the next request build'),
-        );
+        await io.out.waitUntilContains('(applies to the next request build');
         io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
@@ -181,11 +167,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startImagesFlow();
-      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      await io.out.waitUntilContains('Toggle registry');
       io.sendLine('2'); // the cap
-      await waitForIt(
-        () => io.out.toString().contains('per-request cap (empty keeps'),
-      );
+      await io.out.waitUntilContains('per-request cap (empty keeps');
       io.sendLine('abc'); // invalid → the parser's verbatim message
       await waitForIt(
         () =>
@@ -230,7 +214,7 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startImagesFlow();
-        await waitForIt(() => io.out.toString().contains('Toggle registry'));
+        await io.out.waitUntilContains('Toggle registry');
         // The parser defaults are offered.
         expect(
           io.out.toString(),
@@ -238,9 +222,7 @@ void main() {
         );
         expect(io.out.toString(), contains('20 unique image(s) per request'));
         io.sendLine('1'); // toggle off → a fresh block lands at the end
-        await waitForIt(
-          () => io.out.toString().contains('images.registry = false'),
-        );
+        await io.out.waitUntilContains('images.registry = false');
         io.sendLine('4'); // done
         await flow;
         io.sendLine('/exit');
@@ -264,12 +246,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startImagesFlow();
-      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      await io.out.waitUntilContains('Toggle registry');
       io.sendLine('1'); // the toggle → the write path reads the config
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
@@ -283,11 +262,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startImagesFlow();
-      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      await io.out.waitUntilContains('Toggle registry');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('no user config on this host'),
-      );
+      await io.out.waitUntilContains('no user config on this host');
       io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
@@ -302,11 +279,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startImagesFlow();
-      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      await io.out.waitUntilContains('Toggle registry');
       io.sendLine('2'); // the cap
-      await waitForIt(
-        () => io.out.toString().contains('per-request cap (empty keeps'),
-      );
+      await io.out.waitUntilContains('per-request cap (empty keeps');
       // A concurrent edit lands while the prompt sits open.
       await env.writeFile(
         '/home/u/.fah/config.yaml',
@@ -314,9 +289,7 @@ void main() {
             '  registry: false\n',
       );
       io.sendLine('9');
-      await waitForIt(
-        () => io.out.toString().contains('images.maxPerRequest = 9'),
-      );
+      await io.out.waitUntilContains('images.maxPerRequest = 9');
       io.sendLine('4'); // done
       await flow;
       io.sendLine('/exit');
@@ -346,7 +319,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startImagesFlow();
-      await waitForIt(() => io.out.toString().contains('Toggle registry'));
+      await io.out.waitUntilContains('Toggle registry');
       io.interrupt();
       await flow;
       io.sendLine('/exit');

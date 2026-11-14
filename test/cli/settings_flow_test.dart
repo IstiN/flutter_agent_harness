@@ -83,7 +83,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/settings');
-    await waitForIt(() => io.out.toString().contains('change via /provider'));
+    await io.out.waitUntilContains('change via /provider');
     io.sendLine('/settings extra');
     await waitForIt(
       () => 'provider: test-provider'.allMatches(io.out.toString()).length == 2,
@@ -132,17 +132,11 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startChatModelFlow();
-      await waitForIt(
-        () => io.out.toString().contains('chat model — provider'),
-      );
+      await io.out.waitUntilContains('chat model — provider');
       io.sendLine('1'); // the saved entry (listed before the catalog)
-      await waitForIt(
-        () => io.out.toString().contains("model id (empty keeps 'm2')"),
-      );
+      await io.out.waitUntilContains("model id (empty keeps 'm2')");
       io.sendLine('llama3.2');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       await flow;
       io.sendLine('/exit');
       await run;
@@ -178,20 +172,13 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startChatModelFlow();
-      await waitForIt(
-        () => io.out.toString().contains('chat model — provider'),
-      );
+      await io.out.waitUntilContains('chat model — provider');
       io.sendLine('2'); // openrouter — AIIN now takes the first slot
-      await waitForIt(() => io.out.toString().contains('chat model — model'));
+      await io.out.waitUntilContains('chat model — model');
       // The active model is in the list, so it carries the (current) marker.
-      await waitForIt(
-        () =>
-            io.out.toString().contains('2) test-model — ✗ text-only (current)'),
-      );
+      await io.out.waitUntilContains('2) test-model — ✗ text-only (current)');
       io.sendLine('1'); // m1
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openrouter'),
-      );
+      await io.out.waitUntilContains('switched provider to openrouter');
       await flow;
       io.sendLine('/exit');
       await run;
@@ -216,19 +203,13 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startChatModelFlow();
-      await waitForIt(
-        () => io.out.toString().contains('chat model — provider'),
-      );
+      await io.out.waitUntilContains('chat model — provider');
       io.sendLine('2'); // openrouter (AIIN takes the first slot)
-      await waitForIt(() => io.out.toString().contains('2) + enter manually'));
+      await io.out.waitUntilContains('2) + enter manually');
       io.sendLine('2'); // the manual-entry escape
-      await waitForIt(
-        () => io.out.toString().contains("model id (empty keeps 'test-model')"),
-      );
+      await io.out.waitUntilContains("model id (empty keeps 'test-model')");
       io.sendLine(''); // empty keeps the current model
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openrouter'),
-      );
+      await io.out.waitUntilContains('switched provider to openrouter');
       await flow;
       io.sendLine('/exit');
       await run;
@@ -248,7 +229,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startChatModelFlow();
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -272,13 +253,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startChatModelFlow();
-      await waitForIt(
-        () => io.out.toString().contains('chat model — provider'),
-      );
+      await io.out.waitUntilContains('chat model — provider');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains("model id (empty keeps 'test-model')"),
-      );
+      await io.out.waitUntilContains("model id (empty keeps 'test-model')");
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -303,17 +280,15 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startChatModelFlow();
-    await waitForIt(() => io.out.toString().contains('chat model — provider'));
+    await io.out.waitUntilContains('chat model — provider');
     await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
     io.sendLine('1'); // aiin (first catalog row)
-    await waitForIt(
-      () => io.out.toString().contains(
-        'fetching models from https://api.aiin.by/v1 ...',
-      ),
+    await io.out.waitUntilContains(
+      'fetching models from https://api.aiin.by/v1 ...',
     );
     // The fetched chat ids are offered with the manual-entry escape.
-    await waitForIt(() => io.out.toString().contains('aiin/aiin_flash'));
-    await waitForIt(() => io.out.toString().contains('+ enter manually'));
+    await io.out.waitUntilContains('aiin/aiin_flash');
+    await io.out.waitUntilContains('+ enter manually');
     io.interrupt();
     await flow;
     io.sendLine('/exit');
@@ -368,18 +343,14 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startChatModelFlow();
-    await waitForIt(() => io.out.toString().contains('chat model — provider'));
+    await io.out.waitUntilContains('chat model — provider');
     io.sendLine('1'); // the saved my-dial entry
-    await waitForIt(
-      () => io.out.toString().contains(
-        'fetching models from https://dial.example.com',
-      ),
+    await io.out.waitUntilContains(
+      'fetching models from https://dial.example.com',
     );
-    await waitForIt(() => io.out.toString().contains('2) terra-2'));
+    await io.out.waitUntilContains('2) terra-2');
     io.sendLine('2'); // terra-2
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to dial'),
-    );
+    await io.out.waitUntilContains('switched provider to dial');
     await flow;
     io.sendLine('/exit');
     await run;
@@ -404,24 +375,18 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startAgentModelFlow();
-      await waitForIt(
-        () => io.out.toString().contains('2) Subagents model (subagent)'),
-      );
+      await io.out.waitUntilContains('2) Subagents model (subagent)');
       io.sendLine('2'); // the subagent role
-      await waitForIt(() => io.out.toString().contains('1) Pick a model'));
+      await io.out.waitUntilContains('1) Pick a model');
       io.sendLine('1'); // set (not clear)
-      await waitForIt(
-        () => io.out.toString().contains(
-          'agent Subagents model (subagent) — provider',
-        ),
+      await io.out.waitUntilContains(
+        'agent Subagents model (subagent) — provider',
       );
       io.sendLine('1'); // the saved my-dial entry
-      await waitForIt(() => io.out.toString().contains('1) terra-1'));
+      await io.out.waitUntilContains('1) terra-1');
       io.sendLine('1'); // terra-1
-      await waitForIt(
-        () => io.out.toString().contains(
-          'role subagent → terra-1 @ https://dial.example.com',
-        ),
+      await io.out.waitUntilContains(
+        'role subagent → terra-1 @ https://dial.example.com',
       );
       await flow;
       io.sendLine('/exit');
@@ -465,15 +430,11 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startAgentModelFlow();
-    await waitForIt(
-      () => io.out.toString().contains(
-        '1) Quick model (smol) — openrouter/m-fast',
-      ),
-    );
+    await io.out.waitUntilContains('1) Quick model (smol) — openrouter/m-fast');
     io.sendLine('1'); // the smol role
-    await waitForIt(() => io.out.toString().contains('2) Use the main model'));
+    await io.out.waitUntilContains('2) Use the main model');
     io.sendLine('2'); // clear
-    await waitForIt(() => io.out.toString().contains('role smol → main model'));
+    await io.out.waitUntilContains('role smol → main model');
     await flow;
     io.sendLine('/exit');
     await run;
@@ -504,11 +465,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('1'); // view
-      await waitForIt(
-        () => io.out.toString().contains('dap hub url: ws://hub.test:8787/ws'),
-      );
+      await io.out.waitUntilContains('dap hub url: ws://hub.test:8787/ws');
       io.sendLine('6'); // done
       await flow;
       io.sendLine('/exit');
@@ -526,11 +485,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('1'); // view
-      await waitForIt(
-        () => io.out.toString().contains('dap: hub state unavailable'),
-      );
+      await io.out.waitUntilContains('dap: hub state unavailable');
       io.sendLine('6'); // done
       await flow;
       io.sendLine('/exit');
@@ -557,7 +514,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('2'); // set hub url
       await waitForIt(
         () => io.out.toString().contains(
@@ -565,10 +522,8 @@ void main() {
         ),
       );
       io.sendLine('ws://hub.test:8787/ws');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'dap: saved hub url ws://hub.test:8787/ws',
-        ),
+      await io.out.waitUntilContains(
+        'dap: saved hub url ws://hub.test:8787/ws',
       );
       io.sendLine('6'); // done
       await flow;
@@ -599,7 +554,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('3'); // set agent name
       await waitForIt(
         () => io.out.toString().contains(
@@ -607,9 +562,7 @@ void main() {
         ),
       );
       io.sendLine('telemetry-bot');
-      await waitForIt(
-        () => io.out.toString().contains('dap: saved agent name telemetry-bot'),
-      );
+      await io.out.waitUntilContains('dap: saved agent name telemetry-bot');
       io.sendLine('6'); // done
       await flow;
       io.sendLine('/exit');
@@ -634,7 +587,7 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startDapHubFlow();
-        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        await io.out.waitUntilContains('dap / hub');
         io.sendLine('2'); // set hub url
         await waitForIt(
           () => io.out.toString().contains(
@@ -642,15 +595,9 @@ void main() {
           ),
         );
         io.sendLine('ws://mine:8787/ws');
-        await waitForIt(
-          () => io.out.toString().contains(
-            'dap: saved hub url ws://mine:8787/ws',
-          ),
-        );
-        await waitForIt(
-          () => io.out.toString().contains(
-            'dap: effective stays ws://env.hub:8787/ws',
-          ),
+        await io.out.waitUntilContains('dap: saved hub url ws://mine:8787/ws');
+        await io.out.waitUntilContains(
+          'dap: effective stays ws://env.hub:8787/ws',
         );
         io.sendLine('6'); // done
         await flow;
@@ -668,13 +615,9 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startDapHubFlow();
-        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        await io.out.waitUntilContains('dap / hub');
         io.sendLine('2'); // set hub url
-        await waitForIt(
-          () => io.out.toString().contains(
-            'dap: no hub config hook on this host',
-          ),
-        );
+        await io.out.waitUntilContains('dap: no hub config hook on this host');
         io.sendLine('6'); // done
         await flow;
         io.sendLine('/exit');
@@ -736,11 +679,9 @@ void main() {
     Future<void> runOptOut(AgentCli cli) async {
       final run = cli.run();
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('5'); // opt out
-      await waitForIt(
-        () => io.out.toString().contains('dap: hub plugin disabled'),
-      );
+      await io.out.waitUntilContains('dap: hub plugin disabled');
       io.sendLine('6'); // done
       await flow;
       io.sendLine('/exit');
@@ -803,21 +744,17 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      await io.out.waitUntilContains('dap / hub');
       io.sendLine('4'); // test connection
-      await waitForIt(
-        () => io.out.toString().contains(
-          'dap: connected to ws://hub.test:8787/ws as abcd1234abcd1234',
-        ),
+      await io.out.waitUntilContains(
+        'dap: connected to ws://hub.test:8787/ws as abcd1234abcd1234',
       );
       // The re-rendered menu went out before the flip; the NEXT pick is
       // what reads the fresh (disconnected) snapshot.
       snap = snapshot(ok: false, agentId: null);
       io.sendLine('4'); // test connection again
-      await waitForIt(
-        () => io.out.toString().contains(
-          'dap: not connected to ws://hub.test:8787/ws',
-        ),
+      await io.out.waitUntilContains(
+        'dap: not connected to ws://hub.test:8787/ws',
       );
       io.sendLine('6'); // done
       await flow;
@@ -833,9 +770,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/settings');
-      await waitForIt(
-        () => io.out.toString().contains('dap: ws://hub.test:8787/ws'),
-      );
+      await io.out.waitUntilContains('dap: ws://hub.test:8787/ws');
       io.sendLine('/exit');
       await run;
       expect(fake.calls, 0);
@@ -851,22 +786,16 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startCompactionEngineFlow();
-        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        await io.out.waitUntilContains('compaction engine');
         io.sendLine('2'); // structured
-        await waitForIt(
-          () => io.out.toString().contains('compaction engine — scope'),
-        );
+        await io.out.waitUntilContains('compaction engine — scope');
         io.sendLine('1'); // session
-        await waitForIt(
-          () => io.out.toString().contains(
-            'compaction engine → structured (this session',
-          ),
+        await io.out.waitUntilContains(
+          'compaction engine → structured (this session',
         );
         await flow;
         io.sendLine('/settings');
-        await waitForIt(
-          () => io.out.toString().contains('compaction: structured'),
-        );
+        await io.out.waitUntilContains('compaction: structured');
         io.sendLine('/exit');
         await run;
 
@@ -886,16 +815,12 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startCompactionEngineFlow();
-        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        await io.out.waitUntilContains('compaction engine');
         io.sendLine('2'); // structured
-        await waitForIt(
-          () => io.out.toString().contains('compaction engine — scope'),
-        );
+        await io.out.waitUntilContains('compaction engine — scope');
         io.sendLine('2'); // project
-        await waitForIt(
-          () => io.out.toString().contains(
-            'compaction.engine = structured → /work/.fah/config.yaml',
-          ),
+        await io.out.waitUntilContains(
+          'compaction.engine = structured → /work/.fah/config.yaml',
         );
         await flow;
         io.sendLine('/exit');
@@ -943,7 +868,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startCompactionEngineFlow();
-      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      await io.out.waitUntilContains('compaction engine');
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -963,11 +888,9 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startCompactionEngineFlow();
-      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      await io.out.waitUntilContains('compaction engine');
       io.sendLine('1'); // classic
-      await waitForIt(
-        () => io.out.toString().contains('compaction engine — scope'),
-      );
+      await io.out.waitUntilContains('compaction engine — scope');
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -985,16 +908,12 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startCompactionEngineFlow();
-      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      await io.out.waitUntilContains('compaction engine');
       io.sendLine('2'); // structured
-      await waitForIt(
-        () => io.out.toString().contains('compaction engine — scope'),
-      );
+      await io.out.waitUntilContains('compaction engine — scope');
       io.sendLine('3'); // global
-      await waitForIt(
-        () => io.out.toString().contains(
-          'compaction.engine = structured → /home/u/.fah/config.yaml',
-        ),
+      await io.out.waitUntilContains(
+        'compaction.engine = structured → /home/u/.fah/config.yaml',
       );
       await flow;
       io.sendLine('/exit');
@@ -1020,16 +939,12 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startCompactionEngineFlow();
-      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      await io.out.waitUntilContains('compaction engine');
       io.sendLine('2'); // structured
-      await waitForIt(
-        () => io.out.toString().contains('compaction engine — scope'),
-      );
+      await io.out.waitUntilContains('compaction engine — scope');
       io.sendLine('3'); // global
-      await waitForIt(
-        () => io.out.toString().contains(
-          'compaction: no user config on this host — not saved',
-        ),
+      await io.out.waitUntilContains(
+        'compaction: no user config on this host — not saved',
       );
       await flow;
       io.sendLine('/exit');
@@ -1055,16 +970,11 @@ void main() {
         await env.createDir('/work/.fah/config.yaml');
 
         final flow = cli.startCompactionEngineFlow();
-        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        await io.out.waitUntilContains('compaction engine');
         io.sendLine('2'); // structured
-        await waitForIt(
-          () => io.out.toString().contains('compaction engine — scope'),
-        );
+        await io.out.waitUntilContains('compaction engine — scope');
         io.sendLine('2'); // project
-        await waitForIt(
-          () =>
-              io.out.toString().contains('cannot read /work/.fah/config.yaml'),
-        );
+        await io.out.waitUntilContains('cannot read /work/.fah/config.yaml');
         await flow;
         io.sendLine('/exit');
         await run;
@@ -1085,10 +995,8 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMemoryStoresFlow();
-      await waitForIt(() => io.out.toString().contains('memory stores'));
-      await waitForIt(
-        () => io.out.toString().contains('1) Project memory — /work/memory'),
-      );
+      await io.out.waitUntilContains('memory stores');
+      await io.out.waitUntilContains('1) Project memory — /work/memory');
       io.sendLine('1'); // projectPath
       await waitForIt(
         () => io.out.toString().contains(
@@ -1096,10 +1004,8 @@ void main() {
         ),
       );
       io.sendLine('./longterm');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'memory.projectPath = ./longterm → /work/.fah/config.yaml',
-        ),
+      await io.out.waitUntilContains(
+        'memory.projectPath = ./longterm → /work/.fah/config.yaml',
       );
       await flow;
       io.sendLine('/exit');
@@ -1122,12 +1028,10 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startMemoryStoresFlow();
-        await waitForIt(() => io.out.toString().contains('memory stores'));
+        await io.out.waitUntilContains('memory stores');
         io.sendLine('2'); // userPath
-        await waitForIt(
-          () => io.out.toString().contains(
-            'memory: no user config on this host — not saved',
-          ),
+        await io.out.waitUntilContains(
+          'memory: no user config on this host — not saved',
         );
         await flow;
         io.sendLine('/exit');
@@ -1190,7 +1094,7 @@ memory:
 
         final run = cli.run();
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('ttsr:'));
+        await io.out.waitUntilContains('ttsr:');
         io.sendLine('/exit');
         await run;
 
@@ -1215,7 +1119,7 @@ memory:
       final cli = cliFor(fake.call, homeDir: '/home/u');
       final run = cli.run();
       io.sendLine('/settings');
-      await waitForIt(() => io.out.toString().contains('ttsr:'));
+      await io.out.waitUntilContains('ttsr:');
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), contains('ttsr: not configured'));
@@ -1232,17 +1136,11 @@ memory:
 
         final flow = cli.startTtsrRulesFlow();
         await render(1); // main menu
-        await waitForIt(
-          () => io.out.toString().contains('off · sk-[a-zA-Z0-9]{8}'),
-        );
+        await io.out.waitUntilContains('off · sk-[a-zA-Z0-9]{8}');
         io.sendLine('1'); // no-secrets (disabled first)
         await render(2); // the rule submenu
         io.sendLine('1'); // toggle → enable
-        await waitForIt(
-          () => io.out.toString().contains(
-            'ttsr saved → /home/u/.fah/config.yaml',
-          ),
-        );
+        await io.out.waitUntilContains('ttsr saved → /home/u/.fah/config.yaml');
         await render(3); // the submenu exited; the main menu re-rendered
         io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
         await flow;
@@ -1294,19 +1192,15 @@ memory:
         final flow = cli.startTtsrRulesFlow();
         await render(1); // main menu (no rules yet)
         io.sendLine('1'); // add (no rules yet → first option)
-        await waitForIt(() => io.out.toString().contains('rule name:'));
+        await io.out.waitUntilContains('rule name:');
         io.sendLine('no-doom');
-        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        await io.out.waitUntilContains('pattern (regex):');
         io.sendLine('doomsday clock');
-        await waitForIt(() => io.out.toString().contains('body:'));
+        await io.out.waitUntilContains('body:');
         io.sendLine('Stop summoning doomsday.');
-        await waitForIt(() => io.out.toString().contains('scope'));
+        await io.out.waitUntilContains('scope');
         io.sendLine('thinking');
-        await waitForIt(
-          () => io.out.toString().contains(
-            'ttsr saved → /home/u/.fah/config.yaml',
-          ),
-        );
+        await io.out.waitUntilContains('ttsr saved → /home/u/.fah/config.yaml');
         await render(2); // the main menu re-rendered with the new rule
         io.sendLine('3'); // done (1=no-doom, 2=add, 3=done)
         await flow;
@@ -1343,10 +1237,7 @@ memory:
       io.sendLine('2'); // no-french
       await render(2); // the rule submenu
       io.sendLine('2'); // delete
-      await waitForIt(
-        () =>
-            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('ttsr saved → /home/u/.fah/config.yaml');
       await render(3); // the submenu exited; the main menu re-rendered
       io.sendLine('3'); // done (1=no-secrets, 2=add, 3=done)
       await flow;
@@ -1393,9 +1284,7 @@ memory:
       io.sendLine('1'); // no-secrets (disabled, first in the list)
       await render(2); // the rule submenu
       io.sendLine('1'); // toggle → enable + register live
-      await waitForIt(
-        () => io.out.toString().contains('rule edits apply live'),
-      );
+      await io.out.waitUntilContains('rule edits apply live');
       await render(3); // the submenu exited; the main menu re-rendered
       io.sendLine('4'); // done (1=no-secrets, 2=no-french, 3=add, 4=done)
       await flow;
@@ -1431,7 +1320,7 @@ memory:
       io.sendLine('1'); // rule a
       await render(2); // the rule submenu
       io.sendLine('1'); // toggle off
-      await waitForIt(() => io.out.toString().contains('applies at next boot'));
+      await io.out.waitUntilContains('applies at next boot');
       await render(3); // the submenu exited; the main menu re-rendered
       io.sendLine('3'); // done (1=rule a, 2=add, 3=done)
       await flow;
@@ -1455,9 +1344,7 @@ memory:
         final run = cli.run();
 
         await cli.startTtsrRulesFlow();
-        await waitForIt(
-          () => io.out.toString().contains('"ttsr" must be a map'),
-        );
+        await io.out.waitUntilContains('"ttsr" must be a map');
         io.sendLine('/exit');
         await run;
 
@@ -1481,19 +1368,15 @@ memory:
         final flow = cli.startTtsrRulesFlow();
         await render(1); // main menu (no rules → add is the first option)
         io.sendLine('1'); // add
-        await waitForIt(() => io.out.toString().contains('rule name:'));
+        await io.out.waitUntilContains('rule name:');
         io.sendLine('first');
-        await waitForIt(() => io.out.toString().contains('pattern (regex):'));
+        await io.out.waitUntilContains('pattern (regex):');
         io.sendLine('boom');
-        await waitForIt(() => io.out.toString().contains('body:'));
+        await io.out.waitUntilContains('body:');
         io.sendLine('Watch out.');
-        await waitForIt(() => io.out.toString().contains('scope (empty'));
+        await io.out.waitUntilContains('scope (empty');
         io.sendLine(''); // default scope
-        await waitForIt(
-          () => io.out.toString().contains(
-            'ttsr saved → /home/u/.fah/config.yaml',
-          ),
-        );
+        await io.out.waitUntilContains('ttsr saved → /home/u/.fah/config.yaml');
         await render(2); // the main menu re-rendered with the new rule
         io.sendLine('3'); // done (1=first, 2=add, 3=done)
         await flow;
@@ -1517,10 +1400,7 @@ memory:
       final run = cli.run();
 
       await cli.startTtsrRulesFlow();
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('/exit');
       await run;
       expect(fake.calls, 0);
@@ -1545,12 +1425,9 @@ memory:
             '    - name: concurrent\n      pattern: y\n      body: c\n',
       );
       io.sendLine('1'); // toggle a off
-      await waitForIt(
-        () =>
-            io.out.toString().contains('ttsr saved → /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('ttsr saved → /home/u/.fah/config.yaml');
       await render(3); // the submenu exited; the main menu re-rendered
-      await waitForIt(() => io.out.toString().contains('concurrent'));
+      await io.out.waitUntilContains('concurrent');
       io.sendLine('4'); // done (1=a, 2=concurrent, 3=add, 4=done)
       await flow;
       io.sendLine('/exit');
@@ -1602,7 +1479,7 @@ memory:
         final run = cli.run();
 
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('redact: on, block'));
+        await io.out.waitUntilContains('redact: on, block');
         io.sendLine('/exit');
         await run;
 
@@ -1623,7 +1500,7 @@ memory:
       final run = cli.run();
 
       io.sendLine('/settings');
-      await waitForIt(() => io.out.toString().contains('redact: off'));
+      await io.out.waitUntilContains('redact: off');
       io.sendLine('/exit');
       await run;
 
@@ -1659,44 +1536,36 @@ memory:
         final run = cli.run();
 
         final flow = cli.startRedactionFlow();
-        await waitForIt(() => io.out.toString().contains('redaction'));
+        await io.out.waitUntilContains('redaction');
         // allowlist: two comma-separated regexes → a yaml block list.
         io.sendLine('5');
-        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        await io.out.waitUntilContains('Allowlist regexes');
         io.sendLine(r'sha-[0-9a-f]{40}, \b[0-9a-f-]{36}\b');
-        await waitForIt(() => io.out.toString().contains('redact.allowlist'));
+        await io.out.waitUntilContains('redact.allowlist');
         // minEntropy + minLength scalars.
         io.sendLine('3');
-        await waitForIt(() => io.out.toString().contains('min entropy'));
+        await io.out.waitUntilContains('min entropy');
         io.sendLine('3.2');
-        await waitForIt(
-          () => io.out.toString().contains('redact.minEntropy = 3.2'),
-        );
+        await io.out.waitUntilContains('redact.minEntropy = 3.2');
         io.sendLine('4');
-        await waitForIt(() => io.out.toString().contains('min token length'));
+        await io.out.waitUntilContains('min token length');
         io.sendLine('40');
-        await waitForIt(
-          () => io.out.toString().contains('redact.minLength = 40'),
-        );
+        await io.out.waitUntilContains('redact.minLength = 40');
         // toolDeny list.
         io.sendLine('7');
-        await waitForIt(() => io.out.toString().contains('tool deny'));
+        await io.out.waitUntilContains('tool deny');
         io.sendLine('bash, read_file');
-        await waitForIt(() => io.out.toString().contains('redact.toolDeny'));
+        await io.out.waitUntilContains('redact.toolDeny');
         // Layer toggle: pii (index 9 → picker row 10) off → on, then out.
         io.sendLine('8');
-        await waitForIt(() => io.out.toString().contains('redaction layers'));
-        await waitForIt(() => io.out.toString().contains('10) pii'));
+        await io.out.waitUntilContains('redaction layers');
+        await io.out.waitUntilContains('10) pii');
         io.sendLine('10');
-        await waitForIt(
-          () => io.out.toString().contains('redact.layers.pii = true'),
-        );
+        await io.out.waitUntilContains('redact.layers.pii = true');
         io.sendLine('12'); // done — out of the layers submenu
         // blockMode quick toggle off → on.
         io.sendLine('2');
-        await waitForIt(
-          () => io.out.toString().contains('redact.blockMode = true'),
-        );
+        await io.out.waitUntilContains('redact.blockMode = true');
         io.sendLine('10'); // done — out of the redaction menu
         await flow;
         io.sendLine('/exit');
@@ -1741,9 +1610,9 @@ memory:
         final run = cli.run();
 
         final flow = cli.startRedactionFlow();
-        await waitForIt(() => io.out.toString().contains('redaction'));
+        await io.out.waitUntilContains('redaction');
         io.sendLine('2'); // blockMode toggle
-        await waitForIt(() => io.out.toString().contains('(applies live'));
+        await io.out.waitUntilContains('(applies live');
         io.sendLine('10'); // done
         await flow;
         io.sendLine('/exit');
@@ -1760,11 +1629,9 @@ memory:
         final run = cli.run();
 
         final flow = cli.startRedactionFlow();
-        await waitForIt(() => io.out.toString().contains('redaction'));
+        await io.out.waitUntilContains('redaction');
         io.sendLine('2'); // blockMode toggle
-        await waitForIt(
-          () => io.out.toString().contains('(applies at next boot)'),
-        );
+        await io.out.waitUntilContains('(applies at next boot)');
         io.sendLine('10'); // done
         await flow;
         io.sendLine('/exit');
@@ -1786,13 +1653,11 @@ memory:
         final run = cli.run();
 
         final flow = cli.startRedactionFlow();
-        await waitForIt(() => io.out.toString().contains('redaction'));
+        await io.out.waitUntilContains('redaction');
         io.sendLine('5'); // allowlist
-        await waitForIt(() => io.out.toString().contains('Allowlist regexes'));
+        await io.out.waitUntilContains('Allowlist regexes');
         io.sendLine('[unclosed');
-        await waitForIt(
-          () => io.out.toString().contains('Unterminated character class'),
-        );
+        await io.out.waitUntilContains('Unterminated character class');
         io.sendLine('10'); // done
         await flow;
         io.sendLine('/exit');
@@ -1816,11 +1681,9 @@ memory:
       final run = cli.run();
 
       final flow = cli.startRedactionFlow();
-      await waitForIt(() => io.out.toString().contains('redaction'));
+      await io.out.waitUntilContains('redaction');
       io.sendLine('2'); // blockMode toggle
-      await waitForIt(
-        () => io.out.toString().contains('redact.blockMode = true'),
-      );
+      await io.out.waitUntilContains('redact.blockMode = true');
       io.sendLine('10'); // done
       await flow;
       io.sendLine('/exit');
@@ -1848,12 +1711,9 @@ memory:
       await env.createDir('/home/u/.fah/config.yaml');
 
       final flow = cli.startRedactionFlow();
-      await waitForIt(() => io.out.toString().contains('redaction'));
+      await io.out.waitUntilContains('redaction');
       io.sendLine('1'); // toggle enabled
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('10'); // done
       await flow;
       io.sendLine('/exit');
@@ -1873,7 +1733,7 @@ memory:
       final run = cli.run();
 
       final flow = cli.startRedactionFlow();
-      await waitForIt(() => io.out.toString().contains('redaction'));
+      await io.out.waitUntilContains('redaction');
       // A concurrent editor (the agent's own config save) lands between
       // the menu render and the flow's write.
       await env.writeFile(
@@ -1881,9 +1741,7 @@ memory:
         'redact:\n  minEntropy: 2.0\n',
       );
       io.sendLine('2'); // blockMode toggle
-      await waitForIt(
-        () => io.out.toString().contains('redact.blockMode = true'),
-      );
+      await io.out.waitUntilContains('redact.blockMode = true');
       io.sendLine('10'); // done
       await flow;
       io.sendLine('/exit');
@@ -1907,11 +1765,9 @@ memory:
       final run = cli.run();
 
       final flow = cli.startRedactionFlow();
-      await waitForIt(() => io.out.toString().contains('redaction'));
+      await io.out.waitUntilContains('redaction');
       io.sendLine('9'); // reset stats
-      await waitForIt(
-        () => io.out.toString().contains('redaction stats reset'),
-      );
+      await io.out.waitUntilContains('redaction stats reset');
       io.sendLine('10'); // done
       await flow;
       io.sendLine('/exit');
@@ -1932,7 +1788,7 @@ memory:
       final run = cli.run();
 
       final flow = cli.startRedactionFlow();
-      await waitForIt(() => io.out.toString().contains('redaction'));
+      await io.out.waitUntilContains('redaction');
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -1971,7 +1827,7 @@ memory:
         final run = cli.run();
 
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('ctx cap:'));
+        await io.out.waitUntilContains('ctx cap:');
         io.sendLine('/exit');
         await run;
 
@@ -1992,7 +1848,7 @@ memory:
       final run = cli.run();
 
       io.sendLine('/settings');
-      await waitForIt(() => io.out.toString().contains('ctx cap: off'));
+      await io.out.waitUntilContains('ctx cap: off');
       io.sendLine('/exit');
       await run;
 
@@ -2021,15 +1877,11 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('1'); // set
-      await waitForIt(
-        () => io.out.toString().contains('context cap in tokens'),
-      );
+      await io.out.waitUntilContains('context cap in tokens');
       io.sendLine('32768');
-      await waitForIt(
-        () => io.out.toString().contains('agent.contextWindowCap = 32768'),
-      );
+      await io.out.waitUntilContains('agent.contextWindowCap = 32768');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2054,11 +1906,9 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('2'); // clear
-      await waitForIt(
-        () => io.out.toString().contains('agent.contextWindowCap removed'),
-      );
+      await io.out.waitUntilContains('agent.contextWindowCap removed');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2095,11 +1945,9 @@ memory:
         final run = cli.run();
 
         final flow = cli.startContextCapFlow();
-        await waitForIt(() => io.out.toString().contains('context cap'));
+        await io.out.waitUntilContains('context cap');
         io.sendLine('2'); // clear
-        await waitForIt(
-          () => io.out.toString().contains('agent.contextWindowCap removed'),
-        );
+        await io.out.waitUntilContains('agent.contextWindowCap removed');
         io.sendLine('3'); // done
         await flow;
         io.sendLine('/exit');
@@ -2127,15 +1975,11 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('1'); // set
-      await waitForIt(
-        () => io.out.toString().contains('context cap in tokens'),
-      );
+      await io.out.waitUntilContains('context cap in tokens');
       io.sendLine('16384');
-      await waitForIt(
-        () => io.out.toString().contains('(applies at next boot'),
-      );
+      await io.out.waitUntilContains('(applies at next boot');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2153,15 +1997,11 @@ memory:
         final run = cli.run();
 
         final flow = cli.startContextCapFlow();
-        await waitForIt(() => io.out.toString().contains('context cap'));
+        await io.out.waitUntilContains('context cap');
         io.sendLine('1'); // set
-        await waitForIt(
-          () => io.out.toString().contains('context cap in tokens'),
-        );
+        await io.out.waitUntilContains('context cap in tokens');
         io.sendLine('16383'); // one below the compaction reserve
-        await waitForIt(
-          () => io.out.toString().contains('must be at least 16384'),
-        );
+        await io.out.waitUntilContains('must be at least 16384');
         io.sendLine('3'); // done
         await flow;
         io.sendLine('/exit');
@@ -2184,15 +2024,11 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('1'); // set
-      await waitForIt(
-        () => io.out.toString().contains('context cap in tokens'),
-      );
+      await io.out.waitUntilContains('context cap in tokens');
       io.sendLine('big');
-      await waitForIt(
-        () => io.out.toString().contains('must be a positive integer (tokens)'),
-      );
+      await io.out.waitUntilContains('must be a positive integer (tokens)');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2214,15 +2050,11 @@ memory:
         final run = cli.run();
 
         final flow = cli.startContextCapFlow();
-        await waitForIt(() => io.out.toString().contains('context cap'));
+        await io.out.waitUntilContains('context cap');
         io.sendLine('1'); // set
-        await waitForIt(
-          () => io.out.toString().contains('context cap in tokens'),
-        );
+        await io.out.waitUntilContains('context cap in tokens');
         io.sendLine('200000');
-        await waitForIt(
-          () => io.out.toString().contains('the cap clamps nothing'),
-        );
+        await io.out.waitUntilContains('the cap clamps nothing');
         io.sendLine('3'); // done
         await flow;
         io.sendLine('/exit');
@@ -2237,15 +2069,11 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('1'); // set
-      await waitForIt(
-        () => io.out.toString().contains('context cap in tokens'),
-      );
+      await io.out.waitUntilContains('context cap in tokens');
       io.sendLine('16384');
-      await waitForIt(
-        () => io.out.toString().contains('agent.contextWindowCap = 16384'),
-      );
+      await io.out.waitUntilContains('agent.contextWindowCap = 16384');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2273,16 +2101,11 @@ memory:
       await env.createDir('/home/u/.fah/config.yaml');
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('1'); // set
-      await waitForIt(
-        () => io.out.toString().contains('context cap in tokens'),
-      );
+      await io.out.waitUntilContains('context cap in tokens');
       io.sendLine('16384');
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('2'); // clear — the same read error on the clear branch
       await waitForIt(
         () => 'cannot read'.allMatches(io.out.toString()).length == 2,
@@ -2300,10 +2123,10 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.sendLine('2'); // clear
       // The handler output, not the menu row's `already off` description.
-      await waitForIt(() => io.out.toString().contains('nothing to clear'));
+      await io.out.waitUntilContains('nothing to clear');
       io.sendLine('3'); // done
       await flow;
       io.sendLine('/exit');
@@ -2322,7 +2145,7 @@ memory:
       final run = cli.run();
 
       final flow = cli.startContextCapFlow();
-      await waitForIt(() => io.out.toString().contains('context cap'));
+      await io.out.waitUntilContains('context cap');
       io.interrupt();
       await flow;
       io.sendLine('/exit');

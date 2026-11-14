@@ -81,6 +81,89 @@ class FakeShell implements Shell {
 }
 
 /// In-memory [CliIO]: scripted input lines, captured output.
+/// Accumulating sink that also publishes every written chunk as a live
+/// stream. Assertions read the buffer ([toString]/[contains]/[length]);
+/// awaiters subscribe — [waitUntilContains] completes the moment the
+/// accumulated output holds [needle], either immediately (sync buffer
+/// check) or on the first chunk that completes it (stream wait, no
+/// timers). Broadcast: late listeners see future chunks only, so arm the
+/// wait BEFORE triggering the write when determinism matters.
+class ListenableOutput implements StringSink {
+  final _buf = StringBuffer();
+  final _chunks = StreamController<void>.broadcast();
+
+  /// Rings on every [write]/[writeln]: a wake-up bell, not a payload —
+  /// awaiters re-check the accumulated buffer (see [waitUntilContains]).
+  Stream<void> get chunks => _chunks.stream;
+
+  bool contains(String needle) => _buf.toString().contains(needle);
+
+  /// Bounded, timer-free wait for [needle] in the accumulated output.
+  /// The sync check and the firstWhere arm run in the same synchronous
+  /// block, so a chunk cannot slip between them; firstWhere cancels its
+  /// own subscription on completion. [seconds] caps the wait — expiry
+  /// throws a named TimeoutException (loud, like waitForIt's fail).
+  Future<void> waitUntilContains(
+    String needle, {
+    String? reason,
+    int seconds = 25,
+  }) async {
+    // One event-loop turn BEFORE the buffer check. Seeing the needle in
+    // the buffer must not shortcut the writer's own continuation: the
+    // old 5ms polling closed exactly this gap — a line sent inside the
+    // print→arm window (prompt printed, pending-answer not yet
+    // registered) raced the pending-prompt routing and deadlocked on
+    // `await _settled` in the input handler.
+    await Future<void>.delayed(Duration.zero);
+    if (contains(needle)) return;
+    await _chunks.stream
+        .firstWhere((_) => contains(needle))
+        .timeout(
+          Duration(seconds: seconds),
+          onTimeout: () {
+            final tail = _buf.toString();
+            final atTimeout = contains(needle);
+            throw TimeoutException(
+              'output missing: $needle'
+              '${reason == null ? '' : ' — $reason'}'
+              ' | contains() at timeout: $atTimeout\n'
+              '--- buffer tail ---\n'
+              '${tail.length > 600 ? tail.substring(tail.length - 600) : tail}',
+            );
+          },
+        );
+  }
+
+  void clear() => _buf.clear();
+
+  int get length => _buf.length;
+
+  bool get isEmpty => _buf.isEmpty;
+
+  bool get isNotEmpty => _buf.isNotEmpty;
+
+  void _emit(String s) {
+    _buf.write(s);
+    _chunks.add(null);
+  }
+
+  @override
+  void write(Object? obj) => _emit('$obj');
+
+  @override
+  void writeln([Object? obj = '']) => _emit('$obj\n');
+
+  @override
+  void writeAll(Iterable objects, [String separator = '']) =>
+      _emit(objects.join(separator));
+
+  @override
+  void writeCharCode(int charCode) => _emit(String.fromCharCode(charCode));
+
+  @override
+  String toString() => _buf.toString();
+}
+
 class FakeCliIO implements CliIO {
   @override
   int columns = 80;
@@ -91,7 +174,7 @@ class FakeCliIO implements CliIO {
   final _lines = StreamController<String>();
   final _interrupts = StreamController<void>.broadcast();
   final _keys = StreamController<KeyEvent>.broadcast();
-  final out = StringBuffer();
+  final out = ListenableOutput();
 
   /// Tests flip this to exercise the non-interactive approval path.
   @override
@@ -113,7 +196,7 @@ class FakeCliIO implements CliIO {
   void write(String text) => out.write(text);
 
   @override
-  void writeln(String text) => out.write('$text\n');
+  void writeln(String text) => out.writeln(text);
 
   void sendLine(String line) => _lines.add(line);
 

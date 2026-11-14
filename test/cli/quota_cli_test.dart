@@ -316,10 +316,7 @@ void main() {
       );
 
       final out = await driveQuotaRepl(cli, io, () async {
-        await waitForIt(
-          () => io.out.toString().contains('/work · ctx'),
-          reason: 'idle prompt with status line',
-        );
+        await io.out.waitUntilContains('/work · ctx');
       });
 
       expect(out, isNot(contains('[OR')));
@@ -344,10 +341,7 @@ void main() {
         final out = await driveQuotaRepl(cli, io, () async {
           // The gated endpoint never answers here; the badge must still
           // render its cold form without blocking (E1).
-          await waitForIt(
-            () => io.out.toString().contains('[OR …]'),
-            reason: 'cold badge rendered while the fetch hangs',
-          );
+          await io.out.waitUntilContains('[OR …]');
           endpoint.gate!.complete();
           await waitForIt(
             () => endpoint.served == 1,
@@ -355,10 +349,7 @@ void main() {
           );
           // Any next line re-renders the idle prompt with fresh cache.
           io.sendLine('/stats');
-          await waitForIt(
-            () => io.out.toString().contains('[OR \$48/\$150]'),
-            reason: 'warm badge after re-render',
-          );
+          await io.out.waitUntilContains('[OR \$48/\$150]');
         });
 
         expect(out, contains('[OR …]'));
@@ -388,10 +379,7 @@ void main() {
       );
 
       final out = await driveQuotaRepl(cli, io, () async {
-        await waitForIt(
-          () => io.out.toString().contains('ctx '),
-          reason: 'status line rendered',
-        );
+        await io.out.waitUntilContains('ctx ');
       });
 
       // No quota adapter for `anthropic`: a permanent `[AN …]` would be

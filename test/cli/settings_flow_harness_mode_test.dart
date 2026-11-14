@@ -73,7 +73,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/settings');
-      await waitForIt(() => io.out.toString().contains('harness:'));
+      await io.out.waitUntilContains('harness:');
       io.sendLine('/exit');
       await run;
 
@@ -96,12 +96,9 @@ void main() {
         final run = cli.run();
 
         final flow = cli.startHarnessModeFlow();
-        await waitForIt(
-          () =>
-              io.out.toString().contains('pi benchmark (4 tools, bare prompt)'),
-        );
+        await io.out.waitUntilContains('pi benchmark (4 tools, bare prompt)');
         io.sendLine('2');
-        await waitForIt(() => io.out.toString().contains('agent.mode = pi'));
+        await io.out.waitUntilContains('agent.mode = pi');
         io.interrupt();
         await flow;
         io.sendLine('/exit');
@@ -134,9 +131,7 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startHarnessModeFlow();
-      await waitForIt(
-        () => io.out.toString().contains('Default (full harness)'),
-      );
+      await io.out.waitUntilContains('Default (full harness)');
       io.interrupt();
       await flow;
       io.sendLine('/exit');

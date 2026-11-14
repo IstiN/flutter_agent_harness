@@ -249,8 +249,8 @@ void main() {
       // Expected <1>, Actual []). Anchor the wait on the card itself: the
       // exact object the assertions below read. `5 done` rides the same
       // synchronous print batch as the headline.
-      await waitForIt(
-        () => io.out.toString().contains('Background jobs (5)'),
+      await io.out.waitUntilContains(
+        'Background jobs (5)',
         reason: 'the collapse summary card settles once every job drains',
       );
 
@@ -335,8 +335,8 @@ void main() {
         ),
         reason: 'the mail steers a run',
       );
-      await waitForIt(
-        () => io.out.toString().contains('btw · mail from explore#1'),
+      await io.out.waitUntilContains(
+        'btw · mail from explore#1',
         reason: 'the panel block renders',
       );
       await waitForIt(() => !cli.isBusy, reason: 'all runs settle');
@@ -350,20 +350,15 @@ void main() {
       );
 
       io.sendLine('/mail');
-      await waitForIt(
-        () => io.out.toString().contains('btw-1'),
-        reason: '/mail lists the panel',
-      );
+      await io.out.waitUntilContains('btw-1', reason: '/mail lists the panel');
       expect(io.out.toString(), contains('mail from explore#1 · complete'));
 
       io.sendLine('/mail btw-1');
-      await waitForIt(
-        () => io.out.toString().contains('reply: /reply explore#1'),
-      );
+      await io.out.waitUntilContains('reply: /reply explore#1');
 
       io.sendLine('/reply btw-1 use retries with backoff');
-      await waitForIt(
-        () => io.out.toString().contains('reply queued to explore#1'),
+      await io.out.waitUntilContains(
+        'reply queued to explore#1',
         reason: '/reply resolves the panel to its reply address',
       );
       final fileFabric = FileMessagingRepository(env: env, root: messagesRoot);

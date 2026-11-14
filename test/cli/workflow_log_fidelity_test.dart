@@ -426,8 +426,8 @@ void main() {
       final run = cli.runHeadless('say');
       // The delta must land while the message is still open: the
       // buffered-answer path would hold every byte until DoneEvent.
-      await waitForIt(
-        () => io.out.toString().contains('streaming…'),
+      await io.out.waitUntilContains(
+        'streaming…',
         reason: 'the text delta must land while the message is still open',
       );
       final midStream = io.out.toString();
@@ -637,7 +637,7 @@ void main() {
         streamFunction: abortable,
       );
       final run = cli.runHeadless('watch');
-      await waitForIt(() => io.out.toString().contains('half a thought'));
+      await io.out.waitUntilContains('half a thought');
       io.interrupt();
       await run;
       final out = io.out.toString();
@@ -706,7 +706,7 @@ void main() {
         streamFunction: abortable,
       );
       final run = cli.runHeadless('watch');
-      await waitForIt(() => io.out.toString().contains('half a thought'));
+      await io.out.waitUntilContains('half a thought');
       io.interrupt();
       await run;
       final out = io.out.toString();

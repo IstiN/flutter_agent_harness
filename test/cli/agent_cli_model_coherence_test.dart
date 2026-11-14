@@ -147,9 +147,7 @@ void main() {
         final run = await boot(cli);
 
         io.sendLine('/models');
-        await waitForIt(
-          () => io.out.toString().contains('kimi/kimi-for-coding'),
-        );
+        await io.out.waitUntilContains('kimi/kimi-for-coding');
         final output = io.out.toString();
         final kimiRow = output
             .split('\n')
@@ -239,9 +237,7 @@ void main() {
       // unknown prefix stays a coherent same-provider pasthrough (an
       // OpenRouter-style vendor id) — covered by the UT-1 parser tests.
       await cli.tuiSelectModelForTest('gone-provider|kimi-for-coding');
-      await waitForIt(
-        () => io.out.toString().contains('model coherence refusal'),
-      );
+      await io.out.waitUntilContains('model coherence refusal');
       io.sendLine('/exit');
       await run;
 
@@ -303,9 +299,7 @@ void main() {
         final run = await boot(cli);
 
         io.sendLine('/model kimi-act/kimi-for-coding');
-        await waitForIt(
-          () => io.out.toString().contains('model coherence refusal'),
-        );
+        await io.out.waitUntilContains('model coherence refusal');
         io.sendLine('/exit');
         await run;
 
@@ -552,9 +546,7 @@ void main() {
       final run = await boot(cli);
 
       await cli.switchModelUnresolvedForTest('kimi/kimi-for-coding');
-      await waitForIt(
-        () => io.out.toString().contains('model coherence refusal'),
-      );
+      await io.out.waitUntilContains('model coherence refusal');
       io.sendLine('/exit');
       await run;
 
@@ -622,7 +614,7 @@ void main() {
       final second = await factory(g3Io, 'g3-note');
       final streamBefore = second.agent.streamFunction;
       final run2 = second.run();
-      await waitForIt(() => g3Io.out.toString().contains('persisted model'));
+      await g3Io.out.waitUntilContains('persisted model');
       g3Io.sendLine('/exit');
       await run2;
       await g3Io.close();
