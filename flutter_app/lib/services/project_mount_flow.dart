@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart'
-    show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/project_mount_store.dart';
@@ -139,9 +138,7 @@ bool folderPathsTailMatch(
   String candidate, {
   required bool caseSensitive,
 }) {
-  final fold = caseSensitive
-      ? (String s) => s
-      : (String s) => s.toLowerCase();
+  final fold = caseSensitive ? (String s) => s : (String s) => s.toLowerCase();
   final rootSegments = _folderSegments(root);
   final candidateSegments = _folderSegments(candidate);
   if (rootSegments.length < 2 || candidateSegments.length < 2) return false;
@@ -231,6 +228,4 @@ bool projectFolderPickingSupported() {
 ProjectMountEnv? _resolveMountEnv(ExecutionEnv env) =>
     resolveProjectMountEnv(env);
 
-ProjectFolderOps? _defaultOps() => ProjectFolderChannelOps.isSupported
-    ? const ProjectFolderChannelOps()
-    : null;
+ProjectFolderOps? _defaultOps() => defaultProjectFolderOps();
