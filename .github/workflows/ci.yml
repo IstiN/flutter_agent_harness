@@ -617,6 +617,14 @@ jobs:
 
       - run: dart pub get
 
+      # gh-2181: AGENTS.md is the agent ENTRY document (harness budget
+      # ~19 KB — a larger file silently disables its own tail). Ceiling
+      # <= 300 lines / <= 20480 bytes; the pre-commit path runs the same
+      # script via ci_fast_gate.sh stage_analyze. Wiring pinned by
+      # test/agents_md_size_guard_test.dart.
+      - name: AGENTS.md size ceiling guard (gh-2181)
+        run: bash scripts/check_agents_md_size.sh
+
       # Issue #1234: the ≤2800-line file guard MOVED into crap4dart's loc
       # gate (crap4dart.yaml, wc -l parity verified by the maintainer
       # recipe in the issue) — enforced whole-tree by the
