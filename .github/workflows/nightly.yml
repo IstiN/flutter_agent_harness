@@ -217,7 +217,14 @@ jobs:
         if: matrix.target == 'android'
         with:
           distribution: 'temurin'
-          java-version: '17'
+# gh-2176: JDK 21 — AGP 9.3.1's bundled lint (the #2112 3.50-train
+          # bump) parses javadoc through an IntelliJ platform compiled
+          # against the JDK-21 API `List.removeLast()`; under JDK 17 the
+          # call throws NoSuchMethodError inside CommentDetector and
+          # lintVitalAnalyzeRelease fails EVERY Android release build
+          # (debug builds never run lintVital — the PR gate stayed green).
+          # Guard: test/ci_android_release_jdk_guard_test.dart.
+          java-version: '21'
           cache: 'gradle'
 
       # gh-1655: same NDK pre-install as ci.yml build-android, on the
