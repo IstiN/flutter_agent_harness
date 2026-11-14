@@ -49,9 +49,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/bogus');
-    await waitForIt(
-      () => io.out.toString().contains('unknown command: /bogus'),
-    );
+    await io.out.waitUntilContains('unknown command: /bogus');
     io.sendLine('/exit');
     await run;
   });
@@ -65,7 +63,7 @@ void main() {
     const message =
         '/var/folders/fa_missing_1152/clip.txt посмотри лог и расскажи';
     io.sendLine(message);
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     expect(
       io.out.toString(),
       isNot(contains('looks like a filesystem path')),
@@ -91,7 +89,7 @@ void main() {
 
     final message = '${dir.path} что внутри этой папки?';
     io.sendLine(message);
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     expect(io.out.toString(), isNot(contains('looks like a filesystem path')));
     // A folder rides verbatim (the @folder semantics): the model sees
     // the path and explores it with its own tools.
@@ -110,9 +108,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/var/folders/fa_missing_1152/clip.txt');
-    await waitForIt(
-      () => io.out.toString().contains('looks like a filesystem path'),
-    );
+    await io.out.waitUntilContains('looks like a filesystem path');
     expect(fake.calls, 0, reason: 'a bare missing path is only a hint');
     io.sendLine('/exit');
     await run;
@@ -128,10 +124,8 @@ void main() {
     final run = cli.run();
 
     io.sendLine(file.path);
-    await waitForIt(
-      () => io.out.toString().contains('[file] pasted path attached'),
-    );
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('[file] pasted path attached');
+    await io.out.waitUntilContains('ok');
     expect(
       messageText(fake.contexts.last.messages.last as UserMessage),
       contains('[attached file:'),
@@ -148,7 +142,7 @@ void main() {
 
     const message = '/unknowntoken объясни этот вывод';
     io.sendLine(message);
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     expect(io.out.toString(), isNot(contains('unknown command:')));
     expect(
       messageText(fake.contexts.last.messages.last as UserMessage),
@@ -171,7 +165,7 @@ void main() {
 
     const message = '/unknowntoken объясни этот вывод';
     await cli.tuiSubmitForTest(message, [chip]);
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     final blocks =
         (fake.contexts.last.messages.last as UserMessage).content
             as List<ContentBlock>;
@@ -196,11 +190,11 @@ void main() {
     final run = cli.run();
 
     io.sendLine('${file.path} summarize this');
-    await waitForIt(
-      () => io.out.toString().contains('[file] pasted path attached'),
+    await io.out.waitUntilContains(
+      '[file] pasted path attached',
       reason: 'an existing path attaches and starts the run',
     );
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     expect(io.out.toString(), isNot(contains('looks like a filesystem path')));
     io.sendLine('/exit');
     await run;

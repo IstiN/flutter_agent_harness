@@ -173,7 +173,7 @@ void main() {
     );
 
     io.sendLine('/provider');
-    await waitForIt(() => io.out.toString().contains('extension providers:'));
+    await io.out.waitUntilContains('extension providers:');
 
     final out = io.out.toString();
     expect(out, contains('Acme Setup (ext:acme)'));
@@ -197,16 +197,12 @@ void main() {
             };
 
       io.sendLine('/provider ext:acme:setup');
-      await waitForIt(
-        () => io.out.toString().contains('Acme Setup (ext:acme)'),
-      );
-      await waitForIt(() => io.out.toString().contains('Acme host: '));
+      await io.out.waitUntilContains('Acme Setup (ext:acme)');
+      await io.out.waitUntilContains('Acme host: ');
       io.sendLine('api.acme.dev');
-      await waitForIt(() => io.out.toString().contains('Acme token: '));
+      await io.out.waitUntilContains('Acme token: ');
       io.sendLine('sk-acme-1');
-      await waitForIt(
-        () => io.out.toString().contains('ext provider acme-main saved'),
-      );
+      await io.out.waitUntilContains('ext provider acme-main saved');
 
       // The JS onSubmit received exactly the collected field values.
       expect(h.received, [
@@ -249,18 +245,16 @@ void main() {
       // 'custom' is the CORE guided wizard's subcommand: the flow with the
       // same bare id must not shadow it.
       io.sendLine('/provider custom');
-      await waitForIt(
-        () => io.out.toString().contains('custom provider setup'),
-      );
+      await io.out.waitUntilContains('custom provider setup');
       expect(h.received, isEmpty);
       io.interrupt(); // cancel the core wizard
-      await waitForIt(() => io.out.toString().contains('setup cancelled'));
+      await io.out.waitUntilContains('setup cancelled');
 
       // The flow is reachable ONLY under its namespaced key.
       io.sendLine('/provider ext:acme:custom');
-      await waitForIt(() => io.out.toString().contains('Acme host: '));
+      await io.out.waitUntilContains('Acme host: ');
       io.interrupt();
-      await waitForIt(() => io.out.toString().contains('canceled'));
+      await io.out.waitUntilContains('canceled');
       expect(h.received, isEmpty);
       await h.exit();
     },
@@ -275,11 +269,11 @@ void main() {
     );
 
     io.sendLine('/provider ext:acme:setup');
-    await waitForIt(() => io.out.toString().contains('Acme host: '));
+    await io.out.waitUntilContains('Acme host: ');
     io.sendLine('api.acme.dev');
-    await waitForIt(() => io.out.toString().contains('Acme token: '));
+    await io.out.waitUntilContains('Acme token: ');
     io.sendLine('');
-    await waitForIt(() => io.out.toString().contains('canceled'));
+    await io.out.waitUntilContains('canceled');
 
     expect(h.received, isEmpty);
     expect(h.store.map, isEmpty);
@@ -297,13 +291,11 @@ void main() {
             ..submitError = 'boom';
 
       io.sendLine('/provider ext:acme:setup');
-      await waitForIt(() => io.out.toString().contains('Acme host: '));
+      await io.out.waitUntilContains('Acme host: ');
       io.sendLine('api.acme.dev');
-      await waitForIt(() => io.out.toString().contains('Acme token: '));
+      await io.out.waitUntilContains('Acme token: ');
       io.sendLine('sk-acme-1');
-      await waitForIt(
-        () => io.out.toString().contains('[ext:acme] flow failed: boom'),
-      );
+      await io.out.waitUntilContains('[ext:acme] flow failed: boom');
 
       expect(h.received, [
         {'host': 'api.acme.dev', 'token': 'sk-acme-1'},
@@ -349,7 +341,7 @@ void main() {
       () => cli.agent.state.tools.any((tool) => tool.name == 'acme_tool'),
     );
     io.sendLine('/provider');
-    await waitForIt(() => io.out.toString().contains('supported providers:'));
+    await io.out.waitUntilContains('supported providers:');
     expect(io.out.toString(), isNot(contains('extension providers:')));
     io.sendLine('/exit');
     await run;

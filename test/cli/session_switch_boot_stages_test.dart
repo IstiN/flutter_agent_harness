@@ -62,9 +62,7 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/session beta');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'beta'"),
-    );
+    await io.out.waitUntilContains("switched to session 'beta'");
     await waitForIt(
       () async => (await readLog()).contains('boot_stage switch-done'),
       reason: 'the switch-done line lands in fa.log',
@@ -131,12 +129,10 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/session beta');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'beta'"),
-    );
+    await io.out.waitUntilContains("switched to session 'beta'");
     io.sendLine('/session $alphaId');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session '$alphaId'"),
+    await io.out.waitUntilContains(
+      "switched to session '$alphaId'",
       reason: 'switch back to alpha by exact id',
     );
     await waitForIt(
@@ -175,9 +171,7 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/session beta');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'beta'"),
-    );
+    await io.out.waitUntilContains("switched to session 'beta'");
     // A foreign writer appends to alpha while the CLI sits on beta.
     final alphaSession = await repo.open(
       await _metadataById(repo, alphaId),
@@ -185,9 +179,7 @@ void main() {
     );
     await alphaSession.appendMessage(UserMessage.text('alpha grew'));
     io.sendLine('/session $alphaId');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session '$alphaId'"),
-    );
+    await io.out.waitUntilContains("switched to session '$alphaId'");
     io.sendLine('/exit');
     await run;
 

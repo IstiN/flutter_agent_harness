@@ -119,12 +119,10 @@ void main() {
       io.sendLine('I need a key');
 
       // Wait for the secret prompt to appear, then send the value.
-      await waitForIt(
-        () => io.out.toString().contains('[secret] MY_KEY needed'),
-      );
+      await io.out.waitUntilContains('[secret] MY_KEY needed');
       io.sendLine('my-secret-value');
 
-      await waitForIt(() => io.out.toString().contains('done'));
+      await io.out.waitUntilContains('done');
       io.sendLine('/exit');
       await run;
 
@@ -161,13 +159,11 @@ void main() {
       // Send a user message to trigger the model turn.
       io.sendLine('I need a key');
 
-      await waitForIt(
-        () => io.out.toString().contains('[secret] API_KEY needed'),
-      );
+      await io.out.waitUntilContains('[secret] API_KEY needed');
       // Empty line = decline.
       io.sendLine('');
 
-      await waitForIt(() => io.out.toString().contains('declined'));
+      await io.out.waitUntilContains('declined');
       io.sendLine('/exit');
       await run;
 
@@ -177,8 +173,7 @@ void main() {
   });
 
   group('bundledCatalogModelIds', () {
-    test('exposes the offline fallback ids the leak guard must subtract',
-        () {
+    test('exposes the offline fallback ids the leak guard must subtract', () {
       // The cli_visual leak guard subtracts this set from real-config
       // markers: every id the /models offline fallback can render
       // without user config must be here, or a hermetic screen showing
@@ -196,4 +191,4 @@ void main() {
       expect(bundledCatalogModelIds, everyElement(isNotEmpty));
     });
   });
- }
+}

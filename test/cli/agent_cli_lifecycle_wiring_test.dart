@@ -209,7 +209,7 @@ void main() {
       io.sendLine('again');
       await waitForIt(() => fake.calls == 8 && !cli.isBusy);
       io.sendLine('/tasks');
-      await waitForIt(() => io.out.toString().contains('background agents:'));
+      await io.out.waitUntilContains('background agents:');
       io.sendLine('/exit');
       await run;
 

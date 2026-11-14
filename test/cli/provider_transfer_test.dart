@@ -428,9 +428,7 @@ void main() {
 
       await step('/provider export cicd', 'to the clipboard? [y/N]');
       io.sendLine('n');
-      await waitForIt(
-        () => io.out.toString().contains('export cancelled — nothing written'),
-      );
+      await io.out.waitUntilContains('export cancelled — nothing written');
       expect(clipboardBox, isNull);
       io.sendLine('/exit');
       await run;

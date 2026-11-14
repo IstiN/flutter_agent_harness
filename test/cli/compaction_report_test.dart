@@ -389,7 +389,7 @@ void main() {
         final cli = cliFor(fake.call);
         final run = cli.run();
         io.sendLine('/compact');
-        await waitForIt(() => io.out.toString().contains('nothing to compact'));
+        await io.out.waitUntilContains('nothing to compact');
         io.sendLine('/exit');
         await run;
 
@@ -419,7 +419,7 @@ void main() {
         io.sendLine('q');
         await waitForIt(() => fake.calls == 1 && !cli.isBusy);
         io.sendLine('/compact');
-        await waitForIt(() => io.out.toString().contains('● compacted'));
+        await io.out.waitUntilContains('● compacted');
         io.sendLine('/exit');
         await run;
 
@@ -462,7 +462,7 @@ void main() {
       io.sendLine('q');
       await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/compact');
-      await waitForIt(() => io.out.toString().contains('● compacted'));
+      await io.out.waitUntilContains('● compacted');
       io.sendLine('next');
       await waitForIt(() => fake.calls == 3 && !cli.isBusy);
       io.sendLine('/exit');

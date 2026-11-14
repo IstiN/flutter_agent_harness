@@ -67,11 +67,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/model');
-    await waitForIt(() => io.out.toString().contains('model: test-model'));
+    await io.out.waitUntilContains('model: test-model');
     io.sendLine('/model new-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched model to new-model'),
-    );
+    await io.out.waitUntilContains('switched model to new-model');
     io.sendLine('go');
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/exit');
@@ -90,12 +88,8 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/model new-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched model to new-model'),
-    );
-    await waitForIt(
-      () => io.out.toString().contains('smol/subagent/memory roles'),
-    );
+    await io.out.waitUntilContains('switched model to new-model');
+    await io.out.waitUntilContains('smol/subagent/memory roles');
     io.sendLine('/exit');
     await run;
 
@@ -112,7 +106,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('claude-sonnet-4-5'));
+    await io.out.waitUntilContains('claude-sonnet-4-5');
     io.sendLine('/exit');
     await run;
 
@@ -131,7 +125,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models opus');
-    await waitForIt(() => io.out.toString().contains('claude-opus-4'));
+    await io.out.waitUntilContains('claude-opus-4');
     io.sendLine('/exit');
     await run;
 
@@ -150,11 +144,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/model ?');
-    await waitForIt(() => io.out.toString().contains('use /model'));
+    await io.out.waitUntilContains('use /model');
     io.sendLine('/model claude-opus-4');
-    await waitForIt(
-      () => io.out.toString().contains('switched model to claude-opus-4'),
-    );
+    await io.out.waitUntilContains('switched model to claude-opus-4');
     io.sendLine('/exit');
     await run;
 
@@ -205,18 +197,14 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit');
-      await waitForIt(() => io.out.toString().contains('contextWindow 100000'));
+      await io.out.waitUntilContains('contextWindow 100000');
       io.sendLine('/model-edit contextWindow 131072');
-      await waitForIt(
-        () => io.out.toString().contains('model context window set to 131072'),
-      );
+      await io.out.waitUntilContains('model context window set to 131072');
       expect(cli.agent.state.model.contextWindow, 131072);
       expect(cli.agent.state.model.maxTokens, 4096);
 
       io.sendLine('/model-edit maxTokens 8192');
-      await waitForIt(
-        () => io.out.toString().contains('model max tokens set to 8192'),
-      );
+      await io.out.waitUntilContains('model max tokens set to 8192');
       expect(cli.agent.state.model.maxTokens, 8192);
       expect(cli.agent.state.model.contextWindow, 131072);
 
@@ -230,9 +218,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model-edit contextWindow nope');
-      await waitForIt(() => io.out.toString().contains('usage: /model-edit'));
+      await io.out.waitUntilContains('usage: /model-edit');
       io.sendLine('/model-edit bananas 123');
-      await waitForIt(() => io.out.toString().contains('usage: /model-edit'));
+      await io.out.waitUntilContains('usage: /model-edit');
       io.sendLine('/exit');
       await run;
 
@@ -932,9 +920,7 @@ void main() {
       await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
       io.sendLine('/provider codemie-personal');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       expect(cli.agent.state.model.baseUrl, codemieUrl);
 
       io.sendLine('/model claude-sonnet-5');

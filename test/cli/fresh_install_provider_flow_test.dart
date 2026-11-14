@@ -134,32 +134,26 @@ void main() {
     // any input — and its first question is the provider choice (issue
     // #1705), not the api type. Custom is the last option; the api-type
     // picker only follows it.
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('13'); // Custom → the guided api-type wizard
-    await waitForIt(() => io.out.toString().contains('api type'));
+    await io.out.waitUntilContains('api type');
     io.sendLine('1'); // openai-like
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('https://proxy.example.com/v1');
-    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
+    await io.out.waitUntilContains('provider name (empty =');
     io.sendLine('work');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
+    await io.out.waitUntilContains('API key (empty for none):');
     io.sendLine('sk-fresh-key-1');
-    await waitForIt(
-      () => io.out.toString().contains('no model list from the endpoint'),
-    );
+    await io.out.waitUntilContains('no model list from the endpoint');
     io.sendLine('proxy-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     // The wizard completes OUTSIDE the dispatch loop — the loop is parked
     // reading the next line when the last answer lands, so only the flow's
     // own completion can restore the idle prompt (round-1 review: it never
     // reappeared and the user had to submit a line blind). On a fresh boot
     // the prompt has never printed before this point, so its first
     // appearance here proves the redraw.
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('fa>');
     io.sendLine('/exit');
     await run;
 
@@ -194,17 +188,15 @@ void main() {
     );
     final run = cli.run();
 
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.interrupt(); // Ctrl-C on the first question (the provider choice)
-    await waitForIt(
-      () => io.out.toString().contains('provider setup cancelled'),
-    );
+    await io.out.waitUntilContains('provider setup cancelled');
     // The cancel happened at the provider pick — the api-type wizard the
     // Custom branch opens was never reached.
     expect(io.out.toString(), isNot(contains('custom provider setup')));
     // The cancel path restores the prompt too — without the redraw the
     // REPL looks dead until the user submits a line blind.
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('fa>');
 
     // Nothing applied: no provider switch, no persisted key. The REPL is
     // still usable — /exit goes through the normal path.
@@ -221,9 +213,9 @@ void main() {
     final cli = cliFor(fake.call, freshInstallProviderFlow: true);
     final run = cli.run();
 
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('10'); // OpenAI preset → the wizard, api type preselected
-    await waitForIt(() => io.out.toString().contains('api type'));
+    await io.out.waitUntilContains('api type');
     final transcript = io.out.toString();
     // The provider pick preceded the api-type question, and the preset
     // prefills it ('(current)') — the user is never cold-asked the api
@@ -235,10 +227,8 @@ void main() {
     expect(transcript, contains('openai-like'));
     expect(transcript, contains('(current)'));
     io.interrupt(); // Ctrl-C: nothing applied
-    await waitForIt(
-      () => io.out.toString().contains('custom provider setup cancelled'),
-    );
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('custom provider setup cancelled');
+    await io.out.waitUntilContains('fa>');
     io.sendLine('/exit');
     await run;
     expect(io.out.toString(), isNot(contains('switched provider')));
@@ -250,7 +240,7 @@ void main() {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
+      await io.out.waitUntilContains('fa>');
       expect(io.out.toString(), isNot(contains('custom provider setup')));
       io.sendLine('/exit');
       await run;
@@ -262,7 +252,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, freshInstallProviderFlow: true);
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('[Model]'));
+    await io.out.waitUntilContains('[Model]');
     expect(io.out.toString(), isNot(contains('custom provider setup')));
     io.sendLine('/exit');
     await run;

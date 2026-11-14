@@ -99,7 +99,7 @@ void main() {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
     final run = cli.run();
     io.sendLine('/settings');
-    await waitForIt(() => io.out.toString().contains('queue:'));
+    await io.out.waitUntilContains('queue:');
     io.sendLine('/exit');
     await run;
     expect(io.out.toString(), contains('queue: not set'));

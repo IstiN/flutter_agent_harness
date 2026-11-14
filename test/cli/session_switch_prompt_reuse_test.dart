@@ -58,9 +58,7 @@ void main() {
     await env.writeFile('/work/AGENTS.md', 'rotated-project-marker\n');
 
     io.sendLine('/session alpha');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'alpha'"),
-    );
+    await io.out.waitUntilContains("switched to session 'alpha'");
     expect(cli.systemPrompt, contains('work-project-marker'));
     expect(cli.systemPrompt, isNot(contains('rotated-project-marker')));
 
@@ -77,9 +75,7 @@ void main() {
     expect(cli.systemPrompt, contains('work-project-marker'));
 
     io.sendLine('/session beta');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'beta'"),
-    );
+    await io.out.waitUntilContains("switched to session 'beta'");
     expect(cli.systemPrompt, contains('other-project-marker'));
 
     // And back: adopting /work again reloads ITS project context.

@@ -386,56 +386,51 @@ void main() {
       );
     });
 
-    test(
-      'dedupes by record id, not list position: a poll whose window slid '
-      '(head eviction) still renders the appended record (gh-1555 W1 '
-      'rework — the headless tail poll composition)',
-      () {
-        final tailer = TrajectoryTailer(width: 200);
-        // The headless verb primes the tailer with the WHOLE ledger.
-        final ledger = [
-          for (var i = 0; i < 300; i++)
-            _userRecord('u$i', parentId: i == 0 ? null : 'u${i - 1}'),
-        ];
-        expect(tailer.tail(ledger), hasLength(300));
-        // A windowed poll after head eviction returns fewer records with
-        // the appended one at the tail — a count-based dedupe reads the
-        // shrunken length as "nothing new" and stalls forever.
-        final slidWindow = [
-          ...ledger.sublist(100),
-          _assistantRecord('a300', parentId: 'u299', content: const [
-            TextContent(text: 'late answer'),
-          ]),
-        ];
-        expect(
-          tailer.tail(slidWindow),
-          ['#301 ASSISTANT late answer (1,000 ms, 163 tok)'],
-        );
-      },
-    );
+    test('dedupes by record id, not list position: a poll whose window slid '
+        '(head eviction) still renders the appended record (gh-1555 W1 '
+        'rework — the headless tail poll composition)', () {
+      final tailer = TrajectoryTailer(width: 200);
+      // The headless verb primes the tailer with the WHOLE ledger.
+      final ledger = [
+        for (var i = 0; i < 300; i++)
+          _userRecord('u$i', parentId: i == 0 ? null : 'u${i - 1}'),
+      ];
+      expect(tailer.tail(ledger), hasLength(300));
+      // A windowed poll after head eviction returns fewer records with
+      // the appended one at the tail — a count-based dedupe reads the
+      // shrunken length as "nothing new" and stalls forever.
+      final slidWindow = [
+        ...ledger.sublist(100),
+        _assistantRecord(
+          'a300',
+          parentId: 'u299',
+          content: const [TextContent(text: 'late answer')],
+        ),
+      ];
+      expect(tailer.tail(slidWindow), [
+        '#301 ASSISTANT late answer (1,000 ms, 163 tok)',
+      ]);
+    });
 
-    test(
-      'the dedupe set is bounded: past the cap the oldest ids evict, so '
-      'a long-running tail does not accumulate every id forever '
-      '(review thread 6)',
-      () {
-        final tailer = TrajectoryTailer(width: 200, seenIdsCap: 10);
-        final firstBatch = [
-          for (var i = 0; i < 10; i++)
-            _userRecord('u$i', parentId: i == 0 ? null : 'u${i - 1}'),
-        ];
-        expect(tailer.tail(firstBatch), hasLength(10));
-        final secondBatch = [
-          for (var i = 10; i < 20; i++) _userRecord('u$i', parentId: 'u${i - 1}'),
-        ];
-        expect(tailer.tail(secondBatch), hasLength(10));
-        // The cap evicted the oldest ids: re-feeding an evicted id (only
-        // possible after a truncation re-anchor on an append-only
-        // ledger) re-renders it — the documented trade-off for a
-        // bounded set.
-        expect(tailer.tail([firstBatch.first]), isNotEmpty);
-      },
-    );
+    test('the dedupe set is bounded: past the cap the oldest ids evict, so '
+        'a long-running tail does not accumulate every id forever '
+        '(review thread 6)', () {
+      final tailer = TrajectoryTailer(width: 200, seenIdsCap: 10);
+      final firstBatch = [
+        for (var i = 0; i < 10; i++)
+          _userRecord('u$i', parentId: i == 0 ? null : 'u${i - 1}'),
+      ];
+      expect(tailer.tail(firstBatch), hasLength(10));
+      final secondBatch = [
+        for (var i = 10; i < 20; i++) _userRecord('u$i', parentId: 'u${i - 1}'),
+      ];
+      expect(tailer.tail(secondBatch), hasLength(10));
+      // The cap evicted the oldest ids: re-feeding an evicted id (only
+      // possible after a truncation re-anchor on an append-only
+      // ledger) re-renders it — the documented trade-off for a
+      // bounded set.
+      expect(tailer.tail([firstBatch.first]), isNotEmpty);
+    });
   });
 
   group('trajectoryJsonLine', () {
@@ -668,21 +663,19 @@ void main() {
       io.sendLine('hello');
       // 'turn 1' in the post-run status row: the settled-turn marker
       // (plain 'ok' would match the boot row's '0tok').
-      await waitForIt(
-        () => io.out.toString().contains('· turn 1 ·'),
+      await io.out.waitUntilContains(
+        '· turn 1 ·',
         reason: 'the prompt turn settles',
       );
       io.sendLine('/trajectory view');
-      await waitForIt(
-        () => io.out.toString().contains('#2 ASSISTANT'),
+      await io.out.waitUntilContains(
+        '#2 ASSISTANT',
         reason: 'the assistant ledger row appears',
       );
       final out = io.out.toString();
       expect(out, contains('#1 USER hello'));
       io.sendLine('/trajectory inspect 99');
-      await waitForIt(
-        () => io.out.toString().contains('trajectory: record out of range'),
-      );
+      await io.out.waitUntilContains('trajectory: record out of range');
       expect(io.out.toString(), contains('(1..2)'));
       io.sendLine('/exit');
       await run;
@@ -703,17 +696,17 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('hello');
-      await waitForIt(
-        () => io.out.toString().contains('· turn 1 ·'),
+      await io.out.waitUntilContains(
+        '· turn 1 ·',
         reason: 'the prompt turn settles',
       );
       io.sendLine('/trajectory tail');
-      await waitForIt(
-        () => io.out.toString().contains('following session records'),
+      await io.out.waitUntilContains(
+        'following session records',
         reason: 'the tail banner appears',
       );
-      await waitForIt(
-        () => io.out.toString().contains('#2 ASSISTANT'),
+      await io.out.waitUntilContains(
+        '#2 ASSISTANT',
         reason: 'the first poll renders the live rows',
       );
       io.interrupt();

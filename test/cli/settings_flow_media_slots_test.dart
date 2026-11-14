@@ -103,34 +103,26 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(() => io.out.toString().contains('media slot'));
+    await io.out.waitUntilContains('media slot');
     // No overrides yet: every slot shows unconfigured (never an inherited
     // main endpoint — gh-1844).
-    await waitForIt(
-      () => io.out.toString().contains('1) imageGeneration — not configured'),
-    );
+    await io.out.waitUntilContains('1) imageGeneration — not configured');
     io.sendLine('1'); // imageGeneration
     // The #2085 action step: pick a model → the provider list.
-    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    await io.out.waitUntilContains('Pick a model');
     io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('media imageGeneration — provider'),
-    );
-    await waitForIt(() => io.out.toString().contains('1) my-ollama'));
+    await io.out.waitUntilContains('media imageGeneration — provider');
+    await io.out.waitUntilContains('1) my-ollama');
     // Catalog order is aiin, openrouter, kimi, openai, ... — openai is #5
     // after the saved entry and aiin (issue #2068 added aiin to the media
     // list; it now precedes the shared-kind entries in catalog order).
-    await waitForIt(() => io.out.toString().contains('5) openai'));
+    await io.out.waitUntilContains('5) openai');
     io.sendLine('5'); // openai
-    await waitForIt(
-      () => io.out.toString().contains("model id (empty keeps 'test-model')"),
-    );
+    await io.out.waitUntilContains("model id (empty keeps 'test-model')");
     io.sendLine('dall-e-3');
-    await waitForIt(
-      () => io.out.toString().contains(
-        'slot imageGeneration → dall-e-3 @ https://api.openai.com/v1 '
-        '(openai-completions)',
-      ),
+    await io.out.waitUntilContains(
+      'slot imageGeneration → dall-e-3 @ https://api.openai.com/v1 '
+      '(openai-completions)',
     );
     await flow;
     io.sendLine('/exit');
@@ -168,24 +160,18 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(() => io.out.toString().contains('media slot'));
+    await io.out.waitUntilContains('media slot');
     io.sendLine('4'); // videoGeneration
     // The #2085 action step: pick a model → the provider list.
-    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    await io.out.waitUntilContains('Pick a model');
     io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('media videoGeneration — provider'),
-    );
-    await waitForIt(() => io.out.toString().contains('1) minimax'));
+    await io.out.waitUntilContains('media videoGeneration — provider');
+    await io.out.waitUntilContains('1) minimax');
     io.sendLine('1'); // minimax
-    await waitForIt(
-      () => io.out.toString().contains("model id (empty keeps 'MiniMax-M3')"),
-    );
+    await io.out.waitUntilContains("model id (empty keeps 'MiniMax-M3')");
     io.sendLine('MiniMax-H3');
-    await waitForIt(
-      () => io.out.toString().contains(
-        'slot videoGeneration → MiniMax-H3 @ https://api.minimax.io/v1',
-      ),
+    await io.out.waitUntilContains(
+      'slot videoGeneration → MiniMax-H3 @ https://api.minimax.io/v1',
     );
     await flow;
     io.sendLine('/exit');
@@ -215,17 +201,14 @@ void main() {
     );
     final run = cli.run();
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(() => io.out.toString().contains('media slot'));
+    await io.out.waitUntilContains('media slot');
     io.sendLine(slotKey);
     // The #2085 action step: pick a model → the provider list.
-    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    await io.out.waitUntilContains('Pick a model');
     io.sendLine('1');
     // The prompt and its option list render in one write burst — assert
     // both off the whole (fresh-io) buffer.
-    await waitForIt(
-      () => io.out.toString().contains(title),
-      reason: '$title provider prompt',
-    );
+    await io.out.waitUntilContains(title);
     await waitForIt(
       () => RegExp(r'\d\) aiin').hasMatch(io.out.toString()),
       reason: 'aiin row in the $title list',
@@ -307,17 +290,15 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMediaSlotFlow();
-      await waitForIt(() => io.out.toString().contains('media slot'));
+      await io.out.waitUntilContains('media slot');
       io.sendLine('1'); // imageGeneration
       // The #2085 action step: pick a model → the provider list.
-      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      await io.out.waitUntilContains('Pick a model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('media imageGeneration — provider'),
-      );
+      await io.out.waitUntilContains('media imageGeneration — provider');
       // The saved entry's spec api (openai-completions) keeps it eligible;
       // the anthropic-wire entry stays hidden.
-      await waitForIt(() => io.out.toString().contains('my-relay'));
+      await io.out.waitUntilContains('my-relay');
       io.interrupt();
       await flow;
       io.sendLine('/exit');
@@ -357,33 +338,25 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMediaSlotFlow();
-      await waitForIt(() => io.out.toString().contains('media slot'));
+      await io.out.waitUntilContains('media slot');
       io.sendLine('1'); // imageGeneration
       // The #2085 action step: pick a model → the provider list.
-      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      await io.out.waitUntilContains('Pick a model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('media imageGeneration — provider'),
-      );
+      await io.out.waitUntilContains('media imageGeneration — provider');
       await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
       io.sendLine('1'); // aiin (first catalog row, no saved entries)
-      await waitForIt(
-        () => io.out.toString().contains(
-          'fetching models from https://api.aiin.by/v1 ...',
-        ),
+      await io.out.waitUntilContains(
+        'fetching models from https://api.aiin.by/v1 ...',
       );
       // The seeded image ids are offered; the chat answer is not.
-      await waitForIt(
-        () => io.out.toString().contains('google/gemini-3.1-flash-image'),
-      );
+      await io.out.waitUntilContains('google/gemini-3.1-flash-image');
       expect(io.out.toString(), isNot(contains('aiin/aiin_free')));
-      await waitForIt(() => io.out.toString().contains('+ enter manually'));
+      await io.out.waitUntilContains('+ enter manually');
       io.sendLine('1'); // the first seeded image id
-      await waitForIt(
-        () => io.out.toString().contains(
-          'slot imageGeneration → google/gemini-3.1-flash-image '
-          '@ https://api.aiin.by/v1',
-        ),
+      await io.out.waitUntilContains(
+        'slot imageGeneration → google/gemini-3.1-flash-image '
+        '@ https://api.aiin.by/v1',
       );
       await flow;
       io.sendLine('/exit');
@@ -413,25 +386,19 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMediaSlotFlow();
-      await waitForIt(() => io.out.toString().contains('media slot'));
+      await io.out.waitUntilContains('media slot');
       io.sendLine('1'); // imageGeneration
       // The #2085 action step: pick a model → the provider list.
-      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      await io.out.waitUntilContains('Pick a model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('media imageGeneration — provider'),
-      );
+      await io.out.waitUntilContains('media imageGeneration — provider');
       await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
       io.sendLine('1'); // aiin
       // The fetch failure answers an empty list — no crash, manual entry.
-      await waitForIt(
-        () => io.out.toString().contains("model id (empty keeps 'test-model')"),
-      );
+      await io.out.waitUntilContains("model id (empty keeps 'test-model')");
       io.sendLine('my-image-model');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'slot imageGeneration → my-image-model @ https://api.aiin.by/v1',
-        ),
+      await io.out.waitUntilContains(
+        'slot imageGeneration → my-image-model @ https://api.aiin.by/v1',
       );
       await flow;
       io.sendLine('/exit');
@@ -455,17 +422,15 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startChatModelFlow();
-    await waitForIt(() => io.out.toString().contains('chat model — provider'));
+    await io.out.waitUntilContains('chat model — provider');
     await waitForIt(() => RegExp(r'\d\) aiin').hasMatch(io.out.toString()));
     io.sendLine('1'); // aiin (first catalog row)
-    await waitForIt(
-      () => io.out.toString().contains(
-        'fetching models from https://api.aiin.by/v1 ...',
-      ),
+    await io.out.waitUntilContains(
+      'fetching models from https://api.aiin.by/v1 ...',
     );
     // The fetched chat ids are offered with the manual-entry escape.
-    await waitForIt(() => io.out.toString().contains('aiin/aiin_flash'));
-    await waitForIt(() => io.out.toString().contains('+ enter manually'));
+    await io.out.waitUntilContains('aiin/aiin_flash');
+    await io.out.waitUntilContains('+ enter manually');
     io.interrupt();
     await flow;
     io.sendLine('/exit');
@@ -489,10 +454,8 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(
-      () => io.out.toString().contains(
-        '1) imageGeneration — img-v1 @ http://img.local/v1',
-      ),
+    await io.out.waitUntilContains(
+      '1) imageGeneration — img-v1 @ http://img.local/v1',
     );
     io.interrupt(); // cancel the slot pick
     await flow;
@@ -535,15 +498,13 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(() => io.out.toString().contains('media slot'));
+    await io.out.waitUntilContains('media slot');
     io.sendLine('1'); // imageGeneration
     // The #2085 action step: pick a model → the provider list.
-    await waitForIt(() => io.out.toString().contains('Pick a model'));
+    await io.out.waitUntilContains('Pick a model');
     io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('media imageGeneration — provider'),
-    );
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('media imageGeneration — provider');
+    await io.out.waitUntilContains('type a number:');
     io.interrupt();
     await flow;
     io.sendLine('/exit');
@@ -569,13 +530,11 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMediaSlotFlow();
-      await waitForIt(() => io.out.toString().contains('media slot'));
+      await io.out.waitUntilContains('media slot');
       io.sendLine('2'); // audioTts
-      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      await io.out.waitUntilContains('Pick a model');
       io.sendLine('2'); // Use the main connection
-      await waitForIt(
-        () => io.out.toString().contains('slot audioTts → main connection'),
-      );
+      await io.out.waitUntilContains('slot audioTts → main connection');
       await flow;
       io.sendLine('/exit');
       await run;
@@ -603,14 +562,12 @@ void main() {
       final run = cli.run();
 
       final flow = cli.startMediaSlotFlow();
-      await waitForIt(() => io.out.toString().contains('media slot'));
+      await io.out.waitUntilContains('media slot');
       io.sendLine('3'); // musicGeneration
-      await waitForIt(() => io.out.toString().contains('Pick a model'));
+      await io.out.waitUntilContains('Pick a model');
       io.sendLine('3'); // Mark unsupported
-      await waitForIt(
-        () => io.out.toString().contains(
-          'slot musicGeneration → unsupported (capability removed)',
-        ),
+      await io.out.waitUntilContains(
+        'slot musicGeneration → unsupported (capability removed)',
       );
       await flow;
       io.sendLine('/exit');
@@ -648,20 +605,12 @@ void main() {
     final run = cli.run();
 
     final flow = cli.startMediaSlotFlow();
-    await waitForIt(
-      () => io.out.toString().contains('1) imageGeneration — img-v1'),
+    await io.out.waitUntilContains('1) imageGeneration — img-v1');
+    await io.out.waitUntilContains('2) audioTts — main connection');
+    await io.out.waitUntilContains(
+      '3) musicGeneration — unsupported (capability removed)',
     );
-    await waitForIt(
-      () => io.out.toString().contains('2) audioTts — main connection'),
-    );
-    await waitForIt(
-      () => io.out.toString().contains(
-        '3) musicGeneration — unsupported (capability removed)',
-      ),
-    );
-    await waitForIt(
-      () => io.out.toString().contains('4) videoGeneration — not configured'),
-    );
+    await io.out.waitUntilContains('4) videoGeneration — not configured');
     io.interrupt(); // cancel the slot pick
     await flow;
     io.sendLine('/exit');

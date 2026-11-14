@@ -52,8 +52,8 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, agentMode: 'pi');
     final run = cli.run();
-    await waitForIt(
-      () => io.out.toString().contains('pi benchmark: initial context'),
+    await io.out.waitUntilContains(
+      'pi benchmark: initial context',
       reason: 'pi boot print',
     );
     await waitForIt(
@@ -97,8 +97,8 @@ void main() {
           reason: 'tool-scope pin applied',
         );
         io.sendLine('/tools');
-        await waitForIt(
-          () => io.out.toString().contains('tool             tier'),
+        await io.out.waitUntilContains(
+          'tool             tier',
           reason: '/tools listing rendered',
         );
         io.sendLine('/exit');
@@ -134,8 +134,8 @@ void main() {
           () => (cli.mcpManagerForTest?.tools ?? const []).isNotEmpty,
           reason: 'fake mcp server connected',
         );
-        await waitForIt(
-          () => io.out.toString().contains('pi benchmark: initial context'),
+        await io.out.waitUntilContains(
+          'pi benchmark: initial context',
           reason: 'pi boot print',
         );
         expect(

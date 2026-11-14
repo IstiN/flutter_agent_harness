@@ -91,7 +91,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider');
-    await waitForIt(() => io.out.toString().contains('supported providers:'));
+    await io.out.waitUntilContains('supported providers:');
     io.sendLine('/exit');
     await run;
 
@@ -127,11 +127,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider my-ollama');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/provider');
-    await waitForIt(() => io.out.toString().contains('saved providers:'));
+    await io.out.waitUntilContains('saved providers:');
     io.sendLine('/exit');
     await run;
 
@@ -156,9 +154,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider anthropic');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to anthropic'),
-    );
+    await io.out.waitUntilContains('switched provider to anthropic');
     io.sendLine('/exit');
     await run;
 
@@ -189,9 +185,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider openai http://127.0.0.1:1/v1');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/exit');
     await run;
 
@@ -217,9 +211,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider openai http://127.0.0.1:1/v1 tok-1234567890');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/exit');
     await run;
 
@@ -235,13 +227,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider bogus');
-    await waitForIt(
-      () => io.out.toString().contains('unknown provider: bogus'),
-    );
+    await io.out.waitUntilContains('unknown provider: bogus');
     io.sendLine('/provider a b c d');
-    await waitForIt(
-      () => io.out.toString().contains('usage: /provider <name>'),
-    );
+    await io.out.waitUntilContains('usage: /provider <name>');
     io.sendLine('/exit');
     await run;
 
@@ -270,9 +258,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/key');
-    await waitForIt(
-      () => io.out.toString().contains('secure storage: fake store'),
-    );
+    await io.out.waitUntilContains('secure storage: fake store');
     io.sendLine('/exit');
     await run;
 
@@ -299,9 +285,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-      await waitForIt(
-        () => io.out.toString().contains('saved OPENAI_API_KEY to fake store'),
-      );
+      await io.out.waitUntilContains('saved OPENAI_API_KEY to fake store');
       io.sendLine('/exit');
       await run;
 
@@ -324,9 +308,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-    await waitForIt(
-      () => io.out.toString().contains('secure storage unavailable'),
-    );
+    await io.out.waitUntilContains('secure storage unavailable');
     io.sendLine('/exit');
     await run;
 
@@ -344,9 +326,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/key set OPENAI_API_KEY sk-new-key-456');
-      await waitForIt(
-        () => io.out.toString().contains('could not save OPENAI_API_KEY'),
-      );
+      await io.out.waitUntilContains('could not save OPENAI_API_KEY');
       io.sendLine('/exit');
       await run;
 
@@ -372,9 +352,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
-      await waitForIt(
-        () => io.out.toString().contains('could not save the key'),
-      );
+      await io.out.waitUntilContains('could not save the key');
       io.sendLine('/exit');
       await run;
 
@@ -396,7 +374,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/key delete OPENAI_API_KEY');
-    await waitForIt(() => io.out.toString().contains('removed OPENAI_API_KEY'));
+    await io.out.waitUntilContains('removed OPENAI_API_KEY');
     io.sendLine('/exit');
     await run;
 
@@ -415,15 +393,13 @@ void main() {
     // Line mode: /key set NAME (without value) prompts for the value;
     // an empty value cancels.
     io.sendLine('/key set ONLYNAME');
-    await waitForIt(() => io.out.toString().contains('value'));
+    await io.out.waitUntilContains('value');
     io.sendLine('');
-    await waitForIt(() => io.out.toString().contains('cancelled'));
+    await io.out.waitUntilContains('cancelled');
     io.sendLine('/key set bad-name! value');
-    await waitForIt(
-      () => io.out.toString().contains('invalid key name: bad-name!'),
-    );
+    await io.out.waitUntilContains('invalid key name: bad-name!');
     io.sendLine('/key frobnicate');
-    await waitForIt(() => io.out.toString().contains('usage: /key [set'));
+    await io.out.waitUntilContains('usage: /key [set');
     io.sendLine('/exit');
     await run;
 
@@ -439,7 +415,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider openai http://127.0.0.1:1/v1 sk-token-789');
-    await waitForIt(() => io.out.toString().contains('saved to fake store'));
+    await io.out.waitUntilContains('saved to fake store');
     io.sendLine('/exit');
     await run;
 
@@ -564,23 +540,17 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('1');
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('http://127.0.0.1:1/v1');
-    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
+    await io.out.waitUntilContains('provider name (empty =');
     io.sendLine('');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
+    await io.out.waitUntilContains('API key (empty for none):');
     io.sendLine('');
-    await waitForIt(
-      () => io.out.toString().contains('no model list from the endpoint'),
-    );
+    await io.out.waitUntilContains('no model list from the endpoint');
     io.sendLine('my-local-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/exit');
     await run;
 
@@ -605,21 +575,17 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('1');
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('https://proxy.example.com/v1');
-    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
+    await io.out.waitUntilContains('provider name (empty =');
     io.sendLine('');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
+    await io.out.waitUntilContains('API key (empty for none):');
     io.sendLine('');
-    await waitForIt(() => io.out.toString().contains('2) m2'));
+    await io.out.waitUntilContains('2) m2');
     io.sendLine('2');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/exit');
     await run;
 
@@ -641,23 +607,17 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('1');
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('https://proxy.example.com/v1');
-    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
+    await io.out.waitUntilContains('provider name (empty =');
     io.sendLine('work');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
+    await io.out.waitUntilContains('API key (empty for none):');
     io.sendLine('sk-flow-key-1');
-    await waitForIt(
-      () => io.out.toString().contains('no model list from the endpoint'),
-    );
+    await io.out.waitUntilContains('no model list from the endpoint');
     io.sendLine('proxy-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to openai'),
-    );
+    await io.out.waitUntilContains('switched provider to openai');
     io.sendLine('/exit');
     await run;
 
@@ -726,21 +686,17 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('2');
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('https://anthropic-proxy.example.com');
-    await waitForIt(() => io.out.toString().contains('provider name (empty ='));
+    await io.out.waitUntilContains('provider name (empty =');
     io.sendLine('');
-    await waitForIt(
-      () => io.out.toString().contains('API key (empty for none):'),
-    );
+    await io.out.waitUntilContains('API key (empty for none):');
     io.sendLine('');
-    await waitForIt(() => io.out.toString().contains('model id (empty keeps'));
+    await io.out.waitUntilContains('model id (empty keeps');
     io.sendLine('claude-proxy-model');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to anthropic'),
-    );
+    await io.out.waitUntilContains('switched provider to anthropic');
     io.sendLine('/exit');
     await run;
 
@@ -759,17 +715,15 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom extra');
-    await waitForIt(
-      () => io.out.toString().contains('usage: /provider custom'),
-    );
+    await io.out.waitUntilContains('usage: /provider custom');
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.sendLine('x');
-    await waitForIt(() => io.out.toString().contains('invalid selection: x'));
+    await io.out.waitUntilContains('invalid selection: x');
     io.sendLine('1');
-    await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+    await io.out.waitUntilContains('base URL (empty =');
     io.sendLine('localhost:8080');
-    await waitForIt(() => io.out.toString().contains('invalid base URL'));
+    await io.out.waitUntilContains('invalid base URL');
     io.sendLine('/exit');
     await run;
 
@@ -783,11 +737,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider custom');
-    await waitForIt(() => io.out.toString().contains('type a number:'));
+    await io.out.waitUntilContains('type a number:');
     io.interrupt();
-    await waitForIt(
-      () => io.out.toString().contains('custom provider setup cancelled'),
-    );
+    await io.out.waitUntilContains('custom provider setup cancelled');
     io.sendLine('/exit');
     await run;
 
@@ -811,9 +763,7 @@ void main() {
         ..sendLine('')
         ..sendLine('')
         ..sendLine('my-local-model');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       io.sendLine('/exit');
       await run;
 
@@ -834,27 +784,17 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider custom');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('base URL (empty = https://'),
-      );
+      await io.out.waitUntilContains('base URL (empty = https://');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
+      await io.out.waitUntilContains('provider name (empty =');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('API key (empty for none):'),
-      );
+      await io.out.waitUntilContains('API key (empty for none):');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('no model list from the endpoint'),
-      );
+      await io.out.waitUntilContains('no model list from the endpoint');
       io.sendLine('gpt-4o-mini');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       io.sendLine('/exit');
       await run;
 
@@ -877,23 +817,17 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider custom');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('1');
-      await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+      await io.out.waitUntilContains('base URL (empty =');
       io.sendLine('http://localhost:11434/v1');
-      await waitForIt(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
+      await io.out.waitUntilContains('provider name (empty =');
       io.sendLine('my-ollama');
-      await waitForIt(
-        () => io.out.toString().contains('API key (empty for none):'),
-      );
+      await io.out.waitUntilContains('API key (empty for none):');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('2) m2'));
+      await io.out.waitUntilContains('2) m2');
       io.sendLine('2');
-      await waitForIt(
-        () => io.out.toString().contains('saved provider my-ollama'),
-      );
+      await io.out.waitUntilContains('saved provider my-ollama');
 
       final entry = registry.entries.single;
       expect(entry.name, 'my-ollama');
@@ -902,21 +836,15 @@ void main() {
 
       // A catalog switch clears it; switching back by name restores m2.
       io.sendLine('/provider anthropic');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to anthropic'),
-      );
+      await io.out.waitUntilContains('switched provider to anthropic');
       io.sendLine('/model other-model');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to other-model'),
-      );
+      await io.out.waitUntilContains('switched model to other-model');
       io.sendLine('/provider my-ollama');
       await waitForIt(() => cli.agent.state.model.id == 'm2');
 
       // Per-provider model memory: /model rewrites the entry.
       io.sendLine('/model llama3.2');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to llama3.2'),
-      );
+      await io.out.waitUntilContains('switched model to llama3.2');
       expect(registry.find('my-ollama')!.modelId, 'llama3.2');
       io.sendLine('/exit');
       await run;
@@ -974,9 +902,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider-edit');
-      await waitForIt(
-        () => io.out.toString().contains('unknown command: /provider-edit'),
-      );
+      await io.out.waitUntilContains('unknown command: /provider-edit');
       io.sendLine('/exit');
       await run;
     },
@@ -1013,17 +939,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider openrouter oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('OpenRouter OAuth (headless)'),
-        );
-        await waitForIt(
-          () => io.out.toString().contains('authorization code:'),
-        );
+        await io.out.waitUntilContains('OpenRouter OAuth (headless)');
+        await io.out.waitUntilContains('authorization code:');
 
         io.sendLine('auth-code-123');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to openrouter'),
-        );
+        await io.out.waitUntilContains('switched provider to openrouter');
         io.sendLine('/exit');
         await run;
 
@@ -1076,20 +996,14 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider openrouter oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('authorization code:'),
-        );
+        await io.out.waitUntilContains('authorization code:');
         io.sendLine('auth-code-123');
         // First connect offers the provider-name step every add flow has.
-        await waitForIt(
-          () => io.out.toString().contains('provider name [openrouter.ai]'),
-        );
+        await io.out.waitUntilContains('provider name [openrouter.ai]');
         io.sendLine(''); // keep the host-derived default name
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to openrouter'),
-        );
+        await io.out.waitUntilContains('switched provider to openrouter');
         io.sendLine('/provider');
-        await waitForIt(() => io.out.toString().contains('saved providers:'));
+        await io.out.waitUntilContains('saved providers:');
         io.sendLine('/exit');
         await run;
 
@@ -1128,15 +1042,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openrouter oauth headless');
-      await waitForIt(() => io.out.toString().contains('authorization code:'));
+      await io.out.waitUntilContains('authorization code:');
       io.sendLine('auth-code-123');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [openrouter.ai]'),
-      );
+      await io.out.waitUntilContains('provider name [openrouter.ai]');
       io.sendLine('my-or');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openrouter'),
-      );
+      await io.out.waitUntilContains('switched provider to openrouter');
       io.sendLine('/exit');
       await run;
 
@@ -1177,15 +1087,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider openrouter');
-        await waitForIt(
-          () => io.out.toString().contains('OpenRouter sign-in method'),
-        );
+        await io.out.waitUntilContains('OpenRouter sign-in method');
         // The stored-key option is offered first in the list.
         expect(io.out.toString(), contains('1) Use stored key'));
         io.sendLine('1'); // accept the stored key
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to openrouter'),
-        );
+        await io.out.waitUntilContains('switched provider to openrouter');
         io.sendLine('/exit');
         await run;
 
@@ -1220,13 +1126,9 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider openrouter oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('authorization code:'),
-        );
+        await io.out.waitUntilContains('authorization code:');
         io.sendLine('auth-code-123');
-        await waitForIt(
-          () => io.out.toString().contains('OpenRouter authorized'),
-        );
+        await io.out.waitUntilContains('OpenRouter authorized');
         io.sendLine('/exit');
         await run;
 
@@ -1244,9 +1146,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openrouter oauth too many args');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider openrouter oauth'),
-      );
+      await io.out.waitUntilContains('usage: /provider openrouter oauth');
       io.sendLine('/exit');
       await run;
     });
@@ -1257,11 +1157,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openrouter oauth headless');
-      await waitForIt(() => io.out.toString().contains('authorization code:'));
+      await io.out.waitUntilContains('authorization code:');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('OpenRouter OAuth cancelled'),
-      );
+      await io.out.waitUntilContains('OpenRouter OAuth cancelled');
       io.sendLine('/exit');
       await run;
     });
@@ -1291,19 +1189,15 @@ void main() {
         // Line-mode answers: default base URL (empty), the API key, then the
         // deployment id (the models fetch fails against the default host —
         // no fetcher injected here, the network error is swallowed).
-        await waitForIt(() => io.out.toString().contains('base URL [https://'));
+        await io.out.waitUntilContains('base URL [https://');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('DIAL API key'));
+        await io.out.waitUntilContains('DIAL API key');
         io.sendLine('dial-key-1');
-        await waitForIt(
-          () => io.out.toString().contains('deployment (model id)'),
-        );
+        await io.out.waitUntilContains('deployment (model id)');
         io.sendLine('anthropic.claude-sonnet-4-5-v1:0');
-        await waitForIt(() => io.out.toString().contains('provider name'));
+        await io.out.waitUntilContains('provider name');
         io.sendLine('my-dial');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to dial'),
-        );
+        await io.out.waitUntilContains('switched provider to dial');
         io.sendLine('/exit');
         await run;
 
@@ -1341,19 +1235,15 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider dial setup');
-        await waitForIt(() => io.out.toString().contains('base URL [https://'));
+        await io.out.waitUntilContains('base URL [https://');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('DIAL API key'));
+        await io.out.waitUntilContains('DIAL API key');
         io.sendLine('');
-        await waitForIt(
-          () => io.out.toString().contains('deployment (model id)'),
-        );
+        await io.out.waitUntilContains('deployment (model id)');
         io.sendLine('new-model');
-        await waitForIt(() => io.out.toString().contains('provider name'));
+        await io.out.waitUntilContains('provider name');
         io.sendLine('');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to dial'),
-        );
+        await io.out.waitUntilContains('switched provider to dial');
         io.sendLine('/exit');
         await run;
 
@@ -1380,19 +1270,15 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider dial setup');
-      await waitForIt(() => io.out.toString().contains('base URL [https://'));
+      await io.out.waitUntilContains('base URL [https://');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('DIAL API key'));
+      await io.out.waitUntilContains('DIAL API key');
       io.sendLine('dial-key-2');
-      await waitForIt(
-        () => io.out.toString().contains('deployment (model id)'),
-      );
+      await io.out.waitUntilContains('deployment (model id)');
       io.sendLine('gpt-4o');
-      await waitForIt(() => io.out.toString().contains('provider name'));
+      await io.out.waitUntilContains('provider name');
       io.sendLine('dial-work');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to dial'),
-      );
+      await io.out.waitUntilContains('switched provider to dial');
       io.sendLine('/exit');
       await run;
 
@@ -1410,9 +1296,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider dial setup extra');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider dial setup'),
-      );
+      await io.out.waitUntilContains('usage: /provider dial setup');
       io.sendLine('/exit');
       await run;
     });
@@ -1424,15 +1308,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openrouter');
-      await waitForIt(
-        () => io.out.toString().contains('OpenRouter sign-in method'),
-      );
+      await io.out.waitUntilContains('OpenRouter sign-in method');
       io.sendLine('2'); // API key option
-      await waitForIt(() => io.out.toString().contains('OpenRouter API key:'));
+      await io.out.waitUntilContains('OpenRouter API key:');
       io.sendLine('sk-or-test-key');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openrouter'),
-      );
+      await io.out.waitUntilContains('switched provider to openrouter');
       io.sendLine('/exit');
       await run;
 
@@ -1457,19 +1337,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider openrouter');
-      await waitForIt(
-        () => io.out.toString().contains('OpenRouter sign-in method'),
-      );
+      await io.out.waitUntilContains('OpenRouter sign-in method');
       io.sendLine('2'); // API key option
-      await waitForIt(() => io.out.toString().contains('OpenRouter API key:'));
+      await io.out.waitUntilContains('OpenRouter API key:');
       io.sendLine('sk-or-key');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [openrouter.ai]'),
-      );
+      await io.out.waitUntilContains('provider name [openrouter.ai]');
       io.sendLine(''); // keep the host-derived default name
-      await waitForIt(
-        () => io.out.toString().contains('saved provider openrouter.ai'),
-      );
+      await io.out.waitUntilContains('saved provider openrouter.ai');
       io.sendLine('/exit');
       await run;
 
@@ -1499,14 +1373,12 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      await io.out.waitUntilContains('Kimi API key');
       io.sendLine('sk-kimi-test');
       // No provider carries a default model anymore — the flow asks.
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to kimi'),
-      );
+      await io.out.waitUntilContains('switched provider to kimi');
       io.sendLine('/exit');
       await run;
 
@@ -1538,15 +1410,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      await io.out.waitUntilContains('Kimi API key');
       io.sendLine('sk-kimi-work');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [api.kimi.com]'),
-      );
+      await io.out.waitUntilContains('provider name [api.kimi.com]');
       io.sendLine('work');
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(() => io.out.toString().contains('saved provider work'));
+      await io.out.waitUntilContains('saved provider work');
       io.sendLine('/exit');
       await run;
 
@@ -1582,21 +1452,15 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      await io.out.waitUntilContains('Kimi API key');
       io.sendLine('sk-kimi-x');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [api.kimi.com]'),
-      );
+      await io.out.waitUntilContains('provider name [api.kimi.com]');
       io.sendLine('kimi'); // built-in name — must be rejected
-      await waitForIt(
-        () => io.out.toString().contains('is a built-in provider name'),
-      );
+      await io.out.waitUntilContains('is a built-in provider name');
       io.sendLine('personal');
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('saved provider personal'),
-      );
+      await io.out.waitUntilContains('saved provider personal');
       io.sendLine('/exit');
       await run;
 
@@ -1624,21 +1488,15 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider kimi');
-        await waitForIt(() => io.out.toString().contains('Kimi API key'));
+        await io.out.waitUntilContains('Kimi API key');
         io.sendLine('sk-kimi-x');
-        await waitForIt(
-          () => io.out.toString().contains('provider name [api.kimi.com]'),
-        );
+        await io.out.waitUntilContains('provider name [api.kimi.com]');
         io.sendLine('?'); // junk name — must be rejected with a re-prompt
-        await waitForIt(
-          () => io.out.toString().contains('not a usable provider name'),
-        );
+        await io.out.waitUntilContains('not a usable provider name');
         io.sendLine('personal');
-        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        await io.out.waitUntilContains('Kimi model');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('saved provider personal'),
-        );
+        await io.out.waitUntilContains('saved provider personal');
         io.sendLine('/exit');
         await run;
 
@@ -1671,13 +1529,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('1'); // Use the resolved key → plain catalog switch
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to kimi'),
-      );
+      await io.out.waitUntilContains('switched provider to kimi');
       // Simulate the model-memory write path a `/model` switch takes.
       cli.recordCustomModelForTest('k3');
       io.sendLine('/exit');
@@ -1720,20 +1576,16 @@ void main() {
         io.sendLine('/provider kimi');
         // The resolved-key picker appears (no key re-prompt), showing the
         // name-scoped slot as the source.
-        await waitForIt(
-          () => io.out.toString().contains('Use the resolved key'),
-        );
+        await io.out.waitUntilContains('Use the resolved key');
         expect(io.out.toString(), contains('FA_KEY_API_KIMI_COM_WORK'));
         expect(
           io.out.toString(),
           isNot(contains('Kimi API key (empty to skip')),
         );
         io.sendLine('1'); // Use the resolved key
-        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        await io.out.waitUntilContains('Kimi model');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to kimi'),
-        );
+        await io.out.waitUntilContains('switched provider to kimi');
         io.sendLine('/exit');
         await run;
 
@@ -1753,13 +1605,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider kimi');
-        await waitForIt(() => io.out.toString().contains('type a number:'));
+        await io.out.waitUntilContains('type a number:');
         io.sendLine('1'); // Use the resolved key
-        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        await io.out.waitUntilContains('Kimi model');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to kimi'),
-        );
+        await io.out.waitUntilContains('switched provider to kimi');
         io.sendLine('/exit');
         await run;
 
@@ -1790,19 +1640,19 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('2'); // Use a different API key → the generic wizard
-      await waitForIt(() => io.out.toString().contains('api type'));
+      await io.out.waitUntilContains('api type');
       io.sendLine('1'); // openai-like
-      await waitForIt(() => io.out.toString().contains('base URL'));
+      await io.out.waitUntilContains('base URL');
       io.sendLine(''); // keep the prefilled kimi endpoint
-      await waitForIt(() => io.out.toString().contains('provider name'));
+      await io.out.waitUntilContains('provider name');
       io.sendLine(''); // accept the derived unique name
-      await waitForIt(() => io.out.toString().contains('API key'));
+      await io.out.waitUntilContains('API key');
       io.sendLine('sk-kimi-2');
-      await waitForIt(() => io.out.toString().contains('model id'));
+      await io.out.waitUntilContains('model id');
       io.sendLine(''); // keep k3
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -1827,13 +1677,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi');
-      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      await io.out.waitUntilContains('Kimi API key');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to kimi'),
-      );
+      await io.out.waitUntilContains('switched provider to kimi');
       io.sendLine('/exit');
       await run;
 
@@ -1862,15 +1710,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi https://kimi-proxy.example.com/v1');
-      await waitForIt(() => io.out.toString().contains('Kimi API key'));
+      await io.out.waitUntilContains('Kimi API key');
       io.sendLine('sk-proxy-key');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [kimi-proxy'),
-      );
+      await io.out.waitUntilContains('provider name [kimi-proxy');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      await io.out.waitUntilContains('Kimi model');
       io.sendLine('1');
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -1908,9 +1754,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider my-ollama');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       io.sendLine('/exit');
       await run;
 
@@ -1947,13 +1791,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider alpha');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       io.sendLine('/model new-model');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to new-model'),
-      );
+      await io.out.waitUntilContains('switched model to new-model');
       io.sendLine('/exit');
       await run;
 
@@ -1987,30 +1827,24 @@ void main() {
         // Switch the active model to kimi first, then open the codemie
         // entry's edit wizard (the TUI picker's Edit action).
         io.sendLine('/provider kimi https://api.kimi.com/coding/v1');
-        await waitForIt(() => io.out.toString().contains('Kimi API key'));
+        await io.out.waitUntilContains('Kimi API key');
         io.sendLine(''); // keyless kimi switch — active model is now kimi
         // The models fetch is stubbed empty → manual model id entry.
-        await waitForIt(() => io.out.toString().contains('Kimi model id'));
+        await io.out.waitUntilContains('Kimi model id');
         io.sendLine('k3');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to kimi'),
-        );
+        await io.out.waitUntilContains('switched provider to kimi');
         cli.startProviderEditWizardForTest(
           registry.find('codemie.lab.epam.com'),
         );
-        await waitForIt(() => io.out.toString().contains('editing provider'));
-        await waitForIt(() => io.out.toString().contains('type a number:'));
+        await io.out.waitUntilContains('editing provider');
+        await io.out.waitUntilContains('type a number:');
         io.sendLine('1'); // openai-like (keep)
-        await waitForIt(
-          () => io.out.toString().contains(
-            'base URL (empty = https://codemie.lab.epam.com/code-assistant-api/v1)',
-          ),
+        await io.out.waitUntilContains(
+          'base URL (empty = https://codemie.lab.epam.com/code-assistant-api/v1)',
         );
         // Cancel the wizard (Ctrl-C) — the prefill was the assertion.
         io.interrupt();
-        await waitForIt(
-          () => io.out.toString().contains('provider edit cancelled'),
-        );
+        await io.out.waitUntilContains('provider edit cancelled');
         io.sendLine('/exit');
         await run;
 
@@ -2054,25 +1888,23 @@ void main() {
       final run = cli.run();
 
       cli.startProviderEditWizardForTest(registry.find('old-name'));
-      await waitForIt(
-        () => io.out.toString().contains('editing provider old-name'),
-      );
+      await io.out.waitUntilContains('editing provider old-name');
       // api type → keep (picker answer via line mode 'type a number').
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('1'); // openai-like
       // base URL → keep.
-      await waitForIt(() => io.out.toString().contains('base URL'));
+      await io.out.waitUntilContains('base URL');
       io.sendLine('');
       // name → the RENAME.
-      await waitForIt(() => io.out.toString().contains('provider name'));
+      await io.out.waitUntilContains('provider name');
       io.sendLine('renamed');
       // key → keep current.
-      await waitForIt(() => io.out.toString().contains('API key (empty'));
+      await io.out.waitUntilContains('API key (empty');
       io.sendLine('');
       // model → keep.
-      await waitForIt(() => io.out.toString().contains('model id'));
+      await io.out.waitUntilContains('model id');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('renamed provider'));
+      await io.out.waitUntilContains('renamed provider');
       io.sendLine('/exit');
       await run;
 

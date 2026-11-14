@@ -99,13 +99,9 @@ void main() {
 
         io.sendLine('/provider codemie sso');
         // First login offers the provider-name step every add flow has.
-        await waitForIt(
-          () => io.out.toString().contains(
-            'provider name [codemie.lab.epam.com]',
-          ),
-        );
+        await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
         io.sendLine('my-codemie');
-        await waitForIt(() => io.out.toString().contains('saved provider'));
+        await io.out.waitUntilContains('saved provider');
         io.sendLine('/exit');
         await run;
 
@@ -164,19 +160,14 @@ void main() {
       io.sendLine('/provider codemie sso');
       // Explicit connect always offers the provider-name step — Enter
       // here keeps the existing entry (same-account cookie refresh).
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine('');
       // The project picker runs on the SAME-account path too (gh-1809
       // AC2/AC6) — led by the keep-current row.
-      await waitForIt(() => io.out.toString().contains('CodeMie project'));
-      await waitForIt(
-        () => io.out.toString().contains('keep current project/model'),
-      );
+      await io.out.waitUntilContains('CodeMie project');
+      await io.out.waitUntilContains('keep current project/model');
       io.sendLine('1'); // keep current project/model
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -226,13 +217,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie sso');
-        await waitForIt(
-          () => io.out.toString().contains('provider name [work-codemie]'),
-        );
+        await io.out.waitUntilContains('provider name [work-codemie]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        await io.out.waitUntilContains('CodeMie project');
         io.sendLine('1'); // keep current project/model (gh-1809 AC2)
-        await waitForIt(() => io.out.toString().contains('saved provider'));
+        await io.out.waitUntilContains('saved provider');
         io.sendLine('/exit');
         await run;
 
@@ -278,12 +267,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie sso');
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine('work');
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -347,11 +333,8 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie.lab.epam.com');
-        await waitForIt(
-          () =>
-              io.out.toString().contains('CodeMie session expired or missing'),
-        );
-        await waitForIt(() => io.out.toString().contains('saved provider'));
+        await io.out.waitUntilContains('CodeMie session expired or missing');
+        await io.out.waitUntilContains('saved provider');
         io.sendLine('/exit');
         await run;
 
@@ -382,18 +365,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie sso');
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie projects fetch failed'),
-      );
+      await io.out.waitUntilContains('CodeMie projects fetch failed');
       // The picker was skipped — the flow moved on to the model step.
-      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      await io.out.waitUntilContains('CodeMie model');
       io.sendLine('1'); // pick codemie-model-1
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -425,17 +403,14 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie sso');
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine('');
       // First connect: no keep-current row — the fetched projects only.
-      await waitForIt(() => io.out.toString().contains('CodeMie project'));
+      await io.out.waitUntilContains('CodeMie project');
       io.sendLine('2'); // demo-project (sorted after admin-project)
-      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      await io.out.waitUntilContains('CodeMie model');
       io.sendLine('1'); // pick codemie-model-1
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -491,17 +466,13 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie sso');
-        await waitForIt(
-          () => io.out.toString().contains(
-            'provider name [codemie.lab.epam.com]',
-          ),
-        );
+        await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        await io.out.waitUntilContains('CodeMie project');
         io.sendLine('1'); // demo-project (the only fetched project)
-        await waitForIt(() => io.out.toString().contains('CodeMie model'));
+        await io.out.waitUntilContains('CodeMie model');
         io.sendLine('1'); // pick codemie-model-1
-        await waitForIt(() => io.out.toString().contains('saved provider'));
+        await io.out.waitUntilContains('saved provider');
         io.sendLine('/exit');
         await run;
 
@@ -518,9 +489,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie sso not-a-url');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider codemie sso'),
-      );
+      await io.out.waitUntilContains('usage: /provider codemie sso');
       io.sendLine('/exit');
       await run;
     });
@@ -531,9 +500,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie jwt not-a-url token');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider codemie jwt'),
-      );
+      await io.out.waitUntilContains('usage: /provider codemie jwt');
       io.sendLine('/exit');
       await run;
     });
@@ -546,9 +513,7 @@ void main() {
       io.sendLine(
         '/provider codemie jwt https://codemie.lab.epam.com not-a-jwt',
       );
-      await waitForIt(
-        () => io.out.toString().contains('Invalid JWT token format'),
-      );
+      await io.out.waitUntilContains('Invalid JWT token format');
       io.sendLine('/exit');
       await run;
     });
@@ -562,7 +527,7 @@ void main() {
       io.sendLine(
         '/provider codemie jwt https://codemie.lab.epam.com $expiredToken',
       );
-      await waitForIt(() => io.out.toString().contains('JWT token expired'));
+      await io.out.waitUntilContains('JWT token expired');
       io.sendLine('/exit');
       await run;
     });
@@ -573,11 +538,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie jwt https://codemie.lab.epam.com');
-      await waitForIt(() => io.out.toString().contains('JWT token:'));
+      await io.out.waitUntilContains('JWT token:');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie JWT setup cancelled'),
-      );
+      await io.out.waitUntilContains('CodeMie JWT setup cancelled');
       io.sendLine('/exit');
       await run;
     });
@@ -588,11 +551,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie bogus');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'usage: /provider codemie [sso [orgUrl] [--no-browser] | '
-          'jwt [orgUrl] [token]]',
-        ),
+      await io.out.waitUntilContains(
+        'usage: /provider codemie [sso [orgUrl] [--no-browser] | '
+        'jwt [orgUrl] [token]]',
       );
       io.sendLine('/exit');
       await run;
@@ -621,17 +582,13 @@ void main() {
           '/provider codemie jwt https://codemie.lab.epam.com $jwtToken',
         );
         // The JWT path runs the project step too (gh-1809 AC5).
-        await waitForIt(() => io.out.toString().contains('CodeMie project'));
+        await io.out.waitUntilContains('CodeMie project');
         io.sendLine('1'); // pick demo
-        await waitForIt(() => io.out.toString().contains('CodeMie model'));
+        await io.out.waitUntilContains('CodeMie model');
         io.sendLine('1'); // pick codemie-model-jwt
-        await waitForIt(
-          () => io.out.toString().contains(
-            'provider name [codemie.lab.epam.com]',
-          ),
-        );
+        await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
         io.sendLine(''); // keep the host-derived default name
-        await waitForIt(() => io.out.toString().contains('saved provider'));
+        await io.out.waitUntilContains('saved provider');
         io.sendLine('/exit');
         await run;
 
@@ -672,24 +629,19 @@ void main() {
       io.sendLine('/provider codemie');
       // The bare command asks WHERE CodeMie lives before the method
       // picker (gh-1809 AC1) — Enter applies the hosted default.
-      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      await io.out.waitUntilContains('CodeMie URL [');
       io.sendLine('');
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie sign-in method'),
-      );
+      await io.out.waitUntilContains('CodeMie sign-in method');
       io.sendLine('2'); // JWT option
-      await waitForIt(() => io.out.toString().contains('JWT token:'));
+      await io.out.waitUntilContains('JWT token:');
       io.sendLine(jwtToken);
-      await waitForIt(() => io.out.toString().contains('CodeMie project'));
+      await io.out.waitUntilContains('CodeMie project');
       io.sendLine('1'); // pick demo (gh-1809 AC5)
-      await waitForIt(() => io.out.toString().contains('CodeMie model'));
+      await io.out.waitUntilContains('CodeMie model');
       io.sendLine('1'); // pick codemie-model-jwt
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine(''); // keep the host-derived default name
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -708,11 +660,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie');
-      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      await io.out.waitUntilContains('CodeMie URL [');
       io.interrupt(); // cancel at the URL prompt
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie setup cancelled'),
-      );
+      await io.out.waitUntilContains('CodeMie setup cancelled');
 
       // Each restart re-waits on a FRESH prompt (output grown past the
       // snapshot) — the earlier flow's identical prompt text must not
@@ -725,9 +675,7 @@ void main() {
             io.out.toString().contains('CodeMie URL ['),
       );
       io.sendLine('ftp://nope');
-      await waitForIt(
-        () => io.out.toString().contains('invalid CodeMie URL: ftp://nope'),
-      );
+      await io.out.waitUntilContains('invalid CodeMie URL: ftp://nope');
 
       // A scheme-less host is accepted — https is assumed.
       before = io.out.toString().length;
@@ -741,14 +689,12 @@ void main() {
       // Wait for the picker's line prompt (same sync block as the
       // interrupt listener) — interrupting on the title alone races the
       // prompt install and the Ctrl-C is lost.
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.interrupt(); // end the flow — the URL normalization was the point
       // The interrupt rides the broadcast controller's async delivery —
       // one pump before asserting keeps this deterministic.
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie setup cancelled'),
-      );
+      await io.out.waitUntilContains('CodeMie setup cancelled');
       io.sendLine('/exit');
       await run;
     });
@@ -776,19 +722,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider codemie');
-      await waitForIt(() => io.out.toString().contains('CodeMie URL ['));
+      await io.out.waitUntilContains('CodeMie URL [');
       io.sendLine('https://codie.corp.example.com');
-      await waitForIt(
-        () => io.out.toString().contains('CodeMie sign-in method'),
-      );
+      await io.out.waitUntilContains('CodeMie sign-in method');
       io.sendLine('1'); // Browser SSO
-      await waitForIt(
-        () => io.out.toString().contains(
-          'provider name [codie.corp.example.com]',
-        ),
-      );
+      await io.out.waitUntilContains('provider name [codie.corp.example.com]');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -834,14 +774,11 @@ void main() {
       );
       // A re-login (existing entry, no project yet) keeps the current
       // MODEL — the label drops the project half.
-      await waitForIt(() => io.out.toString().contains('keep current model'));
+      await io.out.waitUntilContains('keep current model');
       io.sendLine('1');
-      await waitForIt(
-        () =>
-            io.out.toString().contains('provider name [codemie.lab.epam.com]'),
-      );
+      await io.out.waitUntilContains('provider name [codemie.lab.epam.com]');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('saved provider'));
+      await io.out.waitUntilContains('saved provider');
       io.sendLine('/exit');
       await run;
 
@@ -880,9 +817,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie.lab.epam.com');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to openai'),
-        );
+        await io.out.waitUntilContains('switched provider to openai');
         io.sendLine('/exit');
         await run;
 
@@ -919,7 +854,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie.lab.epam.com');
-        await waitForIt(() => io.out.toString().contains('JWT token expired'));
+        await io.out.waitUntilContains('JWT token expired');
         io.sendLine('/exit');
         await run;
 
@@ -949,9 +884,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider codemie.lab.epam.com');
-        await waitForIt(
-          () => io.out.toString().contains('CodeMie JWT token missing'),
-        );
+        await io.out.waitUntilContains('CodeMie JWT token missing');
         io.sendLine('/exit');
         await run;
 

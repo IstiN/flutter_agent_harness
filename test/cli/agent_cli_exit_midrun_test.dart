@@ -71,7 +71,7 @@ void main() {
 
       final wall = Stopwatch()..start();
       io.sendLine('/exit');
-      await waitForIt(() => io.out.toString().contains('bye'));
+      await io.out.waitUntilContains('bye');
       await run; // must return bounded — the stream never settles on its own
       wall.stop();
 

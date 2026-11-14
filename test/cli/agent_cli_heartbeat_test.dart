@@ -390,8 +390,8 @@ void main() {
       expect(digestText, contains('Scout (task)'));
 
       // Parent acts: the scripted cancel lands; the child aborts.
-      await waitForIt(
-        () => io.out.toString().contains('[task] Scout (task) aborted'),
+      await io.out.waitUntilContains(
+        '[task] Scout (task) aborted',
         reason: 'task_cancel aborted the child',
       );
       expect(io.out.toString(), contains('cancelled the zombie'));

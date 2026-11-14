@@ -105,8 +105,8 @@ void main() {
         streamFunction: fake.call,
       );
       final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('pi benchmark: initial context'),
+      await io.out.waitUntilContains(
+        'pi benchmark: initial context',
         reason: 'pi boot print',
       );
       await waitForIt(

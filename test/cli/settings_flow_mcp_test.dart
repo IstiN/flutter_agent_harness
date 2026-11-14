@@ -132,7 +132,7 @@ memory:
 
         final run = cli.run();
         io.sendLine('/settings');
-        await waitForIt(() => io.out.toString().contains('mcp:'));
+        await io.out.waitUntilContains('mcp:');
         io.sendLine('/exit');
         await run;
 
@@ -157,7 +157,7 @@ memory:
       final cli = cliFor(fake.call, homeDir: '/home/u');
       final run = cli.run();
       io.sendLine('/settings');
-      await waitForIt(() => io.out.toString().contains('mcp:'));
+      await io.out.waitUntilContains('mcp:');
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), contains('mcp: not configured'));
@@ -177,16 +177,12 @@ memory:
         io.sendLine('1'); // fs
         await render(2); // the server submenu (edit/delete/back)
         io.sendLine('1'); // edit
-        await waitForIt(
-          () => io.out.toString().contains("command (empty keeps 'npx'):"),
-        );
+        await io.out.waitUntilContains("command (empty keeps 'npx'):");
         io.sendLine('node'); // command
         io.sendLine('srv.js, --port, 9'); // args
         io.sendLine('BAZ=qux'); // env (replaces FOO=bar)
-        await waitForIt(
-          () => io.out.toString().contains(
-            'mcp saved → /home/u/.fah/config.yaml (applies at next boot',
-          ),
+        await io.out.waitUntilContains(
+          'mcp saved → /home/u/.fah/config.yaml (applies at next boot',
         );
         await render(3); // the submenu exited; the main menu re-rendered
         io.sendLine('4'); // done (1=fs, 2=remote, 3=add, 4=done)
@@ -250,16 +246,12 @@ memory:
       io.sendLine('1'); // fs
       await render(2); // the server submenu (tools/reconnect/edit/delete/back)
       io.sendLine('3'); // edit
-      await waitForIt(
-        () => io.out.toString().contains("command (empty keeps 'npx'):"),
-      );
+      await io.out.waitUntilContains("command (empty keeps 'npx'):");
       io.sendLine(''); // keep command
       io.sendLine('-v'); // args: [] → ['-v']
       io.sendLine(''); // keep env (none)
-      await waitForIt(
-        () => io.out.toString().contains(
-          'mcp saved → /home/u/.fah/config.yaml (applies live — fs reconnecting)',
-        ),
+      await io.out.waitUntilContains(
+        'mcp saved → /home/u/.fah/config.yaml (applies live — fs reconnecting)',
       );
       await waitForIt(
         () =>
@@ -309,14 +301,10 @@ memory:
       io.sendLine('1'); // fs
       await render(2); // the server submenu
       io.sendLine('1'); // view tools
-      await waitForIt(
-        () => io.out.toString().contains('mcp__fs__ping — pings things'),
-      );
+      await io.out.waitUntilContains('mcp__fs__ping — pings things');
       await render(3); // the submenu re-rendered
       io.sendLine('2'); // reconnect
-      await waitForIt(
-        () => io.out.toString().contains('mcp: "fs" reconnecting'),
-      );
+      await io.out.waitUntilContains('mcp: "fs" reconnecting');
       await waitForIt(() => factory.spawned.length == 2);
       await render(4); // the submenu re-rendered (no view-tools: 0 tools yet)
       io.sendLine('4'); // back
@@ -378,10 +366,8 @@ memory:
         final run = cli.run();
 
         final flow = cli.startMcpServersFlow();
-        await waitForIt(
-          () => io.out.toString().contains(
-            '"mcp.toolCallTimeoutMs" must be a positive integer',
-          ),
+        await io.out.waitUntilContains(
+          '"mcp.toolCallTimeoutMs" must be a positive integer',
         );
         await flow;
         io.sendLine('/exit');
@@ -410,16 +396,13 @@ memory:
       io.sendLine('1'); // add
       await render(2); // the kind picker
       io.sendLine('1'); // stdio
-      await waitForIt(() => io.out.toString().contains('server name:'));
+      await io.out.waitUntilContains('server name:');
       io.sendLine('worker');
-      await waitForIt(() => io.out.toString().contains('command: '));
+      await io.out.waitUntilContains('command: ');
       io.sendLine('run-worker');
       io.sendLine('--fast'); // args
       io.sendLine('TOKEN=x'); // env — warns about the inline credential
-      await waitForIt(
-        () =>
-            io.out.toString().contains('mcp saved → /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('mcp saved → /home/u/.fah/config.yaml');
       await render(3); // the main menu re-rendered with the new server
       io.sendLine('3'); // done (1=worker, 2=add, 3=done)
       await flow;
@@ -453,10 +436,7 @@ memory:
       final run = cli.run();
 
       await cli.startMcpServersFlow();
-      await waitForIt(
-        () =>
-            io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('cannot read /home/u/.fah/config.yaml');
       io.sendLine('/exit');
       await run;
       expect(fake.calls, 0);
@@ -487,18 +467,13 @@ memory:
             '      command: ghostd\n',
       );
       io.sendLine('1'); // edit
-      await waitForIt(
-        () => io.out.toString().contains("command (empty keeps 'npx'):"),
-      );
+      await io.out.waitUntilContains("command (empty keeps 'npx'):");
       io.sendLine(''); // keep command
       io.sendLine('--profiled'); // args: replace
       io.sendLine(''); // keep env
-      await waitForIt(
-        () =>
-            io.out.toString().contains('mcp saved → /home/u/.fah/config.yaml'),
-      );
+      await io.out.waitUntilContains('mcp saved → /home/u/.fah/config.yaml');
       await render(3); // the main menu re-rendered — now lists ghost
-      await waitForIt(() => io.out.toString().contains('ghost'));
+      await io.out.waitUntilContains('ghost');
       io.sendLine('4'); // done (1=fs, 2=ghost, 3=add, 4=done)
       await flow;
       io.sendLine('/exit');

@@ -55,7 +55,7 @@ void main() {
       final cli = cliFor();
       final run = cli.run();
       io.sendLine('/mcp');
-      await waitForIt(() => io.out.toString().contains('No MCP servers'));
+      await io.out.waitUntilContains('No MCP servers');
       expect(io.out.toString(), contains('Add servers to the mcp: section'));
       io.sendLine('/exit');
       await run;
@@ -68,7 +68,7 @@ void main() {
       final cli = cliFor(mcpConfig: McpToolConfig(config: config));
       final run = cli.run();
       io.sendLine('/mcp');
-      await waitForIt(() => io.out.toString().contains('MCP servers:'));
+      await io.out.waitUntilContains('MCP servers:');
       expect(io.out.toString(), contains('fs —'));
       expect(io.out.toString(), contains('npx'));
       io.sendLine('/exit');
@@ -82,7 +82,7 @@ void main() {
       final cli = cliFor(mcpConfig: McpToolConfig(config: config));
       final run = cli.run();
       io.sendLine('/mcp');
-      await waitForIt(() => io.out.toString().contains('remote —'));
+      await io.out.waitUntilContains('remote —');
       expect(io.out.toString(), contains('https://example.com/mcp'));
       io.sendLine('/exit');
       await run;
@@ -94,9 +94,7 @@ void main() {
       final cli = cliFor();
       final run = cli.run();
       io.sendLine('/mcp reload');
-      await waitForIt(
-        () => io.out.toString().contains('Cannot reload MCP config'),
-      );
+      await io.out.waitUntilContains('Cannot reload MCP config');
       io.sendLine('/exit');
       await run;
     });
@@ -106,7 +104,7 @@ void main() {
       final cli = cliFor(homeDir: '/home');
       final run = cli.run();
       io.sendLine('/mcp reload');
-      await waitForIt(() => io.out.toString().contains('nothing to reload'));
+      await io.out.waitUntilContains('nothing to reload');
       io.sendLine('/exit');
       await run;
     });
@@ -122,7 +120,7 @@ void main() {
       );
       final run = cli.run();
       io.sendLine('/mcp reload');
-      await waitForIt(() => io.out.toString().contains('MCP config unchanged'));
+      await io.out.waitUntilContains('MCP config unchanged');
       io.sendLine('/exit');
       await run;
     });
@@ -142,7 +140,7 @@ void main() {
       // Rewrite the config with a different server set.
       await env.writeFile('/home/.fah/config.yaml', _httpConfig);
       io.sendLine('/mcp reload');
-      await waitForIt(() => io.out.toString().contains('MCP config reloaded'));
+      await io.out.waitUntilContains('MCP config reloaded');
       expect(io.out.toString(), contains('1 server(s)'));
       io.sendLine('/exit');
       await run;
@@ -167,7 +165,7 @@ void main() {
       final cli = cliFor(homeDir: '/home');
       final run = cli.run();
       io.sendLine('/mcp reload');
-      await waitForIt(() => io.out.toString().contains('nothing to reload'));
+      await io.out.waitUntilContains('nothing to reload');
       io.sendLine('/exit');
       await run;
     });

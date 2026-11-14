@@ -157,19 +157,15 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+      await io.out.waitUntilContains('Copilot sign-in');
       io.sendLine('1'); // the device flow
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-octocat]'),
-      );
+      await io.out.waitUntilContains('provider name [copilot-octocat]');
       io.sendLine(''); // keep the default copilot-octocat
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
+      await io.out.waitUntilContains('Copilot plan');
       io.sendLine('1'); // individual
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      await io.out.waitUntilContains('Copilot model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -207,21 +203,17 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+      await io.out.waitUntilContains('Copilot sign-in');
       io.sendLine('2'); // paste an existing token
-      await waitForIt(() => io.out.toString().contains('GitHub token:'));
+      await io.out.waitUntilContains('GitHub token:');
       io.sendLine('gh-paste-1');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-hubot]'),
-      );
+      await io.out.waitUntilContains('provider name [copilot-hubot]');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
+      await io.out.waitUntilContains('Copilot plan');
       io.sendLine('2'); // business
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      await io.out.waitUntilContains('Copilot model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -277,25 +269,21 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot account'));
+      await io.out.waitUntilContains('Copilot account');
       io.sendLine('3'); // add another account (2 entries listed first)
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+      await io.out.waitUntilContains('Copilot sign-in');
       io.sendLine('1'); // device flow
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-a]'),
-      );
+      await io.out.waitUntilContains('provider name [copilot-a]');
       io.sendLine('corp'); // clash with a different endpoint
-      await waitForIt(() => io.out.toString().contains('already used by'));
+      await io.out.waitUntilContains('already used by');
       io.sendLine('kimi'); // a built-in catalog name
-      await waitForIt(() => io.out.toString().contains('built-in provider'));
+      await io.out.waitUntilContains('built-in provider');
       io.sendLine(''); // default copilot-a — the same account again
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
+      await io.out.waitUntilContains('Copilot plan');
       io.sendLine('1'); // individual
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      await io.out.waitUntilContains('Copilot model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -329,11 +317,9 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider copilot');
-        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        await io.out.waitUntilContains('Copilot sign-in');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('Copilot device flow failed'),
-        );
+        await io.out.waitUntilContains('Copilot device flow failed');
         io.sendLine('/exit');
         await run;
 
@@ -361,23 +347,19 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider copilot');
-        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        await io.out.waitUntilContains('Copilot sign-in');
         io.sendLine('2'); // paste an existing token
-        await waitForIt(() => io.out.toString().contains('GitHub token:'));
+        await io.out.waitUntilContains('GitHub token:');
         io.sendLine('github_pat_FINEGRAINED_TOKEN');
-        await waitForIt(() => io.out.toString().contains('Copilot Requests'));
+        await io.out.waitUntilContains('Copilot Requests');
         // Accepted, not rejected: the flow continues to the name prompt.
-        await waitForIt(
-          () => io.out.toString().contains('provider name [copilot-hubot]'),
-        );
+        await io.out.waitUntilContains('provider name [copilot-hubot]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        await io.out.waitUntilContains('Copilot plan');
         io.sendLine('1'); // individual
-        await waitForIt(() => io.out.toString().contains('Copilot model'));
+        await io.out.waitUntilContains('Copilot model');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to copilot'),
-        );
+        await io.out.waitUntilContains('switched provider to copilot');
         io.sendLine('/exit');
         await run;
 
@@ -410,25 +392,21 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+      await io.out.waitUntilContains('Copilot sign-in');
       io.sendLine('2'); // paste an existing token
-      await waitForIt(() => io.out.toString().contains('GitHub token:'));
+      await io.out.waitUntilContains('GitHub token:');
       io.sendLine('ghp_CLASSIC_TOKEN');
-      await waitForIt(() => io.out.toString().contains('not supported'));
+      await io.out.waitUntilContains('not supported');
       // Re-asked (the flow continues), not aborted.
-      await waitForIt(() => io.out.toString().contains('GitHub token:'));
+      await io.out.waitUntilContains('GitHub token:');
       io.sendLine('github_pat_FINEGRAINED_TOKEN');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-hubot]'),
-      );
+      await io.out.waitUntilContains('provider name [copilot-hubot]');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
+      await io.out.waitUntilContains('Copilot plan');
       io.sendLine('1'); // individual
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      await io.out.waitUntilContains('Copilot model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -466,25 +444,21 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider copilot');
-        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        await io.out.waitUntilContains('Copilot sign-in');
         io.sendLine('2'); // paste an existing token
-        await waitForIt(() => io.out.toString().contains('GitHub token:'));
+        await io.out.waitUntilContains('GitHub token:');
         io.sendLine('github_pat_NO_REQUESTS_PERMISSION');
-        await waitForIt(
-          () => io.out.toString().contains('provider name [copilot-hubot]'),
-        );
+        await io.out.waitUntilContains('provider name [copilot-hubot]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        await io.out.waitUntilContains('Copilot plan');
         io.sendLine('1'); // individual
         // The Copilot API rejection is surfaced at the model fetch, not
         // swallowed into a silent manual-entry drop (gh-1990: the named
         // failure branch).
-        await waitForIt(() => io.out.toString().contains('no models:'));
-        await waitForIt(() => io.out.toString().contains('model id: '));
+        await io.out.waitUntilContains('no models:');
+        await io.out.waitUntilContains('model id: ');
         io.sendLine('gpt-4.1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to copilot'),
-        );
+        await io.out.waitUntilContains('switched provider to copilot');
         io.sendLine('/exit');
         await run;
 
@@ -526,27 +500,21 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider copilot');
-        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        await io.out.waitUntilContains('Copilot sign-in');
         io.sendLine('2'); // paste an existing token
-        await waitForIt(() => io.out.toString().contains('GitHub token: '));
+        await io.out.waitUntilContains('GitHub token: ');
         io.sendLine('gho_DEAD_EXCHANGE_TOKEN');
-        await waitForIt(
-          () => io.out.toString().contains('provider name [copilot-hubot]'),
-        );
+        await io.out.waitUntilContains('provider name [copilot-hubot]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        await io.out.waitUntilContains('Copilot plan');
         io.sendLine('1'); // individual
         // The exchange 404 is surfaced with the manual-entry hint before
         // the model step, not swallowed into a silent manual-entry drop.
-        await waitForIt(() => io.out.toString().contains('token exchange'));
-        await waitForIt(
-          () => io.out.toString().contains('continuing — pick or type'),
-        );
-        await waitForIt(() => io.out.toString().contains('model id: '));
+        await io.out.waitUntilContains('token exchange');
+        await io.out.waitUntilContains('continuing — pick or type');
+        await io.out.waitUntilContains('model id: ');
         io.sendLine('gpt-4.1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to copilot'),
-        );
+        await io.out.waitUntilContains('switched provider to copilot');
         io.sendLine('/exit');
         await run;
 
@@ -582,11 +550,9 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot account'));
+      await io.out.waitUntilContains('Copilot account');
       io.sendLine('1'); // copilot-b
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -610,21 +576,17 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot');
-      await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+      await io.out.waitUntilContains('Copilot sign-in');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('provider name [copilot-octocat]'),
-      );
+      await io.out.waitUntilContains('provider name [copilot-octocat]');
       io.sendLine('');
-      await waitForIt(() => io.out.toString().contains('Copilot plan'));
+      await io.out.waitUntilContains('Copilot plan');
       io.sendLine('4'); // custom base URL
-      await waitForIt(() => io.out.toString().contains('base URL:'));
+      await io.out.waitUntilContains('base URL:');
       io.sendLine('https://copilot.corp.example/v1');
-      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      await io.out.waitUntilContains('Copilot model');
       io.sendLine('1');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -640,9 +602,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot extra');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider copilot'),
-      );
+      await io.out.waitUntilContains('usage: /provider copilot');
       io.sendLine('/exit');
       await run;
     });
@@ -685,21 +645,17 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider copilot');
-        await waitForIt(() => io.out.toString().contains('Copilot sign-in'));
+        await io.out.waitUntilContains('Copilot sign-in');
         io.sendLine('2'); // paste an existing token
-        await waitForIt(() => io.out.toString().contains('GitHub token: '));
+        await io.out.waitUntilContains('GitHub token: ');
         io.sendLine('github_pat_HEADLESS_PAT');
-        await waitForIt(
-          () => io.out.toString().contains('provider name [copilot-hubot]'),
-        );
+        await io.out.waitUntilContains('provider name [copilot-hubot]');
         io.sendLine('');
-        await waitForIt(() => io.out.toString().contains('Copilot plan'));
+        await io.out.waitUntilContains('Copilot plan');
         io.sendLine('2'); // business
-        await waitForIt(() => io.out.toString().contains('Copilot model'));
+        await io.out.waitUntilContains('Copilot model');
         io.sendLine('1');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to copilot'),
-        );
+        await io.out.waitUntilContains('switched provider to copilot');
         io.sendLine('/exit');
         await run;
 
@@ -763,13 +719,11 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider export --yes');
-      await waitForIt(() => io.out.toString().contains('export passphrase'));
+      await io.out.waitUntilContains('export passphrase');
       io.sendLine('pass-phrase-1');
-      await waitForIt(() => io.out.toString().contains('confirm passphrase'));
+      await io.out.waitUntilContains('confirm passphrase');
       io.sendLine('pass-phrase-1');
-      await waitForIt(
-        () => io.out.toString().contains('container copied to clipboard'),
-      );
+      await io.out.waitUntilContains('container copied to clipboard');
       io.sendLine('/exit');
       await run;
 
@@ -799,9 +753,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider export --yes');
-      await waitForIt(
-        () => io.out.toString().contains('is not an exportable provider'),
-      );
+      await io.out.waitUntilContains('is not an exportable provider');
       io.sendLine('/exit');
       await run;
     });
@@ -839,7 +791,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider export --yes');
-      await waitForIt(() => io.out.toString().contains('no credential'));
+      await io.out.waitUntilContains('no credential');
       io.sendLine('/exit');
       await run;
 
@@ -882,13 +834,11 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/provider export --yes');
-        await waitForIt(() => io.out.toString().contains('export passphrase'));
+        await io.out.waitUntilContains('export passphrase');
         io.sendLine('pass-phrase-1');
-        await waitForIt(() => io.out.toString().contains('confirm passphrase'));
+        await io.out.waitUntilContains('confirm passphrase');
         io.sendLine('pass-phrase-1');
-        await waitForIt(
-          () => io.out.toString().contains('could not copy to the clipboard'),
-        );
+        await io.out.waitUntilContains('could not copy to the clipboard');
         io.sendLine('/exit');
         await run;
 
@@ -905,7 +855,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider export now');
-      await waitForIt(() => io.out.toString().contains('usage: /provider'));
+      await io.out.waitUntilContains('usage: /provider');
       io.sendLine('/exit');
       await run;
     });
@@ -962,8 +912,8 @@ void main() {
       ], fake: fake);
       final run = cli.run();
 
-      await waitForIt(
-        () => io.out.toString().contains('model context window: 128000'),
+      await io.out.waitUntilContains(
+        'model context window: 128000',
         reason: 'endpoint window applied in roles mode',
       );
       io.sendLine('/exit');
@@ -1040,7 +990,7 @@ void main() {
       ], fake: fake);
       final run = cli.run();
 
-      await waitForIt(() => io.out.toString().contains('[Model]'));
+      await io.out.waitUntilContains('[Model]');
       // Give the background model-cache refresh time to (not) apply.
       await Future<void>.delayed(const Duration(milliseconds: 200));
       io.sendLine('/exit');
@@ -1081,8 +1031,8 @@ void main() {
       );
       final run = cli.run();
 
-      await waitForIt(
-        () => io.out.toString().contains('not reported by the endpoint'),
+      await io.out.waitUntilContains(
+        'not reported by the endpoint',
         reason: 'explicit fallback note for the unverified window',
       );
       io.sendLine('/exit');

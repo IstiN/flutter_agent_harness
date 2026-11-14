@@ -77,7 +77,7 @@ void main() {
         streamFunction: FakeStreamFunction([textTurn('ok')]).call,
       );
       final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa>'));
+      await io.out.waitUntilContains('fa>');
 
       io.sendLine('/jsr widget:test calc --event btn_7 --json');
       await waitForIt(() => shell.commands.isNotEmpty);
@@ -86,7 +86,7 @@ void main() {
         'dart "$jsrRoot/bin/jsr_widget.dart" widget:test calc '
         '--event btn_7 --json',
       );
-      await waitForIt(() => io.out.toString().contains('widget test: ok'));
+      await io.out.waitUntilContains('widget test: ok');
       io.sendLine('/exit');
       await run;
       // No failed-run noise.
@@ -112,10 +112,10 @@ void main() {
       streamFunction: FakeStreamFunction([textTurn('ok')]).call,
     );
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('fa>');
 
     io.sendLine('/jsr frobnicate');
-    await waitForIt(() => io.out.toString().contains('usage: /jsr'));
+    await io.out.waitUntilContains('usage: /jsr');
     expect(shell.commands, isEmpty);
     io.sendLine('/exit');
     await run;
@@ -140,10 +140,10 @@ void main() {
       streamFunction: FakeStreamFunction([textTurn('ok')]).call,
     );
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('fa>');
 
     io.sendLine('/jsr');
-    await waitForIt(() => io.out.toString().contains('usage: /jsr'));
+    await io.out.waitUntilContains('usage: /jsr');
     final out = io.out.toString();
     // The shared body from cli_args.dart (not a second flag list).
     expect(out, contains('fa jsr widget:screenshot <path> [--out png]'));
@@ -189,7 +189,7 @@ void main() {
       streamFunction: FakeStreamFunction([textTurn('ok')]).call,
     );
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('fa>'));
+    await io.out.waitUntilContains('fa>');
 
     io.sendLine('/jsr widget:test calc');
     await waitForIt(() => shell.commands.isNotEmpty);

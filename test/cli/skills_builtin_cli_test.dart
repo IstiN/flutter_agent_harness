@@ -72,10 +72,8 @@ void main() {
       );
       // /skills lists them with the builtin scope+source.
       io.sendLine('/skills');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'builtin://skills/create-goal/SKILL.md (builtin, builtin)',
-        ),
+      await io.out.waitUntilContains(
+        'builtin://skills/create-goal/SKILL.md (builtin, builtin)',
       );
       // The /<name> alias invokes the builtin and the rendered body enters
       // the run.
@@ -114,10 +112,8 @@ void main() {
       // The project copy wins discovery: no builtin:// location anywhere.
       expect(cli.systemPrompt, isNot(contains('builtin://skills/create-goal')));
       io.sendLine('/skills');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'create-goal: builtin skill shadowed by project skill',
-        ),
+      await io.out.waitUntilContains(
+        'create-goal: builtin skill shadowed by project skill',
       );
       io.sendLine('/create-goal ship');
       await waitForIt(() => fake.calls == 1 && !cli.isBusy);
@@ -138,9 +134,7 @@ void main() {
         () => cli.systemPrompt.contains('builtin://skills/create-goal'),
       );
       io.sendLine('/skills');
-      await waitForIt(
-        () => io.out.toString().contains('create-goal — Turn a feature'),
-      );
+      await io.out.waitUntilContains('create-goal — Turn a feature');
       expect(io.out.toString(), isNot(contains('shadowed by')));
       io.sendLine('/exit');
       await run;
@@ -164,14 +158,12 @@ void main() {
     expect(menuRow(cli, '/cre', '/create-goal'), isNull);
     // Invocation names the scope and the way back.
     io.sendLine('/create-goal nope');
-    await waitForIt(
-      () => io.out.toString().contains('skill create-goal is disabled'),
-    );
+    await io.out.waitUntilContains('skill create-goal is disabled');
     expect(io.out.toString(), contains('(project)'));
     expect(io.out.toString(), contains('/skills on create-goal'));
     // The /skills listing shows the off-state in the dim tail.
     io.sendLine('/skills');
-    await waitForIt(() => io.out.toString().contains('off (project)'));
+    await io.out.waitUntilContains('off (project)');
     io.sendLine('/exit');
     await run;
   });
@@ -201,9 +193,7 @@ void main() {
 
       // /skills reload reports the same error without killing the REPL.
       io.sendLine('/skills reload');
-      await waitForIt(
-        () => io.out.toString().contains('skills: invalid skills section in'),
-      );
+      await io.out.waitUntilContains('skills: invalid skills section in');
       io.sendLine('/exit');
       // The REPL unwind-free exit (run() completing) IS the crash-free proof.
       await run;
@@ -219,7 +209,7 @@ void main() {
     await env.writeFile(
       '/work/.fah/skills/pinny/SKILL.md',
       '---\nname: pinny\ndescription: pin owner\n'
-      'operative:\n  - "always cite sources"\n---\nBody.\n',
+          'operative:\n  - "always cite sources"\n---\nBody.\n',
     );
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
@@ -229,14 +219,14 @@ void main() {
     expect(cli.agent.operativeSkills.map((s) => s.name), contains('pinny'));
 
     io.sendLine('/skills off pinny');
-    await waitForIt(() => io.out.toString().contains('skills: disabled pinny'));
+    await io.out.waitUntilContains('skills: disabled pinny');
     expect(
       cli.agent.operativeSkills.map((s) => s.name),
       isNot(contains('pinny')),
     );
 
     io.sendLine('/skills on pinny');
-    await waitForIt(() => io.out.toString().contains('skills: enabled pinny'));
+    await io.out.waitUntilContains('skills: enabled pinny');
     expect(cli.agent.operativeSkills.map((s) => s.name), contains('pinny'));
     io.sendLine('/exit');
     await run;
@@ -260,9 +250,7 @@ void main() {
     );
 
     io.sendLine('/skills off create-goal');
-    await waitForIt(
-      () => io.out.toString().contains('skills: cannot merge project scope'),
-    );
+    await io.out.waitUntilContains('skills: cannot merge project scope');
     expect(io.out.toString(), contains('skills: cannot merge project scope'));
     expect(io.out.toString(), isNot(contains('ConfigException')));
     // Nothing persisted — the broken section is untouched.
@@ -273,7 +261,7 @@ void main() {
     // contract): create-goal is still listed, and the REPL is alive.
     expect(cli.systemPrompt, contains('<name>create-goal</name>'));
     io.sendLine('/skills reload');
-    await waitForIt(() => io.out.toString().contains('reloaded:'));
+    await io.out.waitUntilContains('reloaded:');
     io.sendLine('/exit');
     await run;
   });
@@ -303,7 +291,7 @@ void main() {
     expect(io.out.toString(), contains('toggle "no-such-skill" ignored'));
     // /skills reload re-resolves — the warning must not repeat.
     io.sendLine('/skills reload');
-    await waitForIt(() => io.out.toString().contains('reloaded:'));
+    await io.out.waitUntilContains('reloaded:');
     expect(
       'toggle "no-such-skill" ignored'.allMatches(io.out.toString()),
       hasLength(1),
@@ -322,10 +310,8 @@ void main() {
         () => cli.systemPrompt.contains('<name>create-goal</name>'),
       );
       io.sendLine('/skills off create-goal');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'skills: disabled create-goal (scope: project)',
-        ),
+      await io.out.waitUntilContains(
+        'skills: disabled create-goal (scope: project)',
       );
       // Same-session effect: prompt + completion recomposed, no restart.
       expect(cli.systemPrompt, isNot(contains('<name>create-goal</name>')));
@@ -338,10 +324,8 @@ void main() {
       expect(file, contains('create-goal: false'));
       // Back on through the same arm.
       io.sendLine('/skills on create-goal');
-      await waitForIt(
-        () => io.out.toString().contains(
-          'skills: enabled create-goal (scope: project)',
-        ),
+      await io.out.waitUntilContains(
+        'skills: enabled create-goal (scope: project)',
       );
       expect(cli.systemPrompt, contains('<name>create-goal</name>'));
       expect(menuRow(cli, '/cre', '/create-goal'), isNotNull);
@@ -362,10 +346,8 @@ void main() {
       () => cli.systemPrompt.contains('<name>self-settings</name>'),
     );
     io.sendLine('/skills off self-settings global');
-    await waitForIt(
-      () => io.out.toString().contains(
-        'skills: disabled self-settings (scope: global)',
-      ),
+    await io.out.waitUntilContains(
+      'skills: disabled self-settings (scope: global)',
     );
     expect(persisted, 1);
     expect(cli.globalSkillToggles, {'self-settings': false});
@@ -389,7 +371,7 @@ void main() {
         () => cli.systemPrompt.contains('<name>create-goal</name>'),
       );
       io.sendLine('/skills off create-goal global');
-      await waitForIt(() => io.out.toString().contains('no persistence hook'));
+      await io.out.waitUntilContains('no persistence hook');
       expect(cli.systemPrompt, isNot(contains('<name>create-goal</name>')));
       io.sendLine('/exit');
       await run;
@@ -412,9 +394,7 @@ void main() {
     expect(cli.settingsPickerHandlerKeysForTest(), contains('skills'));
     // The line-mode summary shows the same live balance.
     io.sendLine('/settings');
-    await waitForIt(
-      () => io.out.toString().contains('skills: 3 of 3 skills available'),
-    );
+    await io.out.waitUntilContains('skills: 3 of 3 skills available');
     io.sendLine('/exit');
     await run;
   });
@@ -437,7 +417,7 @@ void main() {
       expect(goal!.description, contains('(builtin)'));
       // The project skill's row has no badge.
       io.sendLine('/skills reload');
-      await waitForIt(() => io.out.toString().contains('reloaded: 4 skill(s)'));
+      await io.out.waitUntilContains('reloaded: 4 skill(s)');
       final ship = menuRow(cli, '/ship', '/ship');
       expect(ship, isNotNull);
       expect(ship!.description, isNot(contains('(builtin)')));
@@ -659,7 +639,7 @@ void main() {
       () => cli.systemPrompt.contains('builtin://skills/create-goal'),
     );
     io.sendLine('/skills');
-    await waitForIt(() => io.out.toString().contains('greet — say hi'));
+    await io.out.waitUntilContains('greet — say hi');
     final listing = io.out
         .toString()
         .split('\n')

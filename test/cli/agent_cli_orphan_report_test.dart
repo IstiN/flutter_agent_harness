@@ -184,8 +184,8 @@ void main() {
       reason: 'session A answers its turn',
     );
     io.sendLine('/session orphan-b');
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'orphan-b'"),
+    await io.out.waitUntilContains(
+      "switched to session 'orphan-b'",
       reason: 'the switch loads session B on the SAME Agent',
     );
     io.sendLine('go');
