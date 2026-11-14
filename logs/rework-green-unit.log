@@ -12770,3 +12770,1262 @@ stage: expect
 ✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: tag-run queued or in_progress -> skip, run linked
 ✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: E1: run queued far past the grace window still skips, never alarms
 ✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: grace is tunable (RELEASE_FLIGHT_GRACE_SECS): 2h-old tag inside a 3h grace skips
+✅ test/release_flow_race_test.dart: AC2 — genuine failures keep the existing alarm tag past grace with NO run -> the exact current error text
+✅ test/release_flow_race_test.dart: AC2 — genuine failures keep the existing alarm review thread 2 (E4 residual): run registers between the reads -> the past-grace re-read finds it and the leg skips, never alarms
+✅ test/release_flow_race_test.dart: AC2 — genuine failures keep the existing alarm completed run succeeded but pub.dev behind -> publish-did-not-upload alarm
+✅ test/release_flow_race_test.dart: AC2 — genuine failures keep the existing alarm completed run failed -> the existing rerun recovery path fires
+✅ test/purity_js_test.dart: no js/web imports anywhere under lib/ (REG-C1)
+✅ test/purity_js_test.dart: dart:io imports stay out of top-level lib/ barrels except io.dart
+✅ test/release_flow_race_test.dart: AC2 — genuine failures keep the existing alarm E4: re-pushed OLD tag with a fresh run never reads «never triggered»
+✅ test/release_flow_race_test.dart: gh-1561 — never-triggered arms re-arm the tag, then alarm re-arm registers the fresh push run -> the leg continues with it (neutral skip)
+✅ test/ci_mobile_sdk_pin_guard_test.dart: AC1: every hosted flutter-action setup pins an exact 3.50.x patch (gh-2126: the absent pin floated stable to 3.50.0, whose flutter_test test_api 0.7.14 deterministically skew-failed the committed lockfile under --enforce-lockfile)
+✅ test/ci_mobile_sdk_pin_guard_test.dart: AC2: the hosted pins match the self-hosted lane pin — one workflow resolving one committed lockfile must run one SDK
+✅ test/ci_mobile_sdk_pin_guard_test.dart: AC3: the four known hosted flutter-action setups are all still accounted for
+✅ test/release_flow_race_test.dart: gh-1561 — never-triggered arms re-arm the tag, then alarm re-armed run completes during the leg and pub.dev caught up -> green
+✅ test/release_flow_race_test.dart: gh-1561 — never-triggered arms re-arm the tag, then alarm re-arm push fails -> the exact manual-fix alarm, unchanged
+✅ test/ci_2030_ci_sign_authoritative_copy_test.dart: build-macos installs the authoritative repo ci-sign before any ci-sign call (gh-2030)
+✅ test/release_flow_race_test.dart: gh-1561 — never-triggered arms re-arm the tag, then alarm re-arm pushed but the fresh run is not registered yet -> neutral skip (the next daily re-verifies)
+✅ test/release_flow_race_test.dart: gh-1561 rework — pub.dev outage semantics + guarded registration wait pub.dev API down at the top of the leg -> loud classify failure
+✅ test/event_stream_test.dart: EventStream pushed events are delivered in order
+✅ test/event_stream_test.dart: EventStream events pushed before listen are buffered
+✅ test/event_stream_test.dart: EventStream result resolves with message on DoneEvent
+✅ test/event_stream_test.dart: EventStream result resolves with error message on ErrorEvent
+✅ test/event_stream_test.dart: EventStream pushes after a completion event are ignored
+✅ test/event_stream_test.dart: EventStream pushes after end are ignored
+✅ test/event_stream_test.dart: EventStream end(result) resolves result without a completion event
+✅ test/event_stream_test.dart: EventStream first result resolution wins
+✅ test/event_stream_test.dart: EventStream end without completion event completes result with StateError
+✅ test/event_stream_test.dart: EventStream createAssistantMessageEventStream factory works
+✅ test/event_stream_test.dart: partial-first invariant every delta event carries the live partial message
+✅ test/event_stream_test.dart: partial-first invariant ErrorEvent partial is the error message
+✅ test/release_flow_race_test.dart: gh-1561 rework — pub.dev outage semantics + guarded registration wait API outage must never fire the re-arm (no recovery on empty data)
+✅ test/release_flow_race_test.dart: gh-1561 rework — pub.dev outage semantics + guarded registration wait pub.dev goes down mid-leg at the success re-read -> neutral skip
+✅ test/release_flow_race_test.dart: gh-1561 rework — pub.dev outage semantics + guarded registration wait transient gh failure inside the registration wait -> still-pending, never a dead leg (thread 9)
+✅ test/release_flow_race_test.dart: gh-1561 rework — pub.dev outage semantics + guarded registration wait wiring: the pubdev mint ceiling rides the WORKING granular input (thread 10)
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits release-event-only runs past grace -> «never triggered», the exit-65 arm named
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits young tag with release-only runs visible -> grace skip, never alarms
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits release-only run registers on the spaced re-read -> still alarms (past grace)
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits twin runs: recovery targets the PUSH twin, never the release twin
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects explicit Ollama prompt-too-long errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects Together AI context length errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects LiteLLM-wrapped OpenAI maximum context length errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects parenthesized maximum context length errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects OpenRouter Poolside maximum allowed input length errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects DS4 configured context size errors
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat generic non-overflow Ollama errors as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat Bedrock throttling 'Too many tokens' as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat Bedrock service unavailable as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat generic rate limit errors as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat HTTP 429 style errors as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases detects Xiaomi-style overflow (length stop, zero output, full)
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat normal length stops with output as overflow
+✅ test/overflow_test.dart: isContextOverflow — ported pi cases does not treat length stops far below context as overflow
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Anthropic token overflow
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Anthropic HTTP 413
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Amazon Bedrock
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects OpenAI
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects LiteLLM (no model prefix)
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects LiteLLM (with the)
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Google Gemini
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects xAI
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Groq
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects OpenRouter
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects OpenRouter/Poolside
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects GitHub Copilot
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects llama.cpp
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects LM Studio
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects MiniMax
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Kimi For Coding
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Mistral
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects z.ai
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Ollama (without max)
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Generic context_length_exceeded
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Generic context length exceeded
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Generic too many tokens
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Generic token limit exceeded
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Cerebras 400
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage detects Cerebras 413
+✅ test/overflow_test.dart: isContextOverflow — overflow pattern coverage all patterns are case-insensitive
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow ignores overflow text when stopReason is not error
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow returns false for an error without a message
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow detects silent overflow (z.ai style) via usage over window
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow usage exactly at the window is not silent overflow
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow silent overflow requires a context window
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow silent overflow is not detected on non-stop reasons
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow length-stop overflow requires a context window
+✅ test/overflow_test.dart: isContextOverflow — guards and silent overflow length stop at 99% of the window counts as overflow
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) the exact incident string is overflow and yields M=2048
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) heartbeat variants classify with the same parsed cap
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) plain array-length shape with other numbers classifies
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) comma-grouped numbers parse
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) generic shapes classify: too many messages / messages count exceeds
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) cap shape without a number flags cap-unknown (E1)
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) non-overflow 400s do not classify
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) rate-limit shaped messages stay non-overflow
+✅ test/overflow_test.dart: gh-1680 message-cap classifier (AC1) null/empty errors do not classify
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits pending push run reaches terminal within the wait -> classified
+✅ test/release_flow_race_test.dart: #1368 — push-twin selection and the bounded waits pending push run past the terminal-wait budget -> neutral skip, no error
+✅ test/release_flow_race_test.dart: verify — unchanged paths up-to-date: pub.dev serves the tag version -> green no-op
+✅ test/release_flow_race_test.dart: verify — unchanged paths private package (publish_to: none) -> green no-op before any queries
+✅ test/release_flow_race_test.dart: verify — unchanged paths gh-1522: no v* tags on the remote -> up-to-date no-op, never an alarm
+✅ test/release_flow_race_test.dart: verify — unchanged paths a transient ls-remote failure fails OPEN: no tag read -> up-to-date
+✅ test/web_search/duckduckgo_test.dart: parseDuckDuckGoResults parses the classic results page
+✅ test/web_search/duckduckgo_test.dart: parseDuckDuckGoResults survives markup rot
+✅ test/web_search/duckduckgo_test.dart: parseDuckDuckGoResults deduplicates URLs and honors the limit
+✅ test/web_search/duckduckgo_test.dart: parseDuckDuckGoResults returns an empty list when the page has no results
+✅ test/web_search/duckduckgo_test.dart: unwrapDuckDuckGoUrl unwraps uddg redirect URLs
+✅ test/web_search/duckduckgo_test.dart: unwrapDuckDuckGoUrl passes through protocol-relative and absolute URLs
+✅ test/web_search/duckduckgo_test.dart: unwrapDuckDuckGoUrl rejects relative and empty hrefs
+✅ test/web_search/duckduckgo_test.dart: isDuckDuckGoAnomalyPage detects the bot-challenge page
+✅ test/web_search/duckduckgo_test.dart: DuckDuckGoSearchProvider is keyless and always available
+✅ test/web_search/duckduckgo_test.dart: DuckDuckGoSearchProvider posts the query to the HTML frontend and parses results
+✅ test/web_search/duckduckgo_test.dart: DuckDuckGoSearchProvider caps the sources at the requested count
+✅ test/web_search/duckduckgo_test.dart: DuckDuckGoSearchProvider throws a 429-tagged error on the anomaly page
+✅ test/web_search/duckduckgo_test.dart: DuckDuckGoSearchProvider throws on non-2xx responses
+✅ test/release_flow_race_test.dart: verify — unchanged paths E2: only the LATEST remote tag is evaluated
+✅ test/release_flow_race_test.dart: AC1 — report job files nothing for a release-in-flight leg pubdev green + release-in-flight override -> no issue lifecycle action
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts daily-publish.yml pubdev check calls verify_pubdev_release.sh
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts verify script default grace is 15 min (AC1 suggestion)
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts gh-1522: ci.yml has NO release-tag job; the tag-only flow needs none
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts #1368: publish gates on dart_ok and PUSH-event tags only
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts #1368: quality-gate exports dart_ok; platform legs cannot redden it
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts #1368: the Provider smoke runs off dart_ok, not the aggregate result
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts #1368: report renders release-in-flight as a skip, never ✅
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts report script renders the release-in-flight override neutrally
+✅ test/release_flow_race_test.dart: wiring — workflows route through the hardened scripts plan job change detection runs the extracted, tested script
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved main moved since the last green daily -> legs run, pub.dev not consulted
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved main quiet + pub.dev serves the latest tag version -> all legs skip (unchanged)
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved main quiet + pub.dev BEHIND the latest tag (release-in-flight green became the baseline) -> re-armed: changed=true, next daily re-verifies
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved gh-1522: no tags at all -> no re-arm (changed stays false)
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved pub.dev read fails -> fail OPEN: the baseline skip stands, exit 0
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved FORCE=true forces the legs without consulting pub.dev
+✅ test/release_flow_race_test.dart: plan gate — re-arms the daily while a release is unresolved no green all-legs daily recorded -> legs run (first-run path unchanged)
+✅ test/release_flow_race_test.dart: fixture hygiene — the gh stub fails loudly on unexpected commands an unknown subcommand exits non-zero with a loud stderr
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool converts an HTML page to markdown with the title as H1
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool prepends the <title> when the content lacks it
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool passes plain text and JSON through
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool rejects invalid URLs
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool surfaces HTTP failures
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool rejects unsupported content types
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool truncates oversized content with a notice
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool routes pub.dev URLs through the site handler
+✅ test/web_search/web_fetch_tool_test.dart: webFetchTool falls back to the generic converter when the handler declines
+✅ test/release_flow_race_test.dart: fixture hygiene — the gh stub fails loudly on unexpected commands gh release create stays a quiet success (auto_release.sh path)
+✅ test/release_flow_race_test.dart: fixture hygiene — the gh stub fails loudly on unexpected commands the known subcommands still answer (no over-tightening)
+✅ test/web_search/web_gate_test.dart: web_fetch under a cube deny-all cube: clean note, zero client sends (AC1, AC5)
+✅ test/web_search/web_gate_test.dart: web_fetch under a cube wildcard allow: subdomain fetches, lookalike denied (AC2)
+✅ test/web_search/web_gate_test.dart: web_fetch under a cube an allowed request reaches the wire untouched (IT-NET-2)
+✅ test/web_search/web_gate_test.dart: web_fetch under a cube the gate reads the live spec: /cube use flips the next call (E2)
+✅ test/web_search/web_gate_test.dart: web_search under a cube deny-all cube: clean note, zero client sends (AC7)
+✅ test/web_search/web_gate_test.dart: web_search under a cube Q1: only providers whose endpoint is allowed run
+✅ test/web_search/web_gate_test.dart: REG-NET-1: no cube stays byte-identical (AC4) web_fetch sends the same request the pre-gate client sent
+✅ test/web_search/web_gate_test.dart: REG-NET-1: no cube stays byte-identical (AC4) web_search sends the DuckDuckGo form POST golden
+✅ test/web_search/web_gate_test.dart: REG-NET-1: no cube stays byte-identical (AC4) withNetworkGate(null) returns the same config instance
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler renders package metadata, score, dependencies, and versions
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler tolerates a missing metrics endpoint
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler declines non-pub.dev hosts
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler declines non-package paths
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler declines when the API fails or returns malformed JSON
+✅ test/web_search/pubdev_handler_test.dart: PubDevHandler handles www.pub.dev and deeper package paths
+✅ test/web_search/pubdev_handler_test.dart: defaultWebSiteHandlers ships the pub.dev handler
+✅ test/web_search/providers_test.dart: BraveSearchProvider requires BRAVE_API_KEY for availability
+✅ test/web_search/providers_test.dart: BraveSearchProvider sends the documented request shape and parses results
+✅ test/web_search/providers_test.dart: BraveSearchProvider throws a status-tagged error on API failure
+✅ test/web_search/providers_test.dart: BraveSearchProvider fails fast when the key is missing
+✅ test/web_search/providers_test.dart: TavilySearchProvider requires TAVILY_API_KEY for availability
+✅ test/web_search/providers_test.dart: TavilySearchProvider posts the documented body with bearer auth and parses results
+✅ test/web_search/providers_test.dart: TavilySearchProvider throws a status-tagged error on API failure
+✅ test/web_search/providers_test.dart: clampWebSearchCount defaults, floors, and caps
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts headings and paragraphs
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown preserves link anchors and resolves relative hrefs
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown drops anchor/javascript/mailto links, keeping the text
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown emits the bare URL when link text equals the href
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts unordered and ordered lists, nested included
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts pre blocks with the language hint
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown keeps code generics inside pre (unknown tags are text)
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts inline code, bold, and italic
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown uses double backticks when inline code contains a backtick
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown strips empty emphasis spans
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts blockquotes
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown strips script, style, nav, footer, head, and comments
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown decodes entities in text
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts images with alt text
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts tables with a header separator
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown converts hr and collapses blank-line runs
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown handles malformed markup without throwing
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown treats a bare less-than in text as text
+✅ test/web_search/html_markdown_test.dart: htmlToMarkdown returns empty for an empty document
+✅ test/web_search/html_markdown_test.dart: extractHtmlTitle extracts and decodes the title
+✅ test/web_search/html_markdown_test.dart: extractHtmlTitle returns null without a title
+✅ test/web_search/web_search_tool_test.dart: resolveWebSearchChain auto order is keyless DuckDuckGo first, keyed providers after
+✅ test/web_search/web_search_tool_test.dart: resolveWebSearchChain keyed providers drop out when their key is absent
+✅ test/web_search/web_search_tool_test.dart: resolveWebSearchChain explicit provider lists are honored and deduplicated
+✅ test/web_search/web_search_tool_test.dart: resolveWebSearchChain an explicit keyed provider without a key resolves empty
+✅ test/web_search/web_search_tool_test.dart: resolveWebSearchChain unknown provider ids throw
+✅ test/web_search/web_search_tool_test.dart: webSearchTool returns ranked DDG results with citation markers
+✅ test/web_search/web_search_tool_test.dart: webSearchTool falls through to the next provider on failure
+✅ test/web_search/web_search_tool_test.dart: webSearchTool falls through on the DDG anomaly page
+✅ test/web_search/web_search_tool_test.dart: webSearchTool all-fail reports every provider error
+✅ test/web_search/web_search_tool_test.dart: webSearchTool single-provider all-fail reports that provider error
+✅ test/web_search/web_search_tool_test.dart: webSearchTool no-key chain only calls DuckDuckGo
+✅ test/web_search/web_search_tool_test.dart: webSearchTool unconfigured chain fails with guidance
+✅ test/web_search/web_search_tool_test.dart: webSearchTool empty provider responses yield a no-results answer
+✅ test/web_search/web_search_tool_test.dart: webSearchTool count caps the returned results
+✅ test/web_search/web_search_tool_test.dart: webSearchTool site appends a site: filter to the provider query
+✅ test/web_search/web_search_tool_test.dart: webSearchTool empty query is rejected
+✅ test/web_search/web_search_tool_test.dart: webSearchTool secrets never leak into the output
+✅ test/web_search/web_search_tool_test.dart: webSearchTool renders the Tavily answer above a Sources section
+✅ test/web_search/web_search_tool_test.dart: formatWebSearchResults omits the Sources header without an answer
+✅ test/web_search/web_search_tool_test.dart: formatWebSearchResults truncates long snippets at 240 chars
+✅ test/web_search/web_search_tool_test.dart: builtinTools registration web tools are absent without a config
+✅ test/web_search/web_search_tool_test.dart: builtinTools registration web tools register behind the config
+✅ test/web_search/web_search_tool_test.dart: builtinTools registration web tools are read-tier for the approval gate
+✅ test/web_search/provider_meta_test.dart: search provider metadata
+✅ test/web_search/provider_meta_test.dart: assistant message role is assistant
+✅ test/ci_release_dedupe_guard_test.dart: AC1 — the release twin short-circuits the whole gate the release-dedupe pre-check job exists and mirrors release-pending
+✅ test/ci_release_dedupe_guard_test.dart: AC1 — the release twin short-circuits the whole gate every release-arm-reachable gate leg ANDs the dedupe guard on top of its pending guard
+✅ test/ci_release_dedupe_guard_test.dart: AC1 — the release twin short-circuits the whole gate quality-gate itself keeps always() and skips on the deduped release twin
+✅ test/ci_release_dedupe_guard_test.dart: AC1 — the release twin short-circuits the whole gate the release trigger comment documents the dedupe (the old tolerates-the-double-fire note is gone)
+✅ test/ci_release_dedupe_guard_test.dart: AC2/AC5 — the check fails safe and keeps the old-tag safety net the script defaults to dedupe=false and only flips inside a successful release-arm lookup
+✅ test/ci_release_dedupe_guard_test.dart: AC2/AC5 — the check fails safe and keeps the old-tag safety net the lookup is conclusion-aware and fails CLOSED: dedupe only on a green push-run gate
+✅ test/ci_release_dedupe_guard_test.dart: AC3 — push/dispatch/schedule arms stay untouched non-release arms short-circuit in the script without an API call
+✅ test/ci_release_dedupe_guard_test.dart: AC3 — push/dispatch/schedule arms stay untouched the concurrency rule is untouched: tag runs are never cancelled mid-flight
+✅ test/ci_release_dedupe_guard_test.dart: AC3 — push/dispatch/schedule arms stay untouched the schedule/dispatch/release flow jobs carry ZERO release-dedupe references
+✅ test/ci_release_dedupe_guard_test.dart: AC4 — the binaries-attach leg stays the release twin's job binaries runs on the deduped release twin via an explicit release arm
+✅ test/ci_release_dedupe_guard_test.dart: AC4 — the binaries-attach leg stays the release twin's job the --clobber last-wins upload is preserved (no race window without an idempotent attach)
+✅ test/ci_release_dedupe_guard_test.dart: AC4 — the binaries-attach leg stays the release twin's job the deduped twin keeps its release-specific legs — binaries, release-provenance and installer-smoke still run (web-spa/publish skip with the gate)
+✅ test/ci_release_dedupe_guard_test.dart: AC4 — the binaries-attach leg stays the release twin's job web-spa stays keyed on the quality-gate result (skips with the deduped gate — the push twin already attached)
+✅ test/ci_release_dedupe_guard_test.dart: RG — the regression guard is wired (aab-gate-selftest pattern) the static gate fixture-self-tests the extracted check
+✅ test/ci_release_dedupe_guard_test.dart: RG — the regression guard is wired (aab-gate-selftest pattern) the selftest drives the check against a stubbed gh and pins the short-circuit scenario
+✅ test/config/config_command_cli_test.dart: check exits 0 and prints the report when both files are absent
+✅ test/config/config_command_cli_test.dart: check exits 1 when a file is broken
+✅ test/config/config_command_cli_test.dart: path lists both locations
+✅ test/config/config_command_cli_test.dart: get found exits 0 and prints the value
+✅ test/config/config_command_cli_test.dart: get not-set exits 1 without throwing
+✅ test/config/config_command_cli_test.dart: get unknown key exits 1 with a named error
+✅ test/config/config_command_cli_test.dart: set writes through and exits 0
+✅ test/config/documented_keys_sweep_test.dart: the skill actually documents yaml config sections (sanity)
+✅ test/config/documented_keys_sweep_test.dart: every documented key round-trips through the real service
+✅ test/config/documented_keys_sweep_test.dart: no schema top-level key is left undocumented
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a missing field merges into the existing quoted entry
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a new model id under a quoted provider inserts quoted
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a new provider under quoted siblings inserts quoted
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a bare-key file stays bare (no quote churn)
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) rewriting an existing bare leaf keeps the bare spelling
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) rewriting an existing quoted leaf keeps its quoted spelling
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a quoted custom-model name is found (models.custom)
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a quoted overrides block (gh-1787) a key that is not a valid bare yaml scalar matches quoted
+✅ test/config/yaml_path_quoted_keys_test.dart: removeYamlPath on a quoted block (gh-1787) a field remove edits the quoted entry, the sibling survives
+✅ test/config/yaml_path_quoted_keys_test.dart: removeYamlPath on a quoted block (gh-1787) the last field remove drops the emptied quoted blocks
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a single-quoted block (gh-1787 rework) a missing field merges into the existing single-quoted entry
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a single-quoted block (gh-1787 rework) a new model id under single-quoted siblings inserts single-quoted
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a single-quoted block (gh-1787 rework) rewriting an existing single-quoted leaf keeps its spelling
+✅ test/config/yaml_path_quoted_keys_test.dart: upsertYamlPath into a single-quoted block (gh-1787 rework) a single-quoted key holding a quote matches (the doubled escape)
+✅ test/config/yaml_path_quoted_keys_test.dart: removeYamlPath on a single-quoted block (gh-1787 rework) a field remove edits the single-quoted entry, the sibling survives
+✅ test/config/yaml_path_quoted_keys_test.dart: the inserted chain spelling is per level (gh-1787 rework) only the first inserted level takes the block spelling; deeper fresh levels stay bare
+✅ test/config/yaml_path_quoted_keys_test.dart: the inserted chain spelling is per level (gh-1787 rework) a single-level insert into a quoted block stays quoted
+✅ test/config/config_service_test.dart: check absent files are fine — defaults apply
+✅ test/config/config_service_test.dart: check valid global + project files pass clean
+✅ test/config/config_service_test.dart: check a broken strict section fails with a named diagnostic (AC7)
+✅ test/config/config_service_test.dart: check a broken project section fails with a named diagnostic
+✅ test/config/config_service_test.dart: check a yaml syntax error fails loudly
+✅ test/config/config_service_test.dart: check unknown top-level keys warn but do not fail
+✅ test/config/config_service_test.dart: check global-only sections in the project file warn as dead config
+✅ test/config/config_service_test.dart: check cwd == home: the project pass is skipped — one file, one pass (gh-1573)
+✅ test/config/config_service_test.dart: check trailing-slash HOME spelling still skips the project pass (gh-1573)
+✅ test/config/config_service_test.dart: check trailing-slash cwd spelling still skips the project pass (gh-1573)
+✅ test/config/config_service_test.dart: check bad providerTimeouts and skills sections fail
+✅ test/config/config_service_test.dart: check a tui.statusLine section boot accepts passes check (gh-1636)
+✅ test/config/config_service_test.dart: check a bad tui.statusLine shape fails like boot parse (gh-1636)
+✅ test/config/config_service_test.dart: check a2a env tokens pass the structural check
+✅ test/config/config_service_test.dart: check set passes on a file carrying a2a env tokens
+✅ test/config/config_service_test.dart: broken files degrade cleanly (never a raw YamlException) check reports invalid yaml on the project file
+✅ test/config/config_service_test.dart: broken files degrade cleanly (never a raw YamlException) get answers "not set" on a broken file
+✅ test/config/config_service_test.dart: broken files degrade cleanly (never a raw YamlException) set refuses to persist onto a broken file
+✅ test/config/config_service_test.dart: get project scope wins for the project-capable sections
+✅ test/config/config_service_test.dart: get global-only keys resolve from the user file
+✅ test/config/config_service_test.dart: get a key absent everywhere reports found=false
+✅ test/config/config_service_test.dart: get an unknown top-level key throws (typo protection)
+✅ test/config/config_service_test.dart: get the fabric section resolves and validates (issue #288)
+✅ test/config/config_service_test.dart: set creates a minimal project file when asked (E1)
+✅ test/config/config_service_test.dart: set writes a top-level scalar to the user file
+✅ test/config/config_service_test.dart: set sets tui.showCompactionDetails in the user file (gh-1636)
+✅ test/config/config_service_test.dart: set compaction.triggerRatio validates and persists (gh-2098)
+✅ test/config/config_service_test.dart: set rewrites only the touched line, comment included (E4)
+✅ test/config/config_service_test.dart: set inserts a missing key under an existing section
+✅ test/config/config_service_test.dart: set builds a nested mcp server entry in the user file
+✅ test/config/config_service_test.dart: set writes a JSON list of provider entries as a yaml block (S4)
+✅ test/config/config_service_test.dart: set replaces an existing provider block in place
+✅ test/config/config_service_test.dart: set a block write keeps the key trailing comment and neighbors
+✅ test/config/config_service_test.dart: set rejects a bad provider entry before writing (named diagnostic)
+✅ test/config/config_service_test.dart: set empty JSON list renders flow [] and appends a fresh block
+✅ test/config/config_service_test.dart: set rejects a wrong-typed value before writing anything (E3)
+✅ test/config/config_service_test.dart: set rejects descending into a scalar key
+✅ test/config/config_service_test.dart: set refuses global-only keys at project scope with guidance
+✅ test/config/config_service_test.dart: set resolves the default scope by cwd: project file wins
+✅ test/config/config_service_test.dart: set resolves the default scope to global without a project file
+✅ test/config/config_service_test.dart: set project-capable keys default to the project file, creating it (E1)
+✅ test/config/config_service_test.dart: set set then get round-trips across scopes (AC8)
+✅ test/config/config_service_test.dart: paths lists the config locations with existence
+✅ test/config/config_service_test.dart: paths reports the global scope honestly without a home (E11)
+✅ test/config/config_service_test.dart: diagnostic dispatch a non-map root is a named error, not a crash
+✅ test/config/config_service_test.dart: diagnostic dispatch scalar keys must be non-empty strings
+✅ test/config/config_service_test.dart: diagnostic dispatch allowedTools must be a list when present
+✅ test/config/config_service_test.dart: diagnostic dispatch the roles group parses once and accepts a valid chain
+✅ test/config/config_service_test.dart: diagnostic dispatch an invalid roles entry fails with the triggering key named
+✅ test/config/config_service_test.dart: diagnostic dispatch every strict section reaches its validator via check
+✅ test/config/config_service_test.dart: diagnostic dispatch providerTimeouts rejects unknown keys and non-positive ints
+✅ test/config/config_service_test.dart: diagnostic dispatch skills rejects bad access values, bad bools and unknown keys
+✅ test/config/config_service_test.dart: diagnostic dispatch prompts must be a string-valued map
+✅ test/config/config_service_test.dart: diagnostic dispatch images rejects unknown keys, bad bools and non-positive ints (issue #195 F1)
+✅ test/config/config_service_test.dart: diagnostic dispatch images.perModel validates strictly (issue #1750 AC7)
+✅ test/config/config_service_test.dart: diagnostic dispatch power rejects bad values and unknown keys (issue #325)
+✅ test/config/config_service_test.dart: diagnostic dispatch agent rejects unknown keys, non-ints and sub-reserve caps (issue #273)
+✅ test/config/config_service_test.dart: diagnostic dispatch a valid agent section passes clean (issue #273)
+✅ test/config/config_service_test.dart: diagnostic dispatch images must be a map (issue #195 F1)
+✅ test/config/config_service_test.dart: diagnostic dispatch a valid images section passes clean (issue #195 F1)
+✅ test/config/config_service_test.dart: diagnostic dispatch a valid output section passes clean (gh-1198)
+✅ test/config/config_service_test.dart: diagnostic dispatch an unknown output key is a check error (gh-1198)
+✅ test/config/config_service_test.dart: applicationNote models overrides apply live to the next model build (gh-1426)
+✅ test/config/config_service_test.dart: applicationNote unlisted sections stay at next boot
+✅ test/config/config_service_test.dart: pins against cli_config.dart tui validation agrees with CliConfig.fromYaml (gh-1636)
+✅ test/config/config_service_test.dart: pins against cli_config.dart the output section validates identically (gh-1198)
+✅ test/config/config_service_test.dart: pins against cli_config.dart the top-level key set matches what the CLI config reads
+✅ test/config/config_service_test.dart: pins against cli_config.dart providerTimeouts validation agrees with CliConfig.fromYaml
+✅ test/config/config_service_test.dart: pins against cli_config.dart skills validation agrees with CliConfig.fromYaml
+✅ test/config/config_service_test.dart: pins against cli_config.dart power validation agrees with CliConfig.fromYaml (issue #325)
+✅ test/config/config_service_test.dart: pins against cli_config.dart agent validation agrees with CliConfig.fromYaml (issue #273)
+✅ test/config/config_service_test.dart: pins against cli_config.dart agent validation agrees on the #729 raise path too
+✅ test/config/config_service_test.dart: pins against cli_config.dart agent validation agrees on the misuseBreaker kill switch (gh-1572)
+✅ test/config/config_service_test.dart: pins against cli_config.dart agent validation agrees on the stuckTool section (gh-1054)
+✅ test/config/config_service_test.dart: pins against cli_config.dart agent validation agrees on the foregroundCall leaves (#1786)
+✅ test/config/config_service_test.dart: pins against cli_config.dart everything the agent emitter renders passes the strict mirror validator
+✅ test/config/config_service_test.dart: host capability (AC11) get of a stdio member answers not applicable, never dead config
+✅ test/config/config_service_test.dart: host capability (AC11) get of a whole stdio entry answers not applicable
+✅ test/config/config_service_test.dart: host capability (AC11) get of a remote server entry resolves normally
+✅ test/config/config_service_test.dart: host capability (AC11) global-scope writes answer honestly on a home-less host
+✅ test/config/config_service_test.dart: host capability (AC11) set of a stdio entry is refused with the host reason
+✅ test/config/config_service_test.dart: host capability (AC11) whole-section sets cannot smuggle stdio servers past the guard
+✅ test/config/config_service_test.dart: host capability (AC11) get of a whole section answers not applicable when it carries stdio entries
+✅ test/config/config_service_test.dart: host capability (AC11) set of a remote server entry succeeds on the same host
+✅ test/config/config_service_test.dart: host capability (AC11) check warns about existing stdio entries as dead config
+✅ test/config/config_service_test.dart: host capability (AC11) the desktop default still resolves and writes stdio entries
+✅ test/config/config_service_test.dart: host capability (AC11) config tool get renders the not-applicable answer (config_tool_test covers the schema; this pins the AC11 wording end to end)
+✅ test/config/app_config_sections_test.dart: UT-1 tools scope stack global < project < runtime: deepest wins per key
+✅ test/config/app_config_sections_test.dart: UT-1 tools scope stack E1: the runtime (app-UI store) scope beats yaml intents
+✅ test/config/app_config_sections_test.dart: UT-1 tools scope stack omp load mode demotes the lean schema + registers discovery
+✅ test/config/app_config_sections_test.dart: UT-1 tools scope stack E4: pi load mode is the exact 4-tool benchmark base
+✅ test/config/app_config_sections_test.dart: UT-1 tools scope stack load-mode precedence: FA_AGENT_MODE beats agent.mode
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) garbage roles → default + warning naming file+section
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) garbage tools survives alongside a valid sibling section
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) garbage user ttsr degrades to project rules with warnings
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) malformed project rules warn and name the file
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) bad agent.mode → default + warning; other sections still land
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) bad FA_AGENT_MODE warns and names the environment
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) an empty FA_AGENT_MODE is an absent intent, not a warning
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) malformed redact falls back to defaults with a warning
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a redact allowlist entry that is not a valid regex warns
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) malformed providerTimeouts → default + warning
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a dead mcp: section warns (inventory #2 interim)
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a retry:-only doc is a silent no-op — CLI parity (round-1)
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a non-string agent.mode warns and keeps the default (round-1)
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a non-map agent: node warns (round-1)
+✅ test/config/app_config_sections_test.dart: UT-3 malformed sections (AC7) a non-map top-level doc warns and names the file (round-1)
+✅ test/config/app_config_sections_test.dart: subagents section (gh-1956 kill switch, review round 1) a present section parses through the CLI parser
+✅ test/config/app_config_sections_test.dart: subagents section (gh-1956 kill switch, review round 1) an absent section reads as absent (defaults)
+✅ test/config/app_config_sections_test.dart: subagents section (gh-1956 kill switch, review round 1) a non-map section warns and falls back to defaults (AC7)
+✅ test/config/app_config_sections_test.dart: subagents section (gh-1956 kill switch, review round 1) an unknown key warns and falls back to defaults (AC7)
+✅ test/config/app_config_sections_test.dart: subagents section (gh-1956 kill switch, review round 1) a bad value type warns and falls back to defaults (AC7)
+✅ test/config/config_tool_test.dart: check prints notes and ok when both files are absent
+✅ test/config/config_tool_test.dart: check reports a broken file as a named error
+✅ test/config/config_tool_test.dart: path lists locations and marks absent files
+✅ test/config/config_tool_test.dart: get returns the effective value with scope and file
+✅ test/config/config_tool_test.dart: get reports not set without throwing
+✅ test/config/config_tool_test.dart: get rejects an unknown top-level key
+✅ test/config/config_tool_test.dart: set writes through and answers file/scope/application
+✅ test/config/config_tool_test.dart: set refuses an invalid value and persists nothing
+✅ test/config/config_tool_test.dart: set honors an explicit global scope for a project-capable key
+✅ test/config/config_tool_test.dart: missing operands surface as error results, never exceptions
+✅ test/config/config_tool_test.dart: an unknown op is an error result (belt for the schema)
+✅ test/config/config_tool_test.dart: builtinTools registers the tool when a service is provided
+✅ test/config/config_tool_test.dart: builtinTools leaves the tool out without a service
+✅ test/config/app_cli_config_parity_test.dart: roles: chains resolve identically
+✅ test/config/app_cli_config_parity_test.dart: tools: scope inputs and resolution match the CLI
+✅ test/config/app_cli_config_parity_test.dart: ttsr: settings + rules match
+✅ test/config/app_cli_config_parity_test.dart: redact: config matches
+✅ test/config/app_cli_config_parity_test.dart: providerTimeouts: overrides match
+✅ test/config/app_cli_config_parity_test.dart: subagents: the reply auto-spill kill switch matches (gh-1956)
+✅ test/config/app_cli_config_parity_test.dart: agent.mode matches the CLI load-mode label
+✅ test/config/app_cli_config_parity_test.dart: an absent section reads as absent on BOTH sides
+✅ test/config/app_cli_config_parity_test.dart: a retry:-only doc is a silent no-op on BOTH sides (round-1)
+✅ test/config/app_cli_config_parity_test.dart: a non-string agent.mode errors on the CLI and warns on the app
+✅ test/config/links_section_test.dart: get links is a known top-level key
+✅ test/config/links_section_test.dart: get absent section reports not set (defaults apply in-process)
+✅ test/config/links_section_test.dart: get a written member resolves through the dotted path
+✅ test/config/links_section_test.dart: get an unknown links member reports not set (no invented defaults)
+✅ test/config/links_section_test.dart: set a good appstore link persists and reads back
+✅ test/config/links_section_test.dart: set a non-URL value is rejected — nothing persists
+✅ test/config/links_section_test.dart: set a non-boolean banner is rejected
+✅ test/config/links_section_test.dart: set an unknown member persists as a tolerant note (AC7)
+✅ test/config/links_section_test.dart: set an explicit project scope is refused — links is user-only
+✅ test/config/links_section_test.dart: check a well-formed section passes clean
+✅ test/config/links_section_test.dart: check a bad shape is a named error, never a silent default
+✅ test/config/links_section_test.dart: check a non-map section is a named error
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally both lanes render distribute_external: true
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally both lanes pass the configured group
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally both lanes wait for processing (pilot silently skips distribution otherwise)
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally missing TESTFLIGHT_EXTERNAL_GROUP fails loudly at lane start
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally workflows pass the repo variables through
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally external distribution supplies a changelog (pilot raises without one)
+✅ test/store_automation_guard_test.dart: AC1 — submit_only lanes distribute externally distribution is verified against ASC after upload (AC4)
+✅ test/store_automation_guard_test.dart: AC2 — beta review info + export compliance (both platforms) lanes supply beta_app_review_info and the feedback email
+✅ test/store_automation_guard_test.dart: AC2 — beta review info + export compliance (both platforms) export compliance off in both lanes
+✅ test/store_automation_guard_test.dart: AC2 — beta review info + export compliance (both platforms) export compliance off in both plists
+✅ test/store_automation_guard_test.dart: Track 2 — release-appstore.yml dispatch contract: version + platforms + confirm
+✅ test/store_automation_guard_test.dart: Track 2 — release-appstore.yml both platform jobs gate on the platforms input
+✅ test/store_automation_guard_test.dart: Track 2 — release-appstore.yml both submit_for_review lanes submit for review
+✅ test/store_automation_guard_test.dart: Track 2 — release-appstore.yml automatic release stays a one-line config (E5), not hardcoded
+✅ test/store_automation_guard_test.dart: Track 2 — release-appstore.yml pre-flight module + AC3 matrix tests exist
+✅ test/store_automation_guard_test.dart: Track 2 — store-metadata.yml android leg (#289) fastlane android play_store lane uploads the listing via supply
+✅ test/store_automation_guard_test.dart: Track 2 — store-metadata.yml android leg (#289) android_content dispatch input offers the supply splits, none default
+✅ test/store_automation_guard_test.dart: Track 2 — store-metadata.yml android leg (#289) android job gates on android_content and wires the Play secret
+✅ test/store_automation_guard_test.dart: Track 2 — store-metadata.yml android leg (#289) dispatch maps android_content to PLAY_DEPLOY_* flags
+✅ test/store_automation_guard_test.dart: Track 2 — store-metadata.yml android leg (#289) committed listing assets exist for both locales
+✅ test/config/auto_update_test.dart: autoUpdateModeFromYaml absent parses as notify (the default is never written)
+✅ test/config/auto_update_test.dart: autoUpdateModeFromYaml true parses as on, false as off
+✅ test/config/auto_update_test.dart: autoUpdateModeFromYaml the "notify" string parses as notify
+✅ test/config/auto_update_test.dart: autoUpdateModeFromYaml junk throws ConfigException with the exact message
+✅ test/config/auto_update_test.dart: CliConfig.fromYaml parses every legal tri-state value
+✅ test/config/auto_update_test.dart: CliConfig.fromYaml junk throws ConfigException at boot
+✅ test/store_automation_guard_test.dart: workflow YAML parses all touched workflows are valid YAML
+✅ test/store_automation_guard_test.dart: AC6 — regression guard (existing channels unchanged) metadata lanes never submit for review
+✅ test/store_automation_guard_test.dart: AC6 — regression guard (existing channels unchanged) daily testflight leg keeps Android excluded
+✅ test/store_automation_guard_test.dart: AC6 — regression guard (existing channels unchanged) daily cron unchanged
+✅ test/config/auto_update_test.dart: config service auto_update is a known top-level key
+✅ test/store_automation_guard_test.dart: AC6 — regression guard (existing channels unchanged) notarized DMG leg intact
+✅ test/config/auto_update_test.dart: config service auto_update is classified by the settings registry
+✅ test/config/auto_update_test.dart: config service the mirror validator agrees with the real parser
+✅ test/config/auto_update_test.dart: config service a legal value writes to the global file and reads back
+✅ test/store_automation_guard_test.dart: daily-publish dispatch contract (#346) every -f input a leg sends is declared by the child workflow
+✅ test/store_automation_guard_test.dart: daily-publish dispatch contract (#346) play leg is independent of the testflight leg outcome (#359)
+✅ test/config/auto_update_test.dart: config service junk is refused and nothing is persisted
+✅ test/store_automation_guard_test.dart: .env placeholder guard (#368) build-android and build-ios seed the .env asset
+✅ test/store_automation_guard_test.dart: release-train tripwires (gh-798) build-ios asserts the ASC version floor before building
+✅ test/store_automation_guard_test.dart: release-train tripwires (gh-798) the 16 KB AAB gate is the shared script and CI self-tests it
+✅ test/config/auto_update_test.dart: saveCliConfig round-trip a non-default mode persists and loads back
+✅ test/config/auto_update_test.dart: saveCliConfig round-trip the notify default is never written
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) latches OUR run when the sibling leg's run lists first
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) prefers the NEWEST same-title match inside the window
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) ignores same-title runs older than the window (stale-run race)
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) without --title still takes the newest in-window dispatch (pages/addin legs)
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) polls until the dispatched run appears
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) fails loudly when the dispatched run never appeared
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) a completed non-success conclusion fails the leg, no re-dispatch
+✅ test/dispatch_watch_test.dart: #343 — dispatch correlation (title + newest + tight window) rejects the removed --budget-seconds flag loudly (gh-1903)
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification the paths classifier runs on SM validation dispatches
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification the dispatch arm derives the validated diff from the fork point
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification a failed classification fails SAFE — both rare-path arms run
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification the dispatch arm exits before the PR-only stages logic
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification exzone keys on the exclusion-zone path set (single source)
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 N1/N2 — dispatch-time path classification locksmoke keys on the flutter_app/pubspec.lock diff (AC2)
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC1 — flutter-app-exzone is path-triggered the leg consults the classifier output on BOTH events
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC2 — flutter-app-lock-smoke the leg exists and gates on the locksmoke output
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC2 — flutter-app-lock-smoke the matrix builds BOTH nightly-only native targets
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC2 — flutter-app-lock-smoke the resolve rides the shared --enforce-lockfile action
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC2 — flutter-app-lock-smoke the legs are RELEASE builds with the pinned SDK
+✅ test/ci_1267_path_triggered_legs_test.dart: #1267 AC2 — flutter-app-lock-smoke a red smoke reddens the required Quality gate (platform class)
+✅ test/dispatch_watch_test.dart: gh-1903 — read-only wait, no stall timer, no re-dispatch (a) child queued 45m with siblings in_progress → NO cancel, leg keeps waiting, then green
+✅ test/dispatch_watch_test.dart: gh-1903 — read-only wait, no stall timer, no re-dispatch (b) child completes after a long queue with NO siblings in progress → leg green, idle-pool warning logged, still no cancel
+✅ test/ci_macos_debug_spm_lane_guard_test.dart: AC1 — the ci.yml build-macos (debug) job carries NO SwiftPM disable pin (knob removed upstream in 3.47.7, flutter/flutter#193978 — gh-1814)
+✅ test/ci_macos_debug_spm_lane_guard_test.dart: AC2 — no build-macos step sets the SwiftPM knob at all (gh-1814)
+✅ test/dispatch_watch_test.dart: gh-1903 — read-only wait, no stall timer, no re-dispatch (e) a failing liveness probe produces the cannot-judge diagnostic and no cancel either
+✅ test/release_drift_workflow_test.dart: AC1 — every fa-* attach path routes through the immutability gate scripts/release_asset_gate.sh exists and uploads with --clobber
+✅ test/release_drift_workflow_test.dart: AC1 — every fa-* attach path routes through the immutability gate release_attach_or_create.sh routes uploads through the gate
+✅ test/release_drift_workflow_test.dart: AC1 — every fa-* attach path routes through the immutability gate ci.yml + build-macos.yml: bare `gh release upload` lines are SHA256SUMS-only (provenance)
+✅ test/release_drift_workflow_test.dart: AC1 — every fa-* attach path routes through the immutability gate every fa-* upload call site invokes the gate (ci.yml binaries/web-spa/extension, build-macos legs)
+✅ test/release_drift_workflow_test.dart: AC2 — the release drift watch workflow workflow exists with publish + schedule + dispatch triggers
+✅ test/release_drift_workflow_test.dart: AC2 — the release drift watch workflow the job is bounded, least-privileged, and runs the check + remediation
+✅ test/release_drift_workflow_test.dart: gh-2042 review rework — repo hygiene + shell-injection posture no committed test-run residue at the repo root (release-notes.md / drift-details.txt)
+✅ test/release_drift_workflow_test.dart: gh-2042 review rework — repo hygiene + shell-injection posture no untrusted template interpolation into run: shells — env indirection (gh-2042 review thread 4)
+✅ test/release_drift_workflow_test.dart: gh-2042 review rework — repo hygiene + shell-injection posture the remediation step pages ONLY on a non-empty drift details file (gh-2042 review thread 6)
+✅ test/release_drift_workflow_test.dart: AC4 (REG) — the existing release gates stay exactly where they are gh-1832 required-assets gate stays a publish-blocking provenance step
+✅ test/release_drift_workflow_test.dart: AC4 (REG) — the existing release gates stay exactly where they are gh-814 trust-anchor drift gate + signature self-check stay in the sign step
+✅ test/release_drift_workflow_test.dart: AC4 (REG) — the existing release gates stay exactly where they are the provenance publish point keeps its signed-manifest precondition
+✅ test/release_drift_workflow_test.dart: AC4 (REG) — the existing release gates stay exactly where they are the provenance flip never drags `latest` backwards (gh-2042 BLOCKING review thread)
+✅ test/release_drift_workflow_test.dart: AC4 (REG) — the existing release gates stay exactly where they are naming consistency: the immutability suite is spelled immutability
+✅ test/env/secret_presence_test.dart: renderEnvListingWithSecretPresence a granted secret renders PRESENT, never its value
+✅ test/env/secret_presence_test.dart: renderEnvListingWithSecretPresence a rostered name without a value renders ABSENT
+✅ test/env/secret_presence_test.dart: renderEnvListingWithSecretPresence an empty-value secret counts as ABSENT
+✅ test/env/secret_presence_test.dart: renderEnvListingWithSecretPresence output stays name-sorted with POSIX ? filtered
+✅ test/env/secret_presence_test.dart: SecretsExecutionEnv roster every exec carries the roster (names only) and the values
+✅ test/env/secret_presence_test.dart: SecretsExecutionEnv roster registered known-names ride the roster without values
+✅ test/env/secret_presence_test.dart: SecretsExecutionEnv roster a revoked secret keeps its roster entry (E3)
+✅ test/env/secret_presence_test.dart: SecretsExecutionEnv roster byte-scan: no secret value reaches the rendered listing
+✅ test/env/secret_presence_test.dart: SecretsExecutionEnv roster per-call env still wins over injected values; roster is fixed
+✅ test/dispatch_watch_test.dart: gh-1903 — read-only wait, no stall timer, no re-dispatch a sustained gh/API outage does not cancel — failed polls just log and the wait continues
+✅ test/dispatch_watch_test.dart: gh-1903 — orphan-cancel fires only when the LEG dies (c) leg timeout (TERM) with a never-started child → exactly one targeted cancel of that child, none otherwise
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) a job runs detached, writes its log, and settles
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) stop terminates a long-running job
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) the timeout kills the job and records the reason
+✅ test/dispatch_watch_test.dart: gh-1903 — orphan-cancel fires only when the LEG dies TERM after the child started → NO cancel (never-started children only)
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) the cancel token kills the job and records the reason
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) live stdin: the pipe stays open until the process ends and a write reaches it (issue #367)
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) without a live channel stdin closes at start (ripgrep safety)
+✅ test/env/shell_job_io_test.dart: BackgroundShell (local) an unwritable job log fails cleanly instead of crashing with an unhandled error (issue #925)
+✅ test/dispatch_watch_test.dart: gh-1903 — orphan-cancel fires only when the LEG dies INT (manual workflow cancel) with a never-started child → the same single orphan-cancel
+✅ test/env/shell_job_io_test.dart: job stop kills the whole process tree (issue #517) stop kills a grandchild forked by the job (AC1)
+✅ test/dispatch_watch_test.dart: gh-1903 — orphan-cancel fires only when the LEG dies watcher dies WITHOUT the orphan-cleanup handler (trap-action parse loss) → the backstop still cancels the never-started child
+✅ test/env/shell_job_io_test.dart: job stop kills the whole process tree (issue #517) stop leaves zero toolchain children of a flutter-test-shaped job (AC2)
+✅ test/env/shell_job_io_test.dart: job stop kills the whole process tree (issue #517) boot sweep reaps a dead-leader group and warns once (AC3)
+✅ test/dispatch_watch_test.dart: gh-1903 — orphan-cancel fires only when the LEG dies trap-action parse loss on a STARTED child → no cancel, backstop correctly silent (gh-1903 AC4: never-started children only)
+✅ test/dispatch_watch_test.dart: DwLive.finish — wedged signal handoff self-identifies the timeout failure carries the diagnostics, not a bare state error
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds build-mobile.yml run-name embeds both content inputs (displayTitle disambiguator)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds build-macos.yml run-name embeds create_release (displayTitle disambiguator)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds self-hosted build-mobile jobs carry a job-level timeout-minutes (server-side wedge bound)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds every dispatching leg routes through dispatch_and_watch.sh (no legacy correlation)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds gh-1903: no leg passes a watcher budget or stall knob; the watchdog vocabulary is gone from the workflow
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds build-mobile/build-macos legs pass --title values matching the child run-name
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds every job in a watched child workflow carries an explicit timeout-minutes (#351)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds leg timeouts clear the child worst-case with margin (#351 arithmetic)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds build-mobile concurrency group is per-dispatch — no cross-run cancellation (#351)
+✅ test/dispatch_watch_test.dart: workflows — correlation plumbing (#343) and gh-1903 bounds dispatching legs check out the repo (the watcher script lives there)
+✅ test/env/shell_job_io_test.dart: job stop kills the whole process tree (issue #517) without group leadership stop still walks the live tree
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) a null process table yields a zero sweep and no warning
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) pids ≤ 1 are filtered before the table is even read
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) malformed table lines are skipped; a dead leader with no members reaps nothing
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) a live leader is never reaped — no kill is issued
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) a dead leader's whole group is killed and warned once
+✅ test/env/shell_job_io_test.dart: reapOrphanJobGroups (process-table seam, no setsid) a failing kill leaves the group unreaped and silent
+✅ test/env/shell_job_io_test.dart: bounded job logs (issue #919) UT-1/E4: a runaway job stays bounded, keeps running, and paging reads the marker as content
+✅ test/env/shell_job_io_test.dart: bounded job logs (issue #919) UT-2: output under the ceiling lands in the file byte-identically
+✅ test/env/shell_job_io_test.dart: bounded job logs (issue #919) UT-4: a low-disk probe stops log writes and warns exactly once
+✅ test/env/shell_job_io_test.dart: bounded job logs (issue #919) a bad ceiling fails as a clean Err before anything spawns (review round 2)
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) a secret-shaped value never lands in the log file
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) a secret split across chunks stays redacted (line buffering)
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) a token split at ANY chunk offset stays redacted (parametrized)
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) flush() emits a trailing partial line
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) an oversized newline-free chunk force-flushes instead of buffering without bound (issue #919 memory discipline)
+✅ test/env/shell_job_io_test.dart: job log redaction at rest (issue #1408 AC2) an oversized buffered partial line keeps best-effort redaction
+✅ test/env/job_log_ceiling_test.dart: below the ceiling (UT-2) every chunk appends byte-identically, in order
+✅ test/env/job_log_ceiling_test.dart: the truncation crossing one marker append, then patch ops at the head boundary
+✅ test/env/job_log_ceiling_test.dart: the truncation crossing E2: a pathological stream keeps exactly one marker per region
+✅ test/env/job_log_ceiling_test.dart: the truncation crossing E1: a multibyte tail trims on UTF-8 sequence boundaries
+✅ test/env/job_log_ceiling_test.dart: the truncation crossing the tail region is capped at 1 MiB at large ceilings and the patch churn stays within ~2x the post-crossing bytes (review: write amplification)
+✅ test/env/job_log_ceiling_test.dart: validation non-positive ceilings are rejected loudly (public API)
+✅ test/env/job_log_ceiling_test.dart: low-disk guard (UT-4) a below-threshold probe stops writes and warns exactly once
+✅ test/env/job_log_ceiling_test.dart: low-disk guard (UT-4) a null or healthy probe keeps writes flowing
+✅ test/env/job_log_ceiling_test.dart: low-disk guard (UT-4) a throwing probe leaves the guard inactive
+✅ test/env/job_log_ceiling_test.dart: low-disk guard (UT-4) the probe runs at most once per produced cadence window
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv injects the session vars into every exec
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv the vars provider is consulted live per exec
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv async vars providers are awaited
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv empty vars pass the options through untouched
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv per-call env entries win over the injected vars
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv the vars merge carries stdinData and the live stdin channel (issue #367)
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv composes with SecretsExecutionEnv without leaking secrets
+✅ test/env/session_vars_execution_env_test.dart: SessionVarsExecutionEnv file operations delegate to the wrapped env
+✅ test/env/bash_self_defense_test.dart: AC1: pkill/pgrep self-match immunity (gh-1763) pkill -f does not kill its own bash tool shell (foreground)
+✅ test/env/bash_self_defense_test.dart: AC1: pkill/pgrep self-match immunity (gh-1763) pgrep -f does not list its own bash tool shell
+✅ test/env/bash_self_defense_test.dart: AC1: pkill/pgrep self-match immunity (gh-1763) pkill -f does not kill its own bash tool shell (background job)
+✅ test/env/bash_self_defense_test.dart: AC1: pkill/pgrep self-match immunity (gh-1763) pkill -f through the bash tool survives end to end
+✅ test/env/bash_self_defense_test.dart: AC2: harness/ancestor pid immunity (gh-1763) the harness pid chain is exported to bash tool calls
+✅ test/env/bash_self_defense_test.dart: AC2: harness/ancestor pid immunity (gh-1763) pkill skips a pid on FA_PROTECTED_PIDS and still reaps the rest
+✅ test/env/bash_self_defense_test.dart: AC2: harness/ancestor pid immunity (gh-1763) kill filters a pid on FA_PROTECTED_PIDS
+✅ test/env/bash_self_defense_test.dart: AC2: harness/ancestor pid immunity (gh-1763) kill without a protected hit is passed through unchanged
+✅ test/env/io_execution_env_test.dart: LocalFileSystem write/append/read round-trip on real disk
+✅ test/env/io_execution_env_test.dart: LocalFileSystem binary write/read round-trip on real disk
+✅ test/env/io_execution_env_test.dart: LocalFileSystem exists, listDir, createDir, remove against real disk
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readTextLines and missing-file errors
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readTextLines with maxLines truncates the output
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readTextLines with maxLines above the line count reads all
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readTextLines with non-positive maxLines returns empty
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readTextLines on a missing file maps to notFound
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readRange reads a byte slice from real disk
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readRange clamps end past EOF and start at EOF
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readRange with inverted range returns empty without I/O
+✅ test/env/io_execution_env_test.dart: LocalFileSystem readRange on a missing file maps to notFound
+✅ test/env/io_execution_env_test.dart: LocalFileSystem absolutePath resolves relatives against cwd
+✅ test/env/io_execution_env_test.dart: LocalFileSystem fileInfo reports real size
+✅ test/env/io_execution_env_test.dart: LocalFileSystem error mapping missing file maps to notFound
+✅ test/env/io_execution_env_test.dart: LocalFileSystem error mapping reading a directory maps to isDirectory
+✅ test/env/io_execution_env_test.dart: LocalFileSystem error mapping unreadable file maps to permissionDenied
+✅ test/env/io_execution_env_test.dart: LocalFileSystem error mapping path through a regular file maps to notDirectory
+✅ test/env/io_execution_env_test.dart: LocalFileSystem error mapping a symlink loop maps to unknown
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove removes a file
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove removes an empty directory non-recursively
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove missing path without force maps to notFound
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove missing path with force succeeds
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove non-empty directory without recursive maps to invalid
+✅ test/env/io_execution_env_test.dart: LocalFileSystem remove non-empty directory with recursive succeeds
+✅ test/env/io_execution_env_test.dart: LocalShell exec captures stdout and exit code
+✅ test/env/io_execution_env_test.dart: LocalShell exec reports non-zero exit codes without throwing
+✅ test/env/io_execution_env_test.dart: LocalShell exec honors timeout
+✅ test/env/io_execution_env_test.dart: LocalShell exec supports env overrides
+✅ test/env/io_execution_env_test.dart: LocalShell exec PATH gains common tool directories (Homebrew)
+✅ test/env/io_execution_env_test.dart: LocalShell an explicit env PATH is preserved, not replaced
+✅ test/env/io_execution_env_test.dart: LocalShell env overrides merge over the host environment
+✅ test/env/io_execution_env_test.dart: LocalShell exec closes stdin so commands like ripgrep do not hang when no path is given
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) kill -- -PGID: a protected group target is never signaled
+✅ test/env/io_execution_env_test.dart: LocalShell git terminal prompts are disabled by default (fa_tui hang)
+✅ test/env/io_execution_env_test.dart: LocalShell an explicit GIT_TERMINAL_PROMPT wins over the default
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) kill -- -PGID: an unprotected group target is still reaped
+✅ test/env/io_execution_env_test.dart: LocalShell timeout reaps the whole tree and returns bounded (gh-1053)
+✅ test/env/io_execution_env_test.dart: LocalShell timeout reaps a detached grandchild that outlived the shell (gh-1053 wedge: run 36421037356)
+✅ test/env/io_execution_env_test.dart: LocalShell cancel token: bounded abort with the tree reaped
+✅ test/env/io_execution_env_test.dart: LocalShell cancel token reaps a detached grandchild that outlived the shell
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) kill filters only the protected target from a mixed group kill
+✅ test/env/io_execution_env_test.dart: LocalShell the walk fallback (no setsid) reaps the tree identically (AC3)
+✅ test/env/io_execution_env_test.dart: LocalShell timeout error carries the captured partial stdout/stderr
+✅ test/env/io_execution_env_test.dart: LocalShell timeout capture is tail-capped at the source
+✅ test/env/io_execution_env_test.dart: LocalShell aborted error carries the captured partial stdout/stderr
+✅ test/env/io_execution_env_test.dart: LocalShell no-timeout exec returns once the direct child has exited (orphan-capped drain)
+✅ test/env/io_execution_env_test.dart: LocalExecutionEnv custom shell uses the provided shell instead of LocalShell
+✅ test/env/io_execution_env_test.dart: LocalExecutionEnv custom shell LocalExecutionEnv exposes renamePath (RenamableFileSystem) — kernel-mode cube profile staging depends on it (the #803 regression)
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) pkill -l defers to the real pkill (usage error) and signals nothing
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) pkill --count defers to the real pkill instead of reading the count as a pid
+✅ test/env/memory_file_system_test.dart: Result ok exposes value
+✅ test/env/memory_file_system_test.dart: Result err exposes error and getOrThrow throws it
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem write then read round-trips, creating parent dirs
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem binary write/read round-trips
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem read of missing file returns not_found
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem read of a directory returns is_directory
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem appendFile appends and creates the file when missing
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem writeFile overwrites existing content
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem exists is false for missing paths, true for files and dirs
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem listDir returns direct children with kinds
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem listDir on missing dir returns not_found
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem listDir on a file returns not_directory
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem createDir non-recursive fails when parent is missing
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem remove deletes files and, recursively, directories
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem remove of a missing path fails unless force
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem readTextLines splits lines and honors maxLines
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem absolutePath resolves relatives against cwd and normalizes
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem joinPath joins segments in the fs namespace
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem fileInfo reports size and mtime
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem.exportSnapshot exports an empty tree
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem.exportSnapshot exports the subtree below cwd, deep-first and name-sorted
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem.exportSnapshot deep-copies file bytes (later writes cannot mutate the export)
+✅ test/env/memory_file_system_test.dart: MemoryFileSystem.exportSnapshot export order matches an async listDir walk
+✅ test/env/memory_file_system_test.dart: MemoryExecutionEnv is an ExecutionEnv with an unavailable shell by default
+✅ test/env/memory_file_system_test.dart: MemoryExecutionEnv accepts a custom shell
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope replays a current-version envelope into the delegate
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope a v1 (sessions-inline) envelope restores and reports isV1
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope unreadable JSON answers null and leaves the tree untouched
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope a non-object JSON document answers null
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope an unhandled newer version answers null (never wipes)
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope a files entry with the wrong shape answers null WITHOUT half-restoring
+✅ test/env/memory_file_system_test.dart: restoreSnapshotEnvelope missing dirs/files keys answer null (corrupt envelope)
+✅ test/env/memory_file_system_test.dart: restoreSessionRecords overlays records onto the tree and seeds the eviction key set
+✅ test/env/memory_file_system_test.dart: restoreSessionRecords non-session keys are skipped and never enter the eviction set
+✅ test/env/memory_file_system_test.dart: restoreSessionRecords a non-String record value counts the key but writes nothing
+✅ test/env/memory_file_system_test.dart: restoreSessionRecords a torn (undecodable) record is skipped without crashing boot
+✅ test/env/bash_self_defense_test.dart: AC2b: review-rework kill/pkill shapes (gh-1763 threads) pkill -u <uid> split form runs the guarded path and honors the pid set
+✅ test/env/bash_self_defense_test.dart: AC2d: review-rework-2 --signal + terminator shapes (gh-1763) pkill --signal=KILL -f reaps its victim (dash-less signal names normalized)
+✅ test/env/bash_self_defense_test.dart: AC2d: review-rework-2 --signal + terminator shapes (gh-1763) pkill --signal TERM (split form) reaps its victim
+✅ test/env/bash_self_defense_test.dart: AC2d: review-rework-2 --signal + terminator shapes (gh-1763) killall --signal TERM reaps its victim (unique comm name)
+✅ test/env/bash_self_defense_test.dart: AC2d: review-rework-2 --signal + terminator shapes (gh-1763) pkill --signal / killall --signal (dangling, last arg) terminate under bash-as-sh instead of looping forever
+✅ test/env/bash_self_defense_test.dart: AC2d: review-rework-2 --signal + terminator shapes (gh-1763) pkill -- -<dash-leading pattern> matches the real exit code (terminator re-emitted on the pgrep-reject fallback)
+✅ test/env/bash_self_defense_test.dart: AC2c: guard provisioning hardening (gh-1763 review) a failing chmod degrades to a shimless provision instead of bricking pkill
+✅ test/env/bash_self_defense_test.dart: AC2c: guard provisioning hardening (gh-1763 review) a successful chmod keeps the shim dir provisioned
+✅ test/env/bash_self_defense_test.dart: E3: sh -c delivery parity (gh-1763) dollar-zero, arg count and args match sh -c
+✅ test/env/bash_self_defense_test.dart: E3: sh -c delivery parity (gh-1763) exit codes propagate
+✅ test/env/bash_self_defense_test.dart: E3: sh -c delivery parity (gh-1763) set -e aborts on failure
+✅ test/env/bash_self_defense_test.dart: E3: sh -c delivery parity (gh-1763) multi-line scripts and heredocs work
+✅ test/env/bash_self_defense_test.dart: E3: sh -c delivery parity (gh-1763) cwd is honored
+✅ test/session_deadline_test.dart: parseDeadlineSpec parses unit durations
+✅ test/session_deadline_test.dart: parseDeadlineSpec parses combined durations covering the whole string
+✅ test/session_deadline_test.dart: parseDeadlineSpec parses a bare epoch-ms integer
+✅ test/session_deadline_test.dart: parseDeadlineSpec rejects a bare small integer (ambiguous, missing its unit)
+✅ test/session_deadline_test.dart: parseDeadlineSpec rejects garbage, trailing units, zero and negative shapes
+✅ test/session_deadline_test.dart: formatTimeLeft formats seconds, minutes and hours
+✅ test/session_deadline_test.dart: formatTimeLeft a non-positive budget reads 0s — the clock never lies
+✅ test/session_deadline_test.dart: SessionDeadline unarmed: budgetLine null, pollNotices empty, remainingMs throws
+✅ test/session_deadline_test.dart: SessionDeadline setDuration arms from now; remaining ticks down with the clock
+✅ test/session_deadline_test.dart: SessionDeadline setFromSpec accepts a duration or an epoch; past epochs error
+✅ test/session_deadline_test.dart: SessionDeadline clear() returns every consumer to the unarmed shape
+✅ test/session_deadline_test.dart: SessionDeadline crossings fire once per arming, in ladder order
+✅ test/session_deadline_test.dart: SessionDeadline gh-1652 C3: the wrap-up steer text carries the parity clause
+✅ test/session_deadline_test.dart: SessionDeadline gh-1668 C4: the wrap-up steer leaves the final state in place
+✅ test/session_deadline_test.dart: SessionDeadline gh-1668 C5: the wrap-up steer stays inside its length budget
+✅ test/session_deadline_test.dart: SessionDeadline a jump across several crossings batches them in ladder order
+✅ test/session_deadline_test.dart: SessionDeadline re-setting re-arms every latch (once per NEW arming)
+✅ test/session_deadline_test.dart: SessionDeadline a compressed ladder fires at the injected thresholds
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) missing env and no flag → unarmed (feature off)
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) invalid env is silent off, never an error
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) a valid env epoch arms the clock
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) a past env epoch is silent off (the host exported a stale cap)
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) the flag overrides the env value
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) an invalid flag spec throws (user-facing, never silent)
+✅ test/session_deadline_test.dart: resolveSessionDeadline (env < flag override order) an env-armed clock survives when no flag is given
+✅ test/utils/frontmatter_parser_test.dart: parseFrontmatter text without a frontmatter block is all body
+✅ test/utils/frontmatter_parser_test.dart: parseFrontmatter parses the fenced block and trims values
+✅ test/utils/frontmatter_parser_test.dart: parseFrontmatter drops empty values from the flat map
+✅ test/utils/frontmatter_parser_test.dart: parseFrontmatter malformed YAML frontmatter degrades to plain body
+✅ test/utils/frontmatter_parser_test.dart: parseFrontmatter typed variant preserves lists, booleans, and nested maps
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) no fence is well-formed
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) a valid yaml map fence is well-formed
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) an opened fence that is never closed is malformed (torn write)
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) unparseable yaml is malformed
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) a yaml list fence is malformed (no map to read metadata from)
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) an empty fence is well-formed "no metadata"
+✅ test/utils/frontmatter_parser_test.dart: frontmatterWellFormed (gh-1440 AC6 gate) a comment-only fence is well-formed "no metadata"
+✅ test/utils/list_equals_test.dart: length mismatch is never equal
+✅ test/utils/list_equals_test.dart: element mismatch is not equal
+✅ test/utils/list_equals_test.dart: identical contents are equal, including empty
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1 — path classification the classifier exposes an installer output
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1 — path classification installer arms key on site/** + the generator (single source)
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1 — path classification a failed classification fails SAFE — the installer arm runs
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1/REG-2 — installer-portability leg the leg exists and consults the classifier on the shared events
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1/REG-2 — installer-portability leg the matrix carries the curl|sh dialect host AND the bash host
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1/REG-2 — installer-portability leg the ubuntu leg installs BOTH piped-dialect shells
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 REG-1/REG-2 — installer-portability leg the leg runs the UT + IT entrypoints explicitly
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 — a red leg blocks the merge (platform class) quality-gate needs the leg, consumes its result, classifies it
+✅ test/ci_1596_installer_portability_ci_test.dart: gh-1596 — a red leg blocks the merge (platform class) the leg stays OUT of the fast gate, watchdog and stage lists
+✅ test/ci_macos_nosandbox_point_of_use_sign_test.dart: AC1 — the no-sandbox step re-asserts the signing state at point of use, before the build
+✅ test/ci_macos_nosandbox_point_of_use_sign_test.dart: AC2 — build_macos_nosandbox.sh pre-flights the pinned identity before spending the build
+✅ test/ci_macos_nosandbox_point_of_use_sign_test.dart: AC3 — an EXPIRED pinned identity is rejected by the pre-flight BEFORE the build (find-identity -v lists invalid identities too)
+✅ test/conflict_markers_reg_test.dart: no committed git conflict markers in source trees (gh-1049)
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts two own-run twin drafts of the published tag are deleted by id; nothing else is touched
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts foreign-run and unmarked drafts are never deleted (ownership discipline)
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts no published release for the tag → nothing deleted (recovery window stays open)
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts no drafts at all → clean no-op
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts run-id prefix trap: run/1111 is not run/111
+✅ test/release_draft_dedupe_test.dart: release_draft_dedupe.sh — reclaims own-run twin drafts multi-page listing still finds and deletes the twin
+✅ test/ci_main_push_retired_test.dart: AC1 — ci.yml has no main-push trigger (gh-1537) on.push carries tags only, no branches filter
+✅ test/ci_main_push_retired_test.dart: AC2 — no ci.yml job keys off a main-push run release job has no dead push arm; main survives only in the ref-restricted releaseDispatch arm
+✅ test/ci_main_push_retired_test.dart: AC3 — the release flow keeps working without main CI the ci.yml release job owns the tag cut (gh-1522 tag-only flow) — no release-tag job anywhere
+✅ test/ci_main_push_retired_test.dart: AC4 — flake intake consumes PR-dispatch runs flake_watch.py filters ci.yml failures to workflow_dispatch
+✅ test/ci_main_push_retired_test.dart: AC5 — the serialized-validation invariant has a cheap alarm sm-merge-guard.yml fires on every main push and nothing else
+✅ test/ci_main_push_retired_test.dart: AC5 — the serialized-validation invariant has a cheap alarm the guard checkout is pinned to the pushed SHA — the tree under assertion cannot drift to a moved main
+✅ test/release_draft_dedupe_test.dart: wiring — the dedupe runs at every publish flip ci.yml release-provenance reclaims twins AFTER the publish flip
+✅ test/release_draft_dedupe_test.dart: wiring — the dedupe runs at every publish flip release_attach_or_create.sh reclaims twins after its servable-recovery flip
+✅ test/release_draft_dedupe_test.dart: wiring — the dedupe runs at every publish flip draft lifecycle roster: guard (failure) + dedupe (post-publish)
+✅ test/release_draft_dedupe_test.dart: best-effort failure mode — a dedupe blip never reds a published release failing DELETE after a successful flip keeps the attach leg green with a ::warning:: (review thread 1)
+✅ test/release_draft_dedupe_test.dart: best-effort failure mode — a dedupe blip never reds a published release wiring lints: BOTH dedupe call sites are best-effort (review threads 1 + 2)
+✅ test/parity/prompt_parity_test.dart: prompt parity every interactive tool factory is wired in the CLI
+✅ test/parity/prompt_parity_test.dart: prompt parity every interactive tool factory is wired in the app
+✅ test/parity/prompt_parity_test.dart: prompt parity approval gate is constructed in both platforms
+✅ test/parity/prompt_parity_test.dart: prompt parity every TuiPromptSpec subtype has a core type counterpart
+✅ test/parity/hello_token_parity_test.dart: AC2: fa-omp hello scenario ≤ oh-my-pi (12345-token baseline)
+fa-omp: system=1590 tools=7982 turns=10 total=9582
+oh-my-pi baseline: initial=12345 turns=10 total=12355
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) the parser sources actually describe a schema
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) every parsed yaml key is classified
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) the logging dial key is explicitly file-only (issue #2117)
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) classification is not accidental: an unknown key is rejected
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) every SharedSetting owns a yaml key or is a documented non-yaml
+✅ test/parity/settings_completeness_test.dart: yaml schema completeness (AC1) the audit table covers every key exactly once
+✅ test/parity/settings_completeness_test.dart: CLI-only classification discipline every CLI-only setting has a user-readable justification
+✅ test/parity/settings_completeness_test.dart: CLI-only classification discipline no justification exists for a non-CLI-only setting
+✅ test/parity/settings_completeness_test.dart: CLI-only classification discipline file-only keys carry a non-empty WHY
+✅ test/parity/settings_completeness_test.dart: surface audit completeness (AC3/AC5) every SharedSetting has a surface classification
+✅ test/parity/settings_completeness_test.dart: surface audit completeness (AC3/AC5) absent surfaces always name a capability (E3)
+✅ test/parity/settings_completeness_test.dart: surface audit completeness (AC3/AC5) CLI-only settings are absent from every app surface
+✅ test/parity/settings_completeness_test.dart: surface claims are pinned to real code (AC5) the extension panel really exposes provider + approval
+✅ test/parity/settings_completeness_test.dart: surface claims are pinned to real code (AC5) the web compaction gap is real: the web loader has no yaml
+✅ test/parity/provider_wiring_guard_test.dart: every catalog provider is a legal custom-provider api type
+✅ test/parity/provider_wiring_guard_test.dart: every custom-provider api type resolves to a catalog spec
+✅ test/parity/provider_wiring_guard_test.dart: every headless-capable catalog kind is accepted by --provider
+✅ test/parity/provider_wiring_guard_test.dart: every catalog kind builds a stream function
+✅ test/parity/provider_wiring_guard_test.dart: every cli provider kind maps to a catalog spec
+✅ test/parity/provider_wiring_guard_test.dart: buildCliDefaultModel resolves or clearly demands --model per kind
+✅ test/parity/provider_wiring_guard_test.dart: CustomProviderEntry round-trips every catalog api type
+✅ test/parity/settings_parity_test.dart: settings parity every SharedSetting is present in the CLI unless exempted
+✅ test/parity/settings_parity_test.dart: settings parity every SharedSetting is present in the app unless exempted
+✅ test/parity/settings_parity_test.dart: settings parity cliOnlySettings entries have no appRef (truly CLI-only)
+✅ test/parity/settings_parity_test.dart: settings parity appOnlySettings entries have a cliRef that is absent from CLI
+✅ test/parity/settings_parity_test.dart: settings parity media slot ids are shared between CLI and app
+✅ test/parity/settings_parity_test.dart: settings parity approval mode enum is referenced by both platforms
+✅ test/parity/settings_parity_test.dart: settings parity interactive tool factories are called by both platforms
+✅ test/macos_min_platform_gate_test.dart: AC0a — gate script exists and is executable
+✅ test/macos_min_platform_gate_test.dart: AC0b — the gate never advertises the DEAD SwiftPM disable knob; the real env override is FLUTTER_SWIFT_PACKAGE_MANAGER and no 28-char FLUTER_ misspelling may re-enter the tree
+✅ test/macos_min_platform_gate_test.dart: AC1 — a post-config SPM tree with all floors at/below the app min PASSES (the gh-1814 happy path on 3.47.7)
+✅ test/macos_min_platform_gate_test.dart: AC1b — SPM state with ONLY the generated package (no product manifests) passes
+✅ test/macos_min_platform_gate_test.dart: AC2 — a tree with NO SwiftPM state after the config pass FAILS: the lane decision is SPM-expected, absence is loud
+✅ test/macos_min_platform_gate_test.dart: AC3 — generated floor below the app min fails (the tool's silent bump skipped — the literal gh-180 killer)
+✅ test/macos_min_platform_gate_test.dart: AC4 — floor scan catches a product above the app min in a LATER manifest (multi-item)
+✅ test/macos_min_platform_gate_test.dart: AC5a — vendored Package.swift at the app floor is no longer a violation (presence is fine on the SPM lane)
+✅ test/macos_min_platform_gate_test.dart: AC5b — vendored Package.swift below the app min fails with the raise-the-floor remediation
+✅ test/macos_min_platform_gate_test.dart: AC5c — vendored Package.swift above the app min fails
+✅ test/macos_min_platform_gate_test.dart: AC5d — vendored Package.swift with NO readable .macOS floor fails (a SwiftPM opt-in whose minimum cannot be asserted)
+✅ test/macos_min_platform_gate_test.dart: AC10a — ephemeral Packages/ dir present but the generated manifest missing fails (half-written config pass)
+✅ test/macos_min_platform_gate_test.dart: AC10b — generated manifest whose .macOS floor does not parse fails (upstream package-generation shape change)
+✅ test/macos_min_platform_gate_test.dart: AC6a — pbxproj marker without the generated package fails (half-migrated tree)
+✅ test/macos_min_platform_gate_test.dart: AC6b — generated package without the pbxproj marker fails (half-migrated tree)
+✅ test/macos_min_platform_gate_test.dart: AC7a — MACOSX_DEPLOYMENT_TARGET drift below the app floor fails
+✅ test/macos_min_platform_gate_test.dart: AC7b — Podfile platform drift fails
+✅ test/macos_min_platform_gate_test.dart: AC8 — missing pbxproj fails gracefully
+✅ test/macos_min_platform_gate_test.dart: AC8b — missing Podfile fails gracefully
+✅ test/wasmrun_ios_pod_link_test.dart: iOS Runner link does not depend on the XCFrameworkIntermediates copy post_install injects the vendored slice dirs into LIBRARY_SEARCH_PATHS[sdk=…]
+✅ test/wasmrun_ios_pod_link_test.dart: iOS Runner link does not depend on the XCFrameworkIntermediates copy committed pbxproj carries the injected LIBRARY_SEARCH_PATHS settings
+✅ test/macos_min_platform_gate_test.dart: AC9 — the committed floors PASS the gate once the tool's SPM migration state is materialized on top (asserted against HEAD, not the live working tree)
+✅ test/wasmrun_ios_pod_link_test.dart: iOS Runner link does not depend on the XCFrameworkIntermediates copy load side is unchanged: force_load stays pinned to the same slices
+✅ test/tracked_paths_windows_safe_test.dart: every tracked path is checkoutable on Windows (no <>:"|?* characters, no trailing dots/spaces, no reserved DOS device names)
+✅ test/tools/read_description_gating_test.dart: the read prompt template carries exactly one {{sqlite}} token
+✅ test/tools/read_description_gating_test.dart: with an engine the description is byte-identical to the pre-split one
+✅ test/tools/read_description_gating_test.dart: without an engine the description is the golden minus the section
+✅ test/tools/read_description_gating_test.dart: without an engine no SQLite trace, token, or double blanks remain
+✅ test/tools/load_modes_test.dart: preset definitions (issue #680) pi keeps the 4-tool file+shell base
+✅ test/tools/load_modes_test.dart: preset definitions (issue #680) omp keeps the card draft base (glob → ls in fa taxonomy)
+✅ test/tools/load_modes_test.dart: preset definitions (issue #680) every essential id is a known tool id
+✅ test/tools/load_modes_test.dart: preset definitions (issue #680) discovery ships with omp only (pi is #679's exact shape)
+✅ test/tools/load_modes_test.dart: preset definitions (issue #680) labels round-trip through agentLoadModeFromLabel
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) nothing set → default mode
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) flag wins over env and config
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) env wins over config
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) empty env label falls through to config (no intent)
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) unknown env label throws naming FA_AGENT_MODE
+✅ test/tools/load_modes_test.dart: resolveAgentLoadMode precedence (flag > env > config) unknown config label throws naming agent.mode
+✅ test/tools/load_modes_test.dart: availability demotion (issue #680) enabled non-essential ids become discoverable
+✅ test/tools/load_modes_test.dart: availability demotion (issue #680) essentials are pinned: no scope mention can demote them
+✅ test/tools/load_modes_test.dart: availability demotion (issue #680) explicit scope on is a standing mount, not discoverable
+✅ test/tools/load_modes_test.dart: availability demotion (issue #680) no preset (null essential set) demotes nothing — REG
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) enabled families become discoverable — mcp__* is in the card
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) no preset (null essential set) demotes no family — REG
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) an explicit per-server on is a standing mount
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) an explicit aggregate mcp on exempts every family
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) a disabled family is not discoverable — off stays off
+✅ test/tools/load_modes_test.dart: MCP family demotion (issue #680 review) the mcp:false kill-switch disables every family
+✅ test/tools/inspect_image_multi_test.dart: single path form (AC5 REG) stays byte-compatible: one call, one image part, raw pass-through of an in-limits image
+✅ test/tools/inspect_image_multi_test.dart: single path form (AC5 REG) mixed path+paths is rejected with a clear schema error
+✅ test/tools/inspect_image_multi_test.dart: single path form (AC5 REG) neither path nor paths is rejected with a clear schema error
+✅ test/tools/inspect_image_multi_test.dart: single path form (AC5 REG) an empty paths array is rejected with a clear schema error
+✅ test/tools/inspect_image_multi_test.dart: single path form (AC5 REG) a non-image member fails with the path named (graceful, no call)
+✅ test/tools/inspect_image_multi_test.dart: array routing (AC3) paths [a, b] on an array-capable model → ONE call, two image parts
+✅ test/tools/inspect_image_multi_test.dart: array routing (AC3) default prompt for several paths names each image in order
+✅ test/tools/inspect_image_multi_test.dart: array routing (AC3) a compare question rides the compare prompt shape
+✅ test/tools/inspect_image_multi_test.dart: array routing (AC3) single-image-only model + paths [a, b, c] → stitch composite (AC4): ONE call, one image part, tile labels in bytes, note maps A/B/C
+✅ test/tools/inspect_image_multi_test.dart: stitch: true (AC5b) forces the composite path on an array-capable model: ONE call, single image part, tile labels present
+✅ test/tools/inspect_image_multi_test.dart: stitch: true (AC5b) stitch: true with a single path → clear schema hint (needs ≥2)
+✅ test/tools/inspect_image_multi_test.dart: stitch: true (AC5b) default (no stitch param) keeps array routing per AC3
+✅ test/tools/inspect_image_multi_test.dart: stitch: true (AC5b) 9+ paths cap at 8 with a notice
+✅ test/tools/inspect_image_multi_test.dart: resize control (AC6) default = settings ladder: an oversized image is downscaled before the call
+✅ test/tools/inspect_image_multi_test.dart: resize control (AC6) resize: "original" sends the original bytes when within budget
+✅ test/tools/inspect_image_multi_test.dart: resize control (AC6) resize: "original" over budget → minimal downscale + note naming the applied size
+✅ test/tools/inspect_image_multi_test.dart: resize control (AC6) resize param is documented in the tool description the agent sees
+✅ test/tools/inspect_image_multi_test.dart: budgets (AC7) multi-image call drops images over the per-request byte budget and fires the drop notice
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps accepts a source at exactly 64 KiB utf8
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps rejects a source one byte past the cap with a clean error
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps rejects a missing title
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps rejects a non-object initialState
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps rejects a non-positive heightHint
+✅ test/tools/dynamic_message_tool_test.dart: parse and caps coerces an integer heightHint to double and accepts an absent initialState
+✅ test/tools/dynamic_message_tool_test.dart: execute a null callback throws (error tool result for the model)
+✅ test/tools/dynamic_message_tool_test.dart: execute the presentation payload reaches the callback
+✅ test/tools/dynamic_message_tool_test.dart: execute a null callback result is a plain decline, not an error
+✅ test/tools/dynamic_message_tool_test.dart: execute the resolve text names the widget id and the event prefix
+✅ test/tools/dynamic_message_tool_test.dart: execute a pre-cancelled token throws before invoking the callback
+✅ test/tools/dynamic_message_tool_test.dart: execute cancelling mid-presentation unwinds with CancelledException
+✅ test/tools/dynamic_message_tool_test.dart: execute is read-tier and forces sequential execution
+✅ test/tools/dynamic_message_tool_test.dart: serialization toJson/fromJson round-trips the request
+✅ test/tools/dynamic_message_tool_test.dart: serialization omits absent optional fields and restores them as null
+✅ test/tools/inspect_image_multi_test.dart: stitch layout contract (deterministic) ≤3 tiles stack vertically; 4+ tiles grid 2-wide, last row padded
+✅ test/tools/inspect_image_multi_test.dart: stitch layout contract (deterministic) glyph pixels are deterministic for every tile label A–H
+✅ test/tools/inspect_image_multi_test.dart: paths validation contract (gh-2007 review thread 5) a non-string member is refused explicitly — nothing is silently dropped
+✅ test/tools/inspect_image_multi_test.dart: paths validation contract (gh-2007 review thread 5) a single-element paths array still works (documented 1-8 range)
+✅ test/tools/inspect_image_multi_test.dart: paths validation contract (gh-2007 review thread 5) the schema docs the 1-8 range the code enforces
+✅ test/tools/inspect_image_multi_test.dart: stitch × resize doc contract (gh-2007 review thread 6) the tool description says resize does not apply to the stitched composite
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput parses an https URL
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput parses a b64: payload
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput parses a data: URL
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput treats anything else as a sandbox path
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput bare base64 auto-detect (CRAP coverage) a long base64-only string is base64
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput bare base64 auto-detect (CRAP coverage) the + padding character stays in the base64 alphabet
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput bare base64 auto-detect (CRAP coverage) a non-base64 character demotes the entry to a path
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput bare base64 auto-detect (CRAP coverage) a too-short base64-ish string is a path
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput bare base64 auto-detect (CRAP coverage) a path separator demotes the entry to a path
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput rejects an empty entry
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput rejects a b64: entry with an empty payload
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput rejects a data URL without a comma
+✅ test/tools/media_reference_images_test.dart: parseMediaImageInput rejects a data URL without payload
+✅ test/tools/media_reference_images_test.dart: resolveMediaImageInputs resolves a sandbox path to sniffed inline bytes
+✅ test/tools/media_reference_images_test.dart: resolveMediaImageInputs resolves multiple entries (2+) in order
+✅ test/tools/media_reference_images_test.dart: resolveMediaImageInputs a missing sandbox path fails with the path named
+✅ test/tools/mobile/mobile_shell_approval_test.dart: mobile.* family is exec tier
+✅ test/tools/mobile/mobile_shell_approval_test.dart: critical patterns guard mobile.shell commands like bash
+✅ test/tools/media_reference_images_test.dart: resolveMediaImageInputs inline bytes above the paste cap are rejected
+✅ test/tools/media_reference_images_test.dart: parseOpenRouterCapabilities finds the model architecture input/output modalities
+✅ test/tools/media_reference_images_test.dart: parseOpenRouterCapabilities returns null when the model is not listed
+✅ test/tools/media_reference_images_test.dart: resolveInputModalities declared modalities win without any probe
+✅ test/tools/media_reference_images_test.dart: resolveInputModalities discovers from the models endpoint when nothing is declared
+✅ test/tools/media_reference_images_test.dart: resolveInputModalities probe failure degrades to unknown (null)
+✅ test/tools/media_reference_images_test.dart: ensureImageInputSupported image-capable endpoints pass
+✅ test/tools/media_reference_images_test.dart: ensureImageInputSupported unknown (null) capabilities pass through
+✅ test/tools/media_reference_images_test.dart: ensureImageInputSupported text-only endpoints reject with the declared modalities named
+✅ test/tools/mobile/mobile_tiers_test.dart: mobile availability families the three ids are known with their member tools
+✅ test/tools/mobile/mobile_tiers_test.dart: UT-floor-1: capability floor per tier store floor: automation + shell absent with the sideload reason
+✅ test/tools/mobile/mobile_tiers_test.dart: UT-floor-1: capability floor per tier god floor: everything present
+✅ test/tools/mobile/mobile_tiers_test.dart: UT-floor-1: capability floor per tier store: mobile.* gated names absent from registry and prompt list
+✅ test/tools/mobile/mobile_tiers_test.dart: UT-floor-1: capability floor per tier god: the whole mobile set is advertised
+✅ test/tools/mobile/mobile_tiers_test.dart: UT-floor-2: gated call tombstone tombstone names the tier and the sideload link (reason golden)
+✅ test/tools/mobile/mobile_tools_test.dart: UT-gesture-1: gestures translate to backend dispatches tap by element id and by coordinates
+✅ test/tools/mobile/mobile_tools_test.dart: UT-gesture-1: gestures translate to backend dispatches tap without target fails validation
+✅ test/tools/mobile/mobile_tools_test.dart: UT-gesture-1: gestures translate to backend dispatches swipe geometry passes through with default duration
+✅ test/tools/mobile/mobile_tools_test.dart: UT-gesture-1: gestures translate to backend dispatches text entry targets an element with clear flag
+✅ test/tools/mobile/mobile_tools_test.dart: UT-tier-3 / UT-shell-1: the Shizuku shell bridge Shizuku absent → the named error, not a hang
+✅ test/tools/mobile/mobile_tools_test.dart: UT-tier-3 / UT-shell-1: the Shizuku shell bridge fake bridge round-trips a command
+✅ test/tools/mobile/mobile_tools_test.dart: UT-pkg-1: package inventory is tier-gated store build answers with the honest gate reason
+✅ test/tools/mobile/mobile_tools_test.dart: UT-pkg-1: package inventory is tier-gated launcher listing works on the store surface
+✅ test/tools/mobile/mobile_tools_test.dart: UT-toolhelp-1: tier annotations in tool help every god-only description names the god tier; store tools do not
+✅ test/tools/mobile/mobile_tools_test.dart: UT-redact-1: foreign-screen text passes the redaction pipeline token-shaped secrets are masked in the hierarchy result
+✅ test/tools/mobile/mobile_tools_test.dart: UT-inject-1: hostile screen content is fence-wrapped injection text arrives inside the untrusted fence, exactly once
+✅ test/tools/mobile/mobile_tools_test.dart: UT-delta-1: the observe step contract hierarchy + screenshot are captured concurrently
+✅ test/tools/mobile/mobile_tools_test.dart: UT-delta-1: the observe step contract step budget: exceeding the wall clock raises the named state
+✅ test/tools/mobile/mobile_tools_test.dart: UT-delta-1: the observe step contract hierarchy {screenshot: true} rides the observe step
+✅ test/tools/mobile/mobile_hierarchy_test.dart: UT-hierarchy-1: filtered element index (golden fixtures) settings: rows kept, password elided, zero-area dropped
+✅ test/tools/mobile/mobile_hierarchy_test.dart: UT-hierarchy-1: filtered element index (golden fixtures) recycler view: interactive containers kept with child labels
+✅ test/tools/mobile/mobile_hierarchy_test.dart: UT-hierarchy-1: filtered element index (golden fixtures) web view: text nodes and links survive, zero-area link dropped
+✅ test/tools/mobile/mobile_hierarchy_test.dart: UT-hierarchy-1: filtered element index (golden fixtures) element cap produces the truncated marker
+✅ test/tools/mobile/mobile_hierarchy_test.dart: UT-hierarchy-1: filtered element index (golden fixtures) malformed and empty input degrade to an empty, named screen
+✅ test/tools/read_skill_pointer_test.dart: AC1 — pointer-following reads fs path and builtin URI return identical bytes
+✅ test/tools/read_skill_pointer_test.dart: AC1 — pointer-following reads every builtin skill reads byte-identically through its pointer
+✅ test/tools/read_skill_pointer_test.dart: AC1 — pointer-following reads a missing file with no pointer keeps the error
+✅ test/tools/read_skill_pointer_test.dart: AC1 — pointer-following reads a real file still wins over pointer machinery
+✅ test/tools/read_skill_pointer_test.dart: E1 — pointer refusals are loud foreign scheme
+✅ test/tools/read_skill_pointer_test.dart: E1 — pointer refusals are loud unknown skill
+✅ test/tools/read_skill_pointer_test.dart: E1 — pointer refusals are loud cross-skill redirect
+✅ test/tools/read_skill_pointer_test.dart: E1 — pointer refusals are loud corrupt body
+✅ test/tools/read_skill_pointer_test.dart: AC2/E5 — builtin empty payload never a silent success empty on first lookup, content on retry → retried payload
+✅ test/tools/read_skill_pointer_test.dart: AC2/E5 — builtin empty payload never a silent success persistently empty lookup → explicit error naming the resource
+✅ test/tools/read_skill_pointer_test.dart: AC2/E5 — builtin empty payload never a silent success the error names the resource id (E5)
+✅ test/tools/read_skill_pointer_test.dart: AC2/E5 — builtin empty payload never a silent success the compiled-in builtins are never empty (property sweep)
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool sends a multipart request and returns the transcript
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool honours baseUrl, model id, and language overrides
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool falls back to the raw body when the response is not JSON
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool refuses files over 25MB without calling the endpoint
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool throws with status and body on http errors
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool throws for an unsupported audio extension
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool throws when the file is missing
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool defaults modelId to whisper-1
+✅ test/tools/transcribe_audio_test.dart: transcribeAudioTool accepts every documented extension
+✅ test/tools/availability_load_mode_test.dart: essential-only boot schema (issue #680 L2) registry holds exactly the omp essentials, byte-level
+✅ test/tools/availability_load_mode_test.dart: essential-only boot schema (issue #680 L2) provider context never sees a discoverable tool
+✅ test/tools/availability_load_mode_test.dart: discoverable tombstone (issue #680 L2) unmounted call never executes and names the discovery path
+✅ test/tools/availability_load_mode_test.dart: mid-session mount (issue #680 L2) mount re-applies the resolution: tool enters schema, prompt rebuilds
+✅ test/tools/availability_load_mode_test.dart: mid-session mount (issue #680 L2) mount state survives a resolution re-apply
+✅ test/tools/availability_load_mode_test.dart: mid-session mount (issue #680 L2) mounted discoverable executes through the wrapped executor
+✅ test/tools/availability_load_mode_test.dart: mid-session mount (issue #680 L2) mount ignores unknown and already-mounted ids
+✅ test/tools/availability_load_mode_test.dart: MCP family demotion (issue #680 review) a demoted family is out of the schema but discoverable
+✅ test/tools/availability_load_mode_test.dart: MCP family demotion (issue #680 review) an unmounted family member tombstones, naming the path
+✅ test/tools/availability_load_mode_test.dart: MCP family demotion (issue #680 review) mounting the family registers its noted tools
+✅ test/tools/availability_load_mode_test.dart: MCP family demotion (issue #680 review) a mounted family member executes through the executor
+✅ test/tools/availability_load_mode_test.dart: discover_tools meta tool (issue #680 L2) lists discoverable tools with first-line docs
+✅ test/tools/availability_load_mode_test.dart: discover_tools meta tool (issue #680 L2) listing reports nothing when everything is mounted
+✅ test/tools/availability_load_mode_test.dart: discover_tools meta tool (issue #680 L2) mount argument routes through onMount by name
+✅ test/tools/request_secret_tool_test.dart: schema validation accepts a name + reason payload
+✅ test/tools/request_secret_tool_test.dart: schema validation rejects a missing name or reason
+✅ test/tools/request_secret_tool_test.dart: execution is a read-tier, sequentially executed tool
+✅ test/tools/request_secret_tool_test.dart: execution grant resolves with the saved-and-available text
+✅ test/tools/request_secret_tool_test.dart: execution grant text reflects the host-adjusted name, never the value
+✅ test/tools/request_secret_tool_test.dart: execution non-persisted grant says session-only
+✅ test/tools/request_secret_tool_test.dart: execution decline resolves with the declined text (non-error)
+✅ test/tools/request_secret_tool_test.dart: execution unattended decline carries the credential-hunt nudge (gh-1412)
+✅ test/tools/request_secret_tool_test.dart: execution interactive decline never carries the nudge
+✅ test/tools/request_secret_tool_test.dart: execution no unattended getter behaves as interactive (default)
+✅ test/tools/request_secret_tool_test.dart: execution a grant in unattended mode is unchanged
+✅ test/tools/request_secret_tool_test.dart: execution null callback throws (host cannot prompt)
+✅ test/tools/request_secret_tool_test.dart: execution rejects a non-UPPER_SNAKE name
+✅ test/tools/request_secret_tool_test.dart: execution rejects an empty reason
+✅ test/tools/generate_media_cancel_test.dart: generate_image cancellation a token cancelled before generate rejects with no HTTP call
+✅ test/tools/generate_media_cancel_test.dart: generate_image cancellation an uncancelled token does not disturb the happy path
+✅ test/tools/generate_media_cancel_test.dart: generate_video cancellation a token cancelled before generate rejects with no HTTP call
+✅ test/tools/generate_media_cancel_test.dart: generate_video cancellation a cancel landing mid-poll aborts the loop with CancelledException
+✅ test/tools/generate_media_cancel_test.dart: generate_video cancellation a pre-fired yield token hands the poll back after the submit, without polling
+✅ test/tools/generate_media_cancel_test.dart: generate_video cancellation the tool result carries the anchor sentence and the task id
+✅ test/tools/generate_media_cancel_test.dart: generate_video cancellation video completes normally when no tokens fire
+✅ test/tools/job_id_resolution_test.dart: parseShellJobIdParts parses the minted sh-<n>-<tail> shape
+✅ test/tools/job_id_resolution_test.dart: parseShellJobIdParts sh-99 (the old short scheme) has no tail part
+✅ test/tools/job_id_resolution_test.dart: parseShellJobIdParts rejects non-numeric n, foreign prefixes and empty tails
+✅ test/tools/job_id_resolution_test.dart: shellJobIdCloseness identical ids score 0
+✅ test/tools/job_id_resolution_test.dart: shellJobIdCloseness same numeric part always beats a different numeric part
+✅ test/tools/job_id_resolution_test.dart: shellJobIdCloseness among same-n ids a more similar tail is closer
+✅ test/tools/job_id_resolution_test.dart: closestShellJobIds same numeric part first, ties broken by id
+✅ test/tools/job_id_resolution_test.dart: closestShellJobIds caps at the limit (default 3)
+✅ test/tools/job_id_resolution_test.dart: closestShellJobIds honors an explicit smaller limit
+✅ test/tools/job_id_resolution_test.dart: closestShellJobIds falls back to global closeness when no id shares the n
+✅ test/tools/job_id_resolution_test.dart: closestShellJobIds empty candidates give an empty result
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId exactly one retained id sharing the n resolves uniquely
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId an exact retained match resolves to itself
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId two retained ids sharing the n stay ambiguous (E1)
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId ambiguous listings stay bounded at 3
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId no shared n lists the closest retained ids (AC2)
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId a malformed id skips resolution entirely (E3)
+✅ test/tools/job_id_resolution_test.dart: matchShellJobId a malformed id never resolves even when n coincides
+✅ test/tools/job_id_resolution_test.dart: shellJobSettledAgo buckets seconds, minutes, hours and days
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks AC1: [sudo] password for user: with the full line as title
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks bare Password: prompt (sudo retry, ssh)
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks ssh's user@host password prompt
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks passphrase prompt (ssh key, disk encryption)
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks TOTP verification code prompt
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks prompt split across chunks (rolling window)
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks prompt after complete lines: only the partial line is the title
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks stderr chunks feed the same detector (sudo prompts on stderr)
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks a newline-terminated Password: line is ordinary output
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks prose mentioning Password: mid-line
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks password-shaped word without the colon
+✅ test/tools/password_prompt_detector_test.dart: detects the sudo/password asks PASSWD: and Token prompts are out of scope
+✅ test/tools/password_prompt_detector_test.dart: quiet-window debounce new output inside the quiet window cancels the pending match
+✅ test/tools/password_prompt_detector_test.dart: quiet-window debounce the match fires after the quiet window holds
+✅ test/tools/password_prompt_detector_test.dart: quiet-window debounce output resuming after the fire does not re-fire by itself
+✅ test/tools/password_prompt_detector_test.dart: re-arm lifecycle (E1) muted while the answer is pending; re-arms after the answer
+✅ test/tools/password_prompt_detector_test.dart: re-arm lifecycle (E1) dispose cancels the pending quiet timer
+✅ test/tools/availability_outlook_test.dart: outlook availability family outlook is a known id with its three member tools
+✅ test/tools/availability_outlook_test.dart: outlook availability family toolAvailabilityIdOf resolves every member to the family
+✅ test/tools/availability_outlook_test.dart: outlook availability family absent capability keeps the row visible with the host reason
+✅ test/tools/availability_outlook_test.dart: outlook availability family present capability defaults on; config can gate the family
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry isSupported mirrors the BackgroundShell capability
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry start rejects unsupported environments with a clean note
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry start allocates sequential ids and logs under .fah/bash_jobs
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry onSettled fires on every settle; suppression gates only the model notice (issue #562)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry onStart fires exactly once per started job
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry tail reads the job log through the env
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry tail of an unknown id still throws the bare error
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry settledAt stamps when the registry observes the settle
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) prunes exited entries beyond the cap, oldest settle first
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) running jobs are never pruned even when the cap is exceeded
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) pruned exact-id tail falls back to the on-disk log (AC4)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) a deleted pruned log reads as unavailable (E2)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) cap 0 tombstones every exited entry
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry exited-entry GC (gh-1438 second tier) default cap bounds long-session growth
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry lookup (gh-1438) exact id hits
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry lookup (gh-1438) unique same-n near-miss resolves to the retained job (AC1)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry lookup (gh-1438) no shared n lists closest retained ids (AC2)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry lookup (gh-1438) a malformed id skips resolution (E3)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry lookup (gh-1438) two retained ids sharing the n stay ambiguous (E1)
+✅ test/tools/shell_jobs_test.dart: bash background background: true returns the job id immediately
+✅ test/tools/shell_jobs_test.dart: bash background a bare long sleep with background: true runs and settles
+✅ test/tools/shell_jobs_test.dart: bash background an unbounded bare long sleep is denied with the background advice
+✅ test/tools/shell_jobs_test.dart: bash background background on an unsupported env answers a clean note
+✅ test/tools/shell_jobs_test.dart: bash background a settled job yields the classic inline result
+✅ test/tools/shell_jobs_test.dart: bash background a mid-run yield moves the command to the background untouched
+✅ test/tools/shell_jobs_test.dart: bash background a non-zero exit in job mode reports the exit code
+✅ test/tools/shell_jobs_test.dart: bash background a timeout stop reason reports the timeout message
+✅ test/tools/shell_jobs_test.dart: bash_job status lists all jobs with state and log path
+✅ test/tools/shell_jobs_test.dart: bash_job job ids and log paths are unique across registries
+✅ test/tools/shell_jobs_test.dart: bash_job status without jobs says so
+✅ test/tools/shell_jobs_test.dart: bash_job output tails the log
+✅ test/tools/shell_jobs_test.dart: bash_job stop terminates a running job
+✅ test/tools/shell_jobs_test.dart: bash_job stop on a finished job reports its state
+✅ test/tools/shell_jobs_test.dart: bash_job unknown ids are clean errors
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry stale old-format job log detection warns once for an old-format log fresh in this session
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry stale old-format job log detection old-format logs predating boot stay silent (history)
+✅ test/tools/shell_jobs_test.dart: ShellJobRegistry stale old-format job log detection fresh unique-format logs never warn
+✅ test/tools/shell_jobs_test.dart: newShellJobId mints unique ids in the 32-bit random range (#1074)
+✅ test/tools/shell_jobs_test.dart: shellJobSettleNoticeText names the timeout (gh-1835 review) a cap-killed job (stopReason timeout) is not reported as a crash
+✅ test/tools/shell_jobs_test.dart: shellJobSettleNoticeText names the timeout (gh-1835 review) a normally exited job carries no timeout line
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.apply registers enabled and unregisters disabled tools
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.apply updates agent.state.tools and rebuilds the prompt
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.apply restores a previously disabled tool
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.apply is idempotent: applying the same resolution twice is a no-op
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.apply skips tools that are already registered
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.hiddenToolNames empty before any apply
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.hiddenToolNames lists names of disabled ids after apply
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.noteHiddenNames records dynamic family names for hiding and the executor
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.noteHiddenNames kill-switch tombstones noted families with the aggregate reason
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.wrapExecutor delegates for an enabled tool
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.wrapExecutor returns a plain tombstone for a disabled tool
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.wrapExecutor tombstone carries the capability absence reason
+✅ test/tools/availability_gate_test.dart: ToolAvailabilityGate.wrapExecutor delegates for names the gate does not know
+✅ test/tools/availability_gate_test.dart: Agent integration hidden tool leaves the provider context; enabled tool runs through the wrapped executor
+✅ test/tools/sqlite_engine_test.dart: lists tables with row counts
+✅ test/tools/sqlite_engine_test.dart: renders a table schema with sample rows
+✅ test/tools/sqlite_engine_test.dart: the schema sample note points at paged reads
+✅ test/tools/sqlite_engine_test.dart: looks a row up by primary key
+✅ test/tools/sqlite_engine_test.dart: falls back to rowid for tables without a primary key
+✅ test/tools/sqlite_engine_test.dart: a missing row says so
+✅ test/tools/sqlite_engine_test.dart: a non-integer key on an integer primary key throws
+✅ test/tools/sqlite_engine_test.dart: pages a table with limit/offset and a continuation note
+✅ test/tools/sqlite_engine_test.dart: orders and filters a paged table
+✅ test/tools/sqlite_engine_test.dart: rejects an unknown order column
+✅ test/tools/sqlite_engine_test.dart: runs a raw read-only query
+✅ test/tools/sqlite_engine_test.dart: rejects bound parameters in raw queries
+✅ test/tools/sqlite_engine_test.dart: renders blob cells as size placeholders
+✅ test/tools/sqlite_engine_test.dart: a missing table errors with omp’s message
+✅ test/tools/sqlite_engine_test.dart: a non-database file fails cleanly
+✅ test/tools/sqlite_engine_test.dart: looks rows up by a REAL primary key, coercing numeric keys
+✅ test/tools/sqlite_engine_test.dart: looks rows up by a TEXT primary key without coercion
+✅ test/tools/sqlite_engine_test.dart: raw queries are capped and say how to page
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) the fixtures mirror the real resolver paths, /lib/ included
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) the unavailable note shows the correct example path
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) the ffi resolver failure shape is recognized
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) database-level errors are not misclassified
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) openReadOnly maps the load failure to a clean sqlite-unavailable note
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) openReadOnly rethrows non-load failures untouched
+✅ test/tools/sqlite_engine_test.dart: missing bundled library degrades cleanly (gh-1574) the read tool surfaces the clean note, not the raw ffi error
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) moves stale <exe_dir>/libsqlite3.* into <exe_dir>/../lib and says so
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates splits archive from inner path
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates bare archive path yields an empty subPath
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates handles every recognized extension
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates prefers the longest archive prefix on nested extensions
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates .tar.gz wins over .tar at the same position
+✅ test/tools/archive_read_test.dart: parseArchivePathCandidates is case-insensitive on the extension
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) no stale <exe_dir>/lib means no repair
+✅ test/tools/archive_read_test.dart: normalizeArchiveLookupPath normalizes separators and dot segments
+✅ test/tools/archive_read_test.dart: normalizeArchiveLookupPath rejects parent traversal
+✅ test/tools/archive_read_test.dart: decodeUtf8Text decodes valid UTF-8
+✅ test/tools/archive_read_test.dart: decodeUtf8Text rejects NUL bytes and malformed UTF-8
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) never clobbers a lib already present at the target
+✅ test/tools/archive_read_test.dart: ArchiveReader indexes entries with synthesized parent directories
+✅ test/tools/archive_read_test.dart: ArchiveReader lists immediate children only
+✅ test/tools/archive_read_test.dart: ArchiveReader listing errors match omp
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) a missing executable is a no-op, never a throw
+✅ test/tools/archive_read_test.dart: ArchiveReader reads member bytes across zip, tar, and tar.gz
+✅ test/tools/archive_read_test.dart: ArchiveReader member read errors match omp
+✅ test/tools/archive_read_test.dart: ArchiveReader a corrupt archive fails with a clear error
+✅ test/tools/archive_read_test.dart: ArchiveReader duplicate entries at the same path a file replaces an earlier directory entry
+✅ test/tools/archive_read_test.dart: ArchiveReader duplicate entries at the same path a directory entry never replaces an earlier file
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) openReadOnly retries the load after a successful repair
+✅ test/tools/archive_read_test.dart: ArchiveReader duplicate entries at the same path a duplicate file keeps the first content and size
+✅ test/tools/archive_read_test.dart: ArchiveReader duplicate entries at the same path a duplicate file fills in a zero size from the later entry
+✅ test/tools/archive_read_test.dart: ArchiveReader duplicate entries at the same path duplicate directory entries stay a directory
+✅ test/tools/archive_read_test.dart: readFileTool archive targets a bare archive path lists the root
+✅ test/tools/archive_read_test.dart: readFileTool archive targets an inner directory lists its children
+✅ test/tools/archive_read_test.dart: readFileTool archive targets reads an inner text member
+✅ test/tools/archive_read_test.dart: readFileTool archive targets applies line selectors after extraction
+✅ test/tools/archive_read_test.dart: readFileTool archive targets applies multi-range selectors to members
+✅ test/tools/archive_read_test.dart: readFileTool archive targets a member range past EOF gets the graceful note
+✅ test/tools/archive_read_test.dart: readFileTool archive targets binary members return a note instead of bytes
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) a repair that does not heal still degrades to the clean note
+✅ test/tools/archive_read_test.dart: readFileTool archive targets missing members throw a not-found-inside-archive error
+✅ test/tools/archive_read_test.dart: readFileTool archive targets a selector on the archive root offsets the listing
+✅ test/tools/archive_read_test.dart: readFileTool archive targets multi-range selectors are rejected for listings
+✅ test/tools/archive_read_test.dart: readFileTool archive targets reads tar and tar.gz members too
+✅ test/tools/archive_read_test.dart: readFileTool archive targets a missing archive falls through to a file not-found error
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) a no-op repair degrades without a second load attempt
+✅ test/tools/sqlite_engine_test.dart: successor-side layout repair (gh-1574 r2) a non-load failure on the retried load passes through untouched
+✅ test/tools/shell_jobs_isolation_test.dart: jobLogDirOverride (FAH_JOB_LOG_DIR) reads the env override
+✅ test/tools/shell_jobs_isolation_test.dart: jobLogDirOverride (FAH_JOB_LOG_DIR) trims surrounding whitespace
+✅ test/tools/shell_jobs_isolation_test.dart: jobLogDirOverride (FAH_JOB_LOG_DIR) null when unset or blank
+✅ test/tools/tool_gating_table_test.dart: capability gating: web_search capability present → tool offered to the model
+✅ test/tools/tool_gating_table_test.dart: capability gating: web_search capability absent → tool hidden everywhere
+✅ test/tools/tool_gating_table_test.dart: capability gating: web_fetch capability present → tool offered to the model
+✅ test/tools/tool_gating_table_test.dart: capability gating: web_fetch capability absent → tool hidden everywhere
+✅ test/tools/tool_gating_table_test.dart: capability gating: lsp capability present → tool offered to the model
+✅ test/tools/tool_gating_table_test.dart: capability gating: lsp capability absent → tool hidden everywhere
+✅ test/tools/tool_gating_table_test.dart: capability gating: inspect_image capability present → tool offered to the model
+✅ test/tools/tool_gating_table_test.dart: capability gating: inspect_image capability absent → tool hidden everywhere
+✅ test/tools/tool_gating_table_test.dart: capability gating: transcribe_audio capability present → tool offered to the model
+✅ test/tools/tool_gating_table_test.dart: capability gating: transcribe_audio capability absent → tool hidden everywhere
+✅ test/tools/tool_gating_table_test.dart: sqlite capability is visible in the read tool description
+✅ test/tools/shell_jobs_isolation_test.dart: ShellJobRegistry jobLogDir a run leaves no .fah/ in the task dir after completion
+✅ test/tools/shell_jobs_isolation_test.dart: ShellJobRegistry jobLogDir the default keeps <cwd>/.fah/bash_jobs (non-bench compat)
+✅ test/tools/shell_jobs_isolation_test.dart: ShellJobRegistry jobLogRedactor (issue #1408 AC2) job logs are secret-redacted at rest
+✅ test/tools/shell_jobs_isolation_test.dart: ShellJobRegistry jobLogRedactor (issue #1408 AC2) registered (non-vendor-shaped) secrets are redacted too
+✅ test/tools/shell_jobs_isolation_test.dart: ShellJobRegistry jobLogRedactor (issue #1408 AC2) without a redactor the log keeps the raw bytes (compat)
+✅ test/tools/transcribe_audio_web_safe_test.dart: REG-02: no dart:io in transcribe_audio shared code
+✅ test/tools/transcribe_audio_web_safe_test.dart: REG-02: media slot siblings are untouched
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: exact-match edits (issue #1083) UT-1: two same-file edits in one parallel batch both apply (AC1)
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: exact-match edits (issue #1083) E1: aliased spellings of one file serialize too
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: exact-match edits (issue #1083) UT-2: edit + write on one path land in order without torn content (AC2)
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: exact-match edits (issue #1083) UT-3: edits to different files still run concurrently (AC3)
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) E2: aliased spellings serialize even on a raw, non-normalizing env (production IO semantics)
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) UT-2c: a call cancelled while queued on the lock never mutates
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) P1: write + write on one path serialize — last content wins
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) P2: edit → write reversed pairing — the write still lands whole
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) P3: exact-match edit + same-tag hashline patch serialize — the patch rejects stale instead of double-writing
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) UT-2cW: a WRITE cancelled while queued never mutates either
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) UT-3r: a hashline patch recovered onto another file holds that file's lock too
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: pairings, cancel, raw envs (review #1084) UT-2cH: a hashline PATCH cancelled while queued never mutates either
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: hashline patches (issue #1083) UT-4: two same-tag patches in one batch — exactly one applies, the other rejects stale (AC4)
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: hashline patches (issue #1083) UT-4b: the rejected patch fails loudly with a stale-tag mismatch
+✅ test/tools/same_path_mutation_lock_test.dart: per-path mutation lock: end-to-end (issue #1083) IT-1: five same-file edits in one scripted batch all land (AC5)
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) UT-1/AC1: a valid patch wins over a complete exact-match triple and the notice names the ignored payload
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) UT-1 negative: a lone patch coerces nothing (no notice)
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) UT-2/AC2: a malformed patch with a complete exact-match triple falls back to exact-match with the same notice shape
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) UT-2 negative: an empty (null) patch is not a coercion
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) UT-3/AC3: neither mode complete rejects with a remedy example
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) E1: both modes complete and contradictory — patch wins deterministically, notice names the conflict
+✅ test/tools/misuse_policy_test.dart: resolveEditMode (UT-1..3) luna fixture: the exact 15x-rejected call shape now coerces (patch present, oldText/newText non-empty)
+✅ test/tools/misuse_policy_test.dart: readWindowCoercionNotice (UT-4/AC4) selector + offset/limit produces the ignore notice
+✅ test/tools/misuse_policy_test.dart: readWindowCoercionNotice (UT-4/AC4) negative: selector alone coerces nothing
+✅ test/tools/misuse_policy_test.dart: readWindowCoercionNotice (UT-4/AC4) negative: offset/limit without a selector coerces nothing
+✅ test/tools/misuse_policy_test.dart: readWindowCoercionNotice (UT-4/AC4) luna fixture: selector + limit names both ignored params
+✅ test/tools/misuse_policy_test.dart: parsePatch (one shared parse, fallbackPath honored) accepts a real hashline patch, rejects garbage and empty
+✅ test/tools/misuse_policy_test.dart: parsePatch (one shared parse, fallbackPath honored) a header-less patch with recognizable ops is usable under the executor fallbackPath contract — the BLOCKING regression pin (issue #862 review)
+✅ test/tools/misuse_policy_test.dart: parsePatch (one shared parse, fallbackPath honored) a failure carries the parser diagnostic for the remedy reject
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) short commands pass through (flattened)
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) multi-line commands flatten to one line
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) long commands keep first/last ~120 chars with a true count
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) cuts never split a surrogate pair
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) a multi-line command with an empty first line keeps a command face (gh-1604 rework)
+✅ test/tools/shell_job_command_label_test.dart: shellJobCommandLabel (gh-1604 item 1) a heredoc body never re-enters the label through the tail (issue #599 RED contract)
+✅ test/tools/shell_job_command_label_test.dart: bash_job status wall (gh-1604 item 1) status lines carry id, state, exit code and the bounded label
+✅ test/tools/shell_job_command_label_test.dart: bash_job status wall (gh-1604 item 1) a running job renders the bounded label too
+✅ test/tools/shell_job_command_label_test.dart: gh-1604 AC1: the 60-job registry fixture model-visible registry material shrinks >=10x; the wall stays within K lines
+✅ test/tools/bash_job_resolution_test.dart: AC1 — near-miss output resolves a unique same-n job exited job: tail + corrected id + stop-polling note
+✅ test/tools/bash_job_resolution_test.dart: AC1 — near-miss output resolves a unique same-n job running job: tail + corrected id, no exit claim (E4)
+✅ test/tools/bash_job_resolution_test.dart: AC1 — near-miss output resolves a unique same-n job status acts on the resolved near-miss too
+✅ test/tools/bash_job_resolution_test.dart: AC2 — unresolvable unknown ids answer plain results non-error result with the closest retained ids
+✅ test/tools/bash_job_resolution_test.dart: AC2 — unresolvable unknown ids answer plain results status mirrors the plain-result shape
+✅ test/tools/bash_job_resolution_test.dart: AC2 — unresolvable unknown ids answer plain results no retained jobs still answers gracefully
+✅ test/tools/bash_job_resolution_test.dart: AC2 — unresolvable unknown ids answer plain results the hint lists at most 3 ids
+✅ test/tools/bash_job_resolution_test.dart: AC3 — status without id stays bounded line count = running + min(exited, 20) + summary
+✅ test/tools/bash_job_resolution_test.dart: AC3 — status without id stays bounded all: true restores the full dump
+✅ test/tools/bash_job_resolution_test.dart: AC4 — post-GC exact-id output falls back to the on-disk log pruned id still tails from disk
+✅ test/tools/bash_job_resolution_test.dart: AC4 — post-GC exact-id output falls back to the on-disk log deleted log degrades to the clean unknown-id error (E2)
+✅ test/tools/bash_job_resolution_test.dart: AC4 — post-GC exact-id output falls back to the on-disk log status names the compacted log without tailing
+✅ test/tools/bash_job_resolution_test.dart: AC5 — stop never acts on a resolved id near-miss stop returns a hint and kills nothing
+✅ test/tools/bash_job_resolution_test.dart: AC5 — stop never acts on a resolved id unknown stop hints the closest ids without resolving
+✅ test/tools/bash_job_resolution_test.dart: AC5 — stop never acts on a resolved id stop of a GCd id reports there is nothing to stop
+✅ test/tools/bash_job_resolution_test.dart: E1 — a shared sh-<n>- prefix never silently picks output lists the candidates without resolving
+✅ test/tools/bash_job_resolution_test.dart: E1 — a shared sh-<n>- prefix never silently picks status renders the same candidate list
+✅ test/tools/bash_job_resolution_test.dart: E1 — a shared sh-<n>- prefix never silently picks stop still demands the exact id
+✅ test/tools/bash_job_resolution_test.dart: E3 — malformed ids skip resolution every action answers the shortest error
+✅ test/tools/bash_job_resolution_test.dart: exact ids keep today’s results plus exited context output of an exited exact id gains the exited context
+✅ test/tools/bash_job_resolution_test.dart: exact ids keep today’s results plus exited context output of a running exact id is unchanged
+✅ test/tools/bash_job_resolution_test.dart: exact ids keep today’s results plus exited context status of an exited exact id gains the ago suffix
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation sends verbose_json plus repeated timestamp_granularities fields
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation the prompt tool argument overrides the configured default
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation requesting granularities under json upgrades to verbose once
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation json (default) sends no granularity fields — byte-identical path
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation responseFormat text requests bare text and returns it
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-01/IT-01/AC2: verbose request formation E6: baseUrl with trailing slash, path prefix, and port
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-02/AC4: segment-only degradation segment-only endpoint yields segments, no words, explicit warning
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error granularity 400 fails actionably with exactly one call
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error a silent 200 WITHOUT word timings is also a hard error (AC5)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error require: segment fails on a 200 without segments
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error require: word with DEFAULT (empty) granularities implies the word request on the wire (AC5)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error require: word with DEFAULT granularities hard-fails on a 200 without words — never success-with-no-warning (AC5)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-03/AC5: require: word is a hard error thread-7 semantics: require: segment does NOT accept a words-only payload — segments are demanded specifically
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-04/AC6: Groq-style probe-and-degrade 400 on granularity triggers exactly one retry, then segments
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-04/AC6: Groq-style probe-and-degrade persistent granularity 400s do NOT retry-storm (E9)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-05/AC7: verbose→json fallback verbose-unsupported falls back to plain text plus warning
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-05/AC7: verbose→json fallback require blocks the verbose downgrade with an actionable error
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-06/AC8: sidecar routing auto mode spills oversized documents to the spill store
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-06/AC8: sidecar routing a host-wired session id scopes the sidecar to the session spill bucket (review: AC8 retention)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-06/AC8: sidecar routing small documents under auto stay inline with no sidecar (E15)
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-06/AC8: sidecar routing sidecar mode always spills, even for small documents
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-07/AC9: sanitized, distinguishable error taxonomy HTTP 401 reports status, class, and sanitized body
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-07/AC9: sanitized, distinguishable error taxonomy HTTP 413 reports status, class, and sanitized body
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-07/AC9: sanitized, distinguishable error taxonomy HTTP 429 reports status, class, and sanitized body
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-07/AC9: sanitized, distinguishable error taxonomy HTTP 500 reports status, class, and sanitized body
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-08: cancellation a pre-cancelled token aborts before any network call
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-09/AC12: secret hygiene the configured key never appears in errors or transcripts
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-09/AC12: secret hygiene verbose doc and sidecar bytes never carry the key
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-10/AC13/E13: transcripts are data, not instructions prompt-injection transcript is returned verbatim, unexecuted
+✅ test/tools/transcribe_audio_timestamps_test.dart: IT-10/AC13/E13: transcripts are data, not instructions injection survives the verbose document verbatim too
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-03/AC10/E1: size guards a file exactly at the 25MB boundary is accepted
+✅ test/tools/transcribe_audio_timestamps_test.dart: UT-03/AC10/E1: size guards one byte over the cap is rejected before any network call
+✅ test/tools/transcribe_audio_timestamps_test.dart: E5: non-transcription endpoints fail actionably an HTML 200 body in verbose mode names the real problem
+✅ test/tools/transcribe_audio_timestamps_test.dart: REG-01: semantic drift — default path unchanged json body extracts the trimmed text field (legacy semantics)
+✅ test/tools/transcribe_audio_timestamps_test.dart: REG-01: semantic drift — default path unchanged bare body falls back to the raw trimmed body (legacy semantics)
+✅ test/tools/transcribe_audio_timestamps_test.dart: REG-01: semantic drift — default path unchanged unicode body survives the default path byte-exactly
+✅ test/tools/transcribe_audio_timestamps_test.dart: REG-01: semantic drift — default path unchanged request fields are unchanged: model, response_format=json
+✅ test/tools/checkpoint_tool_test.dart: checkpoint tool result confirms the mark and writes a checkpoint record
+✅ test/tools/checkpoint_tool_test.dart: checkpoint tool a second checkpoint while one is active errors
+✅ test/tools/checkpoint_tool_test.dart: rewind tool guards rewind without a checkpoint errors with an explanation
+✅ test/tools/checkpoint_tool_test.dart: rewind tool guards rewind with a blank report errors
+✅ test/tools/checkpoint_tool_test.dart: rewind tool guards rewind after a completed rewind guides without an error
+✅ test/tools/checkpoint_tool_test.dart: rewind application drops post-mark messages, keeps the report verbatim, and preserves the detour in the session tree
+✅ test/tools/checkpoint_tool_test.dart: rewind application extends the keep range over dangling tool results
+✅ test/tools/checkpoint_tool_test.dart: rewind application works without a session (in-memory pruning only)
+✅ test/tools/checkpoint_tool_test.dart: rewind application checkpoint in one run, rewind in a later run
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) an unrewound checkpoint does not block the next checkpoint after the turn ended (the live case)
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) gh-1425 AC4: the host learns about every auto-close — onAutoClose fires with the reason and the closed checkpoint (the hook the CLI restore-budget guard wires)
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) a checkpoint whose anchored span is gone after a transcript rebuild (session reload) auto-closes instead of blocking
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) compaction over the anchor region auto-closes the checkpoint
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) repeated stale checkpoints each close with their own audit record; rewind after the last close errors cleanly (idempotent close)
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) the refusal names the active checkpoint and how to clear it
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) a batched [rewind, checkpoint] after mid-detour steering does not destroy the checkpoint being rewound
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) auto-close flushes the pending detour before the audit record
+✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) non-turn user-role injections (widget events, system notices) do not make an in-scope checkpoint stale
