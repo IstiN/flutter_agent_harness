@@ -656,6 +656,61 @@ void main() {
       expect([for (final r in branch) r.id], hasLength(4));
       expect(branch.where((r) => r.timestampDegraded), isEmpty);
     });
+
+    test('E3 (gh-2178 review, BLOCKING): a multi-byte UTF-8 line in the '
+        'same merged span does not corrupt the splice', () async {
+      // The review's verified repro: non-ASCII payload BEFORE the poison
+      // line inside one merged kept span. SessionScannedLine offsets are
+      // BYTE offsets; each Cyrillic character is 2 UTF-8 bytes, so
+      // splicing byte offsets into the decoded UTF-16 string shifted
+      // every cut off position and concatenated two half-lines (the
+      // repaired file carried a permanently torn record).
+      const russianPayload =
+          'привет мир — длинная русская строка для многобайтности';
+      final fs = MemoryFileSystem(cwd: '/');
+      final m1 = messageLine('m1', text: russianPayload);
+      await fs.writeFile(
+        sessionPath,
+        [
+          headerLine(),
+          m1,
+          poisonLine(parentId: 'm1'),
+          messageLine('m2', parentId: incidentRecordId),
+        ].join('\n'),
+      );
+      final report = await repairSessionLedgers(fs, sessionPath);
+      expect(report.malformedTotal, 1);
+      expect(report.malformedRepaired, 1);
+
+      // Every repaired line still parses — the splice must never cut
+      // mid-record or concatenate half-lines.
+      final after = (await fs.readTextFile(sessionPath)).valueOrNull!;
+      final lines = after.split('\n')..removeLast();
+      expect(lines, hasLength(4));
+      final decoded = [
+        for (final line in lines)
+          jsonDecode(line) as Map<String, dynamic>,
+      ];
+      expect([for (final m in decoded) m['id'] as String], [
+        'poisoned', // header
+        'm1',
+        incidentRecordId,
+        'm2',
+      ]);
+      // The multi-byte payload survives byte-verbatim.
+      expect(decoded[1]['message']['content'], russianPayload);
+      // Only the poison line changed (its timestamp), everything else is
+      // byte-identical to the input.
+      expect(decoded[0], jsonDecode(headerLine()));
+      expect(decoded[1], jsonDecode(m1));
+      expect(decoded[3], jsonDecode(messageLine('m2', parentId: incidentRecordId)));
+
+      // The fixed record rejoins the branch with a valid timestamp.
+      final storage = await JsonlSessionStorage.open(fs, sessionPath);
+      final branch = await storage.getPathToRoot('m2');
+      expect([for (final r in branch) r.id], contains(incidentRecordId));
+      expect(branch.where((r) => r.timestampDegraded), isEmpty);
+    });
   });
 
   group('repair scan finder (quarantineFindingForLine)', () {

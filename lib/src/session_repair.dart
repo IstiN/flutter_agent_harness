@@ -19,6 +19,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'env/execution_env.dart';
 import 'session/obligations_ledger.dart' show obligationsLedgerRecordType;
@@ -682,21 +683,28 @@ Future<String> _spanTextToWrite(
     );
   }
   if (keys.isEmpty) return utf8.decode(bytes, allowMalformed: true);
-  // Splice the fixes into the span text line by line: bytes before the
-  // first fix, each fix, the original bytes between fixes, the tail.
-  final original = utf8.decode(bytes, allowMalformed: true);
-  final buffer = StringBuffer();
-  var cursor = span.$1;
+  // Splice the fixes into the span BYTE STREAM line by line: bytes
+  // before the first fix, each fix, the original bytes between fixes,
+  // the tail. Every offset here stays in BYTE space — [keys] are
+  // scanner byte offsets (SessionScannedLine.start) and the original
+  // line's extent is the same 0x0A byte split the scanner used; the
+  // decoded string is built only for output, never indexed by them
+  // (gh-2178 review: byte offsets used as UTF-16 string offsets cut
+  // mid-record whenever multi-byte content preceded the fix line in
+  // the merged span).
+  final out = BytesBuilder(copy: false);
+  var cursor = 0; // byte offset within the span
   for (final key in keys) {
-    buffer.write(original.substring(cursor - span.$1, key - span.$1));
-    buffer.write(lineRewrites[key]!.replacement);
+    final lineStart = key - span.$1;
+    out.add(bytes.sublist(cursor, lineStart));
+    out.add(utf8.encode(lineRewrites[key]!.replacement));
     // Advance past the ORIGINAL line (its newline included) — the same
     // 0x0A byte split the scanner used to find it.
-    final lineEnd = original.indexOf('\n', key - span.$1);
-    cursor = lineEnd < 0 ? span.$2 : span.$1 + lineEnd + 1;
+    final lineEnd = bytes.indexOf(0x0A, lineStart);
+    cursor = lineEnd < 0 ? bytes.length : lineEnd + 1;
   }
-  buffer.write(original.substring(cursor - span.$1));
-  return buffer.toString();
+  out.add(bytes.sublist(cursor));
+  return utf8.decode(out.takeBytes(), allowMalformed: true);
 }
 
 void _ensureRepairableHeader(String line, String path) {
