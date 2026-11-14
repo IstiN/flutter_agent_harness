@@ -144,6 +144,7 @@ export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';
+export 'src/cli/console_line_decoder.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/cli/resumed_context_cache.dart';
