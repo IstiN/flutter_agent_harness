@@ -168,9 +168,12 @@ void main() {
       io.sendLine('start');
       await waitForIt(() => stream.calls >= 1 && cli.isBusy);
 
-      io.sendLine('/exit');
       // Outlast the stale threshold with no events flowing (the gated
       // stream is silent): the run is stalled — not "working", not dead.
+      // NO quit in flight (gh-2168): an in-flight /exit now aborts the
+      // wedged run, which would settle it before the classifier's window
+      // — the stall surfaces are pinned for a wedged run the user has
+      // not left.
       await Future<void>.delayed(const Duration(milliseconds: 250));
       cli.checkPendingSteeringHealthForTest();
 
