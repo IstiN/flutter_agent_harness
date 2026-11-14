@@ -63,10 +63,78 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
       service: _devicesConnector,
       sessions: _chatController,
       onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
+      onOpenRemoteConversation:
+          ({
+            required String deviceId,
+            required String deviceLabel,
+            required String agentAddress,
+            String? sessionId,
+          }) => unawaited(
+            _openDeviceConversation(
+              deviceId: deviceId,
+              deviceLabel: deviceLabel,
+              agentAddress: agentAddress,
+              sessionId: sessionId,
+            ),
+          ),
       // The open session's card carries the accent-fill selected state
       // (the same ONE selected id the Local panel's rows compare
       // against — pending wins, then live, then persisted).
       selectedSessionId: _selectedSessionId,
+    );
+  }
+
+  /// Remote roster session/agent tap: the DM opens as a VIRTUAL CHANNEL
+  /// of the account-personal network — the same [NetworkChatPage] the
+  /// regular channels use (§7), fed by the device connector's fanet1
+  /// transport through [NetworkSessionDm]. The sidebar keeps the roster;
+  /// only the message column swaps (the channel-rail contract).
+  Future<void> _openDeviceConversation({
+    required String deviceId,
+    required String deviceLabel,
+    required String agentAddress,
+    String? sessionId,
+  }) async {
+    final manager = widget.networkSessions;
+    final mode = widget.networkMode;
+    if (manager == null || mode == null) return;
+    final connector = _devicesConnector;
+    final personal = connector.personalNetworkId;
+    if (personal == null) {
+      showFahErrorSnack(context, 'device not enrolled yet');
+      return;
+    }
+    final agentName = agentAddress.substring(0, agentAddress.indexOf('@'));
+    final channelId = await connector.dmChannelForAgent(
+      deviceId: deviceId,
+      agentName: agentName,
+    );
+    if (!mounted) return;
+    // The owner is already a member of the auto-provisioned personal
+    // network: the server's auth-first re-entry admits the JWT with no
+    // password prompt (never the join sheet here).
+    if (!manager.sessions.containsKey(personal)) {
+      try {
+        await manager.join(networkId: personal, password: '');
+      } on Object catch (error) {
+        if (mounted) showFahErrorSnack(context, error.toString());
+        return;
+      }
+    }
+    if (!mounted) return;
+    final session = manager.sessions[personal];
+    if (session == null) return;
+    session.attachDmConnector(connector);
+    session.dmSessionTargets[channelId] = sessionId;
+    await _openSidebarChannelEntry(
+      manager,
+      mode,
+      personal,
+      Channel(
+        id: channelId,
+        networkId: personal,
+        name: '$deviceLabel · $agentName',
+      ),
     );
   }
 

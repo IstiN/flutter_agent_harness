@@ -297,11 +297,19 @@ Widget devicesPage(
   ChatListController? sessions,
   void Function(ChatListEntry)? onOpen,
   String? selected,
+  void Function({
+    required String deviceId,
+    required String deviceLabel,
+    required String agentAddress,
+    String? sessionId,
+  })?
+  onOpenRemoteConversation,
 }) => DevicesPage(
   service: service,
   sessions: sessions,
   selectedSessionId: selected,
   onOpenSession: onOpen == null ? null : (entry) => onOpen(entry),
+  onOpenRemoteConversation: onOpenRemoteConversation,
 );
 
 /// The palette resolved from the page's own context — tests assert
@@ -1431,7 +1439,7 @@ void main() {
       expect(find.byKey(const ValueKey('agentRow:fa')), findsOneWidget);
     });
 
-    testWidgets('agent tap opens the conversation pane; back returns', (
+    testWidgets('agent tap opens the DM via the shell callback; roster stays', (
       tester,
     ) async {
       final service = FakeDevicesService(
@@ -1441,7 +1449,26 @@ void main() {
           DeviceInfo(deviceId: 'dev-mac', name: 'mac-host'),
         ],
       );
-      await tester.pumpWidget(_wrap(devicesPage(service)));
+      final opened =
+          <({String deviceId, String agentAddress, String? sessionId})>[];
+      await tester.pumpWidget(
+        _wrap(
+          devicesPage(
+            service,
+            onOpenRemoteConversation:
+                ({
+                  required String deviceId,
+                  required String deviceLabel,
+                  required String agentAddress,
+                  String? sessionId,
+                }) => opened.add((
+                  deviceId: deviceId,
+                  agentAddress: agentAddress,
+                  sessionId: sessionId,
+                )),
+          ),
+        ),
+      );
       await tester.pump();
       service.emitEnvelope(
         _envelope(
@@ -1455,22 +1482,12 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('agentRow:fa')));
       await tester.pump();
-      await tester.pump();
 
-      expect(
-        find.byKey(const ValueKey('deviceConversation:dev-mac')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('conversationComposer')),
-        findsOneWidget,
-      );
-      // The fake has no account client — the pane surfaces its error
-      // line instead of hanging or crashing.
-      expect(find.byKey(const ValueKey('conversationError')), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('conversationBack')));
-      await tester.pump();
+      // The callback carries the full DM target; the roster pane stays
+      // in place (the conversation lives in the shell's message column).
+      expect(opened.single.deviceId, 'dev-mac');
+      expect(opened.single.agentAddress, 'fa@dev-mac');
+      expect(opened.single.sessionId, isNull);
       expect(find.byKey(const ValueKey('devicePane:dev-mac')), findsOneWidget);
     });
   });

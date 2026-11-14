@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/fa_network_client.dart';
-import 'package:fa/ui/network/device_conversation_pane.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
@@ -59,6 +58,7 @@ class DevicesPage extends StatefulWidget {
     this.sessions,
     this.onOpenSession,
     this.selectedSessionId,
+    this.onOpenRemoteConversation,
   });
 
   /// The rail's geometry — the networks strip's contract scaled to the
@@ -91,6 +91,17 @@ class DevicesPage extends StatefulWidget {
   /// accent-fill selected state. Null highlights nothing.
   final String? selectedSessionId;
 
+  /// Remote session/agent tap: the SHELL opens the DM as a virtual
+  /// channel in its message column (NetworkChatPage reuse — the sidebar
+  /// keeps the roster, the tapped row highlights). Null = read-only rows.
+  final void Function({
+    required String deviceId,
+    required String deviceLabel,
+    required String agentAddress,
+    String? sessionId,
+  })?
+  onOpenRemoteConversation;
+
   @override
   State<DevicesPage> createState() => _DevicesPageState();
 }
@@ -111,7 +122,9 @@ class _DevicesPageState extends State<DevicesPage> {
 
   /// The open DM conversation (a remote session/agent tap); null shows
   /// the selected device's pane. Switching devices clears it.
-  ({String deviceId, String agentAddress, String? sessionId})? _conversation;
+  /// The tapped remote session awaiting its chat in the shell's message
+  /// column (highlight only — the conversation itself is the shell's).
+  String? _selectedRemoteSessionId;
 
   StreamSubscription<NetworkEnvelope>? _framesSubscription;
   StreamSubscription<NetworkEnvelope>? _rosterSubscription;
@@ -460,7 +473,6 @@ class _DevicesPageState extends State<DevicesPage> {
               ownSnapshot.data,
             );
             final selected = _resolveSelected(devices);
-            final conversation = _conversation;
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -471,36 +483,29 @@ class _DevicesPageState extends State<DevicesPage> {
                     selectedId: selected.id,
                     onSelect: (id) => setState(() {
                       _selectedDeviceId = id;
-                      _conversation = null;
+                      _selectedRemoteSessionId = null;
                     }),
                     onRenameOwn: () => unawaited(_renameOwnDevice()),
                   ),
                 ),
                 VerticalDivider(width: 1, color: FahColors.of(context).border),
                 Expanded(
-                  child: conversation != null
-                      ? DeviceConversationPane(
-                          service: widget.service,
-                          deviceId: conversation.deviceId,
-                          deviceLabel: selected.label,
-                          agentAddress: conversation.agentAddress,
-                          sessionId: conversation.sessionId,
-                          onBack: () => setState(() => _conversation = null),
-                        )
-                      : _DevicePane(
-                          device: selected,
-                          onOpenSession: widget.onOpenSession,
-                          selectedSessionId: widget.selectedSessionId,
-                          onRenameOwn: () => unawaited(_renameOwnDevice()),
-                          onOpenConversation:
-                              (deviceId, agentAddress, sessionId) => setState(
-                                () => _conversation = (
-                                  deviceId: deviceId,
-                                  agentAddress: agentAddress,
-                                  sessionId: sessionId,
-                                ),
-                              ),
-                        ),
+                  child: _DevicePane(
+                    device: selected,
+                    onOpenSession: widget.onOpenSession,
+                    selectedSessionId: widget.selectedSessionId,
+                    selectedRemoteSessionId: _selectedRemoteSessionId,
+                    onRenameOwn: () => unawaited(_renameOwnDevice()),
+                    onOpenConversation: (deviceId, agentAddress, sessionId) {
+                      setState(() => _selectedRemoteSessionId = sessionId);
+                      widget.onOpenRemoteConversation?.call(
+                        deviceId: deviceId,
+                        deviceLabel: selected.label,
+                        agentAddress: agentAddress,
+                        sessionId: sessionId,
+                      );
+                    },
+                  ),
                 ),
               ],
             );
@@ -999,6 +1004,7 @@ class _DevicePane extends StatelessWidget {
     required this.device,
     this.onOpenSession,
     this.selectedSessionId,
+    this.selectedRemoteSessionId,
     this.onRenameOwn,
     this.onOpenConversation,
   });
@@ -1016,6 +1022,9 @@ class _DevicePane extends StatelessWidget {
 
   /// The currently open session's id — its card renders the accent fill.
   final String? selectedSessionId;
+
+  /// The remote session whose DM is open in the shell's message column.
+  final String? selectedRemoteSessionId;
 
   @override
   Widget build(BuildContext context) {
@@ -1144,6 +1153,7 @@ class _DevicePane extends StatelessWidget {
             dotColor: deviceSessionDotColor(colors, entry.value),
             title: entry.key,
             subtitle: deviceSessionLabel(context, entry.value),
+            selected: entry.key == selectedRemoteSessionId,
             onTap: _sessionConversation(entry.key),
           ),
         ),

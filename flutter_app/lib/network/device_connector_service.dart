@@ -752,6 +752,20 @@ class DeviceConnectorService {
     return envelope.to == local && envelope.from != local;
   }
 
+  /// Live user-side DM mail from the device WS (own agent-echo excluded):
+  /// the personal-network [NetworkSession] folds these into its open DM
+  /// channel stores so NetworkChatPage updates in place.
+  Stream<NetworkEnvelope> get dmMail => _dmMailController.stream;
+  final _dmMailController = StreamController<NetworkEnvelope>.broadcast();
+
+  Future<void> _onDmSink(InboundMail mail) async {
+    final envelope = mail.envelope;
+    if (envelope.from != _localAgentAddress()) {
+      _dmMailController.add(envelope);
+    }
+    await _receiveDm(mail);
+  }
+
   Future<void> _receiveDm(InboundMail mail) async {
     if (!_isActionableDm(mail.envelope)) return;
     final host = dmSessionHost;
@@ -848,7 +862,7 @@ class DeviceConnectorService {
       // echoes and other agents' traffic are acked and dropped so the
       // server never redelivers them.
       channel: dmChannelPrefix,
-      sink: _receiveDm,
+      sink: _onDmSink,
     );
     if (generation != _generation) {
       unawaited(connector.stop());
