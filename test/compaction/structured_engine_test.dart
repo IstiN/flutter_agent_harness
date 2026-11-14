@@ -141,6 +141,66 @@ void main() {
     expect(judgeCalls, 1);
   });
 
+  test('gh-2101: one judge pass batches its whole multi-group pick into '
+      'ONE hidden_range append', () async {
+    // A longer variant of the fixture: both tool pairs sit WELL outside
+    // the 8-entry protected tail, so a two-group judge pick survives
+    // validation whole.
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('fix the login crash'));
+    await session.appendMessage(
+      _assistant(
+        'looking',
+        calls: [ToolCall(id: 'c1', name: 'read', arguments: {})],
+      ),
+    );
+    await session.appendMessage(_result('c1', 'read', 'x' * 16000));
+    await session.appendMessage(_assistant('found token-expiry bug'));
+    await session.appendMessage(
+      _assistant(
+        'running tests',
+        calls: [ToolCall(id: 'c2', name: 'bash', arguments: {})],
+      ),
+    );
+    await session.appendMessage(_result('c2', 'bash', 'y' * 12000));
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(_assistant('filler analysis $i'));
+    }
+    final state = stateFor(await session.buildContextMessages());
+    var judgeCalls = 0;
+    final compactor = StructuredCompactor(
+      session: session,
+      state: state,
+      window: 8000,
+      settings: _settings,
+      judge: (ledger, [token]) async {
+        judgeCalls++;
+        // The two tool-call carrier lines of the ledger — two independent
+        // pair groups in ONE answer (a multi-group pick).
+        final carriers = RegExp(r'\[(\d+)\] assistant-TOOLCALL')
+            .allMatches(ledger)
+            .map((m) => m.group(1)!)
+            .toList();
+        expect(carriers, hasLength(2), reason: 'the fixture has two pairs');
+        return '[${carriers.join(', ')}]';
+      },
+      summarize: (request) async =>
+          SummarizationResult.failure('must not summarize in this test'),
+      checkpointPrompt: 'SUMMARY INSTRUCTIONS',
+    );
+    final hid = await compactor.run();
+    expect(hid, isTrue);
+    final records = await session.getEntries();
+    final hiddenRanges = records.whereType<HiddenRangeRecord>().toList();
+    // THE gh-2101 contract: the pass's whole pick set lands in ONE batched
+    // append — the request prefix is rewritten once per pass, not once per
+    // group.
+    expect(hiddenRanges, hasLength(1));
+    expect(hiddenRanges.single.recordIds, hasLength(4),
+        reason: 'both pair groups (carrier + result each) ride one append');
+    expect(judgeCalls, 1);
+  });
+
   test(
     'a failed judge call is counted, retried, and pass 2 still engages',
     () async {
