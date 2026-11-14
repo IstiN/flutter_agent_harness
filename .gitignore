@@ -201,6 +201,11 @@ node_modules
 # sdk/web type-stripped build output (node build.mjs regenerates it).
 sdk/web/dist/
 agents/
+# gh-2181: docs/agents/ holds the canonical AGENTS.md reference docs (8
+# files were tracked before this rule existed — new ones silently vanished
+# from git status). Un-ignore the docs subtree explicitly; the runtime
+# `agents/` dir at the root stays ignored.
+!docs/agents/
 
 # runtime preference files written at the repo root during tests
 /session_ui_prefs.json
