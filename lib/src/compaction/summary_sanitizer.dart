@@ -17,14 +17,74 @@
 /// temporal words survive: "the last release was v1.0.492", "the current
 /// maintainer is X", and quoted history like "the user asked you to re-run
 /// the tests" all stay verbatim.
+///
+/// gh-2103 adds the provenance belt over the same chokepoints: digest text
+/// must not launder tool-controlled content into trusted memory. Within the
+/// user-intent sections of a digest (`## Open User Requests`, `## Original
+/// Request`, `open asks:`), machine-origin lines (the [isSyntheticUserText]
+/// classes — the same lines the request-candidate scan refuses to feed the
+/// summarizer) are stripped, and a line quoting tool text verbatim carries
+/// a `[from toolResult]` origin mark. The mark arm grades against
+/// [SummaryOriginEvidence] — the transcript the fold consumed — so it is
+/// wired at persist sites; heal-on-read sites pass no evidence and only the
+/// synthetic arm fires.
 library;
 
+import '../context.dart' show ToolResultMessage, UserMessage;
+import '../types.dart' show Message, TextContent;
+import '../user_text.dart' show isSyntheticUserText, userMessageText;
 import 'structured/markers.dart' show pinBlockCloseTag, pinBlockOpenTag;
 
 /// A summary after sanitization: the cleaned [text] plus the [stripped]
-/// ephemeral sentences (persist sites log them, e.g. in the compaction
-/// record's `details`).
-typedef SanitizedSummary = ({String text, List<String> stripped});
+/// ephemeral/laundered spans (persist sites log them, e.g. in the compaction
+/// record's `details`) and the [marked] lines that gained a `[from
+/// toolResult]` origin mark (gh-2103, logged alongside the strips).
+typedef SanitizedSummary = ({
+  String text,
+  List<String> stripped,
+  List<String> marked,
+});
+
+/// Flattened transcript-origin evidence for the provenance belt (gh-2103).
+///
+/// Built at persist sites from the same [messages] the summarizer consumed:
+/// the whitespace-flattened text of every user message and every tool
+/// result of the summarized span. A digest line in a user-intent section
+/// that verbatim-quotes one of the tool texts (and no user text) is a
+/// laundered quote — the belt origin-marks it; a line contained in (or
+/// containing) a user text is user-sourced and stays untouched.
+final class SummaryOriginEvidence {
+  /// Collects the origin evidence of one summarized span.
+  SummaryOriginEvidence(Iterable<Message> messages)
+    : userTexts = [
+        for (final message in messages)
+          if (message is UserMessage)
+            if (_flattenText(userMessageText(message.content)).isNotEmpty)
+              _flattenText(userMessageText(message.content)),
+      ],
+      toolTexts = [
+        for (final message in messages)
+          if (message is ToolResultMessage)
+            if (_flattenText(
+              message.content
+                  .whereType<TextContent>()
+                  .map((block) => block.text)
+                  .join('\n'),
+            ).isNotEmpty)
+              _flattenText(
+                message.content
+                    .whereType<TextContent>()
+                    .map((block) => block.text)
+                    .join('\n'),
+              ),
+      ];
+
+  /// Flattened user-message texts of the span.
+  final List<String> userTexts;
+
+  /// Flattened tool-result texts of the span.
+  final List<String> toolTexts;
+}
 
 final RegExp _contextNoteOpen = RegExp(
   r'\[\s*context notes?\s*[—–\-:]',
@@ -69,7 +129,10 @@ final RegExp _ephemeralClaim = RegExp(
   caseSensitive: false,
 );
 
-/// Strips ephemeral, time-scoped claims from a compaction [summary].
+/// Strips ephemeral, time-scoped claims from a compaction [summary], and —
+/// gh-2103 — belts the user-intent sections against laundering when the
+/// fold's transcript [origins] is given (a `null` [origins], the heal-on-read
+/// shape, still strips machine-origin lines; it just cannot grade quotes).
 ///
 /// Whole `[context note …]` blocks go first (the harness delivers drop notes
 /// itself, once, at the turn where they happen — a copy inside a summary is
@@ -88,14 +151,28 @@ final RegExp _ephemeralClaim = RegExp(
 SanitizedSummary sanitizeSummary(
   String summary, {
   Set<String> protectedLines = const {},
+  SummaryOriginEvidence? origins,
 }) {
-  if (summary.isEmpty) return (text: summary, stripped: const []);
+  if (summary.isEmpty) {
+    return (text: summary, stripped: const [], marked: const []);
+  }
   final stripped = <String>[];
+  final marked = <String>[];
   final text = _stripContextNotes(summary, stripped);
+  // gh-2103: user-intent sections never carry machine-origin asks, and
+  // tool-verbatim quotes there carry an origin mark. Runs before the
+  // ephemeral-claim walk so the per-line strips see the belted text.
+  final belted = _beltUserIntentSections(
+    text,
+    stripped,
+    marked,
+    origins,
+    protectedLines,
+  );
   final keptLines = <String>[];
   var insidePinEnvelope = false;
   var envelopeLines = 0;
-  for (final line in text.split('\n')) {
+  for (final line in belted.split('\n')) {
     // Standalone-line equality only (review gh-1409 round 2): the harness
     // renders the tags as whole lines, so a tag quoted mid-prose — a pin
     // line copied into a sentence, or a hostile `operative:` line
@@ -110,15 +187,338 @@ SanitizedSummary sanitizeSummary(
     // envelope (truncated checkpoint, hostile open without close) re-arms
     // sanitization after [_maxPinEnvelopeLines] lines instead of staying
     // exempt for the rest of the summary.
-    final keptLine =
-        insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
+    final keptLine = insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
         ? line
         : _sanitizeLine(line, stripped, protectedLines);
     if (keptLine != null) keptLines.add(keptLine);
     if (insidePinEnvelope) envelopeLines++;
     if (trimmed == pinEnvelopeCloseTag) insidePinEnvelope = false;
   }
-  return (text: keptLines.join('\n'), stripped: stripped);
+  return (text: keptLines.join('\n'), stripped: stripped, marked: marked);
+}
+
+// ---------------------------------------------------------------------------
+// The provenance belt (gh-2103) — no laundering through user-intent sections
+// ---------------------------------------------------------------------------
+
+/// Headings whose digest sections claim USER INTENT: the classic
+/// checkpoint's `## Open User Requests`, the split-turn prefix's
+/// `## Original Request`, and the structured checkpoint's bare
+/// `open asks:` heading. Only inside these sections can text pose AS the
+/// user; everywhere else tool-derived quotes are legitimate context.
+final RegExp _userIntentHeading = RegExp(
+  r'^(?:#{1,6}\s+)?(?:open user requests\b|original request\b|open asks\b\s*:)',
+  caseSensitive: false,
+  multiLine: true,
+);
+
+final RegExp _mdHeading = RegExp(r'^#{1,6}\s');
+
+final RegExp _bulletMarker = RegExp(r'^\s*(?:[-*+]\s|\d+\.\s)');
+
+/// List marker plus optional task checkbox, stripped when the belt reads a
+/// bullet's content.
+final RegExp _bulletContentPrefix = RegExp(
+  r'^\s*(?:[-*+]\s|\d+\.\s)\s*(?:\[[ xX]\]\s*)?',
+);
+
+final RegExp _coversLine = RegExp(r'^covers\b\s*:', caseSensitive: false);
+
+/// Minimum verbatim-quote length the mark arm requires: shorter strings
+/// ("error: file not found", a command name) collide too easily between a
+/// real ask and incidental tool output, so they never fire the arm.
+const _minQuoteChars = 24;
+
+final RegExp _sentenceSplit = RegExp(r'(?<=[.!?])\s+');
+
+/// Leading candidate-pointer bracket groups (`[r7 · 2026-11-14] `) the belt
+/// strips before retrying a sentence against the tool bodies.
+final RegExp _leadingBrackets = RegExp(r'^(?:\[[^\]]*\]\s*)+');
+
+final RegExp _whitespaceRun = RegExp(r'\s+');
+
+/// Leading whitespace test for the belt walk's continuation/bare-prose
+/// classification (`_bulletBlockEnd`, `_endsBareHeadingSection`).
+final RegExp _leadingWhitespace = RegExp(r'\s');
+
+String _flattenText(String text) => text.replaceAll(_whitespaceRun, ' ').trim();
+
+/// The gh-2103 belt over the user-intent sections of [text].
+///
+/// Within a section (from a [_userIntentHeading] line to the next markdown
+/// heading, a `covers:` line, or — for the bare `open asks:` shape — the
+/// first unindented prose line):
+///
+/// - a line (bullet block, or a prose line under a `#`-headed section)
+///   whose flattened content is machine-origin by construction
+///   ([isSyntheticUserText] — the same predicate the request-candidate scan
+///   applies at the source) is STRIPPED and logged in [stripped];
+/// - when [origins] is present and the content is user-sourced by neither
+///   whole-content nor per-sentence verbatim containment, but a ≥
+///   [_minQuoteChars]-char sentence IS verbatim inside a tool result, the
+///   line is annotated with ` [from toolResult]` and logged in [marked].
+///
+/// Everything else — real asks above all — survives byte-identical. Pinned
+/// directives ([protectedLines]) and the `<pinned-skill-directives>`
+/// envelope are exempt, exactly as for the ephemeral-claim strips.
+///
+/// The walk is split so each decision stays under the CRAP ratchet: this
+/// walker only dispatches whole sections to [_beltSectionBody] (pin
+/// envelope lines via [_BeltPinEnvelope]); the section body grades bullet
+/// blocks and prose lines and reports where the section ended.
+String _beltUserIntentSections(
+  String text,
+  List<String> stripped,
+  List<String> marked,
+  SummaryOriginEvidence? origins,
+  Set<String> protectedLines,
+) {
+  if (!_userIntentHeading.hasMatch(text)) return text;
+  final lines = text.split('\n');
+  final out = <String>[];
+  final pin = _BeltPinEnvelope();
+  var i = 0;
+  while (i < lines.length) {
+    final line = lines[i];
+    final trimmed = line.trim();
+    if (pin.entersKept(trimmed)) {
+      out.add(line);
+      pin.completeKept(trimmed);
+      i++;
+      continue;
+    }
+    if (!_userIntentHeading.hasMatch(trimmed)) {
+      out.add(line);
+      i++;
+      continue;
+    }
+    out.add(line);
+    final (belted, end) = _beltSectionBody(
+      lines,
+      start: i + 1,
+      sectionHeaded: _mdHeading.hasMatch(line),
+      origins: origins,
+      protectedLines: protectedLines,
+      stripped: stripped,
+      marked: marked,
+      pin: pin,
+    );
+    out.addAll(belted);
+    i = end;
+  }
+  return out.join('\n');
+}
+
+/// The belt walk's pin-envelope exemption state (the gh-1409 envelope
+/// semantics, bound to the belt's line walk): an open envelope keeps its
+/// lines verbatim until the close tag or the bounded re-arm (defense in
+/// depth against a hostile unclosed open), exactly mirroring the
+/// `sanitizeSummary` line loop's counter placement — the open decision
+/// precedes the kept test on every line, and the counter/close bookkeeping
+/// rides ONLY the kept (pasthrough) branch, never the graded path.
+final class _BeltPinEnvelope {
+  bool _open = false;
+  int _count = 0;
+
+  /// Opens the envelope on an open tag, then tests the exemption.
+  bool entersKept(String trimmed) {
+    if (trimmed == pinEnvelopeOpenTag) {
+      _open = true;
+      _count = 0;
+    }
+    return _open && _count < _maxPinEnvelopeLines;
+  }
+
+  /// Pasthrough-path bookkeeping only: the line counter and the close tag
+  /// are processed for kept lines. A graded or boundary line inside a
+  /// re-armed envelope can neither extend nor close the exemption — the
+  /// same sequencing as the `sanitizeSummary` loop.
+  void completeKept(String trimmed) {
+    if (_open) _count++;
+    if (trimmed == pinEnvelopeCloseTag) _open = false;
+  }
+}
+
+/// Consumes one user-intent section body — every line after its heading
+/// until the section ends (a markdown heading or `covers:` line, or body
+/// prose after a bare `open asks:` heading) or the transcript ends — and
+/// returns the belted lines plus the index the caller must resume at (the
+/// boundary line itself, so it is reprocessed from the outside state).
+/// Pin-envelope lines ([_BeltPinEnvelope.entersKept]) are kept verbatim;
+/// an envelope open when the heading arrives keeps the heading in the
+/// walker's pasthrough branch, so no section opens and nothing is graded
+/// until the envelope closes or re-arms.
+(List<String>, int) _beltSectionBody(
+  List<String> lines, {
+  required int start,
+  required bool sectionHeaded,
+  required SummaryOriginEvidence? origins,
+  required Set<String> protectedLines,
+  required List<String> stripped,
+  required List<String> marked,
+  required _BeltPinEnvelope pin,
+}) {
+  final out = <String>[];
+  var i = start;
+  while (i < lines.length) {
+    final line = lines[i];
+    final trimmed = line.trim();
+    if (pin.entersKept(trimmed)) {
+      out.add(line);
+      pin.completeKept(trimmed);
+      i++;
+      continue;
+    }
+    if (_isSectionEnd(line, trimmed)) break;
+    if (trimmed.isEmpty) {
+      out.add(line);
+      i++;
+      continue;
+    }
+    final bullet = _bulletMarker.hasMatch(line);
+    if (!bullet && _endsBareHeadingSection(line, sectionHeaded)) break;
+    final end = bullet ? _bulletBlockEnd(lines, i) : i + 1;
+    final block = lines.sublist(i, end);
+    final verdict = _beltVerdict(block, origins, protectedLines, stripped);
+    out.addAll(_applyBeltVerdict(verdict, block, marked));
+    i = end;
+  }
+  return (out, i);
+}
+
+/// Whether [line] ends the section it is walking inside: any markdown
+/// heading, or a `covers:` line (the next fold's coverage marker).
+bool _isSectionEnd(String line, String trimmed) =>
+    _mdHeading.hasMatch(line) || _coversLine.hasMatch(trimmed);
+
+/// Whether a non-bullet [line] ends a bare `open asks:` section: body prose
+/// at column 0 under an unmarked heading — the checkpoint's post-asks
+/// narrative — is outside the asks list.
+bool _endsBareHeadingSection(String line, bool sectionHeaded) =>
+    !sectionHeaded && !line.startsWith(_leadingWhitespace);
+
+/// Where a bullet block starting at [start] ends: the bullet plus its
+/// indented, non-empty, non-bullet continuation lines ride one verdict.
+int _bulletBlockEnd(List<String> lines, int start) {
+  var end = start + 1;
+  while (end < lines.length &&
+      lines[end].trim().isNotEmpty &&
+      lines[end].startsWith(_leadingWhitespace) &&
+      !_bulletMarker.hasMatch(lines[end])) {
+    end++;
+  }
+  return end;
+}
+
+/// Belt verdicts for one content block.
+enum _BeltVerdict {
+  /// No laundering signal — the block survives byte-identical.
+  keep,
+
+  /// Machine-origin content in a user-intent section — the block drops.
+  strip,
+
+  /// Tool-verbatim quote posing as user intent — the block gains an
+  /// origin mark.
+  mark,
+}
+
+/// Grades one bullet block (or prose line) of a user-intent section.
+_BeltVerdict _beltVerdict(
+  List<String> block,
+  SummaryOriginEvidence? origins,
+  Set<String> protectedLines,
+  List<String> stripped,
+) {
+  for (final line in block) {
+    for (final protected in protectedLines) {
+      if (protected.isNotEmpty && line.contains(protected)) {
+        return _BeltVerdict.keep; // gh-1409: pins are never rewritten.
+      }
+    }
+  }
+  var content = block.join(' ').replaceFirst(_bulletContentPrefix, '');
+  final flat = _flattenText(content);
+  if (flat.isEmpty) return _BeltVerdict.keep;
+  // Arm 1 — machine-origin BY CONSTRUCTION: the request-candidate scan
+  // already refuses these classes at the source, so their presence in a
+  // user-intent section is laundering whatever phrasing wraps them.
+  if (isSyntheticUserText(flat)) {
+    stripped.add(flat);
+    return _BeltVerdict.strip;
+  }
+  // Arm 2 — tool-verbatim quote (needs the fold's transcript evidence).
+  if (origins != null && _quotesToolText(flat, origins)) {
+    return _BeltVerdict.mark;
+  }
+  return _BeltVerdict.keep;
+}
+
+/// Whether [flatContent] in a user-intent section verbatim-quotes a tool
+/// result without quoting the user: the whole content is user-sourced
+/// (either containment direction — digests append scaffolding like
+/// `(asked <date>, id)` around verbatim asks), or it carries a
+/// [_minQuoteChars]-char sentence found inside a tool text and inside no
+/// user text. The sentence grading lives in [_launderedQuoteSentence].
+bool _quotesToolText(String flatContent, SummaryOriginEvidence origins) {
+  if (flatContent.length < _minQuoteChars) return false;
+  if (_containedInAny(origins.userTexts, flatContent, alsoContains: true)) {
+    return false;
+  }
+  return flatContent
+      .split(_sentenceSplit)
+      .any((sentence) => _launderedQuoteSentence(sentence, origins));
+}
+
+/// Whether one sentence of a user-intent line is a laundering quote: long
+/// enough to be distinctive, verbatim inside a tool result, and inside no
+/// user text. Digest scaffolding rides the line — a candidate pointer
+/// (`[r7 · …]`) prefixed to a verbatim quote must not hide the quote — so
+/// the sentence is retried without its leading bracket groups.
+bool _launderedQuoteSentence(String sentence, SummaryOriginEvidence origins) {
+  if (sentence.length < _minQuoteChars) return false;
+  if (_containedInAny(origins.userTexts, sentence)) return false;
+  if (_containedInAny(origins.toolTexts, sentence)) return true;
+  final bare = sentence.replaceFirst(_leadingBrackets, '');
+  if (bare.length < _minQuoteChars || bare == sentence) return false;
+  return _containedInAny(origins.toolTexts, bare);
+}
+
+/// Whether [needle] occurs verbatim inside any of [texts]; [alsoContains]
+/// adds the reverse containment (the needle contains the text) — the
+/// digest-scaffolding case where a real ask line wraps its own user text.
+bool _containedInAny(
+  List<String> texts,
+  String needle, {
+  bool alsoContains = false,
+}) {
+  for (final text in texts) {
+    if (text.contains(needle) || (alsoContains && needle.contains(text))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Applies a [_BeltVerdict]: `keep` returns the block unchanged, `strip`
+/// drops it (the fires were already logged by [_beltVerdict]), `mark`
+/// appends the origin mark to the block's first line and logs the annotated
+/// line in [marked].
+List<String> _applyBeltVerdict(
+  _BeltVerdict verdict,
+  List<String> block,
+  List<String> marked,
+) {
+  switch (verdict) {
+    case _BeltVerdict.keep:
+      return block;
+    case _BeltVerdict.strip:
+      return const [];
+    case _BeltVerdict.mark:
+      final annotated = '${block.first} [from toolResult]';
+      marked.add(annotated);
+      return [annotated, ...block.skip(1)];
+  }
 }
 
 /// The pin-envelope exemption's line bound (defense in depth): a

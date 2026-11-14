@@ -1571,9 +1571,16 @@ final class CompactionManager {
     // stripped pre-persist; the fires are logged in the record details.
     // gh-1409 AC4: pinned lines are protected — the sanitizer strips the
     // ephemeral claims AROUND them, never the pins themselves.
+    // gh-2103: the provenance belt grades against the same transcript the
+    // summarizer saw — machine-origin lines leave the user-intent sections,
+    // tool-verbatim quotes there gain an origin mark.
     final sanitized = sanitizeSummary(
       summary,
       protectedLines: pinnedOperative?.lines ?? const {},
+      origins: SummaryOriginEvidence([
+        ...preparation.messagesToSummarize,
+        ...preparation.turnPrefixMessages,
+      ]),
     );
     summary = sanitized.text;
 
@@ -1591,6 +1598,7 @@ final class CompactionManager {
         'modifiedFiles': preparation.modifiedFiles,
         if (sanitized.stripped.isNotEmpty)
           'sanitizedEphemeral': sanitized.stripped,
+        if (sanitized.marked.isNotEmpty) 'markedToolOrigin': sanitized.marked,
       },
     );
   }

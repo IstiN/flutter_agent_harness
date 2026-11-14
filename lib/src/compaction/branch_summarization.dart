@@ -323,7 +323,12 @@ Future<BranchSummaryResult> generateBranchSummary(
   final fileLists = computeFileLists(preparation.fileOps);
   // Issue #1131: the summary persists and re-renders every turn — strip
   // ephemeral, time-scoped claims from the LLM prose before recording it.
-  final sanitized = sanitizeSummary(text);
+  // gh-2103: the provenance belt rides the digest input's origin evidence —
+  // the same transcript the summarizer consumed.
+  final sanitized = sanitizeSummary(
+    text,
+    origins: SummaryOriginEvidence(preparation.messages),
+  );
   final summary =
       '$preamble\n${sanitized.text}'
       '${formatFileOperations(fileLists.readFiles, fileLists.modifiedFiles)}';

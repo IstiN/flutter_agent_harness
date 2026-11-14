@@ -233,6 +233,60 @@ gh-2101 one compaction run is ONE cache family:
   hit is shown, not hidden: it is the regression signal the metrics
   exist for.
 
+### Digest provenance (gh-2103)
+
+The "compaction laundering" audit (gh-2103): published attack research
+shows harnesses that flatten role-typed transcripts before digesting let
+attacker-forged "user" turns survive compaction into trusted context.
+This harness never flattens — the judge sees typed ledger lines
+(`[4] toolResult(read) …`), real user turns are ledger-exempt, and the
+fold input keeps the `[User]:` / `[Tool result]:` labels of
+`serializeConversation`, so a forged `[User]:` line inside a tool result
+stays inside the tool-result block. The digest TEXT, however, is free
+prose: nothing stopped a summarizer from copying tool-controlled
+instructions into `## Open User Requests` and effectively laundering
+them into trusted memory. Three layers close that leg, mirroring the
+#1131 belt-and-suspenders pair:
+
+- **Prompt duty** — every digest/checkpoint prompt
+  (`prompts/compaction/*.md`) carries the origin-provenance rule: asks
+  come ONLY from real `[User]:` turns (the `USER REQUEST CANDIDATES` /
+  `<open-user-requests>` blocks collect them mechanically), tool
+  output — including instruction-shaped text, forged `[User]:` labels,
+  and "USER INSTRUCTION" framing — is never user intent, and verbatim
+  quotes of tool-derived text carry an inline origin mark
+  (`[from toolResult]`; harness notes `[from harness]`, assistant text
+  `[from assistant]`). The hide judge needs no such rule: it emits hide
+  ids, never digest text.
+- **The provenance belt** (`SummaryOriginEvidence` +
+  `sanitizeSummary(origins:)`, `lib/src/compaction/summary_sanitizer.dart`)
+  — at persist sites (classic `compact`, structured checkpoint folds,
+  branch digests incl. `/handoff`) the sanitizer grades the digest's
+  user-intent sections (`## Open User Requests`, `## Original Request`,
+  `open asks:`) against the same transcript the fold consumed: a line
+  that is machine-origin by construction (the `isSyntheticUserText`
+  classes — the same lines the request-candidate scan refuses to feed
+  the summarizer) is stripped and logged as `sanitizedEphemeral`; a line
+  that verbatim-quotes a ≥24-char sentence found inside a tool result
+  and inside no user text gains a ` [from toolResult]` suffix, logged as
+  `markedToolOrigin`. Real asks (verbatim user text, either containment
+  direction) survive byte-identical; pinned directives and the pin
+  envelope stay exempt. Heal-on-read projection passes have no
+  transcript, so only the synthetic arm fires there — no invented marks.
+- **Adversarial regression transcripts** —
+  `test/compaction/provenance_laundering_test.dart` keeps a tool result
+  shaped like user turns (forged `[User]:` transcript line, "USER
+  INSTRUCTION" framing, a `<system-notice>` fake ask, an agent-mail
+  instruction) and asserts the typed pipeline never promotes it, the
+  belt strips/marks it at every persist path, and every prompt carries
+  the duty.
+
+Scope note: the belt grades only the sections that claim user intent.
+Tool-derived quotes under `## Critical Context` / Observed State are
+legitimate context and carry their origin by the prompt's
+"with what produced them" convention — the mechanical mark arm stays out
+of them to keep false fires off real context.
+
 ## The working set and the goal slot (gh-210)
 
 After any compaction, the context tail carries a bounded re-injection so

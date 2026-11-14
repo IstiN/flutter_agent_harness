@@ -1652,6 +1652,10 @@ final class StructuredCompactor {
     final budget = summarizerWindow == null
         ? null
         : summarizationPayloadBudget(summarizerWindow!, settings);
+    // gh-2103: the fold's transcript rides the sanitize belt — the
+    // checkpoint's user-intent lines are graded against what the summarizer
+    // actually saw.
+    final origins = SummaryOriginEvidence(messages);
     var prompt = build(serializeConversation(messages), openAsks, null);
     if (budget != null && estimateStringTokens(prompt) > budget) {
       // Issue #729: the dropped region does not fit the summarizer's
@@ -1663,9 +1667,10 @@ final class StructuredCompactor {
         build: build,
         asksFor: asksFor,
         budget: budget,
+        origins: origins,
       );
     }
-    final text = await _callSummarizer(prompt);
+    final text = await _callSummarizer(prompt, origins: origins);
     return (text: text, summarizerCalls: 1);
   }
 
@@ -1683,6 +1688,7 @@ final class StructuredCompactor {
     build,
     required List<String> Function(List<Message> chunk) asksFor,
     required int budget,
+    SummaryOriginEvidence? origins,
   }) async {
     var priorFold = '';
     var calls = 0;
@@ -1705,6 +1711,7 @@ final class StructuredCompactor {
           asksFor(chunk),
           priorFold.isEmpty ? null : priorFold,
         ),
+        origins: origins,
       );
       calls++;
       if (text == null) return (text: null, summarizerCalls: calls);
@@ -1715,7 +1722,12 @@ final class StructuredCompactor {
 
   /// One summarizer call under the attempt budget (issue #515). Returns
   /// the trimmed summary text, `null` on failure-safety (empty/failed).
-  Future<String?> _callSummarizer(String prompt) async {
+  /// [origins] (gh-2103) grades the provenance belt against the fold's
+  /// transcript when provided.
+  Future<String?> _callSummarizer(
+    String prompt, {
+    SummaryOriginEvidence? origins,
+  }) async {
     try {
       final result =
           await summarize(
@@ -1737,7 +1749,12 @@ final class StructuredCompactor {
       // time-scoped claims the summarizer may have copied from context.
       // gh-1409 AC4: pin-carrying lines are exempt (the pin rides in the
       // envelope, structurally protected; raw lines protected here too).
-      return sanitizeSummary(text, protectedLines: pinnedLines).text;
+      // gh-2103: the provenance belt rides the fold's origin evidence.
+      return sanitizeSummary(
+        text,
+        protectedLines: pinnedLines,
+        origins: origins,
+      ).text;
     } on TimeoutException {
       // A budget kill surfaces as a named error (issue #515) — the pass
       // loop must not dissolve it into the failure-safety null.
