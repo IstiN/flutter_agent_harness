@@ -149,6 +149,7 @@ export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/cli/resumed_context_cache.dart';
 export 'src/compaction/branch_summarization.dart';
+export 'src/compaction/cache_policy.dart';
 export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';

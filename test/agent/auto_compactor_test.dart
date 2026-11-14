@@ -115,6 +115,75 @@ void main() {
     );
   }
 
+  test('gh-2101: a classic pass carries its duration and metered usage '
+      'on the receipt', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('u1${'a' * 400}'));
+    await session.appendMessage(assistantWithUsage('b' * 400, 5000));
+    await session.appendMessage(UserMessage.text('u2${'a' * 400}'));
+    await session.appendMessage(assistantWithUsage('c' * 400, 5000));
+
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final hooks = _RecordingHooks();
+    final ledger = CompactionUsageAccumulator();
+    // A real adapter over a scripted stream — the only way usage reaches
+    // the classic pass (SummarizeFn fakes carry no metering).
+    final summarize = streamFunctionSummarizer(
+      (model, context, {cancelToken}) {
+        final message = AssistantMessage(
+          content: [TextContent(text: 'SUMMARY')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: const Usage(
+            input: 300,
+            output: 12,
+            cacheRead: 2700,
+            cacheWrite: 0,
+            totalTokens: 3012,
+            cost: UsageCost(total: 0.003),
+          ),
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+        final stream = AssistantMessageEventStream();
+        stream
+          ..push(StartEvent(partial: message))
+          ..push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      },
+      _model,
+      onUsage: ledger.add,
+    );
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: summarize,
+      mainSummary: summarize,
+      smolModel: null,
+      hooks: hooks,
+      usage: ledger,
+      force: true,
+      attemptBudget: const Duration(minutes: 10),
+    ).run();
+
+    expect(ok, isTrue);
+    expect(hooks.passes, hasLength(1));
+    expect(hooks.passes.single.durationMs, isNotNull);
+    expect(hooks.passes.single.usage, isNotNull);
+    expect(hooks.passes.single.usage!.calls, 1);
+    expect(hooks.passes.single.usage!.cacheReadTokens, 2700);
+    expect(hooks.passes.single.usage!.costUsd, closeTo(0.003, 1e-12));
+    // The run ledger folded the same call — one metering source, not two.
+    expect(ledger.snapshot().calls, 1);
+  });
+
   test('a successful pass clears the stale usage anchor — the estimate drops '
       'and the loop stops after one pass', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
