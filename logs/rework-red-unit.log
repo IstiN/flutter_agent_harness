@@ -14515,3 +14515,156 @@ oh-my-pi baseline: initial=12345 turns=10 total=12355
 ✅ test/memory/memory_delete_test.dart: memory_delete removes an entry by id from the project scope
 ✅ test/memory/memory_delete_test.dart: memory_delete returns null for an unknown id
 ✅ test/memory/memory_delete_test.dart: the memory_delete tool reports deletion and unknown ids
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) delete keeps the entity file as a tombstone and hides it from list (AC1)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) the deleted/ record is byte-identical across independent stores (UT-2 merge-triviality invariant)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) double delete is idempotent and keeps a single deleted/ file (E2)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) set-difference consolidation progress works over the adapter (library 0.2.3 unprocessedDeletions, no harness change)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) legacy ledger-only store still answers isDeleted/hasDeletedText (E1)
+✅ test/memory/tombstone_integration_test.dart: git-support migration 0.2.1 → 0.2.3 (AC4) ensureGitSupport appends exactly the new lines, idempotently
+✅ test/memory/memory_controller_test.dart: MemoryController add stores and returns a MemoryEntry
+✅ test/memory/memory_controller_test.dart: MemoryController the storage adapter is append-capable (ledger race fix 0.2.1)
+✅ test/memory/memory_controller_test.dart: MemoryController the project store gets git support files (idempotent)
+✅ test/memory/memory_controller_test.dart: MemoryController sequential adds allocate incrementing note ids
+✅ test/memory/memory_controller_test.dart: MemoryController add with user scope and no userRoot returns no-store entry
+✅ test/memory/memory_controller_test.dart: MemoryController list returns entries from project storage
+✅ test/memory/memory_controller_test.dart: MemoryController list returns empty when storage has no notes
+✅ test/memory/memory_controller_test.dart: MemoryController formatPromptSection returns empty string with no entries
+✅ test/memory/memory_controller_test.dart: MemoryController formatPromptSection returns memory block with entries
+✅ test/memory/memory_controller_test.dart: MemoryController search falls back to keywords without LLM provider
+✅ test/memory/memory_controller_test.dart: MemoryController MemoryEntry.displayLine formats tags and text
+✅ test/memory/memory_controller_test.dart: MemoryController MemoryEntry.displayLine without tags
+✅ test/memory/memory_controller_test.dart: MemoryController list and the prompt section include the USER scope
+✅ test/memory/memory_controller_test.dart: MemoryController gh-1276 AC1: user add → list → search round-trip
+✅ test/memory/memory_controller_test.dart: MemoryController config source hot-swaps the project store without a restart
+✅ test/memory/memory_controller_test.dart: MemoryController a throwing config source keeps the current store
+✅ test/memory/memory_controller_test.dart: MemoryController onConfigChanged fires once per actual swap
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) the adapter is tombstone-capable (0.2.3)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) tombstoneEntity rewrites the file in place with the marker (AC1 seam)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) readEntity reports a tombstoned entity as absent
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) readEntity filters a hand-written tombstone of foreign shape
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) listEntityIds still yields tombstoned ids (no silent id reuse)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) purgeTombstones removes only tombstones and returns sorted ids
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) deleteEntityById unlinks one existing entity, unknown id is false
+✅ test/memory/tombstone_storage_test.dart: cross-tool tombstone consistency (AC2) a store tombstoned by the library FileKbStorage reads as absent through the harness adapter
+✅ test/memory/tombstone_storage_test.dart: cross-tool tombstone consistency (AC2) a harness tombstone carries the library marker format
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider chat returns the joined text of a successful stream
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider defaultModel reflects the per-call resolution
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider defaultModel is "unknown" when no slot resolves
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider system messages merge into the context system prompt
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider an error stream throws and invokes onCancel
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider a null slot throws StateError
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance maintenanceDue is true when never maintained
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance maintain writes the stamp and clears the due flag
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance the running guard makes a concurrent maintain a no-op
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance noteAddForMaintenance crosses the threshold at N adds
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance noteAddForMaintenance stays false before the threshold
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines counts entries per type sorted
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines due flag appends the maintenance hint
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines last maintenance timestamp renders when set
+✅ test/memory/memory_config_test.dart: memory: section parsing absent section leaves the config null (defaults apply)
+✅ test/memory/memory_config_test.dart: memory: section parsing projectPath + userPath parse verbatim
+✅ test/memory/memory_config_test.dart: memory: section parsing an unknown key throws ConfigException (strict schema)
+✅ test/memory/memory_config_test.dart: memory: section parsing a non-string value throws ConfigException
+✅ test/memory/memory_config_test.dart: memory: section parsing a non-map section throws ConfigException
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig absent project file → null (user config applies)
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig a project memory: section parses and wins
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig an invalid project section throws ConfigException (strict)
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a custom project path receives the notes (not .fah/memory)
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a RELATIVE project path resolves against the project root
+✅ test/memory/memory_config_test.dart: MemoryController storage paths no override keeps the .fah/memory default
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a custom user path with ~ expands against the user root
+::endgroup::
+::group::⏭️ Skipped tests
+⏭️ test/import/import_e2e_machine_test.dart: real omp store: discovery + full read of the newest session (skipped)
+machine-gated: requires FA_IMPORT_E2E=1 and a real ~/.omp/agent/sessions store
+⏭️ test/cli/ctx_preflight_compact_test.dart: an over-window history is compacted BEFORE the next request (skipped)
+Skip: giant-transcript second-process resume/input stall (own bug)
+⏭️ test/quickjs_runtime_vendor_pin_test.dart: quickjs_runtime vendored fork pins (PR #1785 CI reds) vendored hook/build.dart compiles to kernel (skipped)
+flutter_app is not pub-resolved in this leg — the hook kernel compile runs wherever the app package_config exists
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) AC2: a wrapped shell READS a file under the rw mount (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) AC3: a wrapped shell still WRITES under the rw mount (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) the /Users read deny still blocks non-mounted paths (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live a redirect above the workspace fails (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live a redirect inside the workspace succeeds (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live reading /etc/hosts fails (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live writing /dev/null succeeds (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_nested_rw_live_test.dart: macOS kernel mode live: nested rw mount under a broader ro mount (issue 732) AC3: the nested rw mount READS its seed, WRITES and reads back a probe (skipped)
+Skip: live nested-rw leg: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_nested_rw_live_test.dart: macOS kernel mode live: nested rw mount under a broader ro mount (issue 732) the broader ro mount still confines the workspace around the child (skipped)
+Skip: live nested-rw leg: sandbox-exec not on this host
+⏭️ test/ci_profile_serial_precheck_test.dart: ci-sign doctor end-to-end fixtures (macOS-only — skipped) (skipped)
+scripts/ci-sign drives the macOS-only `security` CLI; this suite runs on macOS runners only
+::endgroup::
+
+🎉 14111 tests passed, 13 skipped.
+unit exit: 0
+Running build hooks...
+
+::group::❌ loading test/cli_args_jsr_test.dart (failed)
+Failed to load "test/cli_args_jsr_test.dart": Does not exist.
+package:test_core/src/runner/load_suite.dart 156:26    new LoadSuite.forLoadException
+package:test_core/src/runner.dart 419:23               Runner._allSuites.<fn>
+dart:_internal/iterable.dart 421:20                    MappedIterator.moveNext
+dart:core/iterable.dart 366:23                         Iterable.forEach
+package:async/src/stream_group.dart 93:13              StreamGroup.merge
+package:test_core/src/runner.dart 408:24               Runner._allSuites
+package:test_core/src/runner.dart 285:11               Runner._loadSuites
+package:test_core/src/runner.dart 122:18               Runner.run.<fn>
+dart:async/zone_api.dart 162:18                        _runZoned
+dart:async/zone_api.dart 91:10                         runZoned
+package:test_core/src/runner/configuration.dart 952:7  Configuration.asCurrent
+package:test_core/src/runner.dart 115:33               Runner.run
+package:test_core/src/executable.dart 160:30           main
+package:test/src/executable.dart 22:20                 main
+dart:isolate-patch/isolate_patch.dart 311:33           _delayEntrypointInvocation.<fn>
+dart:isolate-patch/isolate_patch.dart 192:12           _RawReceivePort._handleMessage
+::endgroup::
+::group::✅ Passing tests
+✅ test/cli/jsr_cli_test.dart: package resolution absolute file:// rootUri resolves to the package root
+✅ test/cli/jsr_cli_test.dart: package resolution relative rootUri resolves against the .dart_tool directory
+✅ test/cli/jsr_cli_test.dart: package resolution missing package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution config without a jsr entry is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution malformed package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution non-map package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution config without a packages list is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution jsr without the CLI entrypoint is JsrCliEntrypointMissing
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe finds flutter in a later PATH entry (2+ entries)
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe empty PATH is not found
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe no entry carries flutter is not found
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe finds the .bat candidate through a windows-style PATH
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC1: widget:test execs the jsr CLI with the verb and passthrough args
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC2: stdout/stderr chunks stream through verbatim
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC4: a failing widget test maps its exit code 1:1
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand widget:screenshot passes its flags through too
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: no jsr dependency fails clean, before any exec
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: jsr entrypoint missing names the 0.4.128 upgrade
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: flutter missing from PATH fails fast with a named hint
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand a null pathEnv (no env accessor) skips the preflight instead of claiming flutter is missing
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand spawn failure surfaces as a note and exit 1
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand quoted project paths keep the command a single sh word
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand dart executable is injectable
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error an unparseable rootUri (:::) is JsrPackageMissing, not a throw
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error a non-file rootUri (https:) is JsrPackageMissing, not a throw
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error runJsrCliCommand surfaces both as the add-dependency note
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting POSIX default quoting is unchanged: embedded quote sh-escapes only
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting reviewer breakout shape: '& calc keeps every & inactive for cmd
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting a quote later in the arg: metachars inside the re-opened quotes stay bare, cmd never sees them active
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting trailing backslashes double; plain path backslashes survive
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting a %-bearing argument is refused clean, before any exec — cmd expands %VAR% before quote/caret parsing and quotes do not protect
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting the same arg carries fine on the POSIX path (no refusal)
+✅ test/cli/agent_cli_jsr_test.dart: /jsr widget:test runs the jsr delegate through the session env
+✅ test/cli/agent_cli_jsr_test.dart: /jsr with an unknown verb prints usage, no exec
+✅ test/cli/agent_cli_jsr_test.dart: /jsr usage reuses the shared jsrUsage flag matrix (single source) and names the whitespace limitation
+✅ test/cli/agent_cli_jsr_test.dart: /jsr with no env accessor still execs — the harness never claims flutter is missing when it could not see PATH at all
+::endgroup::
+
+::error::36 tests passed, 1 failed.
+jsr exit: 1
+format exit: 0

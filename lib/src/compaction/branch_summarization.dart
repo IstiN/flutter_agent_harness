@@ -306,47 +306,19 @@ Future<BranchSummaryResult> generateBranchSummary(
     return buffer.toString();
   }
 
-  final full = build(serializeConversation(preparation.messages), null);
-  String text;
-  if (maxPromptTokens == null ||
-      estimateStringTokens(full) <= maxPromptTokens) {
-    final result = await runOne(full);
-    if (result.isAborted) return const BranchSummaryResult(aborted: true);
-    text = result.text ?? '';
-    if (text.isEmpty && result.error != null) {
-      return BranchSummaryResult(error: result.error);
-    }
-  } else {
-    // Over the payload budget (#729 parity, gh-2102 review): chunk the
-    // region, fold chunk-wise — the result is the LAST fold.
-    var prior = '';
-    final chunks = chunkSummarizableMessages(
-      preparation.messages,
-      max(maxPromptTokens - _chunkPlanReserveTokens, 256),
-    );
-    for (var i = 0; i < chunks.length; i++) {
-      final conversation = truncateForSummaryBudget(
-        serializeConversation(chunks[i]),
-        budgetTokens: maxPromptTokens,
-        envelopeChars: _foldEnvelopeChars(
-          prior: prior,
-          instructions: instructions,
-        ),
-      );
-      final result = await runOne(
-        build(conversation, prior.isEmpty ? null : prior),
-      );
-      if (result.isAborted) return const BranchSummaryResult(aborted: true);
-      final fold = result.text;
-      if (fold == null) {
-        return BranchSummaryResult(
-          error: result.error ?? 'Branch summarization failed',
-        );
-      }
-      prior = fold;
-    }
-    text = prior;
-  }
+  // One summarizer pass settles the prose: a single call when the prompt
+  // fits the payload budget (or is unbounded), chunk-wise folds otherwise
+  // (#729 parity) — see [_sumarizeBranchText].
+  final outcome = await _sumarizeBranchText(
+    preparation.messages,
+    runOne: runOne,
+    build: build,
+    instructions: instructions,
+    maxPromptTokens: maxPromptTokens,
+  );
+  if (outcome.aborted) return const BranchSummaryResult(aborted: true);
+  if (outcome.error != null) return BranchSummaryResult(error: outcome.error);
+  final text = outcome.text ?? '';
 
   final fileLists = computeFileLists(preparation.fileOps);
   // Issue #1131: the summary persists and re-renders every turn — strip
@@ -360,6 +332,77 @@ Future<BranchSummaryResult> generateBranchSummary(
     readFiles: fileLists.readFiles,
     modifiedFiles: fileLists.modifiedFiles,
   );
+}
+
+/// The settled conversation prose of one [generateBranchSummary] pass:
+/// [text] on success; [aborted]/[error] carry the never-throw contract's
+/// failure exits instead (the caller maps them onto [BranchSummaryResult]).
+final class _BranchTextOutcome {
+  const _BranchTextOutcome.text(this.text) : aborted = false, error = null;
+  const _BranchTextOutcome.aborted()
+    : text = null,
+      aborted = true,
+      error = null;
+  const _BranchTextOutcome.error(this.error) : text = null, aborted = false;
+  final String? text;
+  final bool aborted;
+  final String? error;
+}
+
+/// The conversation-settling half of [generateBranchSummary]: one
+/// summarizer call when the serialized region fits [maxPromptTokens] (or is
+/// unbounded — `null`), chunk-wise folds over budget — each chunk bounded by
+/// [truncateForSummaryBudget] (the explicit truncation note for a single
+/// oversized message), every later call folding the prior summary in as
+/// `<previous-checkpoint>` — and the settled prose is the LAST fold. Never
+/// throws: aborts and failures surface on the [_BranchTextOutcome].
+Future<_BranchTextOutcome> _sumarizeBranchText(
+  List<Message> messages, {
+  required Future<SummarizationResult> Function(String prompt) runOne,
+  required String Function(String conversation, String? prior) build,
+  required String instructions,
+  required int? maxPromptTokens,
+}) async {
+  final full = build(serializeConversation(messages), null);
+  if (maxPromptTokens == null ||
+      estimateStringTokens(full) <= maxPromptTokens) {
+    final result = await runOne(full);
+    if (result.isAborted) return const _BranchTextOutcome.aborted();
+    final text = result.text ?? '';
+    if (text.isEmpty && result.error != null) {
+      return _BranchTextOutcome.error(result.error);
+    }
+    return _BranchTextOutcome.text(text);
+  }
+  // Over the payload budget (#729 parity, gh-2102 review): chunk the
+  // region, fold chunk-wise — the result is the LAST fold.
+  var prior = '';
+  final chunks = chunkSummarizableMessages(
+    messages,
+    max(maxPromptTokens - _chunkPlanReserveTokens, 256),
+  );
+  for (var i = 0; i < chunks.length; i++) {
+    final conversation = truncateForSummaryBudget(
+      serializeConversation(chunks[i]),
+      budgetTokens: maxPromptTokens,
+      envelopeChars: _foldEnvelopeChars(
+        prior: prior,
+        instructions: instructions,
+      ),
+    );
+    final result = await runOne(
+      build(conversation, prior.isEmpty ? null : prior),
+    );
+    if (result.isAborted) return const _BranchTextOutcome.aborted();
+    final fold = result.text;
+    if (fold == null) {
+      return _BranchTextOutcome.error(
+        result.error ?? 'Branch summarization failed',
+      );
+    }
+    prior = fold;
+  }
+  return _BranchTextOutcome.text(prior);
 }
 
 /// Prompt overhead reserved per chunk before the conversation text (parity

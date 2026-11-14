@@ -1,0 +1,603 @@
+Running build hooks...
+
+::group::✅ Passing tests
+✅ test/release_drift_remediate_test.dart: missing remediate script fails the suite loudly
+✅ test/release_drift_remediate_test.dart: happy path: finds the tag run + provenance job, reruns it, files the drift issue
+✅ test/release_drift_remediate_test.dart: an OPEN drift issue with the same tag → comment, never a duplicate issue
+✅ test/gh995_artifact_action_pins_test.dart: gh-995 — artifact action pins + PTY shard pipeline coherence every third-party action is pinned at exactly ONE full SHA repo-wide
+✅ test/release_drift_remediate_test.dart: rerun request fails → the issue STILL pages, body names the failure
+✅ test/gh995_artifact_action_pins_test.dart: gh-995 — artifact action pins + PTY shard pipeline coherence upload-artifact is pinned to the current digest-validating line everywhere
+✅ test/release_drift_remediate_test.dart: no completed tag run found → the issue still pages (re-request impossible)
+✅ test/gh995_artifact_action_pins_test.dart: gh-995 — artifact action pins + PTY shard pipeline coherence pty shard coverage artifacts: upload name, download pattern and count check agree
+✅ test/release_drift_remediate_test.dart: issue filing fails → exit 1 (the only total failure the step can own)
+✅ test/release_drift_remediate_test.dart: PRE-GUARD tag run + tag NOT the current latest → re-request REFUSED, issue still pages
+✅ test/release_drift_remediate_test.dart: PRE-GUARD tag run + tag IS the current latest → re-request proceeds (old flip only re-asserts)
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) all layers absent → catalog spec defaults
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) override beats every layer per field
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) override raises the window above the cap (raise direction kept)
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) role slot beats endpoint truth and catalog
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) endpoint truth beats shared catalog per field
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) remote catalog window fills the gap the endpoint left
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) per-field independence: an override sets ONLY its own fields
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) no spec and no endpoint → documented unknown-model defaults
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — layer precedence (AC1) the fixture table drives every layer × set/unset combination
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — global clamp layer (#729 semantics) cap clamps down
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — global clamp layer (#729 semantics) cap raises to served truth
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — global clamp layer (#729 semantics) no cap leaves the window untouched
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — thinking gating (AC6/E3) a pin on a reasoning:false model is gated with a loud note
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — thinking gating (AC6/E3) a role-slot pin on a reasoning:false model is gated too
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — thinking gating (AC6/E3) reasoning models keep the pin, no note
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — thinking gating (AC6/E3) the gate never fires without a pin
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — divergence notes (E1/E4) an override contradicting endpoint truth names the divergence
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — divergence notes (E1/E4) an agreeing override raises no note
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — divergence notes (E1/E4) an override for a model absent from every catalog is kept (E4)
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — boundary floors (UT-1) a programmatically small override window floors at the reserve
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — boundary floors (UT-1) a programmatically small override maxTokens floors at the answer
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — boundary floors (UT-1) parse rejects an override window below the compaction reserve
+✅ test/model_roles/capability_resolver_test.dart: resolveModelCapabilities — boundary floors (UT-1) parse rejects an override maxTokens below the answer floor
+✅ test/model_roles/capability_resolver_test.dart: maxTokensField selection openai-completions family documents max_completion_tokens
+✅ test/model_roles/capability_resolver_test.dart: maxTokensField selection anthropic documents max_tokens
+✅ test/model_roles/capability_resolver_test.dart: maxTokensField selection google documents maxOutputTokens
+✅ test/model_roles/capability_resolver_test.dart: maxTokensField selection spec-only callers resolve the ceiling table AND the field through the SAME effective api (gh-1426 rework)
+✅ test/model_roles/silent_stream_policy_wiring_test.dart: AC4 IT: 3 stalls through the roles chain → backoff ladder, key rotation after the 2nd, smol takeover after the 3rd
+✅ test/model_roles/silent_stream_policy_wiring_test.dart: a healthy chain never sleeps (E2-class) and the queue/roles behavior is untouched
+✅ test/model_roles/silent_stream_policy_wiring_test.dart: E5 IT: a single-key ring SKIPS rotation (logged) and still escalates to the smol takeover — the value-vs-name rotation anchor cannot false-positive a rotate (review round 1)
+✅ test/model_roles/silent_stream_policy_wiring_test.dart: E5-adjacent IT: an UNCONFIGURED smol role — the 3rd-stall takeover attempt returns null (logged) and the stall error stands
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction falls back to the next chain entry on 429, note surfaced
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction budget exhaustion advances to the fallback at once (issue #926)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction retries the same entry with capped backoff before succeeding
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction honors the provider Retry-After hint over local backoff
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction rotates API keys immediately (delay 0) before spending retries
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction never retries after observable output (mid-stream failure stands)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction context overflow is not retried (compaction owns it)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction non-rate-limit errors are not retried
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction aborted streams are forwarded without retry
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction exhausted chain forwards the last error
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction cooldown skips a failed entry on the next call and reverts later
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction abort during the backoff sleep ends the call as aborted
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction an empty Done (no content) is forwarded, not retried
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction waits for a benched sibling key when the whole stack is down
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction a Retry-After beyond maxWait fails over instead of sleeping
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction sole entry waits out a Retry-After beyond maxWait (issue #1066)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction a pathological Retry-After waits out the ceiling, then exhausts (issue #1066)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction the waited-total label counts rate-limit waits only (issue #1066)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction the last eligible entry waits out even after an instant failover (issue #1066)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction single-key exhaustion ends with the all-rate-limited path
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors retries the same entry on a dropped connection
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors never rotates API keys for a transport failure
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors issue #1168: a resumed-exhaustion terminal passes the mid-answer guard unwrapped
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors fails over to the next entry when retries are spent
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors gh-1308 AC2: a zero-byte stall on the primary hands off to the next chain entry — the fallback answers, its model recorded
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors forwards the last transport error when the chain exhausts
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction transport errors a mid-stream transport drop is forwarded, never replayed
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction issue #290 — verbatim 500 coverage + exhaustion story verbatim gateway 500 is retried in place (main-loop stream, AC1)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction issue #290 — verbatim 500 coverage + exhaustion story exhausted chain tells the retry story, not a raw dump (AC2/E1)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction issue #290 — verbatim 500 coverage + exhaustion story cooldown-wall exhaustion (no attempts this call) still tells a story
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction issue #290 — verbatim 500 coverage + exhaustion story post-commit gateway 500 stands as a mid-answer error (AC4)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction issue #290 — verbatim 500 coverage + exhaustion story transport backoff follows the retry: knobs, jitter pins (AC5/E3)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction finish_reason classification (issue #312) an unknown vendor finish_reason retries the entry in place
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction finish_reason classification (issue #312) a TERMINAL finish_reason is forwarded without any retry
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction finish_reason classification (issue #312) a post-commit classified failure wraps into the mid-answer story (no replay)
+✅ test/model_roles/fallback_stream_test.dart: FallbackStreamFunction finish_reason classification (issue #312) a provider failing every call fails over to the next entry (E2)
+✅ test/model_roles/fallback_stream_test.dart: isTransientTransportError classifies dropped connections, DNS, TLS, and 5xx gateways
+✅ test/model_roles/fallback_stream_test.dart: isTransientTransportError formatProviderError keeps every watchdog timeout retryable (issue #1036)
+✅ test/model_roles/fallback_stream_test.dart: isTransientTransportError rejects rate limits, overflow, non-errors, and clean failures
+✅ test/model_roles/fallback_stream_test.dart: isRateLimitOrQuota classifies 429, rate-limit, quota, throttling wordings
+✅ test/model_roles/fallback_stream_test.dart: isRateLimitOrQuota rejects overflow, non-errors, and unrelated failures
+✅ test/model_roles/fallback_stream_test.dart: isRateLimitOrQuota a Retry-After hint alone does not classify
+✅ test/model_roles/fallback_stream_test.dart: caller-model window honor (gh-1742 review round 1, comment 6) a same-identity caller model dials with the caller window
+✅ test/model_roles/fallback_stream_test.dart: caller-model window honor (gh-1742 review round 1, comment 6) a different-identity caller model keeps the entry model
+✅ test/model_roles/provider_identity_test.dart: both-identifier property (issue #772 AC4) every unique-kind entry resolves through both identifiers
+✅ test/model_roles/provider_identity_test.dart: both-identifier property (issue #772 AC4) shared-kind entries keep adapter identity under both identifiers
+✅ test/model_roles/provider_identity_test.dart: both-identifier property (issue #772 AC4) a synthetic two-identifier spec satisfies the spec-keyed surfaces
+✅ test/model_roles/provider_identity_test.dart: both-identifier property (issue #772 AC4) case variants resolve identically through the seam (review)
+✅ test/model_roles/provider_identity_test.dart: both-identifier property (issue #772 AC4) the closed kind sets derive from the catalog
+✅ test/model_roles/roles_config_test.dart: ModelRef parses the provider/modelId shorthand
+✅ test/model_roles/roles_config_test.dart: ModelRef keeps slashes in the model id (openrouter ids)
+✅ test/model_roles/roles_config_test.dart: ModelRef rejects malformed shorthands
+✅ test/model_roles/roles_config_test.dart: ModelRef parses the map form with overrides
+✅ test/model_roles/roles_config_test.dart: ModelRef rejects maps without provider or model
+✅ test/model_roles/roles_config_test.dart: ModelRef rejects invalid scalar overrides
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) `provider: aiai` resolves through the registry entry
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) equivalence: the kind+baseUrl+apiKeyName spelling builds the same chain entry
+✅ test/model_roles/roles_config_test.dart: ModelRef parses and round-trips authHeader (issue #964)
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) entry defaults: a keyless-looking entry resolves the endpoint-scoped slot
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) a keyName pinned on the ENTRY defaults the key resolution
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) explicit ref fields win over the entry defaults
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-1 — custom-name resolution (AC1) the name matches case-insensitively
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-2 — catalog parity (AC2) catalog-name and kind entries resolve exactly as before with a loaded registry
+✅ test/model_roles/roles_config_test.dart: ModelRef parses and round-trips project (issue #1941)
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-3 — unknown in both namespaces (AC3) unknown-name entries keep the gh-760 skip+degrade contract
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-3 — unknown in both namespaces (AC3) a known entry still carries the role past an unknown one
+✅ test/model_roles/roles_config_test.dart: ModelRef round-trips the watchdog windows and the input list
+✅ test/model_roles/model_resolver_custom_providers_test.dart: UT-3 — unknown in both namespaces (AC3) a matched entry with an unknown apiType names the dialect, not the provider
+✅ test/model_roles/model_resolver_custom_providers_test.dart: REG-2 — key provenance unchanged (issue #40 invariant) the custom-name form picks the SAME key slots as the kind+baseUrl form in every key layout
+✅ test/model_roles/model_resolver_custom_providers_test.dart: REG-2 — key provenance unchanged (issue #40 invariant) the entry pin wins over the endpoint slot when both exist
+✅ test/model_roles/roles_config_test.dart: ModelRef parses and round-trips keyless (gh-1570 AC8)
+✅ test/model_roles/roles_config_test.dart: ModelRef authHeader round-trips yaml-special tokens losslessly (issue #964 review)
+✅ test/model_roles/roles_config_test.dart: ModelRef rejects authHeader on a non-openai-completions dialect (issue #964 review)
+✅ test/model_roles/roles_config_test.dart: ModelRef rejects invalid authHeader values naming the role (issue #964 AC5)
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml parses roles, overrides, and retry knobs
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml defaults the retry policy when the section is absent
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml rejects unknown roles
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml rejects empty chains and non-list chains
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml rejects a missing roles section and bad override entries
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml round-trips through toYaml
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.fromYaml thinkingLevel (issue #734)
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor path overrides win over the top-level role chain
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor the longest matching override pattern wins
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor an override not pinning the role falls through to the role
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor unset roles inherit the default chain
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor returns null when nothing is configured
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.chainFor rejects unknown role ids
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.pinsRole a top-level chain pins its role
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.pinsRole a path override pins its role only inside the pattern
+✅ test/model_roles/roles_config_test.dart: ModelRolesConfig.pinsRole an unpinned role riding inherit-default is not pinned
+✅ test/model_roles/roles_config_test.dart: pathPatternMatches matches the path itself and subdirectories
+✅ test/model_roles/roles_config_test.dart: pathPatternMatches tolerates trailing slashes
+✅ test/model_roles/roles_config_test.dart: pathPatternMatches expands ~ against homeDir
+✅ test/model_roles/roles_config_test.dart: pathPatternMatches glob: * stays within a segment, ** crosses segments
+✅ test/model_roles/roles_config_test.dart: pathPatternMatches dots in patterns are literal
+✅ test/model_roles/roles_config_test.dart: ModelRolesRetryPolicy.backoffFor exponential with cap and jitter bounds
+✅ test/model_roles/cache_routing_test.dart: StreamCacheRouting is null outside an override and scoped inside runWith
+✅ test/model_roles/cache_routing_test.dart: ModelRolesResolver session binding binds the resolver session id into resolved role streams
+✅ test/model_roles/cache_routing_test.dart: ModelRolesResolver session binding an explicit per-call override wins over the bound session id
+✅ test/model_roles/cache_routing_test.dart: ModelRolesResolver session binding overrides propagate through the fallback chain
+✅ test/model_roles/model_resolver_test.dart: provider catalog catalogProvider resolves names and the legacy alias
+✅ test/model_roles/model_resolver_test.dart: provider catalog buildCatalogModel applies catalog defaults and overrides
+✅ test/model_roles/model_resolver_test.dart: provider catalog projectHeader rides the built model (issue #1941)
+✅ test/model_roles/model_resolver_test.dart: provider catalog buildCliDefaultModel carries projectHeader (issue #1941)
+✅ test/model_roles/model_resolver_test.dart: provider catalog buildCliDefaultModel builds only from an explicit model id
+✅ test/model_roles/model_resolver_test.dart: provider catalog providerStreamFunction builds adapters and rejects unknown kinds
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver resolves the role chain into catalog models and key rings
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a chain entry authHeader reaches the built model (issue #964 IT-1)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a chain entry project reaches the built model (issue #1941 IT-1)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver the registry leg inherits the saved entry’s project (issue #1941 review)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver 1554/AC1 — chain entry timeout fields ride the built model, labeled with the role; per-field absence stays null
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver 1554/AC1 — a chain entry without timeout fields builds the byte-identical model (no label, no windows)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver path-scoped overrides pin the chain for a matching cwd
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver entries with missing keys are skipped, never silently
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a role whose entries all miss keys throws ConfigException
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver unknown providers in a chain are skipped with a named reason (gh-760 E3)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a chain with an unknown provider falls back to its known entries (gh-760 E3)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a chain whose entries are all unknown providers reports the reasons in the no-usable-entry error
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver all-unknown-provider chains throw the DEGRADE subtype (gh-760 review)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a KNOWN provider missing its key throws the DEGRADE subtype (gh-1570 incident: a recoverable missing key must never hard-exit the binary)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a model id CONTAINING the marker words is not misclassified as version skew (gh-760 review: typed classification, no substring matching)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a key stored under the PREVIOUS release slot name still resolves after the record-scoped derivation moves (gh-1570 incident REG)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver a roles entry naming an adapter KIND resolves (gh-760 review)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver resolveRole is null when neither role nor default is configured
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver unset roles resolve through the default chain (inheritance)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver chain entries carry thinkingLevel onto the built model (IT-1)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver an unset role inherits the default chain INCLUDING its level (E3)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver applyToAgent runs the agent through the role chain
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver setDefaultChain re-pins the default role
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver describeRoles renders chains with the active marker
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver FA_PROVIDER_* boot pin (the bin/fah.dart wiring) the env provider becomes the default role for all unpinned roles
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver FA_PROVIDER_* boot pin (the bin/fah.dart wiring) a keyless declaration cannot pin a chain (roles keep selection)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver FA_PROVIDER_* boot pin (the bin/fah.dart wiring) a keyless pin resolves with NO credential — localhost preconfig beats saved roles (gh-1570 AC8/UT-8)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver FA_PROVIDER_* boot pin (the bin/fah.dart wiring) the preconfig input modalities reach the pinned chain model (#638)
+✅ test/model_roles/model_resolver_test.dart: ModelRolesResolver ModelRef.input fromYaml parses the modality list and names bad entries
+✅ test/model_roles/model_resolver_test.dart: custom-endpoint key resolution (gh-1000 AC5) a custom-endpoint chain entry resolves its endpoint-scoped key
+✅ test/model_roles/model_resolver_test.dart: custom-endpoint key resolution (gh-1000 AC5) the catalog env name still backstops a custom endpoint
+✅ test/model_roles/model_resolver_test.dart: custom-endpoint key resolution (gh-1000 AC5) a missing key names the endpoint-scoped store fix
+✅ test/model_roles/model_resolver_test.dart: custom-endpoint key resolution (gh-1000 AC5) a default-endpoint entry with a trailing slash keeps the catalog env key (no scoped slot)
+✅ test/model_roles/model_resolver_test.dart: custom-endpoint key resolution (gh-1000 AC5) a missing key on an explicitly pinned ref names THAT slot
+✅ test/model_roles/quota_feed_test.dart: quotaFeed soft-bench (issue #823 AC8) depleted provider is skipped: the turn lands on A/C, never B
+✅ test/model_roles/quota_feed_test.dart: quotaFeed soft-bench (issue #823 AC8) every candidate depleted: the chain still serves (no hard block)
+✅ test/model_roles/quota_feed_test.dart: quotaFeed soft-bench (issue #823 AC8) feed flips an entry healthy again: it returns to rotation
+✅ test/model_roles/quota_feed_test.dart: quotaFeed soft-bench (issue #823 AC8) quotaFeed == null: routing identical to the pre-#823 behavior
+✅ test/model_roles/quota_feed_test.dart: quotaFeed soft-bench (issue #823 AC8) a throwing feed never breaks streaming
+✅ test/model_roles/quota_feed_test.dart: ProviderQueueRuntime.build threads quotaFeed depleted head provider: the chain starts at the healthy entry
+✅ test/model_roles/quota_feed_test.dart: ProviderQueueRuntime.build threads quotaFeed quotaFeed omitted: the queue head stays primary (today's behavior)
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) a genuine environment value wins over the store
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) an env-looking value that merely mirrors the store does not count as a genuine environment value
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) the host-scoped FA_KEY_<HOST> entry beats the legacy env-name store entry
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) custom endpoints resolve ONLY scoped store keys — catalog env names never hijack another endpoint
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) a custom endpoint resolves its host-scoped store key
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) the active custom entry key name wins over the host-scoped one
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKey (the CLI/app shared chain) a null store resolves env-only (web/tests)
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKeyName (the host-facing slot chain, #1322 Gap 2) a genuine environment value names the env var
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKeyName (the host-facing slot chain, #1322 Gap 2) the canonical FA_KEY_<HOST> slot when only the store holds it
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKeyName (the host-facing slot chain, #1322 Gap 2) a legacy env-name store entry names the env var
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKeyName (the host-facing slot chain, #1322 Gap 2) the active custom entry slot wins on a custom endpoint
+✅ test/model_roles/provider_key_resolver_test.dart: resolveEndpointKeyName (the host-facing slot chain, #1322 Gap 2) null when nothing resolves
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) canonical empty + pinned twin held: the pinned slot wins, with a drift hint
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) the pre-gh-1226 doubled z.ai slot drifts the same way
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) a twin-present drift names the same-endpoint entry
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) a clean canonical slot produces no drift hint
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) a known pinned twin wins over an empty canonical (the wiring-time registry leg)
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) nothing resolved produces the missing-key hint naming the canonical slot
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) without catalog facts the env-name leg can never hijack a custom endpoint (store-only resolution)
+✅ test/model_roles/provider_key_resolver_test.dart: HostKeyResolver (#1322 Gap 2 — the kimi/z.ai slot scenarios) with catalog facts the default endpoint resolves the env leg
+✅ test/model_roles/provider_key_resolver_test.dart: AgentCoreServices.resolveKey (the one-line host ask) delegates to the injected resolver
+✅ test/model_roles/provider_key_resolver_test.dart: AgentCoreServices.resolveKey (the one-line host ask) null without a resolver (the host resolves its own way)
+✅ test/model_roles/bifrost_proxy_binding_test.dart: gh-1624 AC4 — bifrost-shaped translating proxy the factory declaration boots with a binding warning (was exit 64 on 1.0.576)
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) every catalog name and kind resolves (REG-C1)
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) every catalog id restores as a STREAMABLE adapter kind (REG-C1, gh-760 review)
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) the chatgpt-codex kind resolves to the chatgpt catalog entry (UT-B1, the app-written config)
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) the catalog names the old switch missed resolve too
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) a provider id no version knows still throws for direct callers
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) the openai-completions legacy baseUrl behavior is preserved
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) ids are canonicalized at the seam: trim + case-fold on names AND kinds (gh-760 review)
+✅ test/model_roles/provider_catalog_coverage_test.dart: buildCliDefaultModel catalog coverage (gh-760) only the chatgpt spec is endpoint-locked (gh-760 review)
+✅ test/model_roles/bifrost_proxy_binding_test.dart: gh-1624 AC4 — bifrost-shaped translating proxy the pinned model completes a streamed request through the production anthropic adapter
+✅ test/model_roles/bifrost_proxy_binding_test.dart: gh-1624 AC4 — bifrost-shaped translating proxy the equal-kind `wire:` caveat neither unblocks nor bricks — the checks run and the warning is still carried (gh-1624 AC3)
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml parses the full shape
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml parses the empty shape (every field optional)
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml xhigh/max thinking levels fold to high
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml rejects a sub-1 messageCap naming the key (PR #1695: the gh-1680 second tier)
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml rejects unknown fields naming the key
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml rejects a bad thinking level naming the ladder
+✅ test/model_roles/capability_overrides_test.dart: ModelCapabilityOverride.fromYaml rejects non-boolean omitMaxOutputTokens
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section parses overrides alongside slots/custom
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section lookup normalizes the provider name, keeps the model id exact
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section unknown provider/model strings are allowed (they address futures)
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section rejects unknown section keys
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section rejects a non-map overrides section
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section rejects a non-map model entry
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section isEmpty stays true without overrides
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section setOverride/removeOverride mutate the live map
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section toYaml round-trips the overrides section
+✅ test/model_roles/capability_overrides_test.dart: ModelsConfig overrides section toYaml omits the overrides block when empty
+✅ test/model_roles/capability_overrides_test.dart: buildCatalogModel — override consultation (AC2) the owner pain: raised maxTokens + thinking level reach the model
+✅ test/model_roles/capability_overrides_test.dart: buildCatalogModel — override consultation (AC2) an override beats the explicit role-slot argument (layer order)
+✅ test/model_roles/capability_overrides_test.dart: buildCatalogModel — override consultation (AC2) no overrides installed → byte-identical legacy build (REG-1)
+✅ test/model_roles/capability_overrides_test.dart: buildCatalogModel — override consultation (AC2) omitMaxOutputTokens lands on the model compat (AC7)
+✅ test/model_roles/capability_overrides_test.dart: buildCatalogModel — override consultation (AC2) the override survives a catalog-source swap (AC3 refresh)
+✅ test/model_roles/capability_overrides_test.dart: buildCliDefaultModel — override consultation the single-model boot path applies the same override layer
+✅ test/model_roles/capability_overrides_test.dart: capability notes ride the model (gh-1426 rework) the resolved notes are threaded onto the built Model — never dropped at the build boundary
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — identity shape resolves a catalog record to its wire kind and default endpoint
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — identity shape resolves a catalog NAME record with its own endpoint
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — identity shape a key env ref is carried as an indirection, never a value
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — identity shape bindings with identical identity fields are equal across provenance (I5 round-trip)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — identity shape echo names record, wire, endpoint and model (I2 report shape)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — wire ⇄ endpoint (AC2) a known endpoint of another dialect is rejected
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — wire ⇄ endpoint (AC2) a trailing-slash spelling of a foreign endpoint is caught too (S4 normalized comparison)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — wire ⇄ endpoint (AC2) the explicit wire: override passes and is echoed (E6)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — wire ⇄ endpoint (AC2) an unknown wire: value is rejected
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — wire ⇄ endpoint (AC2) an anthropic-dialect proxy on the anthropic wire passes (no false positive on unknown endpoints)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) a known openai family id over a known anthropic endpoint is rejected naming both (H2: --model gpt-5 on saved anthropic)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) a known google family id over the canonical openai endpoint is rejected (family-exclusive endpoints carry a verdict)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) a family id over a ROUTER endpoint passes (routers serve many families — openrouter, copilot, dial carry no verdict)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) a vendor-prefixed id on an openai-dialect binding passes (the routing convention — openrouter zai/glm ids)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) an unknown family id on any endpoint passes (no list to check)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — model ⇄ endpoint (AC3) a foreign-family id on an UNKNOWN endpoint passes (D2 unverified territory, not a rejection)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) AC1: vendor-prefixed model of another dialect on an UNKNOWN endpoint boots with a warning (was exit 64)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) AC2: the same mismatch on a KNOWN vendor endpoint is still fatal (gh-1570 fail-fast preserved)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) AC2: an anthropic-wire binding on a known OPENAI endpoint with a claude id stays rejected (family-exclusive verdict intact)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) AC3: wire: override (declaredWire != record kind) skips both checks — even where they would fire — and yields no warning
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) AC3 caveat: wire: EQUAL to the record kind does NOT engage the override — the checks still run
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) warnings are report notes, not identity (I5 round-trip)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) review: a prefix mismatch on a known ROUTER endpoint warns, never exit 64 (OpenRouter canonical id format)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) review: a prefix mismatch on the family-exclusive vendor endpoints stays fatal (both directions)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — vendor-prefix endpoint scoping (gh-1624 REG, AC1/AC2/AC3) review: warnings is pinned unmodifiable (identity-class invariant)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — endpoint-shared wires (M5) openai-completions without baseUrl or record is rejected
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — endpoint-shared wires (M5) a custom baseUrl resolves to the openai record (legacy rule)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — endpoint-shared wires (M5) baseUrl normalization strips one trailing slash (E1)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id (empty)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "   "
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "has space"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "tab	id"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "http://evil.example/x"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "id
+injected"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "quote'id"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "ctlx"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) rejects model id "idnext"
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) accepts a lowercase env name — a legacy apiKeyEnvVar/apiKeyEnv keeps booting (gh-1570 key-ref review)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) key ref stays an env REFERENCE: whitespace and = are rejected (a value never enters a binding, S3)
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) accepts a well-formed id with dots, slashes, colons and plus
+✅ test/model_roles/provider_model_binding_test.dart: ProviderModelBinding.resolve — id shape (E5) and key ref (S3) an unknown provider id is rejected (fail loud, not a guess)
+✅ test/model_roles/provider_model_binding_test.dart: BindingProvenance.label (issue #1992 CRAP tier) every provenance renders its own enum name
+✅ test/model_roles/vision_models_test.dart: modelIdSuggestsVision mainstream hosted vision families
+✅ test/model_roles/vision_models_test.dart: modelIdSuggestsVision text-only and empty ids stay blind
+✅ test/model_roles/vision_models_test.dart: modelIdSuggestsVision glm-5 flagships are text-only, only the v/flash lines see images
+✅ test/model_roles/vision_models_test.dart: visionMarker marks vision and text-only models explicitly
+✅ test/model_roles/vision_models_test.dart: inputModalitiesFor vision models get image input, text-only stay text
+✅ test/model_roles/key_rotation_test.dart: collectKeyStack collects the base name then numbered suffixes in order
+✅ test/model_roles/key_rotation_test.dart: collectKeyStack skips empty values and tolerates gaps
+✅ test/model_roles/key_rotation_test.dart: collectKeyStack returns empty when no key matches the base name
+✅ test/model_roles/key_rotation_test.dart: collectKeyStack numbered keys alone form a stack without the bare name
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing requires at least one credential
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing session affinity: the current key stays put until it fails
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing round-robin start: new rings start one slot later per base name
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing availableCredential skips keys in backoff
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing rotate advances past the failing key round-robin
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing rotate returns null when every key is benched
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing earliestBackoffEnd reports the soonest free moment
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing stickTo pins affinity to a credential
+✅ test/model_roles/key_rotation_test.dart: ApiKeyRing fromSecrets returns null without keys and builds otherwise
+✅ test/model_roles/providers_queue_rows_golden_test.dart: all four health states render byte-stable rows
+✅ test/model_roles/providers_queue_rows_golden_test.dart: rows are width-independent: identical bytes at 80/120/200 columns
+✅ test/model_roles/providers_queue_rows_golden_test.dart: secret values never appear in rows (AC9)
+✅ test/model_roles/provider_catalog_test.dart: chatgpt spec is visible after Phase 1 un-hide
+✅ test/model_roles/provider_catalog_test.dart: mediaSlotEligible (issue #2068) every OpenAI-wire catalog entry is eligible — the property
+✅ test/model_roles/provider_catalog_test.dart: mediaSlotEligible (issue #2068) own-kind OpenAI-wire providers are media-eligible
+✅ test/model_roles/provider_catalog_test.dart: mediaSlotEligible (issue #2068) non-OpenAI wires and non-Bearer transports stay excluded
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) exact catalogued versions pin their documented cap
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) uncatalogued versions fall to the nearest-lower minor
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) unknown Claude model takes the conservative fallback
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) non-Claude ids miss the table (null = provider default)
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) claude ids outside the anthropic family miss the table (#302)
+✅ test/model_roles/provider_catalog_test.dart: resolveModelMaxOutputTokens (UT-ceilings, AC2) id shapes: dates, dots, scopes, underscores, pre-family
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCatalogModel: table beats provider default
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCatalogModel: non-Claude id keeps the provider default
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCatalogModel: explicit override beats the table
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCliDefaultModel resolves through the table
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCatalogModel: claude id off the table family keeps the provider default (#302)
+✅ test/model_roles/provider_catalog_test.dart: catalog/cli builders thread the ceiling table buildCliDefaultModel: claude id off the table family keeps the provider default (#302)
+✅ test/model_roles/provider_catalog_test.dart: explicit input modalities (issue #638 AC1) buildCatalogModel: explicit input overrides the catalog spec
+✅ test/model_roles/provider_catalog_test.dart: explicit input modalities (issue #638 AC1) buildCliDefaultModel threads the explicit input override
+✅ test/model_roles/provider_catalog_test.dart: explicit input modalities (issue #638 AC1) buildCliDefaultModel threads the preconfig thinkingLevel (issue #734 rework: the no-roles boot path)
+✅ test/model_roles/provider_catalog_test.dart: explicit input modalities (issue #638 AC1) buildCliDefaultModel threads the preconfig contextWindow/maxTokens (gh-1471 D4: the FA_PROVIDER_CONFIG declaration)
+✅ test/model_roles/provider_catalog_test.dart: providerStreamFunction cache routing (issue #1992 CRAP tier) an unknown kind is rejected at the factory
+✅ test/model_roles/provider_catalog_test.dart: providerStreamFunction cache routing (issue #1992 CRAP tier) the factory sessionId rides the wire as prompt_cache_key
+✅ test/model_roles/provider_catalog_test.dart: providerStreamFunction cache routing (issue #1992 CRAP tier) an active StreamCacheRouting override wins per call
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) parses the full override form with modalities
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) parses the useMainConnection opt-in without endpoint fields
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) parses the unsupported opt-out without endpoint fields (#2085)
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) useMainConnection and unsupported are mutually exclusive (#2085)
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) endpoint fields alongside unsupported are rejected (#2085)
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) non-boolean unsupported is rejected (#2085)
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) unsupported round-trips through writeYaml (#2085)
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) non-boolean useMainConnection is rejected
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) endpoint fields are required without the opt-in
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) unknown fields are rejected
+✅ test/model_roles/media_model_slots_test.dart: parseMediaSlotModelOverride (gh-1844) non-string list entries in input are rejected
+✅ test/model_roles/media_model_slots_test.dart: mediaModelSlotIds covers both media slots
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: HostKeyResolver.missingKeyHint store-health states (gh-1679 AC3) healthy-and-empty store keeps the plain wording naming the slot
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: HostKeyResolver.missingKeyHint store-health states (gh-1679 AC3) degraded store names the last write failure and the persist caveat
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: HostKeyResolver.missingKeyHint store-health states (gh-1679 AC3) a resolved key never carries the degraded hint
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) healthy store: the custom-endpoint hint is the plain wording
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) degraded store: the hint names the last write failure and the persist caveat; never the value
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) the errorLine 401 path carries the degraded wording end-to-end
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) one degraded slot that differs from the suggested one names itself (gh-1679 review: the diagnostic belongs to a slot)
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) the degraded slot that IS the suggested one keeps the plain diagnostic
+✅ test/model_roles/provider_key_resolver_store_health_test.dart: KeyStatusRenderer no-key hint store-health states (gh-1679 AC3) several degraded slots keep the aggregate wording, labeled as the last write failure (never implied to be the suggested slot)
+✅ test/model_roles/providers_queue_test.dart: boot scope resolution (IT-33..36) project .fah/config.yaml wins over user; env wins over both
+✅ test/model_roles/providers_queue_test.dart: boot scope resolution (IT-33..36) absent files and sections are not present; no queue = no notices
+✅ test/model_roles/providers_queue_test.dart: boot scope resolution (IT-33..36) present-but-invalid section is a hard boot error naming the file
+✅ test/model_roles/providers_queue_test.dart: boot scope resolution (IT-33..36) collectQueueSecrets: env wins, secure store backs up
+✅ test/model_roles/providers_queue_test.dart: type naming in parse errors (gh-1713 CRAP descent) a non-array node names the decoded type
+✅ test/model_roles/providers_queue_test.dart: type naming in parse errors (gh-1713 CRAP descent) a non-object entry names the decoded type
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText parses the canonical two-entry queue (UT-parse-env-happy)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText whitespace, BOM and trailing newline tolerance (E9)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText hard error with line:col on invalid JSON (UT-parse-env-sad)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText shell-level single quotes are rejected with a hint (E8)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText empty array is an explicit error (UT-parse-empty-single)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText @path file form loads through the injected reader
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText literal apiKey in provider_config is a hard error (AC9)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText unknown provider_type names the supported kinds
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText missing model is an error; unknown config keys warn (UT-warn)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText duplicates dedup keep-first with a warning (UT-duplicates, E10)
+✅ test/model_roles/providers_queue_test.dart: parseProviderQueueJsonText {"ref": name} resolves through the custom provider (UT-ref)
+✅ test/model_roles/providers_queue_test.dart: resolveProviderQueueScopes none set → unset legacy resolution (AC10)
+✅ test/model_roles/providers_queue_test.dart: resolveProviderQueueScopes env wins over project and user, both named (IT-40, AC2)
+✅ test/model_roles/providers_queue_test.dart: resolveProviderQueueScopes project over user when env unset
+✅ test/model_roles/providers_queue_test.dart: resolveProviderQueueScopes identical shadowed queue collapses into one notice (UT-scope-stack)
+✅ test/model_roles/providers_queue_test.dart: editor list ops (UT-editor-api) add validates and rejects duplicates
+✅ test/model_roles/providers_queue_test.dart: editor list ops (UT-editor-api) removeAt and move reorder/move-to-head
+✅ test/model_roles/providers_queue_test.dart: editor list ops (UT-editor-api) yaml body round-trips through the yaml parser (UT-yaml-roundtrip)
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) 429 → quota with Retry-After cooldown
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) quota without Retry-After → default 60s (UT-cooldown-borders)
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) budget/spending exhaustion → quota death, immediate (issue #926)
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) budget wording outranks the gateway 5xx and finish_reason nets
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) 401/403 → auth, immediate, no cooldown (UT-10)
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) gh-1308: the zero-byte stall verdict → timeout death, immediate
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) network, timeout, malformed, 5xx, finish_reason labels
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) every #1036 watchdog timeout renders retryable and classifies timeout (review round 1)
+✅ test/model_roles/providers_queue_test.dart: classifyQueueDeath (UT-17 kind strings) content_filter and user abort never advance (E-guard)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain builds models with kind→catalog mapping (openai-completions)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain an openai-completions entry WITHOUT baseUrl is rejected — no silent openrouter ride (gh-1570 M5/AC6)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain a queue entry whose model names another dialect is rejected (gh-1570 AC6 binding validation)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain keyless env skips with a reason; all-keyless throws
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain a queue entry with a foreign-dialect prefix on a private endpoint rides LOUD: the chain emits the binding warnings (gh-1624 review r2)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain a quiet entry emits no binding warnings (channel stays empty)
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder an omitted apiKeyEnv resolves the default Keychain slot
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder an omitted apiKeyEnv with no stored login is skipped with a login hint
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder a refreshTokenEnv entry mints once, then reuses the blob
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder a mint failure surfaces as the terminal error event
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder a missing refresh token env skips the entry with the env name
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder refreshTokenEnv on a non-chatgpt kind is a hard error
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder a non-chatgpt entry that names no key is a hard error
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder an apiKeyEnv raw bearer token passes through to the adapter
+✅ test/model_roles/providers_queue_test.dart: buildProviderQueueChain — chatgpt-codex credential ladder refreshTokenEnv round-trips through toJson/fromJsonMap
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — binding warning surfacing build forwards the chain's binding warnings to onBindingWarning
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-partial-keys-boot: a keyless head is skipped with a warning and the keyed entry leads (AC2, E1)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-partial-keys-boot: a fully keyed queue emits no skip warning
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-all-keys-missing: every entry keyless throws the loud queue error naming each missing var (AC3)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-secrets-rotation-stack: collectQueueSecrets captures KEY, KEY_2, KEY_3 from env and backs the base from the store (AC4, E2)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-secrets-rotation-stack: the stack feeds a multi-key ApiKeyRing (AC4, E2)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime.build — boot key gates (gh-1781) UT-queue-secrets-rotation-stack: an unrelated NAME_2-shaped var is not captured
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) failover on death then sticky cursor: 10/10 on the winner (UT-sticky)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) cooldown re-probe at exact expiry; success heals (UT-cooldown-reprobe, AC5)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) consecutive quota failures double the cooldown up to the cap (UT-backoff-doubling)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) Retry-After beyond the clamp clamps to 24h (UT-cooldown-borders)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) auth death advances immediately and leaves no cooldown (UT-10)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) a refreshTokenEnv mint entry fails over like any other (issue #1704)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) every entry cooling → terminal with per-entry ETAs (UT-23)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) exhausted queue → one terminal with per-entry health (UT-24)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) sole queue entry waits out a quota wall: waited total in the story (issue #1066)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) mid-turn committed failure stands; next turn uses the next entry (UT-midturn-boundary)
+DBG2=[StartEvent, TextStartEvent, TextDeltaEvent, DoneEvent] cooling0=0:01:00.000000 idx=1
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) fresh runtime restarts at the head (AC6, UT-restart-resets)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime failover (UT-18..26, IT-37) no queue → no runtime change: legacy byte-identical (AC10, REG-45)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime notice listeners (gh-1617 review r2) a late-attached listener rides the same dispatch as the build handler
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime notice listeners (gh-1617 review r2) a listener works with NO build handler (the boot never wired onNotice — the fah_runapp shape)
+✅ test/model_roles/providers_queue_test.dart: ProviderQueueRuntime notice listeners (gh-1617 review r2) no listener: dispatch stays inert and the failover is byte-identical (legacy boot)
+✅ test/import/import_cli_args_test.dart: the canonical forms parse
+✅ test/import/import_cli_args_test.dart: an id-prefix selector rides --session
+✅ test/import/import_cli_args_test.dart: missing / conflicting selectors are usage errors (exit 1 class)
+✅ test/import/import_cli_args_test.dart: an empty --session value is a usage error, not a wildcard (F7)
+✅ test/import/import_cli_args_test.dart: unknown harness names are usage errors
+✅ test/import/import_cli_args_test.dart: unknown flags are usage errors — never a prompt (F7)
+✅ test/import/import_cli_args_test.dart: --help routes to the help result
+✅ test/import/import_cli_args_test.dart: REG-3: the subcommand table and the cli help cover fa import
+✅ test/import/import_mapper_test.dart: REG-4: the omp fixture maps to the pinned record sequence
+✅ test/import/import_mapper_test.dart: the newest user title wins and lands in the name plan (AC4)
+✅ test/import/import_mapper_test.dart: blank titles fall back to the first user message prefix (F5 pin)
+✅ test/import/import_mapper_test.dart: the user→assistant(toolCall)→toolResult chain pairs by toolCallId and orphans land as counted customs (AC5)
+✅ test/import/import_mapper_test.dart: foreign customType strings survive byte-exact (M-invariant)
+✅ test/import/import_mapper_test.dart: specd-but-unseen types tolerate as customs (AC6)
+✅ test/import/import_mapper_test.dart: aborted empty assistant imports with the chain intact (E3)
+✅ test/import/import_mapper_test.dart: interrupted toolCall carries partialArguments as data (E4)
+✅ test/import/import_mapper_test.dart: assistant usage and stopReason map onto the FA slots
+✅ test/import/import_mapper_test.dart: model_change lands verbatim with the provider prefix split
+✅ test/import/import_mapper_test.dart: compaction keeps the summary verbatim and counts dropped fields
+✅ test/import/import_mapper_test.dart: non-conversation roles map to inert customs, never messages
+✅ test/import/import_mapper_test.dart: claude: main chain imports, sidechain excluded and counted (AC8/E13)
+✅ test/import/adapter_size_parity_test.dart: claude: over-cap file on a non-ranged backend is still discovered and refuses at read time
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches plain base64 embeds with the default png mime
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches data-URL header with the base64 flag is stripped
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches claude source shape supplies data and media_type
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches blob reference resolves through the resolver
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches blob reference missing from the store is a counted placeholder
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches blob reference without any resolver is a placeholder too
+✅ test/import/adapter_size_parity_test.dart: claude: the non-ranged over-cap file warns with the counted warning through the runner
+✅ test/import/import_image_surface_test.dart: parseForeignContent image branches undecodable payloads become placeholders, never throw
+✅ test/import/adapter_size_parity_test.dart: omp: over-cap file on a non-ranged backend is still discovered and warns through the runner (parity both ways)
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.read image and tree surface lifts tool results, parses on-path images, counts skips
+✅ test/import/import_image_surface_test.dart: mapper content-block and store-root surface thinking, tool-call, unknown, and skipped images map to text placeholders; embedded images embed
+✅ test/import/import_image_surface_test.dart: mapper content-block and store-root surface expectedStoreRoot pins the documented per-harness roots
+✅ test/import/import_image_surface_test.dart: mapper content-block and store-root surface custom_message records map to structured planned messages
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.discover non-ranged prefix surface reads the recorded cwd from a small whole-file backend
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.discover non-ranged prefix surface truncates the prefix at 4 KiB but still finds the cwd
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.discover non-ranged prefix surface fileInfo failure yields no cwd and no summary, never a crash
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.discover non-ranged prefix surface readTextFile failure yields no summary, never a crash
+✅ test/import/import_image_surface_test.dart: ClaudeAdapter.discover non-ranged prefix surface read on a whole-file backend parses lines and counts oversized
+✅ test/import/omp_adapter_test.dart: ompBucketSlugs covers the absolute, home-relative and tmp forms
+✅ test/import/omp_adapter_test.dart: discover finds current-folder sessions and skips foreign folders
+✅ test/import/omp_adapter_test.dart: a header cwd that does not match the launch folder is skipped
+✅ test/import/omp_adapter_test.dart: read returns the leaf path root-first with header counted
+✅ test/import/omp_adapter_test.dart: legacy files (no title slot) parse with the inline header title
+✅ test/import/omp_adapter_test.dart: title slot files report the slotted title
+✅ test/import/omp_adapter_test.dart: blob images embed when present and within bounds (GOAL O5)
+✅ test/import/omp_adapter_test.dart: a missing blob becomes a counted placeholder, no crash (GOAL E5)
+✅ test/import/omp_adapter_test.dart: corrupt and oversized lines skip with a count (GOAL E10/AC9)
+✅ test/import/omp_adapter_test.dart: sidecar artifacts dirs and tombstones are not imported (GOAL E2)
+✅ test/import/omp_adapter_test.dart: a file over the size cap refuses before reading (GOAL E11)
+✅ test/import/omp_adapter_test.dart: a headerless file refuses with a named error
+✅ test/import/import_runner_test.dart: AC1: one session lands in the current folder bucket and renders
+✅ test/import/import_runner_test.dart: AC2 + E6: --all imports every session; reruns skip idempotently
+✅ test/import/import_runner_test.dart: E7: an absent store exits 2 naming the expected path
+✅ test/import/import_runner_test.dart: E8: a store without current-folder sessions exits 3
+✅ test/import/import_runner_test.dart: E9: an unresolved id exits 3 and imports nothing
+✅ test/import/import_runner_test.dart: E9b: an ambiguous id lists the matches and imports nothing
+✅ test/import/import_runner_test.dart: E10: a corrupt line mid-file skips with a count, rest imports
+✅ test/import/import_runner_test.dart: E14: a kill-mid-import file is replaced on retry (AC10)
+✅ test/import/import_runner_test.dart: AC9: oversized files refuse with an explicit reason and no import
+✅ test/import/import_runner_test.dart: REG-5 + AC11: the foreign store stays byte-identical and stdout carries ids/counts only
+✅ test/import/import_tui_test.dart: the harness picker lists all four harnesses with the two spikes
+✅ test/import/import_tui_test.dart: a pending-spike harness answers and writes nothing
+✅ test/import/import_tui_test.dart: picking omp opens rows with previews; keyword search matches session CONTENT (AC3/F10/F11)
+✅ test/import/import_tui_test.dart: selecting All imports every discovered session into the store
+✅ test/dart2js_shift_guard_test.dart: no dart2js-unsafe integer shifts under lib/ (issue #1074)
+✅ test/dart2js_shift_guard_test.dart: guard rules catch the planted hazards they exist for
+✅ test/ci_pty_aot_seam_test.dart: gh-1300 — the fa-aot-bin artifact survives the shard handoff the PTY/CLI shard leg downloads the once-per-run AOT artifact
+✅ test/ci_pty_aot_seam_test.dart: gh-1300 — the fa-aot-bin artifact survives the shard handoff the shard restores the exec bit after the download
+✅ test/ci_pty_aot_seam_test.dart: gh-1300 — the fa-aot-bin artifact survives the shard handoff the smoke still fails loud, after the restore, before FA_BIN
+✅ test/ci_pty_aot_seam_test.dart: gh-1300 — nightly keeps its in-job build (no artifact round-trip) the nightly PTY leg builds the bundle in-job and boots it before use
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 voxelWorld wiring guard every Fa-app JsonWidgetRenderer construction passes voxelWorld:
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 voxelWorld wiring guard JsAppEngine exposes the runtime engine voxelWorld
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) double-quoted strings with // survive intact
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) commented-out constructions are not counted, block comments mask nested quotes
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) raw strings, triple quotes and escapes do not desync the mask
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) parens inside string arguments cannot truncate balancedArgs
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) an unterminated string masks the tail — the known-surface floor goes red, never vacuous green
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) a voxelWorld only inside a NESTED call is not a wiring — the guard must not false-GREEN on contains-over-raw-args
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) a direct top-level voxelWorld survives nested-group stripping
+✅ test/jsr_voxel_world_pin_guard_test.dart: gh-1441 scanner hardening (gh-1441 review: false-red risks) string interpolation ${...} cannot desync balancedArgs
+✅ test/cli/session_name_resolution_test.dart: the launch folder wins over a namesake from another project
+✅ test/cli/session_name_resolution_test.dart: a single namesake in ANOTHER folder still opens
+✅ test/cli/session_name_resolution_test.dart: several in one folder: most recent + a note with the ids
+✅ test/cli/session_name_resolution_test.dart: mid-session /session <name> asks when ambiguous
+✅ test/cli/links_config_test.dart: defaults the baked-in product links are present
+✅ test/cli/links_config_test.dart: defaults a null section parses to the defaults
+✅ test/cli/links_config_test.dart: strict parse a non-map section throws ConfigException
+✅ test/cli/links_config_test.dart: strict parse a non-string link value throws
+✅ test/cli/links_config_test.dart: strict parse an empty link value throws
+✅ test/cli/links_config_test.dart: strict parse a non-http(s) link value throws
+✅ test/cli/links_config_test.dart: strict parse a non-boolean banner throws
+✅ test/cli/links_config_test.dart: strict parse a bad section fails the whole CliConfig parse (boot-strict)
+✅ test/cli/links_config_test.dart: tolerant parse unknown keys become notes, never errors (AC7)
+✅ test/cli/links_config_test.dart: tolerant parse explicit null play stays unset
+✅ test/cli/links_config_test.dart: tolerant parse banner: false parses and un-defaults the section
+✅ test/cli/links_config_test.dart: override every known key overrides its default
+✅ test/cli/links_config_test.dart: override CliConfig.fromYaml carries the section through
+✅ test/cli/links_config_test.dart: override CliConfig defaults to the baked-in section when absent
+✅ test/cli/links_config_test.dart: toYaml round-trip defaults are never written (file stays minimal)
+✅ test/cli/links_config_test.dart: toYaml round-trip only the overridden keys are written
+✅ test/cli/links_config_test.dart: toYaml round-trip a written section parses back to the same values
+✅ test/cli/links_config_test.dart: toYaml round-trip a URL with a space-before-fragment survives the round-trip
+✅ test/cli/links_config_test.dart: one-change propagation (AC1) the site App Store block renders the flipped links
+✅ test/cli/links_config_test.dart: one-change propagation (AC1) the in-app banner view renders the flipped links
+✅ test/cli/links_config_test.dart: one-change propagation (AC1) the default block links the direct APKs (AC2, issue #1864)
+✅ test/cli/links_config_test.dart: header badge + hero CTA placements (issue #881) each placement carries its own referral value (AC3)
+✅ test/cli/links_config_test.dart: header badge + hero CTA placements (issue #881) a flipped store URL reaches every placement
+✅ test/cli/links_config_test.dart: header badge + hero CTA placements (issue #881) header badge carries the PAID link only (pinned policy)
+✅ test/cli/links_config_test.dart: header badge + hero CTA placements (issue #881) a future Play link adds no header/hero buttons (E4)
+✅ test/cli/links_config_test.dart: store copy compliance (AC6, issue #643 list) no superlative claims on the rendered site block
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin browser connect: provider pick, email-named entry, key stored, switch
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin key <token>: no sign-in menu, explicit name kept
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin key with an empty answer cancels
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin cancels at the sign-in menu
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin cancels at the identity-provider pick
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin argument errors print usage
+✅ test/cli/aiin_provider_commands_test.dart: /provider aiin connect failure (null result) applies nothing
+✅ test/cli/trajectory_cli_test.dart: trajectoryLines one line per record with kind, duration, and tokens
+✅ test/cli/trajectory_cli_test.dart: trajectoryLines long text truncates to the width with an ellipsis
+✅ test/cli/trajectory_cli_test.dart: trajectoryLines caps at maxLines keeping the tail and naming the hidden count
+✅ test/cli/trajectory_cli_test.dart: trajectoryLines empty snapshot prints a placeholder
+✅ test/cli/trajectory_cli_test.dart: trajectoryCostLines one row per request plus cumulative and cost columns
+✅ test/cli/trajectory_cli_test.dart: trajectoryCostLines omits the cost column when nothing cost anything
+✅ test/cli/trajectory_cli_test.dart: trajectoryCostLines no requests prints a placeholder
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines assistant record shows model, timing, and token sections
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines tool record shows call, args, and result
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines out of range returns null and the caller-facing error
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines system record shows change, text, and time
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines user record shows text and turn metadata
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines context record shows its text
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines compacted record shows summary and kept-from
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines failed assistant record shows the error sections
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines unanswered tool call shows running status without a result
+✅ test/cli/trajectory_cli_test.dart: TrajectoryTailer renders only the suffix appended since the previous call
+✅ test/cli/trajectory_cli_test.dart: TrajectoryTailer dedupes by record id, not list position: a poll whose window slid (head eviction) still renders the appended record (gh-1555 W1 rework — the headless tail poll composition)
+✅ test/cli/trajectory_cli_test.dart: TrajectoryTailer the dedupe set is bounded: past the cap the oldest ids evict, so a long-running tail does not accumulate every id forever (review thread 6)
+✅ test/cli/trajectory_cli_test.dart: trajectoryJsonLine carries index, kind, text, seconds, and tokens
+✅ test/cli/trajectory_cli_test.dart: trajectoryJsonLine assistant line carries token totals
+✅ test/cli/trajectory_cli_test.dart: trajectorySnapshotAt projects the prefix ending at record at
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing parses verb, session id, and flags
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing inspect requires a numeric record operand
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing unknown verb is a usage error, never a prompt
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing bare trajectory prints usage
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing --at is rejected outside view
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing inspect without a number is a usage error
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing unknown flags stay errors inside the subcommand
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing --help inside the subcommand wins
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing --cwd and --session-root apply to the run config
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing value flags reject a missing or non-numeric value
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing more than two positionals is a usage error
+✅ test/cli/trajectory_cli_test.dart: parseCliArgs trajectory routing inspect rejects a non-numeric record number
+✅ test/cli/trajectory_cli_test.dart: resolveTrajectorySession omitted id resolves the most recent session
+✅ test/cli/trajectory_cli_test.dart: resolveTrajectorySession exact id and session-name matches resolve
+✅ test/cli/trajectory_cli_test.dart: resolveTrajectorySession unknown id resolves nothing
+✅ test/cli/trajectory_cli_test.dart: /trajectory in the REPL view prints the ledger rows of the live session
+✅ test/cli/trajectory_cli_test.dart: /trajectory in the REPL tail follows the session until interrupted; cost prints
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines blob sections (issue #385) an assistant row prints the prompt text, manifest tools, and sizes
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines blob sections (issue #385) pointers without blob records render hash-only (E6)
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines blob sections (issue #385) a system row renders the full prompt when the blob is present
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectReport (issue #385 F4/AC9) empty, non-numeric, and out-of-range args degrade explicitly
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectReport (issue #385 F4/AC9) a plain row reports its detail lines untouched
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectReport (issue #385 F4/AC9) a compacted row resolves its hidden range through the callback
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectReport (issue #385 F4/AC9) an unserved range renders the honest not-captured marker (E6)
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines system diff sections (issue #385 F7) a toolsChange row diffs prompt and manifest against previous
+✅ test/cli/trajectory_cli_test.dart: trajectoryInspectLines system diff sections (issue #385 F7) system-row pointers without blobs render hash-only (E6)
+✅ test/cli/agent_cli_child_wait_steering_test.dart: AC1+AC2: background spawn ends the turn; owner mail wakes and is routed to the child via task_send with a report
+✅ test/cli/agent_cli_child_wait_steering_test.dart: AC1 wedge: steering during a never-returning foreground bash moves it to background and the turn continues
+✅ test/cli/fa_tui_frame_budget_test.dart: UT-1 #479 AC1: frame is exactly termHeight rows across the chrome matrix (24- and 12-row terminals)
+✅ test/cli/fa_tui_frame_budget_test.dart: UT-2 #479 AC2: a JobBoardMsg arriving and draining mid-run keeps the frame constant, follow-tail latched, region order unchanged
+✅ test/cli/fa_tui_frame_budget_test.dart: UT-3 #479 AC4: prompt mode with board and chips fills exactly termHeight (no double count of the input zone)
+✅ test/cli/fa_tui_frame_budget_test.dart: UT-4 #479 AC5: squeezed board clips newest-kept with an explicit tail row; input zone, rules and status are never sacrificed
+✅ test/cli/fa_tui_frame_budget_test.dart: UT-5 #479 AC6: board rows clip to VISIBLE cells — no chrome row wider than the terminal under any combination
+✅ test/cli/fa_tui_frame_budget_test.dart: E5 #479: pinned sticky echo and live board coexist at termHeight
