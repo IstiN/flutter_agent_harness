@@ -183,6 +183,223 @@ block a release again.
   env → per-channel macOS Keychain item → one prompt with save default.
 
 
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+- feat(gh-2102): `/handoff` — start a fresh session from an editable digest
+  of the current one: the branch-digest machinery
+  (`prepareBranchEntries` + the shared `SummarizeFn` seam, handoff preamble
+  in `lib/src/compaction/handoff_digest.dart`) generates a structured
+  checkpoint of the whole current branch, the scratch file
+  (`<cwd>/.fah/handoff-digest-<ts>.md`) opens in the user's editor
+  (`FA_EDITOR` > `VISUAL` > `EDITOR`; non-interactive runs and missing
+  editors use the digest as generated — the LM call is never wasted), and
+  the fresh session is seeded with the edited digest + the relevant-file
+  list (a `handoff_digest` custom-message record whose `details` carry
+  `readFiles`/`modifiedFiles`; the digest also rides the live context as
+  the opening user message, counted as persisted so the next run never
+  re-persists it). The old session is never written to — byte-identical,
+  reachable via the printed `fa --session` link; an emptied digest is the
+  cancel gesture (no switch), a failed digest keeps the session with a
+  visible error (#2102)
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+
 - fix: `fileInfo().name` returns the bare entry name on Windows — the
   abspath resolution previously glued the drive-letter absolute path onto
   the returned name (`C:\dirC:\dir\file.txt`), breaking the file browser
