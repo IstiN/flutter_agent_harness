@@ -110,6 +110,9 @@ fa-local/
 !.fah/bootstrap.yaml
 !.fah/dap.json
 
+# Rework/verification run logs (transient artifacts — never committed).
+logs/rework-*
+
 # Embedded browser-extension agent: dart2js output (built by
 # scripts/build_browser_ext.sh), plus the local package's tooling dirs.
 browser_ext/sw/agent.js
@@ -198,6 +201,11 @@ node_modules
 # sdk/web type-stripped build output (node build.mjs regenerates it).
 sdk/web/dist/
 agents/
+# gh-2181: docs/agents/ holds the canonical AGENTS.md reference docs (8
+# files were tracked before this rule existed — new ones silently vanished
+# from git status). Un-ignore the docs subtree explicitly; the runtime
+# `agents/` dir at the root stays ignored.
+!docs/agents/
 
 # runtime preference files written at the repo root during tests
 /session_ui_prefs.json

@@ -21,6 +21,8 @@
 ///   absent (no equivalents on this side).
 library;
 
+import 'dart:math' show max;
+
 import '../cancel_token.dart';
 import '../context.dart';
 import '../prompts/prompts.g.dart';
@@ -250,14 +252,26 @@ BranchPreparation prepareBranchEntries(
 /// Generate a summary of abandoned-branch [entries] (omp's
 /// `generateBranchSummary`): serializes them into `<conversation>` tags,
 /// ends with the fixed branch-summary prompt (or [customInstructions]), and
-/// prepends the branch preamble plus the file-operation tags. Never throws:
+/// prepends the branch preamble ([preamble] — the default is the branch
+/// preamble; the `/handoff` digest passes its own, gh-2102) plus the
+/// file-operation tags. Never throws:
 /// failures surface as [BranchSummaryResult.error].
+///
+/// [maxPromptTokens] (issue #729 parity, gh-2102 review) bounds the outbound
+/// payload when set: over-budget branches are summarized CHUNK-WISE — each
+/// chunk under the budget ([truncateForSummaryBudget], the explicit
+/// truncation note for a single oversized message), every later call
+/// folding the prior summary in as `<previous-checkpoint>` — and the result
+/// is the LAST fold. `null` (the default) leaves the prompt byte-identical
+/// to the unbounded path.
 Future<BranchSummaryResult> generateBranchSummary(
   List<SessionRecord> entries, {
   required SummarizeFn summarize,
   int tokenBudget = 0,
   String? customInstructions,
   CancelToken? cancelToken,
+  String preamble = branchSummaryPreamble,
+  int? maxPromptTokens,
 }) async {
   final preparation = prepareBranchEntries(entries, tokenBudget: tokenBudget);
   if (preparation.messages.isEmpty) {
@@ -265,39 +279,148 @@ Future<BranchSummaryResult> generateBranchSummary(
   }
 
   final instructions = customInstructions ?? branchSummaryPrompt;
-  final prompt =
-      '<conversation>\n'
-      '${serializeConversation(preparation.messages)}\n'
-      '</conversation>\n\n$instructions';
 
-  SummarizationResult result;
-  try {
-    result = await summarize(
-      SummarizationRequest(prompt: prompt, cancelToken: cancelToken),
-    );
-  } catch (error) {
-    result = SummarizationResult.failure('Branch summarization failed: $error');
+  // One summarizer call, wrapped so a provider error keeps the never-throw
+  // contract (the legacy single-call shape).
+  Future<SummarizationResult> runOne(String prompt) async {
+    try {
+      return await summarize(
+        SummarizationRequest(prompt: prompt, cancelToken: cancelToken),
+      );
+    } catch (error) {
+      return SummarizationResult.failure('Branch summarization failed: $error');
+    }
   }
-  if (result.isAborted) return const BranchSummaryResult(aborted: true);
-  final text = result.text;
-  if (text == null) {
-    return BranchSummaryResult(
-      error: result.error ?? 'Branch summarization failed',
-    );
+
+  String build(String conversation, String? prior) {
+    final buffer = StringBuffer()
+      ..write('<conversation>\n')
+      ..write(conversation)
+      ..write('\n</conversation>\n');
+    if (prior != null) {
+      buffer.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n');
+    }
+    buffer
+      ..write('\n')
+      ..write(instructions);
+    return buffer.toString();
   }
+
+  // One summarizer pass settles the prose: a single call when the prompt
+  // fits the payload budget (or is unbounded), chunk-wise folds otherwise
+  // (#729 parity) — see [_sumarizeBranchText].
+  final outcome = await _sumarizeBranchText(
+    preparation.messages,
+    runOne: runOne,
+    build: build,
+    instructions: instructions,
+    maxPromptTokens: maxPromptTokens,
+  );
+  if (outcome.aborted) return const BranchSummaryResult(aborted: true);
+  if (outcome.error != null) return BranchSummaryResult(error: outcome.error);
+  final text = outcome.text ?? '';
 
   final fileLists = computeFileLists(preparation.fileOps);
   // Issue #1131: the summary persists and re-renders every turn — strip
   // ephemeral, time-scoped claims from the LLM prose before recording it.
   final sanitized = sanitizeSummary(text);
   final summary =
-      '$branchSummaryPreamble\n${sanitized.text}'
+      '$preamble\n${sanitized.text}'
       '${formatFileOperations(fileLists.readFiles, fileLists.modifiedFiles)}';
   return BranchSummaryResult(
     summary: summary.isEmpty ? 'No summary generated' : summary,
     readFiles: fileLists.readFiles,
     modifiedFiles: fileLists.modifiedFiles,
   );
+}
+
+/// The settled conversation prose of one [generateBranchSummary] pass:
+/// [text] on success; [aborted]/[error] carry the never-throw contract's
+/// failure exits instead (the caller maps them onto [BranchSummaryResult]).
+final class _BranchTextOutcome {
+  const _BranchTextOutcome.text(this.text) : aborted = false, error = null;
+  const _BranchTextOutcome.aborted()
+    : text = null,
+      aborted = true,
+      error = null;
+  const _BranchTextOutcome.error(this.error) : text = null, aborted = false;
+  final String? text;
+  final bool aborted;
+  final String? error;
+}
+
+/// The conversation-settling half of [generateBranchSummary]: one
+/// summarizer call when the serialized region fits [maxPromptTokens] (or is
+/// unbounded — `null`), chunk-wise folds over budget — each chunk bounded by
+/// [truncateForSummaryBudget] (the explicit truncation note for a single
+/// oversized message), every later call folding the prior summary in as
+/// `<previous-checkpoint>` — and the settled prose is the LAST fold. Never
+/// throws: aborts and failures surface on the [_BranchTextOutcome].
+Future<_BranchTextOutcome> _sumarizeBranchText(
+  List<Message> messages, {
+  required Future<SummarizationResult> Function(String prompt) runOne,
+  required String Function(String conversation, String? prior) build,
+  required String instructions,
+  required int? maxPromptTokens,
+}) async {
+  final full = build(serializeConversation(messages), null);
+  if (maxPromptTokens == null ||
+      estimateStringTokens(full) <= maxPromptTokens) {
+    final result = await runOne(full);
+    if (result.isAborted) return const _BranchTextOutcome.aborted();
+    final text = result.text ?? '';
+    if (text.isEmpty && result.error != null) {
+      return _BranchTextOutcome.error(result.error);
+    }
+    return _BranchTextOutcome.text(text);
+  }
+  // Over the payload budget (#729 parity, gh-2102 review): chunk the
+  // region, fold chunk-wise — the result is the LAST fold.
+  var prior = '';
+  final chunks = chunkSummarizableMessages(
+    messages,
+    max(maxPromptTokens - _chunkPlanReserveTokens, 256),
+  );
+  for (var i = 0; i < chunks.length; i++) {
+    final conversation = truncateForSummaryBudget(
+      serializeConversation(chunks[i]),
+      budgetTokens: maxPromptTokens,
+      envelopeChars: _foldEnvelopeChars(
+        prior: prior,
+        instructions: instructions,
+      ),
+    );
+    final result = await runOne(
+      build(conversation, prior.isEmpty ? null : prior),
+    );
+    if (result.isAborted) return const _BranchTextOutcome.aborted();
+    final fold = result.text;
+    if (fold == null) {
+      return _BranchTextOutcome.error(
+        result.error ?? 'Branch summarization failed',
+      );
+    }
+    prior = fold;
+  }
+  return _BranchTextOutcome.text(prior);
+}
+
+/// Prompt overhead reserved per chunk before the conversation text (parity
+/// with the compaction fold's `_chunkEnvelopeReserveTokens`): tags, the
+/// previous-checkpoint block and the instruction tail. The exact fit is
+/// enforced by [truncateForSummaryBudget]; this only sizes the chunk plan.
+const _chunkPlanReserveTokens = 4096;
+
+/// Everything around the conversation in a fold prompt (tags, the
+/// previous-checkpoint block, the instructions), measured — the envelope
+/// [truncateForSummaryBudget] subtracts from the budget.
+int _foldEnvelopeChars({required String prior, required String instructions}) {
+  final prompt = StringBuffer()..write('<conversation>\n</conversation>\n');
+  if (prior.isNotEmpty) {
+    prompt.write('<previous-checkpoint>\n$prior\n</previous-checkpoint>\n');
+  }
+  prompt.write(instructions);
+  return prompt.length;
 }
 
 /// Navigate [session] to [targetId] (omp's tree navigation with branch

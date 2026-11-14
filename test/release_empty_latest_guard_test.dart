@@ -382,7 +382,15 @@ void main() {
       // releases" paragraph must describe the implemented flow — tag-only
       // auto_release.sh, draft-first binaries create, provenance-owned
       // publish — never the retired "tag + GitHub Release" one-liner.
-      final doc = read('AGENTS.md');
+      // gh-2181: AGENTS.md is a ≤300-line entry doc — the FULL contract
+      // text moved verbatim to docs/agents/commits-releases.md and the
+      // slim entry keeps the invariants + the pointer, so the pin runs
+      // against BOTH surfaces.
+      final entry = read('AGENTS.md');
+      expect(entry, contains('DRAFT-first'));
+      expect(entry, contains('release-provenance'));
+      expect(entry, contains('docs/agents/commits-releases.md'));
+      final doc = read('docs/agents/commits-releases.md');
       expect(doc, contains('release_lazy_draft.sh'));
       expect(doc, contains('release-provenance'));
       expect(

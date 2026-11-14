@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb, visibleForTesting;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
 /// Native project-folder operations: directory picking plus the
@@ -68,4 +69,43 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
     if (!isSupported) return;
     await _channel.invokeMethod<void>('stopAccessing', bookmark);
   }
+}
+
+/// The desktop file-selector-backed ops (Windows/Linux): the native folder
+/// dialog through `file_selector` (file_selector_windows is a compiled
+/// plugin in the Windows runner) without security-scoped bookmarks — the
+/// bookmark is always the empty string and the access lifecycle is a
+/// success no-op, matching how [ProjectMountStore] persists the mount on
+/// platforms that have no sandbox to re-grant.
+final class ProjectFolderSelectorOps implements ProjectFolderOps {
+  /// Creates the selector-backed ops.
+  const ProjectFolderSelectorOps();
+
+  @override
+  Future<({String path, String bookmark})?> pickDirectory() async {
+    final path = await getDirectoryPath();
+    if (path == null || path.isEmpty) return null;
+    return (path: path, bookmark: '');
+  }
+
+  @override
+  Future<bool> startAccessing(String bookmark) async => true;
+
+  @override
+  Future<void> stopAccessing(String bookmark) async {}
+}
+
+/// The default [ProjectFolderOps] per platform: the security-scoped
+/// channel on macOS/iOS (sandbox bookmarks), the plain file selector on
+/// Windows/Linux, null on web/embedded targets.
+ProjectFolderOps? defaultProjectFolderOps() {
+  if (kIsWeb) return null;
+  if (defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux) {
+    return const ProjectFolderSelectorOps();
+  }
+  if (ProjectFolderChannelOps.isSupported) {
+    return const ProjectFolderChannelOps();
+  }
+  return null;
 }

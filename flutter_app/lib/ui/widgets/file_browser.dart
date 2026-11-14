@@ -20,11 +20,9 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
 
-/// The default [ProjectFolderOps] on supported platforms (macOS), else null.
-ProjectFolderOps? _defaultProjectFolderOps() =>
-    ProjectFolderChannelOps.isSupported
-    ? const ProjectFolderChannelOps()
-    : null;
+/// The default [ProjectFolderOps] per platform: security-scoped bookmarks
+/// on macOS/iOS, the plain file selector on Windows/Linux, else null.
+ProjectFolderOps? _defaultProjectFolderOps() => defaultProjectFolderOps();
 
 /// Width of the file browser panel (right side panel on wide layouts, end
 /// drawer on narrow ones).
@@ -843,7 +841,7 @@ class _FileBrowserState extends State<FileBrowser> {
       );
     }
     final canPick =
-        widget.projectFolderOps != null || ProjectFolderChannelOps.isSupported;
+        widget.projectFolderOps != null || defaultProjectFolderOps() != null;
     if (!canPick) return null;
     return FaHeaderAction(
       key: const ValueKey('fileBrowserMount'),

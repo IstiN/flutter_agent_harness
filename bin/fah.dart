@@ -108,8 +108,11 @@ Future<void> main(List<String> args) async {
   }
   // Session segment rotation warnings (fa gh-1077): the session layer has
   // no console dependency — the CLI surfaces hard-cap truncations and
-  // rotation fallbacks on stderr.
+  // rotation fallbacks on stderr. Same boot default for the gh-2178
+  // quarantine report (a malformed persisted record quarantines itself;
+  // the pre-construction window reports on stderr).
   JsonlSessionStorage.onRotationWarning = stderr.writeln;
+  SessionQuarantine.onQuarantined = stderr.writeln;
   await runZoned(
     () => _runApp(args),
     zoneSpecification: ZoneSpecification(

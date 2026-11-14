@@ -71,7 +71,7 @@ final class _NewSessionFolderDialogState
             leading: const Icon(Icons.folder_outlined),
           ),
         ),
-        if (ProjectFolderChannelOps.isSupported)
+        if (defaultProjectFolderOps() != null)
           SimpleDialogOption(
             key: const ValueKey('newSessionChooseFolder'),
             onPressed: () => _select(_NewSessionFolderAction.choose),

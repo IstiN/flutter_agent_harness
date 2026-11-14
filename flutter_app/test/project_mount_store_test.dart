@@ -39,4 +39,28 @@ void main() {
     await ProjectMountStore.clear(env);
     expect(await ProjectMountStore.load(env), isNull);
   });
+
+  test('empty bookmark round-trips (Windows/Linux selectors)', () async {
+    // The Windows/Linux file selectors persist no security-scoped
+    // bookmark — the store record carries `bookmark: ""` and must still
+    // restore the mount (the scoped-folder toggle rides the same load).
+    final env = MemoryExecutionEnv();
+    await ProjectMountStore.save(env, path: r'C:\Users\me\repo', bookmark: '');
+
+    final stored = await ProjectMountStore.load(env);
+    expect(stored, isNotNull);
+    expect(stored!.path, r'C:\Users\me\repo');
+    expect(stored.bookmark, isEmpty);
+
+    // The scoped flag survives the same restore path.
+    await ProjectMountStore.save(
+      env,
+      path: r'C:\Users\me\repo',
+      bookmark: '',
+      scoped: true,
+    );
+    final scoped = await ProjectMountStore.load(env);
+    expect(scoped!.bookmark, isEmpty);
+    expect(scoped.scoped, isTrue);
+  });
 }

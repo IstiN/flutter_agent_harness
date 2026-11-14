@@ -2,6 +2,11 @@
 
 Reference for the `lib/`, `packages/`, `bin/`, `prompts/` subsystems. The Flutter app and its JS apps platform live in their own docs:
 
+> gh-2181: the full per-subsystem reference (moved verbatim from AGENTS.md)
+> is [sdk-subsystems.md](sdk-subsystems.md) +
+> [flutter-app-subsystems.md](flutter-app-subsystems.md); this file stays
+> the condensed map.
+
 - [flutter-app.md](flutter-app.md) — chat example, services, widgets
 - [js-apps.md](js-apps.md) — JS apps platform, demo apps, runtime pinning
 - [services.md](services.md) — Flutter app services one-liner

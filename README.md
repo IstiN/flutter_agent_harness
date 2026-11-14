@@ -371,7 +371,8 @@ stub.
 
 `/provider`, `/models`, `/model`, `/approval`, `/allow`, `/tools`,
 `/skills`, `/agents`, `/tasks`, `/trajectory [view|cost|tail|inspect]`,
-`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
+`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/handoff`,
+`/checkpoint`/`/rewind`,
 `/mcp`, `/a2a`, `/dap`, `/stats`, `/mouse`, `/settings`, `/help` — plus
 every discovered skill as `/skill:<name>` (a bare `/<name>` alias works
 too). While a run streams, typed input steers the agent; Ctrl-C aborts
