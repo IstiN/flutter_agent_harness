@@ -69,6 +69,15 @@ extension AgentCliLifecycle on AgentCli {
     StreamSubscription<dynamic> taskSub,
     Timer inboxTimer,
   ) async {
+    // gh-2168 bounded-exit: quitting never waits out an in-flight run. A
+    // mid-run EOF lands here without ever passing `/exit`, so fire the
+    // quit abort at the boundary: the run's — or a bare compaction's —
+    // cancel token goes off now, the settle lands during the preamble
+    // below, and the wait stays bounded even for a token-ignoring
+    // provider (a partial transcript is persisted by the run's own
+    // abort handling).
+    _abortRequested = true;
+    _abortRunOrCompaction();
     _cancelPendingAnswers();
     _hubTeardown();
     unawaited(_subagentBoardSub?.cancel());
@@ -86,7 +95,10 @@ extension AgentCliLifecycle on AgentCli {
     await interruptSub.cancel();
     await taskSub.cancel();
     inboxTimer.cancel();
-    await _settled;
+    // gh-2168: the run was aborted above — settle bounded, never wedged
+    // (the SIGINT path's same bound; close order below is unchanged:
+    // drain → usage fold → seal → exit).
+    await waitForIdle();
     // Live-session presence off: the session stops being "running in
     // the CLI" for app viewers.
     await _extSessionEndBounded();
