@@ -110,6 +110,9 @@ fa-local/
 !.fah/bootstrap.yaml
 !.fah/dap.json
 
+# Rework/verification run logs (transient artifacts — never committed).
+logs/rework-*
+
 # Embedded browser-extension agent: dart2js output (built by
 # scripts/build_browser_ext.sh), plus the local package's tooling dirs.
 browser_ext/sw/agent.js

@@ -145,6 +145,9 @@ const builtinSlashCommands = <String, String>{
   '/exit': 'quit',
   '/reset': 'start a new session',
   '/compact': 'summarize history to free context',
+  '/handoff':
+      'start a fresh session from an editable digest of this one + '
+      'relevant files',
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
   '/transcript':
