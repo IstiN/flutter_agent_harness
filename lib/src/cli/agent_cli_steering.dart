@@ -418,7 +418,15 @@ extension AgentCliSteering on AgentCli {
         queued: queued,
         budgetOffer: hasOutstandingBudgetOffer,
       );
-      io.writeln(queued > 0 ? tuiWarning(line) : _style.dim(line));
+      // Issue #2117: the banner obeys the console log dial — the queued
+      // variant is warn-level (still visible at the default), the
+      // passive `info:` variant is info-level (hidden at the interactive
+      // default, shown from `--log-level info` or `/log info`; headless
+      // defaults stay unfiltered). Panel/busy pushes above are unaffected.
+      final level = queued > 0 ? LogLevel.warn : LogLevel.info;
+      if (_consolePasses(level, LogCategory.lifecycle)) {
+        io.writeln(queued > 0 ? tuiWarning(line) : _style.dim(line));
+      }
     }
   }
 

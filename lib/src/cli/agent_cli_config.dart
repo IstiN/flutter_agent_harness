@@ -179,6 +179,7 @@ final class AgentCliConfig {
     this.trajectoryRequestBlobTtlDays = 30,
     this.updateCommand,
     this.autoUpdate = AutoUpdateMode.notify,
+    this.logging = const ResolvedLogSettings(),
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -228,6 +229,14 @@ final class AgentCliConfig {
   /// settings-hub flow updates it after a successful persist — the same
   /// live-override pattern as [liveCompactionEngine].
   AutoUpdateMode autoUpdate = AutoUpdateMode.notify;
+
+  /// The RESOLVED log settings (issue #2117): console/file levels, the
+  /// line pattern and time format, the `keys=debug` alias floor. The
+  /// host resolves the five sources (flag > env > project config > user
+  /// config > default) at boot via `resolveLogSettings`; the default is
+  /// the pinned interactive contract — console `warn`, file `debug`, no
+  /// pattern, nothing explicit (so headless stdout stays byte-identical).
+  final ResolvedLogSettings logging;
 
   /// The `/update` slash-command seam (issue #1377): the self-update
   /// engine lives in the host executable (`bin/self_manage.dart`) and
