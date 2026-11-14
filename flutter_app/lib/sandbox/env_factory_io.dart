@@ -247,19 +247,21 @@ final class _MobileExecutionEnv extends PersistentWebExecutionEnv
 
 /// The desktop branch of [createPlatformEnv]: the application-support
 /// directory as the container cwd so settings/stores live inside the app
-/// sandbox and do not trigger a permission prompt on macOS. macOS
-/// additionally layers the optional project-folder mount on top via
-/// [mountedDesktopEnv].
+/// sandbox and do not trigger a permission prompt on macOS. Every desktop
+/// platform layers the optional project-folder mount on top via
+/// [mountedDesktopEnv] (the selector-backed pick on Windows/Linux — the
+/// channel/bookmark layer is macOS-only; see [defaultProjectFolderOps]).
 Future<ExecutionEnv> createDesktopEnv() async {
   final appDir = await getApplicationSupportDirectory();
   final baseEnv = LocalExecutionEnv(cwd: appDir.path);
-  if (!Platform.isMacOS) return baseEnv;
   return mountedDesktopEnv(baseEnv);
 }
 
-/// macOS project-folder mount layer over [baseEnv]: restores the persisted
-/// mount (bookmark access re-granted → [ProjectMountEnv.mountedRoot], or the
-/// stale-mount note when access is refused).
+/// The desktop project-folder mount layer over [baseEnv]: restores the
+/// persisted mount (access re-granted → [ProjectMountEnv.mountedRoot], or
+/// the stale-mount note when access is refused). Bookmark re-granting is
+/// macOS-only; Windows/Linux restore directly through the selector ops
+/// (no sandbox to re-grant — see [defaultProjectFolderOps]).
 Future<ExecutionEnv> mountedDesktopEnv(LocalExecutionEnv baseEnv) async {
   final mountEnv = ProjectMountEnv(baseEnv);
   final stored = await ProjectMountStore.load(baseEnv);
@@ -267,7 +269,9 @@ Future<ExecutionEnv> mountedDesktopEnv(LocalExecutionEnv baseEnv) async {
   applyStoredMount(
     mountEnv,
     stored,
-    granted: await ProjectFolderChannelOps().startAccessing(stored.bookmark),
+    granted:
+        await (defaultProjectFolderOps() ?? const ProjectFolderChannelOps())
+            .startAccessing(stored.bookmark),
   );
   return mountEnv;
 }
