@@ -237,6 +237,10 @@ final RegExp _leadingBrackets = RegExp(r'^(?:\[[^\]]*\]\s*)+');
 
 final RegExp _whitespaceRun = RegExp(r'\s+');
 
+/// Leading whitespace test for the belt walk's continuation/bare-prose
+/// classification (`_bulletBlockEnd`, `_endsBareHeadingSection`).
+final RegExp _leadingWhitespace = RegExp(r'\s');
+
 String _flattenText(String text) => text.replaceAll(_whitespaceRun, ' ').trim();
 
 /// The gh-2103 belt over the user-intent sections of [text].
@@ -257,6 +261,11 @@ String _flattenText(String text) => text.replaceAll(_whitespaceRun, ' ').trim();
 /// Everything else — real asks above all — survives byte-identical. Pinned
 /// directives ([protectedLines]) and the `<pinned-skill-directives>`
 /// envelope are exempt, exactly as for the ephemeral-claim strips.
+///
+/// The walk is split so each decision stays under the CRAP ratchet: this
+/// walker only dispatches whole sections to [_beltSectionBody] (pin
+/// envelope lines via [_BeltPinEnvelope]); the section body grades bullet
+/// blocks and prose lines and reports where the section ended.
 String _beltUserIntentSections(
   String text,
   List<String> stripped,
@@ -267,74 +276,138 @@ String _beltUserIntentSections(
   if (!_userIntentHeading.hasMatch(text)) return text;
   final lines = text.split('\n');
   final out = <String>[];
-  var inSection = false;
-
-  /// The opening heading used a `#` marker: prose lines stay in scope.
-  var sectionHeaded = false;
-  var pinEnvelope = false;
-  var envelopeLines = 0;
+  final pin = _BeltPinEnvelope();
   var i = 0;
   while (i < lines.length) {
     final line = lines[i];
     final trimmed = line.trim();
-    if (trimmed == pinEnvelopeOpenTag) {
-      pinEnvelope = true;
-      envelopeLines = 0;
-    }
-    final pinKept = pinEnvelope && envelopeLines < _maxPinEnvelopeLines;
-    final closesPin = trimmed == pinEnvelopeCloseTag;
-
-    if (!inSection || pinKept) {
+    if (pin.entersKept(trimmed)) {
       out.add(line);
-      if (!inSection && !pinKept && _userIntentHeading.hasMatch(trimmed)) {
-        inSection = true;
-        sectionHeaded = _mdHeading.hasMatch(line);
-      }
-      if (pinEnvelope) envelopeLines++;
-      if (closesPin) pinEnvelope = false;
+      pin.completeKept(trimmed);
       i++;
       continue;
     }
-
-    // Inside a user-intent section.
-    if (_mdHeading.hasMatch(line) || _coversLine.hasMatch(trimmed)) {
-      inSection = false;
-      continue; // reprocess the boundary line from the outside state
+    if (!_userIntentHeading.hasMatch(trimmed)) {
+      out.add(line);
+      i++;
+      continue;
     }
+    out.add(line);
+    final (belted, end) = _beltSectionBody(
+      lines,
+      start: i + 1,
+      sectionHeaded: _mdHeading.hasMatch(line),
+      origins: origins,
+      protectedLines: protectedLines,
+      stripped: stripped,
+      marked: marked,
+      pin: pin,
+    );
+    out.addAll(belted);
+    i = end;
+  }
+  return out.join('\n');
+}
+
+/// The belt walk's pin-envelope exemption state (the gh-1409 envelope
+/// semantics, bound to the belt's line walk): an open envelope keeps its
+/// lines verbatim until the close tag or the bounded re-arm (defense in
+/// depth against a hostile unclosed open), exactly mirroring the
+/// `sanitizeSummary` line loop's counter placement — the open decision
+/// precedes the kept test on every line, and the counter/close bookkeeping
+/// rides ONLY the kept (pasthrough) branch, never the graded path.
+final class _BeltPinEnvelope {
+  bool _open = false;
+  int _count = 0;
+
+  /// Opens the envelope on an open tag, then tests the exemption.
+  bool entersKept(String trimmed) {
+    if (trimmed == pinEnvelopeOpenTag) {
+      _open = true;
+      _count = 0;
+    }
+    return _open && _count < _maxPinEnvelopeLines;
+  }
+
+  /// Pasthrough-path bookkeeping only: the line counter and the close tag
+  /// are processed for kept lines. A graded or boundary line inside a
+  /// re-armed envelope can neither extend nor close the exemption — the
+  /// same sequencing as the `sanitizeSummary` loop.
+  void completeKept(String trimmed) {
+    if (_open) _count++;
+    if (trimmed == pinEnvelopeCloseTag) _open = false;
+  }
+}
+
+/// Consumes one user-intent section body — every line after its heading
+/// until the section ends (a markdown heading or `covers:` line, or body
+/// prose after a bare `open asks:` heading) or the transcript ends — and
+/// returns the belted lines plus the index the caller must resume at (the
+/// boundary line itself, so it is reprocessed from the outside state).
+/// Pin-envelope lines ([_BeltPinEnvelope.entersKept]) are kept verbatim;
+/// an envelope open when the heading arrives keeps the heading in the
+/// walker's pasthrough branch, so no section opens and nothing is graded
+/// until the envelope closes or re-arms.
+(List<String>, int) _beltSectionBody(
+  List<String> lines, {
+  required int start,
+  required bool sectionHeaded,
+  required SummaryOriginEvidence? origins,
+  required Set<String> protectedLines,
+  required List<String> stripped,
+  required List<String> marked,
+  required _BeltPinEnvelope pin,
+}) {
+  final out = <String>[];
+  var i = start;
+  while (i < lines.length) {
+    final line = lines[i];
+    final trimmed = line.trim();
+    if (pin.entersKept(trimmed)) {
+      out.add(line);
+      pin.completeKept(trimmed);
+      i++;
+      continue;
+    }
+    if (_isSectionEnd(line, trimmed)) break;
     if (trimmed.isEmpty) {
       out.add(line);
       i++;
       continue;
     }
     final bullet = _bulletMarker.hasMatch(line);
-    if (!bullet) {
-      if (!sectionHeaded && !line.startsWith(RegExp(r'\s'))) {
-        // Body prose after a bare `open asks:` heading — section over.
-        inSection = false;
-        continue;
-      }
-      // Prose line under a `#`-headed section: graded on its own.
-      final verdict = _beltVerdict([line], origins, protectedLines, stripped);
-      final applied = _applyBeltVerdict(verdict, [line], marked);
-      out.addAll(applied);
-      i++;
-      continue;
-    }
-    // A bullet plus its indented continuation lines ride one verdict.
-    var end = i + 1;
-    while (end < lines.length &&
-        lines[end].trim().isNotEmpty &&
-        lines[end].startsWith(RegExp(r'\s')) &&
-        !_bulletMarker.hasMatch(lines[end])) {
-      end++;
-    }
+    if (!bullet && _endsBareHeadingSection(line, sectionHeaded)) break;
+    final end = bullet ? _bulletBlockEnd(lines, i) : i + 1;
     final block = lines.sublist(i, end);
     final verdict = _beltVerdict(block, origins, protectedLines, stripped);
-    final applied = _applyBeltVerdict(verdict, block, marked);
-    out.addAll(applied);
+    out.addAll(_applyBeltVerdict(verdict, block, marked));
     i = end;
   }
-  return out.join('\n');
+  return (out, i);
+}
+
+/// Whether [line] ends the section it is walking inside: any markdown
+/// heading, or a `covers:` line (the next fold's coverage marker).
+bool _isSectionEnd(String line, String trimmed) =>
+    _mdHeading.hasMatch(line) || _coversLine.hasMatch(trimmed);
+
+/// Whether a non-bullet [line] ends a bare `open asks:` section: body prose
+/// at column 0 under an unmarked heading — the checkpoint's post-asks
+/// narrative — is outside the asks list.
+bool _endsBareHeadingSection(String line, bool sectionHeaded) =>
+    !sectionHeaded && !line.startsWith(_leadingWhitespace);
+
+/// Where a bullet block starting at [start] ends: the bullet plus its
+/// indented, non-empty, non-bullet continuation lines ride one verdict.
+int _bulletBlockEnd(List<String> lines, int start) {
+  var end = start + 1;
+  while (end < lines.length &&
+      lines[end].trim().isNotEmpty &&
+      lines[end].startsWith(_leadingWhitespace) &&
+      !_bulletMarker.hasMatch(lines[end])) {
+    end++;
+  }
+  return end;
 }
 
 /// Belt verdicts for one content block.
@@ -386,34 +459,42 @@ _BeltVerdict _beltVerdict(
 /// (either containment direction — digests append scaffolding like
 /// `(asked <date>, id)` around verbatim asks), or it carries a
 /// [_minQuoteChars]-char sentence found inside a tool text and inside no
-/// user text.
+/// user text. The sentence grading lives in [_launderedQuoteSentence].
 bool _quotesToolText(String flatContent, SummaryOriginEvidence origins) {
   if (flatContent.length < _minQuoteChars) return false;
-  for (final user in origins.userTexts) {
-    if (user.contains(flatContent) || flatContent.contains(user)) {
-      return false;
-    }
+  if (_containedInAny(origins.userTexts, flatContent, alsoContains: true)) {
+    return false;
   }
-  for (final sentence in flatContent.split(_sentenceSplit)) {
-    if (sentence.length < _minQuoteChars) continue;
-    var inUserText = false;
-    for (final user in origins.userTexts) {
-      if (user.contains(sentence)) {
-        inUserText = true;
-        break;
-      }
-    }
-    if (inUserText) continue;
-    for (final tool in origins.toolTexts) {
-      if (tool.contains(sentence)) return true;
-    }
-    // Digest scaffolding rides the line: a candidate pointer (`[r7 · …]`)
-    // prefixed to a verbatim quote must not hide the quote. Retry the
-    // sentence without its leading bracket groups.
-    final bare = sentence.replaceFirst(_leadingBrackets, '');
-    if (bare.length < _minQuoteChars || bare == sentence) continue;
-    for (final tool in origins.toolTexts) {
-      if (tool.contains(bare)) return true;
+  return flatContent
+      .split(_sentenceSplit)
+      .any((sentence) => _launderedQuoteSentence(sentence, origins));
+}
+
+/// Whether one sentence of a user-intent line is a laundering quote: long
+/// enough to be distinctive, verbatim inside a tool result, and inside no
+/// user text. Digest scaffolding rides the line — a candidate pointer
+/// (`[r7 · …]`) prefixed to a verbatim quote must not hide the quote — so
+/// the sentence is retried without its leading bracket groups.
+bool _launderedQuoteSentence(String sentence, SummaryOriginEvidence origins) {
+  if (sentence.length < _minQuoteChars) return false;
+  if (_containedInAny(origins.userTexts, sentence)) return false;
+  if (_containedInAny(origins.toolTexts, sentence)) return true;
+  final bare = sentence.replaceFirst(_leadingBrackets, '');
+  if (bare.length < _minQuoteChars || bare == sentence) return false;
+  return _containedInAny(origins.toolTexts, bare);
+}
+
+/// Whether [needle] occurs verbatim inside any of [texts]; [alsoContains]
+/// adds the reverse containment (the needle contains the text) — the
+/// digest-scaffolding case where a real ask line wraps its own user text.
+bool _containedInAny(
+  List<String> texts,
+  String needle, {
+  bool alsoContains = false,
+}) {
+  for (final text in texts) {
+    if (text.contains(needle) || (alsoContains && needle.contains(text))) {
+      return true;
     }
   }
   return false;
