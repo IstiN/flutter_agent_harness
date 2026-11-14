@@ -27,8 +27,34 @@ void main() {
     expect(source, contains('_savedCodePage ??= previousCp;'));
     expect(
       source,
-      contains("lookupFunction<_SetConsoleCpC, _SetConsoleCpD>('SetConsoleCP')(savedCp);"),
+      contains(
+          "lookupFunction<_SetConsoleCpC, _SetConsoleCpD>('SetConsoleCP')"),
       reason: 'the shell must not inherit UTF-8 if the user had another page',
+    );
+    expect(source, contains('savedCp'), reason: 'the saved page is restored');
+  });
+
+  test('the ANSI-page mojibake repair hook is installed and cleared', () {
+    // Even with the input page flipped, some consoles translate through the
+    // ANSI page first (and ConPTY hosts the flip never reaches keep the
+    // legacy page): 'п' arrives as 'ï' or the bare byte 0xEF. The parser
+    // hook repairs both shapes; it must be cleared on restore so a stale
+    // table cannot corrupt plain UTF-8 input (fa: cannot type Russian).
+    expect(
+      source,
+      contains("lookupFunction<_GetAcpC, _GetAcpD>('GetACP')"),
+      reason: 'the repair table maps through the ANSI code page',
+    );
+    expect(source, contains('_installMojibakeRepairMap(k32)'));
+    expect(
+      source,
+      contains('consoleTextRepair ='),
+      reason: 'the hook is set after the table build and cleared on restore',
+    );
+    expect(
+      source,
+      contains('_mojibakeRepairMap.isEmpty ? null : _repairConsoleText'),
+      reason: 'an empty table (non-Windows, probe failure) means no repair',
     );
   });
 }

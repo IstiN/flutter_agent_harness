@@ -20,9 +20,13 @@ final class _TerminalCliIO implements CliIO {
   void fireInterrupt() => _interrupts.add(null);
 
   @override
+  @override
   Stream<String> get lines => headless
       ? const Stream<String>.empty()
-      : stdin.transform(utf8.decoder).transform(const LineSplitter());
+      // Windows console code-page repair (see fah_console_cp.dart): legacy
+      // RU-locale consoles deliver Cyrillic as ANSI/OEM bytes — plain strict
+      // UTF-8 decoding dies on them (stream error → dead input line).
+      : stdin.transform(_consoleLineDecoder()).transform(const LineSplitter());
 
   @override
   Stream<KeyEvent> get keys {

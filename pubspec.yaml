@@ -53,6 +53,9 @@ dependencies:
   # DAP hub client (IstiN/fa_hub_client on GitHub). 0.2.8 carries the
   # backoff-overflow CPU fix — the dead-hub reconnect tight loop.
   fa_hub_client: ^0.2.11
+  # Windows console code-page tables for ConsoleLineDecoder (bin/ only —
+  # MultiByteToWideChar over kernel32; lib/ stays dart:ffi-free).
+  ffi: ^2.1.0
   # 0.2.2/0.2.3: conflict-free deletions — KbTombstoneCapable tombstones
   # entity files in place (no git delete/modify conflicts), per-record
   # `deleted/` files + set-difference consolidation progress, union merge
