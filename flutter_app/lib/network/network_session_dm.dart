@@ -43,9 +43,10 @@ extension NetworkSessionDm on NetworkSession {
     _dmSubscription = connector.dmMail.listen(_onDmMail);
   }
 
-  /// Synthetic channel metadata + no network-WS subscribe: DM history
-  /// rides `GET /api/channels/{dm:id}/messages` (owner-only server
-  /// branch) and live frames arrive over the device connector instead.
+  /// Synthetic channel metadata. DM history rides
+  /// `GET /api/channels/{dm:id}/messages` (owner-only server branch);
+  /// live frames arrive on the account network WS and device connector,
+  /// with [ChannelState.seen] deduplicating the two delivery paths.
   void prepareDmChannel(String channelId) {
     if (!channels.any((c) => c.id == channelId)) {
       channels = [
@@ -53,6 +54,67 @@ extension NetworkSessionDm on NetworkSession {
         Channel(id: channelId, networkId: networkId, name: channelId),
       ];
     }
+    _ensureDmPolling();
+  }
+
+  /// The backend persists user/agent DM mail but currently does not push the
+  /// user-addressed half to either live socket. Poll only OPEN DM stores as a
+  /// v1 fallback; real network/device frames still win through the same
+  /// envelope-id dedup. One guarded timer serves every open DM in this session.
+  void _ensureDmPolling() {
+    if (_dmPollTimer?.isActive ?? false) return;
+    _dmPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_pollOpenDmChannels());
+    });
+  }
+
+  @visibleForTesting
+  Future<void> debugPollDmChannels() => _pollOpenDmChannels();
+
+  Future<void> _pollOpenDmChannels() async {
+    if (_dmPollInFlight) return;
+    final open = channelStates.entries
+        .where((entry) => isDmChannel(entry.key))
+        .toList(growable: false);
+    if (open.isEmpty) {
+      _dmPollTimer?.cancel();
+      _dmPollTimer = null;
+      return;
+    }
+    _dmPollInFlight = true;
+    try {
+      for (final entry in open) {
+        if (_dmPollTimer == null) return; // closed while a request was away
+        try {
+          await _pollDmChannel(entry.key, entry.value);
+        } on Object catch (error) {
+          // A transient REST/decode failure must not kill later ticks or
+          // become an unhandled Timer exception.
+          debugPrint('[dm] history poll failed ${entry.key}: $error');
+        }
+      }
+    } finally {
+      _dmPollInFlight = false;
+    }
+  }
+
+  Future<void> _pollDmChannel(String channelId, ChannelState state) async {
+    final revision = state._revision;
+    final page = await _client.listMessages(channelId, useAccountToken: true);
+    var changed = false;
+    for (final envelope in page.items) {
+      if (state.seen.contains(envelope.id)) continue;
+      final message = await _decode(envelope);
+      if (!_isCurrentChannelState(channelId, state, revision) ||
+          _dmPollTimer == null) {
+        return;
+      }
+      // Unlike initial history pagination, a poll MERGES the newest tail:
+      // state.add appends after the outgoing message and owns race dedup
+      // against either live socket path.
+      if (state.add(message)) changed = true;
+    }
+    if (changed) notifyDmChanged();
   }
 
   Future<void> sendDmText(String channelId, String text) async {
@@ -165,17 +227,22 @@ extension NetworkSessionDm on NetworkSession {
     final ts = DateTime.tryParse(envelope.ts);
     unawaited(
       decodeDmEnvelope(
-        Envelope(
-          id: envelope.msgId,
-          channelId: channelId,
-          senderId: envelope.from ?? '',
-          payload: ciphertext,
-          createdAt: ts,
-        ),
-      ).then((message) {
-        if (!identical(channelStates[channelId], state)) return;
-        if (state.add(message)) notifyDmChanged();
-      }),
+            Envelope(
+              id: envelope.msgId,
+              channelId: channelId,
+              senderId: envelope.from ?? '',
+              payload: ciphertext,
+              createdAt: ts,
+            ),
+          )
+          .then((message) {
+            if (!identical(channelStates[channelId], state)) return;
+            if (state.add(message)) notifyDmChanged();
+          })
+          .catchError((Object error) {
+            // A live DM must never vanish silently (e2e issue #2062).
+            debugPrint('[dm] live decode failed ${envelope.msgId}: $error');
+          }),
     );
   }
 }

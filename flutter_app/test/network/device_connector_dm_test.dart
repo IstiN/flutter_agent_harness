@@ -148,9 +148,24 @@ void main() {
     });
   });
 
-  test(
-    'inbound DM routes a plain user turn and auto-replies to sender',
-    () async {
+  for (final route in <({String label, String sender, String recipient})>[
+    (
+      label: 'normalizes the backend\'s bare user id',
+      sender: 'remote-user',
+      recipient: 'user:remote-user',
+    ),
+    (
+      label: 'preserves an already-prefixed user id',
+      sender: 'user:remote-user',
+      recipient: 'user:remote-user',
+    ),
+    (
+      label: 'preserves an agent address',
+      sender: 'peer@dev-2',
+      recipient: 'peer@dev-2',
+    ),
+  ]) {
+    test('inbound DM auto-reply ${route.label}', () async {
       final user = await EnvelopeCodec.newX25519KeyPair();
       final userKeyPair = await codec.keyPairFromPriv(user.priv);
       final host = _FakeDmSessionHost('assistant answer');
@@ -183,7 +198,7 @@ void main() {
           msgId: 'inbound-frame-1',
           network: 'net-personal',
           channel: channel,
-          from: 'user:remote-user',
+          from: route.sender,
           to: 'fa@dev-1',
           ts: '2026-11-12T10:00:00.000Z',
           ciphertext: ciphertext,
@@ -210,7 +225,7 @@ void main() {
       expect(reply.network, 'net-personal');
       expect(reply.channel, channel);
       expect(reply.from, 'fa@dev-1');
-      expect(reply.to, 'user:remote-user');
+      expect(reply.to, route.recipient);
       final opened = await codec.decrypt(
         channelKeyPair: userKeyPair,
         frameId: reply.msgId,
@@ -219,8 +234,8 @@ void main() {
       );
       expect(opened.senderPub, local.publicKey);
       expect(opened.plaintext, 'assistant answer');
-    },
-  );
+    });
+  }
 
   test(
     'structured slash-command plaintext stays blocked by connector ACL',

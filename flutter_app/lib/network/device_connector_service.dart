@@ -28,7 +28,8 @@ import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:fa_ui/fa_ui.dart' show KeychainStore;
-import 'package:flutter/foundation.dart' show Listenable;
+import 'package:flutter/foundation.dart'
+    show Listenable, debugPrint, kDebugMode;
 // The machine-connector core is pure Dart; the src imports follow the
 // lib/network implementation-import convention (key_wallet.dart).
 // ignore: implementation_imports
@@ -776,6 +777,10 @@ class DeviceConnectorService {
       sessionId: sessionId,
       text: mail.text,
     );
+    // e2e diagnostics (issue #2062): the reply path is otherwise silent.
+    if (kDebugMode) {
+      debugPrint('[dm] inbound ${envelope.msgId} reply=${reply?.length}');
+    }
     if (reply == null || reply.trim().isEmpty) return;
     final channel = envelope.channel;
     final network = envelope.network;
@@ -787,20 +792,38 @@ class DeviceConnectorService {
         userPub == null) {
       throw StateError('incomplete DM reply route');
     }
+    // The live backend rewrites an authenticated user sender from
+    // `user:<uid>` to bare `<uid>` on inbound mail. Device-WS routing needs
+    // the explicit user prefix on the reply; a bare uid is echoed to the
+    // sending agent instead of delivered to the user's devices.
+    final replyRecipient = sender.startsWith('user:') || sender.contains('@')
+        ? sender
+        : 'user:$sender';
     final agent = await _dmKeys.loadOrCreate(_localAgentAddress());
-    await sendMail(
-      network: network,
-      channel: channel,
-      from: _localAgentAddress(),
-      to: sender,
-      ciphertextFor: (frameId) => hubSealFanet1(
-        senderDhKeyPair: agent.keyPair,
-        recipientDhPubkey: userPub,
-        frameId: frameId,
-        aadTarget: channel,
-        plaintext: reply,
-      ),
-    );
+    try {
+      await sendMail(
+        network: network,
+        channel: channel,
+        from: _localAgentAddress(),
+        to: replyRecipient,
+        ciphertextFor: (frameId) => hubSealFanet1(
+          senderDhKeyPair: agent.keyPair,
+          recipientDhPubkey: userPub,
+          frameId: frameId,
+          aadTarget: channel,
+          plaintext: reply,
+        ),
+      );
+      if (kDebugMode) {
+        debugPrint(
+          '[dm] reply sent network=$network channel=$channel '
+          'to=$replyRecipient',
+        );
+      }
+    } on Object catch (error) {
+      debugPrint('[dm] reply send failed: $error');
+      rethrow;
+    }
   }
 
   Future<void> _start(int generation) async {

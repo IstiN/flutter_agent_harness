@@ -5,7 +5,6 @@ import 'package:cryptography/cryptography.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/envelope_codec.dart';
-import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show NetworkEnvelope, NetworkEnvelopeKind;
@@ -97,6 +96,7 @@ void main() {
         httpClient: httpClient,
         connector: wsConnector,
         wallet: wallet,
+        jwtToken: 'jwt-account',
       );
       s.attachDmConnector(dmConnector);
       addTearDown(s.dispose);
@@ -112,6 +112,10 @@ void main() {
         expect(s.channels.any((c) => c.id == dmChannel), isTrue);
         expect(s.channelStates[dmChannel]!.historyResolved, isTrue);
         expect(s.channelStates[dmChannel]!.messages, isEmpty);
+        expect(
+          httpClient.requests.single.headers['authorization'],
+          'Bearer jwt-account',
+        );
       },
     );
 
@@ -188,10 +192,24 @@ void main() {
       expect(messages[1].senderName, 'fa');
     });
 
-    test('live connector dmMail appends into the open channel store', () async {
-      httpClient.respond(200, body: '{"items":[],"nextCursor":""}');
+    test('live network WS reply appends and device echo dedups', () async {
+      httpClient
+        ..respond(200, body: channelsBody)
+        ..respond(200, body: membersBody)
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
       final s = await session();
+      await s.start();
+      await pumpEventQueue();
       await s.openChannel(dmChannel);
+      await pumpEventQueue();
+      final networkChannel = wsConnector.channels.single;
+      expect(
+        networkChannel.sentFrames.any(
+          (frame) =>
+              frame['type'] == 'subscribe' && frame['channelId'] == dmChannel,
+        ),
+        isTrue,
+      );
       final userPub = await identityPub();
       final agentKeys = await X25519().newKeyPair();
       final sealed = await hubSealFanet1(
@@ -201,23 +219,18 @@ void main() {
         aadTarget: dmChannel,
         plaintext: 'live reply',
       );
-      dmConnector.dmMailController.add(
-        NetworkEnvelope(
-          kind: NetworkEnvelopeKind.mail,
-          msgId: 'dm-live-1',
-          network: 'personal',
-          channel: dmChannel,
-          from: 'fa@dev-1',
-          to: 'user:u-1',
-          ts: '2026-11-14T10:00:00.000Z',
-          ciphertext: sealed,
-        ),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      networkChannel.serverEvent('envelope', {
+        'id': 'dm-live-1',
+        'channelId': dmChannel,
+        'senderId': 'fa@dev-1',
+        'payload': sealed,
+        'createdAt': '2026-11-14T10:00:00.000Z',
+      });
+      await pumpEventQueue();
       final messages = s.channelStates[dmChannel]!.messages;
       expect(messages.single.text, 'live reply');
       expect(messages.single.isOwn, isFalse);
-      // Dedup by msgId: the same frame again appends nothing.
+      // Cross-transport dedup by msgId: the device-WS echo appends nothing.
       dmConnector.dmMailController.add(
         NetworkEnvelope(
           kind: NetworkEnvelopeKind.mail,
@@ -233,5 +246,51 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(s.channelStates[dmChannel]!.messages, hasLength(1));
     });
+
+    test(
+      'history poll appends unseen replies after outgoing and dedups',
+      () async {
+        httpClient.respond(200, body: '{"items":[],"nextCursor":""}');
+        final s = await session();
+        await s.openChannel(dmChannel);
+        await s.sendText(dmChannel, 'ping');
+        final sealed = await hubSealFanet1(
+          senderDhKeyPair: await X25519().newKeyPair(),
+          recipientDhPubkey: await identityPub(),
+          frameId: 'dm-poll-1',
+          aadTarget: dmChannel,
+          plaintext: 'polled reply',
+        );
+        final body = jsonEncode({
+          'items': [
+            {
+              'id': 'dm-poll-1',
+              'channelId': dmChannel,
+              'senderId': 'fa@dev-1',
+              'payload': sealed,
+              'createdAt': '2026-11-14T10:00:01.000Z',
+            },
+          ],
+          'nextCursor': '',
+        });
+        httpClient.respond(200, body: body);
+        await s.debugPollDmChannels();
+        expect(
+          httpClient.requests.last.headers['authorization'],
+          'Bearer jwt-account',
+        );
+        final messages = s.channelStates[dmChannel]!.messages;
+        expect(messages.map((message) => message.envelopeId), [
+          'dm-msg-1',
+          'dm-poll-1',
+        ]);
+        expect(messages.last.text, 'polled reply');
+        expect(messages.last.isOwn, isFalse);
+
+        httpClient.respond(200, body: body);
+        await s.debugPollDmChannels();
+        expect(s.channelStates[dmChannel]!.messages, hasLength(2));
+      },
+    );
   });
 }

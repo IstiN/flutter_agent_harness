@@ -14,6 +14,8 @@ import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show isDmChannel;
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
@@ -132,7 +134,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
 
   /// A private channel is writable only when this device's wallet holds its
   /// E2E key. Network ownership/membership cannot substitute for that key.
+  /// DM virtual channels are exempt: their transport is fanet1 sealed to
+  /// the identity key, never the per-channel key ring (issue #2062).
   bool _isMissingPrivateKey(NetworkSession session, String channelId) {
+    if (isDmChannel(channelId)) return false;
     final channel = _lastChannel(session, channelId);
     if (channel == null || channel.isPublic) return false;
     return widget.manager.wallet.channelKeysFor(

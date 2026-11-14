@@ -148,6 +148,8 @@ final class NetworkSession extends ChangeNotifier {
   DeviceConnectorService? _dmConnector;
   StreamSubscription<NetworkEnvelope>? _dmSubscription;
   final _dmSessionTargets = <String, String?>{};
+  Timer? _dmPollTimer;
+  var _dmPollInFlight = false;
 
   /// The member roster by id, presence included (roster.snapshot +
   /// presence.changed folded in).
@@ -266,10 +268,18 @@ final class NetworkSession extends ChangeNotifier {
   Future<void> openChannel(String channelId) async {
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
     if (isDmChannel(channelId)) {
+      // History decode needs the same lazy identity as send: an enrolled
+      // account on a fresh install can open an existing DM before its first
+      // outgoing message, so there is no earlier send path to create it.
+      if (!_wallet.hasIdentity) {
+        await _wallet.createIfMissing(displayName: identity.displayName);
+      }
       prepareDmChannel(channelId);
-    } else {
-      _ws.subscribe(channelId);
     }
+    // User-addressed DM replies arrive on the account network WS; agent-
+    // addressed turns arrive on the device connector. Keep both live paths
+    // attached — ChannelState.seen dedups their overlap by envelope id.
+    _ws.subscribe(channelId);
     if (state.historyResolved || state.loading) return;
     await Future<void>.microtask(() {});
     await _loadHistoryPage(channelId, state);
@@ -316,6 +326,7 @@ final class NetworkSession extends ChangeNotifier {
       final page = await _client.listMessages(
         channelId,
         cursor: state.nextCursor,
+        useAccountToken: isDmChannel(channelId),
       );
       if (!_isCurrentChannelState(channelId, state, revision)) return;
       // Chat-order pagination (fa_network contract): pages arrive
@@ -694,6 +705,8 @@ final class NetworkSession extends ChangeNotifier {
   /// event queue, which wedges `testWidgets`'s implicit end-of-test pump —
   /// teardown is best-effort and needs no completion guarantee.
   Future<void> close() async {
+    _dmPollTimer?.cancel();
+    _dmPollTimer = null;
     final events = _events;
     _events = null;
     if (events != null) unawaited(events.cancel());

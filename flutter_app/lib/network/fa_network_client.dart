@@ -607,6 +607,11 @@ class FaNetworkClient {
     String? cursor,
     int? limit,
 
+    /// Owner-only DM history requires the ai-native account JWT rather than
+    /// the personal network's member session token. Ordinary channels keep
+    /// the default member-token-first behavior.
+    bool useAccountToken = false,
+
     /// Anonymous showcase read: NO bearer at all (a public channel of a
     /// public network is served tokenless; a present-but-invalid token
     /// would earn a 401 instead of the oracle-free 404).
@@ -617,6 +622,7 @@ class FaNetworkClient {
       '/api/channels/$channelId/messages',
       query: {'cursor': ?cursor, 'limit': ?limit?.toString()},
       auth: !anonymous,
+      management: useAccountToken,
       expected: {200},
     );
     return MessagePage.fromJson(_decodeMap(res));

@@ -124,6 +124,11 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     if (!mounted) return;
     final session = manager.sessions[personal];
     if (session == null) return;
+    // A Devices tap is a ROOT entry into the personal network: a fresh shell
+    // has no current network id, and selectChannel alone would retain null
+    // (or a previously viewed network), leaving NetworkChatPage unbound.
+    await mode.enterNetwork(personal);
+    if (!mounted) return;
     session.attachDmConnector(connector);
     session.dmSessionTargets[channelId] = sessionId;
     await _openSidebarChannelEntry(
