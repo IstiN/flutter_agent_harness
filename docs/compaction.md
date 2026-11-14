@@ -199,3 +199,38 @@ funnel (issue #1085 M2) survives as the backstop: when the deterministic
 tier cannot free the window (e.g. a keep-recent floor pinning the whole
 transcript), the bounded classic/structured passes run and the exhaustion
 verdict stays honest about how many ran.
+
+## The working set and the goal slot (gh-210)
+
+After any compaction, the context tail carries a bounded re-injection so
+operative continuity stops depending on what happened to survive the
+cut (lost-in-the-middle). Two pieces, both additive projection output —
+neither is ever written as a session record, so every hide path (judge,
+deterministic fallback, LRU re-hide, agent hide, checkpoint fold) walks
+records it cannot see and cannot sink them:
+
+- **The obligations block** (issue #1380) — unchanged, ahead of the
+  working set.
+- **The working-set block** (`lib/src/compaction/working_set.dart`) —
+  `goal:` first, then `recently touched files` once a compaction
+  boundary exists (structured hide/checkpoint OR a classic
+  `CompactionRecord`; the classic engine's folded-off records count
+  too). Files render as PATH references only — content re-reads on
+  demand — so the block stays bounded.
+
+Budgets, enforced with explicit markers, never silent cuts: the file
+list caps at `defaultWorkingSetMaxPaths` lines (the oldest counted away
+as `… and N more touched files`), the whole block caps at
+`defaultWorkingSetBudgetChars` chars (the oldest files drop first), and
+an oversized goal clips with a `[clipped at N chars]` marker. Operative
+skills are NOT re-listed here — the gh-1409 pinned-operative mechanism
+already carries them through checkpoints, and this card leaves the
+prior mechanisms untouched.
+
+**The goal recitation slot** is the agent-updatable `goal:` line. The
+agent writes it with the `recite_goal` tool (latest-wins, one new
+append-only `goal_recitation` snapshot per recite; no goal argument =
+read the current slot). Goals bound at `goalRecitationBudgetChars`
+before the write lands — the render never clips again. A session with
+no recitation and no compaction boundary projects byte-identically to
+the pre-gh-210 shape.
