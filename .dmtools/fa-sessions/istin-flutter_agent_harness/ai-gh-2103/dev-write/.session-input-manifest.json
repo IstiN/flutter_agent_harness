@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-14T16:56:58.537Z",
+  "ticketKey": "gh-2103",
+  "headSha": "7b94872f3773c0e0c2d53fbb530f77087dbc5fcf",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:96f533b408729695",
+      "size": 72013
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:dac9f53bfa7075a5",
+      "size": 142121
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:41d7fbb8de71a3b5",
+      "size": 560
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:06e4835444f634e8",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:43731e35e901c11d",
+      "size": 871
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:52e8062aef27257d",
+      "size": 852
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:8386341b6d4be46d",
+      "size": 3047
+    },
+    "request.md": {
+      "hash": "fnv1a64:a535cacd82847f2c",
+      "size": 2524
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f73ca41bb4b4bbcd",
+      "size": 376
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:173c09b3c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:115c5802f099d299",
+      "size": 2615
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a535cacd82847f2c",
+      "size": 2524
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel afc2af9794c800a5b4c081cce71ddb880dca2f09 — stale base at 2026-11-14T14:35:51.737Z\n🛑 stale-cancel b61c0c3b631be5cd069621e20a76b79ac5442c75 — stale base at 2026-11-14T14:35:51.737Z\n\nCancelled 2 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-14:b4892aec",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel afc2af9794c800a5b4c081cce71ddb880dca2f09 — stale base at 2026-11-14T14:35:51.737Z\n🛑 stale-cancel b61c0c3b631be5cd069621e20a76b79ac5442c75 — stale base at 2026-11-14T14:35:51.737Z\n\nCancelled 2 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
