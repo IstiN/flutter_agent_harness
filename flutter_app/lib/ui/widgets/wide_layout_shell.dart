@@ -172,8 +172,18 @@ Future<List<DeviceChatSession>> _loadDeviceChatSessions(
   FlutterSessionManager manager,
 ) async {
   final persisted = await manager.listPersistedSessions();
+  // The server rejects oversized roster patches (400 "roster patch too
+  // large" on hosts with hundreds of sessions): the projection is a
+  // RECENT-SESSIONS surface, not an archive — cap at the 50 most recently
+  // updated persisted rows; live sessions always ride on top below.
+  final recent = persisted.toList()
+    ..sort(
+      (a, b) => (b.lastUpdatedAt ?? b.createdAt).compareTo(
+        a.lastUpdatedAt ?? a.createdAt,
+      ),
+    );
   final sessions = <String, DeviceChatSession>{
-    for (final metadata in persisted)
+    for (final metadata in recent.take(50))
       metadata.id: (id: metadata.id, live: false),
   };
   // Include a just-created live row even if its first disk listing has not

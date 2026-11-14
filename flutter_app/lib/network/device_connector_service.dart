@@ -826,12 +826,16 @@ class DeviceConnectorService {
   ) async {
     try {
       final client = await sessionManager.accountClient();
-      if (client == null) return;
+      if (client == null) {
+        onLog?.call('device roster publish skipped: no account client');
+        return;
+      }
       await client.patchDeviceRoster(
         deviceId,
         agents: agents,
         sessions: sessions,
       );
+      onLog?.call('device roster published: ${sessions.length} sessions');
     } on Object catch (error) {
       onLog?.call('device roster publish skipped: $error');
     }
