@@ -5554,3 +5554,1368 @@ warning: dropped customProviders entries named after built-in providers (openai)
 ✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) the steering cancel reason is SteeringInterruptFire, never a retry-ladder class
 ✅ test/agent/image_recovery_loop_test.dart: IT-5 (AC5): the learned budget rides subsequent requests — config still honored when lower
 ✅ test/agent/image_recovery_loop_test.dart: IT-6 (AC6): a text-only session never engages the ladder
+✅ test/agent/image_recovery_loop_test.dart: the kill switch disables the ladder entirely
+✅ test/agent/image_recovery_loop_test.dart: IT-4b (review: AC6 gate): a strip-all-latched session with image history never re-runs the ladder on a later 413
+✅ test/agent/image_recovery_loop_test.dart: IT-4c (review: AC6 gate): a text-only 413 with a small inline icon never engages the ladder
+✅ test/agent/image_recovery_loop_test.dart: IT-6 (review: armed note): an armed recovery note never rides an unrelated later request when the retry never streams
+✅ test/agent/image_registry_video_test.dart: AC7 — a video payload reports as carrying image bytes
+✅ test/agent/image_registry_video_test.dart: text-only payloads still report no image bytes
+✅ test/agent/image_registry_video_test.dart: AC7 — a video-only session keeps the image-free fast path: the caller list is returned untouched (same instance)
+✅ test/agent/image_registry_video_test.dart: AC7 — the strip-all latch strips video blocks with the [image dropped] placeholder and stops the payload from carrying media bytes
+✅ test/agent/image_registry_video_test.dart: AC7 — strip-all with both an image and a video strips BOTH
+✅ test/agent/agent_loop_test.dart: agentLoop an over-window outgoing context ends the run without a provider call
+✅ test/agent/agent_loop_test.dart: agentLoop the over-window guard trips at the capped window, not the model window (issue #273)
+✅ test/agent/agent_loop_test.dart: agentLoop IT-W2 (#729): a cap above the catalog window raises the guard basis — an over-catalog branch keeps flowing
+✅ test/agent/agent_loop_test.dart: agentLoop the over-window guard counts the system prompt and tool schemas when no usage anchor covers them
+✅ test/agent/agent_loop_test.dart: agentLoop the over-window guard does not double-count the system prompt when provider usage anchors the estimate
+✅ test/agent/agent_loop_test.dart: agentLoop single turn without tools emits full lifecycle in order
+✅ test/agent/agent_loop_test.dart: agentLoop prompts and caller context are not mutated
+✅ test/agent/agent_loop_test.dart: agentLoop multi-turn run executes tool call and accumulates context
+✅ test/agent/agent_loop_test.dart: agentLoop multiple tool calls in one message produce results in source order
+✅ test/agent/agent_loop_test.dart: agentLoop parallel mode: end events in completion order, results in source order
+✅ test/agent/agent_loop_test.dart: agentLoop sequential mode runs one tool at a time
+✅ test/agent/agent_loop_test.dart: agentLoop abort mid-stream ends the loop with aborted semantics
+✅ test/agent/agent_loop_test.dart: agentLoop abort during tool execution: no further provider call
+✅ test/agent/agent_loop_test.dart: agentLoop provider error event ends the loop without tool execution
+✅ test/agent/agent_loop_test.dart: agentLoop length stop fails tool calls as truncated and continues
+✅ test/agent/agent_loop_test.dart: agentLoop unknown tool yields an error result without executing
+✅ test/agent/agent_loop_test.dart: agentLoop executor throw becomes an error tool result
+✅ test/agent/agent_loop_test.dart: agentLoop core exception prefixes are stripped from error tool results
+✅ test/agent/agent_loop_test.dart: agentLoop operational carriers never carry the uncaught-exception hint
+✅ test/agent/agent_loop_test.dart: agentLoop nested core exception prefixes are stripped recursively
+✅ test/agent/agent_loop_test.dart: agentLoop an empty error message still renders the structured wrapper
+✅ test/agent/agent_loop_test.dart: agentLoop errors with clean toString are wrapped, not leaked bare
+✅ test/agent/agent_loop_test.dart: agentLoop partial tool updates are relayed; post-settle updates are dropped
+✅ test/agent/agent_loop_test.dart: agentLoop terminate hint stops the loop after the tool batch
+✅ test/agent/agent_loop_test.dart: agentLoop stream function throwing becomes an error turn, not a crash
+✅ test/agent/agent_loop_test.dart: steering cap run settles after maxSteeringTurns extensions; over-cap batches wait for the next run
+✅ test/agent/agent_loop_test.dart: agentLoopContinue rejects an empty context
+✅ test/agent/agent_loop_test.dart: agentLoopContinue rejects a context ending with an assistant message
+✅ test/agent/agent_loop_test.dart: agentLoopContinue continues from a tool-result message without new prompts
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a wedged context is repaired pre-request without a provider call knowing (UT-repair through the loop)
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a anthropic pairing 400 triggers exactly one self-healing repair and retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a litellm pairing 400 triggers exactly one self-healing repair and retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a openai pairing 400 triggers exactly one self-healing repair and retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a google pairing 400 triggers exactly one self-healing repair and retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a openai-unanswered pairing 400 triggers exactly one self-healing repair and retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) unrelated provider errors do not trigger the pairing retry
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) per-run position-counter ids stay unique across runs sharing a context (UT-ids)
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a terminal event without a start still stamps and appends the message (skipLast=false path)
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) an already-cancelled token short-circuits before the provider call
+✅ test/agent/agent_loop_test.dart: tool pairing integrity (issue #85) a stream that closes without a terminal event surfaces an error turn
+✅ test/agent/agent_loop_test.dart: degenerate empty completions an empty completion is retried once, the real answer lands
+✅ test/agent/agent_loop_test.dart: degenerate empty completions retries are bounded by maxEmptyRetries
+✅ test/agent/agent_loop_test.dart: degenerate empty completions maxEmptyRetries: 0 keeps the old accept-blank behavior
+✅ test/agent/agent_loop_test.dart: degenerate empty completions a completion with tool calls continues normally (no empty-retry — the next call carries the tool result)
+✅ test/agent/agent_loop_test.dart: degenerate empty completions whitespace-only text counts as degenerate and is retried
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) IT-1: empty after tool activity retries and the healthy answer lands
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) IT-2/E3/AC7: a persistent-empty storm fires exactly N retries then ends with a loud run error — no storm
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) invariant 3: retried empty messages stay in the transcript (truthful record)
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) UT-2/E6: silent-truncation-flagged and length empties follow the same hiccup path to the loud error (REG-2 family)
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) UT-4/E2: a cancel between attempts suppresses the next attempt — no retry after abort, and the run settles aborted
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) AC2: a clean empty keeps the generic budget only — no hiccup retries, no error conversion
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) gh-1603: the first hiccup retry stays plain; the second and third carry the continuation nudge — and the recovery lands
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) gh-1603 AC2: a thinking-only output-truncated first response (the HT6UsCc shape) reaches a tool call on the next turn
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) UT: emptyHiccupRetries: 0 is not an escape hatch — the exhaustion error fires after the maxEmptyRetries budget
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) E5/E2: an abort racing the FINAL hiccup retry wins over any empty shape — a length-flagged empty settles aborted, never escapes as a silent final (headless would exit 0 on an aborted run)
+✅ test/agent/agent_loop_test.dart: empty completion after partial content (gh-1577) E7: the backoff sleep is cancellation-aware — a cancel landing during the backoff does not wait out the delay
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC1 — a warming-up model survives under its configured window config: streamIdleTimeoutMs above the floor — the warmup completes, the run answers, no (zero-byte stall) abort
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC2 — the entry override wins over the global section the entry window keeps its endpoint alive while the global window aborts another endpoint
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC3 — unset config keeps today's behavior no config: two watchdog kills, then the zero-byte terminal (the pre-ticket 2-kill abort)
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC4 — the replay stops at the connect budget connectTimeoutMs below the window: one attempt, terminal names both values
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC4 — the replay stops at the connect budget connectTimeoutMs == window: the replay still runs (AC1 shape survives its own budget)
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC5 — the fire names the governing window and source a raised window names the value and its precedence source
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC5 — the fire names the governing window and source the default fire message stays byte-for-byte (AC3)
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC5 — the fire names the governing window and source runIdleWindow exposes the effective window + source for the stall surfaces
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC5 — the fire names the governing window and source #1916 AC3 — the run-idle window scales for the outbound payload a multi-MB request build doubles the resolved window
+✅ test/agent/run_idle_watchdog_provider_window_test.dart: gh-1617 AC5 — the fire names the governing window and source the replay notice carries the governing idle window (capability surface: replay event carries idleWindowMs)
+✅ test/agent/agent_loop_truncated_capture_test.dart: output-limit stop during reply (IT-01) salvaged reply text becomes a partial artifact; the call stays failed
+✅ test/agent/agent_loop_truncated_capture_test.dart: output-limit stop during reply (IT-01) no usable salvage creates no artifact (E2/AC6)
+✅ test/agent/agent_loop_truncated_capture_test.dart: mixed truncated batch (UT-05, E3) executable calls beside reply execute zero times and persist nothing
+✅ test/agent/agent_loop_truncated_capture_test.dart: mixed truncated batch (UT-05, E3) REG-03: executable-only truncated batches create zero artifacts
+✅ test/agent/agent_loop_truncated_capture_test.dart: non-truncated behavior unchanged (REG-03) a normal toolUse reply runs through the executor, no capture
+✅ test/agent/agent_loop_truncated_capture_test.dart: config plumbing (review regression) copyWith preserves onTruncatedToolCall across model swaps
+✅ test/agent/message_cap_loop_test.dart: cap-400: learn + one compaction pass + one retry → success (AC3)
+✅ test/agent/message_cap_loop_test.dart: a second cap-400 surfaces the terminal error — no infinite loop
+✅ test/agent/message_cap_loop_test.dart: no policy: the cap-400 is terminal immediately (AC8, byte-identical)
+✅ test/agent/message_cap_loop_test.dart: cap-unknown refusal still heals once, with a null learned cap (E1)
+✅ test/agent/message_cap_loop_test.dart: the retry rides a coalesced payload; the transcript is untouched (AC6/AC7)
+✅ test/agent/message_cap_loop_test.dart: a throwing relief degrades to the coalesce-only retry
+✅ test/agent/steering_yield_test.dart: steer soft-yield a steer mid-tool cancels the phase yield token, the yield-aware tool ends early untouched, and the message is delivered at the boundary
+✅ test/agent/image_recovery_state_test.dart: ImagePayloadRecoveryState.effectiveByteBudget no learning — the configured budget rides verbatim
+✅ test/agent/image_recovery_state_test.dart: ImagePayloadRecoveryState.effectiveByteBudget a learned budget binds only when lower than configured (AC5)
+✅ test/agent/image_recovery_state_test.dart: ImagePayloadRecoveryState.effectiveByteBudget halving compounds — each 413 halves again (AC4)
+✅ test/agent/image_recovery_state_test.dart: ImagePayloadRecoveryState.effectiveByteBudget the learned budget never sinks below the recovery floor
+✅ test/agent/image_recovery_state_test.dart: ImagePayloadRecoveryState.effectiveByteBudget a disabled configured budget seeds halving from the default
+✅ test/agent/image_recovery_state_test.dart: the one-shot recovery note armed → consumed once with the build counts, then silence
+✅ test/agent/image_recovery_state_test.dart: the one-shot recovery note the note re-arms per pass with fresh counts
+✅ test/agent/image_recovery_state_test.dart: the canonical notice text matches the ticket format
+✅ test/agent/image_recovery_state_test.dart: review — the disarm + loop-event seam disarmNote kills an armed note without consuming it
+✅ test/agent/image_recovery_state_test.dart: review — the disarm + loop-event seam disarmNote without an armed note is a no-op
+✅ test/agent/image_recovery_state_test.dart: review — the disarm + loop-event seam takeLoopEvent rides the consumed note once, with the build counts
+✅ test/agent/image_recovery_state_test.dart: review — the disarm + loop-event seam observeBuild records whether the payload carried image bytes
+✅ test/agent/image_recovery_state_test.dart: review — the disarm + loop-event seam lastDropped/lastStripped expose the observed build counts
+✅ test/agent/steering_yield_test.dart: steer soft-yield the external probe also triggers the yield (inbox mail mid-tool)
+✅ test/agent/steering_yield_test.dart: steer soft-yield a tool that ignores the yield token runs to completion (classic boundary delivery)
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger parses items with all fields from the fenced block
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger takes the LAST block when the message carries several
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger missing status parses as fail (unverified never counts as pass)
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger tolerant status tokens: pass/fixed prefixes, junk is fail
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger entries without a requirement are skipped
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger no block at all parses to null (legacy answer)
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger an empty or requirement-less block parses to null
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger unterminated final block still parses (truncated answer)
+✅ test/agent/finalize_gate_test.dart: parseTaskLedger does not mistake other fenced languages for the ledger
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes parses the unfenced heading + bullet shape
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes accepts a bold heading variant (**task-ledger**)
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes gh-1516 review: a model DOCUMENTING the ledger format is not stripped — the unfenced shape needs real verification evidence
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes gh-1516 review: a single-entry near-miss with a real command still parses (verification evidence present)
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes a task-ledger heading without requirement bullets is not a ledger
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes the fenced block still wins when both shapes appear
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes stripTaskLedger removes the fenced block and its blank line
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes stripTaskLedger removes the unfenced heading + bullets
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes stripTaskLedger leaves plain answers byte-identical
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes gh-1516 review: strip collapses ONLY the seam blanks — the rest of the answer stays byte-identical
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes gh-1516 review: a ledger at the very start drops the leading blank edge it vacated
+✅ test/agent/finalize_gate_test.dart: gh-1516: tolerant strip — near-miss ledger shapes resolveTaskLedger pairs the parsed ledger with the stripped text in one shot (single-scan entry point)
+✅ test/agent/finalize_gate_test.dart: TaskLedger model verifiedCount/failedCount/allVerified (2+ item case)
+✅ test/agent/finalize_gate_test.dart: TaskLedger model JSON round-trip preserves items and status
+✅ test/agent/finalize_gate_test.dart: TaskLedger model fromJson is tolerant: junk data → null, partial items survive
+✅ test/agent/finalize_gate_test.dart: formatTaskLedgerBlock round-trip formatted block parses back to the same ledger
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) names the contract and the ledger record block
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) enumerates the named checklist items
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) gh-1605/gh-1652: documents the grader-parity step (2.5, not a named check)
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) gh-1834: conformance claims count as verified only with negative + combination checks (AC1/AC2), taught abstractly
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) mandates command-verified state, never memory
+✅ test/agent/finalize_gate_test.dart: FinalizeGate contract prompt (gh-1412 UT-1 content) pins the ledger status vocabulary
+✅ test/agent/finalize_gate_test.dart: record type constant is the session record discriminator
+✅ test/agent/finalize_gate_test.dart: TaskLedgerItemStatus persisted-name contract (issue #1999) statuses round-trip through pinned payload spellings
+✅ test/agent/finalize_gate_test.dart: TaskLedgerItemStatus persisted-name contract (issue #1999) unknown/legacy statuses degrade to fail, never crash
+✅ test/agent/message_cap_compactor_test.dart: message count at cap − margin fires compaction with tokens far under the trigger (AC4)
+✅ test/agent/message_cap_compactor_test.dart: just under the trigger: no compaction (the margin is real)
+✅ test/agent/message_cap_compactor_test.dart: no learned cap: token-only behavior, byte-identical (AC8)
+✅ test/agent/finalize_gate_loop_test.dart: finalizeGate on + ledger in the final answer emits TaskLedgerEvent
+✅ test/agent/finalize_gate_loop_test.dart: the event lands after the final message and before agent end
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516: a produced-state turn emits the event AND strips the ledger from the final message (the transcript never shows it)
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516 review: the MessageEndEvent itself already carries the stripped message — hosts persist/render the event payload, so the strip must land BEFORE it, not at end-of-run
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516 review: an error/aborted terminal answer still folds — the hidden record persists and the end payload ships the stripped message
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516 review: EVERY ledger-bearing text block is stripped — a second block never survives in the transcript (the gate key stays the last ledger)
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516: a trivial turn (no tool calls, pure Q&A) does not fire the gate — no event — and an over-eager ledger is still stripped
+✅ test/agent/finalize_gate_loop_test.dart: gh-1516: the unfenced near-miss ledger shape fires the gate and is stripped from the final message
+✅ test/agent/finalize_gate_loop_test.dart: finalizeGate off: no TaskLedgerEvent even with a ledger present
+✅ test/agent/finalize_gate_loop_test.dart: finalizeGate on + no ledger in the answer: no event (degrades clean)
+✅ test/agent/finalize_gate_loop_test.dart: a run that ends on tool calls without a final answer emits nothing
+✅ test/agent/finalize_gate_loop_test.dart: a ledger quoted in an earlier turn never satisfies the gate when the run ends on tool calls (gh-1412 review)
+✅ test/agent/orphan_notice_adapters_test.dart: UT-ROLE anthropic: the note rides the existing user message
+✅ test/agent/orphan_notice_adapters_test.dart: UT-ROLE openai chat completions: the note rides the existing user message
+✅ test/agent/orphan_notice_adapters_test.dart: UT-ROLE google: the note rides the existing user turn
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-1: empty after partial text in the turn → emptyAfterPartial
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-2: empty after a StopReason.length message → emptyAfterPartial
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-2: empty after a silent-truncation-flagged message → emptyAfterPartial
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-1: empty after tool activity in the turn → emptyAfterPartial
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-3: empty with no partial content anywhere → cleanEmpty
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-3/E1: the partial-content window is the TURN — an old truncation from a previous turn cannot resurrect retries
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-3: aborted stop is never classified empty (guard kept)
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-3: error stop is never classified empty (guard kept)
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-5: thinking-only WITH a tool call is not empty (ToolCall boundary survives)
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-5: thinking-only without text or tool calls IS empty
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-5: whitespace-only text IS empty
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) UT-5: real text is not empty
+✅ test/agent/empty_completion_test.dart: classifyEmptyCompletion (UT-1..UT-5, gh-1577) E6: an empty message that is itself truncation-flagged is hiccup evidence on its own
+✅ test/agent/empty_completion_test.dart: emptyHiccupBackoffFor (UT-4) exponential from the base, capped at the max, deterministic
+✅ test/agent/empty_completion_test.dart: continuation nudge transparency (gh-1603) UT-N1: the loop-injected nudge does not reset the partial-content window — a nudged retry stays a hiccup
+✅ test/agent/empty_completion_test.dart: continuation nudge transparency (gh-1603) UT-N2: a real user message still ends the window — cleanEmpty
+✅ test/agent/empty_completion_test.dart: continuation nudge transparency (gh-1603) UT-N3: the nudge marker recognizes only the exact message
+✅ test/agent/empty_completion_test.dart: continuation nudge transparency (gh-1603) UT-N4: the nudge text carries the truncation + continuation ask
+✅ test/agent/empty_completion_test.dart: emptyHiccupExhaustedError names the retry count, the attempt count, and the stop reason
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog aborts a wedged run and reports via onRunIdleTimeout
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog gh-1308: a replayed zero-byte stall is bounded — the run ends as a retryable provider error at ≈N×watchdog-interval, never at the cap
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog stays quiet while a tool is executing (long test gates)
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog streaming deltas keep the watchdog disarmed
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog Duration.zero disables the watchdog
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog issue #1126: a watchdog fire resumes through the retry wrapper and the tool phase runs on the re-armed run token
+✅ test/agent/run_idle_watchdog_test.dart: Agent run idle watchdog issue #1132 r2: a completed dead tool call is dropped on resume — the regenerated call is the only one the tool phase executes
+✅ test/fanet/fanet_client_test.dart: FanetClient.joinNetwork POSTs the join body and returns the session token
+✅ test/fanet/fanet_client_test.dart: FanetClient.joinNetwork omits displayName when not provided
+✅ test/fanet/fanet_client_test.dart: FanetClient.joinNetwork throws FanetApiException with status and body on 403
+✅ test/fanet/fanet_client_test.dart: FanetClient.joinNetwork URL-encodes the network id in the path
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent POSTs with Bearer auth and parses the enrollment (201)
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent URL-encodes the network id in the path
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent throws FanetApiException on 200 (201 only)
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent throws FanetApiException on 400 (invalid_credentials name)
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent throws FanetApiException on 401
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent throws FanetApiException on 403 (member token is not enough)
+✅ test/fanet/fanet_client_test.dart: FanetClient.enrollAgent throws FanetApiException on 503 (hub unavailable)
+✅ test/fanet/fanet_client_test.dart: FanetClient base URL handling tolerates a trailing slash on baseUrl
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse parses a full link with password fragment
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse tolerates a missing fragment (no password)
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse tolerates an empty password fragment
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse decodes percent-encoded network id and password
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse keeps a non-default port on the rest base
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects a non-join path
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects a link without a network query parameter
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects an empty network query parameter
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects a non-http(s) scheme
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects a relative URL
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects an unexpected fragment shape
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.parse rejects garbage input
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.toUri rebuilds a full link (round trip)
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.toUri rebuilds a link without a password
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.toUri encodes special characters in network id and password
+✅ test/fanet/fanet_join_link_test.dart: FanetJoinLink.toUri restBase can be given as a Uri
+✅ test/fanet/fanet_models_test.dart: FanetJoinResult.fromJson parses sessionToken and ignores extra fields
+✅ test/fanet/fanet_models_test.dart: FanetJoinResult.fromJson rejects a missing sessionToken
+✅ test/fanet/fanet_models_test.dart: FanetJoinResult.fromJson rejects a non-string sessionToken
+✅ test/fanet/fanet_models_test.dart: FanetAgentEnrollment.fromJson parses all fields including note
+✅ test/fanet/fanet_models_test.dart: FanetAgentEnrollment.fromJson tolerates a missing note and extra fields
+✅ test/fanet/fanet_models_test.dart: FanetAgentEnrollment.fromJson rejects a missing required field
+✅ test/fanet/fanet_models_test.dart: FanetAgentEnrollment.fromJson rejects a non-string required field
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid accepts valid names
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid rejects too short names (< 3 chars)
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid rejects too long names (65 chars)
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid rejects uppercase
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid rejects underscores and other symbols
+✅ test/fanet/fanet_models_test.dart: FanetAgentName.isValid rejects a leading hyphen
+✅ test/image_overflow_test.dart: the pinned refusal string classifies to (modelId, cap)
+✅ test/image_overflow_test.dart: case-insensitive and mid-message matches work
+✅ test/image_overflow_test.dart: near-miss: cap text WITHOUT "too many images" never matches (AC5)
+✅ test/image_overflow_test.dart: near-miss: "too many images" without a parseable cap never matches
+✅ test/image_overflow_test.dart: unrelated errors never match (AC5)
+✅ test/image_overflow_test.dart: a degenerate cap still classifies — the caller guards (E3)
+✅ test/image_overflow_test.dart: gh-1934: payload-size (413-class) refusals the original repro string classifies
+✅ test/image_overflow_test.dart: gh-1934: payload-size (413-class) refusals known provider shapes classify
+✅ test/image_overflow_test.dart: gh-1934: payload-size (413-class) refusals unrelated errors never classify
+✅ test/image_overflow_test.dart: gh-1934: payload-size (413-class) refusals rate-limit wording owns the message even with a 413 digit
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip ci.yml carries a build-extension release leg
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip the leg rides the tag/release train and waits for the quality gate
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip the leg is additive (continue-on-error), like web-spa
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip build → size gate → attach, in that order
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip the attach is draft-first and never publishes
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the tag train builds its own fa-extension.zip the leg builds on the pinned Flutter SDK (gh-1684 AC5)
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: release-provenance can never race the attach provenance needs the extension leg (ordering)
+✅ test/gh1847_release_extension_train_test.dart: gh-1847: the daily producer stays available build-macos.yml build-extension still gates then uploads
+✅ test/publish_fa_llm_preflight_guard_test.dart: workflow YAML parses and carries the OIDC pre-flight probe
+✅ test/publish_fa_llm_preflight_guard_test.dart: pre-flight probe curl uses the repo retry/timeout convention
+✅ test/ci_macos_keychain_unlock_watchdog_guard_test.dart: AC1 — build-macos arms a background keychain unlock watchdog (≤60 s cadence, survives the step) after provisioning (gh-1986)
+✅ test/ci_macos_keychain_unlock_watchdog_guard_test.dart: AC2 — the watchdog is armed ONLY on signed runs: no ci-sign unlock before the signed gate (negative check)
+✅ test/ci_macos_keychain_unlock_watchdog_guard_test.dart: AC3 — the always() Cleanup step stops the watchdog by the same pid file, existence-guarded AND identity-checked
+✅ test/ci_macos_keychain_unlock_watchdog_guard_test.dart: AC4 — the Fastfile gym-lane unlock watchdog (gh-1954) still stands
+✅ test/plugins/transcribe_audio_plugin_test.dart: TranscribeAudioPlugin registers transcribe_audio tool when configured
+✅ test/plugins/transcribe_audio_plugin_test.dart: TranscribeAudioPlugin skips registration when apiKey is missing
+✅ test/plugins/transcribe_audio_plugin_test.dart: TranscribeAudioPlugin registered tool can transcribe audio
+✅ test/plugins/inspect_image_plugin_test.dart: InspectImagePlugin registers inspect_image tool when configured
+✅ test/plugins/inspect_image_plugin_test.dart: InspectImagePlugin skips registration when model is missing
+✅ test/plugins/inspect_image_plugin_test.dart: InspectImagePlugin skips registration when apiKey is missing
+✅ test/plugins/inspect_image_plugin_test.dart: InspectImagePlugin registered tool can describe an image
+✅ test/plugins/transcribe_audio_config_test.dart: TranscribeAudioPlugin yaml knobs valid full section registers the tool
+✅ test/plugins/transcribe_audio_config_test.dart: TranscribeAudioPlugin yaml knobs unknown keys fail loudly naming the offenders
+✅ test/plugins/transcribe_audio_config_test.dart: TranscribeAudioPlugin yaml knobs invalid enum values fail loudly listing allowed values
+✅ test/plugins/plugin_interactive_test.dart: PluginContext interactive surface registerSlashCommand stores the optional description
+✅ test/plugins/plugin_interactive_test.dart: PluginContext interactive surface pickOption/askLine callbacks are exposed to the plugin
+✅ test/plugins/plugin_interactive_test.dart: PluginContext interactive surface pickOption/askLine default to null (non-interactive host)
+✅ test/plugins/plugin_interactive_test.dart: slash menu plugin items plugin commands carry their description as the menu hint
+✅ test/plugins/plugin_interactive_test.dart: slash menu plugin items a plugin command shadows the same ext command (no duplicates)
+✅ test/plugins/transcribe_audio_config_test.dart: TranscribeAudioPlugin yaml knobs configured knobs reach the registered tool end-to-end
+✅ test/plugins/external_inbox_test.dart: ExternalInbox registered inboxes are collected in order
+✅ test/plugins/external_inbox_test.dart: ExternalInbox the collected list is unmodifiable
+✅ test/plugins/plugin_test.dart: PluginContext collects registered tools and slash commands
+✅ test/plugins/plugin_test.dart: AgentCli plugins plugin tools are registered on the agent
+✅ test/plugins/plugin_test.dart: AgentCli plugins plugin slash commands are dispatched
+✅ test/plugins/plugin_test.dart: AgentCli plugins unknown slash command still prints error
+✅ test/plugins/plugin_test.dart: AgentCli plugins plugin config is passed to the plugin
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) .github/workflows/build-mobile.yml::build-ios runs on exactly self-hosted + macos-m5
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) .github/workflows/build-mobile.yml::submit-ios runs on exactly self-hosted + macos-m5
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) .github/workflows/build-macos.yml::build-macos runs on exactly self-hosted + macos-m5
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 1. wildcard spec, marker at the newest stable match -> SKIP
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) audit: no workflow anywhere pins the generic macOS/ARM64 labels
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 2. wildcard spec, marker at an older match -> INSTALL the bump
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) audit: matrix-defined runners never carry the generic macOS/ARM64 labels
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) audit: no workflow anywhere pins an fa-m5-* runner-name label
+✅ test/workflow_selfhosted_legs_test.dart: AC1 — self-hosted macOS legs pin the runner LABEL SET (gh-1600 F-A, gh-1906) audit: no self-hosted job in either leg skips the macos-m5 pin
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) harbor run writes its job output under $RUNNER_TEMP, not the workspace
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) artifact + Harbor Hub uploads follow the out-of-workspace output
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) bench job tears its docker containers down before removing the output
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 3. exact spec, marker at a different version -> INSTALL
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) every mirror-checkout script is inline with a log-and-prune clean
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) no local-action checkout remained in either publish leg
+✅ test/workflow_selfhosted_legs_test.dart: AC2 — bench leftovers never land in the shared workspace (F-B) build-macos parks its per-arch build cache outside the clean, expanded $HOME
+✅ test/workflow_selfhosted_legs_test.dart: Rework — checkout hardening (review threads) stub collision parks the stale stub — the FRESH entry always wins
+✅ test/workflow_selfhosted_legs_test.dart: Rework — checkout hardening (review threads) old stale-workspace-* sidecars are pruned before a new one is parked
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 4. manifest unreachable, marker satisfies the spec -> REUSE
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 5. manifest unreachable, no marker -> hard error
+✅ test/setup_flutter_selfhosted_test.dart: decision logic — the six #357 review scenarios 6. manifest reachable, no stable match, marker unsatisfying -> hard error
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction install: rename(2) lands a complete tree in an empty slot
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction install: concurrent winner converges the loser — slot untouched, duplicate discarded (no BSD-mv nesting)
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction flip: symlink swap is atomic per os.replace and keeps old trees
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction flip: re-creating a missing link is idempotent
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction migrate: legacy real-dir current moves into its marker slot
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction migrate: unmarked legacy dir is dropped, symlinked layout no-ops
+✅ test/setup_flutter_selfhosted_test.dart: slot primitives — race-free by construction gc: keeps the live version, drains only old trees + stale stages
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) archive: arm64 host -> arm64-qualified zip name
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) archive: x86_64 host -> unqualified (x64) zip name
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) archive: unknown host arch is a hard error, never a silent x64
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) ensure_arch: stamped matching slot stays (ok)
+✅ test/nightly_filer_1267_test.dart: #1267 AC3 — the filer arms where the drill can reach it the job runs on schedule AND on the fileTracker drill dispatch
+✅ test/nightly_filer_1267_test.dart: #1267 AC3 — the filer arms where the drill can reach it the dispatch trigger declares the fileTracker input
+✅ test/nightly_filer_1267_test.dart: #1267 AC3 — the filer arms where the drill can reach it a drill dispatch can never CLOSE the live tracker on green
+✅ test/nightly_filer_1267_test.dart: #1267 N3 — the dedup lookup never reads jq null as a number every lookup reads `.[0].number // empty`
+✅ test/nightly_filer_1267_test.dart: #1267 N3 — escalation + decision log the 2nd consecutive red scheduled night escalates
+✅ test/nightly_filer_1267_test.dart: #1267 N3 — escalation + decision log the decision (filed/commented/closed/why-not) hits the output
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) ensure_arch: raw uname stamp round-trips on x86_64 hosts (gh-1736 review) — no prune, no re-download
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) ensure_arch: unstamped slot (the gh-1736 poisoned runner state) is pruned for reinstall
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) ensure_arch: mismatched stamp is pruned for reinstall
+✅ test/setup_flutter_selfhosted_test.dart: host-arch archive selection + slot arch stamp (gh-1736) ensure_arch: missing slot is a no-op ok (install creates it)
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) no self-hosted leg may pair subosito/flutter-action with cache: true
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) the self-hosted build legs set Flutter up via the composite action
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) self-hosted legs pin an EXACT Flutter patch, never a wildcard (gh-1826)
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) action contract: bounded download, no cache POST, no slot swap
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) action contract: the SDK download is host-arch qualified (gh-1736)
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) action contract: a failed ensure_arch is a loud error, never a silent fall-through to reusing the slot (gh-1736 review)
+✅ test/setup_flutter_selfhosted_test.dart: self-hosted SDK regression guard (#354/#357) action.yml and the touched workflows parse as YAML
+✅ test/bin_main_wiring_reg_test.dart: bin main keeps every boot-wiring symbol (gh-1000 rework reg)
+✅ test/bin_main_wiring_reg_test.dart: runtime overlay cleanup is wired into every CLI shutdown path
+✅ test/bin_main_wiring_reg_test.dart: post-resolution _fail paths run plugin teardown before exiting (gh-1895 review)
+✅ test/bin_main_wiring_reg_test.dart: REG-preconfig-and-queue: the queue is resolved before keyCache.preload and the key gate (gh-1781 AC1/AC3)
+✅ test/bin_main_wiring_reg_test.dart: REG-preconfig-and-queue: queueResolved threads into startupApiKey and queueSecrets into buildSecretRedactor (gh-1781 I1/I5)
+✅ test/bin_main_wiring_reg_test.dart: REG-preconfig-and-queue: the boot model identity follows the queue head when the launch pinned nothing (gh-1781 I6)
+✅ test/ci_core_shard_timeout_guard_test.dart: gh-1778 — test-core budget survives a degraded cache service the leg carries the pub and native-assets hook caches
+✅ test/ci_core_shard_timeout_guard_test.dart: gh-1778 — test-core budget survives a degraded cache service AC1: the job budget clears the degraded-cache worst case
+✅ test/ci_core_shard_timeout_guard_test.dart: gh-1778 — test-core budget survives a degraded cache service AC2: every cache step is best-effort (continue-on-error)
+✅ test/ci_core_shard_timeout_guard_test.dart: gh-1778 — test-core budget survives a degraded cache service AC3: every cache step caps its own stall (timeout-minutes)
+✅ test/browser/browser_tools_test.dart: browserTools exposes exactly the eleven contract tools
+✅ test/browser/browser_tools_test.dart: browserTools every tool is exec-tier
+✅ test/browser/browser_tools_test.dart: browserTools every happy path reaches the scripted controller
+✅ test/browser/browser_tools_test.dart: browserTools tabId pins ops; omitting it never sends the key
+✅ test/browser/browser_tools_test.dart: browserTools read_dom passes nodeCount and the truncated flag through
+✅ test/browser/browser_tools_test.dart: browserTools screenshot saves via the saver, inlines the image, links the path
+✅ test/browser/browser_tools_test.dart: browserTools controller failures throw with the contract code in the message
+✅ test/browser/browser_tools_test.dart: browserTools invalid args fail with bad_args before reaching the controller
+✅ test/browser/browser_tools_test.dart: browserTools wait_for dispatches selector vs text and defaults timeoutMs
+✅ test/browser/browser_tools_test.dart: browserTools type forwards submit=true
+✅ test/browser/browser_tools_test.dart: browserTools saveBrowserScreenshot writes generated/browser-<ts>.png
+✅ test/browser/browser_tools_test.dart: browser availability absent capability disables the family at builtin scope with a reason
+✅ test/browser/browser_tools_test.dart: browser availability browser_eval off in a scope hides only eval
+✅ test/browser/browser_tools_test.dart: browser availability reverse index keeps browser_eval on its own id
+✅ test/browser/browser_tools_test.dart: browser availability the browser family lists every browser tool name
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution a named provider resolves endpoint AND key from the SAME record
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution a named provider with a client-chosen baseUrl is rejected
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution an unknown provider name is a named rejection
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution an unnamed request resolves to null (anonymous, keyless)
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution an unnamed request to a KEYED saved record gets the migration hint (legacy clients named no provider)
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution an unnamed request to a KEYLESS saved record stays an anonymous relay (local endpoints keep working)
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution a brand-typed openai-completions record (apiType kimi) resolves endpoint AND key — catalog names are not foreign dialects
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution genuinely foreign dialects (anthropic, chatgpt responses) reject with a named dialect error
+✅ test/browser/llm_relay_sec_test.dart: resolveLlmRelayTarget — the SEC-01 server-side resolution a keyless record resolves with a null key (frame glue rejects)
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC1 — a keyed request never goes to a client-chosen address provider=X + baseUrl=attacker → zero outbound requests + named error
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC1 — a keyed request never goes to a client-chosen address unknown provider → zero outbound requests + named error
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC1 — a keyed request never goes to a client-chosen address named provider without a stored key → zero outbound + no-key error
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record the record baseUrl is used verbatim with the record key attached
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record a second named record resolves to ITS OWN endpoint
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record the anonymous mode is relayed keyless — never a stored key
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record an unnamed request aimed at a keyed saved record answers the migration hint with zero outbound requests
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record a brand-typed kimi record relays with its key — one openai-completions request, done frame
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC2 — a named provider request goes to the record a named non-openai record never sends its key with an openai-shaped request
+✅ test/browser/llm_relay_sec_test.dart: SEC-01 AC3 — cross-origin redirect strips the relayed auth a 302 to another host fails; no request re-sent, no auth leaked
+✅ test/browser/llm_relay_sec_test.dart: REG (SEC-01 AC4) — no Bearer may leave to a non-record address property over all fixtures: a Bearer only ever rides to a stored record origin
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a hello frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a welcome frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a mail frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a mail with user kind frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a acked frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a ping frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a pong frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a browserReq frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a browserRes ok frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a browserRes error frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips encode→decode preserves a error frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips the wire envelope carries v first, then id and op
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame round-trips envelope keys are reserved: a payload shadow never leaks on the wire
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness non-JSON text is a bad_frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness a non-object JSON body is a bad_frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness a version mismatch is a proto error echoing the frame id
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness a missing or empty id is a bad_frame
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness a missing op is a bad_frame echoing the id
+✅ test/browser/bridge_protocol_test.dart: BridgeFrame.decode strictness str and map accessors tolerate missing or mistyped fields
+✅ test/browser/bridge_protocol_test.dart: issue #34 item 3: providersSync / llmReq / llmRes the new ops are registered in bridgeKnownOps
+✅ test/browser/bridge_protocol_test.dart: issue #34 item 3: providersSync / llmReq / llmRes the new ops round-trip through the envelope
+✅ test/browser/bridge_protocol_test.dart: issue #34 item 3: providersSync / llmReq / llmRes unknown ops still decode fine — an old peer answers bad_op instead of crashing (additive versioning)
+✅ test/browser/bridge_protocol_test.dart: error codes wire names are stable snake_case strings
+✅ test/browser/bridge_protocol_test.dart: error codes fromWire round-trips every code and rejects unknowns
+✅ test/browser/bridge_protocol_test.dart: error codes every code has a unique wire name
+✅ test/browser/bridge_protocol_test.dart: pairing tokens and mailbox ids pairingToken is 64 lowercase hex chars and fresh every time
+✅ test/browser/bridge_protocol_test.dart: pairing tokens and mailbox ids randomMailboxSuffix is 8 lowercase hex chars
+✅ test/browser/bridge_protocol_test.dart: pairing tokens and mailbox ids deriveMailboxId namespaces and sanitizes the agent id
+✅ test/browser/bridge_protocol_test.dart: bridgeBackoff doubles from 1s and caps at 30s (contract table)
+✅ test/browser/bridge_protocol_test.dart: bridgeBackoff extreme attempts stay at the cap (clamp before shift)
+✅ test/browser/bridge_protocol_test.dart: MailDeduper a re-observed id inside the window is a duplicate
+✅ test/browser/bridge_protocol_test.dart: MailDeduper eviction is LRU: a re-observed id survives, a stale one falls out
+✅ test/browser/bridge_protocol_test.dart: MailDeduper the default window is the contract capacity of 512
+✅ test/browser/bridge_protocol_test.dart: nextFrameId is <epochMs>-<8 hex rand> (sortable, collision-safe)
+✅ test/browser/bridge_protocol_test.dart: nextFrameId successive ids never share a full id (collision-safe)
+✅ test/browser/bridge_protocol_test.dart: nextFrameId fresh ids differ from earlier ones
+✅ test/browser/serve_bridge_test.dart: pairing a valid hello is welcomed with the derived mailbox and capabilities
+✅ test/browser/serve_bridge_test.dart: pairing a hello without an agentId derives a random one
+✅ test/browser/serve_bridge_test.dart: pairing a wrong token is rejected with bad_token and close 4401
+✅ test/browser/serve_bridge_test.dart: pairing an absent token is rejected with bad_token and close 4401
+✅ test/browser/serve_bridge_test.dart: pairing a hello with a mismatching proto is a proto error + close
+✅ test/browser/serve_bridge_test.dart: pairing a non-hello first frame is rejected and the socket closed
+✅ test/browser/serve_bridge_test.dart: pairing an envelope with a wrong version is a proto error + close
+✅ test/browser/serve_bridge_test.dart: pairing an unknown op after pairing is a bad_op error, connection lives
+✅ test/browser/serve_bridge_test.dart: pairing a non-loopback bind fails fast in the constructor
+✅ test/browser/serve_bridge_test.dart: pairing an http origin is rejected before the upgrade
+✅ test/browser/serve_bridge_test.dart: mail relay extension → fabric delivers and acks
+✅ test/browser/serve_bridge_test.dart: mail relay extension mail with kind=user is preserved
+✅ test/browser/serve_bridge_test.dart: mail relay mail without text is a bad_args error
+✅ test/browser/serve_bridge_test.dart: mail relay fabric → extension forwards with msgId and dedupes
+✅ test/browser/serve_bridge_test.dart: mail relay the offline queue drains immediately on welcome
+✅ test/browser/serve_bridge_test.dart: liveness the heartbeat rewrites .heartbeat while connected
+✅ test/browser/serve_bridge_test.dart: liveness mail to a fresh fabric address acks and creates the mailbox
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes dispatch correlates the flat browserRes on the envelope id
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes a failed op resolves with the error result
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes a hung client hits the dispatch timeout
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes a disconnect resolves pending dispatches with a clean error
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes dispatch on an unpaired connection is a no_target error result
+✅ test/browser/serve_bridge_test.dart: browserReq / browserRes task_end routes through the same dispatch path
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) a sync-capable hello gets welcome then a proxy-mode providersSync push carrying metadata but no key bytes
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) an old client (no providers-sync cap) never sees the push
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) no saved providers: no capability advertised, no push
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) copy mode (--copy-keys) transfers keys once, stages them, and the ack wipes the staged copy
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) llmReq naming its provider streams llmRes deltas then done; the key is injected server-side and never appears in any frame
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) llmReq with no relay wired answers a clean llmRes error
+✅ test/browser/serve_bridge_test.dart: providers sync / llm relay (issue #34 item 3) a named provider whose key is missing answers a no-key llmRes error
+✅ test/browser/serve_bridge_test.dart: llm relay trust boundary (SEC-01) provider=X + baseUrl=attacker → llmRes error naming X, the relay is NEVER invoked
+✅ test/browser/serve_bridge_test.dart: llm relay trust boundary (SEC-01) an unknown provider name is a named rejection with zero relay calls
+✅ test/browser/serve_bridge_test.dart: llm relay trust boundary (SEC-01) an anonymous llmReq aimed at a keyed saved record answers the migration hint; the relay is NEVER invoked
+✅ test/browser/serve_bridge_test.dart: llm relay trust boundary (SEC-01) a client-supplied baseUrl matching no record and no provider is relayed keyless (no key lookup)
+✅ test/browser/serve_bridge_test.dart: token file ensure mints once at mode 0600 and rotate replaces
+✅ test/browser/serve_bridge_test.dart: token file ensure reuses an existing token file
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion a keyless request (anonymous mode) posts WITHOUT an auth header
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion posts the streaming call to <baseUrl>/chat/completions
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion forwards content deltas until [DONE]
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion skips keepalives and chunks it cannot trust, keeps streaming
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion an HTTP error propagates as ProviderHttpError
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion a network failure propagates
+✅ test/browser/llm_relay_test.dart: relayOpenAiCompletion a mid-stream socket error propagates
+✅ test/browser/providers_sync_test.dart: buildProvidersSync proxy mode carries metadata only — never a key
+✅ test/browser/providers_sync_test.dart: buildProvidersSync copy mode puts keys ONLY in the dedicated keys field
+✅ test/browser/providers_sync_test.dart: buildProvidersSync an entry without a resolved key still syncs (metadata is safe)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson round-trips through jsonEncode/jsonDecode
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson proxy mode drops any keys the sender illegally inlined
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects not an object with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects a wrong version with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects an unknown mode with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects an empty host with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects a non-list providers field with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson rejects a provider without a name with null (never a throw)
+✅ test/browser/providers_sync_test.dart: ProvidersSyncPayload.fromJson ignores unknown fields from a newer peer (additive versioning)
+✅ test/browser/providers_sync_test.dart: providersSyncProvenance stamps the host
+✅ test/browser/browser_connect_test.dart: /browser connect prints the ws URL, the one-time token and the mailbox hint
+✅ test/browser/browser_connect_test.dart: /browser connect a port argument is passed through
+✅ test/browser/browser_connect_test.dart: /browser connect a non-numeric port is refused without touching the handle
+✅ test/browser/browser_connect_test.dart: /browser connect a connect failure surfaces the error line
+✅ test/browser/browser_connect_test.dart: /browser connect connect start alias behaves like connect
+✅ test/browser/browser_connect_test.dart: /browser status shows connected extensions and the fabric mailboxes
+✅ test/browser/browser_connect_test.dart: without a handle connect answers with a clean unavailable note
+✅ test/browser/browser_connect_test.dart: without a handle status answers with the same note
+✅ test/browser/browser_connect_test.dart: an unknown subcommand gets the usage line
+✅ test/session_retention_test.dart: usage walk counts units: primaries, segments, sidecars, usage dirs
+✅ test/session_retention_test.dart: usage walk spill bytes are measured but never counted toward the cap
+✅ test/session_retention_test.dart: usage walk E3: an mtime older than the header falls back to the header time
+✅ test/session_retention_test.dart: usage walk a header id that disagrees with the filename is unidentified
+✅ test/session_retention_test.dart: usage walk the shared filename parser and the repo agree on ids
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) AC2: total under the cap — no deletions, silent
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) AC3: oldest-last-used deleted first until under the cap
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) AC3: live, named, young and current sessions are exempt
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) AC4: the blocker note names only the sessions that explain the overflow, largest first
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) keepNamed: false makes named sessions deletable
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) AC4: exempt-only overflow names each blocker with its size
+✅ test/session_retention_test.dart: plan + apply (AC2/AC3/AC4) E1: a cap smaller than one marathon session still deletes it
+✅ test/session_retention_test.dart: apply deletes whole units (AC5) + logs (AC7) sidecars die with the session; one log line per deletion
+✅ test/session_retention_test.dart: apply deletes whole units (AC5) + logs (AC7) E2: a session that becomes live mid-sweep is skipped
+✅ test/session_retention_test.dart: apply deletes whole units (AC5) + logs (AC7) E6: the cap is global across slugs — oldest wins globally
+✅ test/session_retention_test.dart: boot policy (E5 + posture B) no cap: deletions never run; the soft warn fires past the seam
+✅ test/session_retention_test.dart: boot policy (E5 + posture B) E5: cap set with sweep off — over-cap note, no deletions
+✅ test/session_retention_test.dart: fail-closed presence (gh-1746 review) a missing presence store aborts the sweep like a failed probe — live sessions survive
+✅ test/session_retention_test.dart: fail-closed presence (gh-1746 review) the dry-run plan aborts too — no phantom plan without presence
+✅ test/session_retention_test.dart: fail-closed presence (gh-1746 review) allowMissingPresence: true opts back into the test-only shape — null reads as "nothing is live"
+✅ test/session_retention_test.dart: E4 path escape a path-shaped session id is never a candidate
+✅ test/session_retention_test.dart: E4 path escape a RELATIVE header cwd is never measured or deleted (spill traversal)
+✅ test/session_retention_test.dart: E4 path escape an ABSOLUTE cwd with a `..` segment is never measured or deleted
+✅ test/session_retention_test.dart: E4 path escape a safe absolute cwd still sweeps normally (the guard does not over-block)
+✅ test/session_retention_test.dart: REG-2 survival property named/live/young/current survive every sweep shape
+✅ test/session_retention_test.dart: report rendering the dry-run plan prints the exact actions; apply matches
+✅ test/session_retention_test.dart: report rendering formatRetentionBytes renders stable human units
+✅ test/session_retention_test.dart: report rendering the /sessions usage footer renders only under a cap
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType returns only custom records of the requested types
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType substring gate does not leak types inside content
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType a torn tail line is skipped
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType missing file yields an empty list
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType block boundary inside a line still parses (streaming seam)
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType tiny blocks stress every seam: lines and gates spanning blocks
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType a record starting exactly at a block boundary is not skipped
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType scans the whole segment chain of a rotated session
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType dedupes record ids repeated across segments
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType orphan_report batches (gh-1449) round-trip append + scan
+✅ test/session/read_custom_records_test.dart: JsonlSessionRepo.readCustomRecordsOfType lastSegmentOnly scans the primary segment only (gh-1449 boot bound)
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open never materializes the file through readTextFile
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open giant custom records load shallow; the LATEST per customType keeps full data
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open giant NON-custom records keep full fidelity
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open open above the size backstop refuses with a repair hint
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open torn writes heal through the streamed path byte-identically
+✅ test/session/session_streamed_open_test.dart: gh-1073: streamed full open blank lines are skipped without breaking spans
+✅ test/session/session_whole_file_open_test.dart: gh-1073: whole-file open (non-ranged filesystem) opens header + messages and tracks the leaf
+✅ test/session/session_whole_file_open_test.dart: gh-1073: whole-file open (non-ranged filesystem) merges rotated parts, dedupes the restore leftover
+✅ test/session/session_whole_file_open_test.dart: gh-1073: whole-file open (non-ranged filesystem) quarantines a torn line and rewrites the segment
+✅ test/session/session_whole_file_open_test.dart: gh-1073: whole-file open (non-ranged filesystem) fails closed on a missing session file
+✅ test/session/session_whole_file_open_test.dart: gh-1073: whole-file open (non-ranged filesystem) wholeFileOnly opens through bulk reads on a ranged fs
+✅ test/session/ledger_vacuum_scale_test.dart: ledger vacuum scale (issue #1882 AC2) 10,400 snapshots: size collapses, records stay byte-verbatim, latest snapshots survive, the real open replays the transcript
+AC2 measured: 14607829 → 616547 bytes (95.8% reclaimed; fixture input 14603828B)
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) drops ledger customs, keeps the latest snapshot per superseding type, keeps messages and custom_message
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) recordsKept counts records, not coalesced byte spans (contiguous conversation)
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) a torn header line is refused — repair must not produce an unopenable file
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) a non-session first line is refused
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) rotated .part-NN siblings are reported as untouched
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) a second repair rotates the previous backup instead of overwriting it
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) dry-run counts without touching the file
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) a missing file fails with notFound
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) an unknown custom type is kept (conservative by default)
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) a line that cannot be sniffed is kept verbatim
+✅ test/session/session_repair_test.dart: repairSessionLedgers (gh-1073) dry-run projects the bytesAfter the real repair produces (gh-1590)
+✅ test/session/session_io_retry_test.dart: JsonlSessionStorage transient-ENOENT retry (issue #427) appendEntry retries a transient ENOENT and lands the record
+✅ test/session/session_io_retry_test.dart: JsonlSessionStorage transient-ENOENT retry (issue #427) appendEntry exhaustion is a named SessionException and never poisons the store for later appends
+✅ test/session/session_io_retry_test.dart: JsonlSessionStorage transient-ENOENT retry (issue #427) open retries a transient ENOENT during the full read
+✅ test/session/session_io_retry_test.dart: JsonlSessionStorage transient-ENOENT retry (issue #427) create retries a transient ENOENT on the header write
+✅ test/session/session_io_retry_test.dart: JsonlSessionStorage transient-ENOENT retry (issue #427) windowed appendEntry rides the same helper (app chat submit path)
+✅ test/session/session_io_retry_test.dart: JsonlSessionRepo transient-ENOENT retry (issue #427) open retries a transient ENOENT and returns the session
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips MessageRecord with a user message
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips MessageRecord with an assistant message
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips ThinkingLevelChangeRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips ModelChangeRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips ModelChangeRecord carries the custom provider pin (gh-1000)
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips ModelChangeRecord without the pin fields restores nulls (REG-5)
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips ActiveToolsChangeRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CompactionRecord with details and fromHook
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CompactionRecord omits null details/fromHook
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips BranchSummaryRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CheckpointRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CheckpointRecord omits a null goal
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CustomRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CustomMessageRecord with string content
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips CustomMessageRecord with block content
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips LabelRecord with label and label removal
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips SessionInfoRecord
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips LeafRecord with and without target
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips fromJson rejects unknown types
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips fromJson rejects missing id
+✅ test/session/session_record_test.dart: SessionRecord JSON round-trips fromJson rejects non-string parentId
+✅ test/session/session_record_test.dart: SessionHeader round-trips with all fields
+✅ test/session/session_record_test.dart: SessionHeader rejects unsupported version
+✅ test/session/session_record_test.dart: SessionHeader rejects wrong type and missing fields
+✅ test/session/session_record_test.dart: SessionHeader rejects non-object metadata
+✅ test/session/session_storage_test.dart: JsonlSessionStorage create writes a header line and exposes metadata
+✅ test/session/session_storage_test.dart: JsonlSessionStorage appendEntry persists JSONL lines that survive reopen
+✅ test/session/session_storage_test.dart: JsonlSessionStorage a torn LAST line (crash mid-append) is dropped, history intact
+✅ test/session/session_storage_test.dart: JsonlSessionStorage a torn MID-FILE line is quarantined: the session always opens
+✅ test/session/session_storage_test.dart: JsonlSessionStorage concurrent appends serialize into whole lines in submit order
+✅ test/session/session_storage_test.dart: JsonlSessionStorage setLeafId appends a leaf record and validates the target
+✅ test/session/session_storage_test.dart: JsonlSessionStorage createEntryId returns unique 8-char ids
+✅ test/session/session_storage_test.dart: JsonlSessionStorage labels: set, overwrite, and remove via empty label
+✅ test/session/session_storage_test.dart: JsonlSessionStorage findEntries filters by type
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession closing an unknown id is a no-op
+✅ test/session/session_storage_test.dart: JsonlSessionStorage getPathToRoot walks a branch; unknown ids fail loudly (#1114)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage getPathToRoot stops at a dangling parentId (partial path)
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession closing an inactive session keeps the active one
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession closing the active session activates the newest remaining one
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession closing the last session leaves nothing active
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession closing notifies listeners
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession deleteFile removes the session file from the repo
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.closeSession without deleteFile the session file stays on disk
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.switchTo switching to another session makes it active and notifies
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.switchTo switching to an unknown id is a no-op
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.switchTo switching to the already-active session is a no-op
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.persistAll appends only new messages across multiple sessions
+✅ test/session/agent_session_manager_test.dart: AgentSessionManager.persistAll a session with no new messages persists nothing
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open rejects a missing file as storage error
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open rejects an empty file (missing header)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open rejects a corrupt header line
+✅ test/session/session_storage_test.dart: JsonlSessionStorage a blank first line opens on the streamed path too (whole-file parity)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage parse batches carry physical line numbers — blank lines do not drift the numbering
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open quarantines a corrupt entry line (JSON garbage) mid-file
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open quarantines an entry line missing required fields
+✅ test/session/session_storage_test.dart: JsonlSessionStorage open skips blank lines
+✅ test/session/session_storage_test.dart: JsonlSessionStorage loadJsonlSessionMetadata reads only the header
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation rotate: oversized primary moves to .part-0001, primary reseeds
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation reopen loads parts + primary as one record chain
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation rotation continues after reopen (no part overwrite)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation hard cap: oldest records dropped with a warning, append never fails
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation no rotation below the thresholds
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation hard cap truncation keeps the parent chain walkable after reopen
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation failed rotation seed does not duplicate records on reopen
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation hard cap still applies when the rotation itself fails
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation open heals a primary lost mid-rotation (crash between rename and seed)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation open heals a header-less primary left by a racing append
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation a failed part listing suspends rotation instead of overwriting parts
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation a fileInfo failure degrades rotation to the plain append
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation failed rotation with a failed restore still never loses the append
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation size math counts UTF-8 bytes, not UTF-16 code units
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation windowed open reads only the active segment (documented boundary)
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation a fresh session file carries header version 3
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation rotation marks every segment header with the rotated-format version so older builds fail with a clear error
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation SessionHeader.fromJson accepts the rotated-format version and rejects unknown versions
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation open exposes the primary header, not the oldest segment header
+✅ test/session/session_storage_test.dart: JsonlSessionStorage segment rotation the heal never writes a segment first line that is not a session header into the primary
+✅ test/session/session_storage_test.dart: quarantine never bricks the branch walk (#858) a descendant of a quarantined record no longer bricks the resume
+✅ test/session/session_storage_test.dart: quarantine never bricks the branch walk (#858) a dangling LeafRecord target falls back to the newest record
+✅ test/session/session_storage_test.dart: quarantine never bricks the branch walk (#858) a parentId cycle terminates the walk instead of spinning
+✅ test/session/session_storage_test.dart: quarantine never bricks the branch walk (#858) poison-typed session resumes a full turn without any JSONL rewrite
+✅ test/session/attach/session_lease_test.dart: lease lifecycle (AC1) free lease acquires and the sidecar carries the full shape
+✅ test/session/attach/session_lease_test.dart: lease lifecycle (AC1) heartbeat refreshes liveness only for the owner (E3)
+✅ test/session/attach/session_lease_test.dart: lease lifecycle (AC1) graceful release frees the lease for immediate re-acquire
+✅ test/session/attach/session_lease_test.dart: lease lifecycle (AC1) release refuses to delete a foreign lease
+✅ test/session/attach/session_lease_test.dart: live lease is never seized (AC3/AC7) acquire over a live lease blocks as viewer
+✅ test/session/attach/session_lease_test.dart: live lease is never seized (AC3/AC7) property: no interleaving beats a fresh heartbeat (AC7)
+✅ test/session/attach/session_lease_test.dart: live lease is never seized (AC3/AC7) expiry frees the lease and names the dead owner
+✅ test/session/attach/session_lease_test.dart: corrupt and foreign sidecars (E4) a corrupt sidecar is no lease
+✅ test/session/attach/session_lease_test.dart: corrupt and foreign sidecars (E4) a non-object sidecar is no lease
+✅ test/session/attach/session_lease_test.dart: corrupt and foreign sidecars (E4) strict parse: missing required fields throw
+✅ test/session/attach/session_lease_test.dart: corrupt and foreign sidecars (E4) unknown fields are tolerated with a note
+✅ test/session/attach/session_lease_test.dart: banner text (AC9) live banner matches the exact contract wording
+✅ test/session/attach/session_lease_test.dart: banner text (AC9) stale banner offers the reopen, never a takeover
+✅ test/session/attach/session_lease_test.dart: banner text (AC9) host labels
+✅ test/session/attach/session_lease_test.dart: enforceable-backend failures refuse the drive (#2138) HOLE-2: a rename failure on an enforceable backend REFUSES the open — never drive unleased
+✅ test/session/attach/session_lease_test.dart: enforceable-backend failures refuse the drive (#2138) HOLE-3: a persistently unreadable verify REFUSES the open after bounded retries — the rename SUCCEEDED, only the read is broken
+✅ test/session/attach/session_lease_test.dart: enforceable-backend failures refuse the drive (#2138) HOLE-3: a flaky verify read heals inside the bounded retry
+✅ test/session/attach/attach_test.dart: attachedRowFromMessage assistant with a tool call renders a tool row
+✅ test/session/attach/attach_test.dart: attachedRowFromMessage assistant with mixed text keeps the text
+✅ test/session/attach/attach_test.dart: attachedRowFromMessage user with content blocks renders joined text
+✅ test/session/attach/attach_test.dart: attachedRowFromMessage empty user content renders nothing
+✅ test/session/attach/attach_test.dart: attachedRowFromMessage empty assistant content renders nothing
+✅ test/session/session_io_retry_helper_test.dart: retryTransientSessionFileIo retries a transient ENOENT until the operation succeeds
+✅ test/session/session_io_retry_helper_test.dart: retryTransientSessionFileIo a non-ENOENT failure is returned immediately (never retried)
+✅ test/session/session_io_retry_helper_test.dart: retryTransientSessionFileIo exhausting the cap returns the last error inside the total-wait budget (no wedge)
+✅ test/session/attach/attach_test.dart: probePidAlive our own live pid probes true
+✅ test/session/attach/attach_test.dart: probePidAlive a reaped pid probes false (definitive absence)
+✅ test/session/attach/attach_test.dart: AgentMessage.kind round-trips a user-kind message
+✅ test/session/attach/attach_test.dart: AgentMessage.kind agent kind is the default and omitted from json
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore register → list shows the session live; unregister removes it
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore a stale heartbeat is treated as dead (crash recovery)
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore touch refreshes the heartbeat within the window
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore list over an empty root answers empty without creating files
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore a stale presence file past the cleanup grace is deleted from disk
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore a stale-but-young presence file stays on disk within the grace
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore a live pid keeps its presence file past the grace
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore a provably dead pid removes its stale presence file
+✅ test/session/attach/attach_test.dart: FileSessionPresenceStore an unparseable presence file ages by its mtime
+✅ test/session/attach/attach_test.dart: FileSessionEventSource + FileSessionInputChannel watch emits the backlog and follows appended rows
+✅ test/session/attach/attach_test.dart: FileSessionEventSource + FileSessionInputChannel input channel delivers user-kind mail the CLI inbox drains
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner yields each complete line with byte-true spans
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner yields a final line without a trailing newline
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner keeps lines intact across chunk boundaries
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner a multi-byte UTF-8 character split across chunks survives
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner malformed UTF-8 degrades instead of failing the scan
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner empty file yields no lines
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner lone newline yields one empty line
+✅ test/session/session_line_scanner_test.dart: SessionLineScanner reports scanned byte totals
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.open reads only the tail window, not the whole file
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.open header parse fails loudly on a corrupt first line
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.open missing file surfaces notFound
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.loadOlder pages older records in order until the file top
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.loadOlder small sessions load whole: window == file
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.loadOlder a chunk of foreign-branch records does not strand paging
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.loadAllOlder pages the whole file head in when under the size bound
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.loadAllOlder refuses past the whole-ledger size bound with the gh-1073 tooLarge SessionException (repair hint) BEFORE the scan starts — the honest-degradation contract for truly-giant ledgers
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage byte cap keeps at least one record even when it alone exceeds the cap
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.mutations appends persist and a full reopen sees them
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.mutations setLeafId writes a leaf record chaining from the current leaf
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.mutations createEntryId avoids collisions with loaded records
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.live tail ingestAppended picks up externally-appended records
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.live tail a shrunken file re-anchors to the new tail (E5)
+✅ test/session/windowed_session_storage_test.dart: WindowedSessionStorage.live tail deep-paged (jumped) ingest counts appends below the window without re-anchoring
+✅ test/session/windowed_session_storage_test.dart: SessionChunkReader countRecords counts records, not lines
+✅ test/session/windowed_session_storage_test.dart: SessionChunkReader readAround centers on the target record
+✅ test/session/windowed_session_storage_test.dart: SessionChunkReader readForward parses only bytes from the offset
+✅ test/session/windowed_session_storage_test.dart: residency bound resident window stays capped while paging far past it
+✅ test/session/windowed_session_storage_test.dart: residency bound eviction prunes every side structure - nothing outlives residency
+✅ test/session/windowed_session_storage_test.dart: residency bound appends never evict the live tail; the oldest side gives way
+✅ test/session/windowed_session_storage_test.dart: residency bound external ingest never evicts the live tail either
+✅ test/session/windowed_session_storage_test.dart: residency bound deep paging slides the newest side out; loadNewer pages it back
+✅ test/session/windowed_session_storage_test.dart: residency bound jumpToTail pins the tail: fill overshoot trims the OLD side
+✅ test/session/windowed_session_storage_test.dart: residency bound jumpToOffset recenters the window; leaf and counts behave (AC6)
+✅ test/session/windowed_session_storage_test.dart: residency bound byte cap bounds residency with pathological records
+✅ test/session/windowed_session_storage_test.dart: residency bound external appends keep the cached total fresh (no drift)
+✅ test/session/windowed_session_storage_test.dart: residency bound seeded tap-walk concatenates the full branch with no gaps
+✅ test/session/windowed_session_storage_test.dart: round 4 AC6: jumpToRecord through the offset map scans nothing
+✅ test/session/windowed_session_storage_test.dart: round 4 AC10: branch switch re-centers on the new branch tail
+✅ test/session/windowed_session_storage_test.dart: round 4 branch re-center keeps the load-newer banner off (#197)
+✅ test/session/windowed_session_storage_test.dart: round 4 locateRecord skips a torn line that carries the needle (#197)
+✅ test/session/windowed_session_storage_test.dart: round 4 AC7: a same-size rewrite (mtime) re-anchors to tail
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) pages several chunks to the boundary WITHOUT sliding the tail out
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) session without compaction pages to the file head and keeps the whole chain (no full-open fallback needed)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) maxPages exhaustion reports false (fallback preserved)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) token budget stops the walk before the boundary once the resident tail already fills the context window (issue #503: resume reads only what fits the model window, never the whole file)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) walk pages giant model_request_summary records header-only: chain stays intact, walked customs lose data, tail window keeps it (issue #503 round 3b — 467 × 0.75MB monsters were the 9.3s walk)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) budget walk with a hidden_range hiding most messages does NOT trip early: the projected estimate sees markers, so the walk reaches the deep compaction boundary (issue #503 round 3b — raw estimate overshot the projection ~8x and under-filled the resume window)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) budget stop trims to the parity bound (gh-968 AC-R4): the kept tail never prices past the budget, and dropped history pages back lazily
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) boundary-first preserved: a reachable compaction boundary stops the walk before the budget and is NEVER trimmed (the parity budget is the safety net, not the target)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) a budget under the newest record alone floors at the tail record (E3: giant in the tail — never an empty window)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) walk + trim keep the tail byte-exact: Cyrillic payloads and image blocks survive the JSONL round-trip (mojibake-family regression, E2E tail shape)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) gh-1425 AC1: the boundary stop waits for the kept path — a block bottom between firstKeptEntryId and the compaction record keeps paging (the kept region must never silently drop at resume)
+✅ test/session/windowed_session_storage_test.dart: growOlderUntil (resume boundary walk) gh-1425 AC1: budget stop wins over kept-path completeness when the boundary is unreachable (issue #503 bounded boot preserved)
+✅ test/session/session_search_test.dart: session search persisted-name contract (issue #1999) modes/scopes round-trip through pinned payload spellings
+✅ test/session/session_search_test.dart: session search persisted-name contract (issue #1999) null/unknown/legacy values degrade to defaults, never crash
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) empty search query is rejected with the map-mode hint
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) an overlong query is rejected, not scanned
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) an invalid regex is rejected at parse time
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) a malformed time bound is rejected with its label
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) map mode needs no query
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) maxHits clamps to the hard ceiling
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) a nested-quantifier regex is rejected at parse time (E5)
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) the other classic catastrophic shapes are rejected too
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) a benign quantified group still parses (no false positive)
+✅ test/session/session_search_test.dart: argument validation (E5 — structured errors, never a hang) the screen never touches literal mode
+✅ test/session/session_search_test.dart: keyword search over hidden + checkpointed regions (AC4) finds a record the projection hides
+✅ test/session/session_search_test.dart: keyword search over hidden + checkpointed regions (AC4) finds a record inside a checkpoint span
+✅ test/session/session_search_test.dart: keyword search over hidden + checkpointed regions (AC4) the checkpoint text itself is searchable
+✅ test/session/session_search_test.dart: keyword search over hidden + checkpointed regions (AC4) no match reports zero hits honestly
+✅ test/session/session_search_test.dart: keyword search over hidden + checkpointed regions (AC4) matching runs on DECODED text, not raw JSON
+✅ test/session/session_search_test.dart: regex mode case-insensitive regex matches across case
+✅ test/session/session_search_test.dart: regex mode a literal keyword never behaves as a pattern
+✅ test/session/session_search_test.dart: filters kinds filter narrows to the requested record types
+✅ test/session/session_search_test.dart: filters before/after bound the searched span
+✅ test/session/session_search_test.dart: previews (AC4 — never full content) a 2000-char record previews clipped and single-line
+✅ test/session/session_search_test.dart: previews (AC4 — never full content) newlines flatten so one hit is one line
+✅ test/session/session_search_test.dart: capped scans + continuation (E4) the cap stops the scan and the token resumes it
+✅ test/session/session_search_test.dart: branch vs tree scope (AC4 / IT-tree-scope) branch scope excludes the abandoned fork; tree scope includes it
+✅ test/session/session_search_test.dart: branch vs tree scope (AC4 / IT-tree-scope) the result cap counts BRANCH hits only (fork hits are free)
+✅ test/session/session_search_test.dart: mode: map (the archive forensics readout) counts, hidden totals and checkpoint tree with nesting depth
+✅ test/session/session_search_test.dart: mode: map (the archive forensics readout) no checkpoints maps to an honest empty readout
+✅ test/session/session_search_test.dart: the obligations ledger is searchable (custom payload) an entry quote inside a custom record is found
+✅ test/session/session_search_test.dart: the streamed file scan finds what the pure core finds on the same seeded session
+✅ test/session/session_search_test.dart: the streamed file scan runs on a non-ranged file system too (readTextLines fallback)
+✅ test/session/session_search_test.dart: the streamed file scan non-ASCII matches survive tiny scan blocks (UTF-8 seam test)
+✅ test/session/session_search_test.dart: the streamed file scan a malformed tail line never breaks the scan
+✅ test/session/session_search_test.dart: the streamed file scan map mode over the file agrees with the pure core
+✅ test/session/session_search_test.dart: the streamed file scan a time-budget stop carries a continuation token too
+✅ test/session/custom_record_tail_cap_test.dart: tailCapBytes bounds the streamed scan to the file tail — records beyond the cap are not returned, tail records are
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) a giant custom record decodes header-only, data stubbed to null
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) shallow mode leaves small custom records fully decoded
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) default (non-shallow) mode always fully decodes, even giants
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) a foreign field order falls back to a full decode
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) a giant custom record without a data key decodes fully
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) custom_message giants are NEVER shallow-parsed (they project)
+✅ test/session/shallow_custom_parse_test.dart: shallow giant custom parse (walk path) message records are never shallow-parsed either
+✅ test/session/custom_record_tail_cap_test.dart: a >95MB primary: the default cap scans the tail only, an explicit null is genuinely unbounded (sentinel regression)
+✅ test/session/session_parse_cache_test.dart: parse cache: repeated windows (issue #1498) a repeat readAround splices instead of re-parsing
+✅ test/session/session_parse_cache_test.dart: parse cache: repeated windows (issue #1498) capped readForward over a visited range is a cache hit
+✅ test/session/session_parse_cache_test.dart: parse cache: repeated windows (issue #1498) readBlockBefore re-walk is a cache hit, records identical
+✅ test/session/session_parse_cache_test.dart: parse cache: repeated windows (issue #1498) jumpToOffset twice on the same window stays under the budget
+✅ test/session/session_parse_cache_test.dart: parse cache: freshness (issue #1498) an append keeps the cached prefix and serves the new lines
+✅ test/session/session_parse_cache_test.dart: parse cache: freshness (issue #1498) a completed torn line re-parses (the length changed)
+✅ test/session/session_parse_cache_test.dart: parse cache: freshness (issue #1498) a shrink (truncation) invalidates the cached lines
+✅ test/session/session_parse_cache_test.dart: parse cache: freshness (issue #1498) a same-size mtime move (the rewrite signal) invalidates
+✅ test/session/session_parse_cache_test.dart: parse cache: freshness (issue #1498) shallow and full parses never cross (byte-compat guard)
+✅ test/session/session_parse_cache_test.dart: parse cache: bounds (issue #1498) entry cap evicts oldest first
+✅ test/session/session_parse_cache_test.dart: parse cache: bounds (issue #1498) byte cap bounds the cached raw-line bytes
+✅ test/session/session_parse_cache_test.dart: parse cache: bounds (issue #1498) parseCacheEntries: 0 disables the cache
+✅ test/session/session_parse_cache_test.dart: parse cache: torn and junk lines (issue #1498) a known-torn line is skipped without a re-parse
+✅ test/session/session_parse_cache_test.dart: parse cache: torn and junk lines (issue #1498) a foreign (parseable, non-record) line stays skipped
+✅ test/session/session_parse_cache_test.dart: parse cache: torn and junk lines (issue #1498) a decode-failed (invalid utf8) line is torn-cached too
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd decodes a slug back to its absolute path
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd round-trips typical absolute paths
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd round-trips paths containing hyphens (gh-1744)
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd escapes literal hyphens reversibly, separators stay hyphens
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd round-trips percent and colon characters (gh-1744)
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd legacy escape-free slugs decode as before (compat)
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd ignores trailing slashes when encoding
+✅ test/session/session_repo_test.dart: encodeSessionCwd / decodeSessionCwd returns null for bad or empty slugs
+✅ test/session/session_repo_test.dart: JsonlSessionRepo create lays out files under an encoded cwd directory
+✅ test/session/session_repo_test.dart: JsonlSessionRepo create lays hyphenated cwds under a reversible slug dir (gh-1744)
+✅ test/session/session_repo_test.dart: JsonlSessionRepo create rejects nothing; ids default to unique generated values
+✅ test/session/session_repo_test.dart: JsonlSessionRepo open re-loads an existing session with its entries
+✅ test/session/session_repo_test.dart: JsonlSessionRepo open of a missing session throws not_found
+✅ test/session/session_repo_test.dart: JsonlSessionRepo list returns sessions most recently updated first, filtered by cwd
+✅ test/session/session_repo_test.dart: JsonlSessionRepo list populates sizeBytes from the filesystem entry
+✅ test/session/session_repo_test.dart: JsonlSessionRepo list skips corrupt session files
+✅ test/session/session_repo_test.dart: JsonlSessionRepo delete removes the session file
+✅ test/session/session_repo_test.dart: JsonlSessionRepo fork copies the full tree by default and records parent session
+✅ test/session/session_repo_test.dart: JsonlSessionRepo fork at an entry truncates to that prefix
+✅ test/session/session_repo_test.dart: JsonlSessionRepo fork before a user message drops that message
+✅ test/session/session_repo_test.dart: JsonlSessionRepo fork before a non-user message is rejected
+✅ test/session/session_repo_test.dart: JsonlSessionRepo fork of an unknown entry is rejected
+✅ test/session/session_repo_test.dart: JsonlSessionRepo cleanupEmptySessions removes header-only .jsonl files and keeps the rest
+✅ test/session/session_repo_test.dart: JsonlSessionRepo cleanupEmptySessions returns 0 and removes nothing when everything has transcript
+✅ test/session/session_repo_test.dart: JsonlSessionRepo cleanupEmptySessions olderThan spares fresh header-only files
+✅ test/session/session_repo_test.dart: listing resilience — one bad entry must not blank the list an unreadable session file is skipped and logged; the rest list
+✅ test/session/session_repo_test.dart: listing resilience — one bad entry must not blank the list an unlistable session directory is skipped and logged; the rest lists
+✅ test/session/session_repo_test.dart: listing resilience — one bad entry must not blank the list without a logger the skip stays silent and non-fatal
+✅ test/session/session_repo_test.dart: issue #199 — parallel listing list fans header reads out concurrently, bounded pool
+✅ test/session/session_repo_test.dart: sortSessionsCurrentFolderFirst current folder first, then other folders, each group newest first
+✅ test/session/session_repo_test.dart: sortSessionsCurrentFolderFirst falls back to createdAt when a session has no activity stamp
+✅ test/session/session_repo_test.dart: sortSessionsCurrentFolderFirst no current cwd keeps the plain activity order
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse big named-at-creation file resolves with zero parse batches
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse rename at the tail wins over the creation name
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse a name archived by segment rotation still resolves
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse an empty rename in the active segment clears an archived name
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse newest empty name clears an older name
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse file without session_info resolves to null
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse a foreign torn line carrying the needle is skipped
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse needle straddling a 1 MiB block boundary is found
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse missing file throws like open
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse non-ranged store keeps the ranged-read error contract
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse AC1: a 50 MB name-miss proves absence with bounded bytes
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse AC2: header name resolves with bounded bytes on a 9 MB file
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse AC5: tail rename beats the header name, bounded bytes
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse a rename pushed beyond both probe windows is outside the bounded contract
+✅ test/session/session_repo_test.dart: issue #369 — session-name resolution without full parse needle crossing the head window edge is found via overlap
+✅ test/session/session_repo_test.dart: persistTransform — record-write mask (gh-1952 review) appended records carry masked tool-call arguments
+✅ test/session/session_repo_test.dart: persistTransform — record-write mask (gh-1952 review) a repo without a transform persists byte-identically
+✅ test/session/session_deletion_test.dart: deletion journal + trash (AC1, AC3) delete moves the file into .trash and journals the culprit
+✅ test/session/session_deletion_test.dart: deletion journal + trash (AC1, AC3) cleanupEmptySessions trashes and journals only empty files
+✅ test/session/session_deletion_test.dart: deletion journal + trash (AC1, AC3) .trash contents never surface in list()
+✅ test/session/session_deletion_test.dart: deletion journal + trash (AC1, AC3) deleting a missing file is journaled, not thrown
+✅ test/session/session_deletion_test.dart: deletion journal + trash (AC1, AC3) purgeTrash removes only entries older than the ttl
+✅ test/session/session_deletion_test.dart: delete guarantees (issue #863) AC1: delete removes the file; a fresh list has no such id
+✅ test/session/session_deletion_test.dart: delete guarantees (issue #863) a backend that renames nothing still deletes via copy+delete
+✅ test/session/session_deletion_test.dart: delete guarantees (issue #863) copy+delete refuses sessions over the trash-copy budget
+✅ test/session/session_deletion_test.dart: delete guarantees (issue #863) E3: a backend that removes nothing fails loudly, not silently
+✅ test/session/session_deletion_test.dart: live-session guard (AC2) a fresh foreign heartbeat refuses the delete by name
+✅ test/session/session_deletion_test.dart: live-session guard (AC2) an expired heartbeat deletes with a journal entry
+✅ test/session/session_deletion_test.dart: live-session guard (AC2) the owning pid may delete its own live session
+✅ test/session/session_deletion_test.dart: live-session guard (AC2) cleanupEmptySessions skips a live header-only session
+✅ test/session/session_deletion_test.dart: no raw unlink on session files (AC3 grep-test) the gate is the only remove site in the session zones
+✅ test/session/windowed_session_property_test.dart: seeded random walk of taps and jumps keeps every view exact
+✅ test/session/custom_record_scan_memo_test.dart: an unchanged file is scanned once — the repeat call is memoized
+✅ test/session/custom_record_scan_memo_test.dart: an append invalidates the memo — the new record is seen
+✅ test/session/custom_record_scan_memo_test.dart: records of another type are invisible to the memo entry
+✅ test/session/custom_record_scan_memo_test.dart: a multi-type scan memoizes independently of a single-type scan
+✅ test/session/custom_record_scan_memo_test.dart: lastSegmentOnly scans are memoized under their own key
+✅ test/session/custom_record_scan_memo_test.dart: a memo hit returns records that decode identically
+✅ test/session/custom_record_scan_memo_test.dart: an explicit tail-cap change is a different memo key
+✅ test/session/session_grouping_test.dart: classification a session without metadata (pre-feature file) is a main
+✅ test/session/session_grouping_test.dart: classification cli/app agents are mains; subagent carries its parent id
+✅ test/session/session_grouping_test.dart: groupSessionsByParent a list with no children yields one group per main, in order
+✅ test/session/session_grouping_test.dart: groupSessionsByParent children attach to their parent when it is in the list
+✅ test/session/session_grouping_test.dart: groupSessionsByParent a child whose parent is missing from the list is an orphan: top-level group, still marked as a subagent
+✅ test/session/session_grouping_test.dart: groupSessionsByParent a subagent with an empty parent id never vanishes: it surfaces top-level with the subagent marker (both hosts wrote parent: '' before the writers stamped real ids)
+✅ test/session/session_grouping_test.dart: groupSessionsByParent a self-referential parent id degrades to an orphan too
+✅ test/session/session_grouping_test.dart: groupSessionsByParent deep nesting is impossible: a child pointing at another child never nests below depth one
+✅ test/session/session_grouping_test.dart: groupSessionsByParent per-level order follows the input order (activity-sorted callers keep newest-first at both levels)
+✅ test/session/session_grouping_test.dart: groupSessionsByParent orphans sit at their own activity position in the top level, not after every main
+✅ test/session/session_grouping_test.dart: groupSessionsByParent every child attaches to exactly one group; none is dropped
+✅ test/session/session_grouping_test.dart: groupSessionsByParent AC5: grouping 500 sessions performs zero file reads beyond the caller's header reads
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readRecordsByIds (issue #385 F4) resolves the wanted ids from a raw file in one pass
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readRecordsByIds (issue #385 F4) missing ids stay absent and missing files resolve empty
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readRecordsByIds (issue #385 F4) an empty id set short-circuits without reading
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readRecordsByIds (issue #385 F4) torn and foreign lines degrade around the drill-in (E6)
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) reads the whole strip above the anchor, header dropped
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) a byte-bound strip keeps the NEWEST records and hasOlder
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) a record cap trims to the newest records and keeps hasOlder
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) a record wider than the strip widens the block until it fits
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) anchor clamps to EOF and a zero anchor reads nothing
+✅ test/session/session_chunk_reader_test.dart: SessionChunkReader.readBlockBefore (issue #503 boundary walk) a missing file surfaces notFound
+✅ test/session/session_tree_test.dart: Session append and navigation appendMessage chains parent ids along the leaf
+✅ test/session/session_tree_test.dart: Session append and navigation branching: two children from one parent have independent paths
+✅ test/session/session_tree_test.dart: Session append and navigation getChildren groups records by parentId
+✅ test/session/session_tree_test.dart: Session append and navigation moveTo to unknown entry throws not_found
+✅ test/session/session_tree_test.dart: Session append and navigation moveTo with summary appends a branch_summary record
+✅ test/session/session_tree_test.dart: Session append and navigation moveTo(null) jumps to the tree root
+✅ test/session/session_tree_test.dart: Session append and navigation labels validate the target and support removal
+✅ test/session/session_tree_test.dart: Session append and navigation session name is sanitized and the last one wins
+✅ test/session/session_tree_test.dart: Session context rebuild buildContextMessages walks leaf to root, oldest first
+✅ test/session/session_tree_test.dart: Session context rebuild buildContextMessages drops stale structured-compaction usage anchors
+✅ test/session/session_tree_test.dart: Session context rebuild context rebuild resets classic-cut anchors but preserves fresh usage
+✅ test/session/session_tree_test.dart: Session context rebuild context rebuild preserves live usage without compaction
+✅ test/session/session_tree_test.dart: Session context rebuild context follows the active branch after moveTo
+✅ test/session/session_tree_test.dart: Session context rebuild compaction record replaces everything before firstKeptEntryId
+✅ test/session/session_tree_test.dart: Session context rebuild branch_summary records project into context as user messages
+✅ test/session/session_tree_test.dart: Session context rebuild custom_message projects into context; custom records do not
+✅ test/session/session_tree_test.dart: Session context rebuild buildContext derives model, thinking level, and active tools
+✅ test/session/session_tree_test.dart: Session context rebuild buildContext derives the custom provider pin from model_change (gh-1000)
+✅ test/session/session_tree_test.dart: Session context rebuild an assistant-message-derived model carries no pin (migration-safe)
+✅ test/session/session_tree_test.dart: Session context rebuild a turn after the model_change keeps the serving pin (gh-1226): an assistant message updates provider/modelId but carries the endpoint/entry pin forward
+✅ test/session/session_tree_test.dart: Session context rebuild a turn served by a DIFFERENT provider than the pin does not carry the pin forward (gh-1226 review): queue failover / roles rotation swap the serving model with no model_change record — fusing the z.ai endpoint onto the new provider would re-bind it to the wrong endpoint and key slot on the next restore
+✅ test/session/session_tree_test.dart: Session context rebuild buildContext defaults when nothing was recorded
+✅ test/session/session_tree_test.dart: ensureCompactionBoundaryResident (windowed CLI resume, #503) a linear session longer than the residency cache pages everything, tail intact — no full-open fallback
+✅ test/session/session_tree_test.dart: ensureCompactionBoundaryResident (windowed CLI resume, #503) a compaction boundary within the cache pages to it, tail intact
+✅ test/session/session_tree_test.dart: ensureCompactionBoundaryResident (windowed CLI resume, #503) a fresh (empty) session is intact without paging
+✅ test/session/session_tree_test.dart: ensureCompactionBoundaryResident (windowed CLI resume, #503) a full (non-windowed) storage is a no-op reporting intact
+✅ test/session/session_tree_test.dart: ensureCompactionBoundaryResident (windowed CLI resume, #503) tokenBudget stops the walk once the resident tail fills the model window — no boundary, no file head (issue #503: resume reads only what fits the context window; older history pages in on scroll)
+✅ test/session/session_tree_test.dart: ensureConversationResident (registry-only live tails) pages bounded older blocks to the nearest conversation record
+✅ test/session/session_tree_test.dart: ensureConversationResident (registry-only live tails) an already-resident custom message avoids older reads
+✅ test/session/session_tree_test.dart: ensureConversationResident (registry-only live tails) maxPages bounds a conversation-less tail and full storage is a no-op
+✅ test/session/session_tree_test.dart: ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces) a linear session longer than the window pages to the file head in bounded blocks — the branch then matches the full open exactly (semantic-drift property)
+✅ test/session/session_tree_test.dart: ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces) a session below the window is already resident — a trivial true, branch identical to the full open (no regression for the common small session, gh-1555 AC7)
+✅ test/session/session_tree_test.dart: ensureWholeLedgerResident (gh-1555 W1 read-everything surfaces) a full (non-windowed) storage is a no-op reporting true
+✅ test/memory_print_redirect_test.dart: MemoryController print redirect (gh-1510) package debug prints land in printSink, never on stdout
+✅ test/memory_print_redirect_test.dart: MemoryController print redirect (gh-1510) without printSink the historical print behavior is preserved
+✅ test/ci_1684_extension_size_gate_test.dart: AC1 — Pages stops carrying the zip; site links move pages.yml no longer copies fa-extension.zip into the artifact
+✅ test/ci_1684_extension_size_gate_test.dart: AC1 — Pages stops carrying the zip; site links move pages.yml runs no size gates at deploy time
+✅ test/ci_1684_extension_size_gate_test.dart: AC1 — Pages stops carrying the zip; site links move every site extension link points at the GitHub release
+✅ test/ci_1684_extension_size_gate_test.dart: AC1 — Pages stops carrying the zip; site links move the llms.txt artifact lead-in matches the release channel (rework)
+✅ test/ci_1684_extension_size_gate_test.dart: AC2 — the zip keeps riding the release build-macos.yml build-extension gates then uploads the zip
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the extension-size-gate leg exists in ci.yml
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the leg is path-gated on the new extsize output
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the leg builds the full zip and gates against the baseline
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the leg carries an explicit ceiling (#351 arithmetic)
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the classifier emits extsize for both events
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the classifier keys on the extension-touching path set
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the trigger set arms on root vendor/ fork edits (rework)
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the trigger set arms on the gate tool itself (rework)
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the trigger set arms on root pubspec_overrides.yaml (rework)
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the classifier failure arm runs the leg (fail-safe)
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the extsize arm classifies validation dispatches too
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time quality-gate NEEDS the leg and consumes its result
+✅ test/ci_1684_extension_size_gate_test.dart: AC3 — the gate runs at PR review time the leg is platform class (never holds the dart publish)
+✅ test/ci_1684_extension_size_gate_test.dart: AC4 — the notice-only web gates are removed, not armed pages.yml has no web-app/outlook-app gate legs left
+✅ test/ci_1684_extension_size_gate_test.dart: AC5 — one baseline, one enforcement rule both legs gate against the committed baseline identically
+✅ test/ci_1684_extension_size_gate_test.dart: AC5 — one baseline, one enforcement rule the release leg builds on the same pinned Flutter
+✅ test/ci_1684_extension_size_gate_test.dart: AC5 — one baseline, one enforcement rule the gate leg caches the pinned Flutter SDK (rework)
+✅ test/sse_decoder_test.dart: SseDecoder parses a simple data-only event
+✅ test/sse_decoder_test.dart: SseDecoder parses event name and data
+✅ test/sse_decoder_test.dart: SseDecoder joins multi-line data with newlines
+✅ test/sse_decoder_test.dart: SseDecoder ignores comment lines but keeps them in raw
+✅ test/sse_decoder_test.dart: SseDecoder handles CRLF line endings
+✅ test/sse_decoder_test.dart: SseDecoder handles lone CR line endings
+✅ test/sse_decoder_test.dart: SseDecoder parses events split across chunks
+✅ test/sse_decoder_test.dart: SseDecoder chunk boundary between CR and LF of a CRLF pair
+✅ test/sse_decoder_test.dart: SseDecoder parses multiple events from one chunk
+✅ test/sse_decoder_test.dart: SseDecoder flushes a trailing event without a final blank line
+✅ test/sse_decoder_test.dart: SseDecoder decodes a trailing line without any newline
+✅ test/sse_decoder_test.dart: SseDecoder yields nothing for an empty stream
+✅ test/sse_decoder_test.dart: SseDecoder yields nothing for comment-only input
+✅ test/sse_decoder_test.dart: SseDecoder consecutive blank lines do not create empty events
+✅ test/sse_decoder_test.dart: SseDecoder strips a single leading space from values
+✅ test/sse_decoder_test.dart: SseDecoder field-less lines are ignored (per SSE spec)
+✅ test/sse_decoder_test.dart: SseDecoder strips a UTF-8 BOM at the start of the stream (SSE spec)
+✅ test/sse_decoder_test.dart: SseDecoder a BOM elsewhere in the stream is NOT stripped
+✅ test/sse_decoder_test.dart: SseDecoder a BOM after an empty first chunk is stripped
+✅ test/sse_decoder_test.dart: SseDecoder unknown fields are ignored
+✅ test/sse_decoder_test.dart: SseDecoder event with only an event name and no data still flushes
+✅ test/sse_decoder_test.dart: SseDecoder later event: line overwrites an earlier one
+✅ test/release_drift_check_test.dart: missing drift-check script fails the suite loudly
+✅ test/release_drift_check_test.dart: every fa-* digest matches the signed manifest → exit 0
+✅ test/release_drift_check_test.dart: tampered asset (manifest digest no longer matches bytes) → exit 1, names the asset
+✅ test/release_drift_check_test.dart: _runCheck is hermetic — a failing check leaves no drift-details.txt in the repo root
+✅ test/release_drift_check_test.dart: asset on disk but NOT in the manifest (stale manifest) → exit 1
+✅ test/release_drift_check_test.dart: SHA256SUMS missing on the release → exit 1 (provenance can never be verified)
+✅ test/release_drift_check_test.dart: SHA256SUMS.sig missing → exit 1 (unsigned manifest is not provenance)
+✅ test/release_drift_check_test.dart: manifest lists an asset the release no longer serves → exit 1
+✅ test/release_drift_check_test.dart: drift writes the details file the remediation pages from; a clean check leaves none
+✅ test/release_drift_check_test.dart: the script downloads from the release when no local dir is given
+✅ test/release_drift_check_test.dart: transient download blip → retried once, the check still passes (gh-2042 review thread 6)
+✅ test/release_drift_check_test.dart: persistent transport failure → infra exit 2, NO drift page (an infra blip is not drift evidence)
+✅ test/release_drift_check_test.dart: explicit not-found verdict → deterministic missing-manifest drift (exit 1 + details)
+✅ test/release_drift_check_test.dart: asset names with spaces are reported whole (line-wise set-diff, not word-split)
+✅ test/release_drift_check_test.dart: a manifest-covered asset with spaces verifies clean (whole-line manifest match)
+✅ test/release_drift_check_test.dart: a sha-check failure with zero FAILED lines never passes silently (catch-all)
+✅ test/power_runner_test.dart: per-run hold (the default) onRunStarted acquires, onRunSettled releases
+✅ test/power_runner_test.dart: per-run hold (the default) the next run re-acquires (acquire → release → acquire)
+✅ test/power_runner_test.dart: per-run hold (the default) a run that settles while the spawn is still in flight strands nothing: release waits the acquire out
+✅ test/power_runner_test.dart: per-run hold (the default) a double run-start acquires once (idempotent)
+✅ test/power_runner_test.dart: per-run hold (the default) a spawn failure warns and the run continues unguarded
+✅ test/power_runner_test.dart: per-run hold (the default) level off never acquires
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard .github/workflows/build-macos.yml: asset-carrying create -> guard step in the same job
+✅ test/power_runner_test.dart: session hold (the explicit opt-in) session open acquires; runs neither acquire nor release
+✅ test/power_runner_test.dart: session hold (the explicit opt-in) the status line names the hold
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard .github/workflows/build-mobile.yml: asset-carrying create -> guard step in the same job
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard .github/workflows/ci.yml: asset-carrying create -> guard step in the same job
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard lint is real: a fixture job that creates a draft and dies is flagged
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard AC6: ci.yml tag-publish path stays draft-capable only via the lazy draft helper
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard guard script: deletes own draft, spares published/missing releases
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard ownership: a failed leg cannot delete the sibling leg's mid-upload draft
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard ownership: a cross-job draft within the same run is still refused
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard ownership: an unmarked draft (legacy/foreign) is left to the sweeper
+✅ test/release_hygiene_test.dart: AC1 — every draft-capable create has a failure-path guard ownership: marker match is exact, not prefix/substring
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped release exists → attach: upload every asset --clobber, NO publish without SHA256SUMS
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped release exists and already carries SHA256SUMS → recovery publish + latest
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped missing → create: bare-tag title, DRAFT-only, assets ride the create, body carries the ownership marker
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped E3 race: create loses to a concurrent winner → attach idempotently, exit 0
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped create fails and nothing exists → loud failure (not a silent || true)
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped workflows route draft-capable creates through the script (one race-safe path)
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped every release_attach_or_create.sh call site exports GH_TOKEN (PAT/App token, never bare GITHUB_TOKEN)
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped gh-2026: build-macos lazy-draft call sites export GH_TOKEN (they can reach the missing-ref mint)
+✅ test/release_hygiene_test.dart: release_attach_or_create.sh — race-idempotent create, ownership-stamped gh-2026: every mint-reachable job grants actions:read (the mint train-verification probe)
+✅ test/release_hygiene_test.dart: AC3 — bare vX.Y.Z titles everywhere no "Fa " title prefix survives in any release-creating path
+✅ test/release_hygiene_test.dart: AC3 — bare vX.Y.Z titles everywhere every gh release create is titled and the title equals the tag
+✅ test/release_hygiene_test.dart: AC3 — bare vX.Y.Z titles everywhere lint is real: fixture with "Fa " prefix / missing title is flagged
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh CHANGELOG section for the version wins
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh gh-1522 preference 1b — a pending curated ## Unreleased section is this release's notes
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh gh-1522 preference 1b — the curated ## <version> section still wins over a non-empty Unreleased
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh gh-1522 rework — TWO ## Unreleased sections fail loud (silent-drop trap)
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh fallback: conventional commits since the previous tag, grouped
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh zero commits since previous tag -> clean "no changes" body (E5)
+✅ test/ci_binaries_arch_gate_test.dart: NG1 — the arch matrix gates the merge (#1280) binaries-pr also fires on the SM validation dispatch event
+✅ test/ci_binaries_arch_gate_test.dart: NG1 — the arch matrix gates the merge (#1280) binaries-smoke-gate aggregates the same events (no green-by-skip)
+✅ test/ci_binaries_arch_gate_test.dart: NG1 — the arch matrix gates the merge (#1280) binaries-pr carries the full 5-leg arch inventory
+✅ test/ci_binaries_arch_gate_test.dart: NG1 — the arch matrix gates the merge (#1280) linux/arm64 builds on the native arm runner (no cross-compile)
+✅ test/ci_binaries_arch_gate_test.dart: NG2 — release binaries boot before they ship (#1280) release binaries matrix carries the full 5-leg arch inventory
+✅ test/ci_binaries_arch_gate_test.dart: NG2 — release binaries boot before they ship (#1280) release binaries job boots the binary (fa --help) before archiving
+✅ test/ci_binaries_arch_gate_test.dart: merge-gate lockstep (#1280 never-again) machine-sm still stamps Binaries smoke gate as a required context
+✅ test/prompt_tools/prompt_tools_test.dart: injection appends tools section to an existing system prompt
+✅ test/prompt_tools/prompt_tools_test.dart: injection uses the section alone when no system prompt exists
+✅ test/prompt_tools/prompt_tools_test.dart: injection empty tools: byte-identical passthrough of context and events
+✅ test/prompt_tools/prompt_tools_test.dart: injection empty tools + injectWhenNoTools injects and parses
+✅ test/prompt_tools/prompt_tools_test.dart: injection promptToolInstructions returns exactly the appended section
+✅ test/prompt_tools/prompt_tools_test.dart: injection slim mode shortens tool descriptions and strips schema metadata
+✅ test/prompt_tools/prompt_tools_test.dart: injection slim mode is wired through PromptToolOptions
+✅ test/prompt_tools/prompt_tools_test.dart: parsing single tool call with surrounding text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing opener split across two chunks
+✅ test/prompt_tools/prompt_tools_test.dart: parsing opener split across three chunks
+✅ test/prompt_tools/prompt_tools_test.dart: parsing closer split across chunks
+✅ test/prompt_tools/prompt_tools_test.dart: parsing multiple calls in one message
+✅ test/prompt_tools/prompt_tools_test.dart: parsing backticks not at line start do not close the block
+✅ test/prompt_tools/prompt_tools_test.dart: parsing false-positive fences in prose and code pass through
+✅ test/prompt_tools/prompt_tools_test.dart: parsing unclosed block at stream end is flushed as text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing unterminated opener at stream end is flushed as text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing invalid JSON recovery: trailing commas
+✅ test/prompt_tools/prompt_tools_test.dart: parsing invalid JSON recovery: single quotes
+✅ test/prompt_tools/prompt_tools_test.dart: parsing unrecoverable JSON falls back to text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing missing name falls back to text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing non-map arguments fall back to text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing block overflow emits the buffer as plain text
+✅ test/prompt_tools/prompt_tools_test.dart: parsing partial-first: snapshots accumulate text and partial args
+✅ test/prompt_tools/prompt_tools_test.dart: parsing CRLF opener is accepted
+✅ test/prompt_tools/prompt_tools_test.dart: parsing inner thinking blocks are mirrored with correct indices
+✅ test/prompt_tools/prompt_tools_test.dart: parsing native tool calls from the inner stream pass through
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization tool results become fenced user text with error marker
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization successful tool result has no error marker
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization image content in tool results becomes an omission note
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization historical assistant tool calls re-serialize as fenced text
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization assistant messages without tool calls pass through untouched
+✅ test/prompt_tools/prompt_tools_test.dart: history re-serialization full round-trip: history feeds back parseable fences
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping no calls: inner stopReason passes through (length)
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping usage passes through to the final message
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping error passes through with retryAfter
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping abort passes through
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping a throwing inner stream is converted into an ErrorEvent
+✅ test/prompt_tools/prompt_tools_test.dart: terminal mapping an inner stream without a terminal event gets a synthetic error
+✅ test/compaction/compaction_test.dart: settings and shouldCompact defaults match pi (reserve 16384, keep 20000, enabled)
+✅ test/compaction/compaction_test.dart: settings and shouldCompact disabled settings never compact
+✅ test/compaction/compaction_test.dart: settings and shouldCompact compacts only when tokens exceed window minus reserve
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow gh-1742 AC3: proportional headroom above the legacy-parity band
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow UT-2: scaling table across the hosted-model range
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow hosted mid-band windows reproduce the pi defaults exactly
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow REG: the estimate trigger never fires later than the legacy curve
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow scales to small on-device windows (summary pricing floor)
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow degenerate tiny windows: reserve never eats half, keep never all
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow invariants hold across the whole range
+✅ test/compaction/compaction_test.dart: CompactionSettings.forWindow UT-2: monotone in the window (reserve and keep)
+✅ test/compaction/compaction_test.dart: owner cap math (issues #273/#729) effectiveContextWindow clamps down below the catalog window
+✅ test/compaction/compaction_test.dart: owner cap math (issues #273/#729) UT-W1: a cap above the catalog window RAISES the effective window (issue #729)
+✅ test/compaction/compaction_test.dart: owner cap math (issues #273/#729) UT-W1: the raise feeds the compaction threshold and trigger
+✅ test/compaction/compaction_test.dart: owner cap math (issues #273/#729) the compaction threshold rides the capped window
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) UT-C1: the chunk planner bounds a 347k region to the budget
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) UT-C1: a single message bigger than the budget is one chunk
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) summarizationPayloadBudget floors at half the window
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) IT-C1: an over-budget region is summarized chunk-wise; every outbound prompt stays under the payload budget
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) under-budget payloads ride the legacy prompt byte-identically
+✅ test/compaction/compaction_test.dart: fit-the-window compaction payloads (issue #729) a single message bigger than the whole budget is truncated with an explicit note, and the prompt still fits
+✅ test/compaction/compaction_test.dart: findCutPoint keeps approximately keepRecentTokens, cutting on a user boundary
+✅ test/compaction/compaction_test.dart: findCutPoint never cuts at a tool result
+✅ test/compaction/compaction_test.dart: findCutPoint split turn: budget exhausts mid-turn
+✅ test/compaction/compaction_test.dart: findCutPoint pulls the cut back over non-message records
+✅ test/compaction/compaction_test.dart: findCutPoint no valid cut points: keeps everything from startIndex
+✅ test/compaction/compaction_test.dart: findCutPoint respects startIndex and endIndex bounds
+✅ test/compaction/compaction_test.dart: findCutPoint branch summary records are valid cut points
+✅ test/compaction/compaction_test.dart: findCutPoint branch summary and custom message records are turn starts
+✅ test/compaction/compaction_test.dart: findCutPoint pairing boundaries (AC4, issue #85) across every budget, the kept region never starts at a tool result and never orphans one
+✅ test/compaction/compaction_test.dart: findCutPoint pairing boundaries (AC4, issue #85) a cut that lands on steering text between call and result orphans the result — the repair drops it with a note (AC4)
+✅ test/compaction/compaction_test.dart: serializeConversation serializes user, assistant and tool result messages
+✅ test/compaction/compaction_test.dart: serializeConversation joins user text blocks and skips images
+✅ test/compaction/compaction_test.dart: serializeConversation truncates tool results beyond 2000 chars (pi limit)
+✅ test/compaction/compaction_test.dart: file operations extracts read/write/edit paths from assistant tool calls
+✅ test/compaction/compaction_test.dart: file operations ignores non-assistant messages
+✅ test/compaction/compaction_test.dart: file operations computeFileLists splits read-only from modified, sorted
+✅ test/compaction/compaction_test.dart: file operations formatFileOperations renders pi metadata tags
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) system prompt forbids continuing the conversation
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) structured prompt contains all pi sections
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) update prompt references the previous summary tags
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) turn prefix prompt describes the split-turn situation
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) prompts pin the epistemic status of claims (gh-1219)
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) update prompt never upgrades a hedged claim while folding
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) turn prefix prompt keeps hedges and evidence for the suffix
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) structured checkpoint prompt demands evidence for conclusions
+✅ test/compaction/compaction_test.dart: summary prompts (ported verbatim from pi) branch summary separates observed from interpreted state
+✅ test/compaction/branch_summarization_test.dart: collectEntriesForBranchSummary returns entries from the old leaf back to the common ancestor
+✅ test/compaction/branch_summarization_test.dart: collectEntriesForBranchSummary returns nothing when there is no old position
+✅ test/compaction/branch_summarization_test.dart: prepareBranchEntries walks newest-to-oldest within the token budget
+✅ test/compaction/branch_summarization_test.dart: prepareBranchEntries accumulates file ops from nested branch summary details
+✅ test/compaction/branch_summarization_test.dart: generateBranchSummary summarizes entries with preamble and file-operation tags
+✅ test/compaction/branch_summarization_test.dart: generateBranchSummary returns "No content to summarize" for empty entries
+✅ test/compaction/branch_summarization_test.dart: generateBranchSummary surfaces summarization failure without throwing
+✅ test/compaction/branch_summarization_test.dart: generateBranchSummary maps aborted summarization to the aborted flag
+✅ test/compaction/branch_summarization_test.dart: navigateSessionTree moves the leaf and prepends the summary to the entered branch
+✅ test/compaction/branch_summarization_test.dart: navigateSessionTree is a no-op when navigating to the current leaf
+✅ test/compaction/branch_summarization_test.dart: navigateSessionTree navigates without a summary when summarization fails
+✅ test/compaction/branch_summarization_test.dart: navigateSessionTree branch-entry boundaries never orphan a tool_result (AC4, #85)
+✅ test/release_hygiene_test.dart: AC5 — release_notes.sh E4: 200 commits -> capped at 50 with an "and N more" line
+✅ test/compaction/structured_engine_test.dart: pass 1 hides judge-picked pairs and refreshes state
+✅ test/compaction/structured_engine_test.dart: gh-2101: one judge pass batches its whole multi-group pick into ONE hidden_range append
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh old bot draft deleted, fresh untouched, human kept; issue filed naming the run
+✅ test/compaction/structured_engine_test.dart: a failed judge call is counted, retried, and pass 2 still engages
+✅ test/compaction/structured_engine_test.dart: pass 2 checkpoints the oldest range with covers and open asks
+✅ test/compaction/structured_engine_test.dart: the fold summarize path never prints to stdout (gh-1469 glass guard)
+✅ test/compaction/structured_engine_test.dart: summarizer failure appends nothing and surfaces failure
+✅ test/compaction/structured_engine_test.dart: nested checkpoints flatten at the depth cap
+✅ test/compaction/structured_engine_test.dart: gh-2097 run-start re-anchor a run re-anchors on the session projection before the trigger math (in-memory tail cut — the incident shape)
+✅ test/compaction/structured_engine_test.dart: gh-2097 run-start re-anchor records a second writer appended between runs re-baseline the next run (two writers: messages + hidden ranges)
+✅ test/compaction/structured_engine_test.dart: gh-2097 run-start re-anchor a mid-run second-writer append rides out as basisReadTokens on the pass receipt (basis flip metadata)
+✅ test/compaction/structured_engine_test.dart: classicTransform no compaction → the path passes through unchanged (copied)
+✅ test/compaction/structured_engine_test.dart: classicTransform cuts at the LAST compaction; kept suffix + post records survive
+✅ test/compaction/structured_engine_test.dart: classicTransform firstKeptEntryId not on the path → everything before drops
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2008: stale PAT-attributed pipeline draft (release-draft-owner marker, human author) is swept; unmarked human draft stays kept (E1)
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2008: stale draft whose body only MENTIONS the marker substring (no run/<id>/job/ shape) stays kept (E1)
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh idempotent re-run: comments on the open issue instead of duplicating
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh clean sweep auto-closes the open issue (self-closing convention)
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2105 — the sweep issue names a failed tag train a stale pipeline draft whose tag train failed names the train run and its failed jobs
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2105 — the sweep issue names a failed tag train a stale pipeline draft whose train succeeded keeps the create-death prose (there the create step really did die)
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2105 — the sweep issue names a failed tag train an unreadable train lookup degrades to the static prose and never blocks the delete + issue filing
+✅ test/release_hygiene_test.dart: AC2 — sweep_stale_drafts.sh gh-2105 — the sweep issue names a failed tag train fresh and human drafts never trigger a train lookup
+✅ test/release_hygiene_test.dart: AC6 — regression no "Release vX" filler bodies remain
+✅ test/release_hygiene_test.dart: AC6 — regression release flow is tag-only (gh-1522): auto_release.sh cuts + pushes the tag, never touches main or any file
+✅ test/release_hygiene_test.dart: AC6 — regression release job authenticates via the fa-release-bot App token (mint step + checkout + GH_TOKEN), no SDK steps
+✅ test/release_hygiene_test.dart: AC6 — regression dry-run dispatch carries no bypass credential (mint gated, checkout falls back, job reads)
+✅ test/release_hygiene_test.dart: AC6 — regression daily-publish.yml carries the sweeper job, ungated by leg results
+✅ test/release_hygiene_test.dart: AC6 — regression sweep-drafts grants actions:read — gh run list 403s without it (review of #294)
+✅ test/release_hygiene_test.dart: AC6 — regression release job never fires from a bare workflow_dispatch (SM validation dispatches pass no inputs)
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) AC1 — dry-run computes the tag, exits before the push; no tag on origin, no gh create, no local leftover
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) coalesce guard — a tag younger than 2h skips the run entirely (no new tag on origin)
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) coalesce guard measures the TAG date, not the tagged commit date — a tag cut minutes ago coalesces even when its commit sat pending for hours (PR #1526 thread 5)
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection null node → null (section absent)
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection non-map node is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection an empty map parses to an empty tuning (engine-only sections keep working)
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection parses triggerRatio as a double
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection parses the token budgets as ints
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection a non-numeric triggerRatio is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection a boolean triggerRatio is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection triggerRatio bounds are exclusive (0 and 1 are errors)
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection a non-int reserveTokens is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection a non-positive reserveTokens is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection a non-positive keepRecentTokens is a strict config error
+✅ test/compaction/tuning_test.dart: CompactionTuning.fromSection triggerRatio and reserveTokens are mutually exclusive
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) forWindow(200) → reserve 128, keep 256
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) forWindow(128000) → reserve 16384, keep 20000
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) forWindow(262144) → reserve 16384, keep 32768
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) forWindow(400000) → reserve 25000, keep 50000
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) forWindow(1048576) → reserve 65536, keep 131072
+✅ test/compaction/tuning_test.dart: forWindow golden curves (gh-1742, byte-identical) the legacy trigger line is 0.9375 × window above 262144 (the ticket correction baseline)
+✅ test/compaction/tuning_test.dart: applyCompactionTuning triggerRatio 0.75 pins the trigger at 75% of the window
+✅ test/compaction/tuning_test.dart: applyCompactionTuning triggerRatio 0.80 fires at 80% of the window
+✅ test/compaction/tuning_test.dart: applyCompactionTuning the ratio line never fires later than configured (modulo the double-multiplication epsilon)
+✅ test/compaction/tuning_test.dart: applyCompactionTuning reserveTokens overrides the curve directly
+✅ test/compaction/tuning_test.dart: applyCompactionTuning keepRecentTokens overrides the curve directly
+✅ test/compaction/tuning_test.dart: applyCompactionTuning ratio + keep compose (the ratio fixes the line, keep overrides retention)
+✅ test/compaction/tuning_test.dart: applyCompactionTuning a reserve over half the window clamps like forWindow (a pass must free tokens)
+✅ test/compaction/tuning_test.dart: applyCompactionTuning a keep over the window clamps like forWindow
+✅ test/compaction/tuning_test.dart: applyCompactionTuning a degenerate zero window stays forWindow-shaped
+✅ test/compaction/tuning_test.dart: applyCompactionTuning a disabled base stays disabled (tuning never re-enables)
+✅ test/compaction/tuning_test.dart: loadProjectCompactionTuning absent file → null; valid section parses; invalid throws (strict)
+✅ test/compaction/tuning_test.dart: mergeCompactionTuning both absent → null
+✅ test/compaction/tuning_test.dart: mergeCompactionTuning project wins per key; the other scope fills the gaps
+✅ test/compaction/tuning_test.dart: mergeCompactionTuning a conflicting merged pair is a strict config error
+✅ test/compaction/tuning_test.dart: mergeCompactionTuning a merged empty tuning reports empty
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) E1 race — a tag that appeared mid-run rejects the push; the run re-derives the next version and lands THAT
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) E1 exhaustion — a tag race on every attempt exits 1 after 3 tries, creating nothing
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) tag sequence — releases cut consecutive tags on origin/main with zero commits on main and one create each
+✅ test/release_hygiene_test.dart: gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race) suite git resolution is host-independent — no session shim decides fixture behavior
+✅ test/release_hygiene_test.dart: gh-1005 — PTY legs never route to fa-m5 / hosted macOS no runner-pick probe and no mac pty-integration leg remains
+✅ test/release_hygiene_test.dart: gh-1005 — PTY legs never route to fa-m5 / hosted macOS every PR PTY leg runs on ubuntu-24.04-arm
+✅ test/release_hygiene_test.dart: gh-1005 — PTY legs never route to fa-m5 / hosted macOS the consolidated linux leg carries the coverage + duration reporting
+✅ test/release_hygiene_test.dart: committed-artifact hygiene (gh-1033 review thread 11) no cov-*/ raw coverage dump directories exist in the tree
+✅ test/release_hygiene_test.dart: committed-artifact hygiene (gh-1033 review thread 11) .gitignore sweeps future cov-*/ scratch dirs
+✅ test/compaction/handoff_digest_test.dart: collectEntriesForHandoff returns the whole current branch, leaf to root, chronological
+✅ test/compaction/handoff_digest_test.dart: collectEntriesForHandoff an empty session has nothing to hand off
+✅ test/compaction/emergency_relief_test.dart: dedup repeated reads the older read of a path folds, the newest copy survives
+✅ test/compaction/emergency_relief_test.dart: dedup repeated reads a failed newest read never folds its older good copy
+✅ test/compaction/emergency_relief_test.dart: dedup repeated reads different paths never dedup each other
+✅ test/compaction/emergency_relief_test.dart: keep-N-recent per tool class stalest-first hides past the per-class keep budget (multi-item)
+✅ test/compaction/emergency_relief_test.dart: keep-N-recent per tool class exempt user turns and the live tail never hide
+✅ test/compaction/handoff_digest_test.dart: collectEntriesForHandoff a windowed (resumed) session collects the WHOLE branch, not just the resident tail — the resume walk must never silently truncate the digest input (gh-2102 review, BLOCKING)
+✅ test/compaction/emergency_relief_test.dart: invariants and edges a single oversized newest tool result folds so the turn survives (the buster rule)
+✅ test/compaction/emergency_relief_test.dart: invariants and edges already-under target: no-op outcome, nothing written
+✅ test/compaction/emergency_relief_test.dart: invariants and edges unanswered carriers never hide (pair integrity)
+✅ test/compaction/emergency_relief_test.dart: invariants and edges trim valve bounds the live context when hides free nothing
+✅ test/compaction/emergency_relief_test.dart: invariants and edges pinned expansions never hide
+✅ test/compaction/handoff_digest_test.dart: collectEntriesForHandoff a ledger past the whole-ledger bound refuses with the tooLarge SessionException — hosts degrade loudly, never silently digest a partial tail (gh-2102 review)
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest uses the handoff preamble, never the abandoned-branch one
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest composed digest carries the handoff preamble + file tags
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest nested branch-summary file lists accumulate (2+ sources)
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest no entries → no digest, reported not thrown
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest summarizer failure surfaces as an error, never throws
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest summarizer abort surfaces as aborted
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest generation is lossless: the session gains no records
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest a summarizer window bounds the digest prompt: an over-budget branch is summarized chunk-wise (fold), every outbound prompt within the payload budget (gh-2102 review, IMPORTANT)
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest a summarizer window over an under-budget branch is a no-op: the single prompt is byte-identical to the unbounded path (gh-2102 review)
+✅ test/compaction/handoff_digest_test.dart: generateHandoffDigest a single message bigger than the budget is truncated with the explicit note, never silently (gh-2102 review)
+✅ test/compaction/handoff_digest_test.dart: seedHandoffRecord the fresh session context carries digest + file list
+✅ test/compaction/emergency_relief_test.dart: session survival (owner directive) an old large session loads unchanged — byte-identical apart from the appended hidden-range records
+✅ test/compaction/emergency_relief_test.dart: session survival (owner directive) the tier never calls a language model (bounded wall time)
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide hides a whole pair group mid-turn and refreshes state
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide unknown id answers with the valid range
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide real user turns are rejected, never hidden
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide the protected tail is rejected with the reason
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide already-hidden targets answer honestly, append nothing
+✅ test/compaction/structured_tier2_test.dart: AC1 — agent-initiated hide unknown action name is a structured error
+✅ test/compaction/structured_tier2_test.dart: AC2 — LRU re-hide after expansion pressure evicts the oldest expansion, keeps the newest, segments stay expandable
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins judge picks on pinned segments silently fall through
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins agent hide on a pinned segment is a structured error
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins unpin releases the segment
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins a checkpoint never swallows a pinned segment
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins a deep pin cannot starve checkpointing (foldable walk)
+✅ test/compaction/structured_tier2_test.dart: AC3 — per-segment pins pins survive session reload
+✅ test/compaction/structured_tier2_test.dart: AC4 — marker budget (tier 2 variants) pinned markers stay inside the 12-token pin
+✅ test/compaction/structured_tier2_test.dart: AC5 — property: pin/hide/LRU interleavings stay lossless random interleavings keep the wire valid and the file whole
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-1/REG-ESC-2 — incident replay 385,619→360,497-shaped relief escalates on the same run (judge dead twice, fallback hide, no hides-exhausted gate)
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-1/REG-ESC-2 — incident replay 375,609→360,010-shaped relief escalates too (second incident transition is a merge-blocking fixture)
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-1/REG-ESC-2 — incident replay IT-ESC-4: the next run starting under the trigger performs no judge call and no escalation
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-4 — exact boundary table margin == 0 escalates
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-4 — exact boundary table margin == reserve - 1 escalates
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-4 — exact boundary table margin == reserve does not escalate
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-4 — exact boundary table margin == reserve + 1 does not escalate
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-4 — exact boundary table negative margin (still over the trigger) is not a thin settlement: no escalation, verdict fails
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-5 — automatic-only gating manual force == true skips the escalation
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-6 — bounded work exactly one escalation; a still-thin result does not loop
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-6 — bounded work maxCheckpointPasses == 0 produces no checkpoint call and no escalation
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-7 — failure safety empty summary: the failed escalation report fires and the pre-escalation under-trigger success stands
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-7 — failure safety failed processing (throwing summarizer): verdict stands, failure reported
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-8 — projection invariants inherited escalation never swallows pinned records and the wire stays pair-safe
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-8 — projection invariants inherited a marker-only escalation range consolidates deterministically with NO summarizer call
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-9/AC9-AC10 — cancellation and budgets a cancellation during the escalation surfaces: run() reports failure instead of swallowing the abort
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-9/AC9-AC10 — cancellation and budgets an already-cancelled run token skips the escalation entirely
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-9/AC9-AC10 — cancellation and budgets an attempt-budget expiry during the escalation propagates as the named TimeoutException (no chunk after it)
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-11 — multi-chunk escalation stays one pass (AC9/IT-ESC-2) a range needing several chunked summarizer calls reports exactly one escalation record
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-10 — observability is content-safe the escalation report carries margin/band/outcome and never ledger content in its diagnostics
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-12 — the keep-recent boundary cannot fold the whole live world (gh-2044 rework) an escalation whose foldable path fits keepRecentTokens with live records left declines: no fold, no live-tail swallow, honest no-range receipt, verdict stands
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-12 — the keep-recent boundary cannot fold the whole live world (gh-2044 rework) the hideableRemaining diagnostic reads 0 when every entry is exempt or inside the protected tail
+✅ test/compaction/structured_escalation_test.dart: UT-ESC-13 — an over-window run whose whole ledger fits keepRecentTokens still folds (gh-2044 rework, flutter_app over-window relief AC) the ladder folds the tool-result-heavy whole world when relief is required — the decline stays escalation-only
+✅ test/compaction/structured_escalation_test.dart: IT-ESC — factory wiring IT-ESC-1: a dead judge + deterministic fallback hide still escalates in the same structured run
+✅ test/compaction/structured_escalation_test.dart: IT-ESC — factory wiring IT-ESC-6: a user abort mid-escalation through the factory surfaces — even when the cancel reason is a TimeoutException (gh-2044 review thread 3)
+✅ test/compaction/structured_escalation_test.dart: IT-ESC — factory wiring IT-ESC-5: a cap-forced run does not escalate (cap channel keeps its existing classic fall-through)
+✅ test/compaction/structured_judge_health_test.dart: per-call budget token gh-2096 AC: a budget timeout cancels ONLY the in-flight judge call — the retry and the run-wide token stay live
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096 AC: the first run pays the budget, the next run goes straight to the deterministic hide
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096 AC: a due probe unlatches on success — its answer drives the hide, the unlatch persists
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096: a failing probe stays latched — one call, no retry, the failure count grows
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096: a garbage probe failure rides the same one-probe latch path — persist + deterministic hide, no retry
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096: a healthy judge answering garbage counts toward the same latch — two unparseable answers engage it
+✅ test/compaction/structured_judge_health_test.dart: cross-run judge-health latch gh-2096: a changed judge class probes immediately — the latch is about the class, not the session
+✅ test/compaction/structured_judge_health_test.dart: timeout diagnosis gh-2096 AC: the judge failure receipt carries entries, tokens and elapsed
+✅ test/compaction/structured_judge_health_test.dart: session survival (owner directive) gh-2096: an old large session loads unchanged — byte-identical apart from the additive records
+✅ test/compaction/structured_judge_health_test.dart: judgeHealthFromPath no records → null (the legacy path writes nothing)
+✅ test/compaction/structured_judge_health_test.dart: judgeHealthFromPath newest record wins; latched only at the threshold
+✅ test/compaction/structured_judge_health_test.dart: judgeHealthFromPath malformed payload degrades to a fresh state, never throws
+✅ test/compaction/structured_judge_health_test.dart: judgeHealthFromPath judgeLatchAfter mirrors the in-run fallback threshold
+✅ test/compaction/structured_judge_health_test.dart: factory surface (AutoCompactorPass fields) gh-2096: the host-visible pass receipts carry the judge diagnosis and the latch flag
+✅ test/compaction/token_estimation_test.dart: estimateTokens (pi chars/4 heuristic) user message with plain string content
+✅ test/compaction/token_estimation_test.dart: estimateTokens (pi chars/4 heuristic) user message with text and image blocks (image ≈ 1200 tokens)
+✅ test/compaction/token_estimation_test.dart: estimateTokens (pi chars/4 heuristic) assistant message sums text, thinking and tool calls
+✅ test/compaction/token_estimation_test.dart: estimateTokens (pi chars/4 heuristic) tool result message counts text and images
+✅ test/compaction/token_estimation_test.dart: calculateContextTokens prefers totalTokens when reported
+✅ test/compaction/token_estimation_test.dart: calculateContextTokens sums components when totalTokens is zero
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens no assistant usage: pure heuristic over all messages
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens uses the last valid assistant usage plus trailing estimate
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens ignores usage from errored or aborted assistant messages
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens ignores zero-valued usage blocks
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens repeated images charge once plus the wire replacement (issue #195 F5)
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens distinct images each charge full (issue #195 F5)
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens trailing repeats of anchor-era images stay cheap (issue #195 F5)
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens the content key matches the registry (drift pin, issue #195 F5)
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens estimateTokens without a seen set charges every occurrence
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens a riding video charges its base64 payload (gh-2007 thread 3)
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens a video in a tool result charges its payload too
+✅ test/compaction/token_estimation_test.dart: estimateContextTokens estimateContextTokens (dedup estimator) prices video payloads — videos replay their bytes every request (no registry placeholder rewrite), so every occurrence charges full
+✅ test/compaction/token_estimation_test.dart: estimateRequestOverheadTokens counts the system prompt and tool schemas at chars/4
+✅ test/compaction/token_estimation_test.dart: estimateRequestOverheadTokens a null prompt and no tools cost nothing
+✅ test/compaction/token_estimation_test.dart: estimateRequestTokens (the meter/guard shared basis) an unanchored transcript adds the system prompt and tool schemas
+✅ test/compaction/token_estimation_test.dart: estimateRequestTokens (the meter/guard shared basis) an anchored transcript does NOT add overhead — provider usage already prices the system prompt and tools
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate memoizes on the list identity + length — one estimator run for repeated calls
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate recomputes when the list grows (length key)
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate recomputes for a same-length REPLACEMENT list (compaction swaps identity)
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate the settled memo has no streaming input — in-flight stream content never invalidates it (the typing-lag fix)
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate a fresh list COPY over the same settled messages still hits the memo (the AgentState getter copies the list on every read)
+✅ test/compaction/token_estimation_test.dart: SettledContextEstimate settledEstimate exposes the usage anchor so callers can add request overhead only when unanchored
+✅ test/compaction/token_estimation_test.dart: estimateProjectedBranchTokens (issue #503 round 3b) equals the raw estimate when no structured records exist
+✅ test/compaction/token_estimation_test.dart: estimateProjectedBranchTokens (issue #503 round 3b) hidden records count as one-line markers, not full content
+✅ test/compaction/token_estimation_test.dart: estimateProjectedBranchTokens (issue #503 round 3b) covered records count zero; the checkpoint text is counted once
+✅ test/compaction/token_estimation_test.dart: estimateProjectedBranchTokens (issue #503 round 3b) a checkpoint covered by a later checkpoint is skipped (D4)
+✅ test/compaction/token_estimation_test.dart: estimateProjectedBranchTokens (issue #503 round 3b) classic transform drops everything before firstKeptEntryId
+✅ test/compaction/token_estimation_test.dart: hidden-checkpoint parity (the goal_builder resume class) a hidden checkpoint covers NOTHING - its span prices full
+✅ test/compaction/token_estimation_test.dart: hidden-checkpoint parity (the goal_builder resume class) a healthy (non-hidden) checkpoint still covers - unchanged
+✅ test/compaction/token_estimation_test.dart: hidden-checkpoint parity (the goal_builder resume class) projectedBranchBudgetCut prices the hidden span full (the cut must respect it)
+✅ test/compaction/token_estimation_test.dart: resetLoadedUsageAnchors zeroes assistant usage; user/tool messages pass through
+✅ test/compaction/token_estimation_test.dart: resetLoadedUsageAnchors a zero anchor is left as the same instance (no copy churn)
+✅ test/compaction/token_estimation_test.dart: resumeParityBudget (gh-968 UT-BUDGET) window − system+tools overhead − reserve: the meter's own basis
+✅ test/compaction/token_estimation_test.dart: resumeParityBudget (gh-968 UT-BUDGET) no prompt and no tools: budget = window − reserve
+✅ test/compaction/token_estimation_test.dart: resumeParityBudget (gh-968 UT-BUDGET) an unanchored overhead is SUBTRACTED, never swallowed (the reported 127% resume priced system+tools on top of a full window)
+✅ test/compaction/token_estimation_test.dart: resumeParityBudget (gh-968 UT-BUDGET) a clamped window (contextWindowCap) scales the budget (E4)
+✅ test/compaction/token_estimation_test.dart: resumeParityBudget (gh-968 UT-BUDGET) a system prompt alone near the window floors the budget at 0 without throwing (E6: huge AGENTS.md chain)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) whole branch fits the budget → null (nothing to trim)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) cuts before the record that would push the kept tail PAST the budget walking backward (kept tail ≤ budget, never a blockful over)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) a whole branch exactly at the budget fits (budget is inclusive)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) the overshoot is bounded by ONE record, never one block: a giant record at the crossing is dropped, not accepted
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) hidden records price as markers in the cut arithmetic (same estimator as the meter — REG-STRUCTURED)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) a checkpoint-covered span prices as its checkpoint text once
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) budget 0 floors at keeping the newest record (never an empty window)
+✅ test/compaction/token_estimation_test.dart: projectedBranchBudgetCut (gh-968 UT-OVERSHOOT) the classic compaction transform bounds the cut: records below firstKeptEntryId project zero and are never the crossing
+✅ test/compaction/context_window_registry_test.dart: ModelWindowKey (E2 identity) normalizes provider case and trailing-slash base URLs
+✅ test/compaction/context_window_registry_test.dart: ModelWindowKey (E2 identity) different model ids never share a key
+✅ test/compaction/context_window_registry_test.dart: ModelWindowKey (E2 identity) different providers never share a key
+✅ test/compaction/context_window_registry_test.dart: ContextWindowRegistry empty registry resolves nothing and verifies nothing
+✅ test/compaction/context_window_registry_test.dart: ContextWindowRegistry publish resolves the window for the same identity
+✅ test/compaction/context_window_registry_test.dart: ContextWindowRegistry resolve keys by identity, not by instance (E2)
+✅ test/compaction/context_window_registry_test.dart: ContextWindowRegistry last publish wins (endpoint detection, then a user pin)
+✅ test/compaction/context_window_registry_test.dart: ContextWindowRegistry non-positive windows are never registered
+✅ test/compaction/context_window_registry_test.dart: withRegisteredContextWindow (the child-wiring shape) no entry and an already-matching entry return the SAME instance
+✅ test/compaction/context_window_registry_test.dart: withRegisteredContextWindow (the child-wiring shape) the wrap swaps the window and preserves EVERY other field (gh-1742 review round 1, comment 5: one shared copyWith)
+✅ test/compaction/context_window_registry_test.dart: withRegisteredContextWindow (the child-wiring shape) Model.copyWith: null keeps, a value swaps (the single field list lives next to the class)
+✅ test/compaction/context_window_registry_test.dart: remove (issue #1515 unpin path) drops one identity and leaves the rest untouched
+✅ test/compaction/context_window_registry_test.dart: remove (issue #1515 unpin path) removing an unknown identity is a no-op
+✅ test/compaction/structured_expand_test.dart: renders every record kind with the wrapper stripped
+✅ test/compaction/structured_expand_test.dart: failure classes answer with one honest message each (F2)
+✅ test/compaction/structured_expand_test.dart: classic-folded, hidden, and off-branch records all expand (F2)
+✅ test/compaction/structured_expand_test.dart: discovery: no target lists hidden segments with previews (F1b)
+✅ test/compaction/structured_expand_test.dart: discovery: query filters previews AND full hidden content (F1b)
+✅ test/compaction/structured_expand_test.dart: a pasted marker string resolves like the bare id
+✅ test/compaction/structured_expand_test.dart: paging: giant segments slice by page with the exact continue footer
+✅ test/compaction/structured_expand_test.dart: budget charges per delivered page, so giants stay expandable
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) appends a CompactionRecord and rebuilds context around it
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool a cancelled token aborts before any write
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) summarization failure is failure-safe: history fully preserved
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool a null callback yields the graceful cannot-execute result
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool reciting stores the goal and reports the slot is set
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool an oversized goal clips BEFORE the write, with a visible marker
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool a multi-line goal is stored verbatim (render flattens)
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool an empty/absent goal is discovery: reads via current, no write
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool discovery with an empty slot points at how to set one
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal tool latest wins: reciting overwrites the slot (no append drift)
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) blank mock summary: the report omits the block (issue #578)
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) empty session: nothing to compact
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) empty summarizable region + blank answer: refused, history preserved (gh-2044 CI regression)
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) second compaction updates the previous summary
+✅ test/compaction/compaction_session_test.dart: compactSession (full pipeline through a Session) estimates tokens from provider usage when available
+✅ test/compaction/compaction_session_test.dart: shouldCompact against a session composes estimateContextTokens with the model window
+✅ test/compaction/compaction_session_test.dart: issue #1914 retry escalation a fruitless retry cuts strictly newer than the failed boundary
+✅ test/compaction/compaction_session_test.dart: issue #1914 retry escalation a healthy iterative fold keeps the shipped cut parameters
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal persistence the persisted snapshot renders at the projection tail
+✅ test/compaction/working_set_recite_tool_test.dart: recite_goal persistence reciteGoalForStorage bounds oversized goals
+✅ test/compaction/structured_continuation_notice_test.dart: notice names hidden spans with kinds and the expand hint
+✅ test/compaction/structured_continuation_notice_test.dart: E4: long span lists cap to first and last with the full-list hint
+✅ test/compaction/structured_continuation_notice_test.dart: AC5: no hidden ranges — the recoverables line is empty
+✅ test/compaction/structured_continuation_notice_test.dart: AC-red: a hidden range whose targets partially slid out of a windowed resident set must not crash the continuation
+✅ test/compaction/working_set_test.dart: goal recitation records payload round-trips through the tolerant parse
+✅ test/compaction/working_set_test.dart: goal recitation records junk payloads parse to null, never throw
+✅ test/compaction/working_set_test.dart: goal recitation records latest snapshot wins in file order
+✅ test/compaction/working_set_test.dart: goal recitation records a cleared (empty-goal) latest snapshot clears the slot
+✅ test/compaction/working_set_test.dart: recentlyTouchedPaths collects write/edit call paths, newest-last, distinct
+✅ test/compaction/working_set_test.dart: recentlyTouchedPaths ignores read-class calls, pathless calls and non-call records
+✅ test/compaction/working_set_test.dart: hasCompactionBoundary false on a plain transcript
+✅ test/compaction/working_set_test.dart: hasCompactionBoundary true for a hide, a checkpoint and a classic compaction
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock no recitation and no compaction boundary renders nothing
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock a recitation alone renders the goal section
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock post-compaction paths render the files section
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock whitespace-carrying paths render as ONE flattened line
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock both sections render together
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock the file count is capped with an explicit counting tail
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock the char budget drops the oldest files, never the newest
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock a zero budget disables the whole block
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock an oversized goal is clipped with an explicit marker
+✅ test/compaction/working_set_test.dart: renderWorkingSetBlock multi-line goals render as one flattened line
