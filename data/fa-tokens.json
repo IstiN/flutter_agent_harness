@@ -2,15 +2,6 @@
   "pr-2025": [
     {
       "leg": "rework",
-      "at": "2026-10-31T15:21:24Z",
-      "prompt": 68010,
-      "completion": 11874,
-      "total": 79884,
-      "cacheRead": 755392,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "rework",
       "at": "2026-10-31T15:38:16Z",
       "prompt": 75373,
       "completion": 12420,
@@ -3739,6 +3730,15 @@
       "completion": 4142,
       "total": 74471,
       "cacheRead": 720704,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T15:24:10Z",
+      "prompt": 98215,
+      "completion": 6022,
+      "total": 104237,
+      "cacheRead": 1005760,
       "model": "glm-5.3-flash"
     }
   ],
