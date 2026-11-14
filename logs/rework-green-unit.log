@@ -11444,3 +11444,1329 @@ site built: 9 artifact(s) — blog posts, docs pages, sitemap.xml, llms-full.txt
 ✅ test/wire/wire_serve_test.dart: bad_frame (review #1113 r2, BLOCKING #1) a malformed line emits a loud error frame pre-handshake
 ✅ test/wire/wire_serve_test.dart: bad_frame (review #1113 r2, BLOCKING #1) a malformed line post-handshake keeps the attach alive
 ✅ test/wire/wire_serve_test.dart: bad_frame (review #1113 r2, BLOCKING #1) a request after shutdown resolves to the safe refusal immediately
+✅ test/ci_core_shard_upload_retry_guard_test.dart: gh-1724 — test-core artifact uploads ride a retry the leg carries the two evidence uploads and their retries
+✅ test/ci_core_shard_upload_retry_guard_test.dart: gh-1724 — test-core artifact uploads ride a retry AC1: every primary upload step carries an id the retry references
+✅ test/ci_core_shard_upload_retry_guard_test.dart: gh-1724 — test-core artifact uploads ride a retry AC2: each primary upload is followed by an overwrite:true retry
+✅ test/ci_core_shard_upload_retry_guard_test.dart: gh-1724 — test-core artifact uploads ride a retry AC3: retries stay always()-reachable and never continue-on-error
+✅ test/ci_core_shard_upload_retry_guard_test.dart: gh-1724 — test-core artifact uploads ride a retry primaries keep their scope gate, retries keep the same scope
+✅ test/hosts/host_extension_api_test.dart: E6 — extension matrix declared at birth a missing built-in profile is rejected, extension and profile named
+✅ test/hosts/host_extension_api_test.dart: E6 — extension matrix declared at birth a transport state is rejected — tool extensions have no transport dimension
+✅ test/hosts/host_extension_api_test.dart: E6 — extension matrix declared at birth an off state without a reason is rejected (off is never silent)
+✅ test/hosts/host_extension_api_test.dart: E6 — extension matrix declared at birth a duplicate tool id inside one extension is rejected
+✅ test/hosts/host_extension_api_test.dart: E6 — extension matrix declared at birth every built-in profile declared constructs
+✅ test/hosts/host_extension_api_test.dart: E7 — collisions rejected at build time an extension id colliding with the SDK core throws naming both registrants (the negative-API pin: there is NO override point for a core tool)
+✅ test/hosts/host_extension_api_test.dart: E7 — collisions rejected at build time two extensions colliding with each other throw naming both
+✅ test/hosts/host_extension_api_test.dart: E7 — collisions rejected at build time an extension id colliding with the gated task surface throws naming both
+✅ test/hosts/host_extension_api_test.dart: E8 — off means hidden with a surfaced reason a profile-off extension contributes no tools and surfaces its reason
+✅ test/hosts/host_extension_api_test.dart: E8 — off means hidden with a surfaced reason an on extension wires its tools in the canonical tail position
+✅ test/hosts/host_extension_api_test.dart: E8 — off means hidden with a surfaced reason a profile with hostExtensionApi off hides every declared extension with the cell reason (the cell is enforced, E8)
+✅ test/hosts/host_extension_api_test.dart: E8 — off means hidden with a surfaced reason a custom profile without a state is a wire-time E6 violation
+✅ test/hosts/host_extension_api_test.dart: AC9 — extension hosts get byte-identical core wiring the extension is the ONLY delta: core tools, env chain, and plan are identical with and without it
+✅ test/hosts/host_extension_api_test.dart: AC9 — extension hosts get byte-identical core wiring extension tools ride the child tool pool like the core surface
+✅ test/hosts/app_host_wiring_test.dart: flutter-app profile (slice 5: the app host declares its matrix) it declares every capability without throwing (E2 completeness)
+✅ test/hosts/app_host_wiring_test.dart: flutter-app profile (slice 5: the app host declares its matrix) the wired set matches the app host reality
+✅ test/hosts/app_host_wiring_test.dart: flutter-app profile (slice 5: the app host declares its matrix) the fabric wires file + hub (the opt-in agent network)
+✅ test/hosts/app_host_wiring_test.dart: flutter-app profile (slice 5: the app host declares its matrix) AC7: off capabilities are invisible on the app plan
+✅ test/hosts/app_host_wiring_test.dart: flutter-app profile (slice 5: the app host declares its matrix) the marker-backed cells stay wired at run (js apps, on-device providers) and narrow honestly without their markers
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) the env chain is base → session vars (no sandbox layer)
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) the fabric is the file layer over the session root; the hub transport drops honestly without a hub service
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) a mounted project scopes the messaging root by sessionCwd, not the container cwd (the app mount flow)
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) the task/subagent complex assembles; children draw the safe pool
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) the registry floor (issue #692) holds at the builder level
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) the extension rides the canonical tail position; core first
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) E7: an app extension colliding with a core id throws at build time
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) E8: a profile-off extension hides with its reason surfaced
+✅ test/hosts/app_host_wiring_test.dart: app host wiring (slice 5: the shell constructs through the builder) buildAgentStack wires the app spec onto the agent
+✅ test/hosts/extension_host_parity_test.dart: IT-5 setup — the YoClip host wires through its custom profile the extension wires on the custom profile and the plan is identical to the CLI host's
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness every built-in profile declares every capability
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness off/transport cells carry non-empty reasons
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness transport cells name known transports only
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness the 14 matrix rows are pinned cell-exact (UT-2)
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness the five inventory-driven rows: CLI on, every other host off
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness a custom profile missing a capability is rejected (E2/UT-2)
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness a blank off reason is rejected at construction
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness a blank transport reason is rejected at construction
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness a transport naming an out-of-vocabulary transport is rejected
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness an empty transport set is rejected at construction
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness isWired is true for on/transport and false for off
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness a custom host can construct its own complete profile
+✅ test/hosts/host_wiring_test.dart: AC3 — matrix completeness transport vocabulary covers every capability (E2)
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) iosProfile cannot force-enable mcp over stdio (pinned example)
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) off is always declarable, even on a floored capability
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) manifest-sandbox floors hold: no sandbox/shell/sqlite raise
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) a custom profile force-enabling past an explicit floor throws at construction
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) the floor table survives narrowing (a narrowed profile cannot raise what its base floored)
+✅ test/hosts/host_wiring_test.dart: AC4 — floor narrowing (UT-3) macOS may explicitly narrow UP to stdio (floor keeps both transports)
+✅ test/hosts/host_wiring_test.dart: AC10 — catalog ceiling: SDK ⊇ CLI (UT-6) every capability-classified inventory item is a catalog row with CLI evidence
+✅ test/hosts/host_wiring_test.dart: AC10 — catalog ceiling: SDK ⊇ CLI (UT-6) the catalog covers every capability in the enum
+✅ test/hosts/host_wiring_test.dart: AC10 — catalog ceiling: SDK ⊇ CLI (UT-6) matrix-floored rows carry no fake CLI evidence
+✅ test/hosts/host_wiring_test.dart: AC10 — catalog ceiling: SDK ⊇ CLI (UT-6) wiring evidence files still exist (rot guard)
+✅ test/hosts/host_wiring_test.dart: AC10 — catalog ceiling: SDK ⊇ CLI (UT-6) the CLI plan hides exactly the two VM-floored rows and wires the rest of the ceiling
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) the CLI plan hides the browser-API JS surface (pinned example)
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) the real CLI help text carries zero jsApps references
+✅ test/hosts/extension_host_parity_test.dart: IT-5 — the registered tool is callable through the wired loop yoclip_cut executes in-session and its result lands as a toolResult record
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) jsr token ownership: the CLI pass-through is wired, the browser-API row stays hidden
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) expectTextFreeOf matches on identifier boundaries, not substrings
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) every hidden cell of every built-in profile removes its whole surface
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) 🔀 surfaces only the chosen transports (mcp on iOS)
+✅ test/hosts/host_wiring_test.dart: AC7 — hiding (UT-4) positive control: the CLI plan really surfaces its tokens
+✅ test/hosts/host_wiring_test.dart: builder — platform services (E1 embryo) a missing service fails loudly, naming every gap
+✅ test/hosts/host_wiring_test.dart: builder — platform services (E1 embryo) a partially served profile names exactly what is missing
+✅ test/hosts/host_wiring_test.dart: builder — platform services (E1 embryo) the plan carries the platform services for the slice-2 wiring
+✅ test/hosts/host_wiring_test.dart: builder — platform services (E1 embryo) a sqljs-only web host needs no lsp process factory (E1 by-transport)
+✅ test/hosts/host_wiring_test.dart: builder — platform services (E1 embryo) a profile wiring fewer capabilities needs fewer services
+✅ test/hosts/extension_host_parity_test.dart: IT-5 — record-level session parity (the YoClip scenario) identical scripted sessions produce identical JSONL record streams — kinds, order and payloads (modulo volatile identity)
+✅ test/hosts/extension_host_parity_test.dart: IT-5 — record-level session parity (the YoClip scenario) compaction fires identically: same resolved wiring, same threshold crossing, same compaction record payload
+✅ test/hosts/extension_host_parity_test.dart: IT-5 — long-term memory parity same memory tool calls produce the same outputs, the same store listing and the same store tree on both hosts
+✅ test/hosts/extension_host_parity_test.dart: IT-5 — the parity guard can go red a one-token divergence in the core behavior fails the diff
+✅ test/hosts/host_agent_wiring_test.dart: canonical CLI wiring (order parity) the full bundle reproduces the pre-conversion tool order
+✅ test/hosts/host_agent_wiring_test.dart: canonical CLI wiring (order parity) env chain: sandbox wraps base, session vars wrap sandbox
+✅ test/hosts/host_agent_wiring_test.dart: canonical CLI wiring (order parity) buildAgentStack registers core first, then the host surface
+✅ test/hosts/host_agent_wiring_test.dart: gh-1577 empty-hiccup knobs (AgentWiringSpec → Agent) the three hiccup knobs thread through the wiring spec to the agent, next to maxEmptyRetries
+✅ test/hosts/host_agent_wiring_test.dart: gh-1577 empty-hiccup knobs (AgentWiringSpec → Agent) defaults keep the loop defaults (3 / 500ms / 8s)
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) a2a-only fabric shape (no sessionRoot, no hub) wires clean — no repository composes, the plan keeps a2a (regression: the file-less fast path used to null-deref hubFabric)
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) absent web search config hides the family from tools AND tokens
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) absent browser handle hides the bridge with its reason
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) sqlite/lsp narrow per transport; zero served = off
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) hub-absent messaging narrows to the served transports
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) narrowing never force-enables a floored capability
+✅ test/hosts/host_agent_wiring_test.dart: run-narrowing (AC7 — hiding, off means absent everywhere) a profile with the sandbox off skips the sandbox layer
+✅ test/build_filter/provider_filter_test.dart: provider filter (FA_PROVIDERS) no override enables the whole catalog
+✅ test/hosts/host_agent_wiring_test.dart: headless host-callback tools (ask / request_secret) null callbacks still register the tools (graceful in-tool failure)
+✅ test/hosts/host_agent_wiring_test.dart: media facility hosts without MediaToolServices surface no media tools
+✅ test/build_filter/provider_filter_test.dart: provider filter (FA_PROVIDERS) a subset keeps only the listed providers
+✅ test/build_filter/provider_filter_test.dart: provider filter (FA_PROVIDERS) 'all' / '*' keep every visible provider
+✅ test/hosts/host_agent_wiring_test.dart: decisions facility (gh-1844 review) decide registers without any media facility when the bundle is provided
+✅ test/build_filter/provider_filter_test.dart: provider filter (FA_PROVIDERS) names match case-insensitively and ignore whitespace
+✅ test/hosts/host_agent_wiring_test.dart: decisions facility (gh-1844 review) no DecisionsServices surfaces no decide tool
+✅ test/build_filter/provider_filter_test.dart: provider filter (FA_PROVIDERS) the openai-completions alias honors the filter
+✅ test/build_filter/provider_filter_test.dart: bundledCatalogEndpoints is exactly the non-empty endpoints of the enabled providers
+✅ test/build_filter/provider_filter_test.dart: bundledCatalogEndpoints follows the FA_PROVIDERS filter like every picker surface
+✅ test/hosts/host_agent_wiring_test.dart: issue #1322 host seams (telemetry + key resolution) services.telemetry wires the sink in one field
+✅ test/hosts/host_agent_wiring_test.dart: issue #1322 host seams (telemetry + key resolution) a pinned key slot fires the drift warning at stack build
+✅ test/hosts/host_agent_wiring_test.dart: issue #1322 host seams (telemetry + key resolution) no resolver, no telemetry → byte-identical legacy wiring
+✅ test/hosts/host_agent_wiring_test.dart: issue #1322 host seams (telemetry + key resolution) services.resolveKey answers before the session binds
+✅ test/hosts/host_agent_wiring_test.dart: env chain for fs-touching tools (review #1230 decision) vision reads and browser screenshot saves clamp through the cube
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) full bundle: gated task surface rides AFTER the host tools; core tools stay child-safe
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) wired handles expose the assembled complex for the shell
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) hub fabric composes over the file layer; hub-absent stays bare file
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) profile with subagents off hides the whole surface — tools AND tokens
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) absent subagent bundle run-narrows the capability off (reason names the gap)
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) hub-only run keeps the wired hub — no silent fabric discard
+✅ test/hosts/host_agent_wiring_test.dart: task/subagent complex (slice 3 — builder-owned jobs) hub wired without a mainMailbox resolver fails loudly (E1)
+✅ test/ci_android_release_jdk_guard_test.dart: gh-2176: the pinned AGP has a reviewed Gradle JDK entry
+✅ test/ci_android_release_jdk_guard_test.dart: gh-2176 AC1/AC2: android release build jobs pin the AGP-derived JDK
+✅ test/ci_android_release_jdk_guard_test.dart: gh-2176 AC4: build-mobile.yml runs one JDK across its whole fleet
+✅ test/ci_1659_office_addin_matrix_test.dart: AC2 — office-addin.yml is dispatch-only workflow_dispatch stays; push and pull_request are gone
+✅ test/ci_1659_office_addin_matrix_test.dart: AC2 — office-addin.yml is dispatch-only the #423 dispatch-group concurrency block stays intact
+✅ test/ci_1659_office_addin_matrix_test.dart: AC2 — office-addin.yml is dispatch-only the daily leg still has a real job to dispatch and watch
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the office-addin-suite leg exists in ci.yml
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the leg is path-gated on the new office_addin output
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the classifier emits office_addin for both events
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the classifier keys on the exact retired trigger path list
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the classifier failure arm runs the leg (fail-safe)
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the office_addin arm classifies validation dispatches too
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix the two job copies run the SAME suite (drift guard)
+✅ test/ci_1659_office_addin_matrix_test.dart: AC1 — the suite runs inside the ci.yml matrix runner/timeout/permissions parity with the retired job
+✅ test/ci_1659_office_addin_matrix_test.dart: AC3 — the check name stays ruleset-coherent the moved job keeps the bare check-run name
+✅ test/ci_1659_office_addin_matrix_test.dart: AC4 — a red suite blocks the merge via the Quality gate quality-gate NEEDS the leg
+✅ test/ci_1659_office_addin_matrix_test.dart: AC4 — a red suite blocks the merge via the Quality gate the verdict loop consumes the leg result
+✅ test/ci_1659_office_addin_matrix_test.dart: AC4 — a red suite blocks the merge via the Quality gate the leg is platform class (never holds the dart publish)
+✅ test/daily_publish_report_signal_test.dart: signal-first excerpt tree-noise child log -> quotes the server message, not the tree tail
+✅ test/daily_publish_report_signal_test.dart: signal-first excerpt priority order: ::error:: beats a later Message from server
+✅ test/daily_publish_report_signal_test.dart: signal-first excerpt no signal line at all -> raw tail fallback
+✅ test/release_lazy_draft_mint_test.dart: gh-2026: a lazy draft for a MISSING tag mints it via the CI-firing annotated push first
+✅ test/daily_publish_report_signal_test.dart: cancelled-run digest cancelled leg -> dedicated section with job, ceiling, elapsed
+✅ test/daily_publish_report_signal_test.dart: cancelled-run digest cancelled digest still extracts elapsed on BSD hosts (no GNU date -d)
+✅ test/daily_publish_report_signal_test.dart: cancelled-run digest ceiling lookup handles the CLI leg name with a literal +
+✅ test/daily_publish_report_signal_test.dart: cancelled-run digest cancelled digest degrades gracefully without the workflow file
+✅ test/release_lazy_draft_mint_test.dart: gh-2026: a lazy draft whose mint fired no workflow run fails loud, no draft
+✅ test/daily_publish_report_signal_test.dart: root-cause dedup open issue carrying the same signature -> comment, not a new issue
+✅ test/daily_publish_report_signal_test.dart: root-cause dedup gh log line 2+ items: two signal lines both quoted in the dedup comment
+✅ test/daily_publish_report_signal_test.dart: existing lifecycle behavior dedup by open leg issue (title match) still comments, never re-files
+✅ test/daily_publish_report_signal_test.dart: existing lifecycle behavior auto-close on green still closes the leg issue
+✅ test/daily_publish_report_signal_test.dart: existing lifecycle behavior all-skipped stays green and files nothing
+✅ test/daily_publish_report_signal_test.dart: inject_failure end-to-end shape failed leg job log is resolved per-job and the injected ::error:: line is quoted + signed
+✅ test/daily_publish_report_signal_test.dart: wiring daily-publish.yml verifies the injected excerpt, not just issue creation
+✅ test/daily_publish_report_signal_test.dart: wiring report script ships the gh-1478 machinery
+✅ test/exceptions_test.dart: AgentHarnessException toString includes the runtime type and message
+✅ test/exceptions_test.dart: AgentHarnessException carries cause and causeStack
+✅ test/exceptions_test.dart: AgentHarnessException cause and causeStack default to null
+✅ test/exceptions_test.dart: AgentHarnessException ToolNotFoundException composes its message from the tool name
+✅ test/exceptions_test.dart: AgentHarnessException ToolValidationException carries the tool name and message
+✅ test/exceptions_test.dart: AgentHarnessException the hierarchy is exhaustively switchable
+✅ test/exceptions_test.dart: AgentHarnessException CompactionException carries its error code
+✅ test/exceptions_test.dart: AgentHarnessException all subtypes implement Exception
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/ci.yml AC1: each retry waits, bounded, for the stale dpkg lock
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/ci.yml AC2: a holder stuck past the bounded wait is stopped
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/ci.yml AC3: half-configured dpkg state is repaired before the retry
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/ci.yml AC4: the recovery sits INSIDE the loop, before the timeout
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/office-addin.yml AC1: each retry waits, bounded, for the stale dpkg lock
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/office-addin.yml AC2: a holder stuck past the bounded wait is stopped
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/office-addin.yml AC3: half-configured dpkg state is repaired before the retry
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill .github/workflows/office-addin.yml AC4: the recovery sits INSIDE the loop, before the timeout
+✅ test/ci_office_addin_playwright_retry_lock_guard_test.dart: office-addin e2e — the install retry survives its timeout kill AC5: the two workflow copies keep identical e2e run bodies
+✅ test/changelog_cap_guard_test.dart: under the cap passes (exit 0)
+✅ test/changelog_cap_guard_test.dart: exactly at the cap fails (cap is a strict less-than)
+✅ test/changelog_cap_guard_test.dart: over the cap fails naming the size, cap and the fix
+✅ test/changelog_cap_guard_test.dart: default cap is the pub.dev constant: 262145 bytes fails, 262143 passes
+✅ test/changelog_cap_guard_test.dart: repo CHANGELOG.md carries EXACTLY ONE ## Unreleased section (gh-1522 curation convention)
+✅ test/changelog_cap_guard_test.dart: missing changelog fails loudly
+✅ test/changelog_cap_guard_test.dart: repo CHANGELOG.md is under the cap (the gh-1452 trim landed)
+✅ test/changelog_cap_guard_test.dart: repo keeps the archive sibling and references it inline
+✅ test/changelog_cap_guard_test.dart: stamp_staged_release.sh caps the staged changelog after prepending the tag section
+✅ test/changelog_cap_guard_test.dart: stamp_staged_release.sh keeps only the fresh section as the last resort before failing loud
+✅ test/changelog_cap_guard_test.dart: ci.yml publish gate: repo-file check is advisory — an over-cap repo CHANGELOG.md must never fail the release (gh-1522)
+✅ test/changelog_cap_guard_test.dart: ci.yml publish job: the staged changelog is the hard gate, after staging and before upload
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/aab-gate-selftest.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/ai-teammate.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench-ale.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench-harbor.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench-mls.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench-programbench.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench-tests.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/bench.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/browser-ext.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/build-macos.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/build-mobile.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/ci.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/coverage-gardener.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/daily-publish.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/flake-watch.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/golden-regen.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/host-signing-provision.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/machine-merge.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/machine-sm.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/merge-trigger.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/nightly.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/office-addin.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/pages.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/publish-fa-llm.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/release-appstore.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/release-drift-watch.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/shard-rebalance.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/site-mobile.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/sm-kicker.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/sm-merge-guard.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/store-appearance-check.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC1 — full-history checkouts are blobless (gh-1477) .github/workflows/store-metadata.yml
+✅ test/workflow_fetch_shape_guard_test.dart: AC2 — metadata-only daily-train jobs carry a ≥20m seatbelt .github/workflows/build-mobile.yml job "version"
+✅ test/workflow_fetch_shape_guard_test.dart: AC2 — metadata-only daily-train jobs carry a ≥20m seatbelt .github/workflows/build-macos.yml job "version"
+✅ test/workflow_fetch_shape_guard_test.dart: AC2 — metadata-only daily-train jobs carry a ≥20m seatbelt .github/workflows/daily-publish.yml job "plan"
+✅ test/release_publish_immutability_test.dart: published release + unattached fa-* assets → attach refuses loud, nothing uploaded
+✅ test/release_publish_immutability_test.dart: gh-2050 pre-stage policy: published + unattached fa-* → leg goes green, NOTHING mutated
+✅ test/release_publish_immutability_test.dart: the WHOLE asset list is judged against ONE state snapshot (gh-2042 review: one gate call, all-or-nothing)
+✅ test/release_publish_immutability_test.dart: published release + already-attached assets → immutable skip, exit 0, no upload
+✅ test/release_publish_immutability_test.dart: published release + non-fa assets only → clobber-refresh attaches, exit 0
+✅ test/release_publish_immutability_test.dart: published release + servable (SHA256SUMS attached) → NO publish flip (latest never drags backwards)
+✅ test/release_publish_immutability_test.dart: draft release + fa-* assets → attach unchanged (uploads --clobber)
+✅ test/release_publish_immutability_test.dart: draft release + servable → recovery publish + latest (unchanged)
+✅ test/release_publish_immutability_test.dart: release_lazy_draft.sh on a published release → still a no-op skip (the gate owns refusal)
+✅ test/workflow_ios_derived_data_guard_test.dart: AC1 — the archive builds into a workspace-local derived data path build_app pins derived_data_path under the workspace build dir
+✅ test/workflow_ios_derived_data_guard_test.dart: AC2 — the pinned path is removed before the archive rm_rf of the derived data path precedes build_app
+✅ test/workflow_ios_derived_data_guard_test.dart: AC3 — the xcarchive is workspace-local too build_app pins archive_path next to the derived data path
+✅ test/workflow_ios_derived_data_guard_test.dart: AC4 — the shared per-user root is isolated, never purged the Fastfile never deletes ~/Library/Developer/Xcode/DerivedData
+✅ test/workflow_ios_derived_data_guard_test.dart: AC4 — the shared per-user root is isolated, never purged build-ios has no step that blanket-purges the shared DerivedData
+✅ test/viewport/follow_mode_test.dart: boot/resume (AC5) a fresh viewport always starts live with zero unseen
+✅ test/viewport/follow_mode_test.dart: boot/resume (AC5) held state is never persisted: a new instance never inherits
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) a user park beyond the arm band disengages (held)
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) a park inside the band re-arms live — the near-bottom rule
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) scrolling back toward the live edge within the arm band re-engages and flushes unseen
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) stopping outside the band stays held and keeps counting
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) landing exactly on the live edge always re-engages (arm 0)
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) a zero distance is live with any band
+✅ test/viewport/follow_mode_test.dart: user scroll classification (position-governed) further scrolls away while held keep the unseen count
+✅ test/viewport/follow_mode_test.dart: unseen counting (zero loss — AC4) live appends are never counted (the viewport shows them)
+✅ test/viewport/follow_mode_test.dart: unseen counting (zero loss — AC4) held appends accumulate — every event is counted, none shown by force
+✅ test/viewport/follow_mode_test.dart: unseen counting (zero loss — AC4) multi-unit appends (a settle card block) count as one delta
+✅ test/viewport/follow_mode_test.dart: unseen counting (zero loss — AC4) a negative delta never drives the count negative
+✅ test/viewport/follow_mode_test.dart: unseen counting (zero loss — AC4) jump-to-live flushes the count in one action
+✅ test/viewport/follow_mode_test.dart: near-bottom arm band (shared fraction, open question 1) the arm extent is ~10% of the viewport extent
+✅ test/viewport/follow_mode_test.dart: near-bottom arm band (shared fraction, open question 1) the extent floors at one unit so tiny viewports still re-arm
+✅ test/viewport/follow_mode_test.dart: near-bottom arm band (shared fraction, open question 1) a zero/negative extent yields zero (no band, no crash)
+✅ test/viewport/follow_mode_test.dart: value semantics equal states compare equal (app setState relies on it)
+✅ test/machine_kit/sm_kicker_test.dart: sm-kicker live-tick guard (#1092) machine-sm.yml keeps the dryRun=true dispatch trap documented
+✅ test/machine_kit/sm_kicker_test.dart: sm-kicker live-tick guard (#1092) every machine-sm.yml dispatch site passes -f dryRun= explicitly
+✅ test/machine_kit/sm_kicker_test.dart: sm-kicker live-tick guard (#1092) sm-kicker delegates the live rescue dispatch to the factory kicker
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: machine-merge fork guard (gh-1689): merge job `if` evaluates FALSE for a fork pull_request synchronize — the red-run scenario
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: machine-merge fork guard (gh-1689): merge job `if` evaluates FALSE for fork pull_request events generally (labeled, edited)
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: machine-merge fork guard (gh-1689): merge job `if` evaluates TRUE for same-repo synchronize / edited (always run — idempotent)
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: machine-merge fork guard (gh-1689): merge job `if` evaluates TRUE for same-repo labeled ai_* / pr_approved, FALSE otherwise (machine-latch preserved)
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: machine-merge fork guard (gh-1689): merge job `if` evaluates TRUE for every base-context event name — the real merge path (workflow_run / check_run keep full bot behavior for guest PRs)
+✅ test/machine_kit/machine_merge_fork_guard_test.dart: fork guard regression demo: the PRE-guard expression runs the job on a fork synchronize (the gh-1689 bug) — proves the fork arm is load-bearing
+✅ test/machine_kit/factory_stub_ref_test.dart: ai-teammate.yml tracks factory-teammate.yml at main (always-latest policy)
+✅ test/machine_kit/factory_stub_ref_test.dart: machine-sm.yml tracks factory-sm.yml at main (always-latest policy)
+✅ test/machine_kit/factory_stub_ref_test.dart: machine-merge.yml tracks factory-merge.yml at main (always-latest policy)
+✅ test/machine_kit/factory_stub_ref_test.dart: sm-kicker.yml tracks factory-sm-kicker.yml at main (always-latest policy)
+✅ test/machine_kit/factory_stub_ref_test.dart: merge-trigger.yml tracks factory-merge-trigger.yml at main (always-latest policy)
+✅ test/machine_kit/factory_stub_ref_test.dart: all five stubs track the SAME factory ref (teammate, SM, merge, kicker and merge-trigger in lockstep)
+✅ test/machine_kit/factory_stub_ref_test.dart: engine pin: NO wrapper passes factory_ref (AW resolves the engine from releases; the input is gone from the factory contract)
+✅ test/machine_kit/factory_stub_ref_test.dart: secrets are mapped explicitly, not inherited (required-secret validation rejects inherit)
+✅ test/machine_kit/factory_stub_ref_test.dart: per-callee secrets policy: merge-trigger inherits (factory documents inherit as the PAT passthrough; it declares no secrets), the kicker carries no secrets block at all
+✅ test/machine_kit/factory_stub_ref_test.dart: assignment gate: the loop starts when a human ASSIGNS an issue to ai-teammate (assignee filter on issues, author filter on PRs)
+✅ test/release_asset_gate_test.dart: missing gate script fails the suite loudly
+✅ test/release_asset_gate_test.dart: draft release → attach: every asset uploaded --clobber, exit 0
+✅ test/release_asset_gate_test.dart: published release + fa-* NOT attached → loud refusal, NOTHING uploaded
+✅ test/release_asset_gate_test.dart: published release + fa-* ALREADY attached → immutable skip, exit 0, no upload
+✅ test/release_asset_gate_test.dart: published release + non-fa asset → clobber-refresh stays allowed
+✅ test/release_asset_gate_test.dart: published release + mixed list (one unattached fa-*) → refuse ALL, nothing uploaded
+✅ test/release_asset_gate_test.dart: gh-2050 policy: published + unattached fa-* → loud whole-call skip, exit 0, NOTHING uploaded
+✅ test/release_asset_gate_test.dart: gh-2050 policy: mixed list skips the WHOLE call — even the uploadable non-fa asset
+✅ test/release_asset_gate_test.dart: gh-2050 policy never touches the draft path — drafts attach exactly as before
+✅ test/release_asset_gate_test.dart: gh-2050 policy: published + all already attached → unchanged immutable skip
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC1: the pre-install action exists and is composite
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC1: the action resolves flutter.ndkVersion from the SDK gradle plugin (single source of truth)
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC1: the action fails loudly when the version cannot be resolved
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC1: the action skips idempotently when the NDK is present
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC1: the install is bounded-retried through sdkmanager
+✅ test/release_asset_gate_test.dart: gh-2050 policy is opt-in: any value but exactly "1" keeps the loud refusal
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC2: .github/workflows/ci.yml build-android pre-installs the NDK before its Android build step
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC3: .github/workflows/ci.yml references the pre-install action exactly (1 job(s))
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC2: .github/workflows/build-mobile.yml build-android pre-installs the NDK before its Android build step
+✅ test/release_asset_gate_test.dart: the daily release-macos attach step declares the gh-2050 pre-stage policy
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC2: .github/workflows/build-mobile.yml build-android-apks pre-installs the NDK before its Android build step
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC3: .github/workflows/build-mobile.yml references the pre-install action exactly (2 job(s))
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC2: .github/workflows/nightly.yml build-release pre-installs the NDK before its Android build step
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC3: .github/workflows/nightly.yml references the pre-install action exactly (1 job(s))
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC4: the app still reads ndkVersion = flutter.ndkVersion
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC5: the extraction pattern matches the locally resolvable Flutter SDK gradle plugin
+AC5: extraction matches — flutter.ndkVersion = 28.2.13676358
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1655 — Android builds pre-install the Flutter-pinned NDK AC5: an absent hostedtoolcache cache degrades to the named skip, never a PathNotFoundException
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC6: the action pins the AGP-default CMake version
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC6: the action pre-installs CMake through sdkmanager
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC6: the CMake install is bounded-retried like the NDK
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC6: the action skips the CMake pre-install idempotently
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC6: the action verifies the CMake binary and fails loudly
+✅ test/ci_android_ndk_preinstall_guard_test.dart: gh-1757 — Android builds pre-install the AGP-default CMake AC7: the pinned AGP version still maps to the pinned CMake default
+✅ test/release_asset_gate_test.dart: missing release → allow (the caller lazy-drafts first; upload surfaces real errors)
+✅ test/release_asset_gate_test.dart: API blip (view fails without a not-found verdict) → fail CLOSED, no upload
+✅ test/release_asset_gate_test.dart: garbage state verdict (unparseable isDraft) → fail CLOSED, no upload
+✅ test/release_asset_gate_test.dart: zero assets → loud refusal (caller bug, mirror of the gh-1801 refusal)
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) no section + no env → null (legacy: hook not attached)
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) no section + env set → enabled with the env threshold
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) env wins over the configured threshold
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) env 0 explicitly disables a configured section
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) the env override keeps the section tolerant-parse notes (gh-1604 rework)
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) junk env is ignored — the config applies untouched
+✅ test/spill/spill_env_test.dart: resolveRunSpillsConfig (gh-1604 item 4) the full end-to-end preview shape still holds under the env cap
+✅ test/spill/spill_env_wiring_test.dart: env retuning an existing section announces old → new
+✅ test/spill/spill_env_wiring_test.dart: env enabling with no section keeps the enabled notice
+✅ test/spill/spill_env_wiring_test.dart: env 0 disabling an active section announces the disable
+✅ test/spill/spill_env_wiring_test.dart: no section + no env prints nothing (legacy silence)
+✅ test/spill/spill_env_wiring_test.dart: the section tolerant-parse notes still print under the env override
+✅ test/spill/spill_test.dart: shouldSpill (L1) exactly threshold chars stays inline (AC1 boundary)
+✅ test/spill/spill_test.dart: shouldSpill (L1) threshold+1 chars spills (AC1 boundary)
+✅ test/spill/spill_test.dart: shouldSpill (L1) threshold 0 disables spilling for any text (legacy, AC1)
+✅ test/spill/spill_test.dart: shouldSpill (L1) empty and whitespace-only results never spill (AC2)
+✅ test/spill/spill_test.dart: buildPreview (L1) single giant line stays char-bounded, never line-counted (AC3)
+✅ test/spill/spill_test.dart: buildPreview (L1) UTF-16 surrogate pairs are never split by a cut (AC4)
+✅ test/spill/spill_test.dart: buildPreview (L1) omitted marker and header carry the true totals (AC10)
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) null node yields defaults
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) non-map node yields defaults
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) unknown key is noted, parse survives
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) headChars below the preview minimum is clamped with a note
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) negative threshold clamps to 0 (disabled) with a note
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) mistyped enabled falls back to default true with a note
+✅ test/spill/spill_test.dart: SpillsConfig.fromYaml (L1, AC11) string threshold falls back to default with a note
+✅ test/spill/spill_test.dart: SpillStore.write (L2, AC7) unique per-session names, exact utf8 content on disk
+✅ test/spill/spill_test.dart: SpillStore.write (L2, AC7) counter restarts at 1.txt for a new session id
+✅ test/spill/spill_test.dart: attachSpillHooks under threshold (L2) pass-through is byte-identical, no file written
+✅ test/spill/spill_test.dart: attachSpillHooks over threshold (L2) one TextContent: preview + spill file with the full body
+✅ test/spill/spill_test.dart: redaction ordering (L2, AC5) secret in the head: masked in preview AND in the spill file
+✅ test/spill/spill_test.dart: redaction ordering (L2, AC5) secret only in the omitted middle: absent from preview, masked on disk
+✅ test/spill/spill_test.dart: spill write failure (L2, AC6) full body stays inline with a named marker, hook never throws
+✅ test/spill/spill_test.dart: parallel tool results (L2, AC7) concurrent oversized results spill to unique complete files
+✅ test/spill/user_spill_agent_test.dart: AC1 seam: an oversized headless-style prompt is bounded before the first request and the transcript
+✅ test/spill/user_spill_agent_test.dart: AC4 seam: mid-run steering through the drain seam spills too
+✅ test/spill/user_spill_agent_test.dart: AC4 seam: a queued follow-up spills at the loop boundary drain
+✅ test/spill/user_spill_agent_test.dart: AC3 seam: without a guard nothing changes (legacy pass-through)
+✅ test/spill/user_spill_agent_test.dart: regression (CI 39678698410): abort() on the line after prompt() still cancels the run — the guard must not delay run registration
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC1: the composite action exists and is a composite action
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC1: the action carries the #726 bounded retry
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC1: the action fails fast on a deterministic lockfile skew
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC1: the action resolves flutter_app by default
+✅ test/spill/user_spill_test.dart: shouldSpillUserMessage (L1) kill switch: enabled false never spills
+✅ test/spill/user_spill_test.dart: shouldSpillUserMessage (L1) userThreshold 0 disables the user path alone
+✅ test/spill/user_spill_test.dart: shouldSpillUserMessage (L1) byte floor: at the floor stays inline, past it the budget decides
+✅ test/spill/user_spill_test.dart: shouldSpillUserMessage (L1) relative threshold: token estimate over fraction of budget spills
+✅ test/spill/user_spill_test.dart: shouldSpillUserMessage (L1) empty/whitespace text never spills
+✅ test/spill/user_spill_test.dart: SpillsConfig user fields (L1) fromYaml parses userThreshold and userFraction
+✅ test/spill/user_spill_test.dart: SpillsConfig user fields (L1) mistyped user values fall back with notes (tolerant parse)
+✅ test/spill/user_spill_test.dart: SpillsConfig user fields (L1) negative values clamp to 0 with notes
+✅ test/spill/user_spill_test.dart: SpillsConfig user fields (L1) toYaml emits only non-defaults
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) FAH_USER_SPILL_THRESHOLD overrides the configured floor
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) FAH_USER_SPILL_THRESHOLD=0 disables the user path for the run
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) junk user env is ignored
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) the tool knob composes with the user knob
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) the user knob alone does NOT arm tool-result spilling (review)
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) the section kill-switch beats the env knobs (review)
+✅ test/spill/user_spill_test.dart: resolveRunSpillsConfig user knob (AC8) the user knob set to 0 with an active section keeps tools on
+✅ test/spill/user_spill_test.dart: buildUserSpillReplacement (L1) instruction names path + bytes, preview keeps the #678 shape
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) below threshold: byte-identical pass-through, no disk writes (AC3)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) oversized text spills to user-1.md and the replacement is bounded
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) redaction runs BEFORE the spill write (AC6)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/ci.yml has NO run-step resolving flutter_app itself
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) images stay inline in a mixed message (AC5)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) write refusal degrades to inline legacy (AC7)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) a throwing guard (budget closure) never breaks the intake (AC7)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) idempotent on an already-spilled replacement (review)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) multiple oversized messages each get their own file (AC4)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) sessionless counter still lands (no session id yet)
+✅ test/spill/user_spill_test.dart: UserMessageSpillGuard (L2) utf8 byte floor counts bytes, not chars (multibyte text)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/ci.yml still resolves flutter_app (14 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/nightly.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/nightly.yml still resolves flutter_app (2 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/build-mobile.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/build-mobile.yml still resolves flutter_app (4 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/build-macos.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/build-macos.yml still resolves flutter_app (1 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/browser-ext.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/browser-ext.yml still resolves flutter_app (1 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/office-addin.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/office-addin.yml still resolves flutter_app (1 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: .github/workflows/pages.yml has NO run-step resolving flutter_app itself
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: .github/workflows/pages.yml still resolves flutter_app (1 resolution steps)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC2: the detector catches the `working-directory: ./flutter_app` spelling of a bare resolve
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC4: office-addin.yml resolves flutter_app BEFORE its first flutter consumer (no implicit pub get first)
+✅ test/ci_pub_get_retry_guard_test.dart: gh-1310 — flutter_app pub get rides the shared retry action AC3: every workflow that needs flutter_app references the action
+✅ test/bin_boot_restore_pin_test.dart: a state naming a live entry resolves THAT entry
+✅ test/bin_boot_restore_pin_test.dart: a state naming a deleted entry degrades with the E1 note
+✅ test/bin_boot_restore_pin_test.dart: a pre-pin state (no provider name) resolves nothing, no note
+✅ test/bin_boot_restore_pin_test.dart: a null state (nothing saved) resolves nothing, no note
+✅ test/bin_boot_restore_pin_test.dart: fah.dart still imports the helper (wiring guard companion)
+✅ test/ci_release_pending_guard_test.dart: AC1 — empty schedule tick short-circuits the whole gate release-pending job exists with a pending output and the tag-vs-HEAD comparison
+✅ test/ci_release_pending_guard_test.dart: AC1 — empty schedule tick short-circuits the whole gate every schedule-reachable gate job requires release-pending and ANDs the guard into its if
+✅ test/ci_release_pending_guard_test.dart: AC3 — tag/release events and both dispatch arms stay untouched the check short-circuits to pending=true on every non-schedule event
+✅ test/ci_release_pending_guard_test.dart: AC3 — tag/release events and both dispatch arms stay untouched the tag/release chain and PR-only satellites carry ZERO release-pending references
+✅ test/ci_release_pending_guard_test.dart: AC3 — tag/release events and both dispatch arms stay untouched the release job keeps its three gh-1537 arming arms with the guard ANDed on top
+✅ test/ci_release_pending_guard_test.dart: AC4 — the check is fail-open pending defaults to true; false only inside the zero-commits branch
+✅ test/ci_release_pending_guard_test.dart: AC5 — the comment block documents the contract the schedule comment names the release arming + empty-tick short-circuit
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: self-containment (the hook-free invocation contract) the script imports no package: library
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: parseAssetHashes parses release tag and hash map
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: parseAssetHashes parses a null release tag (pre-release shape)
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: parseAssetHashes a null release tag cannot build a download URL
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: asset filename mapping (mirrors package:sqlite3 releases) linux/android assets are .so with the lib prefix
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: asset filename mapping (mirrors package:sqlite3 releases) apple assets are .dylib (ios_sim is the release os name)
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: asset filename mapping (mirrors package:sqlite3 releases) windows assets carry no lib prefix and are .dll
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: cached filename mapping (mirrors the hook reuse path) linux/android cache as libsqlite3.so
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: cached filename mapping (mirrors the hook reuse path) apple caches as libsqlite3.dylib, windows as sqlite3.dll
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: cache layout matches the hook reuse path observed live
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: cache layout dir name is the first 8 hex of the asset hash
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets a bare os expands to all supported ABIs of that os
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets a pinned os-arch expands to exactly one target
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets host resolves against the injected platform
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets a fully injected host never consults the real machine
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets a partial host injection fills the missing side from the machine
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets an injected platform is still validated (loud on unknown os/arch)
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: expandTargets unknown os or arch is a loud error, never a silent no-op
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: fetchVerified writes hash-verified bytes and leaves no tmp sibling
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: fetchVerified retries a brownout (non-200) and succeeds on a later attempt
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: fetchVerified exhausted retries fail loudly naming the url and the status
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: fetchVerified a corrupt body is never written — hash gate before rename
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: prewarmPackage end-to-end (fixture package) seeds the hook cache with hash-verified bytes
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: prewarmPackage end-to-end (fixture package) is idempotent — a verified cache hit performs no fetch
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: prewarmPackage end-to-end (fixture package) repairs a corrupt cache entry in place
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: prewarmPackage end-to-end (fixture package) seeds multiple targets (the android ABI set) in one run
+✅ test/scripts/sqlite3_hook_prewarm_test.dart: prewarmPackage end-to-end (fixture package) a missing sqlite3 in the package config is a loud error
+✅ test/scripts/llm_tag_boundary_test.dart: llm tag boundary lint is clean (gh-1199 AC2/AC3 audit)
+✅ test/scripts/check_lockfiles_gate_test.dart: check_lockfiles selftest: every red exit stays red (gh-1296 AC2)
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC11: pure SHA-256 matches the FIPS vectors
+✅ test/scripts/sm_merge_guard_test.dart: a successful dispatch run with the SAME tree validates the push (squash/merge-commit landing, new SHA)
+✅ test/scripts/sm_merge_guard_test.dart: a successful dispatch run on the EXACT pushed SHA validates (fast-forward landing)
+✅ test/scripts/sm_merge_guard_test.dart: two or more items: one matching run among non-matching ones still validates
+✅ test/scripts/sm_merge_guard_test.dart: a FAILED run on the same tree is an alarm (validation ran red)
+✅ test/scripts/sm_merge_guard_test.dart: a run entry WITHOUT a conclusion key does NOT validate (only confirmed successes count — for every caller by construction)
+✅ test/scripts/sm_merge_guard_test.dart: a push/tag-event run match does NOT validate (must be the SM dispatch population)
+✅ test/scripts/sm_merge_guard_test.dart: no dispatch runs in the window is an alarm
+✅ test/scripts/sm_merge_guard_test.dart: runs covering other trees only is an alarm (main moved past what was validated)
+✅ test/scripts/sm_merge_guard_test.dart: the release-bot bump push skips the guard even with no runs
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC12: a hung connection (accepted, never answered) is bounded by the per-attempt request timeout
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC9: target expansion — android triple, auto host, pass-through
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC9: release-asset names pin the REAL upstream naming — windows drops the lib prefix, apple targets use .dylib
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC9: hostTarget() maps the running platform to a pinned name
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC10: parser reads the REAL upstream asset_hashes.dart format
+✅ test/scripts/sm_merge_guard_test.dart: an empty commit subject still alarms cleanly — the alarm path must never traceback on `splitlines()[0]`
+✅ test/scripts/sm_merge_guard_test.dart: missing --tree is a usage error, not an alarm
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC1+AC2: downloads into the hook cache path, then reuses with zero fetches
+✅ test/scripts/build_site_test.dart: frontmatter parses key: value pairs
+✅ test/scripts/build_site_test.dart: frontmatter missing frontmatter yields empty map and unchanged body
+✅ test/scripts/build_site_test.dart: frontmatter stripFrontmatter removes only the front-matter block
+✅ test/scripts/build_site_test.dart: renderMarkdown renders ATX headings
+✅ test/scripts/build_site_test.dart: renderMarkdown escapes raw HTML in paragraphs
+✅ test/scripts/build_site_test.dart: renderMarkdown renders inline bold, em, code, and strike
+✅ test/scripts/build_site_test.dart: renderMarkdown renders links with rel and images with alt
+✅ test/scripts/build_site_test.dart: renderMarkdown renders autolinks
+✅ test/scripts/build_site_test.dart: renderMarkdown renders fenced code with language and escaping
+✅ test/scripts/build_site_test.dart: renderMarkdown renders GFM pipe tables with alignment
+✅ test/scripts/build_site_test.dart: renderMarkdown renders unordered lists with 2+ items
+✅ test/scripts/build_site_test.dart: renderMarkdown renders ordered lists and nested lists by indent
+✅ test/scripts/build_site_test.dart: renderMarkdown lazy continuation lines merge into the list item
+✅ test/scripts/build_site_test.dart: renderMarkdown renders blockquotes and horizontal rules
+✅ test/scripts/build_site_test.dart: plainText strips markdown formatting
+✅ test/scripts/build_site_test.dart: blog post page carries the raw content without JS and exactly one h1
+✅ test/scripts/build_site_test.dart: blog post page emits BlogPosting JSON-LD with real dates
+✅ test/scripts/build_site_test.dart: blog post page escapes title and description in head meta
+✅ test/scripts/build_site_test.dart: blog post page lastmod prefers updated over date over filename prefix
+✅ test/scripts/build_site_test.dart: blog post page dateless post fails the build instead of fabricating a lastmod
+✅ test/scripts/build_site_test.dart: blog post page escapes the cover path in every HTML attribute
+✅ test/scripts/build_site_test.dart: docs page renders TechArticle JSON-LD and canonical URL
+✅ test/scripts/build_site_test.dart: docs page renders exactly one visible h1 with the doc title
+✅ test/scripts/build_site_test.dart: docs page rewrites parent-relative .md links without leaking .. segments
+✅ test/scripts/build_site_test.dart: sitemap lists statics, posts, and docs with sane priorities
+✅ test/scripts/build_site_test.dart: llms-full sections are headed by canonical URLs and the budget holds
+✅ test/scripts/build_site_test.dart: llms-full budget guard measures UTF-8 bytes, not UTF-16 code units
+✅ test/scripts/build_site_test.dart: blog index block renders a card per post with 2+ posts, escaping titles
+✅ test/scripts/build_site_test.dart: buildSite (temp root) generates post pages, docs pages, sitemap, and llms-full
+✅ test/scripts/build_site_test.dart: buildSite (temp root) regeneration is deterministic (idempotent)
+✅ test/scripts/build_site_test.dart: CLI args --out pairs its value; no args means in-tree build
+✅ test/scripts/build_site_test.dart: CLI args unknown args fail fast — a typo must not build in-tree
+✅ test/scripts/build_site_test.dart: CLI args --out without a value fails fast
+✅ test/scripts/build_site_test.dart: CLI args --check fails with the migration hint
+✅ test/scripts/build_site_test.dart: CI gate (ci.yml GEO step) syncs canonical blog/posts before building and fails on copy drift
+✅ test/scripts/build_site_test.dart: CI gate (ci.yml GEO step) runs the site guards through the dart test runner (gh-1476 rework)
+site built: 9 artifact(s) — blog posts, docs pages, sitemap.xml, llms-full.txt -> /tmp/build_site_emit_testHEYEVA-out
+✅ test/scripts/build_site_test.dart: emitSite (--out) writes a complete servable tree without touching the sources
+pruned stale page: blog/2024-01-01-old/
+site built: 9 artifact(s) — blog posts, docs pages, sitemap.xml, llms-full.txt -> /tmp/build_site_emit_testBCLRGU-out
+✅ test/scripts/build_site_test.dart: emitSite (--out) prunes stale generated pages already in the out dir
+pruned stale page: blog/2024-01-01-old/
+site built: 9 artifact(s) — blog posts, docs pages, sitemap.xml, llms-full.txt
+✅ test/scripts/build_site_test.dart: emitSite (--out) in-tree emit writes artifacts next to the sources (local preview)
+✅ test/scripts/ios_build_failure_classifier_test.dart: the dead CocoaPods pattern is gone from ci.yml
+✅ test/scripts/ios_build_failure_classifier_test.dart: the CocoaPods classifier carries the real tool-exit message
+✅ test/scripts/ios_build_failure_classifier_test.dart: a log with only the real pod-install error classifies as cocoapods
+✅ test/scripts/ios_build_failure_classifier_test.dart: the version-conflict and sandbox signatures still classify
+✅ test/scripts/ios_build_failure_classifier_test.dart: green-build pod-install noise does NOT classify as cocoapods
+✅ test/scripts/ios_build_failure_classifier_test.dart: native-assets signatures still win (checked first)
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF64 two congruent 4 KB-aligned LOADs are raised to 16 KB
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF64 already 16 KB-aligned file is a no-op
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF64 non-congruent vaddr/offset diff fails loudly, bytes untouched
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF64 congruent segment at a sub-16 KB file offset patches with a warning (DSP-blob shape)
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF32 two congruent LOADs are raised to 16 KB
+✅ test/scripts/patch_elf_16k_alignment_test.dart: ELF32 non-congruent LOAD fails loudly
+✅ test/scripts/patch_elf_16k_alignment_test.dart: robustness non-ELF file fails with a clean error
+✅ test/scripts/patch_elf_16k_alignment_test.dart: robustness truncated program header table fails with a clean error
+✅ test/scripts/patch_elf_16k_alignment_test.dart: robustness big-endian image fails with a clean error
+✅ test/scripts/patch_elf_16k_alignment_test.dart: robustness wrapped e_phoff (0xFFFF…FFFF reads back as -1) fails with a clean error instead of throwing RangeError
+✅ test/scripts/patch_elf_16k_alignment_test.dart: robustness huge positive e_phoff (addition overflow) fails with a clean error instead of throwing RangeError
+✅ test/scripts/patch_elf_16k_alignment_test.dart: check-only mode reports a 4 KB-aligned blob without modifying it
+✅ test/scripts/patch_elf_16k_alignment_test.dart: check-only mode passes an already-aligned blob
+✅ test/scripts/patch_elf_16k_alignment_test.dart: check-only mode patchPath check-only reports but never touches
+✅ test/scripts/patch_elf_16k_alignment_test.dart: directory scan patches every .so under a directory tree, skips other files
+✅ test/scripts/patch_elf_16k_alignment_test.dart: directory scan a failing file is reported but does not stop the scan
+✅ test/scripts/patch_elf_16k_alignment_test.dart: directory scan missing path fails with a clean error
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC3: THE BUG — a 504 error page then a 200 lands the correct bytes (bounded retry)
+✅ test/scripts/shard_files_llm_boundary_test.dart: no live-provider file appears in any gate shard selection
+✅ test/scripts/shard_files_llm_boundary_test.dart: without --exclude-tag the same invocation WOULD select a live file (red/green contrast)
+✅ test/scripts/gate_failed_targets_test.dart: python3 is available (the gate and this file require it)
+✅ test/scripts/gate_failed_targets_test.dart: extracts the suite path of a failed test
+✅ test/scripts/gate_failed_targets_test.dart: dedupes several failures in one file to a single line
+✅ test/scripts/gate_failed_targets_test.dart: ignores passes and skips; other files stay out
+✅ test/scripts/gate_failed_targets_test.dart: a hidden (suite-load) failure maps to its suite path
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC4: persistent 504 fails loudly, caches nothing
+✅ test/scripts/gate_failed_targets_test.dart: a load failure with NO suite event falls back to the loading test name
+✅ test/scripts/gate_failed_targets_test.dart: multiple failing files come out sorted, deduped, one per line
+✅ test/scripts/gate_failed_targets_test.dart: a missing log file is a clean empty result (no blind rerun)
+✅ test/scripts/gate_failed_targets_test.dart: an empty log is a clean empty result
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC5: a 200 with hash-mismatched bytes is never cached
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC6: a corrupted cache entry is repaired, not trusted
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC7: a package graph without sqlite3 is a clean no-op
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC8: an unknown target fails loudly
+✅ test/usage_summary_test.dart: UsageAccumulator addSideCall sums tokens and cost without bumping the turn count
+✅ test/usage_summary_test.dart: UsageAccumulator addSideCall on a fresh accumulator keeps turns at zero
+✅ test/usage_summary_test.dart: UsageAccumulator starts at zero usage with zero turns
+✅ test/usage_summary_test.dart: UsageAccumulator sums token and cost fields across turns
+✅ test/usage_summary_test.dart: UsageAccumulator optional fields stay null when never reported
+✅ test/usage_summary_test.dart: UsageAccumulator sums reasoning and cacheWrite1h once any usage reports them
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC8: android expansion prewarms the three APK ABIs
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC13: a corrupt package_config.json fails through the PREWARM FAILED trailer, not a raw stack trace
+✅ test/scripts/sqlite3_native_assets_prewarm_test.dart: gh-2072 — sqlite3 native-assets prewarm script AC13: valid-JSON-wrong-shape package_config.json variants fail through the PREWARM FAILED trailer too, not a raw stack trace
+✅ test/secrets/secure_key_save_degradation_test.dart: SecureKeyCache failed-save name tracking (gh-1679 UT-2) multiple failures keep every name, sorted, with per-name diagnostics
+✅ test/secrets/secure_key_save_degradation_test.dart: SecureKeyCache failed-save name tracking (gh-1679 UT-2) a successful save clears the name; other names stay degraded
+✅ test/secrets/secure_key_save_degradation_test.dart: SecureKeyCache failed-save name tracking (gh-1679 UT-2) the unavailable store degrades with the slot name too
+✅ test/secrets/secure_key_save_degradation_test.dart: macOS missing-default-keychain advisory (gh-1679 UT-4, AC6) classifies the preflight failure shape
+✅ test/secrets/secure_key_save_degradation_test.dart: macOS missing-default-keychain advisory (gh-1679 UT-4, AC6) classifies the canceled-authorization shape (gh-1679 review: the incident second live shape points at the same remedy)
+✅ test/secrets/secure_key_save_degradation_test.dart: macOS missing-default-keychain advisory (gh-1679 UT-4, AC6) the advisory names the system remedy and is text-only
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend read returns the stored value without the trailing newline
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend read maps a non-zero exit (item not found) to null
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend write updates the generic-password item
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend write surfaces a failing exit code
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend write surfaces the helper stderr tail on a failing add (gh-1679 review: the canceled-authorization shape must be classifiable)
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend write without a default keychain fails before the add (no system dialog)
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend delete tolerates a missing entry
+✅ test/secrets/secure_key_store_test.dart: macOS Keychain backend availability follows the security binary probe
+✅ test/secrets/secure_key_store_test.dart: Linux Secret Service backend unavailable without the secret-tool binary
+✅ test/secrets/secure_key_store_test.dart: Linux Secret Service backend read looks the entry up by service and name
+✅ test/secrets/secure_key_store_test.dart: Linux Secret Service backend write passes the secret over stdin, never argv
+✅ test/secrets/secure_key_store_test.dart: Linux Secret Service backend delete clears the attributes
+✅ test/secrets/secure_key_store_test.dart: Windows Credential Locker backend read retrieves the credential and unprotects the password
+✅ test/secrets/secure_key_store_test.dart: Windows Credential Locker backend read round-trips a non-ASCII secret through base64
+✅ test/secrets/secure_key_store_test.dart: Windows Credential Locker backend read degrades a legacy raw value to an error, not a crash
+✅ test/secrets/secure_key_store_test.dart: Windows Credential Locker backend write passes the secret through the child environment
+✅ test/secrets/secure_key_store_test.dart: Windows Credential Locker backend delete removes the credential, ignoring a miss
+✅ test/secrets/secure_key_store_test.dart: backend invariants unsupported platforms stay unavailable and throw on writes
+✅ test/secrets/secure_key_store_test.dart: backend invariants key names must match the env-var shape
+✅ test/secrets/secure_key_store_test.dart: backend invariants a runner failure reads as unavailable / missing
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload fills the synchronous snapshot
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache an unavailable store preloads nothing and rejects writes
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache save and delete write through and update the snapshot
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache a null store behaves as unavailable
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache a failing backend degrades save/delete to false, never throws
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache the process runner kills a hung helper instead of hanging
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache the process runner reports spawn failures as -1
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache the process runner captures the helper stderr
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache helper environment overrides ride the inherited environment
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache a keychain read with an explicit env override still works (inherited env survives the spawn)
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload report (gh-1059) classifies found / absent / error per name
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload report (gh-1059) a plain store still reports errors instead of silent absence
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload report (gh-1059) a throwing read surfaces as an error outcome, preload still ends
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload report (gh-1059) an unavailable store preloads nothing and reports it
+✅ test/secrets/secure_key_store_test.dart: SecureKeyCache preload report (gh-1059) save degradations are counted for the /key status summary
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a real write→read→delete round-trip makes the leg usable
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a locked keychain — preflight ok, the WRITE fails — skips the leg
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a missing default keychain skips the leg and never writes
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a read-back that returns a different secret skips the leg and still deletes the probe item
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a failed delete skips the leg — the probe item must not survive
+✅ test/secrets/secure_key_store_test.dart: functional keychain round-trip probe (gh-1934 rework-3) a helper hung on a system modal — the bounded timeout verdict (exit -1, timedOut) — skips the leg instead of wedging it
+✅ test/secrets/secrets_test.dart: SecretRedactor masks exact matches with ***
+✅ test/secrets/secrets_test.dart: SecretRedactor masks multiple occurrences and multiple secrets
+✅ test/secrets/secrets_test.dart: SecretRedactor ignores values shorter than 8 chars
+✅ test/secrets/secrets_test.dart: SecretRedactor empty redactor and empty text pass through unchanged
+✅ test/secrets/secrets_test.dart: SecretRedactor fromSecrets registers a whole map; names never expose values
+✅ test/secrets/secrets_test.dart: InMemorySecretsStore readAll returns initial values and reflects set/remove
+✅ test/secrets/secrets_test.dart: InMemorySecretsStore readAll result is unmodifiable
+✅ test/secrets/secrets_test.dart: redactionHooks afterToolCall masks secret values in the tool result
+✅ test/secrets/secrets_test.dart: redactionHooks afterToolCall returns null when nothing matched
+✅ test/secrets/secrets_test.dart: redactionHooks transformContext masks user, assistant, and tool-result text
+✅ test/secrets/secrets_test.dart: redactionHooks transformContext masks UserMessage content blocks
+✅ test/secrets/secrets_test.dart: attachSecretRedactor composes with a pre-existing afterToolCall hook
+✅ test/secrets/secrets_test.dart: attachSecretRedactor composes with a pre-existing transformContext hook
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv exec merges secrets into ShellExecOptions.env
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv per-call env wins over injected secrets
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv exec with no options still injects secrets
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv empty secrets pass options through untouched
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv startShellJob merges secrets into ShellExecOptions.env
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv startShellJob with no secrets passes options through untouched
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv startShellJob injects registered names for roster-only envs
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv addSecrets merges into the live map for later exec calls
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv addSecrets replaces an existing entry
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv secretsSnapshot reflects runtime grants and is a copy
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv per-call env still wins over runtime-added secrets
+✅ test/secrets/secrets_test.dart: SecretsExecutionEnv filesystem operations delegate to the wrapped env
+✅ test/cube/resolver_test.dart: CubeResolver.resolve resolves by name from <cwd>/.fah/cubes/<name>.yaml
+✅ test/cube/resolver_test.dart: CubeResolver.resolve resolves by explicit path (highest precedence)
+✅ test/cube/resolver_test.dart: CubeResolver.resolve prefers explicit path over name
+✅ test/cube/resolver_test.dart: CubeResolver.resolve expands a leading ~ with homeDir
+✅ test/cube/resolver_test.dart: CubeResolver.resolve throws a clean ConfigException for a missing file
+✅ test/cube/resolver_test.dart: CubeResolver.resolve built-in preset fallback a preset id resolves to a generated manifest
+✅ test/cube/resolver_test.dart: CubeResolver.resolve built-in preset fallback a bare level id resolves to the conservative core axis
+✅ test/cube/resolver_test.dart: CubeResolver.resolve built-in preset fallback a project manifest with the same id wins over the preset
+✅ test/cube/resolver_test.dart: CubeResolver.resolve built-in preset fallback a non-preset name still fails loudly
+✅ test/cube/resolver_test.dart: CubeResolver.resolve throws a clean ConfigException for a missing explicit path
+✅ test/cube/resolver_test.dart: CubeResolver.resolve returns null when nothing is requested
+✅ test/cube/resolver_test.dart: CubeResolver.resolve rejects invalid yaml with ConfigException
+✅ test/cube/resolver_test.dart: CubeResolver.resolve rejects a schema violation from the parsed document
+✅ test/cube/resolver_test.dart: CubeResolver.resolve ~ path without homeDir fails loudly
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine allows a command in the allowlist
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine denies an unlisted command with the allowlist wording
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine empty allow denies everything
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine an empty command line is allowed
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine deny wins over allow with the deny wording
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine a deny entry on a subcommand does not block other commands
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine splits pipes and checks both sides
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine splits &&, ;, & and newlines
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine catches a $(subshell) command
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine catches a backticked subshell command
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine a quoted pipe is not a separator
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine strips leading VAR=value assignments
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine a redirect 2>&1 does not become a command or a file target
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine curl to an allowed host is permitted
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine curl to a disallowed host is denied and names the host
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine a port outside the allowlist is denied
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine wget is network-checked like curl
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine non-fetching commands skip the network check
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine gh api to a disallowed host is denied like curl
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine gh api to an allowed host is permitted
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine gh api explicit port is network-checked
+✅ test/cube/runtime/policy_engine_test.dart: CubePolicyEngine gh without the api subcommand skips the network check
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets a redirect outside the workspace is denied
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets 2>&1 is an fd duplicate, not a file target, and passes
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets every write-redirect form is path-checked
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets an attached target is path-checked
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets a redirect inside the workspace is allowed
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets /dev/null stays writable
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets an input redirect of a denied path is denied
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets an input redirect inside the workspace is allowed
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets an rw mount allows redirect writes into it, others stay denied
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets a rw root (L3 shape) allows redirects anywhere
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets ~ targets resolve through homeDir
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets redirects in later segments are checked too
+✅ test/cube/runtime/policy_engine_test.dart: redirect targets a symlinked redirect target outside the workspace is denied
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell foreground exec denies a redirect through a symlinked target
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell forwards an allowed command to the inner shell
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell denied command never reaches the inner shell
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell injects the cube env vars additively
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell an empty env policy forwards the options untouched
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell clamps the caller timeout to the cube timeout
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell a null caller timeout inherits the cube timeout
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell a tighter caller timeout wins over the cube timeout
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell updateSpec swaps the policy live
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell clearSpec switches to full passthrough
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode stages the verified profile outside the workspace and wraps commands
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode REG: the staged profile path never resolves under the workspace
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode REG: a spec mounting the staging area read-write is refused, never staged
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode an L3-shaped blocking spec with allowDegrade degrades to policy mode and fires onDegrade
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a pre-seeded profile in the old in-workspace location is inert
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a tampered profile in the staging location is restaged before exec
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a kernel spec without a home is refused (nothing to stage on)
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a filesystem without atomic rename refuses staging and never execs
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a failed rename cleans up its temp file
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode injected env vars ride inside the clean environment
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode caller options.env rides inside the clean environment
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode policy mode never stages or wraps
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode AC1: a kernel spec on a platform without a backend is refused with zero commands
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode AC1: a kernel spec without a platform or home is refused too
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode AC2: allowDegrade runs in policy mode loudly and queryably
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode effectiveBackend reports the mode each spec actually runs
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode AC3 REG: an explicit kernel spec never silently executes in policy mode
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode an enforcing kernel spec does not report degradation
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode SEC-02 staging invariant a workspace-relative homeDir fail-closes kernel mode
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode SEC-02 staging invariant a homeDir inside the workspace fail-closes kernel mode
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode SEC-02 staging invariant `..` cannot smuggle a home outside the workspace back in
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode SEC-02 staging invariant kernel staging refuses background preparation when the fs cannot atomically restage
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode SEC-02 staging invariant prepare refuses when staging fails after the probe passed
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode staging sweeps its own tmp orphans once per binding and leaves other bindings alone
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a missing sandbox-exec spawn failure maps to a clean error
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode an exit-127 not-found stderr maps to a clean error
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a wrapper refusing the sandbox (EPERM) maps to a clean error
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode startupFailure probes once and reports a broken wrapper
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode startupFailure returns null when the wrapper works
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a post-probe restage failure refuses exec (probe-then-tamper window)
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a normal non-zero result inside the sandbox passes through
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode prepare wraps background job commands identically
+✅ test/cube/runtime/sandboxed_shell_test.dart: SandboxedShell kernel mode a staged profile with matching content is reused without a rewrite
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard writes under the workspace root succeed
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard writes to a read-only path are permissionDenied
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard reads of a denied path vanish as notFound
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard exists on a denied path reports false
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard denied directories are not listable or statable
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard .. traversal resolves and is then denied
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard workspaceRoot override maps the delegate cwd
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard absolutePath and joinPath forward untouched
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard cwd forwards to the delegate
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard append and createDir and remove honor the policy
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard symlink resolution (#791) AC1: read AND write through a link outside are denied, named
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard symlink resolution (#791) AC2: symlink chains are denied, in-workspace chains allowed
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard symlink resolution (#791) AC3: .. traversal after resolution is denied
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard symlink resolution (#791) unreadable indirection fails closed
+✅ test/cube/runtime/cube_fs_guard_test.dart: CubeFsGuard symlink resolution (#791) without a probe the guard keeps the lexical check
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv routes writes through the fs guard
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv routes exec through the policy engine
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv a denied job is never started
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv a job escaping the workspace through a redirect is denied
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv an allowed job is forwarded
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv kernel mode wraps background jobs and stages the profile
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv a job is denied cleanly when the kernel wrapper is broken
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv a job is denied cleanly when staging lands inside the workspace
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv a refusing kernel spec denies background jobs naming allowDegrade
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv effectiveBackend forwards the shell mode
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv backgroundJobsSupported delegates to the wrapped shell
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv cwd forwards to the delegate
+✅ test/cube/runtime/sandboxed_env_test.dart: SandboxedExecutionEnv activeSpec tracks updateSpec and clearSpec
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager the key is stable per spec and changes with it
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager cacheRoot lives under the env cwd
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager cold save creates the manifest and mirrored files
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager restore copies the cached tree back into place
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager an expired ttl clears the entry and restores nothing
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager restore:false skips the restore but keeps saving
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager a cache path outside the workspace mirrors by basename
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager a changed spec forks a separate cache root
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager save prunes oldest siblings down to the disk bound
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager clear removes the whole cache root
+✅ test/cube/runtime/cache_manager_test.dart: CubeCacheManager a disabled cache policy is a full no-op
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) AC1: link to outside denies read AND write; allowed path works
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) AC1: relative link escaping the workspace is denied too
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) AC2: chains denied; in-workspace link allowed
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) AC3: .. traversal after resolution is denied
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) AC3: .. from a link target lands where the kernel would
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) exists reports false for outside targets behind links
+✅ test/cube/runtime/cube_fs_guard_io_test.dart: CubeFsGuard resolves real symlinks (REG #791) hostile inputs: probe never throws, guard denies, loops terminate
+✅ test/cube/schema_test.dart: schema/cube_schema.json parses as JSON with draft 2020-12
+✅ test/cube/schema_test.dart: schema/cube_schema.json object schemas forbid unknown keys at every level
+✅ test/cube/schema_test.dart: schema/cube_schema.json document and spec keys match the parser contract
+✅ test/cube/schema_test.dart: schema/cube_schema.json enums match parser reality
+✅ test/cube/schema_test.dart: docs/cubes.md example parses via CubeSpec.fromYaml (strict)
+✅ test/cube/schema_test.dart: docs/cubes.md example example policies behave as documented
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.templates fetches and parses the catalog
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.templates non-200 is a clean ConfigException
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.templates malformed json or a wrong shape is a clean ConfigException
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.download downloads the manifest and verifies the sha256
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.download a hash mismatch is refused
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryClient.download a non-200 download is a clean ConfigException
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryTemplate.fromTemplateJson rejects a template missing required fields
+✅ test/cube/registry/cube_registry_test.dart: CubeRegistryTemplate.fromTemplateJson rejects a non-hex sha256
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.fromYaml null section defaults to /workspace without mounts
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.fromYaml parses workspace and ro/rw/deny mounts
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.fromYaml rejects unknown keys at both levels
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.fromYaml rejects unknown access labels and relative workspace
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor path under the workspace is read/write
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor path outside the workspace with no mount is denied
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor longest prefix mount wins
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor a root mount grants its access level everywhere
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor deny mount inside the workspace beats the workspace default
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor dot-segment paths collapse before matching
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor traversal above the workspace is denied
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor relative traversal escaping the workspace is denied
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor ~/.ssh with a known homeDir is denied via the deny mount
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor ~ path with unknown homeDir is denied
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor ~ path with known homeDir lands outside the workspace -> deny
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor mounts on ~ paths resolve with homeDir
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor empty path is denied
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) judges the target, not the written form
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) denies symlink chains a -> b -> outside
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) allows a link inside the workspace (legitimate use)
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) denies .. climbing above the root after resolution
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) applies .. to the resolved prefix, like the kernel
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) honors mounts on the resolved target
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) configured roots are trusted heads, not probed
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) unreadable indirection (reparse point) fails closed
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) relative paths resolve against a custom workspace in both modes
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) denies chains past the fixed depth
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) resolves ~ heads against the home and probes only below it
+✅ test/cube/config/fs_policy_test.dart: CubeFsPolicy.accessFor with a probe (resolving mode) accessForResolved reports the canonical path to open
+✅ test/cube/config/fs_policy_test.dart: CubePathAccess parses yaml labels and rejects unknown ones
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.fromYaml null section is empty and passes the host env through
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.fromYaml parses value, valueFrom and hidden entries
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.fromYaml rejects valueFrom without the env: prefix
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.fromYaml rejects entries with none or several of value/valueFrom/hidden
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.fromYaml rejects unknown keys and duplicate names
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply injects literal values
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply resolves valueFrom from the host env
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply missing valueFrom source is simply absent
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply hidden vars are stripped
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply clean-env trio survives; other host vars do not
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply declared var overrides a trio variable
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply trio dropped entirely with only hidden vars declared
+✅ test/cube/config/env_policy_test.dart: CubeEnvPolicy.apply hidden wins over the trio for the same name
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.fromYaml null section denies all network
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.fromYaml parses map rules with ports and string shorthand
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.fromYaml rejects unknown keys
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.fromYaml rejects non-integer ports and missing host
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy host matching matches the apex domain
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy host matching matches single and deep subdomains
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy host matching does not match a different domain sharing the suffix
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy host matching matches host names case-insensitively
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics IP literals match exactly only
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics bare * host matches everything
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics deny rule wins over allow
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics deny on a specific port only blocks that port
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics ports restriction on allow blocks other ports
+✅ test/cube/config/network_policy_test.dart: CubeNetworkPolicy.semantics empty ports set means any port
+✅ test/cube/config/cube_presets_test.dart: CubePresets.all exposes the 3 levels x 2 app axes with unique lowercase ids
+✅ test/cube/config/cube_presets_test.dart: CubePresets.all every preset carries level, apps and a non-empty description
+✅ test/cube/config/cube_presets_test.dart: CubePresets.byId accepts exact ids case-insensitively
+✅ test/cube/config/cube_presets_test.dart: CubePresets.byId a bare level selects the conservative core axis
+✅ test/cube/config/cube_presets_test.dart: CubePresets.byId non-preset ids return null
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml all 6 presets parse through the strict CubeSpec parser
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml presets are refusal-by-default (no implicit allowDegrade)
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml L1: no mounts, no network
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml L2: cwd rw + root ro, dev hosts on 443 only
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml L3: root rw, full network
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml core axis: read commands + read-only git only
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml full axis: any command
+✅ test/cube/config/cube_presets_test.dart: CubePresets.manifestYaml a cwd with quotes survives the yaml escaping
+✅ test/cube/config/cube_presets_test.dart: CubePresets.maybeSpec resolves a preset id to a parsed spec with a builtin source
+✅ test/cube/config/cube_presets_test.dart: CubePresets.maybeSpec returns null for names that are not preset ids
+✅ test/cube/config/cube_presets_test.dart: preset confinement matrix every preset confines out-of-scope writes through guard and shell
+✅ test/cube/config/resource_limits_test.dart: parseSizeBytes plain integers are bytes
+✅ test/cube/config/resource_limits_test.dart: parseSizeBytes binary suffixes are 1024-based
+✅ test/cube/config/resource_limits_test.dart: parseSizeBytes decimal suffixes are 1000-based
+✅ test/cube/config/resource_limits_test.dart: parseSizeBytes suffixes are case-insensitive and allow a space
+✅ test/cube/config/resource_limits_test.dart: parseSizeBytes rejects malformed sizes
+✅ test/cube/config/resource_limits_test.dart: parseDurationSpec parses single-unit s/m/h specs
+✅ test/cube/config/resource_limits_test.dart: parseDurationSpec rejects compound and unknown units
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml null section means no limits
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml parses a full resources section
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml accepts integer bytes and integer timeout seconds
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml rejects a bad size string with the field named
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml rejects a bad timeout with the field named
+✅ test/cube/config/resource_limits_test.dart: CubeResourceLimits.fromYaml rejects unknown keys at both levels
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml minimal document parses with safe defaults
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml parses a full document
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml rejects a non-map document
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml rejects wrong or missing apiVersion and kind
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml rejects invalid cube names
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml accepts the documented name shape
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml rejects unknown keys at the top level and in metadata
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml rejects unknown spec sections and a non-map spec
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml sourcePath names the file in error messages
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml backend: kernel parses to the kernel mode
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml allowDegrade parses as the kernel-degrade opt-in
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml withAllowDegrade copies every field and flips only the flag
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml withAllowDegrade is exhaustive against future CubeSpec fields
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml a non-bool allowDegrade is rejected
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.fromYaml an unknown backend value is rejected
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap two parses of the same document produce equal maps
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap equivalent documents with different order produce equal maps
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap map is JSON-encodable and includes name plus spec
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap durations serialize as seconds and nulls are omitted
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap canonical map includes the backend mode
+✅ test/cube/config/cube_spec_test.dart: CubeSpec.toCanonicalMap allowDegrade is omitted unless true (cache keys stay stable)
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.fromYaml null section yields the deny-all default
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.fromYaml parses allow and deny entries
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.fromYaml rejects unknown keys
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.fromYaml rejects a non-map section
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.fromYaml rejects non-string or empty entries
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits wildcard git* allows git, git-status and git-log
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits exact entry allows the command alone
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits exact entry does not match a different command name
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits multi-word entry matches at word boundary
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits trailing-word boundary requires a space
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits deny wins over allow
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits empty allowlist denies everything
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits empty allowlist denies even a wildcard deny
+✅ test/cube/config/tool_policy_test.dart: CubeToolPolicy.permits untrimmed command words are matched after trim
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml null section means caching disabled
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml section present defaults enabled+restore to true
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml parses an explicit full section
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml explicit enabled: false overrides the present-section default
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml rejects unknown keys
+✅ test/cube/config/cache_policy_test.dart: CubeCachePolicy.fromYaml rejects bad ttl and non-string paths
+✅ test/cube/backends/kernel_artifacts_test.dart: generates macOS kernel-launch artifacts
+macOS kernel artifacts written to /tmp/fah-cube-artifacts-XXKLOY:
+  profile: /tmp/fah-cube-artifacts-XXKLOY/kernel-validation.sb
+  commands: /tmp/fah-cube-artifacts-XXKLOY/wrapped-commands.sh
+Copy both to the validation host, then:
+  mkdir -p /tmp/fa-cube-validation/.fah/tmp
+  /bin/sh /tmp/fah-cube-artifacts-XXKLOY/wrapped-commands.sh
+✅ test/cube/backends/backends_test.dart: shellQuote wraps a plain word and a word with spaces
+✅ test/cube/backends/backends_test.dart: shellQuote escapes embedded single quotes
+✅ test/cube/backends/backends_test.dart: shellQuote quotes the empty string
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend the profile contains workspace, mount and network lines
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend an allow-all network policy renders (allow network*)
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend wrapCommand builds the standalone sandbox-exec line
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend the staged profile is the SBPL profile
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend describe names the active mechanism
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend confined paths are emitted in original and resolved forms
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend a workspace-only spec (L1 shape) confines writes and sensitive reads
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend a ro-root spec (L2 shape) confines writes, reads stay broad
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend a rw-root spec (L3 shape) stays allow-default
+✅ test/cube/backends/backends_test.dart: MacOsSandboxBackend caller env rides inside the clean environment, caller wins
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend argv has --net exactly when the network is denied
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend argv always sets up user, mount and pid namespaces
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend wrapCommand rebinds ro mounts, applies ulimits and honors --net
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend a limit-free spec with allowed network skips the preamble and --net
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend caller env rides inside the clean environment, caller wins
+✅ test/cube/backends/backends_test.dart: LinuxUnshareBackend describe names the active mechanism
+✅ test/cube/backends/backends_test.dart: WindowsJobBackend the descriptor maps memory and cpu limits to Job Object flags
+✅ test/cube/backends/backends_test.dart: WindowsJobBackend absent limits produce no limit flags or entries
+✅ test/cube/backends/backends_test.dart: WindowsJobBackend wrapCommand is a passthrough and does not claim enforcement
+✅ test/cube/backends/backends_test.dart: cubeBackendForPlatform maps known platforms to their backends
+✅ test/cube/backends/backends_test.dart: cubeBackendForPlatform an unknown platform falls back to the no-op backend
+✅ test/cube/backends/backends_test.dart: cubeBackendForPlatform binds a run context to the enforcing backends
+✅ test/cube/backends/backends_test.dart: NoOpCubeBackend passes commands through unchanged
+✅ test/cube/backends/backends_test.dart: rw mount emission (issue 709) an rw mount under a read-denied prefix allows reads AND writes (UT1)
+✅ test/cube/backends/backends_test.dart: rw mount emission (issue 709) ro and deny mounts emit byte-identical rule sets (UT2)
+✅ test/cube/backends/backends_test.dart: rw mount emission (issue 709) an rw mount on the denied prefix root itself wins by order (E1)
+✅ test/cube/backends/backends_test.dart: rw mount emission (issue 709) ro+rw twin mounts stay deterministic: last entry wins per class (E2)
+✅ test/cube/backends/backends_test.dart: rw mount emission (issue 709) a nested deny child emits AFTER its broader parent (E4)
+✅ test/cube/backends/backends_test.dart: mount emission ordering (issue 732) declaration order does not change the emitted profile (AC2)
+✅ test/cube/backends/backends_test.dart: mount emission ordering (issue 732) the nested rw mount emits after the broader ro deny-write (the uv break)
+✅ test/cube/backends/backends_test.dart: mount emission ordering (issue 732) /private-resolved variants stay adjacent, bare spelling first (E2)
+✅ test/cube/backends/backends_test.dart: REG1: non-macOS backends unchanged (issue 709) linux unshare re-binds ro mounts only; an rw mount binds nothing
+✅ test/cube/backends/backends_test.dart: REG1: non-macOS backends unchanged (issue 709) windows descriptor and no-op passthrough are untouched
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a ro mount (/Users/agents/ro-cache/package/file.dart)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a rw mount (/Users/agents/rw-cache/hosted/pub.dev)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a deny mount (/Users/agents/vault/id_rsa)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a workspace (/Users/agents/proj/lib/main.dart)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a unmapped path (/Users/agents/elsewhere/notes.txt)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a unmapped firmware-literal path (/etc/hosts)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a firmware mount via /private spelling (/private/etc/ssl/cert.pem)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a firmware mount via literal spelling (/etc/ssl/cert.pem)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a deny child inside the rw parent (/Users/agents/.ssh/id_rsa)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a ro child inside the rw parent (/Users/agents/ro-enclave/x.yaml)
+✅ test/cube/backends/sbpl_guard_parity_test.dart: guard and profile agree at a rw parent outside its children (/Users/agents/elsewhere/z.txt)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table no cube active (null spec) is allow-all
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table exact host match, case-insensitive
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table exact rule denies sibling and subdomain hosts
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table * matches every host
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table *.domain matches the apex and subdomains, never lookalikes
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table IP literals match exactly only (AC3)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table ports come from the rule; scheme defaults fill the rest (E3)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table null/empty rule ports mean any port
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table deny wins over allow
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table a policy section absent means deny-all, never fail-open (E5)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table the denial note names the cube, host and port
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table userinfo never reaches a rule or the note (E4)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table IDN hosts match on the punycode form (E4)
+✅ test/cube/network_gate_test.dart: CubeNetworkGate decision table the gate reads the LIVE spec per call (E2)
+✅ test/cube/network_gate_test.dart: GatedHttpClient a denied initial request produces zero sends (AC1)
+✅ test/cube/network_gate_test.dart: GatedHttpClient the exception message is the fa_cube note
+✅ test/cube/network_gate_test.dart: GatedHttpClient an allowed request passes through unchanged (IT-NET-2)
+✅ test/cube/network_gate_test.dart: GatedHttpClient a redirect to a denied host is re-checked before its send (E1)
+✅ test/cube/network_gate_test.dart: GatedHttpClient a redirect between allowed hosts is followed
+✅ test/cube/network_gate_test.dart: GatedHttpClient credential headers drop on a cross-host hop
+✅ test/cube/network_gate_test.dart: GatedHttpClient 303 downgrades to GET and drops the body
+✅ test/cube/network_gate_test.dart: GatedHttpClient 307 and 308 keep the method and replay the body
+✅ test/cube/network_gate_test.dart: GatedHttpClient credential headers survive a same-host, same-scheme hop
+✅ test/cube/network_gate_test.dart: GatedHttpClient credential headers drop on a cross-scheme hop (same host)
+✅ test/cube/network_gate_test.dart: GatedHttpClient a redirect loop hits the hop ceiling and throws
+✅ test/ci_pty_artifact_upload_retry_guard_test.dart: gh-1412 — pty-integration-linux artifact uploads ride a retry the leg carries the three evidence uploads and their retries
+✅ test/ci_pty_artifact_upload_retry_guard_test.dart: gh-1412 — pty-integration-linux artifact uploads ride a retry AC1: every primary upload step carries an id the retry references
+✅ test/ci_pty_artifact_upload_retry_guard_test.dart: gh-1412 — pty-integration-linux artifact uploads ride a retry AC2: each primary upload is followed by an overwrite:true retry
+✅ test/ci_pty_artifact_upload_retry_guard_test.dart: gh-1412 — pty-integration-linux artifact uploads ride a retry AC3: retries stay always()-reachable and never continue-on-error
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing export is a recognized verb
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing session id, --format, and --output parse positionally
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing --session-root still parses after the verb
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing an unknown format fails fast with a usage error
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing --format and --output are export-only flags
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing export rejects --at and --json
+✅ test/cli_args_trajectory_export_test.dart: fa trajectory export parsing unknown verbs still fail fast
+✅ test/lsp/lsp_client_test.dart: handshake initialize sends params and becomes ready
+✅ test/lsp/lsp_client_test.dart: handshake initialize without settings skips didChangeConfiguration
+✅ test/lsp/lsp_client_test.dart: handshake a malformed initialize result fails the handshake
+✅ test/lsp/lsp_client_test.dart: requests round trip resolves with the result
+✅ test/lsp/lsp_config_test.dart: LspConfig.defaults registers the Dart analysis server for .dart
+✅ test/lsp/lsp_config_test.dart: serverForFile matches by extension and basename, skips disabled
+✅ test/lsp/lsp_config_test.dart: languageIdFor defaults to the extension, honors overrides
+✅ test/lsp/lsp_config_test.dart: LspConfig.load returns defaults when no config file exists
+✅ test/lsp/lsp_config_test.dart: LspConfig.load merges .fah/lsp.json over the defaults
+✅ test/lsp/lsp_config_test.dart: LspConfig.load a malformed file falls back to defaults with a warning
+✅ test/lsp/lsp_config_test.dart: LspConfig.load a non-object file falls back to defaults with a warning
+✅ test/lsp/lsp_config_test.dart: LspConfig.load invalid server entries are skipped with a warning
+✅ test/lsp/lsp_config_test.dart: workspaceRootFor walks up to the nearest root marker
+✅ test/lsp/lsp_config_test.dart: workspaceRootFor falls back to cwd when no marker exists
+✅ test/lsp/lsp_client_test.dart: requests an error response rejects with LspRequestException
+✅ test/lsp/lsp_client_test.dart: requests a request without a response times out
+✅ test/lsp/lsp_client_test.dart: requests a dead server rejects in-flight requests
+✅ test/lsp/lsp_client_test.dart: document sync ensureOpen sends didOpen once
+✅ test/lsp/lsp_client_test.dart: document sync syncContent sends didChange with a bumped version
+✅ test/lsp/lsp_client_test.dart: document sync closeFile sends didClose and forgets the document
+✅ test/lsp/lsp_client_test.dart: diagnostics publishDiagnostics updates the cache and version
+✅ test/lsp/lsp_client_test.dart: server-initiated requests workspace/configuration answers from settings
+✅ test/lsp/lsp_client_test.dart: server-initiated requests workspace/workspaceFolders answers the root
+✅ test/lsp/lsp_client_test.dart: server-initiated requests window/showDocument answers headless
+✅ test/lsp/lsp_client_test.dart: server-initiated requests workspace/applyEdit declines
+✅ test/lsp/lsp_client_test.dart: server-initiated requests progress and registration requests are acknowledged
+✅ test/lsp/lsp_client_test.dart: server-initiated requests unknown methods get a method-not-found error
+✅ test/lsp/lsp_client_test.dart: teardown crash marks closed and notifies onExit once
+✅ test/lsp/lsp_client_test.dart: teardown shutdown sends shutdown + exit and closes the stream
+✅ test/lsp/lsp_client_test.dart: teardown requests on a closed client fail immediately
+✅ test/lsp/lsp_manager_test.dart: lazy lifecycle starts on first use and reuses the client
+✅ test/lsp/lsp_manager_test.dart: lazy lifecycle no server for the extension throws LspNoServerException
+✅ test/lsp/lsp_manager_test.dart: lazy lifecycle concurrent clientForFile calls share one spawn
+✅ test/lsp/lsp_manager_test.dart: failures spawn failure surfaces as unavailable and is retried
+✅ test/lsp/lsp_manager_test.dart: failures init failure is negative-cached for the backoff window
+✅ test/lsp/lsp_manager_test.dart: failures a crashed client is dropped and respawned on next use
+✅ test/lsp/lsp_manager_test.dart: failures repeated quick crashes bound respawning with a backoff
+✅ test/lsp/lsp_manager_test.dart: failures a disposed manager refuses new clients
+✅ test/lsp/io_lsp_transport_test.dart: IoLspTransport a missing binary throws LspServerUnavailableException
+✅ test/lsp/lsp_manager_test.dart: idle timeout the sweep shuts down idle clients
+✅ test/lsp/lsp_manager_test.dart: idle timeout checkIdle keeps recently active clients
+✅ test/lsp/lsp_manager_test.dart: shutdownAll shuts down every client and stops the sweep
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString single-line replacement
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString multi-line splice
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString two edits apply bottom-to-top without shifting
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString inserts at the same position land in array order
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString duplicate identical edits collapse
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString overlapping edits throw
+✅ test/lsp/lsp_edits_test.dart: applyTextEditsToString out-of-bounds edits throw
+✅ test/lsp/lsp_edits_test.dart: LspWorkspaceEdit.fromJson parses the legacy changes map
+✅ test/lsp/lsp_edits_test.dart: LspWorkspaceEdit.fromJson parses documentChanges with versions
+✅ test/lsp/lsp_edits_test.dart: LspWorkspaceEdit.fromJson returns null for non-map input
+✅ test/lsp/lsp_edits_test.dart: applyWorkspaceEdit applies edits across files and reports counts
+✅ test/lsp/lsp_edits_test.dart: applyWorkspaceEdit is atomic: a conflict in one file leaves every file untouched
+✅ test/lsp/lsp_edits_test.dart: applyWorkspaceEdit a missing target file fails before any write
+✅ test/lsp/lsp_edits_test.dart: applyWorkspaceEdit version guard rejects a stale edit before any write
+✅ test/lsp/lsp_edits_test.dart: applyWorkspaceEdit version guard passes when versions match or are unknown
+✅ test/lsp/lsp_tool_test.dart: registration gating builtinTools leaves lsp out without a config
+✅ test/lsp/lsp_tool_test.dart: registration gating builtinTools registers lsp with a config
+✅ test/lsp/lsp_tool_test.dart: registration gating the tool is declared at the write tier (rename mutates)
+✅ test/lsp/lsp_tool_test.dart: diagnostics OK for a clean file
+✅ test/lsp/lsp_tool_test.dart: diagnostics renders severity-sorted issues with a summary
+✅ test/lsp/lsp_tool_test.dart: diagnostics falls back to cached diagnostics when nothing is published
+✅ test/lsp/lsp_tool_test.dart: definition renders locations with the source line
+✅ test/lsp/lsp_tool_test.dart: definition accepts LocationLink results
+✅ test/lsp/lsp_tool_test.dart: definition no definition found
+✅ test/lsp/lsp_tool_test.dart: references sends includeDeclaration and renders all locations
+✅ test/lsp/lsp_tool_test.dart: rename requires newName
+✅ test/lsp/lsp_tool_test.dart: rename applies a multi-file workspace edit atomically
+✅ test/lsp/lsp_tool_test.dart: rename rename with no edits reports so
+✅ test/lsp/lsp_tool_test.dart: rename a stale server version rejects the edit without writing
+✅ test/lsp/lsp_tool_test.dart: errors unknown op throws
+✅ test/lsp/lsp_tool_test.dart: errors no server for the file is a clean result, not a crash
+✅ test/lsp/lsp_tool_test.dart: errors a missing server binary is a clean result
+✅ test/lsp/lsp_tool_test.dart: errors a protocol error surfaces as an LSP error
+✅ test/lsp/lsp_tool_test.dart: errors a missing file throws like the read tool
+✅ test/lsp/io_lsp_transport_test.dart: IoLspTransport spawn, handshake, request round trip, graceful shutdown
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer decodes a single complete message in one chunk
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer decodes a message split across chunks
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer decodes multiple messages in one chunk
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer resyncs past a junk header block
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer tolerates extra headers (Content-Type)
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer remainder preserves a partial message for a restarted reader
+✅ test/lsp/lsp_framing_test.dart: LspMessageFramer encode produces Content-Length framing
+✅ test/release_empty_latest_guard_test.dart: gh-1801 AC-3: build-mobile concurrency key the group carries the leg/content discriminator
+✅ test/release_empty_latest_guard_test.dart: gh-1801 AC-3: build-mobile concurrency key the group stays per-dispatch (run_id) and never cancels in progress
+✅ test/release_empty_latest_guard_test.dart: gh-1801 AC-2: release-mobile never runs with zero artifacts the create/attach step routes through release_attach_or_create.sh
+✅ test/release_empty_latest_guard_test.dart: gh-1801 AC-2: release-mobile never runs with zero artifacts artifact download and release steps are gated on success, never skip
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets auto_release.sh creates NO release (zero resolved assets → hard skip)
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets every lazy create routes through release_lazy_draft.sh (curated notes + ownership marker)
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets matrix lazy creates carry a leg-suffixed draft identity (sibling-safe guard)
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets publish (--draft=false) happens ONLY in steps that upload SHA256SUMS
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets release-provenance owns the publish flip after signing
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets web-spa / extension uploads never publish the release
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets AGENTS.md documents the provenance-owned release contract
+✅ test/release_empty_latest_guard_test.dart: gh-1801: no release may be published without assets attach-or-create: create is draft-only, the attach publish is SHA256SUMS-gated
+✅ test/lsp/io_lsp_transport_test.dart: IoLspTransport kill ends the process and closes the client
+✅ test/release_empty_latest_guard_test.dart: gh-1801 behavioral (stubbed gh, fixture git) auto_release.sh pushes the next annotated tag and never creates a release
+✅ test/release_empty_latest_guard_test.dart: gh-1801 behavioral (stubbed gh, fixture git) release_attach_or_create.sh with zero assets refuses (hard fail, no create)
+✅ test/release_empty_latest_guard_test.dart: gh-1801 behavioral (stubbed gh, fixture git) release_attach_or_create.sh attach path publishes draft + asserts latest
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts release_lazy_draft.sh: draft-first, curated notes + owner marker, never latest
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts release_lazy_draft.sh: release already exists → no create, exit 0
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts release_lazy_draft.sh: malformed RELEASE_DRAFT_IDENTITY fails loud
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts attach path: release without SHA256SUMS → upload only, publish left to provenance
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts attach path: release already carrying SHA256SUMS → recovery publish + latest
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts create path: draft-only create, ownership marker, never --latest
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts draft guard: RELEASE_DRAFT_IDENTITY match deletes the leg-stamped draft
+✅ test/release_empty_latest_guard_test.dart: gh-1801 rework behavioral: provenance-owned publish + guard-visible drafts draft guard: sibling leg identity never deletes (refuses, exit 0)
+✅ test/release_empty_latest_guard_test.dart: AC4 — latest is provenance-owned (drafts never carry it) no workflow in the train inlines a release create anymore
+✅ test/release_empty_latest_guard_test.dart: AC4 — latest is provenance-owned (drafts never carry it) the two shared create paths are the only creates, both draft-only
+✅ test/release_empty_latest_guard_test.dart: AC4 — latest is provenance-owned (drafts never carry it) the publish flip exists exactly once per owner, next to SHA256SUMS
+✅ test/release_empty_latest_guard_test.dart: AC4 — latest is provenance-owned (drafts never carry it) guards and sweeper never touch the latest badge
+✅ test/mcp/mcp_client_test.dart: initialize sends the handshake and returns server info
+✅ test/mcp/mcp_client_test.dart: listTools parses names, descriptions, and input schemas
+✅ test/mcp/mcp_client_test.dart: listTools follows nextCursor pagination
+✅ test/mcp/mcp_client_test.dart: callTool returns the raw result map
+✅ test/mcp/mcp_client_test.dart: a server error envelope rejects the request
+✅ test/mcp/mcp_framing_test.dart: McpLineFramer decodes complete lines and keeps a partial tail
+✅ test/mcp/mcp_framing_test.dart: McpLineFramer skips blank lines and tolerates CRLF
+✅ test/mcp/mcp_framing_test.dart: McpLineFramer handles a message split mid-UTF-8-sequence
+✅ test/mcp/mcp_framing_test.dart: McpLineFramer encode appends exactly one newline
+✅ test/mcp/mcp_framing_test.dart: McpLineFramer round-trips a batch of messages
+✅ test/mcp/mcp_client_test.dart: an unanswered request times out with an actionable message
+✅ test/mcp/mcp_client_test.dart: server-initiated requests get a method-not-found reply
+✅ test/mcp/mcp_client_test.dart: a dying transport rejects pending requests and closes the client
+✅ test/mcp/mcp_client_test.dart: requests on a closed client fail fast
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml parses a stdio server with args and env
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml parses a remote server with transport and headers
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml defaults the remote transport to streamable-http
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects a non-map section
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects a missing servers map
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects a bad timeout
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects an entry with neither command nor url
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects an entry mixing command and url
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects an unknown transport label
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects non-string args entries
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml rejects an empty command
+✅ test/mcp/mcp_config_test.dart: McpConfig.fromYaml toYaml round-trips through fromYaml
+✅ test/mcp/mcp_agent_cli_test.dart: background connect registers mcp tools, the prompt section, and a model call executes through the server
+✅ test/mcp/mcp_agent_cli_test.dart: a server that cannot start lands in failed status in the prompt
+✅ test/mcp/mcp_tool_test.dart: mcpToolName namespaces server and tool
+✅ test/mcp/mcp_tool_test.dart: mcpToolName sanitizes provider-hostile characters
+✅ test/mcp/mcp_tool_test.dart: mcpToolName clamps to 64 characters
+✅ test/mcp/mcp_tool_test.dart: mcpAgentTool description is prefixed and the schema passes through verbatim
+✅ test/mcp/mcp_tool_test.dart: mcpAgentTool routes calls with the server-local tool name
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult text blocks pass through as-is
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult image blocks become ImageContent
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult embedded text resources render their text
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult binary resources and links become readable placeholders
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult isError throws so the loop records an error result
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult empty content falls back to structuredContent, then a note
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult text beyond the shared budget is truncated with a note
+✅ test/mcp/mcp_tool_test.dart: mcpResultToToolResult images do not consume the text budget
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport POSTs JSON-RPC with the MCP accept headers and emits the JSON response
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport parses an SSE response body into messages
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport captures and replays the mcp-session-id header
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport a 202 notification ack emits nothing
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport an HTTP error synthesizes a JSON-RPC error for the request id
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport close completes closed and shuts the owned client down
+stage: closing
+stage: closed await
+stage: second close
+stage: expect
+✅ test/mcp/mcp_http_transport_test.dart: McpStreamableHttpTransport a network failure synthesizes a JSON-RPC error
+✅ test/mcp/mcp_http_transport_test.dart: McpSseTransport waits for the endpoint event, POSTs there, and reads message events from the GET stream
+✅ test/mcp/mcp_http_transport_test.dart: McpSseTransport a POST error synthesizes a JSON-RPC error for the request id
+✅ test/mcp/mcp_http_transport_test.dart: McpSseTransport a POST network failure synthesizes a JSON-RPC error
+✅ test/mcp/mcp_http_transport_test.dart: McpSseTransport fails cleanly when the endpoint event never arrives
+✅ test/mcp/mcp_http_transport_test.dart: McpSseTransport a non-200 GET fails cleanly
+✅ test/mcp/io_mcp_transport_test.dart: ioMcpTransportFactory a missing binary throws McpServerUnavailableException
+✅ test/mcp/io_mcp_transport_test.dart: ioMcpTransportFactory rejects non-stdio configs
+✅ test/mcp/mcp_manager_test.dart: connects in the background and registers namespaced tools
+✅ test/mcp/mcp_manager_test.dart: a failed server does not block the others (startup isolation)
+✅ test/mcp/mcp_manager_test.dart: stdio without a transport factory reports a clean note
+✅ test/mcp/mcp_manager_test.dart: callTool routes through the manager and returns converted content
+✅ test/mcp/mcp_manager_test.dart: callTool on a down server throws an actionable error
+✅ test/mcp/io_mcp_transport_test.dart: ioMcpTransportFactory runs a full MCP session over real stdio
+✅ test/mcp/io_mcp_transport_test.dart: ioMcpTransportFactory a server exiting mid-session closes the client
+✅ test/mcp/mcp_manager_test.dart: a crashed server reconnects with backoff and re-registers tools
+✅ test/mcp/mcp_manager_test.dart: promptSection renders one line per server status
+✅ test/mcp/mcp_manager_test.dart: duplicate sanitized tool names register first-wins
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) an untouched server keeps its live connection
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) a changed server reconnects, the rest stay up
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) a removed server stops; an added one connects
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) a tool-call-timeout change restarts every server
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) restartServer reconnects just the named server
+✅ test/mcp/mcp_manager_test.dart: live reload (issue #396) server configs are value-equal field by field
+✅ test/inappwebview_macos_pods_lane_test.dart: AC1 — vendored flutter_inappwebview_macos ships no SwiftPM manifest (gh-1798)
+✅ test/inappwebview_macos_pods_lane_test.dart: AC2 — the CocoaPods lane stays wired (podspec floor + lock pin)
+✅ test/inappwebview_macos_pods_lane_test.dart: AC3 — pubspec dependency_overrides keeps the vendored mapping
+✅ test/session_listing_index_test.dart: AC1 — warm boot is index-priced warm list() performs zero header reads and zero window reads
+✅ test/session_listing_index_test.dart: AC1 — warm boot is index-priced a created/deleted/mutated file since the index costs one re-read
+✅ test/session_listing_index_test.dart: AC2 — cold path is semantically identical no index: same set + order as a second cold scan
+✅ test/session_listing_index_test.dart: AC2 — cold path is semantically identical corrupt index: ignored, full scan, index rewritten
+✅ test/session_listing_index_test.dart: AC2 — cold path is semantically identical version-drift index: treated as cold
+✅ test/session_listing_index_test.dart: AC2 — cold path is semantically identical index listing order matches the cold newest-first order
+✅ test/session_listing_index_test.dart: AC3 — no stale tiles ever (incremental refresh) created since index: seen
+✅ test/session_listing_index_test.dart: AC3 — no stale tiles ever (incremental refresh) deleted since index: gone (never resurrected)
+✅ test/session_listing_index_test.dart: AC3 — no stale tiles ever (incremental refresh) rotated since index: stats + segments reflected
+✅ test/session_listing_index_test.dart: AC3 — no stale tiles ever (incremental refresh) moved since index: old path gone, new path listed
+✅ test/session_listing_index_test.dart: AC3 — no stale tiles ever (incremental refresh) same-size same-mtime swap inside a directory is still caught
+✅ test/session_listing_index_test.dart: AC6 — writers keep the index fresh create updates the sidecar in the same operation
+✅ test/session_listing_index_test.dart: AC6 — writers keep the index fresh delete (soft) drops the sidecar entry in the same operation
+✅ test/session_listing_index_test.dart: AC6 — writers keep the index fresh rotation fires the storage hook and updates the sidecar
+✅ test/session_listing_index_test.dart: AC6 — writers keep the index fresh failed-rotation restore fires the hook too
+✅ test/session_listing_index_test.dart: AC6 — writers keep the index fresh CLI + app racing: last-writer-wins converges via the fingerprint
+✅ test/session_listing_index_test.dart: AC7 — fail-open everywhere a broken index never breaks boot
+✅ test/session_listing_index_test.dart: AC7 — fail-open everywhere missing sessions root lists empty, with or without an index
+✅ test/session_listing_index_test.dart: AC7 — fail-open everywhere empty root and single-file root
+✅ test/session_listing_index_test.dart: AC8 — segment discovery shortcut cold listing + names with no segments: no per-session listDirs
+✅ test/session_listing_index_test.dart: AC8 — segment discovery shortcut with segments present: names still resolve (discovery unchanged)
+✅ test/session_listing_index_test.dart: AC8 — segment discovery shortcut a stale walk hint is dropped by writer mutations
+✅ test/session_listing_index_test.dart: AC4 core — lazy name persistence rememberSessionNames persists a learned name for the next boot
+✅ test/session_listing_index_test.dart: AC4 core — lazy name persistence rememberSessionNames is guarded: a changed file drops the name
+✅ test/session_listing_index_test.dart: index store — two-process write races tmp + rename: last writer wins, no torn read served
+✅ test/session_listing_index_test.dart: persistListingIndex = false — the pre-#2053 path behaves like today: full scan every time, no sidecar
+✅ test/a2a/a2a_wiring_test.dart: A2aConfig parses a server with a literal token
+✅ test/a2a/a2a_wiring_test.dart: A2aConfig resolves ${NAME} tokens from the environment
+✅ test/a2a/a2a_wiring_test.dart: A2aConfig unset env token throws ConfigException
+✅ test/a2a/a2a_wiring_test.dart: A2aConfig missing url throws
+✅ test/a2a/a2a_wiring_test.dart: A2aConfig non-map section throws
+✅ test/a2a/a2a_wiring_test.dart: mapA2aTaskState maps the A2A lifecycle onto subagent statuses
+✅ test/a2a/a2a_wiring_test.dart: A2aManager no servers when config is null
+✅ test/a2a/a2a_wiring_test.dart: A2aManager unknown server connect throws listing available
+✅ test/a2a/a2a_wiring_test.dart: A2aManager renderArtifacts joins text parts under the budget
+✅ test/a2a/a2a_wiring_test.dart: A2aManager renderArtifacts truncates over the budget
+✅ test/a2a/a2a_client_test.dart: AgentCard parses a well-formed card
+✅ test/a2a/a2a_client_test.dart: AgentCard handles missing fields gracefully
+✅ test/a2a/a2a_client_test.dart: A2aTask parses a completed task with messages and artifacts
+✅ test/a2a/a2a_client_test.dart: A2aTask parses input-required state
+✅ test/a2a/a2a_client_test.dart: A2aClient card fetches and caches the Agent Card
+✅ test/a2a/a2a_client_test.dart: A2aClient sendMessage returns a task
+✅ test/a2a/a2a_client_test.dart: A2aClient cancelTask sends cancel and returns canceled task
+✅ test/a2a/a2a_client_test.dart: A2aClient error response throws A2aException
+✅ test/a2a/a2a_client_test.dart: A2aClient bearer token is sent in authorization header
+✅ test/a2a/a2a_client_test.dart: A2aClient streamMessage yields task updates from SSE lines
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) sends the faMail envelope to the machine-matching server
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) matches the machine name case-insensitively
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) an empty machine name stamps the bare sender mailbox
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) an unknown machine fails with the config hint
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) a malformed remote address fails
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.deliver (outbound) a failed remote task surfaces the remote error
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.accept (inbound) resolves a session display name and deposits the mail
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.accept (inbound) resolves an exact mailbox id and a name/main form
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.accept (inbound) an empty envelope id falls back to a generated one
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.accept (inbound) an unknown mailbox fails honestly
+✅ test/a2a/a2a_mail_gateway_test.dart: A2aMailGateway.accept (inbound) an ambiguous mailbox name lists candidates instead of guessing
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend connect fetches the card and marks connected
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend connect failure marks failed with the error
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend send + waitForTask settles on completed with artifacts
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend waitForTask settles early on input-required
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend waitForTask times out on never-settling tasks
+✅ test/a2a/a2a_manager_backend_test.dart: A2aManager with a mock backend cancel calls tasks/cancel
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler agentCardJson produces a valid card
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler message/send runs the agent and returns completed task
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler tasks/get returns the stored task
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler tasks/cancel sets state to canceled
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler unknown method returns error
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler auth: wrong token rejects with -32001
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler auth: correct token allows
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler fabric mail deposits via the sink, never the runner
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler a failing sink fails the task with the error
+✅ test/a2a/a2a_server_test.dart: A2aRequestHandler fabric mail without a sink fails honestly
+✅ test/a2a/a2a_status_format_test.dart: formatA2aServerStatus connecting server shows url and connecting marker
+✅ test/a2a/a2a_status_format_test.dart: formatA2aServerStatus connected server with a card shows agent + version
+✅ test/a2a/a2a_status_format_test.dart: formatA2aServerStatus failed server shows the error line
+✅ test/a2a/a2a_status_format_test.dart: formatA2aServerStatus a server without card or error has no extra lines
+✅ test/a2a/a2a_status_format_test.dart: formatA2aStatusLines no servers renders the config hint
+✅ test/a2a/a2a_status_format_test.dart: formatA2aStatusLines one server renders header + block + usage hint
+✅ test/session_retention_config_test.dart: SessionRetentionConfig defaults defaults carry no cap
+✅ test/session_retention_config_test.dart: SessionRetentionConfig defaults absent yaml node == defaults (AC1)
+✅ test/session_retention_config_test.dart: SessionRetentionConfig defaults a non-map node degrades to defaults with a note, never throws
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml valid section parses all keys
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml zero maxTotalBytes means no cap
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml mistyped scalars fall back with notes (tolerant)
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml negative maxTotalBytes clamps to 0 (no cap) with a note
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml unknown sweep mode falls back to boot with a note
+✅ test/session_retention_config_test.dart: SessionRetentionConfig.fromYaml unknown keys are noted and ignored, never boot failures
+✅ test/session_retention_config_test.dart: SessionsConfig absent node parses to defaults
+✅ test/session_retention_config_test.dart: SessionsConfig the retention block parses through the sessions wrapper
+✅ test/session_retention_config_test.dart: SessionsConfig unknown members of the sessions section are noted
+✅ test/session_retention_config_test.dart: SessionsConfig toYaml renders only non-default sections, round-trips
+✅ test/session_retention_config_test.dart: SessionsConfig vacuumLedgers parses, defaults false, round-trips (issue #1882 AC2)
+✅ test/session_retention_config_test.dart: CliConfig sessions plumbing (gh-1746) absent section parses to null (AC1 byte-identical legacy)
+✅ test/session_retention_config_test.dart: CliConfig sessions plumbing (gh-1746) present section parses tolerantly and renders back
+✅ test/session_retention_config_test.dart: CliConfig sessions plumbing (gh-1746) tolerant: unknown keys under sessions: become notes, not errors
+✅ test/session_retention_config_test.dart: CliConfig sessions plumbing (gh-1746) config service accepts sessions: as a known section
+✅ test/power/io_power_runner_test.dart: CaffeinatePowerRunner spawns caffeinate with the level flags and -w pid
+✅ test/power/io_power_runner_test.dart: release kills the helper once and reaps it (kill-safe, idempotent)
+✅ test/power/io_power_runner_test.dart: a helper that dies on its own is no longer "held"
+✅ test/power/io_power_runner_test.dart: SystemdInhibitPowerRunner spawns systemd-inhibit with a watchdog
+✅ test/power/io_power_runner_test.dart: a spawn failure propagates (the controller warns upstream)
+✅ test/power/io_power_runner_test.dart: systemd-inhibit ENOENT degrades silently, cached (#605)
+✅ test/power/io_power_runner_test.dart: three per-run cycles on an ENOENT host stay silent (#605)
+✅ test/power/io_power_runner_test.dart: a non-ENOENT systemd-inhibit failure still propagates
+✅ test/power/io_power_runner_test.dart: release is BOUNDED against a never-dying helper: SIGTERM timeout → SIGKILL → proceed anyway (#326)
+✅ test/power/io_power_runner_test.dart: hostPowerRunner picks the platform runner
+✅ test/kaomoji_faces_test.dart: AC spec: the eight approved faces, in the issue order
+✅ test/kaomoji_faces_test.dart: ASCII-safe fallbacks for the non-ASCII faces
+✅ test/kaomoji_faces_test.dart: two-tone brand palette (from the launcher icon)
+✅ test/kaomoji_faces_test.dart: AC spec: ~0.9 s random swap cadence (9 × 100 ms CLI ticks)
+✅ test/kaomoji_faces_test.dart: AC spec: every SVG frame is the approved 24-grid sprite content
+✅ test/kaomoji_faces_test.dart: seeded picker: deterministic sequence, replayable
+✅ test/kaomoji_faces_test.dart: picker picks stay in range and never repeat the showing face
+✅ test/kaomoji_faces_test.dart: a seeded 200-swap run visits every face
+✅ test/kaomoji_faces_test.dart: debugPin: pinned draws freeze the face — deterministic goldens
+✅ test/kaomoji_faces_test.dart: kaomojiNextFaceIndex: the skip-over seam the CLI pick injects into
+✅ test/release_tag_mint_test.dart: PR #2029 review: a mint that loses the push race to a sibling leg continues to train verification instead of dying on the rejected push
+✅ test/telemetry/file_agent_telemetry_sink_test.dart: writes the CLI phase vocabulary, one sid-tagged line per record
+✅ test/telemetry/file_agent_telemetry_sink_test.dart: a detail-less firstToken renders without a trailing segment
+✅ test/telemetry/file_agent_telemetry_sink_test.dart: appends across runs (the CLI shares one fa.log)
+✅ test/telemetry/file_agent_telemetry_sink_test.dart: a broken path degrades to silence
+✅ test/telemetry/file_agent_telemetry_sink_test.dart: forHomeDir resolves the canonical fa.log path
+✅ test/release_tag_mint_test.dart: PR #2029 review: a push that fails with the ref still missing fails loud with a self-explaining error
+✅ test/release_tag_mint_test.dart: PR #2029 review: a failed train verification rolls the pushed tag back so a fixed re-run re-mints instead of stranding the draft
+✅ test/release_tag_mint_test.dart: PR #2029 review: a failing train probe (403 / expired PAT) fails fast and is diagnosed as a probe failure, never as a suppressed train
+✅ test/release_tag_mint_test.dart: re-review lap 6: a gh warning on a healthy probe (exit 0, stderr noise) must not corrupt the numeric check — the train is still recognized, no rollback
+✅ test/release_tag_mint_test.dart: gh-2039: checkout v7 includeIf-persisted credentials are stripped — the extraheader must no longer resolve and the credentials file must be deleted
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) a clean run produces the CLI phase map plus the provider records
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) an aborted run is a phase outcome, never a run error
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) an in-stream provider error records the parsed HTTP status
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) a provider exception thrown before the stream is converted to the providers-never-throw shape
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) a hanging request is visible as requestStart with no firstToken
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) tool execution lands as toolStart/toolEnd records
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) stuck-tool supervision lands as heartbeat and stuck records
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) the in-memory ring keeps the last [capacity] records
+✅ test/telemetry/agent_telemetry_test.dart: AgentTelemetry (the agent → sink adapter) a throwing sink never breaks the run
+✅ test/release_tag_mint_test.dart: gh-2039 rework: Guard 1b strips the includeIf.gitdir/i: variant and a plain include.path pointing at a credentials file — benign values on the widened shapes survive
+✅ test/release_tag_mint_test.dart: gh-2039 Guard 1c: an Authorization header that STILL resolves after the strips (global gitconfig scope) fails loud BEFORE the push — no tag is pushed, no probe runs
+✅ test/session_seal_test.dart: UT-1: seal state machine a sealed session drops message appends with ONE warning per class
+✅ test/session_seal_test.dart: UT-1: seal state machine each custom record type is its own writer class
+✅ test/session_seal_test.dart: UT-1: seal state machine a sealed append never throws and resolves to a stable value
+✅ test/session_seal_test.dart: UT-1: seal state machine sealing is idempotent — the first sink stays the sink
+✅ test/session_seal_test.dart: UT-1: seal state machine a throwing onLateWrite sink never propagates (I1)
+✅ test/session_seal_test.dart: UT-5: resume after seal a sealed session reopened by a new Session appends normally
+✅ test/session_seal_test.dart: UT-5: resume after seal a sealed leaf move (moveTo) writes nothing and resolves null
+✅ test/session_seal_test.dart: UT-5: resume after seal the seal does not touch the session file bytes
+✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: 2026-10-03 timeline: tag 60s old, tag-run not visible yet -> neutral skip
+✅ test/uploads_test.dart: stages a fresh name under uploads/ and returns the relative path
+✅ test/uploads_test.dart: dedupes collisions report-1.ext style (AC5/E3)
+✅ test/uploads_test.dart: appends the suffix whole when the name has no extension
+✅ test/uploads_test.dart: flattens path attacks (E2): ../, absolute, webkitRelativePath
+✅ test/uploads_test.dart: empty base name is a named StateError, never a silent no-op
+✅ test/uploads_test.dart: createDir failure is a named StateError, never a silent no-op
+✅ test/uploads_test.dart: writeBinaryFile failure is a named StateError, never a silent no-op
+✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: tag-run queued or in_progress -> skip, run linked
+✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: E1: run queued far past the grace window still skips, never alarms
+✅ test/release_flow_race_test.dart: AC1/AC4 — verify classifies release-in-flight, no ::error:: grace is tunable (RELEASE_FLIGHT_GRACE_SECS): 2h-old tag inside a 3h grace skips
