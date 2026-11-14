@@ -29,14 +29,22 @@ DmChannelParts? parseDmChannelId(String channelId) {
 
 /// Human-facing peer label for a DM virtual channel. The wire id belongs
 /// in routing logs, not in the page title or composer hint. A roster tap
-/// supplies its richer device label; inbox/history restores fall back to
-/// the stable device id carried by the channel id.
+/// supplies its richer device label; inbox/history restores use a generic
+/// human label rather than leaking the stable device id from the channel id.
 String dmChannelPeerLabel(String channelId, {String? deviceLabel}) {
   final parts = parseDmChannelId(channelId);
   if (parts == null) return channelDisplayLabel(channelId);
-  final device = deviceLabel?.trim();
-  return '${device == null || device.isEmpty ? parts.deviceId : device} · '
-      '${parts.agentName}';
+  var device = deviceLabel?.trim() ?? '';
+  // Restored channel rows historically persisted the WHOLE label in `name`.
+  // Accept that form without duplicating the agent suffix, and recognize the
+  // old raw-device fallback so it is upgraded instead of shown again.
+  final agentSuffix = ' · ${parts.agentName}';
+  if (device.endsWith(agentSuffix)) {
+    device = device.substring(0, device.length - agentSuffix.length).trim();
+  }
+  if (device == parts.deviceId) device = '';
+  return '${device.isEmpty ? 'Device' : device} · '
+      '${parts.agentName}'; // l10n:ignore
 }
 
 /// The DM branches of [NetworkSession]. One personal-network session can
@@ -59,16 +67,28 @@ extension NetworkSessionDm on NetworkSession {
   /// `GET /api/channels/{dm:id}/messages` (owner-only server branch);
   /// live frames arrive on the account network WS and device connector,
   /// with [ChannelState.seen] deduplicating the two delivery paths.
-  void prepareDmChannel(String channelId) {
-    if (!channels.any((c) => c.id == channelId)) {
+  /// A roster-supplied [deviceLabel] also upgrades older generic/raw labels.
+  void prepareDmChannel(String channelId, {String? deviceLabel}) {
+    final label = dmChannelPeerLabel(channelId, deviceLabel: deviceLabel);
+    final index = channels.indexWhere((channel) => channel.id == channelId);
+    if (index < 0) {
       channels = [
         ...channels,
-        Channel(
-          id: channelId,
-          networkId: networkId,
-          name: dmChannelPeerLabel(channelId),
-        ),
+        Channel(id: channelId, networkId: networkId, name: label),
       ];
+    } else if (deviceLabel?.trim().isNotEmpty == true &&
+        channels[index].name != label) {
+      final previous = channels[index];
+      final updated = [...channels];
+      updated[index] = Channel(
+        id: previous.id,
+        networkId: previous.networkId,
+        name: label,
+        isPublic: previous.isPublic,
+        acl: previous.acl,
+        retentionDays: previous.retentionDays,
+      );
+      channels = updated;
     }
     _ensureDmPolling();
   }

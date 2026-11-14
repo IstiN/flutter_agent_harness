@@ -12,6 +12,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/device_display.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -175,7 +176,9 @@ DeviceChatSessionSource createDeviceChatSessionSource(
           for (final entry in chatList.localEntries)
             (
               id: entry.id.value,
-              title: entry.title == entry.id.value ? null : entry.title,
+              title: entry.title == entry.id.value || entry.title.trim().isEmpty
+                  ? deviceSessionPreviewTitle(entry.preview)
+                  : entry.title,
               path: entry.folderPath,
               lastActivity: entry.lastActivity ?? entry.createdAt,
             ),

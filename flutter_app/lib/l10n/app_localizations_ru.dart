@@ -2697,6 +2697,10 @@ class AppLocalizationsRu extends AppLocalizations {
       'Зашифровано на другом устройстве';
 
   @override
+  String get networkDmEarlierEncrypted =>
+      'Ранние сообщения зашифрованы на других устройствах';
+
+  @override
   String get networkNewChannel => 'Новый канал';
 
   @override

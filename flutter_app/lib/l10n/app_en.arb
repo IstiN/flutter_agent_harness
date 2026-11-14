@@ -1353,6 +1353,10 @@
   "@networkDmEncryptedOnAnotherDevice": {
     "description": "Non-technical placeholder for a direct message sealed to a different per-device identity"
   },
+  "networkDmEarlierEncrypted": "Earlier messages are encrypted on other devices",
+  "@networkDmEarlierEncrypted": {
+    "description": "Subtle divider replacing a consecutive run of undecryptable direct-message history"
+  },
   "networkNewChannel": "New channel",
   "@networkNewChannel": {
     "description": "Create-channel button tooltip and dialog title"

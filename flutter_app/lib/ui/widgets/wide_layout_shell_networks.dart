@@ -130,6 +130,9 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     await mode.enterNetwork(personal);
     if (!mounted) return;
     session.attachDmConnector(connector);
+    // Preserve the roster's human device label on the synthetic channel;
+    // openChannel would otherwise have to restore a label from the wire id.
+    session.prepareDmChannel(channelId, deviceLabel: deviceLabel);
     session.dmSessionTargets[channelId] = sessionId;
     await _openSidebarChannelEntry(
       manager,

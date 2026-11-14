@@ -111,6 +111,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
         channelId: wanted.$2,
         dmUndecryptablePlaceholder: () =>
             context.l10n.networkDmEncryptedOnAnotherDevice,
+        dmEncryptedHistoryDivider: () => context.l10n.networkDmEarlierEncrypted,
       );
       _chatFor = wanted;
       unawaited(wanted.$1.openChannel(wanted.$2));
@@ -121,15 +122,14 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   String _channelLabel(NetworkSession session, String channelId) {
     final name = _channel(session, channelId)?.name;
     if (isDmChannel(channelId)) {
-      // Server/inbox restores may carry the raw virtual id as `name`.
-      // Never leak that routing identifier into the title or composer.
+      // Server/inbox restores may carry the raw virtual id, or an old label
+      // containing the raw device id, as `name`. The DM parser owns the one
+      // sanitizing path used by both the header and composer.
       final usableName = name?.trim();
-      if (usableName != null &&
-          usableName.isNotEmpty &&
-          usableName != channelId) {
-        return usableName;
-      }
-      return dmChannelPeerLabel(channelId);
+      return dmChannelPeerLabel(
+        channelId,
+        deviceLabel: usableName == channelId ? null : usableName,
+      );
     }
     return channelDisplayLabel(channelId, name);
   }
@@ -285,6 +285,13 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     _ => 2,
   };
 
+  Widget? _dynamicTile(BuildContext context, FaChatMessage message) {
+    if (message.data != ChannelChatService.encryptedHistoryDividerData) {
+      return null;
+    }
+    return _DmEncryptedHistoryDivider(label: message.content);
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = _chat;
@@ -337,7 +344,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   projectIcon: widget.showAppBar
                       ? (channel?.isPublic == true ? Icons.public : Icons.tag)
                       : null,
-                  projectLabel: widget.projectLabel,
+                  projectLabel: isDmChannel(chatFor.$2)
+                      ? null
+                      : widget.projectLabel,
+                  dynamicWidgetTileBuilder: _dynamicTile,
                   onProjectTap:
                       widget.onProjectTap ??
                       () => unawaited(_showChannelDetails(session)),
@@ -368,6 +378,38 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
           ],
         );
       },
+    );
+  }
+}
+
+/// One quiet divider replaces a run of foreign-encrypted history bubbles.
+class _DmEncryptedHistoryDivider extends StatelessWidget {
+  const _DmEncryptedHistoryDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Padding(
+      key: const ValueKey('dmEncryptedHistoryDivider'),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(child: Divider(height: 1, color: colors.border)),
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.dim, fontSize: 11),
+              ),
+            ),
+          ),
+          Expanded(child: Divider(height: 1, color: colors.border)),
+        ],
+      ),
     );
   }
 }

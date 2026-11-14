@@ -69,7 +69,13 @@ void main() {
     });
 
     test('peer label keeps the routing id out of composer/title text', () {
-      expect(dmChannelPeerLabel(dmChannel), 'dev-1 · fa');
+      // Raw device ids are never shown: the generic localized fallback
+      // replaces them; a real roster label wins.
+      expect(dmChannelPeerLabel(dmChannel), 'Device · fa');
+      expect(
+        dmChannelPeerLabel(dmChannel, deviceLabel: 'dev-1'),
+        'Device · fa',
+      );
       expect(dmChannelPeerLabel(dmChannel, deviceLabel: 'Duo'), 'Duo · fa');
     });
   });

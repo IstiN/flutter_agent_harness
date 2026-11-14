@@ -188,7 +188,7 @@ void main() {
         find.byWidgetPredicate(
           (widget) =>
               widget is TextField &&
-              widget.decoration?.hintText == 'Message dev-1 · fa',
+              widget.decoration?.hintText == 'Message Device · fa',
         ),
         findsOneWidget,
       );

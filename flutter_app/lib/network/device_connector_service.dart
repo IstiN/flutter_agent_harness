@@ -57,6 +57,7 @@ import 'package:flutter_agent_harness/io.dart'
     hide DeviceRosterAgent, DeviceRosterSession;
 
 import 'device_dm_session_host.dart';
+import 'device_name.dart';
 import 'device_outbox_store.dart';
 import 'fa_network_client.dart';
 import 'network_session_manager.dart';
@@ -183,6 +184,7 @@ class DeviceCredentials {
     required this.deviceToken,
     this.personalNetworkId,
     this.dmPrivateKeys = const {},
+    this.deviceNameRepaired = true,
   });
 
   /// Stable device id minted at enroll.
@@ -197,6 +199,11 @@ class DeviceCredentials {
   /// Base64 X25519 DM private seeds keyed by full agent address. Secret:
   /// this map is serialized only to the platform keychain, never logged.
   final Map<String, String> dmPrivateKeys;
+
+  /// Whether legacy enrollment-name repair has run (or was unnecessary).
+  /// Programmatically created credentials are already current; deserialized
+  /// legacy JSON explicitly defaults this to false so repair runs once.
+  final bool deviceNameRepaired;
 
   /// Parses stored JSON; null on garbage (the caller re-enrolls).
   static DeviceCredentials? tryFromJson(Object? json) {
@@ -217,6 +224,7 @@ class DeviceCredentials {
           ? personal
           : null,
       dmPrivateKeys: _parseDmPrivateKeys(json['dmPrivateKeys']),
+      deviceNameRepaired: json['deviceNameRepaired'] == true,
     );
   }
 
@@ -226,6 +234,7 @@ class DeviceCredentials {
     'deviceToken': deviceToken,
     if (personalNetworkId != null) 'personalNetworkId': personalNetworkId,
     if (dmPrivateKeys.isNotEmpty) 'dmPrivateKeys': dmPrivateKeys,
+    if (deviceNameRepaired) 'deviceNameRepaired': true,
   };
 
   /// Returns the same enrollment record with updated DM private keys.
@@ -235,7 +244,17 @@ class DeviceCredentials {
         deviceToken: deviceToken,
         personalNetworkId: personalNetworkId,
         dmPrivateKeys: Map.unmodifiable(keys),
+        deviceNameRepaired: deviceNameRepaired,
       );
+
+  /// Marks the one-shot legacy name repair complete without rotating keys.
+  DeviceCredentials withDeviceNameRepaired() => DeviceCredentials(
+    deviceId: deviceId,
+    deviceToken: deviceToken,
+    personalNetworkId: personalNetworkId,
+    dmPrivateKeys: dmPrivateKeys,
+    deviceNameRepaired: true,
+  );
 }
 
 Map<String, String> _parseDmPrivateKeys(Object? value) {
@@ -329,12 +348,14 @@ class DeviceConnectorService {
     OutboxStore? outbox,
     ConnectorTransport? transport,
     Future<String> Function()? supportDirProvider,
+    Future<String> Function()? deviceNameProvider,
     this.idFactory = defaultIdFactory,
     this.onLog,
     this.rosterDebounce = const Duration(milliseconds: 500),
   }) : _tokenStore = tokenStore ?? KeychainDeviceTokenStore(),
        _outboxOverride = outbox,
        _transport = transport ?? const IoConnectorTransport(),
+       _deviceNameProvider = deviceNameProvider ?? platformEnrollmentDeviceName,
        _supportDirProvider =
            supportDirProvider ??
            (() async => (await getApplicationSupportDirectory()).path) {
@@ -369,6 +390,7 @@ class DeviceConnectorService {
   final OutboxStore? _outboxOverride;
   final ConnectorTransport _transport;
   final Future<String> Function() _supportDirProvider;
+  final Future<String> Function() _deviceNameProvider;
 
   /// Delay used to coalesce rapid REST roster changes (test-adjustable).
   final Duration rosterDebounce;
@@ -612,6 +634,13 @@ class DeviceConnectorService {
         userId: current?.userId,
       ),
     );
+    try {
+      await _markDeviceNameRepaired();
+    } on Object catch (error) {
+      // The owner rename already succeeded; a keychain flag failure may only
+      // cause a later no-op probe, never turn that rename into a UI failure.
+      onLog?.call('device name-repair flag was not persisted: $error');
+    }
     return friendly;
   }
 
@@ -877,6 +906,8 @@ class DeviceConnectorService {
     final credentials = await _resolveCredentials();
     _credentials = credentials;
     if (generation != _generation) return;
+    await _repairLegacyDeviceName(generation);
+    if (generation != _generation) return;
     final localAddress = _localAgentAddress();
     final dmKey = await _dmKeys.loadOrCreate(localAddress);
     if (generation != _generation) return;
@@ -962,7 +993,7 @@ class DeviceConnectorService {
       throw StateError('not signed in — cannot enroll the device');
     }
     final enrollment = await client.enrollDevice(
-      name: Platform.localHostname,
+      name: await _computedDeviceName(),
       platform: Platform.operatingSystem,
     );
     final credentials = DeviceCredentials(
@@ -973,6 +1004,83 @@ class DeviceConnectorService {
     await _tokenStore.write(credentials);
     onLog?.call('device enrolled (${credentials.deviceId})');
     return credentials;
+  }
+
+  Future<String> _computedDeviceName() async {
+    String? name;
+    try {
+      name = (await _deviceNameProvider()).trim();
+    } on Object catch (error) {
+      onLog?.call('device name probe failed: $error');
+    }
+    if (!isGenericDeviceName(name)) return name!;
+    // Even a broken host/provider must never put an empty/localhost label on
+    // a new enrollment. This last pure fallback is always non-generic.
+    return enrollmentDeviceName(
+      operatingSystem: Platform.operatingSystem,
+      user: Platform.environment['USER'] ?? Platform.environment['USERNAME'],
+    );
+  }
+
+  /// One-shot migration for enrollments created before name validation.
+  /// The server's device-name PATCH stores a friendly label; that label is
+  /// also the physical-machine grouping key, so the repaired app enrollment
+  /// unions with a same-host CLI enrollment instead of duplicating the card.
+  Future<void> _repairLegacyDeviceName(int generation) async {
+    final credentials = _credentials;
+    if (credentials == null || credentials.deviceNameRepaired) return;
+    try {
+      final client = await sessionManager.accountClient();
+      if (client == null) return;
+      final devices = await client.listDevices();
+      if (generation != _generation) return;
+      DeviceInfo? own;
+      for (final device in devices) {
+        if (device.deviceId == credentials.deviceId) {
+          own = device;
+          break;
+        }
+      }
+      if (own == null) return;
+      _setOwnDevice(own);
+      final hasOwnerLabel = own.friendlyName?.trim().isNotEmpty == true;
+      if (hasOwnerLabel || !isGenericDeviceName(own.name)) {
+        await _markDeviceNameRepaired();
+        return;
+      }
+      final computed = await _computedDeviceName();
+      if (generation != _generation || isGenericDeviceName(computed)) return;
+      final renamed = await client.renameDevice(own.deviceId, computed);
+      if (generation != _generation) return;
+      _setOwnDevice(
+        DeviceInfo(
+          deviceId: own.deviceId,
+          name: own.name,
+          friendlyName: renamed.friendlyName.isEmpty
+              ? null
+              : renamed.friendlyName,
+          createdAt: own.createdAt,
+          revokedAt: own.revokedAt,
+          presence: own.presence,
+          userId: own.userId,
+          agentDmPubs: own.agentDmPubs,
+        ),
+      );
+      await _markDeviceNameRepaired();
+      onLog?.call('legacy device name repaired (${own.deviceId})');
+    } on Object catch (error) {
+      // Repair is additive and best-effort: connectivity/keychain failures
+      // leave the flag clear for the next start and never block the connector.
+      onLog?.call('legacy device name repair skipped: $error');
+    }
+  }
+
+  Future<void> _markDeviceNameRepaired() async {
+    final credentials = _credentials;
+    if (credentials == null || credentials.deviceNameRepaired) return;
+    final repaired = credentials.withDeviceNameRepaired();
+    await _tokenStore.write(repaired);
+    _credentials = repaired;
   }
 
   /// Mints one single-use device WS ticket per dial (§4, TTL 60 s).
@@ -1088,7 +1196,9 @@ class DeviceConnectorService {
       _buildRosterProjection(
         sessions: current.sessions.values,
         metadata: current.metadata,
-        agentState: 'live',
+        agentState: current.sessions.values.any((session) => session.live)
+            ? 'live'
+            : 'wake_on_dm',
       ),
     );
   }
@@ -1132,12 +1242,18 @@ class DeviceConnectorService {
           entry.value,
     ];
     if (changed.isEmpty) return;
+    final liveStateChanged = changed.any(
+      (session) => previous[session.id]?.live != session.live,
+    );
+    final hasLive = current.values.any((session) => session.live);
     _queueRoster(
       _buildRosterProjection(
         sessions: changed,
         metadata: currentMetadata,
-        agentState: 'live',
-        includeAgents: changed.any((session) => session.live),
+        agentState: hasLive ? 'live' : 'wake_on_dm',
+        includeAgents:
+            changed.any((session) => session.live) ||
+            (liveStateChanged && !hasLive),
       ),
     );
   }

@@ -4778,6 +4778,12 @@ abstract class AppLocalizations {
   /// **'Encrypted on another device'**
   String get networkDmEncryptedOnAnotherDevice;
 
+  /// Subtle divider replacing a consecutive run of undecryptable direct-message history
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier messages are encrypted on other devices'**
+  String get networkDmEarlierEncrypted;
+
   /// Create-channel button tooltip and dialog title
   ///
   /// In en, this message translates to:

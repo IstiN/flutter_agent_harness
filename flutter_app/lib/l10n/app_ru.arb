@@ -1078,6 +1078,7 @@
   "networkReconnectNow": "Переподключиться сейчас",
   "networkMessageHint": "Написать в {channel}",
   "networkDmEncryptedOnAnotherDevice": "Зашифровано на другом устройстве",
+  "networkDmEarlierEncrypted": "Ранние сообщения зашифрованы на других устройствах",
   "networkNewChannel": "Новый канал",
   "networkOnlineCount": "{count} в сети",
   "networkRosterTitle": "Участники",

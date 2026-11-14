@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_display.dart';
+import 'package:fa/network/device_name.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
@@ -551,14 +553,6 @@ class _DevicesPageState extends State<DevicesPage> {
               ownSnapshot.data,
             );
             final selected = _resolveSelected(devices);
-            // TEMP flap trace (issue #2062 field feedback).
-            assert(() {
-              debugPrint(
-                '[roster] entries=${devices.map((d) => d.id).join(',')} '
-                'remote=${_remote.keys.join('|')} phase=${widget.service.phase}',
-              );
-              return true;
-            }());
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -869,9 +863,8 @@ class _DevicesPageState extends State<DevicesPage> {
 /// that two machines match; shared sessions or a friendly identity must also
 /// link them (see the rail's grouping pass).
 String? machineGroupKey(String? name) {
-  final normalized = name?.trim().toLowerCase() ?? '';
-  if (normalized.isEmpty || normalized == 'device') return null;
-  return normalized;
+  if (isGenericDeviceName(name)) return null;
+  return name!.trim().toLowerCase();
 }
 
 String? _enrollmentMachineGroupKey(DeviceInfo? device) =>
@@ -1413,6 +1406,7 @@ class _DevicePane extends StatelessWidget {
             title: _sessionTitle(
               entry.key,
               device.sessionMetadata[entry.key]?.title,
+              path: device.sessionMetadata[entry.key]?.path,
             ),
             subtitle: device.sessionMetadata[entry.key]?.path ?? '',
             timestamp: chatListRelativeTime(
@@ -1429,8 +1423,8 @@ class _DevicePane extends StatelessWidget {
   }
 
   /// The DM target for an exposed session card: its origin device (the
-  /// group-merge map) plus that device's first exposed agent address.
-  /// Null keeps the card read-only (no agent published for the device).
+  /// group-merge map) plus a live agent, or a sleeping agent's roster dmPub.
+  /// Null keeps the card read-only only when no DM identity was published.
   VoidCallback? _sessionConversation(String sessionId) {
     final open = onOpenConversation;
     if (open == null) return null;
@@ -1438,6 +1432,12 @@ class _DevicePane extends StatelessWidget {
     for (final name in device.agents.keys) {
       if ((device.agentDeviceIds[name] ?? device.id) == deviceId) {
         return () => open(deviceId, '$name@$deviceId', sessionId);
+      }
+    }
+    for (final address in device.agentDmPubs.keys) {
+      final separator = address.lastIndexOf('@');
+      if (separator > 0 && address.substring(separator + 1) == deviceId) {
+        return () => open(deviceId, address, sessionId);
       }
     }
     return null;
@@ -1459,7 +1459,12 @@ class _DevicePane extends StatelessWidget {
       key: ValueKey('sessionRow:$id'),
       dotKey: ValueKey('sessionDot:$id'),
       dotColor: deviceLocalSessionDotColor(colors, entry.presence),
-      title: _sessionTitle(id, entry.title),
+      title: _sessionTitle(
+        id,
+        entry.title,
+        preview: entry.preview,
+        path: entry.folderPath,
+      ),
       subtitle: entry.folderPath ?? '',
       timestamp: chatListRelativeTime(
         context,
@@ -1473,13 +1478,17 @@ class _DevicePane extends StatelessWidget {
   }
 }
 
-String _sessionTitle(String id, String? rawTitle) {
-  final title = rawTitle?.trim();
-  // ChatListEntry's last-resort title is the id itself. Treat that as "no
-  // title" too, so a full UUID never leaks through the rich metadata path.
-  if (title != null && title.isNotEmpty && title != id) return title;
-  return id.length > 8 ? id.substring(0, 8) : id;
-}
+String _sessionTitle(
+  String id,
+  String? rawTitle, {
+  String? preview,
+  String? path,
+}) => deviceSessionDisplayTitle(
+  id: id,
+  title: rawTitle,
+  preview: preview,
+  path: path,
+);
 
 /// Friendly-name editor. Validation is rune-based to match the deployed
 /// server contract (a 64-emoji name is valid despite 128 UTF-16 code units).

@@ -22,6 +22,7 @@ final class ChannelChatService implements FaChatService {
     required this.session,
     required this.channelId,
     this.dmUndecryptablePlaceholder,
+    this.dmEncryptedHistoryDivider,
   }) {
     session.addListener(_onSessionChanged);
   }
@@ -35,6 +36,13 @@ final class ChannelChatService implements FaChatService {
   /// Localized, non-technical DM fallback. Read lazily because the service
   /// is created in initState, before inherited localizations are available.
   final String Function()? dmUndecryptablePlaceholder;
+
+  /// Localized divider label for a run of foreign-encrypted DM history.
+  /// Null preserves the legacy per-row placeholders for embedders/tests.
+  final String Function()? dmEncryptedHistoryDivider;
+
+  /// Host payload identifying the DM history divider's custom tile.
+  static const encryptedHistoryDividerData = 'dmEncryptedHistoryDivider';
 
   String get _undecryptablePlaceholder => isDmChannel(channelId)
       ? (dmUndecryptablePlaceholder?.call() ??
@@ -70,21 +78,50 @@ final class ChannelChatService implements FaChatService {
   // ------------------------------------------------------------- transcript
 
   @override
-  List<FaChatMessage> get messages => [
-    for (final message in _state.messages)
-      if (message.isOwn)
-        FaChatMessage(
-          role: 'user',
-          content: message.text ?? '_($_undecryptablePlaceholder)_',
-        )
-      else
-        FaChatMessage(
-          role: 'assistant',
-          content: message.text == null
-              ? '_($_undecryptablePlaceholder)_'
-              : '**${_senderName(message)}**\n\n${message.text}',
-        ),
-  ];
+  List<FaChatMessage> get messages {
+    final stored = _state.messages;
+    final projected = <FaChatMessage>[];
+    var index = 0;
+    while (index < stored.length) {
+      final message = stored[index];
+      final divider = dmEncryptedHistoryDivider;
+      if (message.text == null && divider != null && isDmChannel(channelId)) {
+        var end = index + 1;
+        while (end < stored.length && stored[end].text == null) {
+          end++;
+        }
+        if (end - index > 1) {
+          projected.add(
+            FaChatMessage(
+              role: 'widget',
+              content: divider(),
+              data: encryptedHistoryDividerData,
+            ),
+          );
+          index = end;
+          continue;
+        }
+      }
+      projected.add(_chatMessage(message));
+      index++;
+    }
+    return projected;
+  }
+
+  FaChatMessage _chatMessage(ChannelMessage message) {
+    if (message.isOwn) {
+      return FaChatMessage(
+        role: 'user',
+        content: message.text ?? '_($_undecryptablePlaceholder)_',
+      );
+    }
+    return FaChatMessage(
+      role: 'assistant',
+      content: message.text == null
+          ? '_($_undecryptablePlaceholder)_'
+          : '**${_senderName(message)}**\n\n${message.text}',
+    );
+  }
 
   String _senderName(ChannelMessage message) {
     // The envelope-carried name wins (hub-originated DAP agents are not in

@@ -2668,6 +2668,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDmEncryptedOnAnotherDevice => 'Encrypted on another device';
 
   @override
+  String get networkDmEarlierEncrypted =>
+      'Earlier messages are encrypted on other devices';
+
+  @override
   String get networkNewChannel => 'New channel';
 
   @override
