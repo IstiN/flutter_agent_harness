@@ -318,16 +318,25 @@ List<String> formatCompactionReport(
   final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
   final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
   final header = '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix';
+  // gh-2101: the pass's wall-clock duration rides the one-line report —
+  // slow-path regressions visible at a glance, absent on unmeasured
+  // passes (byte-identical legacy lines).
+  final duration = formatPassDuration(pass.durationMs);
+  final durationSuffix = duration == null ? '' : ' · $duration';
   // gh-1636: the default report — one line, no checkpoint text.
   if (!details) {
     return [
-      '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens ($outcome)',
+      '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens '
+          '($outcome)$durationSuffix',
     ];
   }
   final summary = pass.summary?.trim();
   return [
     header,
     'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} ($outcome)',
+    // gh-2101: the metered LLM work — call count, duration, cost and the
+    // cache-hit share (cache 0% stays visible: the regression signal).
+    ?_llmMetricsLine(pass),
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
     // session records or folding a summary — a bare "0 hidden · 0
     // summarized" next to a big freed count cannot describe a real
@@ -347,6 +356,25 @@ List<String> formatCompactionReport(
       '```',
     ],
   ];
+}
+
+/// gh-2101: the details report's `llm:` line — the pass's metered work:
+/// call count, duration, cost (when the provider prices it) and the
+/// cache-hit share (`cacheRead / (input + cacheRead + cacheWrite)`, zero
+/// stays visible). `null` when the pass made no metered call.
+String? _llmMetricsLine(AutoCompactorPass pass) {
+  final usage = pass.usage;
+  if (usage == null || usage.calls == 0) return null;
+  final parts = <String>[
+    usage.calls == 1 ? '1 call' : '${usage.calls} calls',
+    ?formatPassDuration(pass.durationMs),
+    if (usage.costUsd > 0) '\$${usage.costUsd.toStringAsFixed(4)}',
+    if (usage.cacheHitRatio case final ratio?)
+      'cache ${(ratio * 100).round()}% '
+          '(${formatTokens(usage.cacheReadTokens)}/'
+          '${formatTokens(usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens)} tok)',
+  ];
+  return 'llm: ${parts.join(' · ')}';
 }
 
 /// gh-1755: balances unclosed code fences in compaction summaries so the

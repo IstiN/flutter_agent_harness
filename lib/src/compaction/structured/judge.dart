@@ -2,12 +2,12 @@ library;
 
 import 'dart:convert';
 
-import '../../agent/agent_loop.dart' show StreamCacheRouting, StreamFunction;
+import '../../agent/agent_loop.dart' show StreamFunction;
 import '../../cancel_token.dart' show CancelToken;
 import '../../context.dart';
 import '../../model.dart' show Model;
-import '../../session/uuid.dart' show uuidv7;
 import '../../types.dart';
+import '../cache_policy.dart';
 import 'ledger.dart';
 
 /// The live-edge floor shared by every hide path (judge picks, the
@@ -114,11 +114,17 @@ Set<String> validateHidePicks(
 /// Adapts a provider [StreamFunction] into a [HideJudgeFn].
 ///
 /// Mirrors [streamFunctionSummarizer]: a standalone request with the
-/// judge system prompt plus the ledger as a single user message,
-/// `cacheRetention: 'none'`, fresh routing session id; returns the joined
-/// text blocks or `null` on error/abort/empty (F1). Temperature 0 and
+/// judge system prompt plus the ledger as a single user message, routed
+/// through the [CompactionCachePolicy] (gh-2101) — the default affine
+/// policy gives the run's judge calls ONE stable routing session id with
+/// the `short` retention ([CompactionCachePolicy.judgeRetention]), so the
+/// pass ladder's calls stop re-paying the full uncached input price and
+/// the shared ledger prefix is served from the cache the previous pass
+/// wrote; [CompactionCachePolicy.isolated] reproduces the legacy
+/// `cacheRetention: 'none'` + fresh-id-per-call shape. Temperature 0 and
 /// `max_tokens` ≥ 1500 (F2) are the model-role/adapter's responsibility —
 /// the same place the summarizer's pi clamp divergence lives.
+/// [onUsage] receives the call's provider-reported usage when given.
 ///
 /// The cancel token arrives PER CALL (gh-2096): the engine cancels it on
 /// the call's budget expiry and forwards run-wide cancels (a user abort,
@@ -130,10 +136,13 @@ HideJudgeFn streamFunctionHideJudge(
   Model model, {
   required String system,
   void Function(String delta)? onDelta,
+  CompactionCachePolicy? cachePolicy,
+  void Function(Usage usage)? onUsage,
 }) {
+  final policy = cachePolicy ?? CompactionCachePolicy.affine();
   return (String ledgerText, [CancelToken? cancelToken]) async {
     try {
-      final stream = StreamCacheRouting.runWith(
+      final stream = policy.runWith(
         () => streamFunction(
           model,
           Context(
@@ -142,8 +151,7 @@ HideJudgeFn streamFunctionHideJudge(
           ),
           cancelToken: cancelToken,
         ),
-        sessionId: uuidv7(),
-        cacheRetention: 'none',
+        CompactionCallClass.judge,
       );
       if (onDelta != null) {
         stream.listen((event) {
@@ -156,6 +164,17 @@ HideJudgeFn streamFunctionHideJudge(
         });
       }
       final response = await stream.result;
+      // Usage is reported for every answered call — the metrics fold what
+      // was actually spent, even when the answer itself is unusable.
+      if (onUsage != null) {
+        final usage = response.usage;
+        if (usage.totalTokens != 0 ||
+            usage.input != 0 ||
+            usage.cacheRead != 0 ||
+            usage.cacheWrite != 0) {
+          onUsage(usage);
+        }
+      }
       return _hideJudgeResponseText(response);
     } catch (_) {
       return null;

@@ -141,9 +141,13 @@ typedef StreamFunction =
 /// in the zone they were created in. Adapters read [current] when a call
 /// starts; a `null` field keeps the call's own defaults.
 ///
-/// Used by compaction summarization, which forces `cacheRetention: 'none'`
-/// plus a fresh routing session id so summaries never pollute the session's
-/// prompt-cache accounting (pi's `callCompleteSimple`).
+/// Since gh-2101 the values come from the compaction run's
+/// `CompactionCachePolicy` (lib/src/compaction/cache_policy.dart): the
+/// digest/judge calls share ONE run-scoped routing session id with the
+/// `short` retention, so the run's pass ladder reuses the cached request
+/// prefix instead of rebuilding it per call — while the id stays distinct
+/// from the session's, so compaction never routes through the session's
+/// prompt-cache bucket (pi's `callCompleteSimple` invariant).
 final class StreamCacheRouting {
   StreamCacheRouting._();
 
