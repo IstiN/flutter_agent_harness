@@ -70,6 +70,22 @@ jobs:
           npm i --no-fund --no-audit playwright@1.49.1 >/dev/null
           npx playwright install chromium --with-deps >/dev/null
 
+      # ONE-SHOT (PR #2158): re-bake the REG goldens with this same pinned
+      # Chromium before checking, so the bake and the check share one render
+      # environment. The baked goldens upload as an artifact; the follow-up
+      # commit lands them and removes this step.
+      - name: Re-bake goldens (one-shot for #2158)
+        run: node scripts/site_mobile_check.mjs --update-goldens
+
+      - name: Upload re-baked goldens
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-goldens-rebaked
+          path: test/site/goldens/site-mobile/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Site mobile check
         env:
           SHOTS_DIR: site-mobile-shots
