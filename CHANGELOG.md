@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2102): `/handoff` — start a fresh session from an editable digest
+  of the current one: the branch-digest machinery
+  (`prepareBranchEntries` + the shared `SummarizeFn` seam, handoff preamble
+  in `lib/src/compaction/handoff_digest.dart`) generates a structured
+  checkpoint of the whole current branch, the scratch file
+  (`<cwd>/.fah/handoff-digest-<ts>.md`) opens in the user's editor
+  (`FA_EDITOR` > `VISUAL` > `EDITOR`; non-interactive runs and missing
+  editors use the digest as generated — the LM call is never wasted), and
+  the fresh session is seeded with the edited digest + the relevant-file
+  list (a `handoff_digest` custom-message record whose `details` carry
+  `readFiles`/`modifiedFiles`; the digest also rides the live context as
+  the opening user message, counted as persisted so the next run never
+  re-persists it). The old session is never written to — byte-identical,
+  reachable via the printed `fa --session` link; an emptied digest is the
+  cancel gesture (no switch), a failed digest keeps the session with a
+  visible error (#2102)
 - feat(gh-2101): cache-aware compaction calls + pass metrics — one
   compaction run is now ONE provider-cache family: the judge and digest
   adapters share a run-scoped routing session id (`prompt_cache_key` /

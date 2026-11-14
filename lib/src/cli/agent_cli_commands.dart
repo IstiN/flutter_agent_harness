@@ -627,6 +627,8 @@ extension SlashCommandDispatch on AgentCli {
         await _namedSessionSlash(rest, 'rename-session', _renameSession);
       case '/resume':
         await _resumeLastSession();
+      case '/handoff':
+        await _handoffSlash(rest);
       default:
         return false;
     }

@@ -123,6 +123,7 @@ import '../cancel_token.dart';
 import '../compaction/bench_trigger.dart';
 import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
+import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/tuning.dart';
@@ -379,6 +380,7 @@ part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
 part 'agent_cli_herdr.dart';
+part 'agent_cli_handoff.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).

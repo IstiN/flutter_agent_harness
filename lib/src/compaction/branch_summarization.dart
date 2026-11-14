@@ -250,7 +250,9 @@ BranchPreparation prepareBranchEntries(
 /// Generate a summary of abandoned-branch [entries] (omp's
 /// `generateBranchSummary`): serializes them into `<conversation>` tags,
 /// ends with the fixed branch-summary prompt (or [customInstructions]), and
-/// prepends the branch preamble plus the file-operation tags. Never throws:
+/// prepends the branch preamble ([preamble] — the default is the branch
+/// preamble; the `/handoff` digest passes its own, gh-2102) plus the
+/// file-operation tags. Never throws:
 /// failures surface as [BranchSummaryResult.error].
 Future<BranchSummaryResult> generateBranchSummary(
   List<SessionRecord> entries, {
@@ -258,6 +260,7 @@ Future<BranchSummaryResult> generateBranchSummary(
   int tokenBudget = 0,
   String? customInstructions,
   CancelToken? cancelToken,
+  String preamble = branchSummaryPreamble,
 }) async {
   final preparation = prepareBranchEntries(entries, tokenBudget: tokenBudget);
   if (preparation.messages.isEmpty) {
@@ -291,7 +294,7 @@ Future<BranchSummaryResult> generateBranchSummary(
   // ephemeral, time-scoped claims from the LLM prose before recording it.
   final sanitized = sanitizeSummary(text);
   final summary =
-      '$branchSummaryPreamble\n${sanitized.text}'
+      '$preamble\n${sanitized.text}'
       '${formatFileOperations(fileLists.readFiles, fileLists.modifiedFiles)}';
   return BranchSummaryResult(
     summary: summary.isEmpty ? 'No summary generated' : summary,
