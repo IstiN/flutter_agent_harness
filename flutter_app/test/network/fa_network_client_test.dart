@@ -140,6 +140,54 @@ void main() {
     });
 
     test(
+      'patchDeviceRoster merges typed agents and sessions with account JWT',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response('{"patched":"dev/1"}', 200);
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        await deviceClient.patchDeviceRoster(
+          'dev/1',
+          agents: const [
+            DeviceRosterAgent(name: 'goal', state: 'live', exposed: true),
+          ],
+          sessions: const [
+            DeviceRosterSession(
+              id: 'session-1',
+              state: 'live',
+              networks: ['personal-1'],
+            ),
+          ],
+        );
+
+        expect(captured.method, 'PATCH');
+        expect(captured.url.path, '/api/devices/dev%2F1/roster');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(captured.headers['content-type'], contains('application/json'));
+        expect(jsonDecode(captured.body), {
+          'agents': [
+            {'name': 'goal', 'state': 'live', 'exposed': true},
+          ],
+          'sessions': [
+            {
+              'id': 'session-1',
+              'state': 'live',
+              'networks': ['personal-1'],
+            },
+          ],
+        });
+      },
+    );
+
+    test(
       'renameDevice patches the encoded id with the account JWT only',
       () async {
         late http.Request captured;

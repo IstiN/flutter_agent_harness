@@ -20,6 +20,7 @@ import 'package:flutter_agent_harness/src/network/connector/device_registry.dart
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 import 'package:flutter_agent_harness/src/network/connector/offline_outbox.dart';
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -128,6 +129,8 @@ buildService({
   FakeTransport? transport,
   MemoryDeviceTokenStore? tokenStore,
   OutboxStore? outbox,
+  DeviceChatSessionSource? chatSessionSource,
+  Duration rosterDebounce = const Duration(milliseconds: 500),
 }) async {
   final manager = await _manager(httpClient: httpClient, jwt: jwt);
   final usedTransport = transport ?? FakeTransport();
@@ -137,6 +140,8 @@ buildService({
     tokenStore: usedTokens,
     transport: usedTransport,
     outbox: outbox ?? MemoryOutboxStore(),
+    chatSessionSource: chatSessionSource,
+    rosterDebounce: rosterDebounce,
   );
   return (service, manager, httpClient, usedTransport, usedTokens);
 }
@@ -145,6 +150,59 @@ Future<void> pumpUntilOnline(DeviceConnectorService service) => service
     .phaseStream
     .firstWhere((phase) => phase == DeviceConnectorPhase.online)
     .timeout(const Duration(seconds: 5));
+
+MemoryDeviceTokenStore enrolledTokens() => MemoryDeviceTokenStore()
+  ..stored = const DeviceCredentials(
+    deviceId: 'dev-1',
+    deviceToken: 'dt-secret',
+    personalNetworkId: 'net-personal',
+  );
+
+void putSession(
+  NetworkSessionManager manager,
+  FakeHttpClient httpClient,
+  String id, {
+  bool notify = true,
+}) {
+  manager.sessions[id] = buildSession(
+    httpClient: httpClient,
+    connector: FakeWsConnector(),
+    wallet: manager.wallet,
+  );
+  if (notify) manager.notifyListeners();
+}
+
+final class FakeChatSessionSource extends ChangeNotifier
+    implements DeviceChatSessionSource {
+  FakeChatSessionSource([Iterable<DeviceChatSession> initial = const []])
+    : snapshot = List.of(initial);
+
+  List<DeviceChatSession> snapshot;
+  var loads = 0;
+
+  @override
+  Listenable get changes => this;
+
+  @override
+  Future<List<DeviceChatSession>> load() async {
+    loads++;
+    return List.of(snapshot);
+  }
+
+  void replace(Iterable<DeviceChatSession> sessions) {
+    snapshot = List.of(sessions);
+    notifyListeners();
+  }
+}
+
+List<Map<String, Object?>> rosterPatches(FakeHttpClient httpClient) =>
+    httpClient.requests
+        .where((request) => request.url.path == '/api/devices/dev-1/roster')
+        .map(
+          (request) =>
+              (jsonDecode(request.body) as Map).cast<String, Object?>(),
+        )
+        .toList();
 
 void main() {
   late FakeHttpClient httpClient;
@@ -410,6 +468,443 @@ void main() {
     expect(request.method, 'GET');
     expect(request.url.path, '/api/networks/net-personal/devices');
     expect(request.headers['authorization'], 'Bearer jwt-1');
+  });
+
+  group('REST roster projection', () {
+    const debounce = Duration(milliseconds: 40);
+    const settle = Duration(milliseconds: 100);
+
+    test('connect publishes unique live agents and every session with the '
+        'personal network exposure', () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-roster"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final (service, manager, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: enrolledTokens(),
+        rosterDebounce: debounce,
+      );
+      addTearDown(service.dispose);
+      putSession(manager, http, 'session-1', notify: false);
+      putSession(manager, http, 'session-2', notify: false);
+
+      await service.start();
+      await pumpUntilOnline(service);
+      await Future<void>.delayed(settle);
+
+      final patches = rosterPatches(http);
+      expect(patches, hasLength(1));
+      expect(patches.single, {
+        'agents': [
+          {'name': 'fa', 'state': 'live', 'exposed': true},
+        ],
+        'sessions': [
+          {
+            'id': 'session-1',
+            'state': 'live',
+            'networks': ['net-personal'],
+          },
+          {
+            'id': 'session-2',
+            'state': 'live',
+            'networks': ['net-personal'],
+          },
+        ],
+      });
+    });
+
+    test(
+      'session open publishes only the new session as a live merge',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-open"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final (service, manager, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        putSession(manager, http, 'session-1', notify: false);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        putSession(manager, http, 'session-2');
+        await Future<void>.delayed(settle);
+
+        final patches = rosterPatches(http);
+        expect(patches, hasLength(2));
+        expect(patches.last['sessions'], [
+          {
+            'id': 'session-2',
+            'state': 'live',
+            'networks': ['net-personal'],
+          },
+        ]);
+        expect(patches.last['agents'], [
+          {'name': 'fa', 'state': 'live', 'exposed': true},
+        ]);
+        expect(
+          service.connector!.registry.sessions.map((session) => session.id),
+          containsAll(['session-1', 'session-2']),
+        );
+      },
+    );
+
+    test(
+      'session close retracts only that session with explicit offline',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-close"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final (service, manager, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        putSession(manager, http, 'session-1', notify: false);
+        putSession(manager, http, 'session-2', notify: false);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        manager.sessions.remove('session-2');
+        manager.notifyListeners();
+        await Future<void>.delayed(settle);
+
+        final patches = rosterPatches(http);
+        expect(patches, hasLength(2));
+        expect(patches.last, {
+          'agents': <Object?>[],
+          'sessions': [
+            {
+              'id': 'session-2',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        });
+        expect(
+          service.connector!.registry.sessions.map((session) => session.id),
+          ['session-1'],
+        );
+
+        manager.sessions.remove('session-1');
+        manager.notifyListeners();
+        await Future<void>.delayed(settle);
+
+        final lastClosePatches = rosterPatches(http);
+        expect(lastClosePatches, hasLength(3));
+        expect(lastClosePatches.last, {
+          'agents': <Object?>[],
+          'sessions': [
+            {
+              'id': 'session-1',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        });
+        expect(service.connector!.registry.sessions, isEmpty);
+      },
+    );
+
+    test('injected chat source publishes persisted live/offline sessions, '
+        'not network memberships', () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-chat-projection"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final source = FakeChatSessionSource(const [
+        (id: 'chat-live', live: true),
+        (id: 'chat-offline', live: false),
+      ]);
+      final (service, manager, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: enrolledTokens(),
+        chatSessionSource: source,
+        rosterDebounce: debounce,
+      );
+      addTearDown(service.dispose);
+      putSession(manager, http, 'network-membership', notify: false);
+
+      await service.start();
+      await pumpUntilOnline(service);
+      await Future<void>.delayed(settle);
+
+      expect(rosterPatches(http), [
+        {
+          'agents': [
+            {'name': 'fa', 'state': 'live', 'exposed': true},
+          ],
+          'sessions': [
+            {
+              'id': 'chat-live',
+              'state': 'live',
+              'networks': ['net-personal'],
+            },
+            {
+              'id': 'chat-offline',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        },
+      ]);
+      expect(
+        service.connector!.registry.sessions.map((session) => session.id),
+        ['chat-live'],
+        reason: 'only loaded chat sessions are live in the connector registry',
+      );
+    });
+
+    test('chat-session create publishes only the new live merge', () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-chat-create"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final source = FakeChatSessionSource(const [
+        (id: 'chat-persisted', live: false),
+      ]);
+      final (service, _, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: enrolledTokens(),
+        chatSessionSource: source,
+        rosterDebounce: debounce,
+      );
+      addTearDown(service.dispose);
+      await service.start();
+      await pumpUntilOnline(service);
+      await Future<void>.delayed(settle);
+
+      source.replace(const [
+        (id: 'chat-persisted', live: false),
+        (id: 'chat-created', live: true),
+      ]);
+      await Future<void>.delayed(settle);
+
+      final patches = rosterPatches(http);
+      expect(patches, hasLength(2));
+      expect(patches.last['sessions'], [
+        {
+          'id': 'chat-created',
+          'state': 'live',
+          'networks': ['net-personal'],
+        },
+      ]);
+      expect(patches.last['agents'], [
+        {'name': 'fa', 'state': 'live', 'exposed': true},
+      ]);
+      expect(
+        service.connector!.registry.sessions.map((session) => session.id),
+        ['chat-created'],
+      );
+    });
+
+    test(
+      'chat close flips its persisted row offline and delete retracts it',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-chat-close-delete"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final source = FakeChatSessionSource(const [
+          (id: 'chat-retained', live: true),
+          (id: 'chat-victim', live: true),
+        ]);
+        final (service, _, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          chatSessionSource: source,
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        // Close: the persisted id remains, only its live state changes.
+        source.replace(const [
+          (id: 'chat-retained', live: true),
+          (id: 'chat-victim', live: false),
+        ]);
+        await Future<void>.delayed(settle);
+
+        var patches = rosterPatches(http);
+        expect(patches, hasLength(2));
+        expect(patches.last, {
+          'agents': <Object?>[],
+          'sessions': [
+            {
+              'id': 'chat-victim',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        });
+        expect(
+          service.connector!.registry.sessions.map((session) => session.id),
+          ['chat-retained'],
+        );
+
+        // Delete: the id disappears, so the previous snapshot drives retraction.
+        source.replace(const [(id: 'chat-retained', live: true)]);
+        await Future<void>.delayed(settle);
+
+        patches = rosterPatches(http);
+        expect(patches, hasLength(3));
+        expect(patches.last, {
+          'agents': <Object?>[],
+          'sessions': [
+            {
+              'id': 'chat-victim',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        });
+      },
+    );
+
+    test('online reconnect republishes the full chat projection', () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-chat-reconnect-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"ticket":"tk-chat-reconnect-2"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final source = FakeChatSessionSource(const [
+        (id: 'chat-live', live: true),
+        (id: 'chat-offline', live: false),
+      ]);
+      final (service, _, _, transport, _) = await buildService(
+        httpClient: http,
+        tokenStore: enrolledTokens(),
+        chatSessionSource: source,
+        rosterDebounce: debounce,
+      );
+      addTearDown(service.dispose);
+      await service.start();
+      await pumpUntilOnline(service);
+      await Future<void>.delayed(settle);
+      expect(rosterPatches(http), hasLength(1));
+
+      final reconnected = service.phaseStream.firstWhere(
+        (phase) => phase == DeviceConnectorPhase.online,
+      );
+      await transport.sockets.first.close();
+      await reconnected.timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(settle);
+
+      final patches = rosterPatches(http);
+      expect(transport.dials, hasLength(2));
+      expect(patches, hasLength(2));
+      expect(patches.last, patches.first);
+      expect(patches.last['sessions'], [
+        {
+          'id': 'chat-live',
+          'state': 'live',
+          'networks': ['net-personal'],
+        },
+        {
+          'id': 'chat-offline',
+          'state': 'offline',
+          'networks': ['net-personal'],
+        },
+      ]);
+    });
+
+    test(
+      'stop retracts every current session and known agent offline',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-stop"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final (service, manager, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        putSession(manager, http, 'session-1', notify: false);
+        putSession(manager, http, 'session-2', notify: false);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        await service.stop();
+
+        final patches = rosterPatches(http);
+        expect(patches, hasLength(2));
+        expect(patches.last, {
+          'agents': [
+            {'name': 'fa', 'state': 'offline', 'exposed': false},
+          ],
+          'sessions': [
+            {
+              'id': 'session-1',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+            {
+              'id': 'session-2',
+              'state': 'offline',
+              'networks': ['net-personal'],
+            },
+          ],
+        });
+      },
+    );
+
+    test('rapid opens and closes coalesce into one debounced merge', () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-debounce"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final (service, manager, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: enrolledTokens(),
+        rosterDebounce: debounce,
+      );
+      addTearDown(service.dispose);
+      putSession(manager, http, 'session-1', notify: false);
+      await service.start();
+      await pumpUntilOnline(service);
+      await Future<void>.delayed(settle);
+
+      putSession(manager, http, 'session-2');
+      manager.sessions.remove('session-1');
+      manager.notifyListeners();
+      putSession(manager, http, 'session-3');
+
+      expect(rosterPatches(http), hasLength(1));
+      await Future<void>.delayed(settle);
+      final patches = rosterPatches(http);
+      expect(patches, hasLength(2));
+      expect(patches.last['agents'], hasLength(1));
+      expect(patches.last['sessions'], [
+        {
+          'id': 'session-1',
+          'state': 'offline',
+          'networks': ['net-personal'],
+        },
+        {
+          'id': 'session-2',
+          'state': 'live',
+          'networks': ['net-personal'],
+        },
+        {
+          'id': 'session-3',
+          'state': 'live',
+          'networks': ['net-personal'],
+        },
+      ]);
+    });
   });
 
   test('an enrollment failure leaves the service stopped with a logged '

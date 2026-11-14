@@ -4,14 +4,15 @@
 
 /// The app-side host of the machine connector (issue #2062 chunk 14, the
 /// contract's "in-process run mode"): one [DeviceConnectorService] per
-/// app run, bound to the [NetworkSessionManager].
+/// app run, using [NetworkSessionManager] for account/auth state and an
+/// injectable [DeviceChatSessionSource] for the local chat roster.
 ///
 /// Lifecycle: on signed-in state (a live ai-native JWT) [start] enrolls
 /// the device — skipping re-enroll while a valid token is persisted in
 /// the same keychain storage the wallet uses — builds a fresh
 /// [DeviceRegistry] (the user's personal network configured
-/// [NetworkKind.personal]; local agents enumerated from the session
-/// manager's live sessions), wires the upstream device WS
+/// [NetworkKind.personal]; loaded chat sessions enumerated from the chat
+/// source), wires the upstream device WS
 /// ([IoConnectorTransport] + a wsTicket minted per dial from the REST
 /// client) and starts the [MachineConnector]. [stop] (sign-out) tears it
 /// all down; a later sign-in restarts cleanly.
@@ -26,6 +27,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_ui/fa_ui.dart' show KeychainStore;
+import 'package:flutter/foundation.dart' show Listenable;
 // The machine-connector core is pure Dart; the src imports follow the
 // lib/network implementation-import convention (key_wallet.dart).
 // ignore: implementation_imports
@@ -43,11 +45,68 @@ import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart
 import 'package:path_provider/path_provider.dart';
 
 // ignore: implementation_imports
-import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/io.dart'
+    hide DeviceRosterAgent, DeviceRosterSession;
 
 import 'device_outbox_store.dart';
 import 'fa_network_client.dart';
 import 'network_session_manager.dart';
+
+typedef _RosterProjection = ({
+  List<DeviceRosterAgent> agents,
+  List<DeviceRosterSession> sessions,
+});
+
+/// One chat session in the device roster: [live] means its agent is loaded
+/// in this process; persisted-but-closed sessions remain visible offline.
+typedef DeviceChatSession = ({String id, bool live});
+
+/// The device's chat-session authority for the roster projection.
+///
+/// Implementations return ALL persisted chat sessions, including offline
+/// ones, and notify through [changes] after create/open/close/delete. The
+/// legacy default instead exposes network memberships as live sessions so
+/// older hosts and tests retain their original behavior.
+abstract interface class DeviceChatSessionSource {
+  /// Re-emits whenever the session ids or their live states may have changed.
+  Listenable get changes;
+
+  /// Loads the current complete projection (never just the live subset).
+  Future<List<DeviceChatSession>> load();
+}
+
+/// A [DeviceChatSessionSource] backed by host callbacks.
+final class CallbackDeviceChatSessionSource implements DeviceChatSessionSource {
+  /// Creates a source from a change listenable and a complete-snapshot loader.
+  const CallbackDeviceChatSessionSource({
+    required this.changes,
+    required this.loader,
+  });
+
+  /// Loads the source's complete current snapshot.
+  final Future<List<DeviceChatSession>> Function() loader;
+
+  @override
+  final Listenable changes;
+
+  @override
+  Future<List<DeviceChatSession>> load() => loader();
+}
+
+/// Back-compat projection used when no chat-session source is injected.
+final class _NetworkMembershipSessionSource implements DeviceChatSessionSource {
+  const _NetworkMembershipSessionSource(this.manager);
+
+  final NetworkSessionManager manager;
+
+  @override
+  Listenable get changes => manager;
+
+  @override
+  Future<List<DeviceChatSession>> load() async => [
+    for (final id in manager.sessions.keys) (id: id, live: true),
+  ];
+}
 
 /// The service-level lifecycle state the UI renders.
 enum DeviceConnectorPhase {
@@ -173,25 +232,30 @@ class KeychainDeviceTokenStore implements DeviceTokenStore {
 /// Hosts the machine connector inside the app (see the library docs).
 class DeviceConnectorService {
   /// Builds the service over [sessionManager]. Every dependency is
-  /// injectable: [tokenStore] (default keychain), [outbox] (default a
-  /// [FileOutboxStore] under the app support directory), [transport]
-  /// (default the dart:io [IoConnectorTransport]), [idFactory] and
-  /// [onLog] for tests.
+  /// injectable: [chatSessionSource] (default legacy network memberships),
+  /// [tokenStore] (default keychain), [outbox] (default a [FileOutboxStore]
+  /// under the app support directory), [transport] (default the dart:io
+  /// [IoConnectorTransport]), [idFactory] and [onLog] for tests.
   DeviceConnectorService({
     required this.sessionManager,
+    DeviceChatSessionSource? chatSessionSource,
     DeviceTokenStore? tokenStore,
     OutboxStore? outbox,
     ConnectorTransport? transport,
     Future<String> Function()? supportDirProvider,
     this.idFactory = defaultIdFactory,
     this.onLog,
+    this.rosterDebounce = const Duration(milliseconds: 500),
   }) : _tokenStore = tokenStore ?? KeychainDeviceTokenStore(),
        _outboxOverride = outbox,
        _transport = transport ?? const IoConnectorTransport(),
        _supportDirProvider =
            supportDirProvider ??
            (() async => (await getApplicationSupportDirectory()).path) {
+    _chatSessionSource =
+        chatSessionSource ?? _NetworkMembershipSessionSource(sessionManager);
     sessionManager.addListener(_onManagerChanged);
+    _chatSessionSource.changes.addListener(_onChatSessionsChanged);
   }
 
   /// The session manager — the JWT/session integration point (fresh
@@ -199,10 +263,14 @@ class DeviceConnectorService {
   /// via [NetworkSessionManager.sessions]).
   final NetworkSessionManager sessionManager;
 
+  late final DeviceChatSessionSource _chatSessionSource;
   final DeviceTokenStore _tokenStore;
   final OutboxStore? _outboxOverride;
   final ConnectorTransport _transport;
   final Future<String> Function() _supportDirProvider;
+
+  /// Delay used to coalesce rapid REST roster changes (test-adjustable).
+  final Duration rosterDebounce;
 
   /// Frame id factory.
   final IdFactory idFactory;
@@ -219,6 +287,17 @@ class DeviceConnectorService {
   var _phase = DeviceConnectorPhase.signedOut;
   String? _lastStartError;
   final _subscriptions = <StreamSubscription<Object?>>[];
+
+  // REST roster projection state. The server merges by agent name/session
+  // id, so deltas are accumulated by the same keys during the debounce.
+  Timer? _rosterTimer;
+  final _pendingRosterAgents = <String, DeviceRosterAgent>{};
+  final _pendingRosterSessions = <String, DeviceRosterSession>{};
+  var _observedSessions = <String, DeviceChatSession>{};
+  final _knownAgentNames = <String>{};
+  var _rosterActive = false;
+  var _sessionProjectionRevision = 0;
+  Future<void> _rosterWrites = Future<void>.value();
 
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast();
@@ -376,6 +455,7 @@ class DeviceConnectorService {
   /// machine on the clean close, §5). Idempotent.
   Future<void> stop() async {
     _generation++;
+    await _retractRoster();
     await _teardown();
     _setPhase(DeviceConnectorPhase.signedOut);
   }
@@ -383,6 +463,7 @@ class DeviceConnectorService {
   /// Stops and detaches from the session manager; the streams close.
   Future<void> dispose() async {
     sessionManager.removeListener(_onManagerChanged);
+    _chatSessionSource.changes.removeListener(_onChatSessionsChanged);
     await stop();
     await _rosterFrames.close();
     await _presenceFrames.close();
@@ -400,6 +481,10 @@ class DeviceConnectorService {
     }
   }
 
+  void _onChatSessionsChanged() {
+    if (_rosterActive) unawaited(_syncRosterSessions());
+  }
+
   Future<void> _start(int generation) async {
     final jwt = await sessionManager.ensureFreshJwt();
     if (generation != _generation) return;
@@ -415,12 +500,15 @@ class DeviceConnectorService {
     final registry = DeviceRegistry();
     final personal = credentials.personalNetworkId ?? 'personal';
     registry.configureNetwork(personal, NetworkKind.personal);
-    final agentAddress = _localAgentAddress();
-    for (final sessionId in sessionManager.sessions.keys) {
-      registry.registerSession(
-        SessionRegistration(id: sessionId, agentAddressOf: agentAddress),
-      );
+    final sessions = await _currentChatSessions();
+    if (generation != _generation) {
+      registry.dispose();
+      return;
     }
+    for (final session in sessions.values) {
+      if (session.live) registry.registerSession(_registrationFor(session));
+    }
+    _observedSessions = sessions;
 
     final upstream = ConnectorUpstreamClient(
       url: _deviceWsUrl(),
@@ -452,7 +540,7 @@ class DeviceConnectorService {
     }
     _registry = registry;
     _connector = connector;
-    _wireForwarding(connector);
+    _wireForwarding(connector, generation);
     await connector.start();
     if (generation != _generation) return;
     _running = true;
@@ -515,7 +603,7 @@ class DeviceConnectorService {
 
   /// Forwards the connector's surface onto the service's long-lived
   /// streams and maps link states to UI phases.
-  void _wireForwarding(MachineConnector connector) {
+  void _wireForwarding(MachineConnector connector, int generation) {
     _subscriptions.add(connector.rosterFrames.listen(_rosterFrames.add));
     _subscriptions.add(
       connector.presenceFrames.listen((envelope) {
@@ -527,9 +615,11 @@ class DeviceConnectorService {
     _subscriptions.add(connector.wakeHints.listen(_wakeHints.add));
     _subscriptions.add(
       connector.upstream.stateChanges.listen((state) {
+        if (generation != _generation) return;
         switch (state) {
           case ConnectorLinkState.connected:
             _setPhase(DeviceConnectorPhase.online);
+            unawaited(_publishRoster(generation));
           case ConnectorLinkState.connecting:
           case ConnectorLinkState.handshaking:
             _setPhase(DeviceConnectorPhase.connecting);
@@ -540,7 +630,243 @@ class DeviceConnectorService {
     );
   }
 
+  Future<Map<String, DeviceChatSession>> _currentChatSessions() async {
+    try {
+      final sessions = await _chatSessionSource.load();
+      return {for (final session in sessions) session.id: session};
+    } on Object catch (error) {
+      onLog?.call('device chat-session projection failed: $error');
+      return _observedSessions;
+    }
+  }
+
+  SessionRegistration _registrationFor(DeviceChatSession session) =>
+      SessionRegistration(id: session.id, agentAddressOf: _localAgentAddress());
+
+  /// Publishes every persisted session and its actual state after every WS
+  /// handshake. This is deliberately a full merge: the server may hold rows
+  /// from an earlier connection or a PATCH that did not arrive.
+  Future<void> _publishRoster(int generation) async {
+    final revision = ++_sessionProjectionRevision;
+    final current = await _currentChatSessions();
+    if (generation != _generation || revision != _sessionProjectionRevision) {
+      return;
+    }
+    _syncRegistrySessions(_observedSessions, current);
+    _observedSessions = current;
+    _rosterActive = true;
+    _queueRoster(
+      _buildRosterProjection(sessions: current.values, agentState: 'live'),
+    );
+  }
+
+  /// Turns source notifications into minimal merge patches. A live→offline
+  /// transition keeps the persisted row; a deleted id is projected from the
+  /// previous snapshot so its retraction is explicit.
+  Future<void> _syncRosterSessions() async {
+    if (!_rosterActive) return;
+    final revision = ++_sessionProjectionRevision;
+    final previous = _observedSessions;
+    final current = await _currentChatSessions();
+    if (!_rosterActive || revision != _sessionProjectionRevision) return;
+    if (_sameChatSessions(previous, current)) return;
+    _syncRegistrySessions(previous, current);
+    _observedSessions = current;
+    _queueChangedRosterSessions(previous, current);
+    _queueClosedRosterSessions(previous, current);
+  }
+
+  void _queueChangedRosterSessions(
+    Map<String, DeviceChatSession> previous,
+    Map<String, DeviceChatSession> current,
+  ) {
+    final changed = [
+      for (final entry in current.entries)
+        if (previous[entry.key] != entry.value) entry.value,
+    ];
+    if (changed.isEmpty) return;
+    _queueRoster(
+      _buildRosterProjection(
+        sessions: changed,
+        agentState: 'live',
+        includeAgents: changed.any((session) => session.live),
+      ),
+    );
+  }
+
+  void _queueClosedRosterSessions(
+    Map<String, DeviceChatSession> previous,
+    Map<String, DeviceChatSession> current,
+  ) {
+    final closed = [
+      for (final entry in previous.entries)
+        if (!current.containsKey(entry.key)) entry.value,
+    ];
+    if (closed.isEmpty) return;
+    _queueRoster(
+      _buildRosterProjection(
+        sessions: closed,
+        sessionState: 'offline',
+        agentState: 'offline',
+        includeAgents: false,
+      ),
+    );
+  }
+
+  bool _sameChatSessions(
+    Map<String, DeviceChatSession> left,
+    Map<String, DeviceChatSession> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  void _syncRegistrySessions(
+    Map<String, DeviceChatSession> previous,
+    Map<String, DeviceChatSession> current,
+  ) {
+    for (final entry in previous.entries) {
+      if (entry.value.live && current[entry.key]?.live != true) {
+        _registry?.unregisterSession(entry.key);
+      }
+    }
+    for (final entry in current.entries) {
+      if (entry.value.live && previous[entry.key]?.live != true) {
+        _registry?.registerSession(_registrationFor(entry.value));
+      }
+    }
+  }
+
+  Set<String> _registeredAgentNames(Iterable<DeviceChatSession> sessions) => {
+    if (sessions.isNotEmpty) _agentNameFromAddress(_localAgentAddress()),
+  };
+
+  String _agentNameFromAddress(String address) {
+    final separator = address.lastIndexOf('@');
+    return separator < 1 ? address : address.substring(0, separator);
+  }
+
+  /// The single builder used by connect, deltas, and final retraction.
+  _RosterProjection _buildRosterProjection({
+    required Iterable<DeviceChatSession> sessions,
+    String? sessionState,
+    required String agentState,
+    bool includeAgents = true,
+    Iterable<String> extraAgentNames = const [],
+  }) {
+    final projected = sessions.toList(growable: false);
+    final agentNames = includeAgents
+        ? <String>{...extraAgentNames, ..._registeredAgentNames(projected)}
+        : <String>{};
+    final networkId = personalNetworkId;
+    final networks = [if (networkId != null && networkId.isNotEmpty) networkId];
+    return (
+      agents: [
+        for (final name in agentNames)
+          DeviceRosterAgent(
+            name: name,
+            state: agentState,
+            exposed: agentState != 'offline',
+          ),
+      ],
+      sessions: [
+        for (final session in projected)
+          DeviceRosterSession(
+            id: session.id,
+            state: sessionState ?? (session.live ? 'live' : 'offline'),
+            networks: networks,
+          ),
+      ],
+    );
+  }
+
+  void _queueRoster(_RosterProjection projection) {
+    for (final agent in projection.agents) {
+      _pendingRosterAgents[agent.name] = agent;
+      _knownAgentNames.add(agent.name);
+    }
+    for (final session in projection.sessions) {
+      _pendingRosterSessions[session.id] = session;
+    }
+    if (_pendingRosterAgents.isEmpty && _pendingRosterSessions.isEmpty) return;
+    _rosterTimer?.cancel();
+    _rosterTimer = Timer(rosterDebounce, _flushRoster);
+  }
+
+  void _flushRoster() {
+    _rosterTimer?.cancel();
+    _rosterTimer = null;
+    if (_pendingRosterAgents.isEmpty && _pendingRosterSessions.isEmpty) return;
+    final deviceId = _credentials?.deviceId;
+    if (deviceId == null) {
+      _pendingRosterAgents.clear();
+      _pendingRosterSessions.clear();
+      return;
+    }
+    final agents = List<DeviceRosterAgent>.of(_pendingRosterAgents.values);
+    final sessions = List<DeviceRosterSession>.of(
+      _pendingRosterSessions.values,
+    );
+    agents.sort((left, right) => left.name.compareTo(right.name));
+    sessions.sort((left, right) => left.id.compareTo(right.id));
+    _pendingRosterAgents.clear();
+    _pendingRosterSessions.clear();
+    _rosterWrites = _rosterWrites.then(
+      (_) => _writeRoster(deviceId, agents, sessions),
+    );
+  }
+
+  Future<void> _writeRoster(
+    String deviceId,
+    List<DeviceRosterAgent> agents,
+    List<DeviceRosterSession> sessions,
+  ) async {
+    try {
+      final client = await sessionManager.accountClient();
+      if (client == null) return;
+      await client.patchDeviceRoster(
+        deviceId,
+        agents: agents,
+        sessions: sessions,
+      );
+    } on Object catch (error) {
+      onLog?.call('device roster publish skipped: $error');
+    }
+  }
+
+  /// Best-effort final retraction, serialized after any live write already
+  /// in flight so a slower live response cannot leave the roster online.
+  Future<void> _retractRoster() async {
+    _rosterTimer?.cancel();
+    _rosterTimer = null;
+    _pendingRosterAgents.clear();
+    _pendingRosterSessions.clear();
+    if (!_rosterActive) return;
+    _rosterActive = false;
+    _queueRoster(
+      _buildRosterProjection(
+        sessions: _observedSessions.values,
+        sessionState: 'offline',
+        agentState: 'offline',
+        extraAgentNames: _knownAgentNames,
+      ),
+    );
+    _flushRoster();
+    await _rosterWrites;
+  }
+
   Future<void> _teardown() async {
+    _sessionProjectionRevision++;
+    _rosterTimer?.cancel();
+    _rosterTimer = null;
+    _pendingRosterAgents.clear();
+    _pendingRosterSessions.clear();
+    _observedSessions = {};
+    _knownAgentNames.clear();
+    _rosterActive = false;
     final subscriptions = List.of(_subscriptions);
     _subscriptions.clear();
     for (final subscription in subscriptions) {

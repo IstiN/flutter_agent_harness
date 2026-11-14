@@ -46,11 +46,11 @@ import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart
 /// while presence frames stream updates.
 ///
 /// Data: [DeviceConnectorService.presence] (the local machine's own
-/// heartbeat view) + [DeviceConnectorService.presenceFrames] (network-wide
-/// frames — ones carrying a foreign `payload.deviceId` accumulate as
-/// remote machines). Signed out → the not-running retry line above the
-/// rail; connecting → skeleton line; link lost → a muted reconnecting
-/// line above the last-known rail.
+/// heartbeat view) + roster/presence streams whose `payload.devices` rows
+/// accumulate as remote machines (legacy `payload.deviceId` frames remain
+/// supported). Signed out → the not-running retry line above the rail;
+/// connecting → skeleton line; link lost → a muted reconnecting line above
+/// the last-known rail.
 class DevicesPage extends StatefulWidget {
   const DevicesPage({
     super.key,
@@ -131,7 +131,8 @@ class _DevicesPageState extends State<DevicesPage> {
     _remote.clear();
     _fetchingRoster = false;
     _framesSubscription = service.presenceFrames.listen(_onFrame);
-    _rosterSubscription = service.rosterFrames.listen((_) {
+    _rosterSubscription = service.rosterFrames.listen((envelope) {
+      _onFrame(envelope);
       unawaited(_refreshOwnDevice(service));
       unawaited(_refreshRoster(service));
     });
@@ -189,10 +190,19 @@ class _DevicesPageState extends State<DevicesPage> {
     super.dispose();
   }
 
-  /// Network-wide presence frames carry a `payload.deviceId` when the
-  /// server means ANOTHER machine (§5 network-wide view). Ours ride the
-  /// typed [DeviceConnectorService.presence] stream instead.
+  /// Server roster and presence frames carry their device projections in
+  /// `payload.devices`. The legacy device-level `payload.deviceId` shape
+  /// remains a fallback for older connectors.
   void _onFrame(NetworkEnvelope envelope) {
+    final devices = envelope.payload['devices'];
+    if (devices is List) {
+      _onServerDevices(envelope, devices);
+      return;
+    }
+    _onLegacyPresenceFrame(envelope);
+  }
+
+  void _onLegacyPresenceFrame(NetworkEnvelope envelope) {
     final deviceId = envelope.payload['deviceId'];
     if (deviceId is! String || deviceId.isEmpty) return;
     if (deviceId == widget.service.deviceId) return;
@@ -204,6 +214,101 @@ class _DevicesPageState extends State<DevicesPage> {
         presence: frame,
       );
     });
+  }
+
+  /// Upserts every foreign row without treating one network's roster as a
+  /// complete account snapshot (the server sends one frame per network).
+  void _onServerDevices(NetworkEnvelope envelope, List<Object?> devices) {
+    final updates = <String, _RemoteDeviceNode>{};
+    final ownId = widget.service.deviceId;
+    for (final device in devices) {
+      if (device is! Map) continue;
+      final deviceId = device['deviceId'];
+      if (deviceId is! String || deviceId.isEmpty || deviceId == ownId) {
+        continue;
+      }
+      updates[deviceId] = _mergeServerDevice(
+        envelope,
+        device,
+        _remote[deviceId],
+      );
+    }
+    if (updates.isEmpty) return;
+    setState(() => _remote.addAll(updates));
+  }
+
+  _RemoteDeviceNode _mergeServerDevice(
+    NetworkEnvelope envelope,
+    Map<Object?, Object?> device,
+    _RemoteDeviceNode? previous,
+  ) {
+    final roster = DeviceInfo.fromJson(device.cast<String, Object?>());
+    final oldPresence = previous?.presence;
+    final machine =
+        MachinePresence.tryParse(roster.presence ?? '') ??
+        previous?.machine ??
+        MachinePresence.offline;
+    return _RemoteDeviceNode(
+      roster: roster,
+      presence: PresenceFrame(
+        msgId: envelope.msgId,
+        ts: envelope.ts,
+        machine: machine,
+        agents: _serverAgents(device['agents'], oldPresence?.agents),
+        sessions: _serverSessions(
+          device['sessions'],
+          oldPresence?.sessions,
+          envelope.kind,
+        ),
+      ),
+    );
+  }
+
+  /// An omitted projection is a patch with no child changes; an explicit
+  /// list is its new snapshot, so an empty list deliberately clears it.
+  Map<String, AgentRunState> _serverAgents(
+    Object? value,
+    Map<String, AgentRunState>? previous,
+  ) {
+    if (value is! List) return previous ?? const {};
+    final agents = <String, AgentRunState>{};
+    for (final node in value) {
+      if (node is! Map || node['exposed'] != true) continue;
+      final name = node['name'];
+      final state = AgentRunState.tryParse('${node['state'] ?? ''}');
+      if (name is! String || name.isEmpty || state == null) continue;
+      agents[name] = state;
+    }
+    return agents;
+  }
+
+  Map<String, ConnectorSessionPresence> _serverSessions(
+    Object? value,
+    Map<String, ConnectorSessionPresence>? previous,
+    NetworkEnvelopeKind kind,
+  ) {
+    if (value is! List) return previous ?? const {};
+    final sessions = <String, ConnectorSessionPresence>{};
+    for (final node in value) {
+      if (node is! Map || !_serverSessionVisible(node, kind)) continue;
+      final id = node['id'];
+      final state = ConnectorSessionPresence.tryParse('${node['state'] ?? ''}');
+      if (id is! String || id.isEmpty || state == null) continue;
+      sessions[id] = state;
+    }
+    return sessions;
+  }
+
+  bool _serverSessionVisible(
+    Map<Object?, Object?> session,
+    NetworkEnvelopeKind kind,
+  ) {
+    final networks = session['networks'];
+    // REST's personal-network roster predates exposure lists and remains
+    // visible by default. Presence patches need the explicit personal id.
+    if (networks is! List) return kind == NetworkEnvelopeKind.roster;
+    final personalId = widget.service.personalNetworkId;
+    return personalId != null && networks.contains(personalId);
   }
 
   Future<void> _renameOwnDevice() async {

@@ -149,6 +149,60 @@ final class DeviceInfo {
   }
 }
 
+/// One agent entry in a device-roster merge patch.
+///
+/// Entries are keyed by [name] on the server. An omitted entry is left
+/// untouched; use `state: offline` or `exposed: false` to retract one.
+final class DeviceRosterAgent {
+  const DeviceRosterAgent({
+    required this.name,
+    required this.state,
+    required this.exposed,
+  });
+
+  /// The local agent name (without the `@deviceId` suffix).
+  final String name;
+
+  /// Roster presence: `live`, `busy`, or `offline`.
+  final String state;
+
+  /// Whether this agent is exposed to other devices.
+  final bool exposed;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'state': state,
+    'exposed': exposed,
+  };
+}
+
+/// One session entry in a device-roster merge patch.
+///
+/// [networks] is the complete exposure list for this session. An offline
+/// entry retracts the session without affecting any other roster entries.
+final class DeviceRosterSession {
+  const DeviceRosterSession({
+    required this.id,
+    required this.state,
+    this.networks = const [],
+  });
+
+  /// Stable local session id.
+  final String id;
+
+  /// Session presence: `live`, `wake-on-DM`, or `offline`.
+  final String state;
+
+  /// Networks on which this session is exposed.
+  final List<String> networks;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'state': state,
+    'networks': networks,
+  };
+}
+
 /// The result of `PATCH /api/devices/{deviceId}/name`.
 final class DeviceRenameResult {
   const DeviceRenameResult({
@@ -612,6 +666,27 @@ class FaNetworkClient {
       personalNetworkId: personalId is String && personalId.isNotEmpty
           ? personalId
           : null,
+    );
+  }
+
+  /// `PATCH /api/devices/{deviceId}/roster` — merges this device's agent
+  /// and session exposure projection. Entries absent from the patch remain
+  /// unchanged on the server. This account-JWT route never sends a member
+  /// session token.
+  Future<void> patchDeviceRoster(
+    String deviceId, {
+    List<DeviceRosterAgent> agents = const [],
+    List<DeviceRosterSession> sessions = const [],
+  }) async {
+    await _request(
+      'PATCH',
+      '/api/devices/${Uri.encodeComponent(deviceId)}/roster',
+      body: {
+        'agents': [for (final agent in agents) agent.toJson()],
+        'sessions': [for (final session in sessions) session.toJson()],
+      },
+      management: true,
+      expected: {200},
     );
   }
 

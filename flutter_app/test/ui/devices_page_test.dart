@@ -35,6 +35,7 @@ final class FakeDevicesService implements DeviceConnectorService {
   FakeDevicesService({
     DeviceConnectorPhase initialPhase = DeviceConnectorPhase.signedOut,
     this.deviceId,
+    this.personalNetworkId,
     this.lastStartError,
     DeviceInfo? ownDevice,
     this.rosterDevices = const [],
@@ -58,6 +59,9 @@ final class FakeDevicesService implements DeviceConnectorService {
   /// The enrolled device id the page filters its own frames by.
   @override
   final String? deviceId;
+
+  @override
+  final String? personalNetworkId;
 
   /// The simulated start failure the page should surface.
   @override
@@ -204,6 +208,22 @@ NetworkEnvelope _envelope({
         {'id': entry.key, 'state': entry.value.wireName},
     ],
   },
+);
+
+/// The production server projection: device rows ride directly in the
+/// envelope payload, with one roster frame per shared network and
+/// single-device presence flips on the same shape.
+NetworkEnvelope _devicesEnvelope({
+  NetworkEnvelopeKind kind = NetworkEnvelopeKind.roster,
+  String msgId = 'server-devices',
+  String? network,
+  required List<Map<String, Object?>> devices,
+}) => NetworkEnvelope(
+  kind: kind,
+  msgId: msgId,
+  ts: rfc3339Timestamp(DateTime.utc(2026, 11, 12)),
+  network: network,
+  payload: {'devices': devices},
 );
 
 Color dotColor(WidgetTester tester, Key key) {
@@ -853,6 +873,194 @@ void main() {
     expect(find.text('dev-1'), findsNothing);
     expect(find.byKey(const ValueKey('deviceRow:dev-1')), findsNothing);
     expect(find.text('This device'), findsOneWidget);
+  });
+
+  testWidgets('server roster devices[] populates remote identity, exposed '
+      'agents, and only sessions visible on the personal network', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      personalNetworkId: 'net-personal',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    service.emitRoster(
+      _devicesEnvelope(
+        network: 'net-shared',
+        devices: const [
+          {
+            'deviceId': 'dev-remote',
+            'name': 'thinkpad',
+            'friendlyName': 'Workstation',
+            'presence': 'online',
+            'userId': 'user-1',
+            'agents': [
+              {'name': 'goal_builder', 'state': 'live', 'exposed': true},
+              {'name': 'hidden', 'state': 'live', 'exposed': false},
+            ],
+            'sessions': [
+              {
+                'id': 'sess-live',
+                'state': 'live',
+                'networks': ['net-personal', 'net-shared'],
+              },
+              {
+                'id': 'sess-other',
+                'state': 'live',
+                'networks': ['net-other'],
+              },
+              // REST's personal-network projection predates `networks`;
+              // roster rows without it retain that visible-by-default parity.
+              {'id': 'sess-rest', 'state': 'wake_on_dm'},
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      paletteOf(tester).teal,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
+    await tester.pump();
+
+    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('thinkpad'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agentRow:hidden')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:sess-rest')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:sess-other')), findsNothing);
+  });
+
+  testWidgets('single-device presence flips update the dot without wiping '
+      'children; explicit empty projections clear them', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      personalNetworkId: 'net-personal',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        msgId: 'roster-with-children',
+        devices: const [
+          {
+            'deviceId': 'dev-remote',
+            'name': 'thinkpad',
+            'presence': 'online',
+            'userId': 'user-1',
+            'agents': [
+              {'name': 'goal_builder', 'state': 'live', 'exposed': true},
+            ],
+            'sessions': [
+              {
+                'id': 'sess-live',
+                'state': 'live',
+                'networks': ['net-personal'],
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
+    await tester.pump();
+
+    service.emitEnvelope(
+      _devicesEnvelope(
+        kind: NetworkEnvelopeKind.presence,
+        msgId: 'remote-offline',
+        network: 'net-shared',
+        devices: const [
+          {
+            'deviceId': 'dev-remote',
+            'name': 'thinkpad',
+            'presence': 'offline',
+            'userId': 'user-1',
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      paletteOf(tester).dim,
+    );
+    expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
+
+    service.emitEnvelope(
+      _devicesEnvelope(
+        kind: NetworkEnvelopeKind.presence,
+        msgId: 'remote-online-empty',
+        network: 'net-shared',
+        devices: const [
+          {
+            'deviceId': 'dev-remote',
+            'name': 'thinkpad',
+            'presence': 'online',
+            'userId': 'user-1',
+            'agents': [],
+            'sessions': [],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      dotColor(tester, const ValueKey('deviceDot:dev-remote')),
+      paletteOf(tester).teal,
+    );
+    expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsNothing);
+  });
+
+  testWidgets('server devices[] skips the own device without dropping later '
+      'remote rows in the same frame', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        devices: const [
+          {
+            'deviceId': 'dev-1',
+            'name': 'own-host',
+            'presence': 'online',
+            'userId': 'user-1',
+          },
+          {
+            'deviceId': 'dev-remote',
+            'name': 'remote-host',
+            'presence': 'offline',
+            'userId': 'user-1',
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('deviceRow:dev-1')), findsNothing);
+    expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
   });
 
   testWidgets('own friendly name drives tooltip, semantics and the L2 '

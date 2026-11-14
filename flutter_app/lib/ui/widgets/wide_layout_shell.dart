@@ -156,6 +156,34 @@ class WideLayoutShell extends StatefulWidget {
 /// The sessions sidebar's resize handle (tests find it by this key).
 const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 
+/// Projects the same persisted sessions as the Local panel, marking sessions
+/// loaded in [manager] live and every persisted-but-closed session offline.
+/// Manager notifications cover create/open/close/delete and drive the device
+/// roster's merge/retract PATCHes.
+@visibleForTesting
+DeviceChatSessionSource createDeviceChatSessionSource(
+  FlutterSessionManager manager,
+) => CallbackDeviceChatSessionSource(
+  changes: manager,
+  loader: () => _loadDeviceChatSessions(manager),
+);
+
+Future<List<DeviceChatSession>> _loadDeviceChatSessions(
+  FlutterSessionManager manager,
+) async {
+  final persisted = await manager.listPersistedSessions();
+  final sessions = <String, DeviceChatSession>{
+    for (final metadata in persisted)
+      metadata.id: (id: metadata.id, live: false),
+  };
+  // Include a just-created live row even if its first disk listing has not
+  // landed yet; loaded sessions always override their persisted offline row.
+  for (final session in manager.sessions) {
+    sessions[session.id] = (id: session.id, live: true);
+  }
+  return sessions.values.toList(growable: false);
+}
+
 enum _WideShellSection { chats, local, devices, activity, apps, settings }
 
 class _WideLayoutShellState extends State<WideLayoutShell>
@@ -269,10 +297,9 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   bool _networksSurfaceOpen = false;
 
   /// The app-scope device connector (issue #2062 chunk 16): ONE upstream
-  /// socket shared by every device surface (AC1). Created lazily on first
-  /// entry to the DEVICES section — shells without network wiring (and
-  /// every signed-out or test-booted shell) never touch the enrollment
-  /// flow, and the service self-starts/stops on the manager's JWT flips.
+  /// socket shared by every device surface (AC1). Created eagerly at boot
+  /// for a signed-in shell (and on later sign-in), never for shells without
+  /// network wiring; the service self-starts/stops on the manager's JWT flips.
   DeviceConnectorService? _deviceConnector;
 
   /// The [NetworkSessionManager]-bound connector, created on first use.
@@ -281,6 +308,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     assert(sessions != null, 'the DEVICES surface requires networkSessions');
     return _deviceConnector ??= DeviceConnectorService(
       sessionManager: sessions!,
+      chatSessionSource: createDeviceChatSessionSource(widget.manager),
       // Enrollment/keychain/WS failures surface in the app log — the
       // connector has no other voice on this surface.
       onLog: (line) => AppLog.i('devices', line),
@@ -373,6 +401,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     _chatController.updateNetworkNames(_networkNames());
     final manager = widget.networkSessions;
     final enabled = manager?.hasJwt == true;
+    if (enabled && !_networkInboxEnabled) {
+      // Sign-in after boot: bring the device online without waiting for
+      // the Devices page to be opened.
+      // ignore: unused_local_variable — eager creation starts the service.
+      final connector = _devicesConnector;
+    }
     if (widget.networkInboxAdapter == null && enabled != _networkInboxEnabled) {
       _networkInboxEnabled = enabled;
       unawaited(
@@ -585,6 +619,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     _subscribeToActiveService();
     _subscribeToNamesStore();
     _networkInboxEnabled = widget.networkSessions?.hasJwt == true;
+    // The device connector is a NETWORK-MODE lifecycle service, not a
+    // Devices-page one: other machines see this device's sessions (and can
+    // DM it later) only while its socket lives, so start it at shell boot
+    // whenever signed in — the Devices surface shares this instance.
+    if (_networkInboxEnabled) {
+      // ignore: unused_local_variable — eager creation starts the service.
+      final connector = _devicesConnector;
+    }
     _activityController = ActivityController(
       manager: widget.manager,
       namesStore: widget.sessionNamesStore ?? _namesStore,

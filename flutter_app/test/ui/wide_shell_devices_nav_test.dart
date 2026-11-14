@@ -6,10 +6,10 @@
 /// destination exists only for signed-in accounts (a JWT on the network
 /// session manager), sits between the Networks and Channels rows, and
 /// selects the devices section. Fakes mirror
-/// `wide_layout_shell_sidebar_resize_test.dart`. No connector is created
-/// here — the shell builds the service lazily on first section entry, so
-/// pumping the rail never touches enrollment (and these tests never tap
-/// into a real dial).
+/// `wide_layout_shell_sidebar_resize_test.dart`. Signed-out shells create
+/// no connector; the signed-in boot uses the scripted HTTP fake and never
+/// reaches a real socket. The chat-source adapter is covered directly with
+/// an in-memory persisted session store.
 library;
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -109,6 +109,45 @@ Future<void> pumpShell(
 void main() {
   setUp(() => debugFaGlassAlwaysFake = true);
   tearDown(() => debugFaGlassAlwaysFake = false);
+
+  test(
+    'device chat source lists persisted sessions and overlays live state',
+    () async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await repo.create(
+        const JsonlSessionCreateOptions(id: 'persisted-chat', cwd: '/work'),
+      );
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        repo: repo,
+        includeSharedSessionRoots: false,
+      );
+      final source = createDeviceChatSessionSource(manager);
+      expect(source.changes, same(manager));
+
+      expect(await source.load(), const [(id: 'persisted-chat', live: false)]);
+
+      manager
+        ..addSession('persisted-chat', _fakeService(env))
+        ..addSession('new-live-chat', _fakeService(env));
+      final opened = await source.load();
+      expect(opened, hasLength(2));
+      expect(
+        opened,
+        containsAll(const [
+          (id: 'persisted-chat', live: true),
+          (id: 'new-live-chat', live: true),
+        ]),
+      );
+
+      // Closing unloads the agent but does not delete the persisted chat row.
+      await manager.closeSession('persisted-chat');
+      final closed = await source.load();
+      expect(closed, contains(const (id: 'persisted-chat', live: false)));
+    },
+  );
 
   /// The vertical order of rail rows (the rail is a column).
   double topOf(WidgetTester tester, Key key) =>
