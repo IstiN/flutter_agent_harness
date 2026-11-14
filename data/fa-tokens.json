@@ -1,15 +1,4 @@
 {
-  "pr-2025": [
-    {
-      "leg": "rework",
-      "at": "2026-10-31T15:38:16Z",
-      "prompt": 75373,
-      "completion": 12420,
-      "total": 87793,
-      "cacheRead": 935360,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-2026": [
     {
       "leg": "dev",
@@ -3757,6 +3746,15 @@
       "completion": 4334,
       "total": 126323,
       "cacheRead": 1044160,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T15:50:08Z",
+      "prompt": 335582,
+      "completion": 4514,
+      "total": 340096,
+      "cacheRead": 1104576,
       "model": "glm-5.3-flash"
     }
   ],
