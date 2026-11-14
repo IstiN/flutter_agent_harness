@@ -125,7 +125,10 @@ void main() {
           expected,
           reason: 'zero drift required for "$raw"',
         );
-        expect(parsed.value.microsecondsSinceEpoch, expected.microsecondsSinceEpoch);
+        expect(
+          parsed.value.microsecondsSinceEpoch,
+          expected.microsecondsSinceEpoch,
+        );
       }
     });
 
@@ -263,11 +266,7 @@ void main() {
       final reports = <String>[];
       SessionQuarantine.onQuarantined = reports.add;
       final hugeRaw = '${'x' * 500}\n${'y' * 500}';
-      parseSessionEntryLine(
-        poisonLine(timestamp: hugeRaw),
-        sessionPath,
-        7,
-      );
+      parseSessionEntryLine(poisonLine(timestamp: hugeRaw), sessionPath, 7);
       expect(reports, hasLength(1));
       expect(reports.single.length, lessThan(400));
       expect(reports.single.contains('\n'), isFalse);
@@ -357,7 +356,8 @@ void main() {
       expect(
         branch.map((r) => r.id),
         ['m1', 'm2'],
-        reason: 'the poison record is treated as absent; the walk continues '
+        reason:
+            'the poison record is treated as absent; the walk continues '
             'through its parent',
       );
       expect(branch.where((r) => r.timestampDegraded), isEmpty);
@@ -381,7 +381,8 @@ void main() {
       expect(
         listing.map((e) => e.name),
         everyElement(isNot(contains('.corrupt'))),
-        reason: 'a degraded-timestamp record is NOT a torn line — the '
+        reason:
+            'a degraded-timestamp record is NOT a torn line — the '
             'quarantine must not trigger the crash-heal rewrite',
       );
       expect(listing.map((e) => e.name), contains('poisoned.jsonl'));
@@ -398,10 +399,9 @@ void main() {
       final storage = await JsonlSessionStorage.open(fs, sessionPath);
       final branch = await storage.getPathToRoot('m50');
       expect(branch, hasLength(50));
-      expect(
-        [for (final r in branch) r.timestamp.toIso8601String()],
-        everyElement('2026-09-07T00:00:01.000Z'),
-      );
+      expect([
+        for (final r in branch) r.timestamp.toIso8601String(),
+      ], everyElement('2026-09-07T00:00:01.000Z'));
       final after = (await fs.readTextFile(sessionPath)).valueOrNull;
       expect(after, lines.join('\n'));
     });
@@ -418,9 +418,7 @@ void main() {
         if (i == 10) {
           lines.add(poisonLine(parentId: 'm9'));
         } else {
-          lines.add(
-            messageLine('m$i', parentId: i == 1 ? null : 'm${i - 1}'),
-          );
+          lines.add(messageLine('m$i', parentId: i == 1 ? null : 'm${i - 1}'));
         }
       }
       await fs.writeFile(sessionPath, lines.join('\n'));
@@ -431,8 +429,13 @@ void main() {
         'paged full-branch walk completes without a throw', () async {
       final fs = await deepPoisonFile();
       final storage = await WindowedSessionStorage.open(fs, sessionPath);
-      expect(storage.hasOlder, isTrue, reason: 'F3: the boot window masks '
-          'the deep poison');
+      expect(
+        storage.hasOlder,
+        isTrue,
+        reason:
+            'F3: the boot window masks '
+            'the deep poison',
+      );
       // The CLI resume pages to the compaction boundary (growOlderUntil);
       // the auto-compact full-branch walk must survive the poison.
       final boundary = await storage.growOlderUntil(
@@ -442,8 +445,11 @@ void main() {
       final branch = await storage.getPathToRoot(await storage.getLeafId());
       expect(branch.where((r) => r.timestampDegraded), isEmpty);
       expect(branch.map((r) => r.id), isNot(contains(incidentRecordId)));
-      expect(branch.map((r) => r.id), contains('m250'),
-          reason: 'live records stay usable');
+      expect(
+        branch.map((r) => r.id),
+        contains('m250'),
+        reason: 'live records stay usable',
+      );
     });
 
     test('IT-2/AC7 negative: poison INSIDE the boot window also never '
@@ -486,9 +492,7 @@ void main() {
           // record must rejoin the branch after repair.
           lines.add(messageLine('m$i', parentId: incidentRecordId));
         } else {
-          lines.add(
-            messageLine('m$i', parentId: i == 1 ? null : 'm${i - 1}'),
-          );
+          lines.add(messageLine('m$i', parentId: i == 1 ? null : 'm${i - 1}'));
         }
       }
       await fs.writeFile(sessionPath, lines.join('\n'));
@@ -568,9 +572,7 @@ void main() {
       final storage = await JsonlSessionStorage.open(fs, sessionPath);
       await storage.getPathToRoot(await storage.getLeafId());
       expect(reports, isEmpty);
-      final branch = await storage.getPathToRoot(
-        await storage.getLeafId(),
-      );
+      final branch = await storage.getPathToRoot(await storage.getLeafId());
       expect(
         [for (final r in branch) r.id],
         contains(incidentRecordId),
@@ -692,22 +694,27 @@ void main() {
       final lines = after.split('\n');
       expect(lines, hasLength(4));
       final decoded = [
-        for (final line in lines)
-          jsonDecode(line) as Map<String, dynamic>,
+        for (final line in lines) jsonDecode(line) as Map<String, dynamic>,
       ];
-      expect([for (final m in decoded) m['id'] as String], [
-        'poisoned', // header
-        'm1',
-        incidentRecordId,
-        'm2',
-      ]);
+      expect(
+        [for (final m in decoded) m['id'] as String],
+        [
+          'poisoned', // header
+          'm1',
+          incidentRecordId,
+          'm2',
+        ],
+      );
       // The multi-byte payload survives byte-verbatim.
       expect(decoded[1]['message']['content'], russianPayload);
       // Only the poison line changed (its timestamp), everything else is
       // byte-identical to the input.
       expect(decoded[0], jsonDecode(headerLine()));
       expect(decoded[1], jsonDecode(m1));
-      expect(decoded[3], jsonDecode(messageLine('m2', parentId: incidentRecordId)));
+      expect(
+        decoded[3],
+        jsonDecode(messageLine('m2', parentId: incidentRecordId)),
+      );
 
       // The fixed record rejoins the branch with a valid timestamp.
       final storage = await JsonlSessionStorage.open(fs, sessionPath);
@@ -749,8 +756,11 @@ void main() {
         isNull,
       );
       expect(
-        quarantineFindingForLine('not json at all',
-            filePath: sessionPath, lineNumber: 4),
+        quarantineFindingForLine(
+          'not json at all',
+          filePath: sessionPath,
+          lineNumber: 4,
+        ),
         isNull,
       );
     });
@@ -764,8 +774,7 @@ void main() {
         'timestamp': '2026-09-07T00:00:01.000Z',
         'message': {
           'role': 'user',
-          'content':
-              'payload quoting {"timestamp": "<garbage>"} in its text',
+          'content': 'payload quoting {"timestamp": "<garbage>"} in its text',
         },
       });
       expect(
@@ -800,8 +809,7 @@ void main() {
       expect(topLevelTimestampValue(payloadOnly), isNull);
     });
 
-    test('non-string and torn values return null (full decode confirms)',
-        () {
+    test('non-string and torn values return null (full decode confirms)', () {
       expect(
         topLevelTimestampValue(
           '{"type":"custom","id":"x","timestamp":42,"customType":"my_ledger"}',
@@ -821,8 +829,10 @@ void main() {
     test('whitespace after the colon and escaped quotes inside the value '
         'are handled', () {
       expect(
-        topLevelTimestampValue('{"type":"custom","id":"x","timestamp": '
-            '"2026-11-13T14:35:18.198Z"}'),
+        topLevelTimestampValue(
+          '{"type":"custom","id":"x","timestamp": '
+          '"2026-11-13T14:35:18.198Z"}',
+        ),
         '2026-11-13T14:35:18.198Z',
       );
       expect(
@@ -847,8 +857,10 @@ void main() {
       final path = '$root/s1.jsonl';
       await fs.writeFile(
         path,
-        [headerLine('2026-09-07T00:00:00.000Z', 's1'), messageLine('m1')]
-            .join('\n'),
+        [
+          headerLine('2026-09-07T00:00:00.000Z', 's1'),
+          messageLine('m1'),
+        ].join('\n'),
       );
       final repo = JsonlSessionRepo(fs: fs, sessionsRoot: root);
       final cold = await repo.list();
@@ -857,9 +869,9 @@ void main() {
       // Poison the persisted sidecar row (same stat pair, so the warm
       // path serves it without re-reading the header).
       final sidecarPath = '$root/.listing-index.json';
-      final sidecar = jsonDecode(
-        (await fs.readTextFile(sidecarPath)).valueOrNull!,
-      ) as Map<String, dynamic>;
+      final sidecar =
+          jsonDecode((await fs.readTextFile(sidecarPath)).valueOrNull!)
+              as Map<String, dynamic>;
       (sidecar['entries'][0] as Map)['createdAt'] = incidentTimestamp;
       await fs.writeFile(sidecarPath, jsonEncode(sidecar));
 
