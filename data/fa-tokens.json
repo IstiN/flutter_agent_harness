@@ -1,15 +1,6 @@
 {
   "pr-2025": [
     {
-      "leg": "review",
-      "at": "2026-10-31T13:28:41Z",
-      "prompt": 54255,
-      "completion": 12379,
-      "total": 66634,
-      "cacheRead": 866880,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-31T15:21:24Z",
       "prompt": 68010,
@@ -25,17 +16,6 @@
       "completion": 12420,
       "total": 87793,
       "cacheRead": 935360,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-2018": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T13:34:24Z",
-      "prompt": 190977,
-      "completion": 28681,
-      "total": 219658,
-      "cacheRead": 4855360,
       "model": "glm-5.3-flash"
     }
   ],
@@ -3653,6 +3633,17 @@
       "completion": 82589,
       "total": 258434,
       "cacheRead": 17390208,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2181": [
+    {
+      "leg": "dev",
+      "at": "2026-11-14T13:37:33Z",
+      "prompt": 1037309,
+      "completion": 79718,
+      "total": 1117027,
+      "cacheRead": 67394048,
       "model": "glm-5.3-flash"
     }
   ]
