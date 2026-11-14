@@ -145,6 +145,7 @@ void main() {
     expect(jsonDecode(opened.plaintext), {
       'text': 'hello remote',
       'sessionId': 'session-offline',
+      'threading': 1,
     });
   });
 

@@ -54,6 +54,24 @@ extension NetworkSessionDm on NetworkSession {
   /// roster session; null = the device's active/latest session).
   Map<String, String?> get dmSessionTargets => _dmSessionTargets;
 
+  /// Selects the visible DM thread and synchronously notifies open panes.
+  /// Null selects the device-general bucket for legacy/session-less rows.
+  void selectDmSession(String channelId, String? sessionId, {String? title}) {
+    final normalizedTitle = title?.trim();
+    if (_dmSessionTargets[channelId] == sessionId &&
+        _dmSessionTitles[channelId] == normalizedTitle) {
+      return;
+    }
+    _dmSessionTargets[channelId] = sessionId;
+    _dmSessionTitles[channelId] = normalizedTitle?.isEmpty == true
+        ? null
+        : normalizedTitle;
+    notifyDmChanged();
+  }
+
+  /// Human title for the selected DM thread, or null for the device header.
+  String? dmSessionTitle(String channelId) => _dmSessionTitles[channelId];
+
   /// Attaches the app-scope device connector: DM sends route through it
   /// and its live device-WS mail feeds the open DM channel stores.
   void attachDmConnector(DeviceConnectorService connector) {
@@ -162,13 +180,15 @@ extension NetworkSessionDm on NetworkSession {
     if (!_wallet.hasIdentity) {
       await _wallet.createIfMissing(displayName: identity.displayName);
     }
+    final sessionId = _dmSessionTargets[channelId];
     final msgId = await connector.sendDmToAgent(
       deviceId: parts.deviceId,
       agentName: parts.agentName,
-      sessionId: _dmSessionTargets[channelId],
+      sessionId: sessionId,
       text: text,
     );
     _dmOwnText[msgId] = text;
+    _dmOwnSessionIds[msgId] = sessionId;
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
     state.add(
       ChannelMessage(
@@ -178,6 +198,7 @@ extension NetworkSessionDm on NetworkSession {
         text: text,
         isOwn: true,
         createdAt: DateTime.now().toUtc(),
+        sessionId: sessionId,
       ),
     );
     notifyDmChanged();
@@ -202,6 +223,7 @@ extension NetworkSessionDm on NetworkSession {
         text: sentText,
         isOwn: true,
         createdAt: envelope.createdAt,
+        sessionId: _dmOwnSessionIds[envelope.id],
       );
     }
     final frame = hubTryOpenFanet1(envelope.payload);
@@ -209,6 +231,7 @@ extension NetworkSessionDm on NetworkSession {
         ? await _dmPeerPubkey(connector, parts)
         : frame?.senderPubkey;
     String? text;
+    String? sessionId;
     var senderPubB64 = '';
     if (frame != null && senderPub != null) {
       try {
@@ -219,7 +242,9 @@ extension NetworkSessionDm on NetworkSession {
           aadTarget: envelope.channelId,
           ciphertextB64: frame.ciphertextB64,
         );
-        text = isOwn ? _unwrapDmOwnText(plaintext) : plaintext;
+        final decoded = _unwrapDmText(plaintext);
+        text = decoded.text;
+        sessionId = decoded.sessionId;
         senderPubB64 = base64Encode(senderPub.bytes);
       } on Object {
         text = null; // wrong key epoch / legacy shape — placeholder row
@@ -233,6 +258,7 @@ extension NetworkSessionDm on NetworkSession {
       text: text,
       isOwn: isOwn,
       createdAt: envelope.createdAt,
+      sessionId: sessionId,
     );
   }
 
@@ -249,19 +275,26 @@ extension NetworkSessionDm on NetworkSession {
     return SimplePublicKey(base64Decode(pub), type: KeyPairType.x25519);
   }
 
-  /// Own DM plaintext is the `{"text": …, "sessionId"?}` wrapper; agent
-  /// replies are raw assistant text and pass through unchanged.
-  String _unwrapDmOwnText(String plaintext) {
-    if (!plaintext.startsWith('{')) return plaintext;
+  /// Thread-aware DM plaintext is `{"text": …, "sessionId"?}` in both
+  /// directions. Legacy raw assistant text and malformed wrappers pass
+  /// through unchanged and therefore land in the device-general bucket.
+  ({String text, String? sessionId}) _unwrapDmText(String plaintext) {
+    if (!plaintext.startsWith('{')) return (text: plaintext, sessionId: null);
     try {
       final decoded = jsonDecode(plaintext);
       if (decoded is Map && decoded['text'] is String) {
-        return decoded['text'] as String;
+        final sessionId = decoded['sessionId'];
+        return (
+          text: decoded['text'] as String,
+          sessionId: sessionId is String && sessionId.isNotEmpty
+              ? sessionId
+              : null,
+        );
       }
     } on FormatException {
       // Raw text also decrypts here — keep it as-is.
     }
-    return plaintext;
+    return (text: plaintext, sessionId: null);
   }
 
   void _onDmMail(NetworkEnvelope envelope) {

@@ -168,8 +168,20 @@ DeviceChatSessionSource createDeviceChatSessionSource(
   FlutterSessionManager manager, {
   ChatListController? chatList,
 }) => CallbackDeviceChatSessionSource(
-  changes: chatList == null ? manager : Listenable.merge([manager, chatList]),
-  loader: () => _loadDeviceChatSessions(manager),
+  changes: _DeviceChatSessionChanges(manager, chatList),
+  loader: () async {
+    final sessions = await _loadDeviceChatSessions(manager);
+    if (chatList == null) return sessions;
+    // The publisher must not resurrect the Local panel's hidden, unpersisted
+    // live placeholders. The controller is the canonical visible corpus.
+    final visibleIds = chatList.localEntries
+        .map((entry) => entry.id.value)
+        .toSet();
+    return [
+      for (final session in sessions)
+        if (visibleIds.contains(session.id)) session,
+    ];
+  },
   metadataLoader: chatList == null
       ? null
       : () async => [
@@ -183,7 +195,79 @@ DeviceChatSessionSource createDeviceChatSessionSource(
               lastActivity: entry.lastActivity ?? entry.createdAt,
             ),
         ],
+  activityLoader: () async => [
+    for (final session in manager.sessions)
+      (id: session.id, busy: session.service.isStreaming),
+  ],
 );
+
+/// Manager/list changes plus every managed service's run notifications.
+/// Listeners are attached only while the connector observes this source, so
+/// disposing the connector also detaches the per-session subscriptions.
+final class _DeviceChatSessionChanges extends ChangeNotifier {
+  _DeviceChatSessionChanges(this._manager, this._chatList);
+
+  final FlutterSessionManager _manager;
+  final ChatListController? _chatList;
+  final _busyByService = <AgentService, bool>{};
+  var _attached = false;
+
+  @override
+  void addListener(VoidCallback listener) {
+    final start = !hasListeners;
+    super.addListener(listener);
+    if (start && !_attached) {
+      _attached = true;
+      _manager.addListener(_onManagerChanged);
+      _chatList?.addListener(notifyListeners);
+      _syncServices();
+    }
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    if (!_attached || hasListeners) return;
+    _attached = false;
+    _manager.removeListener(_onManagerChanged);
+    _chatList?.removeListener(notifyListeners);
+    for (final service in _busyByService.keys) {
+      service.removeListener(_onServiceChanged);
+    }
+    _busyByService.clear();
+  }
+
+  void _onManagerChanged() {
+    _syncServices();
+    notifyListeners();
+  }
+
+  void _onServiceChanged() {
+    var activityChanged = false;
+    for (final entry in _busyByService.entries) {
+      final busy = entry.key.isStreaming;
+      if (busy == entry.value) continue;
+      _busyByService[entry.key] = busy;
+      activityChanged = true;
+    }
+    // Token/message notifications are not roster changes. Only the run
+    // boundary should trigger a fresh persisted-session probe + PATCH.
+    if (activityChanged) notifyListeners();
+  }
+
+  void _syncServices() {
+    final current = _manager.sessions.map((session) => session.service).toSet();
+    final previous = _busyByService.keys.toSet();
+    for (final service in previous.difference(current)) {
+      service.removeListener(_onServiceChanged);
+      _busyByService.remove(service);
+    }
+    for (final service in current.difference(previous)) {
+      _busyByService[service] = service.isStreaming;
+      service.addListener(_onServiceChanged);
+    }
+  }
+}
 
 Future<List<DeviceChatSession>> _loadDeviceChatSessions(
   FlutterSessionManager manager,

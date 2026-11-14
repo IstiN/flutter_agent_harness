@@ -306,6 +306,7 @@ Widget devicesPage(
     required String deviceLabel,
     required String agentAddress,
     String? sessionId,
+    String? sessionTitle,
   })?
   onOpenRemoteConversation,
 }) => DevicesPage(
@@ -1486,6 +1487,7 @@ void main() {
                   required String deviceLabel,
                   required String agentAddress,
                   String? sessionId,
+                  String? sessionTitle,
                 }) => opened.add((
                   deviceId: deviceId,
                   agentAddress: agentAddress,

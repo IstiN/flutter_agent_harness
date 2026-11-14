@@ -65,14 +65,16 @@ class NetworkChatPage extends StatefulWidget {
 class _NetworkChatPageState extends State<NetworkChatPage> {
   ChannelChatService? _chat;
 
-  /// The (session, channel) pair [_chat] is bound to.
-  (NetworkSession, String)? _chatFor;
+  /// The (session, channel, DM session) triple [_chat] is bound to.
+  (NetworkSession, String, String?)? _chatFor;
+  NetworkSession? _listenedSession;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onSourcesChanged);
     widget.manager.addListener(_onSourcesChanged);
+    _syncSessionSubscription();
     _syncChat();
   }
 
@@ -80,11 +82,21 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   void dispose() {
     widget.controller.removeListener(_onSourcesChanged);
     widget.manager.removeListener(_onSourcesChanged);
+    _listenedSession?.removeListener(_onSourcesChanged);
     _chat?.dispose();
     super.dispose();
   }
 
+  void _syncSessionSubscription() {
+    final session = _session;
+    if (identical(session, _listenedSession)) return;
+    _listenedSession?.removeListener(_onSourcesChanged);
+    _listenedSession = session;
+    session?.addListener(_onSourcesChanged);
+  }
+
   void _onSourcesChanged() {
+    _syncSessionSubscription();
     if (_syncChat() && mounted) setState(() {});
   }
 
@@ -98,8 +110,12 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   bool _syncChat() {
     final session = _session;
     final channelId = widget.controller.channelId;
+    final dmSessionId =
+        session != null && channelId != null && isDmChannel(channelId)
+        ? session.dmSessionTargets[channelId]
+        : null;
     final wanted = (session != null && channelId != null)
-        ? (session, channelId)
+        ? (session, channelId, dmSessionId)
         : null;
     if (wanted == _chatFor) return false;
     _chat?.dispose();
@@ -109,6 +125,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       _chat = ChannelChatService(
         session: wanted.$1,
         channelId: wanted.$2,
+        dmSessionId: wanted.$3,
         dmUndecryptablePlaceholder: () =>
             context.l10n.networkDmEncryptedOnAnotherDevice,
         dmEncryptedHistoryDivider: () => context.l10n.networkDmEarlierEncrypted,
@@ -122,6 +139,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   String _channelLabel(NetworkSession session, String channelId) {
     final name = _channel(session, channelId)?.name;
     if (isDmChannel(channelId)) {
+      final sessionTitle = session.dmSessionTitle(channelId)?.trim();
+      if (sessionTitle != null && sessionTitle.isNotEmpty) {
+        return sessionTitle;
+      }
       // Server/inbox restores may carry the raw virtual id, or an old label
       // containing the raw device id, as `name`. The DM parser owns the one
       // sanitizing path used by both the header and composer.
@@ -320,7 +341,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   context.l10n.networkMessageHint(label),
                 ),
                 child: FaChatScreen(
-                  key: ValueKey('channelChat:${chatFor.$2}'),
+                  key: ValueKey(
+                    chatFor.$3 == null
+                        ? 'channelChat:${chatFor.$2}'
+                        : 'channelChat:${chatFor.$2}:${chatFor.$3}',
+                  ),
                   service: chat,
                   features: const FaChatFeatures(
                     attachments: false,

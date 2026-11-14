@@ -21,6 +21,7 @@ final class ChannelChatService implements FaChatService {
   ChannelChatService({
     required this.session,
     required this.channelId,
+    this.dmSessionId,
     this.dmUndecryptablePlaceholder,
     this.dmEncryptedHistoryDivider,
   }) {
@@ -32,6 +33,12 @@ final class ChannelChatService implements FaChatService {
 
   /// The channel inside [session].
   final String channelId;
+
+  /// Selected DM session thread. Null is the device-general bucket; ignored
+  /// for ordinary channels. Filtering is synchronous over the shared store,
+  /// so switching sessions never shows the previous thread while history
+  /// for the same transport channel is already loaded.
+  final String? dmSessionId;
 
   /// Localized, non-technical DM fallback. Read lazily because the service
   /// is created in initState, before inherited localizations are available.
@@ -77,9 +84,18 @@ final class ChannelChatService implements FaChatService {
 
   // ------------------------------------------------------------- transcript
 
+  List<ChannelMessage> get _visibleMessages {
+    final stored = _state.messages;
+    if (!isDmChannel(channelId)) return stored;
+    return [
+      for (final message in stored)
+        if (message.sessionId == dmSessionId) message,
+    ];
+  }
+
   @override
   List<FaChatMessage> get messages {
-    final stored = _state.messages;
+    final stored = _visibleMessages;
     final projected = <FaChatMessage>[];
     var index = 0;
     while (index < stored.length) {
@@ -138,7 +154,7 @@ final class ChannelChatService implements FaChatService {
       : _undecryptablePlaceholder;
 
   @override
-  String transcriptMarkdown() => _state.messages
+  String transcriptMarkdown() => _visibleMessages
       .map(
         (m) => m.isOwn
             ? '**You**: ${m.text ?? _transcriptPlaceholder(m.isOwn)}'

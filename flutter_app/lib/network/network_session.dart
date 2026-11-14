@@ -39,6 +39,7 @@ final class ChannelMessage {
     required this.isOwn,
     this.senderName,
     this.createdAt,
+    this.sessionId,
   });
 
   /// The envelope id — the at-least-once dedupe key.
@@ -63,6 +64,10 @@ final class ChannelMessage {
   /// Whether the local wallet identity sent this message.
   final bool isOwn;
   final DateTime? createdAt;
+
+  /// DM thread target decrypted from the plaintext wrapper. Null identifies
+  /// the device-general bucket used by legacy/session-less rows.
+  final String? sessionId;
 }
 
 /// The live message store of one channel: deduped, decrypted, paged.
@@ -148,11 +153,13 @@ final class NetworkSession extends ChangeNotifier {
   DeviceConnectorService? _dmConnector;
   StreamSubscription<NetworkEnvelope>? _dmSubscription;
   final _dmSessionTargets = <String, String?>{};
+  final _dmSessionTitles = <String, String?>{};
 
-  /// Plaintext for messages sent by this session. A live echo/history
-  /// refresh must never replace a just-sent bubble with a decrypt
-  /// placeholder when the peer's roster key is temporarily unavailable.
+  /// Plaintext/thread target for messages sent by this session. A live
+  /// echo/history refresh must never replace a just-sent bubble with a
+  /// decrypt placeholder or move it into the device-general bucket.
   final _dmOwnText = <String, String>{};
+  final _dmOwnSessionIds = <String, String?>{};
   Timer? _dmPollTimer;
   var _dmPollInFlight = false;
 

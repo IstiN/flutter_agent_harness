@@ -130,13 +130,17 @@ void main() {
         includeSharedSessionRoots: false,
       );
       final source = createDeviceChatSessionSource(manager);
-      expect(source.changes, same(manager));
+      var changeCount = 0;
+      void onChanged() => changeCount++;
+      source.changes.addListener(onChanged);
+      addTearDown(() => source.changes.removeListener(onChanged));
 
       expect(await source.load(), const [(id: 'persisted-chat', live: false)]);
 
       manager
         ..addSession('persisted-chat', _fakeService(env))
         ..addSession('new-live-chat', _fakeService(env));
+      expect(changeCount, greaterThan(0));
       final opened = await source.load();
       expect(opened, hasLength(2));
       expect(

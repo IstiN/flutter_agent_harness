@@ -220,6 +220,7 @@ void main() {
     String? openedDevice;
     String? openedAddress;
     String? openedSession;
+    String? openedSessionTitle;
     String? openedLabel;
 
     await tester.pumpWidget(
@@ -232,11 +233,13 @@ void main() {
                 required deviceLabel,
                 required agentAddress,
                 sessionId,
+                sessionTitle,
               }) {
                 openedDevice = deviceId;
                 openedLabel = deviceLabel;
                 openedAddress = agentAddress;
                 openedSession = sessionId;
+                openedSessionTitle = sessionTitle;
               },
         ),
       ),
@@ -256,6 +259,7 @@ void main() {
     expect(openedLabel, 'Duo');
     expect(openedAddress, 'fa@dev-duo-000');
     expect(openedSession, sessionId);
+    expect(openedSessionTitle, 'flutter_agent');
   });
 
   testWidgets('repaired app enrollment unions with same-host CLI enrollment', (

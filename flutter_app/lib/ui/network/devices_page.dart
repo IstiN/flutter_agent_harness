@@ -101,6 +101,7 @@ class DevicesPage extends StatefulWidget {
     required String deviceLabel,
     required String agentAddress,
     String? sessionId,
+    String? sessionTitle,
   })?
   onOpenRemoteConversation;
 
@@ -576,15 +577,17 @@ class _DevicesPageState extends State<DevicesPage> {
                     selectedSessionId: widget.selectedSessionId,
                     selectedRemoteSessionId: _selectedRemoteSessionId,
                     onRenameOwn: () => unawaited(_renameOwnDevice()),
-                    onOpenConversation: (deviceId, agentAddress, sessionId) {
-                      setState(() => _selectedRemoteSessionId = sessionId);
-                      widget.onOpenRemoteConversation?.call(
-                        deviceId: deviceId,
-                        deviceLabel: selected.label,
-                        agentAddress: agentAddress,
-                        sessionId: sessionId,
-                      );
-                    },
+                    onOpenConversation:
+                        (deviceId, agentAddress, sessionId, sessionTitle) {
+                          setState(() => _selectedRemoteSessionId = sessionId);
+                          widget.onOpenRemoteConversation?.call(
+                            deviceId: deviceId,
+                            deviceLabel: selected.label,
+                            agentAddress: agentAddress,
+                            sessionId: sessionId,
+                            sessionTitle: sessionTitle,
+                          );
+                        },
                   ),
                 ),
               ],
@@ -1217,7 +1220,12 @@ class _DevicePane extends StatelessWidget {
   final VoidCallback? onRenameOwn;
 
   /// Opens the DM conversation for (deviceId, full agent address, sessionId?).
-  final void Function(String deviceId, String agentAddress, String? sessionId)?
+  final void Function(
+    String deviceId,
+    String agentAddress,
+    String? sessionId,
+    String? sessionTitle,
+  )?
   onOpenConversation;
 
   /// The shell's open flow for [_DeviceEntry.localSessions]; null keeps
@@ -1387,6 +1395,7 @@ class _DevicePane extends StatelessWidget {
                         deviceId,
                         '${entry.key}@$deviceId',
                         null,
+                        null,
                       );
                     },
             ),
@@ -1429,15 +1438,21 @@ class _DevicePane extends StatelessWidget {
     final open = onOpenConversation;
     if (open == null) return null;
     final deviceId = device.sessionDeviceIds[sessionId] ?? device.id;
+    final metadata = device.sessionMetadata[sessionId];
+    final title = _sessionTitle(
+      sessionId,
+      metadata?.title,
+      path: metadata?.path,
+    );
     for (final name in device.agents.keys) {
       if ((device.agentDeviceIds[name] ?? device.id) == deviceId) {
-        return () => open(deviceId, '$name@$deviceId', sessionId);
+        return () => open(deviceId, '$name@$deviceId', sessionId, title);
       }
     }
     for (final address in device.agentDmPubs.keys) {
       final separator = address.lastIndexOf('@');
       if (separator > 0 && address.substring(separator + 1) == deviceId) {
-        return () => open(deviceId, address, sessionId);
+        return () => open(deviceId, address, sessionId, title);
       }
     }
     return null;

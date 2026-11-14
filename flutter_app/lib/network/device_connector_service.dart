@@ -70,6 +70,7 @@ typedef _RosterProjection = ({
 typedef _ChatSessionSnapshot = ({
   Map<String, DeviceChatSession> sessions,
   Map<String, DeviceChatSessionMetadata> metadata,
+  Map<String, DeviceChatSessionActivity> activity,
 });
 
 /// One chat session in the device roster: [live] means its agent is loaded
@@ -91,6 +92,17 @@ typedef DeviceChatSessionMetadata = ({
 abstract interface class DeviceChatSessionMetadataSource {
   /// Loads display metadata for the current session projection.
   Future<List<DeviceChatSessionMetadata>> loadMetadata();
+}
+
+/// Additive per-session run state. A separate source keeps legacy
+/// [DeviceChatSession] literals and metadata-only hosts source-compatible.
+typedef DeviceChatSessionActivity = ({String id, bool busy});
+
+/// Optional extension implemented by hosts that know the real agent run
+/// state. Busy always implies a live session; persisted sleepers stay idle.
+abstract interface class DeviceChatSessionActivitySource {
+  /// Loads the current per-session busy/idle projection.
+  Future<List<DeviceChatSessionActivity>> loadActivity();
 }
 
 ConnectorSessionMetadata _presenceMetadata(DeviceChatSessionMetadata row) =>
@@ -116,13 +128,17 @@ abstract interface class DeviceChatSessionSource {
 
 /// A [DeviceChatSessionSource] backed by host callbacks.
 final class CallbackDeviceChatSessionSource
-    implements DeviceChatSessionSource, DeviceChatSessionMetadataSource {
+    implements
+        DeviceChatSessionSource,
+        DeviceChatSessionMetadataSource,
+        DeviceChatSessionActivitySource {
   /// Creates a source from a change listenable and a complete-snapshot loader.
-  /// [metadataLoader] is optional for legacy id-only projections.
+  /// Optional metadata/activity loaders preserve legacy id-only projections.
   const CallbackDeviceChatSessionSource({
     required this.changes,
     required this.loader,
     this.metadataLoader,
+    this.activityLoader,
   });
 
   /// Loads the source's complete current snapshot.
@@ -130,6 +146,9 @@ final class CallbackDeviceChatSessionSource
 
   /// Loads the canonical Local-panel title/path/activity projection.
   final Future<List<DeviceChatSessionMetadata>> Function()? metadataLoader;
+
+  /// Loads the real per-session agent run state.
+  final Future<List<DeviceChatSessionActivity>> Function()? activityLoader;
 
   @override
   final Listenable changes;
@@ -140,6 +159,10 @@ final class CallbackDeviceChatSessionSource
   @override
   Future<List<DeviceChatSessionMetadata>> loadMetadata() async =>
       await metadataLoader?.call() ?? const [];
+
+  @override
+  Future<List<DeviceChatSessionActivity>> loadActivity() async =>
+      await activityLoader?.call() ?? const [];
 }
 
 /// Back-compat projection used when no chat-session source is injected.
@@ -384,6 +407,7 @@ class DeviceConnectorService {
   final _remoteDmPubs = <String, ({String network, String dmPub})>{};
   final _dmUserPubs = <String, SimplePublicKey>{};
   final _dmSessionTargets = <String, String>{};
+  final _dmThreadedRequests = <String>{};
   Future<SimpleKeyPair>? _userDmKeyPair;
   String? _accountUserId;
   SinkRegistration? _dmSink;
@@ -418,6 +442,7 @@ class DeviceConnectorService {
   final _pendingRosterSessions = <String, DeviceRosterSession>{};
   var _observedSessions = <String, DeviceChatSession>{};
   var _observedSessionMetadata = <String, DeviceChatSessionMetadata>{};
+  var _observedSessionActivity = <String, DeviceChatSessionActivity>{};
   final _knownAgentNames = <String>{};
   var _rosterActive = false;
   var _sessionProjectionRevision = 0;
@@ -548,6 +573,9 @@ class DeviceConnectorService {
     final plaintext = jsonEncode({
       'text': text,
       if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+      // Per-session reply envelopes are opt-in per request: older viewers
+      // keep receiving the legacy raw assistant plaintext they understand.
+      'threading': 1,
     });
     return sendMail(
       // DM always rides the account-personal network: every device of
@@ -804,9 +832,17 @@ class DeviceConnectorService {
       final sessionId = decoded['sessionId'];
       if (sessionId is String && sessionId.isNotEmpty) {
         if (_dmSessionTargets.length >= 256) {
-          _dmSessionTargets.remove(_dmSessionTargets.keys.first);
+          final oldest = _dmSessionTargets.keys.first;
+          _dmSessionTargets.remove(oldest);
+          _dmThreadedRequests.remove(oldest);
         }
         _dmSessionTargets[msgId] = sessionId;
+      }
+      if (decoded['threading'] == 1) {
+        if (_dmThreadedRequests.length >= 256) {
+          _dmThreadedRequests.remove(_dmThreadedRequests.first);
+        }
+        _dmThreadedRequests.add(msgId);
       }
       return decoded['text'] as String;
     } on FormatException {
@@ -842,6 +878,7 @@ class DeviceConnectorService {
     if (host == null) throw StateError('no DM session host configured');
     final envelope = mail.envelope;
     final sessionId = _dmSessionTargets.remove(envelope.msgId);
+    final threaded = _dmThreadedRequests.remove(envelope.msgId);
     final reply = await host.deliverUserText(
       sessionId: sessionId,
       text: mail.text,
@@ -880,7 +917,9 @@ class DeviceConnectorService {
           recipientDhPubkey: userPub,
           frameId: frameId,
           aadTarget: channel,
-          plaintext: reply,
+          plaintext: threaded
+              ? jsonEncode({'text': reply, 'sessionId': ?sessionId})
+              : reply,
         ),
       );
       if (kDebugMode) {
@@ -922,6 +961,7 @@ class DeviceConnectorService {
       return;
     }
     _observedSessionMetadata = snapshot.metadata;
+    _observedSessionActivity = snapshot.activity;
     for (final session in snapshot.sessions.values) {
       if (session.live) registry.registerSession(_registrationFor(session));
     }
@@ -946,6 +986,10 @@ class DeviceConnectorService {
         if (entry.value.live && _observedSessionMetadata[entry.key] != null)
           entry.key: _presenceMetadata(_observedSessionMetadata[entry.key]!),
     };
+    presence.setAgentState(
+      localAddress,
+      _agentPresenceState(snapshot.sessions, snapshot.activity),
+    );
     final connector = MachineConnector(
       registry: registry,
       upstream: upstream,
@@ -1154,6 +1198,7 @@ class DeviceConnectorService {
     try {
       final sessions = await _chatSessionSource.load();
       var metadata = _observedSessionMetadata;
+      var activity = _observedSessionActivity;
       final source = _chatSessionSource;
       if (source is DeviceChatSessionMetadataSource) {
         try {
@@ -1166,13 +1211,28 @@ class DeviceConnectorService {
           onLog?.call('device chat-session metadata failed: $error');
         }
       }
+      if (source is DeviceChatSessionActivitySource) {
+        try {
+          final rows = await (source as DeviceChatSessionActivitySource)
+              .loadActivity();
+          activity = {for (final row in rows) row.id: row};
+        } on Object catch (error) {
+          // Run state is additive too: an activity probe cannot retract chats.
+          onLog?.call('device chat-session activity failed: $error');
+        }
+      }
       return (
         sessions: {for (final session in sessions) session.id: session},
         metadata: metadata,
+        activity: activity,
       );
     } on Object catch (error) {
       onLog?.call('device chat-session projection failed: $error');
-      return (sessions: _observedSessions, metadata: _observedSessionMetadata);
+      return (
+        sessions: _observedSessions,
+        metadata: _observedSessionMetadata,
+        activity: _observedSessionActivity,
+      );
     }
   }
 
@@ -1189,16 +1249,19 @@ class DeviceConnectorService {
       return;
     }
     _observedSessionMetadata = current.metadata;
+    _observedSessionActivity = current.activity;
     _syncRegistrySessions(_observedSessions, current.sessions);
     _observedSessions = current.sessions;
+    _connector?.presence.setAgentState(
+      _localAgentAddress(),
+      _agentPresenceState(current.sessions, current.activity),
+    );
     _rosterActive = true;
     _queueRoster(
       _buildRosterProjection(
         sessions: current.sessions.values,
         metadata: current.metadata,
-        agentState: current.sessions.values.any((session) => session.live)
-            ? 'live'
-            : 'wake_on_dm',
+        agentState: _agentRosterState(current.sessions, current.activity),
       ),
     );
   }
@@ -1211,34 +1274,52 @@ class DeviceConnectorService {
     final revision = ++_sessionProjectionRevision;
     final previous = _observedSessions;
     final previousMetadata = _observedSessionMetadata;
+    final previousActivity = _observedSessionActivity;
     final current = await _currentChatSessions();
     if (!_rosterActive || revision != _sessionProjectionRevision) return;
     if (_sameChatSessions(previous, current.sessions) &&
-        _sameSessionMetadata(previousMetadata, current.metadata)) {
+        _sameSessionMetadata(previousMetadata, current.metadata) &&
+        _sameSessionActivity(previousActivity, current.activity)) {
       return;
     }
     _observedSessionMetadata = current.metadata;
+    _observedSessionActivity = current.activity;
     _syncRegistrySessions(previous, current.sessions);
     _observedSessions = current.sessions;
+    _connector?.presence.setAgentState(
+      _localAgentAddress(),
+      _agentPresenceState(current.sessions, current.activity),
+    );
     _queueChangedRosterSessions(
       previous,
       previousMetadata,
+      previousActivity,
       current.sessions,
       current.metadata,
+      current.activity,
     );
-    _queueClosedRosterSessions(previous, previousMetadata, current.sessions);
+    _queueClosedRosterSessions(
+      previous,
+      previousMetadata,
+      previousActivity,
+      current.sessions,
+      current.activity,
+    );
   }
 
   void _queueChangedRosterSessions(
     Map<String, DeviceChatSession> previous,
     Map<String, DeviceChatSessionMetadata> previousMetadata,
+    Map<String, DeviceChatSessionActivity> previousActivity,
     Map<String, DeviceChatSession> current,
     Map<String, DeviceChatSessionMetadata> currentMetadata,
+    Map<String, DeviceChatSessionActivity> currentActivity,
   ) {
     final changed = [
       for (final entry in current.entries)
         if (previous[entry.key] != entry.value ||
-            previousMetadata[entry.key] != currentMetadata[entry.key])
+            previousMetadata[entry.key] != currentMetadata[entry.key] ||
+            previousActivity[entry.key] != currentActivity[entry.key])
           entry.value,
     ];
     if (changed.isEmpty) return;
@@ -1246,13 +1327,17 @@ class DeviceConnectorService {
       (session) => previous[session.id]?.live != session.live,
     );
     final hasLive = current.values.any((session) => session.live);
+    final activityChanged = changed.any(
+      (session) => previousActivity[session.id] != currentActivity[session.id],
+    );
     _queueRoster(
       _buildRosterProjection(
         sessions: changed,
         metadata: currentMetadata,
-        agentState: hasLive ? 'live' : 'wake_on_dm',
+        agentState: _agentRosterState(current, currentActivity),
         includeAgents:
             changed.any((session) => session.live) ||
+            activityChanged ||
             (liveStateChanged && !hasLive),
       ),
     );
@@ -1261,20 +1346,26 @@ class DeviceConnectorService {
   void _queueClosedRosterSessions(
     Map<String, DeviceChatSession> previous,
     Map<String, DeviceChatSessionMetadata> previousMetadata,
+    Map<String, DeviceChatSessionActivity> previousActivity,
     Map<String, DeviceChatSession> current,
+    Map<String, DeviceChatSessionActivity> currentActivity,
   ) {
     final closed = [
       for (final entry in previous.entries)
         if (!current.containsKey(entry.key)) entry.value,
     ];
     if (closed.isEmpty) return;
+    final currentAgentState = _agentRosterState(current, currentActivity);
+    final busyChanged =
+        _hasBusySession(previous, previousActivity) !=
+        _hasBusySession(current, currentActivity);
     _queueRoster(
       _buildRosterProjection(
         sessions: closed,
         metadata: previousMetadata,
         sessionState: 'offline',
-        agentState: 'offline',
-        includeAgents: false,
+        agentState: currentAgentState,
+        includeAgents: busyChanged,
         exposeSessions: false,
       ),
     );
@@ -1300,6 +1391,44 @@ class DeviceConnectorService {
       if (right[entry.key] != entry.value) return false;
     }
     return true;
+  }
+
+  bool _sameSessionActivity(
+    Map<String, DeviceChatSessionActivity> left,
+    Map<String, DeviceChatSessionActivity> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  bool _hasBusySession(
+    Map<String, DeviceChatSession> sessions,
+    Map<String, DeviceChatSessionActivity> activity,
+  ) => sessions.values.any(
+    (session) => session.live && activity[session.id]?.busy == true,
+  );
+
+  String _agentRosterState(
+    Map<String, DeviceChatSession> sessions,
+    Map<String, DeviceChatSessionActivity> activity,
+  ) {
+    if (_hasBusySession(sessions, activity)) return 'busy';
+    return sessions.values.any((session) => session.live)
+        ? 'live'
+        : 'wake_on_dm';
+  }
+
+  AgentRunState _agentPresenceState(
+    Map<String, DeviceChatSession> sessions,
+    Map<String, DeviceChatSessionActivity> activity,
+  ) {
+    if (_hasBusySession(sessions, activity)) return AgentRunState.busy;
+    // The connector's DM host remains reachable even with no chat rows;
+    // empty/wake-on-DM is still an idle live agent, never device-offline.
+    return AgentRunState.live;
   }
 
   void _syncRegistrySessions(
@@ -1473,6 +1602,7 @@ class DeviceConnectorService {
     _remoteDmPubs.clear();
     _dmUserPubs.clear();
     _dmSessionTargets.clear();
+    _dmThreadedRequests.clear();
     _accountUserId = null;
     _userDmKeyPair = null;
     _dmSink?.close();
@@ -1484,6 +1614,7 @@ class DeviceConnectorService {
     _pendingRosterSessions.clear();
     _observedSessions = {};
     _observedSessionMetadata = {};
+    _observedSessionActivity = {};
     _knownAgentNames.clear();
     _rosterActive = false;
     final subscriptions = List.of(_subscriptions);

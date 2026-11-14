@@ -69,12 +69,14 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
             required String deviceLabel,
             required String agentAddress,
             String? sessionId,
+            String? sessionTitle,
           }) => unawaited(
             _openDeviceConversation(
               deviceId: deviceId,
               deviceLabel: deviceLabel,
               agentAddress: agentAddress,
               sessionId: sessionId,
+              sessionTitle: sessionTitle,
             ),
           ),
       // The open session's card carries the accent-fill selected state
@@ -94,6 +96,7 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     required String deviceLabel,
     required String agentAddress,
     String? sessionId,
+    String? sessionTitle,
   }) async {
     final manager = widget.networkSessions;
     final mode = widget.networkMode;
@@ -133,7 +136,7 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     // Preserve the roster's human device label on the synthetic channel;
     // openChannel would otherwise have to restore a label from the wire id.
     session.prepareDmChannel(channelId, deviceLabel: deviceLabel);
-    session.dmSessionTargets[channelId] = sessionId;
+    session.selectDmSession(channelId, sessionId, title: sessionTitle);
     await _openSidebarChannelEntry(
       manager,
       mode,
