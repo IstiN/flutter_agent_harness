@@ -1,15 +1,6 @@
 {
   "issue-1985": [
     {
-      "leg": "rework",
-      "at": "2026-10-31T00:52:01Z",
-      "prompt": 1008476,
-      "completion": 75372,
-      "total": 1083848,
-      "cacheRead": 35471488,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-10-31T01:07:11Z",
       "prompt": 173831,
@@ -3466,6 +3457,15 @@
       "completion": 89098,
       "total": 466316,
       "cacheRead": 41689216,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-14T01:00:18Z",
+      "prompt": 260261,
+      "completion": 22654,
+      "total": 282915,
+      "cacheRead": 6065472,
       "model": "glm-5.3-flash"
     }
   ],
