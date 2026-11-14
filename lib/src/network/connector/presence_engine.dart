@@ -159,8 +159,13 @@ enum ConnectorSessionPresence {
   /// The wire form in presence frame payloads.
   final String wireName;
 
-  /// Parses a payload state; null for unknown values.
+  /// Parses a payload state; null for unknown values. REST roster writers
+  /// historically used `wake-on-DM`, while presence frames use `wake_on_dm`;
+  /// both spellings denote the same exposed-but-not-running session.
   static ConnectorSessionPresence? tryParse(String wireName) {
+    if (wireName == 'wake-on-DM' || wireName == 'wakeOnDm') {
+      return ConnectorSessionPresence.wakeOnDm;
+    }
     for (final value in values) {
       if (value.wireName == wireName) return value;
     }
@@ -168,18 +173,84 @@ enum ConnectorSessionPresence {
   }
 }
 
+/// Optional, additive display metadata for one exposed session. Older peers
+/// send only `id` + `state`; decoders therefore treat every field as optional
+/// and the UI falls back to a short session id when no title is available.
+final class ConnectorSessionMetadata {
+  /// Builds session display metadata.
+  const ConnectorSessionMetadata({this.title, this.path, this.lastActivity});
+
+  /// Human-readable session title (custom, CLI, or the host's derived title).
+  final String? title;
+
+  /// Project/working-directory path shown as the session row subtitle.
+  final String? path;
+
+  /// Last transcript activity, used for recency ordering and relative time.
+  final DateTime? lastActivity;
+
+  /// Whether no display field is present.
+  bool get isEmpty =>
+      (title == null || title!.isEmpty) &&
+      (path == null || path!.isEmpty) &&
+      lastActivity == null;
+
+  /// Decodes the additive session fields without rejecting legacy rows.
+  static ConnectorSessionMetadata? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final rawTitle = value['title'];
+    final rawPath = value['path'];
+    final rawActivity = value['lastActivity'];
+    final title = rawTitle is String && rawTitle.trim().isNotEmpty
+        ? rawTitle.trim()
+        : null;
+    final path = rawPath is String && rawPath.trim().isNotEmpty
+        ? rawPath.trim()
+        : null;
+    final activity = rawActivity is String
+        ? DateTime.tryParse(rawActivity)
+        : null;
+    final metadata = ConnectorSessionMetadata(
+      title: title,
+      path: path,
+      lastActivity: activity,
+    );
+    return metadata.isEmpty ? null : metadata;
+  }
+
+  /// Wire fields merged into a roster/presence session row.
+  Map<String, Object?> toJson() => {
+    if (title != null && title!.isNotEmpty) 'title': title,
+    if (path != null && path!.isNotEmpty) 'path': path,
+    if (lastActivity != null)
+      'lastActivity': lastActivity!.toUtc().toIso8601String(),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ConnectorSessionMetadata &&
+      other.title == title &&
+      other.path == path &&
+      other.lastActivity == lastActivity;
+
+  @override
+  int get hashCode => Object.hash(title, path, lastActivity);
+}
+
 /// One machine presence frame's payload, built and parsed both ways: the
 /// machine state with agent presence riding inside (§5), addressed
 /// device-level (no `network`/`channel` on the envelope, §3).
 final class PresenceFrame {
   /// Builds a frame payload snapshot; [agents] maps agent address → run
-  /// state, [sessions] maps exposed session id → derived presence.
+  /// state, [sessions] maps exposed session id → derived presence, and
+  /// [sessionMetadata] carries the optional additive display fields.
   const PresenceFrame({
     required this.msgId,
     required this.ts,
     required this.machine,
     this.agents = const {},
     this.sessions = const {},
+    this.sessionMetadata = const {},
   });
 
   /// The frame id (also the dedup key).
@@ -197,6 +268,10 @@ final class PresenceFrame {
   /// Exposed-session presence (lease-derived).
   final Map<String, ConnectorSessionPresence> sessions;
 
+  /// Display metadata keyed by exposed session id. This map may be sparser
+  /// than [sessions]; legacy peers simply leave it empty.
+  final Map<String, ConnectorSessionMetadata> sessionMetadata;
+
   /// Builds the wire envelope (kind `presence`, device-level).
   NetworkEnvelope toEnvelope({IdFactory idFactory = defaultIdFactory}) =>
       NetworkEnvelope(
@@ -213,7 +288,11 @@ final class PresenceFrame {
           if (sessions.isNotEmpty)
             'sessions': [
               for (final entry in sessions.entries)
-                {'id': entry.key, 'state': entry.value.wireName},
+                {
+                  'id': entry.key,
+                  'state': entry.value.wireName,
+                  ...?sessionMetadata[entry.key]?.toJson(),
+                },
             ],
         },
       );
@@ -244,6 +323,13 @@ final class PresenceFrame {
         for (final node in (envelope.payload['sessions'] as List? ?? const []))
           if (node is Map && parseSession(node) != null)
             '${node['id']}': parseSession(node)!,
+      },
+      sessionMetadata: {
+        for (final node in (envelope.payload['sessions'] as List? ?? const []))
+          if (node is Map &&
+              node['id'] is String &&
+              ConnectorSessionMetadata.fromJson(node) != null)
+            node['id'] as String: ConnectorSessionMetadata.fromJson(node)!,
       },
     );
   }
@@ -303,6 +389,11 @@ final class PresenceEngine {
   /// Pulled at EVERY frame build: session ids with an active owner lease
   /// (§5, issue #428 semantics).
   Set<String> Function()? liveLeases;
+
+  /// Optional display metadata for exposed sessions. The delegate is pulled
+  /// with the exposure/lease views so create/rename/activity updates ride the
+  /// next immediate roster update or heartbeat without a wire-version bump.
+  Map<String, ConnectorSessionMetadata> Function()? sessionMetadata;
 
   MachinePresence _machine = MachinePresence.offline;
   final _agents = <String, AgentRunState>{};
@@ -393,12 +484,17 @@ final class PresenceEngine {
             ? ConnectorSessionPresence.live
             : ConnectorSessionPresence.wakeOnDm,
     };
+    final metadata = sessionMetadata?.call() ?? const {};
     return PresenceFrame(
       msgId: idFactory(),
       ts: rfc3339Timestamp(_clock.now()),
       machine: _machine,
       agents: Map.unmodifiable(_agents),
       sessions: sessions,
+      sessionMetadata: {
+        for (final id in exposed)
+          if (metadata[id] != null) id: metadata[id]!,
+      },
     );
   }
 

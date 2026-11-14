@@ -18,7 +18,11 @@ import 'network_session.dart';
 /// Pair it with `FaChatFeatures.minimal()`: no sandbox, no attachments,
 /// no approvals — a channel is plain text-in/text-out.
 final class ChannelChatService implements FaChatService {
-  ChannelChatService({required this.session, required this.channelId}) {
+  ChannelChatService({
+    required this.session,
+    required this.channelId,
+    this.dmUndecryptablePlaceholder,
+  }) {
     session.addListener(_onSessionChanged);
   }
 
@@ -27,6 +31,15 @@ final class ChannelChatService implements FaChatService {
 
   /// The channel inside [session].
   final String channelId;
+
+  /// Localized, non-technical DM fallback. Read lazily because the service
+  /// is created in initState, before inherited localizations are available.
+  final String Function()? dmUndecryptablePlaceholder;
+
+  String get _undecryptablePlaceholder => isDmChannel(channelId)
+      ? (dmUndecryptablePlaceholder?.call() ??
+            'Encrypted on another device') // l10n:ignore
+      : '(unable to decrypt this message)'; // l10n:ignore
 
   final ApprovalManager _approval = ApprovalManager();
 
@@ -62,13 +75,13 @@ final class ChannelChatService implements FaChatService {
       if (message.isOwn)
         FaChatMessage(
           role: 'user',
-          content: message.text ?? '_(unable to decrypt this message)_',
+          content: message.text ?? '_($_undecryptablePlaceholder)_',
         )
       else
         FaChatMessage(
           role: 'assistant',
           content: message.text == null
-              ? '_(unable to decrypt this message)_'
+              ? '_($_undecryptablePlaceholder)_'
               : '**${_senderName(message)}**\n\n${message.text}',
         ),
   ];
@@ -83,12 +96,16 @@ final class ChannelChatService implements FaChatService {
     return (name == null || name.isEmpty) ? message.senderId : name;
   }
 
+  String _transcriptPlaceholder(bool isOwn) => !isDmChannel(channelId) && !isOwn
+      ? '(undecryptable)' // l10n:ignore — legacy non-DM export
+      : _undecryptablePlaceholder;
+
   @override
   String transcriptMarkdown() => _state.messages
       .map(
         (m) => m.isOwn
-            ? '**You**: ${m.text ?? '(unable to decrypt this message)'}'
-            : '**${_senderName(m)}**: ${m.text ?? '(undecryptable)'}',
+            ? '**You**: ${m.text ?? _transcriptPlaceholder(m.isOwn)}'
+            : '**${_senderName(m)}**: ${m.text ?? _transcriptPlaceholder(m.isOwn)}',
       )
       .join('\n\n');
 

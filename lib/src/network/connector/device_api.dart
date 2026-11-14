@@ -138,6 +138,9 @@ final class DeviceRosterSession {
     required this.id,
     required this.state,
     this.networks = const [],
+    this.title,
+    this.path,
+    this.lastActivity,
   });
 
   /// Stable CLI session id.
@@ -149,11 +152,23 @@ final class DeviceRosterSession {
   /// Networks on which this session is exposed.
   final List<String> networks;
 
+  /// Optional human-readable title; omitted by legacy peers.
+  final String? title;
+
+  /// Optional project/working-directory path for the session row subtitle.
+  final String? path;
+
+  /// Optional RFC3339 last-activity timestamp.
+  final String? lastActivity;
+
   /// JSON representation for the roster endpoint.
   Map<String, Object?> toJson() => {
     'id': id,
     'state': state,
     'networks': networks,
+    if (title != null) 'title': title,
+    if (path != null) 'path': path,
+    if (lastActivity != null) 'lastActivity': lastActivity,
   };
 }
 

@@ -305,6 +305,9 @@ void main() {
             id: 'session-1',
             state: 'wake-on-DM',
             networks: ['personal-1'],
+            title: 'Release plan',
+            path: '/work/flutter_agent',
+            lastActivity: '2026-11-12T09:00:00.000Z',
           ),
         ],
       );
@@ -331,6 +334,9 @@ void main() {
             'id': 'session-1',
             'state': 'wake-on-DM',
             'networks': ['personal-1'],
+            'title': 'Release plan',
+            'path': '/work/flutter_agent',
+            'lastActivity': '2026-11-12T09:00:00.000Z',
           },
         ],
       });

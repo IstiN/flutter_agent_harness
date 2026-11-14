@@ -130,6 +130,10 @@ class _DevicesPageState extends State<DevicesPage> {
   StreamSubscription<NetworkEnvelope>? _rosterSubscription;
   var _fetchingRoster = false;
 
+  /// False only until the first usable own/remote projection has been shown.
+  /// Later WS phase flips must not replace that projection with a skeleton.
+  var _hasPresentedBody = false;
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +152,7 @@ class _DevicesPageState extends State<DevicesPage> {
     final service = widget.service;
     _remote.clear();
     _fetchingRoster = false;
+    _hasPresentedBody = false;
     // Seed from the cached per-network roster frames: the server pushes
     // them once per connect (before this page exists), and REST carries no
     // sessions — without the replay every remote pane stays empty.
@@ -187,8 +192,14 @@ class _DevicesPageState extends State<DevicesPage> {
         for (final device in devices)
           if (device.deviceId.isNotEmpty && device.deviceId != ownId) device,
       ];
-      if (remote.isEmpty) return;
+      final remoteIds = remote.map((device) => device.deviceId).toSet();
       setState(() {
+        // A successful account snapshot also RETIRES rows that disappeared
+        // or were revoked. Presence-only rows stay until the next roster
+        // refresh; cached REST rows must not become permanent phantoms.
+        _remote.removeWhere(
+          (id, node) => node.rosterFromAccount && !remoteIds.contains(id),
+        );
         for (final device in remote) {
           final previous = _remote[device.deviceId];
           _remote[device.deviceId] = _RemoteDeviceNode(
@@ -197,6 +208,7 @@ class _DevicesPageState extends State<DevicesPage> {
             agentDmPubs: device.agentDmPubs.isNotEmpty
                 ? device.agentDmPubs
                 : previous?.agentDmPubs ?? const {},
+            rosterFromAccount: true,
           );
         }
       });
@@ -245,6 +257,7 @@ class _DevicesPageState extends State<DevicesPage> {
         roster: _remote[deviceId]?.roster,
         presence: frame,
         agentDmPubs: _remote[deviceId]?.agentDmPubs ?? const {},
+        rosterFromAccount: _remote[deviceId]?.rosterFromAccount ?? false,
       );
     });
   }
@@ -283,6 +296,7 @@ class _DevicesPageState extends State<DevicesPage> {
         MachinePresence.offline;
     return _RemoteDeviceNode(
       roster: roster,
+      rosterFromAccount: previous?.rosterFromAccount ?? false,
       agentDmPubs: device['agents'] is List
           ? roster.agentDmPubs
           : previous?.agentDmPubs ?? const {},
@@ -294,6 +308,11 @@ class _DevicesPageState extends State<DevicesPage> {
         sessions: _serverSessions(
           device['sessions'],
           oldPresence?.sessions,
+          envelope.kind,
+        ),
+        sessionMetadata: _serverSessionMetadata(
+          device['sessions'],
+          oldPresence?.sessionMetadata,
           envelope.kind,
         ),
       ),
@@ -324,15 +343,60 @@ class _DevicesPageState extends State<DevicesPage> {
     NetworkEnvelopeKind kind,
   ) {
     if (value is! List) return previous ?? const {};
-    final sessions = <String, ConnectorSessionPresence>{};
+    // ROSTER carries the complete persisted projection. PRESENCE carries
+    // live/heartbeat deltas from the registry (often live-only, sometimes an
+    // explicit empty list): merge those deltas instead of erasing hundreds of
+    // persisted REST rows after the next heartbeat.
+    final sessions = <String, ConnectorSessionPresence>{
+      if (kind == NetworkEnvelopeKind.presence) ...?previous,
+    };
     for (final node in value) {
-      if (node is! Map || !_serverSessionVisible(node, kind)) continue;
+      if (node is! Map) continue;
       final id = node['id'];
+      if (id is! String || id.isEmpty) continue;
+      final legacyKnownRow =
+          kind == NetworkEnvelopeKind.presence &&
+          node['networks'] is! List &&
+          (previous?.containsKey(id) ?? false);
+      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
+        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
+          sessions.remove(id);
+        }
+        continue;
+      }
       final state = ConnectorSessionPresence.tryParse('${node['state'] ?? ''}');
-      if (id is! String || id.isEmpty || state == null) continue;
-      sessions[id] = state;
+      if (state != null) sessions[id] = state;
     }
     return sessions;
+  }
+
+  Map<String, ConnectorSessionMetadata> _serverSessionMetadata(
+    Object? value,
+    Map<String, ConnectorSessionMetadata>? previous,
+    NetworkEnvelopeKind kind,
+  ) {
+    if (value is! List) return previous ?? const {};
+    final metadata = <String, ConnectorSessionMetadata>{
+      if (kind == NetworkEnvelopeKind.presence) ...?previous,
+    };
+    for (final node in value) {
+      if (node is! Map) continue;
+      final id = node['id'];
+      if (id is! String || id.isEmpty) continue;
+      final legacyKnownRow =
+          kind == NetworkEnvelopeKind.presence &&
+          node['networks'] is! List &&
+          (previous?.containsKey(id) ?? false);
+      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
+        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
+          metadata.remove(id);
+        }
+        continue;
+      }
+      final parsed = ConnectorSessionMetadata.fromJson(node);
+      if (parsed != null) metadata[id] = parsed;
+    }
+    return metadata;
   }
 
   bool _serverSessionVisible(
@@ -340,6 +404,10 @@ class _DevicesPageState extends State<DevicesPage> {
     NetworkEnvelopeKind kind,
   ) {
     final networks = session['networks'];
+    // An explicitly empty exposure list is a deletion/retraction patch, not
+    // a persisted row to render. Stop/offline rows that remain exposed keep
+    // their personal network and therefore remain visible.
+    if (networks is List && networks.isEmpty) return false;
     // REST's personal-network roster predates exposure lists and remains
     // visible by default. Presence patches need the explicit personal id.
     if (networks is! List) return kind == NetworkEnvelopeKind.roster;
@@ -365,22 +433,24 @@ class _DevicesPageState extends State<DevicesPage> {
       initialData: widget.service.phase,
       builder: (context, snapshot) {
         final phase = snapshot.data ?? DeviceConnectorPhase.signedOut;
+        final waitingForConnection =
+            phase == DeviceConnectorPhase.preparing ||
+            phase == DeviceConnectorPhase.connecting;
+        if (!waitingForConnection) _hasPresentedBody = true;
         return Column(
           key: const ValueKey('devicesPage'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _sectionHeader(context, colors),
             Expanded(
-              child: switch (phase) {
-                DeviceConnectorPhase.preparing ||
-                DeviceConnectorPhase.connecting => _phaseLine(
-                  context,
-                  key: const ValueKey('devicesSkeleton'),
-                  label: context.l10n.networkDeviceConnecting,
-                  color: colors.dim.withValues(alpha: 0.5),
-                ),
-                _ => _connectedBody(context, colors, phase),
-              },
+              child: waitingForConnection && !_hasPresentedBody
+                  ? _phaseLine(
+                      context,
+                      key: const ValueKey('devicesSkeleton'),
+                      label: context.l10n.networkDeviceConnecting,
+                      color: colors.dim.withValues(alpha: 0.5),
+                    )
+                  : _connectedBody(context, colors, phase),
             ),
           ],
         );
@@ -413,6 +483,14 @@ class _DevicesPageState extends State<DevicesPage> {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (phase == DeviceConnectorPhase.preparing ||
+          phase == DeviceConnectorPhase.connecting)
+        _phaseLine(
+          context,
+          key: const ValueKey('devicesConnecting'),
+          label: context.l10n.networkDeviceConnecting,
+          color: colors.dim.withValues(alpha: 0.5),
+        ),
       if (phase == DeviceConnectorPhase.reconnecting)
         _phaseLine(
           context,
@@ -473,6 +551,14 @@ class _DevicesPageState extends State<DevicesPage> {
               ownSnapshot.data,
             );
             final selected = _resolveSelected(devices);
+            // TEMP flap trace (issue #2062 field feedback).
+            assert(() {
+              debugPrint(
+                '[roster] entries=${devices.map((d) => d.id).join(',')} '
+                'remote=${_remote.keys.join('|')} phase=${widget.service.phase}',
+              );
+              return true;
+            }());
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -534,26 +620,100 @@ class _DevicesPageState extends State<DevicesPage> {
     final controller = widget.sessions;
     final defaultOwnLabel = context.l10n.networkDeviceThisDevice;
     final ownFriendlyName = ownDevice?.friendlyName;
-    final ownMachineKey = machineGroupKey(ownDevice?.name);
+    final ownMachineKey = _enrollmentMachineGroupKey(ownDevice);
+    final ownSessionIds = <String>{
+      ...?ownFrame?.sessions.keys,
+      ...?controller?.localEntries.map((entry) => entry.id.value),
+    };
 
-    // One physical machine = one card: remote devices sharing a
-    // non-generic enrollment hostname (the macOS app + its CLI) merge;
-    // the machine hosting THIS app merges into the own card.
-    final remoteGroups = <String, List<_RemoteDeviceNode>>{};
-    final groupDevices = <String, List<String>>{};
-    final order = <String>[];
+    // One PHYSICAL machine = one card. Union enrollments by a meaningful
+    // hostname (or owner-friendly identity for legacy `device` rows) AND by
+    // shared persisted session ids. The latter recovers duplicate generic
+    // enrollments of the same machine without merging unrelated online
+    // devices that merely share the placeholder name `device`.
+    final entries = [
+      for (final entry in _remote.entries)
+        if (!_hiddenRemoteEnrollment(entry.value)) entry,
+    ];
+    final parents = List<int>.generate(entries.length, (index) => index);
+    int rootOf(int index) {
+      var root = index;
+      while (parents[root] != root) {
+        root = parents[root];
+      }
+      while (parents[index] != index) {
+        final next = parents[index];
+        parents[index] = root;
+        index = next;
+      }
+      return root;
+    }
+
+    void union(int left, int right) {
+      final leftRoot = rootOf(left);
+      final rightRoot = rootOf(right);
+      if (leftRoot != rightRoot) parents[rightRoot] = leftRoot;
+    }
+
+    final identityOwners = <String, int>{};
+    final sessionOwners = <String, int>{};
+    final ownMembers = List<bool>.filled(entries.length, false);
+    for (var i = 0; i < entries.length; i++) {
+      final node = entries[i].value;
+      final identity = _enrollmentMachineGroupKey(node.roster);
+      if (identity != null) {
+        if (identity == ownMachineKey) ownMembers[i] = true;
+        final previous = identityOwners[identity];
+        if (previous == null) {
+          identityOwners[identity] = i;
+        } else {
+          union(previous, i);
+        }
+      }
+      for (final id in node.presence?.sessions.keys ?? const <String>{}) {
+        if (ownSessionIds.contains(id)) ownMembers[i] = true;
+        final previous = sessionOwners[id];
+        if (previous == null) {
+          sessionOwners[id] = i;
+        } else {
+          union(previous, i);
+        }
+      }
+    }
+    final ownRoots = <int>{
+      for (var i = 0; i < entries.length; i++)
+        if (ownMembers[i]) rootOf(i),
+    };
     final ownMerged = <_RemoteDeviceNode>[];
-    for (final entry in _remote.entries) {
-      final node = entry.value;
-      final key = machineGroupKey(node.roster?.name);
-      if (key != null && key == ownMachineKey) {
-        ownMerged.add(node);
+    final groupedIndexes = <int, List<int>>{};
+    final order = <int>[];
+    for (var i = 0; i < entries.length; i++) {
+      if (ownRoots.contains(rootOf(i))) {
+        ownMerged.add(entries[i].value);
         continue;
       }
-      final groupKey = key ?? 'device:${entry.key}';
-      if (!remoteGroups.containsKey(groupKey)) order.add(groupKey);
-      (remoteGroups[groupKey] ??= []).add(node);
-      (groupDevices[groupKey] ??= []).add(entry.key);
+      final root = rootOf(i);
+      if (!groupedIndexes.containsKey(root)) order.add(root);
+      (groupedIndexes[root] ??= []).add(i);
+    }
+    final remoteGroups = <String, List<_RemoteDeviceNode>>{};
+    final groupDevices = <String, List<String>>{};
+    final groupKeys = <String>[];
+    for (final root in order) {
+      final indexes = groupedIndexes[root]!;
+      final ids = [for (final index in indexes) entries[index].key];
+      final identity = indexes
+          .map(
+            (index) => _enrollmentMachineGroupKey(entries[index].value.roster),
+          )
+          .whereType<String>()
+          .firstOrNull;
+      final key =
+          identity ??
+          (ids.length == 1 ? 'device:${ids.first}' : 'shared:${ids.first}');
+      groupKeys.add(key);
+      remoteGroups[key] = [for (final index in indexes) entries[index].value];
+      groupDevices[key] = ids;
     }
 
     Map<String, AgentRunState> mergedAgents(Iterable<_RemoteDeviceNode> nodes) {
@@ -586,6 +746,14 @@ class _DevicesPageState extends State<DevicesPage> {
         exposedSessions: {
           for (final node in ownMerged) ...?node.presence?.sessions,
         },
+        sessionMetadata: {
+          for (final node in ownMerged) ...?node.presence?.sessionMetadata,
+        },
+        memberDeviceIds: {
+          ?widget.service.deviceId,
+          for (final entry in _remote.entries)
+            if (ownMerged.contains(entry.value)) entry.key,
+        },
         sessionDeviceIds: {
           for (final entry in _remote.entries)
             if (ownMerged.contains(entry.value))
@@ -604,7 +772,7 @@ class _DevicesPageState extends State<DevicesPage> {
             ? const <ChatListEntry>[]
             : deviceVisibleLocalSessions(controller),
       ),
-      for (final groupKey in order)
+      for (final groupKey in groupKeys)
         _remoteGroupEntry(
           context,
           groupKey,
@@ -652,6 +820,10 @@ class _DevicesPageState extends State<DevicesPage> {
       agents: {for (final node in nodes) ...?node.presence?.agents},
       agentDmPubs: {for (final node in nodes) ...node.agentDmPubs},
       exposedSessions: {for (final node in nodes) ...?node.presence?.sessions},
+      sessionMetadata: {
+        for (final node in nodes) ...?node.presence?.sessionMetadata,
+      },
+      memberDeviceIds: deviceIds.toSet(),
       sessionDeviceIds: {
         for (var i = 0; i < nodes.length; i++)
           for (final id in nodes[i].presence?.sessions.keys ?? const <String>{})
@@ -671,7 +843,9 @@ class _DevicesPageState extends State<DevicesPage> {
   _DeviceEntry _resolveSelected(List<_DeviceEntry> devices) {
     final id = _selectedDeviceId;
     for (final device in devices) {
-      if (device.id == id) return device;
+      if (device.id == id || device.memberDeviceIds.contains(id)) {
+        return device;
+      }
     }
     return devices.first;
   }
@@ -691,12 +865,36 @@ class _DevicesPageState extends State<DevicesPage> {
 }
 
 /// The machine-group key for an enrollment hostname: normalized lowercase,
-/// null for generic/empty names (those NEVER group — 'device' is every
-/// platform's default). One physical machine (app + CLI) shares one card.
+/// null for generic/empty names. A generic placeholder alone is NOT proof
+/// that two machines match; shared sessions or a friendly identity must also
+/// link them (see the rail's grouping pass).
 String? machineGroupKey(String? name) {
   final normalized = name?.trim().toLowerCase() ?? '';
   if (normalized.isEmpty || normalized == 'device') return null;
   return normalized;
+}
+
+String? _enrollmentMachineGroupKey(DeviceInfo? device) =>
+    machineGroupKey(device?.name) ?? machineGroupKey(device?.friendlyName);
+
+/// Repeated integration-test enrollments have no useful identity, presence,
+/// or children. Hide those dead account rows instead of letting dozens of
+/// `device` phantoms dominate the rail. A live row, a named/friendly row, or
+/// any exposed child remains visible; presence-only legacy rows are retained.
+bool _hiddenRemoteEnrollment(_RemoteDeviceNode node) {
+  final roster = node.roster;
+  if (roster == null) return false;
+  if (roster.revokedAt != null) return true;
+  if (_enrollmentMachineGroupKey(roster) != null) return false;
+  if (node.machine != MachinePresence.offline) return false;
+  final empty =
+      (node.presence?.agents.isEmpty ?? true) &&
+      (node.presence?.sessions.isEmpty ?? true);
+  final enrolledAt = roster.createdAt;
+  final longDead =
+      enrolledAt != null &&
+      DateTime.now().difference(enrolledAt) > const Duration(hours: 24);
+  return empty || longDead;
 }
 
 /// The platform glyph for a device avatar: laptop for desktop-class
@@ -727,10 +925,16 @@ class _RemoteDeviceNode {
     this.roster,
     this.presence,
     this.agentDmPubs = const {},
+    this.rosterFromAccount = false,
   });
 
   final DeviceInfo? roster;
   final PresenceFrame? presence;
+
+  /// Whether [roster] came from the account device list (rather than a
+  /// network roster envelope). Only account-owned rows are pruned when a
+  /// later account snapshot omits them.
+  final bool rosterFromAccount;
 
   /// Roster `agents[].dmPub`, keyed by full agent address for DM sending.
   final Map<String, String> agentDmPubs;
@@ -754,6 +958,8 @@ class _DeviceEntry {
     this.agents = const {},
     this.agentDmPubs = const {},
     this.exposedSessions = const {},
+    this.sessionMetadata = const {},
+    this.memberDeviceIds = const {},
     this.sessionDeviceIds = const {},
     this.agentDeviceIds = const {},
     this.localSessions = const [],
@@ -777,6 +983,11 @@ class _DeviceEntry {
   /// Full agent address → base64 X25519 public key from the server roster.
   final Map<String, String> agentDmPubs;
   final Map<String, ConnectorSessionPresence> exposedSessions;
+  final Map<String, ConnectorSessionMetadata> sessionMetadata;
+
+  /// All enrollment ids folded into this physical-machine entry. Used to
+  /// preserve a selection when a duplicate arrives and the group id changes.
+  final Set<String> memberDeviceIds;
 
   /// Exposed session id → its origin device id (machine-grouped cards
   /// merge sessions from several devices; the DM target needs the origin).
@@ -1046,16 +1257,44 @@ class _DevicePane extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      device.label,
-                      key: const ValueKey('devicePaneTitle'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            device.label,
+                            key: const ValueKey('devicePaneTitle'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (device.isOwn)
+                          Container(
+                            key: const ValueKey('currentDeviceBadge'),
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colors.teal.withValues(alpha: .12),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              context.l10n.networkDeviceThisDevice
+                                  .toLowerCase(),
+                              style: TextStyle(
+                                color: colors.teal,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     if (device.subtitle case final subtitle?)
                       Padding(
@@ -1108,57 +1347,86 @@ class _DevicePane extends StatelessWidget {
     ),
   );
 
-  /// The children: agents first (the roster-row form), then the session
-  /// cards — the local chat sessions (tappable, the shell's open flow)
-  /// before the remote machine's exposed sessions (read-only).
-  Widget _childrenList(BuildContext context, FahColors colors) => ListView(
-    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-    children: [
-      for (final entry in device.agents.entries)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: DeviceRosterRow(
-            key: ValueKey('agentRow:${entry.key}'),
-            dotKey: ValueKey('agentDot:${entry.key}'),
-            dotColor: deviceAgentDotColor(colors, entry.value),
-            label: deviceAgentName(entry.key),
-            stateLabel: deviceAgentLabel(context, entry.value),
-            stateColor: entry.value == AgentRunState.offline
-                ? colors.dim
-                : colors.teal,
-            onTap: onOpenConversation == null
-                ? null
-                : () {
-                    final deviceId =
-                        device.agentDeviceIds[entry.key] ?? device.id;
-                    onOpenConversation!(
-                      deviceId,
-                      '${entry.key}@$deviceId',
-                      null,
-                    );
-                  },
-          ),
-        ),
-      for (final entry in device.localSessions)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: _localSessionCard(context, colors, entry),
-        ),
+  /// The children: agents first (the roster-row form), then Local-style
+  /// session rows. Duplicate enrollments folded into This device must not
+  /// repeat a session already supplied by the canonical local controller.
+  Widget _childrenList(BuildContext context, FahColors colors) {
+    final localIds = device.localSessions
+        .map((entry) => entry.id.value)
+        .toSet();
+    final remote = [
       for (final entry in device.exposedSessions.entries)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: DeviceSessionCard(
+        if (!localIds.contains(entry.key)) entry,
+    ];
+    DateTime? activity(MapEntry<String, ConnectorSessionPresence> entry) =>
+        device.sessionMetadata[entry.key]?.lastActivity;
+    remote.sort((left, right) {
+      final leftActivity = activity(left);
+      final rightActivity = activity(right);
+      if (leftActivity == null && rightActivity != null) return 1;
+      if (leftActivity != null && rightActivity == null) return -1;
+      final byActivity = rightActivity?.compareTo(leftActivity!) ?? 0;
+      return byActivity != 0 ? byActivity : left.key.compareTo(right.key);
+    });
+    final sessionCount = device.localSessions.length + remote.length;
+    var sessionIndex = 0;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      children: [
+        for (final entry in device.agents.entries)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: DeviceRosterRow(
+              key: ValueKey('agentRow:${entry.key}'),
+              dotKey: ValueKey('agentDot:${entry.key}'),
+              dotColor: deviceAgentDotColor(colors, entry.value),
+              label: deviceAgentName(entry.key),
+              stateLabel: deviceAgentLabel(context, entry.value),
+              stateColor: entry.value == AgentRunState.offline
+                  ? colors.dim
+                  : colors.teal,
+              onTap: onOpenConversation == null
+                  ? null
+                  : () {
+                      final deviceId =
+                          device.agentDeviceIds[entry.key] ?? device.id;
+                      onOpenConversation!(
+                        deviceId,
+                        '${entry.key}@$deviceId',
+                        null,
+                      );
+                    },
+            ),
+          ),
+        for (final entry in device.localSessions)
+          _localSessionCard(
+            context,
+            colors,
+            entry,
+            hairline: sessionIndex++ < sessionCount - 1,
+          ),
+        for (final entry in remote)
+          DeviceSessionCard(
             key: ValueKey('sessionRow:${entry.key}'),
             dotKey: ValueKey('sessionDot:${entry.key}'),
             dotColor: deviceSessionDotColor(colors, entry.value),
-            title: entry.key,
-            subtitle: deviceSessionLabel(context, entry.value),
+            title: _sessionTitle(
+              entry.key,
+              device.sessionMetadata[entry.key]?.title,
+            ),
+            subtitle: device.sessionMetadata[entry.key]?.path ?? '',
+            timestamp: chatListRelativeTime(
+              context,
+              device.sessionMetadata[entry.key]?.lastActivity,
+            ),
+            showPresenceDot: entry.value == ConnectorSessionPresence.live,
+            hairline: sessionIndex++ < sessionCount - 1,
             selected: entry.key == selectedRemoteSessionId,
             onTap: _sessionConversation(entry.key),
           ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
 
   /// The DM target for an exposed session card: its origin device (the
   /// group-merge map) plus that device's first exposed agent address.
@@ -1175,29 +1443,42 @@ class _DevicePane extends StatelessWidget {
     return null;
   }
 
-  /// One local chat session card: the chat list's presence colors the
-  /// glyph-tile badge, the subtitle is the last-activity timestamp, and
-  /// the tap routes through the shell's open flow (null ⇒ read-only).
-  /// The shell's currently open session renders the accent fill.
+  /// One Local-format chat row: title + right timestamp + project path.
+  /// Only an actually live/streaming local session carries an activity dot.
   Widget _localSessionCard(
     BuildContext context,
     FahColors colors,
-    ChatListEntry entry,
-  ) {
+    ChatListEntry entry, {
+    required bool hairline,
+  }) {
     final id = entry.id.value;
+    final active =
+        entry.presence == ChatPresence.live ||
+        entry.presence == ChatPresence.busy;
     return DeviceSessionCard(
       key: ValueKey('sessionRow:$id'),
       dotKey: ValueKey('sessionDot:$id'),
       dotColor: deviceLocalSessionDotColor(colors, entry.presence),
-      title: entry.title,
-      subtitle: chatListRelativeTime(
+      title: _sessionTitle(id, entry.title),
+      subtitle: entry.folderPath ?? '',
+      timestamp: chatListRelativeTime(
         context,
         entry.lastActivity ?? entry.createdAt,
       ),
+      hairline: hairline,
+      showPresenceDot: active,
       selected: id == selectedSessionId,
       onTap: onOpenSession == null ? null : () => onOpenSession!(entry),
     );
   }
+}
+
+String _sessionTitle(String id, String? rawTitle) {
+  final title = rawTitle?.trim();
+  // ChatListEntry's last-resort title is the id itself. Treat that as "no
+  // title" too, so a full UUID never leaks through the rich metadata path.
+  if (title != null && title.isNotEmpty && title != id) return title;
+  return id.length > 8 ? id.substring(0, 8) : id;
 }
 
 /// Friendly-name editor. Validation is rune-based to match the deployed

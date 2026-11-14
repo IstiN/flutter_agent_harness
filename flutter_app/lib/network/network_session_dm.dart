@@ -27,6 +27,18 @@ DmChannelParts? parseDmChannelId(String channelId) {
   );
 }
 
+/// Human-facing peer label for a DM virtual channel. The wire id belongs
+/// in routing logs, not in the page title or composer hint. A roster tap
+/// supplies its richer device label; inbox/history restores fall back to
+/// the stable device id carried by the channel id.
+String dmChannelPeerLabel(String channelId, {String? deviceLabel}) {
+  final parts = parseDmChannelId(channelId);
+  if (parts == null) return channelDisplayLabel(channelId);
+  final device = deviceLabel?.trim();
+  return '${device == null || device.isEmpty ? parts.deviceId : device} · '
+      '${parts.agentName}';
+}
+
 /// The DM branches of [NetworkSession]. One personal-network session can
 /// carry any number of DM conversations next to its regular channels.
 extension NetworkSessionDm on NetworkSession {
@@ -51,7 +63,11 @@ extension NetworkSessionDm on NetworkSession {
     if (!channels.any((c) => c.id == channelId)) {
       channels = [
         ...channels,
-        Channel(id: channelId, networkId: networkId, name: channelId),
+        Channel(
+          id: channelId,
+          networkId: networkId,
+          name: dmChannelPeerLabel(channelId),
+        ),
       ];
     }
     _ensureDmPolling();
@@ -132,6 +148,7 @@ extension NetworkSessionDm on NetworkSession {
       sessionId: _dmSessionTargets[channelId],
       text: text,
     );
+    _dmOwnText[msgId] = text;
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
     state.add(
       ChannelMessage(
@@ -155,6 +172,18 @@ extension NetworkSessionDm on NetworkSession {
     final myId = connector == null ? null : await connector.accountUserId();
     final isOwn =
         envelope.senderId == myId || envelope.senderId == 'user:$myId';
+    final sentText = isOwn ? _dmOwnText[envelope.id] : null;
+    if (sentText != null) {
+      return ChannelMessage(
+        envelopeId: envelope.id,
+        senderId: envelope.senderId,
+        senderPub: _wallet.identityPub ?? '',
+        senderName: identity.displayName,
+        text: sentText,
+        isOwn: true,
+        createdAt: envelope.createdAt,
+      );
+    }
     final frame = hubTryOpenFanet1(envelope.payload);
     final senderPub = isOwn
         ? await _dmPeerPubkey(connector, parts)

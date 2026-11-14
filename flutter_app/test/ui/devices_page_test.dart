@@ -279,11 +279,15 @@ ChatListEntry localEntry(
   bool isSubagent = false,
   String? parentId,
   DateTime? createdAt,
+  DateTime? lastActivity,
+  String? folderPath,
 }) => ChatListEntry(
   id: ChatEntryId.local(id),
   kind: ChatListEntryKind.localAgent,
   title: title,
   createdAt: createdAt ?? DateTime.utc(2026, 11, 12),
+  lastActivity: lastActivity,
+  folderPath: folderPath,
   presence: presence,
   isSubagent: isSubagent,
   parentId: parentId,
@@ -522,10 +526,10 @@ void main() {
       palette.pending,
     );
     expect(find.byKey(const ValueKey('sessionRow:sess-idle')), findsOneWidget);
-    expect(
-      dotColor(tester, const ValueKey('sessionDot:sess-idle')),
-      palette.dim,
-    );
+    // A merely persisted/idle session has no misleading presence label or
+    // activity dot; only the streaming row above is marked active.
+    expect(find.byKey(const ValueKey('sessionDot:sess-idle')), findsNothing);
+    expect(find.text('Offline'), findsNothing);
 
     // The local session cards route through the shell's open flow.
     await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
@@ -765,8 +769,18 @@ void main() {
       'fill and the timestamp subtitle; the selected rail cell carries '
       'the capsule + squircle avatar', (tester) async {
     final controller = chatListOf([
-      localEntry('sess-open', title: 'Open chat', createdAt: DateTime.now()),
-      localEntry('sess-idle', title: 'Idle chat', createdAt: DateTime.now()),
+      localEntry(
+        'sess-open',
+        title: 'Open chat',
+        createdAt: DateTime.now(),
+        folderPath: '/work/open',
+      ),
+      localEntry(
+        'sess-idle',
+        title: 'Idle chat',
+        createdAt: DateTime.now(),
+        folderPath: '/work/idle',
+      ),
     ]);
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
@@ -791,9 +805,10 @@ void main() {
     );
     expect(openCard.selected, isTrue);
     expect(openCard.onTap, isNotNull);
-    // The subtitle is the LAST-ACTIVITY TIMESTAMP (a fresh session reads
-    // 'now'), never the presence word.
-    expect(openCard.subtitle, 'now');
+    // The timestamp sits in its OWN right-aligned slot (a fresh session reads
+    // 'now'); the subtitle is the session path, never preview/presence text.
+    expect(openCard.timestamp, 'now');
+    expect(openCard.subtitle, '/work/open');
     final idleCard = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-idle')),
     );
@@ -813,8 +828,8 @@ void main() {
       tokens.accent,
     );
 
-    // The card's white icon tile carries the vector chat glyph and the
-    // presence dot badge rides it (sessionDot key above).
+    // Local-panel anatomy: no channel-card glyph tile; clean text rows are
+    // hairline-separated and the tappable row keeps its chevron.
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('sessionRow:sess-open')),
@@ -822,8 +837,11 @@ void main() {
           (widget) => widget is FaIcon && widget.icon == FaSemanticIcon.chat,
         ),
       ),
-      findsOneWidget,
+      findsNothing,
     );
+    // The controller may recency-sort the two equal-time fixtures; exactly
+    // one row is last and therefore hairline-free.
+    expect({openCard.hairline, idleCard.hairline}, {true, false});
 
     // The selected rail cell keys like the networks strip: the accent
     // capsule flush to the rail's left edge, and the avatar squares up
@@ -1013,7 +1031,9 @@ void main() {
   });
 
   testWidgets('single-device presence flips update the dot without wiping '
-      'children; explicit empty projections clear them', (tester) async {
+      'children; live-only session projections merge into persisted rows', (
+    tester,
+  ) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -1106,7 +1126,7 @@ void main() {
       paletteOf(tester).teal,
     );
     expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsNothing);
-    expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
     expect(pageState.debugRemoteAgentDmPubs('dev-remote'), isEmpty);
   });
 
@@ -1411,6 +1431,11 @@ void main() {
       );
       await tester.pumpWidget(_wrap(devicesPage(service)));
       await tester.pump();
+      service
+        ..emitEnvelope(_envelope(deviceId: 'dev-a', msgId: 'online-a'))
+        ..emitEnvelope(_envelope(deviceId: 'dev-b', msgId: 'online-b'));
+      await tester.pump();
+      // Placeholder names alone must not merge two running physical devices.
       expect(find.byKey(const ValueKey('deviceRow:dev-a')), findsOneWidget);
       expect(find.byKey(const ValueKey('deviceRow:dev-b')), findsOneWidget);
     });
@@ -1489,6 +1514,278 @@ void main() {
       expect(opened.single.agentAddress, 'fa@dev-mac');
       expect(opened.single.sessionId, isNull);
       expect(find.byKey(const ValueKey('devicePane:dev-mac')), findsOneWidget);
+    });
+  });
+
+  group('field regressions: physical roster, metadata rows, reconnect', () {
+    testWidgets(
+      'friendly own device carries an explicit current-device badge',
+      (tester) async {
+        final service = FakeDevicesService(
+          initialPhase: DeviceConnectorPhase.online,
+          deviceId: 'dev-1',
+          ownDevice: const DeviceInfo(
+            deviceId: 'dev-1',
+            name: 'EPBYGROW03B0',
+            friendlyName: 'Mac',
+          ),
+        );
+        await tester.pumpWidget(_wrap(devicesPage(service)));
+        await tester.pump();
+
+        expect(
+          find.byKey(const ValueKey('currentDeviceBadge')),
+          findsOneWidget,
+        );
+        expect(find.text('this device'), findsOneWidget);
+        expect(find.text('Mac'), findsOneWidget);
+      },
+    );
+
+    testWidgets('dead generic enrollments disappear and duplicate generic '
+        'enrollments sharing persisted sessions merge by physical machine', (
+      tester,
+    ) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-own',
+        personalNetworkId: 'net-personal',
+        ownDevice: const DeviceInfo(
+          deviceId: 'dev-own',
+          name: 'EPBYGROW03B0',
+          friendlyName: 'Mac',
+        ),
+        rosterDevices: [
+          const DeviceInfo(
+            deviceId: 'phantom-1',
+            name: 'device',
+            presence: 'offline',
+          ),
+          const DeviceInfo(deviceId: 'phantom-2', name: 'device'),
+          DeviceInfo(
+            deviceId: 'phantom-stale',
+            name: 'device',
+            createdAt: DateTime.utc(2020),
+          ),
+          const DeviceInfo(
+            deviceId: 'dev-duo-old',
+            name: 'device',
+            friendlyName: 'Duo',
+          ),
+          DeviceInfo(deviceId: 'dev-duo', name: 'device', friendlyName: 'Duo'),
+        ],
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      service.emitRoster(
+        _devicesEnvelope(
+          devices: const [
+            {
+              'deviceId': 'phantom-stale',
+              'name': 'device',
+              'presence': 'offline',
+              'createdAt': '2020-01-01T00:00:00.000Z',
+              'sessions': [
+                {
+                  'id': 'unique-dead-test-chat',
+                  'state': 'offline',
+                  'networks': ['net-personal'],
+                },
+              ],
+            },
+            {
+              'deviceId': 'dev-duo-old',
+              'name': 'device',
+              'friendlyName': 'Duo',
+              'presence': 'offline',
+              'sessions': [
+                {
+                  'id': 'shared-chat',
+                  'state': 'wake_on_dm',
+                  'networks': ['net-personal'],
+                },
+              ],
+            },
+            {
+              'deviceId': 'dev-duo',
+              'name': 'device',
+              'friendlyName': 'Duo',
+              'presence': 'online',
+              'sessions': [
+                {
+                  'id': 'shared-chat',
+                  'state': 'live',
+                  'networks': ['net-personal'],
+                },
+              ],
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+
+      // Own Mac + one Duo = exactly two physical entries. Dead, unnamed test
+      // enrollments never become rail cells; the live duplicate wins presence.
+      expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('deviceRail')),
+          matching: find.byType(InkWell),
+        ),
+        findsNWidgets(2),
+      );
+      expect(
+        find.byKey(const ValueKey('deviceRow:machine:duo')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('deviceRow:phantom-1')), findsNothing);
+      expect(find.byKey(const ValueKey('deviceRow:phantom-2')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('deviceRow:phantom-stale')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('deviceRow:dev-duo-old')), findsNothing);
+      expect(find.byKey(const ValueKey('deviceRow:dev-duo')), findsNothing);
+      expect(
+        dotColor(tester, const ValueKey('deviceDot:machine:duo')),
+        paletteOf(tester).teal,
+      );
+    });
+
+    testWidgets('remote rows use title, relative time and path; presence '
+        'heartbeats retain the persisted roster and older id-only rows shorten '
+        'their fallback title', (tester) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-own',
+        personalNetworkId: 'net-personal',
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      service.emitRoster(
+        _devicesEnvelope(
+          devices: const [
+            {
+              'deviceId': 'dev-mac',
+              'name': 'EPBYGROW03B0',
+              'presence': 'online',
+              'sessions': [
+                {
+                  'id': '123e4567-e89b-12d3-a456-426614174000',
+                  'state': 'wake_on_dm',
+                  'networks': ['net-personal'],
+                  'title': 'Release plan',
+                  'path': '/work/flutter_agent',
+                  'lastActivity': '2026-11-12T09:00:00.000Z',
+                },
+                {
+                  'id': 'abcdef12-0000-0000-0000-000000000000',
+                  'state': 'wake-on-DM',
+                  'networks': ['net-personal'],
+                },
+              ],
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+      await tester.pump();
+
+      final titled = tester.widget<DeviceSessionCard>(
+        find.byKey(
+          const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),
+        ),
+      );
+      expect(titled.title, 'Release plan');
+      expect(titled.subtitle, '/work/flutter_agent');
+      expect(titled.timestamp, isNotEmpty);
+      expect(find.text('123e4567-e89b-12d3-a456-426614174000'), findsNothing);
+      expect(find.text('Offline'), findsNothing);
+      expect(find.text('abcdef12'), findsOneWidget);
+
+      // A live-only/empty presence projection is a patch, not an instruction
+      // to erase the REST roster's persisted sessions.
+      service.emitEnvelope(
+        _devicesEnvelope(
+          kind: NetworkEnvelopeKind.presence,
+          msgId: 'live-only-heartbeat',
+          devices: const [
+            {
+              'deviceId': 'dev-mac',
+              'name': 'EPBYGROW03B0',
+              'presence': 'online',
+              'agents': [],
+              'sessions': [],
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Release plan'), findsOneWidget);
+      expect(find.text('No sessions yet'), findsNothing);
+
+      service.emitEnvelope(
+        _devicesEnvelope(
+          kind: NetworkEnvelopeKind.presence,
+          msgId: 'delete-one-session',
+          devices: const [
+            {
+              'deviceId': 'dev-mac',
+              'name': 'EPBYGROW03B0',
+              'presence': 'online',
+              'sessions': [
+                {
+                  'id': 'abcdef12-0000-0000-0000-000000000000',
+                  'state': 'offline',
+                  'networks': <Object?>[],
+                },
+              ],
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+      expect(find.text('abcdef12'), findsNothing);
+      expect(find.text('Release plan'), findsOneWidget);
+    });
+
+    testWidgets('online → connecting/preparing/reconnecting keeps the same '
+        'rail and session pane mounted; only the phase banner changes', (
+      tester,
+    ) async {
+      final controller = chatListOf([
+        localEntry('stable-chat', title: 'Stable chat', folderPath: '/work'),
+      ]);
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-own',
+      );
+      await tester.pumpWidget(
+        _wrap(devicesPage(service, sessions: controller)),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('sessionRow:stable-chat')),
+        findsOneWidget,
+      );
+
+      for (final phase in const [
+        DeviceConnectorPhase.connecting,
+        DeviceConnectorPhase.reconnecting,
+        DeviceConnectorPhase.preparing,
+      ]) {
+        service.setPhase(phase);
+        await tester.pump();
+        expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('sessionRow:stable-chat')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('devicesSkeleton')), findsNothing);
+        expect(find.text('Stable chat'), findsOneWidget);
+      }
     });
   });
 }

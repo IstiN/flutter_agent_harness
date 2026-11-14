@@ -164,28 +164,32 @@ const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 /// roster's merge/retract PATCHes.
 @visibleForTesting
 DeviceChatSessionSource createDeviceChatSessionSource(
-  FlutterSessionManager manager,
-) => CallbackDeviceChatSessionSource(
-  changes: manager,
+  FlutterSessionManager manager, {
+  ChatListController? chatList,
+}) => CallbackDeviceChatSessionSource(
+  changes: chatList == null ? manager : Listenable.merge([manager, chatList]),
   loader: () => _loadDeviceChatSessions(manager),
+  metadataLoader: chatList == null
+      ? null
+      : () async => [
+          for (final entry in chatList.localEntries)
+            (
+              id: entry.id.value,
+              title: entry.title == entry.id.value ? null : entry.title,
+              path: entry.folderPath,
+              lastActivity: entry.lastActivity ?? entry.createdAt,
+            ),
+        ],
 );
 
 Future<List<DeviceChatSession>> _loadDeviceChatSessions(
   FlutterSessionManager manager,
 ) async {
   final persisted = await manager.listPersistedSessions();
-  // The server rejects oversized roster patches (400 "roster patch too
-  // large" on hosts with hundreds of sessions): the projection is a
-  // RECENT-SESSIONS surface, not an archive — cap at the 50 most recently
-  // updated persisted rows; live sessions always ride on top below.
-  final recent = persisted.toList()
-    ..sort(
-      (a, b) => (b.lastUpdatedAt ?? b.createdAt).compareTo(
-        a.lastUpdatedAt ?? a.createdAt,
-      ),
-    );
+  // Persisted-but-closed chats are first-class roster rows. The service
+  // chunks large patches, so there is no live-only/recent-50 truncation here.
   final sessions = <String, DeviceChatSession>{
-    for (final metadata in recent.take(50))
+    for (final metadata in persisted)
       metadata.id: (id: metadata.id, live: false),
   };
   // Include a just-created live row even if its first disk listing has not
@@ -320,7 +324,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     assert(sessions != null, 'the DEVICES surface requires networkSessions');
     return _deviceConnector ??= DeviceConnectorService(
       sessionManager: sessions!,
-      chatSessionSource: createDeviceChatSessionSource(widget.manager),
+      chatSessionSource: createDeviceChatSessionSource(
+        widget.manager,
+        chatList: _chatController,
+      ),
       dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
       // Enrollment/keychain/WS failures surface in the app log — the
       // connector has no other voice on this surface.
@@ -632,14 +639,6 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     _subscribeToActiveService();
     _subscribeToNamesStore();
     _networkInboxEnabled = widget.networkSessions?.hasJwt == true;
-    // The device connector is a NETWORK-MODE lifecycle service, not a
-    // Devices-page one: other machines see this device's sessions (and can
-    // DM it later) only while its socket lives, so start it at shell boot
-    // whenever signed in — the Devices surface shares this instance.
-    if (_networkInboxEnabled) {
-      // ignore: unused_local_variable — eager creation starts the service.
-      final connector = _devicesConnector;
-    }
     _activityController = ActivityController(
       manager: widget.manager,
       namesStore: widget.sessionNamesStore ?? _namesStore,
@@ -661,6 +660,15 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       networkNames: _networkNames(),
     );
     unawaited(_chatController.load());
+    // The device connector is a NETWORK-MODE lifecycle service, not a
+    // Devices-page one: other machines see this device's sessions (and can
+    // DM it later) only while its socket lives, so start it at shell boot
+    // whenever signed in — the Devices surface shares this instance. Create
+    // it AFTER the canonical chat controller so its metadata source is ready.
+    if (_networkInboxEnabled) {
+      // ignore: unused_local_variable — eager creation starts the service.
+      final connector = _devicesConnector;
+    }
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
     unawaited(_ensureChatStores());
@@ -2043,20 +2051,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     if (service == null) return;
     final sessionId = service.currentSessionId;
     final names = widget.sessionNamesStore ?? _namesStore;
-    final nameController = TextEditingController(
-      text: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
-    );
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => _sessionInfoDialog(
-        dialogContext,
-        service,
-        sessionId,
-        names,
-        nameController,
+      builder: (_) => _SessionInfoDialogControllerScope(
+        initialText: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
+        builder: (dialogContext, nameController) => _sessionInfoDialog(
+          dialogContext,
+          service,
+          sessionId,
+          names,
+          nameController,
+        ),
       ),
     );
-    nameController.dispose();
   }
 
   /// The session info dialog: the active session's name (renameable —
@@ -2352,4 +2359,36 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Future<ExecutionEnv> _createPlatformEnv() async {
     return createPlatformEnv();
   }
+}
+
+/// Owns the session-info text controller for the whole dialog route life.
+/// `showDialog`'s future completes when the route starts popping, before
+/// its exit animation unmounts the field; disposing at that await leaves
+/// live TextField/inherited dependents using a disposed controller.
+final class _SessionInfoDialogControllerScope extends StatefulWidget {
+  const _SessionInfoDialogControllerScope({
+    required this.initialText,
+    required this.builder,
+  });
+
+  final String initialText;
+  final Widget Function(BuildContext, TextEditingController) builder;
+
+  @override
+  State<_SessionInfoDialogControllerScope> createState() =>
+      _SessionInfoDialogControllerScopeState();
+}
+
+final class _SessionInfoDialogControllerScopeState
+    extends State<_SessionInfoDialogControllerScope> {
+  late final _controller = TextEditingController(text: widget.initialText);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _controller);
 }

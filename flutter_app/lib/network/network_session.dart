@@ -148,6 +148,11 @@ final class NetworkSession extends ChangeNotifier {
   DeviceConnectorService? _dmConnector;
   StreamSubscription<NetworkEnvelope>? _dmSubscription;
   final _dmSessionTargets = <String, String?>{};
+
+  /// Plaintext for messages sent by this session. A live echo/history
+  /// refresh must never replace a just-sent bubble with a decrypt
+  /// placeholder when the peer's roster key is temporarily unavailable.
+  final _dmOwnText = <String, String>{};
   Timer? _dmPollTimer;
   var _dmPollInFlight = false;
 

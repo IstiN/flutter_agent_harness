@@ -13,10 +13,15 @@
 library;
 
 import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/network/device_connector_service.dart'
+    show DeviceChatSessionMetadataSource;
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/chats/chat_list_controller.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
@@ -148,6 +153,71 @@ void main() {
       expect(closed, contains(const (id: 'persisted-chat', live: false)));
     },
   );
+
+  test('device chat source keeps the complete persisted corpus', () async {
+    final env = MemoryExecutionEnv();
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    for (var i = 0; i < 55; i++) {
+      await repo.create(
+        JsonlSessionCreateOptions(id: 'persisted-$i', cwd: '/work/$i'),
+      );
+    }
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      repo: repo,
+      includeSharedSessionRoots: false,
+    );
+    final rows = await createDeviceChatSessionSource(manager).load();
+    expect(rows, hasLength(55));
+    expect(
+      rows.map((row) => row.id),
+      containsAll(['persisted-0', 'persisted-54']),
+    );
+    expect(rows.every((row) => !row.live), isTrue);
+  });
+
+  test('device metadata comes from the canonical Local panel rows', () async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    final activity = DateTime.utc(2026, 11, 12, 9);
+    final chatList = ChatListController(
+      localAdapter: StaticChatListAdapter([
+        ChatListEntry(
+          id: ChatEntryId.local('rich-chat'),
+          kind: ChatListEntryKind.localAgent,
+          title: 'Release plan',
+          createdAt: DateTime.utc(2026, 11, 11),
+          lastActivity: activity,
+          folderPath: '/work/flutter_agent',
+        ),
+        ChatListEntry(
+          id: ChatEntryId.local('123e4567-e89b-12d3-a456-426614174000'),
+          kind: ChatListEntryKind.localAgent,
+          title: '123e4567-e89b-12d3-a456-426614174000',
+          createdAt: DateTime.utc(2026, 11, 10),
+        ),
+      ]),
+    );
+    await chatList.load();
+    final source = createDeviceChatSessionSource(manager, chatList: chatList);
+    final metadata = await (source as DeviceChatSessionMetadataSource)
+        .loadMetadata();
+    expect(metadata, [
+      (
+        id: 'rich-chat',
+        title: 'Release plan',
+        path: '/work/flutter_agent',
+        lastActivity: activity,
+      ),
+      (
+        id: '123e4567-e89b-12d3-a456-426614174000',
+        title: null,
+        path: null,
+        lastActivity: DateTime.utc(2026, 11, 10),
+      ),
+    ]);
+  });
 
   /// The vertical order of rail rows (the rail is a column).
   double topOf(WidgetTester tester, Key key) =>

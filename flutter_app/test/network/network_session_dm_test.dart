@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:fa/network/channel_chat_service.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/envelope_codec.dart';
+import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show NetworkEnvelope, NetworkEnvelopeKind;
@@ -64,6 +66,11 @@ void main() {
       expect(parseDmChannelId('dm:user:u-1'), isNull);
       expect(parseDmChannelId('dm:user:u-1:fa'), isNull);
       expect(parseDmChannelId('dm:user::fa@dev-1'), isNull);
+    });
+
+    test('peer label keeps the routing id out of composer/title text', () {
+      expect(dmChannelPeerLabel(dmChannel), 'dev-1 · fa');
+      expect(dmChannelPeerLabel(dmChannel, deviceLabel: 'Duo'), 'Duo · fa');
     });
   });
 
@@ -136,6 +143,26 @@ void main() {
       },
     );
 
+    test('just-sent own text survives an undecryptable history echo', () async {
+      final s = await session();
+      await s.sendText(dmChannel, 'hello agent');
+      // Simulate the account-WS echo before the peer roster key is available.
+      final decoded = await s.decodeDmEnvelope(
+        Envelope(
+          id: 'dm-msg-1',
+          channelId: dmChannel,
+          senderId: 'u-1',
+          payload: 'not-a-fanet1-frame',
+        ),
+      );
+      expect(decoded.text, 'hello agent');
+      expect(decoded.isOwn, isTrue);
+      final chat = ChannelChatService(session: s, channelId: dmChannel);
+      addTearDown(chat.dispose);
+      expect(chat.messages.single.content, 'hello agent');
+      expect(chat.messages.single.content, isNot(contains('Encrypted')));
+    });
+
     test('history rows decrypt: agent reply and own wrapped text', () async {
       final s = await session();
       final userPub = await identityPub();
@@ -191,6 +218,74 @@ void main() {
       expect(messages[1].isOwn, isFalse);
       expect(messages[1].senderName, 'fa');
     });
+
+    test(
+      'another device gets an honest placeholder in both directions',
+      () async {
+        await session();
+        final originPub = await identityPub();
+        final agentKeys = await X25519().newKeyPair();
+        final agentPub = await agentKeys.extractPublicKey();
+        dmConnector.peerDmPub = base64Encode(agentPub.bytes);
+        final own = await hubSealFanet1(
+          senderDhKeyPair: await wallet.identityKeyPair(),
+          recipientDhPubkey: agentPub,
+          frameId: 'dm-u1',
+          aadTarget: dmChannel,
+          plaintext: jsonEncode({'text': 'from Duo'}),
+        );
+        final reply = await hubSealFanet1(
+          senderDhKeyPair: agentKeys,
+          recipientDhPubkey: originPub,
+          frameId: 'dm-a1',
+          aadTarget: dmChannel,
+          plaintext: 'reply to Duo',
+        );
+        // A second wallet models macOS: same account, different X25519 identity.
+        final foreign = await session();
+        expect(wallet.identityPub, isNot(base64Encode(originPub.bytes)));
+        httpClient.respond(
+          200,
+          body: jsonEncode({
+            'items': [
+              {
+                'id': 'dm-u1',
+                'channelId': dmChannel,
+                'senderId': 'u-1',
+                'payload': own,
+              },
+              {
+                'id': 'dm-a1',
+                'channelId': dmChannel,
+                'senderId': 'fa@dev-1',
+                'payload': reply,
+              },
+            ],
+            'nextCursor': '',
+          }),
+        );
+        await foreign.openChannel(dmChannel);
+        final stored = foreign.channelStates[dmChannel]!.messages;
+        expect(stored, hasLength(2));
+        expect(stored.map((message) => message.text), [isNull, isNull]);
+
+        final chat = ChannelChatService(
+          session: foreign,
+          channelId: dmChannel,
+          dmUndecryptablePlaceholder: () => 'Encrypted on another device',
+        );
+        addTearDown(chat.dispose);
+        expect(
+          chat.messages.map((message) => message.content),
+          everyElement(contains('Encrypted on another device')),
+        );
+        expect(
+          chat.messages.map((message) => message.content),
+          everyElement(isNot(contains('unable to decrypt'))),
+        );
+        expect(chat.transcriptMarkdown(), isNot(contains('undecryptable')));
+      },
+    );
 
     test('live network WS reply appends and device echo dedups', () async {
       httpClient

@@ -4772,6 +4772,12 @@ abstract class AppLocalizations {
   /// **'Message {channel}'**
   String networkMessageHint(Object channel);
 
+  /// Non-technical placeholder for a direct message sealed to a different per-device identity
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted on another device'**
+  String get networkDmEncryptedOnAnotherDevice;
+
   /// Create-channel button tooltip and dialog title
   ///
   /// In en, this message translates to:

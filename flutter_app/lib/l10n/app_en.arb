@@ -1349,6 +1349,10 @@
       "channel": {}
     }
   },
+  "networkDmEncryptedOnAnotherDevice": "Encrypted on another device",
+  "@networkDmEncryptedOnAnotherDevice": {
+    "description": "Non-technical placeholder for a direct message sealed to a different per-device identity"
+  },
   "networkNewChannel": "New channel",
   "@networkNewChannel": {
     "description": "Create-channel button tooltip and dialog title"

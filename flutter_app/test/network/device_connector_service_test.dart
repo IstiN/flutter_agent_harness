@@ -191,11 +191,12 @@ void putSession(
 }
 
 final class FakeChatSessionSource extends ChangeNotifier
-    implements DeviceChatSessionSource {
+    implements DeviceChatSessionSource, DeviceChatSessionMetadataSource {
   FakeChatSessionSource([Iterable<DeviceChatSession> initial = const []])
     : snapshot = List.of(initial);
 
   List<DeviceChatSession> snapshot;
+  List<DeviceChatSessionMetadata> metadata = const [];
   var loads = 0;
 
   @override
@@ -205,6 +206,15 @@ final class FakeChatSessionSource extends ChangeNotifier
   Future<List<DeviceChatSession>> load() async {
     loads++;
     return List.of(snapshot);
+  }
+
+  @override
+  Future<List<DeviceChatSessionMetadata>> loadMetadata() async =>
+      List.of(metadata);
+
+  void replaceMetadata(Iterable<DeviceChatSessionMetadata> rows) {
+    metadata = List.of(rows);
+    notifyListeners();
   }
 
   void replace(Iterable<DeviceChatSession> sessions) {
@@ -273,6 +283,9 @@ void main() {
     );
     expect(enroll.method, 'POST');
     expect(enroll.headers['authorization'], 'Bearer jwt-1');
+    final enrollmentBody = jsonDecode(enroll.body) as Map<String, Object?>;
+    expect(enrollmentBody['name'], isNotEmpty);
+    expect(enrollmentBody['platform'], isNotEmpty);
 
     // Credentials persisted from the response.
     expect(tokens.stored?.deviceId, 'dev-1');
@@ -692,11 +705,7 @@ void main() {
         expect(patches.last, {
           'agents': <Object?>[],
           'sessions': [
-            {
-              'id': 'session-2',
-              'state': 'offline',
-              'networks': ['net-personal'],
-            },
+            {'id': 'session-2', 'state': 'offline', 'networks': <Object?>[]},
           ],
         });
         expect(
@@ -713,11 +722,7 @@ void main() {
         expect(lastClosePatches.last, {
           'agents': <Object?>[],
           'sessions': [
-            {
-              'id': 'session-1',
-              'state': 'offline',
-              'networks': ['net-personal'],
-            },
+            {'id': 'session-1', 'state': 'offline', 'networks': <Object?>[]},
           ],
         });
         expect(service.connector!.registry.sessions, isEmpty);
@@ -757,7 +762,7 @@ void main() {
             },
             {
               'id': 'chat-offline',
-              'state': 'offline',
+              'state': 'wake_on_dm',
               'networks': ['net-personal'],
             },
           ],
@@ -769,6 +774,106 @@ void main() {
         reason: 'only loaded chat sessions are live in the connector registry',
       );
     });
+
+    test(
+      'metadata rides persisted rows and rename-only changes publish',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-chat-metadata"}')
+          ..respond(200, body: '{"patched":"dev-1"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final source =
+            FakeChatSessionSource(const [(id: 'chat-rich', live: false)])
+              ..metadata = [
+                (
+                  id: 'chat-rich',
+                  title: 'Release plan',
+                  path: '/work/flutter_agent',
+                  lastActivity: DateTime.utc(2026, 11, 12, 9),
+                ),
+              ];
+        final (service, _, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          chatSessionSource: source,
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        expect(rosterPatches(http).single['sessions'], [
+          {
+            'id': 'chat-rich',
+            'state': 'wake_on_dm',
+            'networks': ['net-personal'],
+            'title': 'Release plan',
+            'path': '/work/flutter_agent',
+            'lastActivity': '2026-11-12T09:00:00.000Z',
+          },
+        ]);
+
+        source.replaceMetadata([
+          (
+            id: 'chat-rich',
+            title: 'Renamed release plan',
+            path: '/work/flutter_agent',
+            lastActivity: DateTime.utc(2026, 11, 12, 9),
+          ),
+        ]);
+        await Future<void>.delayed(settle);
+        expect(rosterPatches(http), hasLength(2));
+        expect(rosterPatches(http).last['sessions'], [
+          {
+            'id': 'chat-rich',
+            'state': 'wake_on_dm',
+            'networks': ['net-personal'],
+            'title': 'Renamed release plan',
+            'path': '/work/flutter_agent',
+            'lastActivity': '2026-11-12T09:00:00.000Z',
+          },
+        ]);
+      },
+    );
+
+    test(
+      'complete large persisted projections publish in bounded patches',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-chat-large"}');
+        for (var i = 0; i < 6; i++) {
+          http.respond(200, body: '{"patched":"dev-1"}');
+        }
+        final source = FakeChatSessionSource([
+          for (var i = 0; i < 85; i++) (id: 'chat-$i', live: false),
+        ]);
+        final (service, _, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          chatSessionSource: source,
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        final patches = rosterPatches(http);
+        expect(patches, hasLength(3));
+        expect(patches.map((patch) => (patch['sessions'] as List).length), [
+          40,
+          40,
+          5,
+        ]);
+        expect(
+          patches
+              .expand((patch) => patch['sessions'] as List)
+              .map((row) => row['id']),
+          containsAll([for (var i = 0; i < 85; i++) 'chat-$i']),
+        );
+      },
+    );
 
     test('chat-session create publishes only the new live merge', () async {
       final http = FakeHttpClient()
@@ -812,7 +917,7 @@ void main() {
     });
 
     test(
-      'chat close flips its persisted row offline and delete retracts it',
+      'chat close keeps its persisted row wake-on-DM and delete retracts it',
       () async {
         final http = FakeHttpClient()
           ..respond(200, body: '{"ticket":"tk-chat-close-delete"}')
@@ -848,7 +953,7 @@ void main() {
           'sessions': [
             {
               'id': 'chat-victim',
-              'state': 'offline',
+              'state': 'wake_on_dm',
               'networks': ['net-personal'],
             },
           ],
@@ -867,11 +972,7 @@ void main() {
         expect(patches.last, {
           'agents': <Object?>[],
           'sessions': [
-            {
-              'id': 'chat-victim',
-              'state': 'offline',
-              'networks': ['net-personal'],
-            },
+            {'id': 'chat-victim', 'state': 'offline', 'networks': <Object?>[]},
           ],
         });
       },
@@ -918,7 +1019,7 @@ void main() {
         },
         {
           'id': 'chat-offline',
-          'state': 'offline',
+          'state': 'wake_on_dm',
           'networks': ['net-personal'],
         },
       ]);
@@ -992,11 +1093,7 @@ void main() {
       expect(patches, hasLength(2));
       expect(patches.last['agents'], hasLength(1));
       expect(patches.last['sessions'], [
-        {
-          'id': 'session-1',
-          'state': 'offline',
-          'networks': ['net-personal'],
-        },
+        {'id': 'session-1', 'state': 'offline', 'networks': <Object?>[]},
         {
           'id': 'session-2',
           'state': 'live',

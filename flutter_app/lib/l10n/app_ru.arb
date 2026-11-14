@@ -1077,6 +1077,7 @@
   "networkReconnecting": "Переподключение — сообщения будут отправлены после восстановления связи.",
   "networkReconnectNow": "Переподключиться сейчас",
   "networkMessageHint": "Написать в {channel}",
+  "networkDmEncryptedOnAnotherDevice": "Зашифровано на другом устройстве",
   "networkNewChannel": "Новый канал",
   "networkOnlineCount": "{count} в сети",
   "networkRosterTitle": "Участники",

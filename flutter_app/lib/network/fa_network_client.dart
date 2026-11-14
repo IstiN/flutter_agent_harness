@@ -222,6 +222,9 @@ final class DeviceRosterSession {
     required this.id,
     required this.state,
     this.networks = const [],
+    this.title,
+    this.path,
+    this.lastActivity,
   });
 
   /// Stable local session id.
@@ -233,10 +236,22 @@ final class DeviceRosterSession {
   /// Networks on which this session is exposed.
   final List<String> networks;
 
+  /// Optional human-readable title; omitted by legacy peers.
+  final String? title;
+
+  /// Optional project/working-directory path for the session row subtitle.
+  final String? path;
+
+  /// Optional RFC3339 last-activity timestamp.
+  final String? lastActivity;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'state': state,
     'networks': networks,
+    if (title != null) 'title': title,
+    if (path != null) 'path': path,
+    if (lastActivity != null) 'lastActivity': lastActivity,
   };
 }
 
@@ -706,11 +721,18 @@ class FaNetworkClient {
   /// The server auto-provisions the owner's personal network on first
   /// enroll (§2) and returns the stable {deviceId, deviceToken} pair the
   /// host persists (deviceToken never logged). Tolerates 200 and 201.
-  Future<DeviceEnrollmentResult> enrollDevice() async {
+  Future<DeviceEnrollmentResult> enrollDevice({
+    String? name,
+    String? platform,
+  }) async {
     final res = await _request(
       'POST',
       '/api/devices/enroll',
-      body: const <String, Object?>{},
+      body: <String, Object?>{
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+        if (platform != null && platform.trim().isNotEmpty)
+          'platform': platform.trim(),
+      },
       management: true,
       expected: {200, 201},
     );

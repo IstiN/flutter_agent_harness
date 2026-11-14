@@ -2693,6 +2693,10 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get networkDmEncryptedOnAnotherDevice =>
+      'Зашифровано на другом устройстве';
+
+  @override
   String get networkNewChannel => 'Новый канал';
 
   @override

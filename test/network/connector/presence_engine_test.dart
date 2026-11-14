@@ -295,6 +295,115 @@ void main() {
     },
   );
 
+  test('session metadata is additive and legacy id-only rows still decode', () {
+    final engine2 = PresenceEngine(
+      clock: clock,
+      timers: timers,
+      exposedSessions: () => {'sess-rich', 'sess-legacy'},
+      liveLeases: () => {'sess-rich'},
+      idFactory: () => 'metadata-id',
+    );
+    engine2.sessionMetadata = () => const {
+      'sess-rich': ConnectorSessionMetadata(
+        title: 'Release plan',
+        path: '/work/flutter_agent',
+        lastActivity: null,
+      ),
+    };
+    final rich = PresenceFrame(
+      msgId: 'metadata-id',
+      ts: '2026-11-12T10:00:00.000Z',
+      machine: MachinePresence.online,
+      sessions: const {
+        'sess-rich': ConnectorSessionPresence.live,
+        'sess-legacy': ConnectorSessionPresence.wakeOnDm,
+      },
+      sessionMetadata: const {
+        'sess-rich': ConnectorSessionMetadata(
+          title: 'Release plan',
+          path: '/work/flutter_agent',
+          lastActivity: null,
+        ),
+      },
+    );
+    final envelope = rich.toEnvelope();
+    final rows = envelope.payload['sessions'] as List;
+    expect(rows[0], {
+      'id': 'sess-rich',
+      'state': 'live',
+      'title': 'Release plan',
+      'path': '/work/flutter_agent',
+    });
+    expect(rows[1], {'id': 'sess-legacy', 'state': 'wake_on_dm'});
+    final decoded = PresenceFrame.fromEnvelope(envelope)!;
+    expect(decoded.sessionMetadata['sess-rich']?.title, 'Release plan');
+    expect(decoded.sessionMetadata['sess-rich']?.path, '/work/flutter_agent');
+    expect(decoded.sessionMetadata.containsKey('sess-legacy'), isFalse);
+    expect(decoded.sessions['sess-legacy'], ConnectorSessionPresence.wakeOnDm);
+    expect(
+      ConnectorSessionPresence.tryParse('wake-on-DM'),
+      ConnectorSessionPresence.wakeOnDm,
+    );
+    engine2.dispose();
+  });
+
+  test('ConnectorSessionMetadata equality and hashCode cover every field', () {
+    final activity = DateTime.utc(2026, 11, 14, 12);
+    const base = ConnectorSessionMetadata(
+      title: 'Release plan',
+      path: '/work/flutter_agent',
+    );
+    final full = ConnectorSessionMetadata(
+      title: 'Release plan',
+      path: '/work/flutter_agent',
+      lastActivity: activity,
+    );
+    expect(base == base, isTrue);
+    expect(base == full, isFalse); // lastActivity differs
+    expect(
+      base,
+      const ConnectorSessionMetadata(
+        title: 'Release plan',
+        path: '/work/flutter_agent',
+      ),
+    );
+    expect(base.hashCode, base.hashCode);
+    expect(
+      base ==
+          const ConnectorSessionMetadata(
+            title: 'Other title',
+            path: '/work/flutter_agent',
+          ),
+      isFalse,
+    );
+    expect(
+      base ==
+          const ConnectorSessionMetadata(
+            title: 'Release plan',
+            path: '/other/path',
+          ),
+      isFalse,
+    );
+    expect(base == Object(), isFalse);
+    expect(full == base, isFalse);
+    expect(
+      full,
+      ConnectorSessionMetadata(
+        title: 'Release plan',
+        path: '/work/flutter_agent',
+        lastActivity: activity,
+      ),
+    );
+    expect(
+      full.hashCode,
+      ConnectorSessionMetadata(
+        title: 'Release plan',
+        path: '/work/flutter_agent',
+        lastActivity: activity,
+      ).hashCode,
+    );
+  });
+
   test('toString hides payload details (diagnostics hygiene)', () async {
     engine.start();
     await pump();

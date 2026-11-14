@@ -174,6 +174,30 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('DM composer uses the peer label, never the raw channel id', (
+      tester,
+    ) async {
+      const channelId = 'dm:user:u-1:fa@dev-1';
+      final rig = await pumpChat(
+        tester,
+        channelId: channelId,
+        channelName: channelId,
+      );
+
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message dev-1 · fa',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Message dm:user:'), findsNothing);
+      expect(find.textContaining('Encrypted on another device'), findsWidgets);
+      expect(find.textContaining('unable to decrypt'), findsNothing);
+      await rig.session.close();
+    });
+
     testWidgets('a missing private key offers import and redecrypts history', (
       tester,
     ) async {

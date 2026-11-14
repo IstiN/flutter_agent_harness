@@ -2665,6 +2665,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get networkDmEncryptedOnAnotherDevice => 'Encrypted on another device';
+
+  @override
   String get networkNewChannel => 'New channel';
 
   @override

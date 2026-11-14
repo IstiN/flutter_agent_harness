@@ -8,6 +8,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/messenger_list_row_style.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FahColors, FaDesignTokens, FaIcon, FaSemanticIcon;
 // The presence payload model is pure Dart in the connector core.
@@ -334,13 +335,11 @@ class DeviceRosterStatusLine extends StatelessWidget {
   }
 }
 
-/// One session child row — the Networks channel-card shape (owner pass):
-/// a rounded-12 card with the white glyph tile (chat icon + presence dot
-/// badge), the bold session title, a muted subtitle (the local chat's
-/// last-activity timestamp, or the connector presence label for remote
-/// rows) and the trailing chevron when the row opens. The selected state
-/// is the accent fill — the messenger list row's selected treatment.
-/// [onTap] null keeps the card read-only (remote exposed sessions).
+/// One session row in the Local panel's anatomy: a bold title with a
+/// right-aligned relative timestamp, a muted PATH subtitle (never a message
+/// preview or presence word), a hairline separator, and a chevron only when
+/// the row opens. Live/busy activity may show the small subtitle dot; closed
+/// and unknown sessions have no misleading "Offline" label.
 class DeviceSessionCard extends StatelessWidget {
   const DeviceSessionCard({
     super.key,
@@ -348,20 +347,24 @@ class DeviceSessionCard extends StatelessWidget {
     required this.dotColor,
     required this.title,
     required this.subtitle,
+    this.timestamp = '',
     this.selected = false,
+    this.hairline = false,
+    this.showPresenceDot = false,
     this.onTap,
   });
 
-  /// The presence dot badge's key (the `sessionDot:<id>` contract).
+  /// The activity dot key (the `sessionDot:<id>` contract when visible).
   final Key dotKey;
   final Color dotColor;
   final String title;
   final String subtitle;
-
-  /// The currently open session's card (accent fill).
+  final String timestamp;
   final bool selected;
+  final bool hairline;
+  final bool showPresenceDot;
 
-  /// The shell's open flow; null renders the read-only card (no chevron).
+  /// The shell's open flow; null renders the read-only row (no chevron).
   final VoidCallback? onTap;
 
   @override
@@ -373,113 +376,108 @@ class DeviceSessionCard extends StatelessWidget {
         ? tokens.accentInk.withValues(alpha: .82)
         : colors.dim;
     return Material(
-      color: selected ? tokens.accent : colors.panelAlt,
+      color: messengerListRowColor(selected: selected, accent: tokens.accent),
       shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
+        child: SizedBox(
+          height: 64,
+          child: Column(
             children: [
-              _SessionGlyphTile(
-                dotKey: dotKey,
-                dotColor: dotColor,
-                accent: tokens.accent,
-              ),
-              const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: ink,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        height: 1.2,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: ink,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ),
+                                if (timestamp.isNotEmpty) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    timestamp,
+                                    style: TextStyle(
+                                      color: subdued,
+                                      fontSize: 10.5,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            if (subtitle.isNotEmpty || showPresenceDot) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: subdued,
+                                        fontSize: 12,
+                                        height: 1.25,
+                                      ),
+                                    ),
+                                  ),
+                                  if (showPresenceDot)
+                                    Container(
+                                      key: dotKey,
+                                      margin: const EdgeInsets.only(left: 6),
+                                      width: 10,
+                                      height: 10,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: dotColor,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
-                    ),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: subdued, fontSize: 11.5),
-                      ),
+                      if (onTap != null)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: FaIcon(
+                            FaSemanticIcon.chevronRight,
+                            size: 16,
+                            color: subdued,
+                          ),
+                        ),
                     ],
-                  ],
+                  ),
                 ),
               ),
-              if (onTap != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: FaIcon(
-                    FaSemanticIcon.chevronRight,
-                    size: 16,
-                    color: subdued,
-                  ),
+              if (hairline)
+                Container(
+                  height: .5,
+                  margin: const EdgeInsets.only(left: 10, right: 8),
+                  color: colors.border.withValues(alpha: .45),
                 ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The channel-card's icon tile: the Ø30 white rounded square with the
-/// vector chat glyph in the accent ink, plus the §5 presence dot as the
-/// badge (the device avatar's badge convention). The theme-resolved
-/// [FaSemanticIcon] keeps the no-`Icons.*` ratchet.
-class _SessionGlyphTile extends StatelessWidget {
-  const _SessionGlyphTile({
-    required this.dotKey,
-    required this.dotColor,
-    required this.accent,
-  });
-
-  final Key dotKey;
-  final Color dotColor;
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 30,
-      height: 30,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: FaIcon(FaSemanticIcon.chat, size: 16, color: accent),
-          ),
-          Positioned(
-            bottom: -1,
-            right: -1,
-            child: Container(
-              key: dotKey,
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(
-                color: dotColor,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

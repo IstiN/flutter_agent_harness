@@ -106,7 +106,12 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     _chat = null;
     _chatFor = null;
     if (wanted != null) {
-      _chat = ChannelChatService(session: wanted.$1, channelId: wanted.$2);
+      _chat = ChannelChatService(
+        session: wanted.$1,
+        channelId: wanted.$2,
+        dmUndecryptablePlaceholder: () =>
+            context.l10n.networkDmEncryptedOnAnotherDevice,
+      );
       _chatFor = wanted;
       unawaited(wanted.$1.openChannel(wanted.$2));
     }
@@ -114,7 +119,19 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
-    return channelDisplayLabel(channelId, _channel(session, channelId)?.name);
+    final name = _channel(session, channelId)?.name;
+    if (isDmChannel(channelId)) {
+      // Server/inbox restores may carry the raw virtual id as `name`.
+      // Never leak that routing identifier into the title or composer.
+      final usableName = name?.trim();
+      if (usableName != null &&
+          usableName.isNotEmpty &&
+          usableName != channelId) {
+        return usableName;
+      }
+      return dmChannelPeerLabel(channelId);
+    }
+    return channelDisplayLabel(channelId, name);
   }
 
   Channel? _channel(NetworkSession session, String channelId) {
