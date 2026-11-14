@@ -9,8 +9,8 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/ledger.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/ledger.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:test/test.dart';
 
@@ -186,12 +186,13 @@ void main() {
       String text, {
       StopReason reason = StopReason.stop,
       List<ContentBlock> content = const [],
+      Usage usage = Usage.zero,
     }) => AssistantMessage(
       content: content.isNotEmpty ? content : [TextContent(text: text)],
       api: 'anthropic-messages',
       provider: 'p',
       model: 'm1',
-      usage: Usage.zero,
+      usage: usage,
       stopReason: reason,
       timestamp: DateTime.utc(2026),
     );
@@ -215,7 +216,8 @@ void main() {
       maxTokens: 4096,
     );
 
-    test('joins text blocks; routes with fresh session, no cache', () async {
+    test('joins text blocks; rides the run-scoped cache-affine routing '
+        '(gh-2101)', () async {
       ({String? sessionId, String? cacheRetention})? routing;
       AssistantMessageEventStream fn(
         Model m,
@@ -232,8 +234,104 @@ void main() {
 
       final judge = streamFunctionHideJudge(fn, model, system: 'judge sys');
       expect(await judge('ledger text'), '["2"]');
-      expect(routing!.sessionId, isNotNull, reason: 'fresh routing session');
-      expect(routing!.cacheRetention, 'none');
+      expect(routing!.sessionId, isNotNull, reason: 'run-scoped routing id');
+      expect(routing!.cacheRetention, CompactionCachePolicy.judgeRetention);
+      // The override does not leak past the call.
+      expect(StreamCacheRouting.current, isNull);
+    });
+
+    test('judge and digest adapters share the injected run policy — one '
+        'cache bucket per compaction run', () async {
+      ({String? sessionId, String? cacheRetention})? judgeRouting;
+      final judge = streamFunctionHideJudge(
+        (m, c, {cancelToken}) {
+          judgeRouting = StreamCacheRouting.current;
+          return streamOf([
+            StartEvent(partial: msg('')),
+            DoneEvent(reason: StopReason.stop, message: msg('["1"]')),
+          ]);
+        },
+        model,
+        system: 'judge',
+        cachePolicy: CompactionCachePolicy.affine(sessionId: 'run-7'),
+      );
+      await judge('ledger');
+      expect(judgeRouting!.sessionId, 'run-7',
+          reason: 'one cache bucket per compaction run');
+      expect(judgeRouting!.cacheRetention,
+          CompactionCachePolicy.judgeRetention);
+    });
+
+    test('two calls of one adapter share the routing id (pass ladder)', () async {
+      final routings = <({String? sessionId, String? cacheRetention})?>[];
+      AssistantMessageEventStream fn(
+        Model m,
+        Context c, {
+        CancelToken? cancelToken,
+      }) {
+        routings.add(StreamCacheRouting.current);
+        return streamOf([
+          StartEvent(partial: msg('')),
+          DoneEvent(reason: StopReason.stop, message: msg('[]')),
+        ]);
+      }
+
+      final judge = streamFunctionHideJudge(fn, model, system: 'judge sys');
+      await judge('ledger pass 1');
+      await judge('ledger pass 2');
+      expect(routings, hasLength(2));
+      expect(routings[0]!.sessionId, routings[1]!.sessionId,
+          reason: 'one cache bucket for the run');
+      expect(routings[0]!.cacheRetention, isNot('none'));
+    });
+
+    test('onUsage reports the judged call usage; failures report none',
+        () async {
+      final usage = <Usage>[];
+      AssistantMessageEventStream fn(
+        Model m,
+        Context c, {
+        CancelToken? cancelToken,
+      }) => streamOf([
+        StartEvent(partial: msg('')),
+        DoneEvent(
+          reason: StopReason.stop,
+          message: msg(
+            '[1]',
+            usage: const Usage(
+              input: 42,
+              output: 3,
+              cacheRead: 900,
+              cacheWrite: 0,
+              totalTokens: 945,
+              cost: UsageCost(total: 0.02),
+            ),
+          ),
+        ),
+      ]);
+
+      final judge = streamFunctionHideJudge(
+        fn,
+        model,
+        system: 's',
+        onUsage: usage.add,
+      );
+      expect(await judge('ledger'), '[1]');
+      expect(usage.single.input, 42);
+      expect(usage.single.cacheRead, 900);
+
+      final empty = streamFunctionHideJudge(
+        (m, c, {cancelToken}) => streamOf([
+          StartEvent(partial: msg('')),
+          DoneEvent(reason: StopReason.stop, message: msg('   ')),
+        ]),
+        model,
+        system: 's',
+        onUsage: usage.add,
+      );
+      expect(await empty('l'), isNull, reason: 'F1: empty is a failed call');
+      expect(usage, hasLength(1), reason: 'a failed judge call reports no '
+          'usage — its cost is not attributable to a pass');
     });
 
     test('onDelta sees text and thinking deltas, skips other events', () async {
