@@ -166,20 +166,24 @@ HideJudgeFn streamFunctionHideJudge(
       final response = await stream.result;
       // Usage is reported for every answered call — the metrics fold what
       // was actually spent, even when the answer itself is unusable.
-      if (onUsage != null) {
-        final usage = response.usage;
-        if (usage.totalTokens != 0 ||
-            usage.input != 0 ||
-            usage.cacheRead != 0 ||
-            usage.cacheWrite != 0) {
-          onUsage(usage);
-        }
+      if (onUsage != null && _hasMeteredUsage(response.usage)) {
+        onUsage(response.usage);
       }
       return _hideJudgeResponseText(response);
     } catch (_) {
       return null;
     }
   };
+}
+
+/// gh-2101: whether the provider reported metered usage worth folding.
+/// An all-zero usage reports nothing — the pass metrics render absent,
+/// never a fake zero (a 0-token answer carries no cost/cache signal).
+bool _hasMeteredUsage(Usage usage) {
+  return usage.totalTokens != 0 ||
+      usage.input != 0 ||
+      usage.cacheRead != 0 ||
+      usage.cacheWrite != 0;
 }
 
 /// Judge response to hide-list text: `null` on aborted/errored calls or
