@@ -300,18 +300,24 @@ void main() {
         'customType': 'obligations_ledger',
         'data': {'blob': 'x' * (80 << 10)},
       });
-      final parsed = parseSessionEntryLinesSync(
+      final result = parseSessionEntryLinesSync(
         SessionParseBatch(
           filePath: sessionPath,
           firstLineNumber: 5,
           lines: [giant],
           shallowGiantCustoms: true,
         ),
-      ).records.single;
+      );
+      final parsed = result.records.single;
       expect(parsed, isA<CustomRecord>());
       expect(parsed!.timestampDegraded, isTrue);
       expect(reports, hasLength(1));
       expect(reports.single, contains('5'));
+      // The batch's own finding carries the REAL raw value now (the
+      // top-level gate extracts it from the line) — before the gate
+      // fired, every isolate-path finding degraded to an empty excerpt.
+      expect(result.quarantined.single.rawTimestamp, incidentTimestamp);
+      expect(result.quarantined.single.lineNumber, 5);
     });
 
     test('second tier UT-8: ProviderQuota.fromJson with a poison resetsAt/'
