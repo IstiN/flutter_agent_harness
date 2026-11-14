@@ -10,28 +10,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-2015": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T11:44:31Z",
-      "prompt": 88791,
-      "completion": 16717,
-      "total": 105508,
-      "cacheRead": 2762048,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-2017": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T11:49:17Z",
-      "prompt": 139843,
-      "completion": 24587,
-      "total": 164430,
-      "cacheRead": 2667200,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-2019": [
     {
       "leg": "review",
@@ -3569,6 +3547,15 @@
       "completion": 43328,
       "total": 173491,
       "cacheRead": 6256832,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-14T11:50:17Z",
+      "prompt": 2068469,
+      "completion": 86688,
+      "total": 2155157,
+      "cacheRead": 32834176,
       "model": "glm-5.3-flash"
     }
   ],
