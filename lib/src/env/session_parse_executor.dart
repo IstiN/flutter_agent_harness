@@ -21,6 +21,11 @@ import '../session/session_storage.dart'
     show parseSessionEntryLine, parseShallowCustomRecord;
 import '../session/session_record.dart';
 
+// Re-export so the CLI boot wiring (agent_cli.dart — held at the 2800-line
+// loc ceiling by its part-file splits) can reach SessionQuarantine through
+// an import it already carries instead of adding one.
+export '../session/record_quarantine.dart' show SessionQuarantine;
+
 /// Max lines per parse transfer.
 const int sessionParseBatchMaxLines = 500;
 

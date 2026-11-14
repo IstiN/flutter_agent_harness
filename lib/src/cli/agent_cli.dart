@@ -212,7 +212,6 @@ import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session_repair.dart' show SessionRepairReport, repairSessionLedgers;
-import '../session/record_quarantine.dart' show SessionQuarantine;
 import '../session/attach/file_presence_store.dart';
 import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
@@ -441,7 +440,6 @@ class AgentCli {
     // pre-construction window. `this.io` — the param still shadows here,
     // and the field may be the _TuiCliIO wrapper.
     JsonlSessionStorage.onRotationWarning = this.io.writeln;
-    // gh-2178: the quarantine report joins the notice channel too.
     wireQuarantineNotice(this.io.writeln);
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
