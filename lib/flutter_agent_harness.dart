@@ -152,6 +152,7 @@ export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/cache_policy.dart';
 export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
+export 'src/compaction/handoff_digest.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/compaction/bench_trigger.dart';
