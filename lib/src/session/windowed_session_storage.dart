@@ -1245,8 +1245,17 @@ final class WindowedSessionStorage
     if (leafId == null) return [];
     final path = <SessionRecord>[];
     var current = _byId[leafId] ?? _appendedBelow[leafId];
+    var walked = 0;
     while (current != null) {
-      path.add(current);
+      // gh-2178 quarantine: a degraded record is treated as ABSENT on
+      // the branch (excluded from context and branch walks) while its
+      // children stay usable — the walk continues through its parent.
+      if (!current.timestampDegraded) path.add(current);
+      // The window carries at most the resident set; the walked-count
+      // guard terminates an adversarial parentId cycle (see
+      // JsonlSessionStorage.getPathToRoot — degraded records shrink the
+      // path, so the count must ride the walk itself).
+      if (++walked > _entries.length) break;
       final parentId = current.parentId;
       if (parentId == null) break;
       final parent = _byId[parentId] ?? _appendedBelow[parentId];

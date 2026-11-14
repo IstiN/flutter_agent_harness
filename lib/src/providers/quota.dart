@@ -16,6 +16,8 @@ library;
 
 import 'package:http/http.dart' as http;
 
+import '../session/record_quarantine.dart' show parseRecordTimestamp;
+
 /// Unit a provider's allowance is measured in.
 enum QuotaUnit {
   currencyUsd('currencyUsd'),
@@ -51,6 +53,11 @@ class ProviderQuota {
   final bool isUnmetered;
   final DateTime updatedAt;
 
+  /// gh-2178 second tier: whether either persisted timestamp (gateway
+  /// JSON is network-controlled input) failed the strict decode and
+  /// landed on the epoch placeholder instead of throwing.
+  final bool timestampsDegraded;
+
   ProviderQuota({
     this.used,
     this.limit,
@@ -58,6 +65,7 @@ class ProviderQuota {
     this.resetsAt,
     this.isUnmetered = false,
     DateTime? updatedAt,
+    this.timestampsDegraded = false,
   }) : updatedAt = updatedAt ?? DateTime.now().toUtc();
 
   /// DIAL-style providers with no billing surface at all: reported
@@ -89,18 +97,27 @@ class ProviderQuota {
     'updatedAt': updatedAt.toUtc().toIso8601String(),
   };
 
-  factory ProviderQuota.fromJson(Map<String, Object?> json) => ProviderQuota(
-    used: (json['used'] as num?)?.toDouble(),
-    limit: (json['limit'] as num?)?.toDouble(),
-    unit: QuotaUnit.fromJson(json['unit']),
-    resetsAt: json['resetsAt'] is String
-        ? DateTime.parse(json['resetsAt'] as String)
-        : null,
-    isUnmetered: json['isUnmetered'] == true,
-    updatedAt: json['updatedAt'] is String
-        ? DateTime.parse(json['updatedAt'] as String)
-        : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-  );
+  factory ProviderQuota.fromJson(Map<String, Object?> json) {
+    // gh-2178 second tier: gateway JSON is network-controlled input — a
+    // poisoned timestamp degrades to the placeholder instead of throwing
+    // (same tolerant protocol as the session file).
+    final resets = json['resetsAt'] is String
+        ? parseRecordTimestamp(json['resetsAt'] as String)
+        : null;
+    final updated = json['updatedAt'] is String
+        ? parseRecordTimestamp(json['updatedAt'] as String)
+        : null;
+    return ProviderQuota(
+      used: (json['used'] as num?)?.toDouble(),
+      limit: (json['limit'] as num?)?.toDouble(),
+      unit: QuotaUnit.fromJson(json['unit']),
+      resetsAt: resets?.value,
+      isUnmetered: json['isUnmetered'] == true,
+      updatedAt: updated?.value ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      timestampsDegraded:
+          (resets?.degraded ?? false) || (updated?.degraded ?? false),
+    );
+  }
 
   @override
   String toString() =>
