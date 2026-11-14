@@ -10,17 +10,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-2020": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T12:31:34Z",
-      "prompt": 103345,
-      "completion": 34929,
-      "total": 138274,
-      "cacheRead": 2658752,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-2022": [
     {
       "leg": "review",
@@ -3603,6 +3592,15 @@
       "completion": 4507,
       "total": 16519,
       "cacheRead": 2014784,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T12:38:14Z",
+      "prompt": 116026,
+      "completion": 4494,
+      "total": 120520,
+      "cacheRead": 2039296,
       "model": "glm-5.3-flash"
     }
   ]
