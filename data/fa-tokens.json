@@ -1,15 +1,4 @@
 {
-  "pr-2016": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T11:04:44Z",
-      "prompt": 131888,
-      "completion": 21219,
-      "total": 153107,
-      "cacheRead": 1375168,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-2021": [
     {
       "leg": "review",
@@ -3473,6 +3462,15 @@
       "completion": 61545,
       "total": 627499,
       "cacheRead": 26176704,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-14T11:07:53Z",
+      "prompt": 195067,
+      "completion": 6514,
+      "total": 201581,
+      "cacheRead": 3796544,
       "model": "glm-5.3-flash"
     }
   ],
