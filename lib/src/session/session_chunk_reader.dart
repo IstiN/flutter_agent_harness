@@ -1149,6 +1149,9 @@ final class SessionChunkReader {
 
   /// Parses batch [b] of [plan] on first touch; later touches splice the
   /// memoized result (the executor path stays one transfer per batch).
+  /// gh-2178: the batch's quarantine findings replay onto the process
+  /// sink here (an isolate worker cannot fire it; dedupe keeps inline
+  /// replays a no-op).
   Future<SessionParseResult> _parseMissBatch(_MissBatchPlan plan, int b) async {
     final existing = plan.results[b];
     if (existing != null) return existing;
@@ -1156,6 +1159,9 @@ final class SessionChunkReader {
     final result = executor == null
         ? parseSessionEntryLinesSync(plan.batches[b])
         : await executor.parse(plan.batches[b]);
+    for (final finding in result.quarantined) {
+      SessionQuarantine.reportRecord(finding);
+    }
     return plan.results[b] = result;
   }
 

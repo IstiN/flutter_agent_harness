@@ -11,6 +11,7 @@ library;
 
 import '../context.dart';
 import '../types.dart';
+import 'record_quarantine.dart';
 
 /// The session header — always the first line of a JSONL session file.
 ///
@@ -23,6 +24,7 @@ final class SessionHeader {
     required this.cwd,
     this.parentSessionPath,
     this.metadata,
+    this.timestampDegraded = false,
   });
 
   /// On-disk format version. Only version 3 is supported.
@@ -42,7 +44,16 @@ final class SessionHeader {
   final String id;
 
   /// When the session was created.
+  ///
+  /// A header whose persisted timestamp failed the strict decode
+  /// degrades to the epoch placeholder and carries
+  /// [timestampDegraded] — the session still opens (gh-2178 E1: the
+  /// file's line 1 can be poison too).
   final DateTime timestamp;
+
+  /// Whether [timestamp] is the decode placeholder for a persisted value
+  /// that failed the strict parse (gh-2178).
+  final bool timestampDegraded;
 
   /// Working directory the session belongs to.
   final String cwd;
@@ -95,12 +106,16 @@ final class SessionHeader {
     if (metadata != null && metadata is! Map<String, dynamic>) {
       throw invalid('session header metadata must be an object');
     }
+    final decodedTimestamp = parseRecordTimestamp(
+      json['timestamp'] as String,
+    );
     return SessionHeader(
       id: json['id'] as String,
-      timestamp: DateTime.parse(json['timestamp'] as String),
+      timestamp: decodedTimestamp.value,
       cwd: json['cwd'] as String,
       parentSessionPath: parentSession as String?,
       metadata: metadata as Map<String, dynamic>?,
+      timestampDegraded: decodedTimestamp.degraded,
     );
   }
 }
@@ -117,6 +132,7 @@ sealed class SessionRecord {
     required this.id,
     required this.parentId,
     required this.timestamp,
+    this.timestampDegraded = false,
   });
 
   /// The type discriminator written to JSON (pi's `type` field).
@@ -129,7 +145,20 @@ sealed class SessionRecord {
   final String? parentId;
 
   /// When the record was created.
+  ///
+  /// A record whose persisted timestamp failed the strict decode (the
+  /// gh-2178 incident: `"2026-11-13T14:35:18.fZ"` from a hand-appended
+  /// foreign record) degrades to the epoch placeholder instead of
+  /// throwing the FormatException that bricked every turn.
   final DateTime timestamp;
+
+  /// Whether [timestamp] is the decode placeholder for a persisted value
+  /// that failed the strict parse (gh-2178). A degraded record is
+  /// QUARANTINED: excluded from context building and branch walks
+  /// (treated as absent — its children stay usable), while the file
+  /// keeps its bytes byte-verbatim. The flag is decode-time metadata
+  /// only: [toJson] never emits it, so the file format is unchanged.
+  final bool timestampDegraded;
 
   /// Serializes to a JSON map with the `type` discriminator (pi shape).
   Map<String, dynamic> toJson() => {
@@ -162,12 +191,18 @@ sealed class SessionRecord {
     if (timestampRaw is! String || timestampRaw.isEmpty) {
       throw invalid('missing timestamp');
     }
-    final timestamp = DateTime.parse(timestampRaw);
+    // gh-2178: the ONLY timestamp decode of persisted record bytes —
+    // strict-first, epoch placeholder + degraded on failure, never
+    // throws. Degraded records quarantine (see [timestampDegraded]).
+    final decodedTimestamp = parseRecordTimestamp(timestampRaw);
+    final timestamp = decodedTimestamp.value;
+    final degraded = decodedTimestamp.degraded;
     return switch (type) {
       'message' => MessageRecord(
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         message: messageFromJson(
           (json['message'] as Map?)?.cast<String, dynamic>() ??
               const <String, dynamic>{},
@@ -177,12 +212,14 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         thinkingLevel: json['thinkingLevel'] as String? ?? 'off',
       ),
       'model_change' => ModelChangeRecord(
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         provider: json['provider'] as String? ?? '',
         modelId: json['modelId'] as String? ?? '',
         baseUrl: json['baseUrl'] as String?,
@@ -192,6 +229,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         activeToolNames: [
           for (final name in (json['activeToolNames'] as List?) ?? const [])
             name as String,
@@ -201,6 +239,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         summary: json['summary'] as String? ?? '',
         firstKeptEntryId: json['firstKeptEntryId'] as String? ?? '',
         tokensBefore: json['tokensBefore'] as int? ?? 0,
@@ -211,6 +250,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         fromId: json['fromId'] as String? ?? '',
         summary: json['summary'] as String? ?? '',
         details: json['details'],
@@ -220,6 +260,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         customType: json['customType'] as String? ?? '',
         data: json['data'],
       ),
@@ -227,6 +268,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         messageCount: json['messageCount'] as int? ?? 0,
         goal: json['goal'] as String?,
       ),
@@ -234,6 +276,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         customType: json['customType'] as String? ?? '',
         content: _parseCustomMessageContent(json['content']),
         display: json['display'] as bool? ?? false,
@@ -243,6 +286,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         targetId: json['targetId'] as String? ?? '',
         label: json['label'] as String?,
       ),
@@ -250,12 +294,14 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         name: json['name'] as String?,
       ),
       'hidden_range' => HiddenRangeRecord(
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         recordIds: [
           for (final recordId in (json['recordIds'] as List?) ?? const [])
             recordId as String,
@@ -265,6 +311,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         firstRecordId: json['firstRecordId'] as String? ?? '',
         lastRecordId: json['lastRecordId'] as String? ?? '',
         text: json['text'] as String? ?? '',
@@ -282,6 +329,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         recordIds: [
           for (final recordId in (json['recordIds'] as List?) ?? const [])
             recordId as String,
@@ -292,6 +340,7 @@ sealed class SessionRecord {
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
+        timestampDegraded: degraded,
         targetId: json['targetId'] as String?,
       ),
       _ => throw invalid('unknown entry type: $type'),
@@ -316,6 +365,7 @@ final class MessageRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.message,
   });
 
@@ -338,6 +388,7 @@ final class ThinkingLevelChangeRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.thinkingLevel,
   });
 
@@ -364,6 +415,7 @@ final class ModelChangeRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.provider,
     required this.modelId,
     this.baseUrl,
@@ -405,6 +457,7 @@ final class ActiveToolsChangeRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.activeToolNames,
   });
 
@@ -430,6 +483,7 @@ final class CompactionRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.summary,
     required this.firstKeptEntryId,
     required this.tokensBefore,
@@ -481,6 +535,7 @@ final class HiddenRangeRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.recordIds,
   });
 
@@ -504,6 +559,7 @@ final class CompactCheckpointRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.firstRecordId,
     required this.lastRecordId,
     required this.text,
@@ -559,6 +615,7 @@ final class SegmentPinRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.recordIds,
     required this.pinned,
   });
@@ -589,6 +646,7 @@ final class BranchSummaryRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.fromId,
     required this.summary,
     this.details,
@@ -635,6 +693,7 @@ final class CheckpointRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.messageCount,
     this.goal,
   });
@@ -665,6 +724,7 @@ final class CustomRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.customType,
     this.data,
   });
@@ -695,6 +755,7 @@ final class CustomMessageRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.customType,
     required this.content,
     required this.display,
@@ -738,6 +799,7 @@ final class LabelRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     required this.targetId,
     this.label,
   });
@@ -768,6 +830,7 @@ final class SessionInfoRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     this.name,
   });
 
@@ -792,6 +855,7 @@ final class LeafRecord extends SessionRecord {
     required super.id,
     required super.parentId,
     required super.timestamp,
+    super.timestampDegraded,
     this.targetId,
   });
 
