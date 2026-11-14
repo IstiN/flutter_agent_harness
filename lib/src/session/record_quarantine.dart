@@ -202,35 +202,53 @@ String? topLevelTimestampValue(String line) {
 /// review digest: the original check compared against depth 0, which no
 /// object-key colon can ever satisfy, so the gate never fired and every
 /// line paid the full decode).
-/// A bounded char scan tracking string/escape/depth state — exact for
+/// A bounded char scan tracking string/depth state — exact for
 /// the writer-canonical field order and for any object whose top-level
 /// timestamp key sits after nested payload fields.
 int _topLevelTimestampColon(String line) {
   var depth = 0;
-  var inString = false;
-  var escaped = false;
-  for (var i = 0; i < line.length; i++) {
-    final char = line[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char == r'\') {
-        escaped = true;
-      } else if (char == '"') {
-        inString = false;
-      }
-      continue;
-    }
-    switch (char) {
+  var i = 0;
+  while (i < line.length) {
+    switch (line[i]) {
       case '"':
-        inString = true;
+        // Strings never affect depth: consume each one wholesale (and
+        // its escapes with it). A torn string means nothing after it
+        // can be a top-level key — stop scanning.
+        final end = _endOfString(line, i);
+        if (end < 0) return -1;
+        i = end;
       case '{' || '[':
         depth++;
+        i++;
       case '}' || ']':
         depth--;
+        i++;
       case ':':
         if (depth == 1 && _isTimestampKeyBefore(line, i)) return i;
+        i++;
+      default:
+        i++;
     }
+  }
+  return -1;
+}
+
+/// The index just past the closing quote of the JSON string that opens
+/// at [openQuote], escapes consumed with the characters they shield. -1
+/// when the string is torn (EOF before the closing quote) — the caller
+/// stops scanning, matching the per-char state machine it replaced (an
+/// unterminated string keeps `inString` set to EOF, so no later char
+/// can open or close a container).
+int _endOfString(String line, int openQuote) {
+  var i = openQuote + 1;
+  while (i < line.length) {
+    final char = line[i];
+    if (char == r'\') {
+      i += 2;
+      continue;
+    }
+    if (char == '"') return i + 1;
+    i++;
   }
   return -1;
 }

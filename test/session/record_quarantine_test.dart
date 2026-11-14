@@ -846,6 +846,14 @@ void main() {
         topLevelTimestampValue('{"type":"custom","id":"x","timestamp":"a\\'),
         isNull,
       );
+      // A string torn BEFORE the timestamp key stops the whole scan —
+      // nothing after an unterminated string can be a top-level key.
+      expect(
+        topLevelTimestampValue(
+          '{"note":"torn,"timestamp":"2026-11-13T14:35:18.198Z"}',
+        ),
+        isNull,
+      );
     });
   });
 
