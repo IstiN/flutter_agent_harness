@@ -2,31 +2,11 @@
   "pr-2021": [
     {
       "leg": "review",
-      "at": "2026-10-31T11:23:08Z",
-      "prompt": 336488,
-      "completion": 35719,
-      "total": 372207,
-      "cacheRead": 6258112,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-31T12:57:39Z",
       "prompt": 129113,
       "completion": 24423,
       "total": 153536,
       "cacheRead": 1921024,
-      "model": "glm-5.3-flash"
-    }
-  ],
-  "pr-2023": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T11:26:02Z",
-      "prompt": 117381,
-      "completion": 32422,
-      "total": 149803,
-      "cacheRead": 5467840,
       "model": "glm-5.3-flash"
     }
   ],
@@ -3500,6 +3480,15 @@
       "completion": 18757,
       "total": 200984,
       "cacheRead": 5406464,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-14T11:40:45Z",
+      "prompt": 353849,
+      "completion": 5532,
+      "total": 359381,
+      "cacheRead": 2074496,
       "model": "glm-5.3-flash"
     }
   ],
