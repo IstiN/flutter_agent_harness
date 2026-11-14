@@ -10,17 +10,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-2019": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T12:12:33Z",
-      "prompt": 317835,
-      "completion": 39110,
-      "total": 356945,
-      "cacheRead": 7824832,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "pr-2020": [
     {
       "leg": "review",
@@ -3576,6 +3565,17 @@
       "completion": 21488,
       "total": 105844,
       "cacheRead": 2076480,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2182": [
+    {
+      "leg": "dev",
+      "at": "2026-11-14T12:13:25Z",
+      "prompt": 628174,
+      "completion": 49838,
+      "total": 678012,
+      "cacheRead": 18269248,
       "model": "glm-5.3-flash"
     }
   ]
