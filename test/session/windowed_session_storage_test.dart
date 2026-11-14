@@ -370,42 +370,35 @@ void main() {
       expect(idsOf(await windowed.getEntries()), expected);
     });
 
-    test(
-      'refuses past the whole-ledger size bound with the gh-1073 tooLarge '
-      'SessionException (repair hint) BEFORE the scan starts — the '
-      'honest-degradation contract for truly-giant ledgers',
-      () async {
-        await seed(120);
-        final windowed = await WindowedSessionStorage.open(
-          fs,
-          path,
-          chunkRecords: 30,
-        );
-        expect(windowed.hasOlder, isTrue);
+    test('refuses past the whole-ledger size bound with the gh-1073 tooLarge '
+        'SessionException (repair hint) BEFORE the scan starts — the '
+        'honest-degradation contract for truly-giant ledgers', () async {
+      await seed(120);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 30,
+      );
+      expect(windowed.hasOlder, isTrue);
 
-        // A bound below the file size: the pre-check must fire before
-        // any strip scan, with the same code and remediation hint the
-        // full-open backstop throws.
-        expect(
-          () => windowed.loadAllOlder(maxWholeLedgerBytes: 1),
-          throwsA(
-            isA<SessionException>()
-                .having(
-                  (e) => e.code,
-                  'code',
-                  SessionErrorCode.tooLarge,
-                )
-                .having(
-                  (e) => e.message,
-                  'message',
-                  allOf(contains('fa session repair'), contains('gh-1073')),
-                ),
-          ),
-        );
-        // Nothing was paged in: the window still reports more above.
-        expect(windowed.hasOlder, isTrue);
-      },
-    );
+      // A bound below the file size: the pre-check must fire before
+      // any strip scan, with the same code and remediation hint the
+      // full-open backstop throws.
+      expect(
+        () => windowed.loadAllOlder(maxWholeLedgerBytes: 1),
+        throwsA(
+          isA<SessionException>()
+              .having((e) => e.code, 'code', SessionErrorCode.tooLarge)
+              .having(
+                (e) => e.message,
+                'message',
+                allOf(contains('fa session repair'), contains('gh-1073')),
+              ),
+        ),
+      );
+      // Nothing was paged in: the window still reports more above.
+      expect(windowed.hasOlder, isTrue);
+    });
   });
 
   group('WindowedSessionStorage byte cap', () {
@@ -560,6 +553,50 @@ void main() {
         expect(idsOf(branch), contains('e10'));
       },
     );
+
+    test('gh-2178 review: a below-window branch longer than the resident set '
+        'is NOT truncated by the walk guard', () async {
+      await seed(10);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 5,
+      );
+      // Deep-page mid-file: the tail (e5..e9) leaves the window and a
+      // below-window region opens (the incident's shared-file shape).
+      await windowed.jumpToRecord('e2', maxRecords: 5);
+
+      // A second process appends a 10-record chain below the window —
+      // longer than the 5-record resident set.
+      final external = await JsonlSessionStorage.open(fs, path);
+      for (var i = 10; i < 20; i++) {
+        await external.appendEntry(
+          MessageRecord(
+            id: 'e$i',
+            parentId: 'e${i - 1}',
+            timestamp: DateTime.utc(2026, 1, 2),
+            message: UserMessage.text('appended $i'),
+          ),
+        );
+      }
+      await windowed.ingestAppended();
+
+      // Every ancestor is reachable: the walk traverses _byId AND
+      // _appendedBelow (the ingest indexed the whole below-window
+      // region), so the cycle guard must admit the full chain —
+      // bounding by the resident set alone silently cut the oldest
+      // ancestors out of the model context.
+      final pathToRoot = await windowed.getPathToRoot('e19');
+      expect(
+        idsOf(pathToRoot),
+        hasLength(20),
+        reason:
+            'the full chain e0..e19 — 15 of its records sit below '
+            'the 5-record window; the guard must not truncate at the '
+            'resident count (pre-fix: only e14..e19 survived)',
+      );
+      expect(idsOf(pathToRoot).first, 'e0');
+    });
   });
 
   group('SessionChunkReader', () {

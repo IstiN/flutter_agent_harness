@@ -19,9 +19,12 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'env/execution_env.dart';
 import 'session/obligations_ledger.dart' show obligationsLedgerRecordType;
+import 'session/record_quarantine.dart'
+    show QuarantinedRecord, quarantineFindingForLine, quarantineFixedLine;
 import 'session_line_scanner.dart';
 import 'session/session_storage.dart' show shallowCustomHeader;
 
@@ -81,6 +84,9 @@ final class SessionRepairReport {
     required this.backupPath,
     required this.dryRun,
     required this.untouchedSegments,
+    this.malformedRecords = const [],
+    this.malformedTotal = 0,
+    this.malformedRepaired = 0,
   });
 
   /// The session file this pass targeted.
@@ -128,6 +134,27 @@ final class SessionRepairReport {
   /// when this is non-zero.
   final int untouchedSegments;
 
+  /// The malformed-timestamp records the gh-2178 scan found (the scan
+  /// mode's report — includes records outside any boot window). Bounded:
+  /// the first [malformedReportCap] findings individually, everything
+  /// beyond them counted in [malformedTotal].
+  final List<QuarantinedRecord> malformedRecords;
+
+  /// Total malformed-timestamp records found (may exceed
+  /// [malformedRecords].length).
+  final int malformedTotal;
+
+  /// Malformed-timestamp records this pass FIXED in place (0 on a dry
+  /// run). A fixed record keeps its identity and payload; only the
+  /// timestamp value becomes valid, so the file resumes with no
+  /// quarantine report for it.
+  final int malformedRepaired;
+
+  /// Findings individually listed by [summaryLines]; beyond this the
+  /// count summary carries the rest (the same flood-cap idea as the
+  /// runtime report).
+  static const int malformedReportCap = 50;
+
   /// Human-readable summary lines for a CLI report.
   List<String> summaryLines() {
     final droppedTotal = droppedByType.values.fold<int>(0, (a, b) => a + b);
@@ -149,6 +176,17 @@ final class SessionRepairReport {
             '${_counts(droppedBytesByType, _bytes)}',
       if (keptLatestTotal > 0)
         'kept the latest snapshot of: ${_counts(keptLatestByType)}',
+      // gh-2178 scan mode: the malformed-timestamp records, each named
+      // (file+line+id+raw) up to the cap, then the count summary.
+      if (malformedTotal > 0) ...[
+        if (malformedRepaired > 0)
+          'fixed $malformedRepaired malformed-timestamp record(s)'
+              '${dryRun ? ' (dry run: nothing written)' : ''}',
+        for (final finding in malformedRecords) finding.describe(),
+        if (malformedTotal > malformedRecords.length)
+          '... and ${malformedTotal - malformedRecords.length} more '
+              'malformed-timestamp record(s)',
+      ],
       if (untouchedSegments > 0)
         '$untouchedSegments rotated segment(s) untouched — ledger '
             'records remain in ${path.split('/').last}.part-*',
@@ -254,11 +292,19 @@ Future<SessionRepairReport> repairSessionLedgers(
   final recordsKept = scan.keptRecords + scan.latestByType.length;
   // gh-1590: the dry run reports the size the rewrite would give — the
   // exact byte sum of the spans pass 2 would stream, so `--dry-run` and
-  // the real pass agree on the same fixture.
-  final projectedBytesAfter = [
-    ...scan.headerSpan,
-    ...keptSpans,
-  ].fold<int>(0, (sum, span) => sum + (span.$2 - span.$1));
+  // the real pass agree on the same fixture. A gh-2178 line rewrite
+  // contributes replacement − original (the key can sit INSIDE a merged
+  // span — see [_RepairLedgerScan.lineRewrites]).
+  final projectedBytesAfter = [...scan.headerSpan, ...keptSpans].fold<int>(0, (
+    sum,
+    span,
+  ) {
+    final rewrite = scan.lineRewrites[span.$1];
+    if (rewrite != null && span.$2 - span.$1 == rewrite.originalBytes) {
+      return sum + utf8.encode(rewrite.replacement).length;
+    }
+    return sum + (span.$2 - span.$1) + _rewriteDelta(scan, span);
+  });
 
   if (dryRun) {
     return SessionRepairReport(
@@ -273,16 +319,22 @@ Future<SessionRepairReport> repairSessionLedgers(
       backupPath: '$path.bak',
       dryRun: true,
       untouchedSegments: untouchedSegments,
+      malformedRecords: scan.malformedRecords,
+      malformedTotal: scan.malformedTotal,
     );
   }
 
-  // Pass 2: stream the kept spans into a temp file, then swap atomically.
+  // Pass 2 streams the kept spans into a temp file, then swaps
+  // atomically. A gh-2178 line rewrite streams its fixed form instead of
+  // the original bytes — spliced per line, since a rewrite key can sit
+  // INSIDE a merged span (never replacing the whole run).
   final bytesAfter = await _writeRepairedAndSwap(
     fs,
     ranged,
     renamable,
     path,
     scan.headerSpan.followedBy(keptSpans),
+    scan.lineRewrites,
   );
   return SessionRepairReport(
     path: path,
@@ -296,6 +348,9 @@ Future<SessionRepairReport> repairSessionLedgers(
     backupPath: '$path.bak',
     dryRun: false,
     untouchedSegments: untouchedSegments,
+    malformedRecords: scan.malformedRecords,
+    malformedTotal: scan.malformedTotal,
+    malformedRepaired: scan.malformedTotal,
   );
 }
 
@@ -322,6 +377,18 @@ Future<SessionRepairReport> repairSessionLedgers(
   return (ranged: ranged, renamable: renamable);
 }
 
+/// The byte delta the gh-2178 line fixes inside [span] contribute to the
+/// dry-run projection (replacement − original, summed per fix).
+int _rewriteDelta(_RepairLedgerScan scan, (int, int) span) {
+  var delta = 0;
+  scan.lineRewrites.forEach((start, rewrite) {
+    if (start >= span.$1 && start < span.$2) {
+      delta += utf8.encode(rewrite.replacement).length - rewrite.originalBytes;
+    }
+  });
+  return delta;
+}
+
 /// Mutable accumulator for the repair pass-1 line scan: classifies each
 /// line's byte span (full drop / keep-latest supersede / keep verbatim),
 /// counts kept records per LINE (never per merged span — contiguous runs
@@ -329,6 +396,12 @@ Future<SessionRepairReport> repairSessionLedgers(
 /// surviving records), and remembers the latest keep-latest span per
 /// type. Extracted from [repairSessionLedgers] so the pass stays under
 /// the CRAP ratchet.
+///
+/// gh-2178 scan mode: the same walk ALSO finds the malformed-timestamp
+/// records (cheap top-level gate first, full decode only to confirm a
+/// finding) and fixes them in place on the real pass — the surviving
+/// line is rewritten with a valid timestamp, everything around it
+/// byte-verbatim.
 final class _RepairLedgerScan {
   _RepairLedgerScan(this._path, this._drops, this._keepLatest);
 
@@ -356,11 +429,32 @@ final class _RepairLedgerScan {
   /// Latest snapshots KEPT per superseding registry type.
   final keptLatestByType = <String, int>{};
 
+  /// gh-2178 scan mode: surviving lines whose timestamp degraded — span
+  /// start → the fix (replacement + original byte length). The real pass
+  /// streams the replacement instead of the original bytes; a dry run
+  /// only weighs the delta. NOTE: kept spans merge contiguous runs, so a
+  /// rewrite key can sit INSIDE a merged span — pass 2 splices by line,
+  /// it never replaces the whole run.
+  final lineRewrites = <int, _RepairLineRewrite>{};
+
+  /// The malformed-timestamp findings, capped at
+  /// [SessionRepairReport.malformedReportCap] individually.
+  final malformedRecords = <QuarantinedRecord>[];
+
+  /// Total malformed-timestamp records found (the individual list is
+  /// capped).
+  var malformedTotal = 0;
+
   /// Total non-blank lines below the header.
   var recordsRead = 0;
 
   /// Records kept, counted per LINE — never derived from keptSpans.length.
   var keptRecords = 0;
+
+  /// 1-based physical line number of the line the callback is looking at
+  /// (blanks included — the same convention the streamed session open
+  /// uses), so findings report the REAL file line even across blanks.
+  var lineNumber = 0;
 
   var _first = true;
 
@@ -368,6 +462,7 @@ final class _RepairLedgerScan {
   /// ledger classification. Tearing is impossible here — spans are
   /// recorded, not decoded.
   Future<void> handleLine(SessionScannedLine line) async {
+    lineNumber++;
     if (_first) {
       _first = false;
       // Repair refuses to produce an unopenable file: line 1 must parse
@@ -393,12 +488,41 @@ final class _RepairLedgerScan {
         _dropBytes(customType, span);
       } else {
         keptLatestByType[customType] = 1;
+        // The SURVIVING snapshot only: a superseded line drops in this
+        // same pass, so it is not a finding of the repaired file.
+        _scanForMalformedTimestamp(line);
       }
       latestByType[customType] = span;
       return;
     }
     keptRecords++;
     _appendSpan(keptSpans, span);
+    _scanForMalformedTimestamp(line);
+  }
+
+  /// The gh-2178 scan-mode check for one surviving line: a record whose
+  /// timestamp degraded is a finding — reported (bounded list + total
+  /// count) and fixed in place (the replacement line rides
+  /// [lineRewrites]). The cheap top-level gate short-circuits every
+  /// well-formed line before any decode.
+  void _scanForMalformedTimestamp(SessionScannedLine line) {
+    final finding = quarantineFindingForLine(
+      line.text,
+      filePath: _path,
+      lineNumber: lineNumber,
+    );
+    if (finding == null) return;
+    malformedTotal++;
+    if (malformedRecords.length < SessionRepairReport.malformedReportCap) {
+      malformedRecords.add(finding);
+    }
+    final fixed = quarantineFixedLine(line.text);
+    if (fixed != null) {
+      lineRewrites[line.start] = _RepairLineRewrite(
+        originalBytes: line.byteLength,
+        replacement: '$fixed\n',
+      );
+    }
   }
 
   /// Accounts [span]'s bytes under [type] — the report's reclaimed-bytes
@@ -417,22 +541,40 @@ final class _RepairLedgerScan {
   }
 }
 
+/// One gh-2178 in-place line fix recorded by the scan: the replacement
+/// text (newline-terminated) plus the original line's byte length it
+/// stands in for (the dry-run projection weighs the delta, and pass 2
+/// may need to splice it into a merged span).
+final class _RepairLineRewrite {
+  const _RepairLineRewrite({
+    required this.originalBytes,
+    required this.replacement,
+  });
+
+  /// The original line's own byte length, newline included.
+  final int originalBytes;
+
+  /// The fixed line, trailing newline included.
+  final String replacement;
+}
+
 /// Pass 2 of a repair: streams [spans] from the original into a temp
 /// file, rotates any existing `<path>.bak` to `.bak1` (repair is exactly
 /// the operation users run twice — silently replacing the previous
 /// `.bak` would destroy the first repair's pristine original), then
 /// swaps the temp file into [path] atomically. Any failure rolls the
-/// original back — never leave the session missing. Returns the repaired
-/// file's size.
+/// original back — never leave the session missing. Line fixes from the
+/// gh-2178 scan ride [lineRewrites]. Returns the repaired file's size.
 Future<int> _writeRepairedAndSwap(
   FileSystem fs,
   RangedReadFileSystem ranged,
   RenamableFileSystem renamable,
   String path,
-  Iterable<(int, int)> spans,
-) async {
+  Iterable<(int, int)> spans, [
+  Map<int, _RepairLineRewrite> lineRewrites = const {},
+]) async {
   final tempPath = '$path.repairing';
-  await _writeSpansToTemp(fs, ranged, path, tempPath, spans);
+  await _writeSpansToTemp(fs, ranged, path, tempPath, spans, lineRewrites);
   // An existing backup is rotated to `.bak1` first.
   final backupPath = '$path.bak';
   final backupExists = await fs.exists(backupPath);
@@ -480,29 +622,28 @@ Future<int> _writeRepairedAndSwap(
 
 /// Streams every span of [spans] from [path] into the empty file at
 /// [tempPath]; removes the temp file and throws on the first read or
-/// write failure.
+/// write failure. A span keyed in [lineRewrites] (gh-2178) writes its
+/// replacement text (already newline-terminated) instead of the original
+/// bytes.
 Future<void> _writeSpansToTemp(
   FileSystem fs,
   RangedReadFileSystem ranged,
   String path,
   String tempPath,
-  Iterable<(int, int)> spans,
-) async {
+  Iterable<(int, int)> spans, [
+  Map<int, _RepairLineRewrite> lineRewrites = const {},
+]) async {
   var write = await fs.writeFile(tempPath, '');
   for (final span in spans) {
-    final raw = await ranged.readRange(path, span.$1, span.$2);
-    final bytes = raw.valueOrNull;
-    if (bytes == null) {
-      await fs.remove(tempPath, force: true);
-      throw SessionRepairException(
-        'read failed during repair of $path: ${raw.errorOrNull?.message}',
-        code: SessionRepairErrorCode.unknown,
-      );
-    }
-    write = await fs.appendFile(
+    final text = await _spanTextToWrite(
+      fs,
+      ranged,
+      path,
       tempPath,
-      utf8.decode(bytes, allowMalformed: true),
+      span,
+      lineRewrites,
     );
+    write = await fs.appendFile(tempPath, text);
     if (write is Err<void, FileError>) {
       final error = write.error;
       await fs.remove(tempPath, force: true);
@@ -512,6 +653,58 @@ Future<void> _writeSpansToTemp(
       );
     }
   }
+}
+
+/// The text one span contributes to the repaired file: its original
+/// bytes, with any gh-2178 line fix inside it spliced per LINE (a
+/// rewrite key can sit inside a merged span — the run around it must
+/// survive byte-verbatim). Throws [SessionRepairException] when the
+/// range read fails (the caller removes the temp file).
+Future<String> _spanTextToWrite(
+  FileSystem fs,
+  RangedReadFileSystem ranged,
+  String path,
+  String tempPath,
+  (int, int) span,
+  Map<int, _RepairLineRewrite> lineRewrites,
+) async {
+  final keys =
+      lineRewrites.keys
+          .where((start) => start >= span.$1 && start < span.$2)
+          .toList()
+        ..sort();
+  final raw = await ranged.readRange(path, span.$1, span.$2);
+  final bytes = raw.valueOrNull;
+  if (bytes == null) {
+    await fs.remove(tempPath, force: true);
+    throw SessionRepairException(
+      'read failed during repair of $path: ${raw.errorOrNull?.message}',
+      code: SessionRepairErrorCode.unknown,
+    );
+  }
+  if (keys.isEmpty) return utf8.decode(bytes, allowMalformed: true);
+  // Splice the fixes into the span BYTE STREAM line by line: bytes
+  // before the first fix, each fix, the original bytes between fixes,
+  // the tail. Every offset here stays in BYTE space — [keys] are
+  // scanner byte offsets (SessionScannedLine.start) and the original
+  // line's extent is the same 0x0A byte split the scanner used; the
+  // decoded string is built only for output, never indexed by them
+  // (gh-2178 review: byte offsets used as UTF-16 string offsets cut
+  // mid-record whenever multi-byte content preceded the fix line in
+  // the merged span).
+  final out = BytesBuilder(copy: false);
+  var cursor = 0; // byte offset within the span
+  for (final key in keys) {
+    final lineStart = key - span.$1;
+    out.add(bytes.sublist(cursor, lineStart));
+    out.add(utf8.encode(lineRewrites[key]!.replacement));
+    // Advance past the ORIGINAL line (its newline included) — the same
+    // 0x0A byte split the scanner used to find it.
+    final lineEnd = bytes.indexOf(0x0A, lineStart);
+    cursor = lineEnd < 0 ? bytes.length : lineEnd + 1;
+  }
+  out.add(bytes.sublist(cursor));
+  return utf8.decode(out.takeBytes(), allowMalformed: true);
 }
 
 void _ensureRepairableHeader(String line, String path) {

@@ -440,6 +440,7 @@ class AgentCli {
     // pre-construction window. `this.io` — the param still shadows here,
     // and the field may be the _TuiCliIO wrapper.
     JsonlSessionStorage.onRotationWarning = this.io.writeln;
+    wireQuarantineNotice(this.io.writeln);
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
