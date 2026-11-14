@@ -7247,3 +7247,1457 @@ AC5: 1 judge call(s), cached 0.950 of input tokens, $0.00321/relief.
 ✅ test/messaging/hub_channel_membership_test.dart: reconnect restores membership before draining an outbound send
 ✅ test/messaging/hub_channel_membership_test.dart: access_denied completes join with an error
 ✅ test/messaging/hub_channel_membership_test.dart: waitForConnection times out without leaking transport errors
+✅ test/messaging/swappable_messaging_repository_test.dart: send/register delegate to the CURRENT repo, swap re-points them
+✅ test/messaging/swappable_messaging_repository_test.dart: touch delegates to the CURRENT repo
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml absent capabilities yields the default config
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml parses full capability entries
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml trims the name and allows omitted description/payload
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects a non-map section
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects unknown section keys
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects a non-list capabilities value
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects non-map capability entries
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects unknown capability keys
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml rejects an empty name
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml hub kill switch (issue #304 E6) defaults to enabled — the hub fabric is on when DAP is
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml hub kill switch (issue #304 E6) fabric.hub: false parses
+✅ test/messaging/fabric_config_test.dart: FabricConfig.fromYaml hub kill switch (issue #304 E6) rejects a non-boolean hub value
+✅ test/messaging/fabric_config_test.dart: FabricConfig.toYaml toYaml round-trips the hub kill switch (issue #304 E6)
+✅ test/messaging/fabric_config_test.dart: FabricConfig.toYaml emits nothing without capabilities
+✅ test/messaging/fabric_config_test.dart: FabricConfig.toYaml round-trips through loadYaml
+✅ test/messaging/fallback_messaging_repository_test.dart: hub-resolvable recipients route over the hub, never the files
+✅ test/messaging/fallback_messaging_repository_test.dart: unknown recipients land in the file fabric untouched
+✅ test/messaging/fallback_messaging_repository_test.dart: disconnected hub routes everything to files
+✅ test/messaging/fallback_messaging_repository_test.dart: channel send while the hub is down fails honestly
+✅ test/messaging/fallback_messaging_repository_test.dart: channel send over a live hub goes hub-ward
+✅ test/messaging/fallback_messaging_repository_test.dart: a private-channel key refusal reaches the caller instead of becoming a silent file dead drop
+✅ test/messaging/fallback_messaging_repository_test.dart: hub send failure falls back to files and forwards on reconnect
+✅ test/messaging/fallback_messaging_repository_test.dart: forward keeps the file copy while the hub stays broken
+✅ test/messaging/fallback_messaging_repository_test.dart: drain merges hub + file mail into the primary mailbox only
+✅ test/messaging/fallback_messaging_repository_test.dart: merged drains dedupe by message id
+✅ test/messaging/fallback_messaging_repository_test.dart: a hub send failure queued while the hub DROPS stays pending
+✅ test/messaging/fallback_messaging_repository_test.dart: a FAILED roster query while connected keeps the queue tracked
+✅ test/messaging/fallback_messaging_repository_test.dart: re-wrapped hub frames dedupe on sender+time+body, not just id
+✅ test/messaging/fallback_messaging_repository_test.dart: peek reads both transports without consuming
+✅ test/messaging/fallback_messaging_repository_test.dart: register and touch reach both transports
+✅ test/messaging/fallback_messaging_repository_test.dart: presence state and capabilities forward to both transports
+✅ test/messaging/fallback_messaging_repository_test.dart: directory merges both views; file entries win on collision
+✅ test/messaging/fallback_messaging_repository_test.dart: broken hub hides only its own peers from the directory
+✅ test/messaging/fallback_messaging_repository_test.dart: retarget keeps identity stable across hub delivery
+✅ test/messaging/scheduled_messages_test.dart: parseDelay handles units and combinations
+✅ test/messaging/scheduled_messages_test.dart: due messages land in the inbox and rearm works
+✅ test/messaging/scheduled_messages_test.dart: overdue records survive a restart (new queue instance delivers)
+✅ test/messaging/scheduled_messages_test.dart: self-scheduled mail resolves to the host mailbox, not a "self" dir
+✅ test/messaging/scheduled_messages_test.dart: cross-mailbox schedule attributes the message to the sender
+✅ test/messaging/scheduled_messages_test.dart: legacy "self" inbox mail is migrated into the real mailbox
+✅ test/messaging/scheduled_messages_test.dart: concurrent delivery runs send each record once
+✅ test/messaging/scheduled_messages_test.dart: schedule/fire notices are surfaced to the host
+✅ test/messaging/scheduled_messages_test.dart: schedule_message tool validates and schedules
+✅ test/messaging/scheduled_messages_test.dart: self-addressed records follow the live mailbox after a re-address
+✅ test/messaging/scheduled_messages_test.dart: junk records in _scheduled never disarm or phantom-deliver (skip branches)
+✅ test/messaging/scheduled_messages_test.dart: disposed queue holds delivery; a fresh start delivers the record
+✅ test/messaging/scheduled_messages_test.dart: gh-1180 review T7: an adopted self-record re-addressed to the LIVE mailbox delivers FROM the live mailbox too — the resumed chain stays self-shaped (from == to) and lands in the exempt wake lane across a session-id change
+✅ test/messaging/scheduled_messages_test.dart: a sweeper never steals another instance's due record (owner prefix)
+✅ test/messaging/scheduled_messages_test.dart: adoption carries only the adopted session's records; others stay put
+✅ test/messaging/scheduled_messages_test.dart: restart re-arm delivers to the original owner; foreign prefix waits
+✅ test/messaging/scheduled_messages_test.dart: pendingSummary reports deliverable count and the nearest due
+✅ test/messaging/scheduled_messages_test.dart: pendingSummary skips foreign-owned self-addressed records
+✅ test/messaging/scheduled_messages_test.dart: dispose releases ownership of pending self-addressed records (#59+#88)
+✅ test/messaging/scheduled_messages_test.dart: dispose never touches foreign-owned records (#88)
+✅ test/messaging/scheduled_messages_test.dart: wall-clock catch-up (issue #259) an overdue record is delivered by the catch-up sweep immediately (turn start), not at the next timer tick
+✅ test/messaging/scheduled_messages_test.dart: wall-clock catch-up (issue #259) a clock jump (system sleep) catches up immediately and delivers each due record exactly once (no N-fold replay)
+✅ test/messaging/scheduled_messages_test.dart: wall-clock catch-up (issue #259) normal awake timing is unchanged: no early fire
+✅ test/messaging/scheduled_messages_test.dart: wall-clock catch-up (issue #259) a recurring self re-arm after a clock jump resumes from "now"
+✅ test/messaging/scheduled_messages_test.dart: leg-timer failure isolation (issue #270) a failed send re-arms the leg timer and delivers on the next leg
+✅ test/messaging/scheduled_messages_test.dart: leg-timer failure isolation (issue #270) one failing record does not block its sweep-mates and is retried
+✅ test/messaging/scheduled_messages_test.dart: gh-970: a subagent self-reminder fires into the subagent inbox a self-addressed record naming a subagent mailbox is NOT re-addressed to main
+✅ test/messaging/scheduled_messages_test.dart: gh-970: a subagent self-reminder fires into the subagent inbox a foreign-owned subagent reminder is left for its owner (theft guard covers child mail too)
+✅ test/messaging/scheduled_messages_test.dart: gh-970: a subagent self-reminder fires into the subagent inbox schedule_message resolves the subagent sender as the default recipient
+✅ test/messaging/scheduled_messages_test.dart: gh-970: a subagent self-reminder fires into the subagent inbox schedule_message on the main agent (null sender) keeps the legacy self default
+✅ test/messaging/scheduled_messages_test.dart: gh-1180: receipts + loud scan re-arm AC5: a listDir failure on a leg is logged + receipted and the heartbeat re-arms — the record still delivers after recovery
+✅ test/messaging/scheduled_messages_test.dart: gh-1180: receipts + loud scan re-arm gh-1180 review: a scan failure inside a DELIVERY pass is receipted too — the arming path and the delivery pass leave the identical scan_failed trail (AC4)
+✅ test/messaging/scheduled_messages_test.dart: gh-1180: receipts + loud scan re-arm AC4: the queue receipts the whole lifecycle — scheduled, delivery_failed (isolated), delivered with lag
+✅ test/messaging/scheduled_messages_test.dart: gh-1180: receipts + loud scan re-arm schedule() itself is receipted (id, due, target, text preview)
+✅ test/messaging/fabric_kill_switch_reg_test.dart: kill switch off (fabric.hub: false): the listing is byte-identical to the legacy file-only rendering
+✅ test/messaging/fabric_kill_switch_reg_test.dart: control: the same state with the hub fabric ON adds the hub row
+✅ test/messaging/inbox_wake_policy_test.dart: AC1: a self-chain wakes forever — 25 consecutive fires, the exempt wake never touches the streak (cap is 10)
+✅ test/messaging/inbox_wake_policy_test.dart: AC2 REG: foreign agent chatter is capped at 10 consecutive wakes — 15 wakes produce 10 turns and 5 refusals with a reason
+✅ test/messaging/inbox_wake_policy_test.dart: AC3: user-kind mail always wakes — even with the streak exhausted — and the reset lets capped chatter flow again
+✅ test/messaging/inbox_wake_policy_test.dart: E5: a storm disguised as self-scheduling (0-delay re-schedule loop) is bounded — rapid self-wakes count against the cap, and the lane recovers at a deliberate cadence
+✅ test/messaging/inbox_wake_policy_test.dart: the cadence floor is host-tunable: zero collapses it (every self wake exempt) — the knob tests use it to model long chains
+✅ test/messaging/inbox_wake_policy_test.dart: isScheduledSelfMail matches only the scheduler shape: own mailbox sender AND the [scheduled] prefix — foreign chatter with either alone is still chatter
+✅ test/messaging/inbox_wake_policy_test.dart: a refusal announcement is once per EPISODE: announceRefusal() fires once, then stays quiet while the gate keeps refusing (review: the host gates its visible line AND its refusal receipts on this)
+✅ test/messaging/inbox_wake_policy_test.dart: the refusal episode re-arms after a user-input reset — a SECOND capped episode announces (and receipts) again, so a repeat refusal can never be silent (review thread 2: the documented reset path must exist next to the streak)
+✅ test/messaging/inbox_wake_policy_test.dart: an allowed cap-consuming wake ends the refusal episode (the successful non-exempt wake reset lives in the policy now)
+✅ test/messaging/inbox_wake_policy_test.dart: a plugin-only batch (empty pending, pluginPending: true) is classified EXPLICITLY as chatter: it consumes the anti-storm cap (review thread 4: the contract is stated, not an accident)
+✅ test/messaging/inbox_wake_policy_test.dart: pluginPending is ignored when fabric mail is pending — the fabric lanes own that classification (a non-empty batch is never silently re-laned by the flag)
+✅ test/messaging/inbox_wake_policy_test.dart: mixed batches: a user message anywhere in the pending batch wins (user lane, always wakes)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository send + peek delivers to the recipient inbox without consuming
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository drain consumes: messages land in read/ and never reappear
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository inbox order is arrival order (filename sort)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository agent ids are sanitized for the filesystem
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory lists agents that have mail
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory falls back to the directory name when .id is missing
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository a torn write never poisons the inbox
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository two repository instances share mail through one root
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository newMessageId is unique and time-ordered
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register announces a zero-mail mailbox in the directory
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository broad-scan finds mailboxes in sibling cwd-slug dirs
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register writes the messages-registry.json with correct shape
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register with a session name persists it in the registry
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register without a name keeps the legacy registry shape
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory reports the session name from the .name marker
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository a mailbox registered without a name reports a null name
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository re-registering with a new name updates the marker
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository registry upserts multiple agent ids
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository registry stores the exact cwd of a hyphenated workspace (gh-1744)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory prefers the exact registry cwd over the lossy decode (gh-1744)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory falls back to the slug decode when the registry has no cwd
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory tolerates a non-map registry entry (gh-1744 review)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory tolerates a non-map registry document (gh-1744 review)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register rewrites a non-map registry document (gh-1744 review)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory tolerates a missing session root
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository touch writes a heartbeat that directory reports as lastActivity
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository touch announces an unknown mailbox in the directory
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository register publishes capabilities into the directory
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository re-registering with no capabilities clears them
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository touch busy sets presence, fresh marker only
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository malformed presence marker never breaks the directory
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository capability marker with a malformed entry tolerates it
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory lastActivity is the newest file across inbox and read
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository directory skips reserved directories (_scheduled, dot-dirs)
+✅ test/messaging/file_messaging_repository_test.dart: FileMessagingRepository MailboxEntry.isLive: null is live, staleness respects the window
+✅ test/messaging/file_messaging_repository_test.dart: cross-project send routing registry-known foreign slug receives the message
+✅ test/messaging/file_messaging_repository_test.dart: cross-project send routing broad scan finds a foreign mailbox without a registry entry
+✅ test/messaging/file_messaging_repository_test.dart: cross-project send routing unknown ids stay in the local root
+✅ test/messaging/file_messaging_repository_test.dart: orphan mailbox reclaim (truncated-id sends) moves pending mail into the real inbox and removes the orphan
+✅ test/messaging/file_messaging_repository_test.dart: orphan mailbox reclaim (truncated-id sends) is a no-op when there is no orphan mailbox
+✅ test/messaging/file_messaging_repository_test.dart: orphan mailbox reclaim (truncated-id sends) never touches unrelated mailboxes
+✅ test/messaging/file_messaging_repository_test.dart: orphan mailbox reclaim (truncated-id sends) keeps both files on a filename collision
+✅ test/messaging/file_messaging_repository_test.dart: live registration wins over a stale cross-root mailbox (#516) AC1: send lands in the live project root, never the corpse
+✅ test/messaging/file_messaging_repository_test.dart: live registration wins over a stale cross-root mailbox (#516) AC1b: a stale registry entry cannot outrank the live registration
+✅ test/messaging/file_messaging_repository_test.dart: live registration wins over a stale cross-root mailbox (#516) AC2: registering under a new root drains the stale inbox once
+✅ test/messaging/file_messaging_repository_test.dart: live registration wins over a stale cross-root mailbox (#516) register never steals the inbox of a live twin root
+✅ test/messaging/file_messaging_repository_test.dart: live registration wins over a stale cross-root mailbox (#516) AC1c: the live OWN root outranks a foreign corpse
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC1: the composite action exists and delegates to the script
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC2: the script carries the full safety contract
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml test-core prewarms before its first hook-building step
+✅ test/workflow_ios_platform_download_guard_test.dart: gh-2054 — build-ios SDK step cannot hang the job AC1 — download is gated on the device SDK being MISSING
+✅ test/workflow_ios_platform_download_guard_test.dart: gh-2054 — build-ios SDK step cannot hang the job AC2 — no hardcoded -buildVersion platform pin
+✅ test/workflow_ios_platform_download_guard_test.dart: gh-2054 — build-ios SDK step cannot hang the job AC3 — the download is bounded by a deadline watchdog
+✅ test/workflow_ios_platform_download_guard_test.dart: gh-2054 — build-ios SDK step cannot hang the job AC4 — the watchdog kills the whole transfer tree, not just the direct child
+✅ test/workflow_ios_platform_download_guard_test.dart: gh-2054 — build-ios SDK step cannot hang the job AC5 — the incident trail cites the real 11-digit leg run id (41778614770)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml test-core prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml test-core prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml test-core prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml static prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml static prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml static prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml static prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml cube-kernel-live prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml cube-kernel-live prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml cube-kernel-live prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml cube-kernel-live prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml integration-mock prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml integration-mock prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml integration-mock prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml integration-mock prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml installer-portability prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml installer-portability prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml installer-portability prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml installer-portability prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml hostile-env prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml hostile-env prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml hostile-env prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml hostile-env prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml fa-aot-build prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml fa-aot-build prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml fa-aot-build prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml fa-aot-build prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml pty-integration-linux prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml pty-integration-linux prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml pty-integration-linux prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml pty-integration-linux prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml pty-visual prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml pty-visual prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml pty-visual prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml pty-visual prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml guards prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml guards prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml guards prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml guards prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml model-switch-reg prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml model-switch-reg prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml model-switch-reg prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml model-switch-reg prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml cli-visual-settings prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml cli-visual-settings prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml cli-visual-settings prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml cli-visual-settings prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml dep-audit prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml dep-audit prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml dep-audit prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml dep-audit prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml perf-gate prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml perf-gate prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml perf-gate prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml perf-gate prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml usage-fold prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml usage-fold prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml usage-fold prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml usage-fold prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml integration prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml integration prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml integration prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml integration prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml js-ext-integration prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml js-ext-integration prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml js-ext-integration prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml js-ext-integration prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml build-android prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml build-android prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml build-android prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml build-android prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/ci.yml build-android requests explicit targets (android)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml build-ios prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml build-ios prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml build-ios prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml build-ios prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/ci.yml build-ios requests explicit targets (arm64-ios)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml binaries prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml binaries prewarms after its pub get and under the same scope condition
+✅ test/build_macos_spm_lane_guard_test.dart: AC1 — the build-macos job carries NO SwiftPM disable pin (knob removed upstream in 3.47.7, flutter/flutter#193978)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml binaries prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml binaries prewarm target value expands to a release asset the script can download
+✅ test/build_macos_spm_lane_guard_test.dart: AC1b — Setup Flutter pins 3.47.7 (the #1813 3.47.4 revert, gh-1814)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml binaries-pr prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/ci.yml binaries-pr prewarms after its pub get and under the same scope condition
+✅ test/build_macos_spm_lane_guard_test.dart: AC2 — Build macOS release step: config-only + min-platform gate before the release build
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/ci.yml binaries-pr prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/ci.yml binaries-pr prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/ci.yml references the prewarm action exactly (21 job(s))
+✅ test/build_macos_spm_lane_guard_test.dart: AC3 — the committed pbxproj keeps the Runner-target floor shape the gate asserts (3×14.0, nothing else)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/build-mobile.yml build-android prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/build-mobile.yml build-android prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/build-mobile.yml build-android prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/build-mobile.yml build-android prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/build-mobile.yml build-android requests explicit targets (android)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/build-mobile.yml build-android-apks prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/build-mobile.yml build-android-apks prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/build-mobile.yml build-android-apks prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/build-mobile.yml build-android-apks prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/build-mobile.yml build-android-apks requests explicit targets (android)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/build-mobile.yml test-android-emulator prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/build-mobile.yml test-android-emulator prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/build-mobile.yml test-android-emulator prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/build-mobile.yml test-android-emulator prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/build-mobile.yml test-android-emulator requests explicit targets (android)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/build-mobile.yml build-ios prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/build-mobile.yml build-ios prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/build-mobile.yml build-ios prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/build-mobile.yml build-ios prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/build-mobile.yml build-ios requests explicit targets (arm64-ios)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/build-mobile.yml references the prewarm action exactly (4 job(s))
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/nightly.yml build-release prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/nightly.yml build-release prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/nightly.yml build-release prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/nightly.yml build-release prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC5: .github/workflows/nightly.yml build-release requests explicit targets (arm-android,arm64-android,x64-android, arm64-ios)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/nightly.yml pty-integration prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/nightly.yml pty-integration prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/nightly.yml pty-integration prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/nightly.yml pty-integration prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/nightly.yml references the prewarm action exactly (2 job(s))
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/coverage-gardener.yml measure-and-file prewarms before its first hook-building step
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC6: .github/workflows/coverage-gardener.yml measure-and-file prewarms after its pub get and under the same scope condition
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC7: every .github/workflows/coverage-gardener.yml measure-and-file prewarm with explicit targets declares package-roots
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC8: every .github/workflows/coverage-gardener.yml measure-and-file prewarm target value expands to a release asset the script can download
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC3: .github/workflows/coverage-gardener.yml references the prewarm action exactly (1 job(s))
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring AC4: the shared flutter-pub-get action ends with the central prewarm (nested composite call — one implementation)
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring gh-2105 — build-macos.yml release legs ride the hardened prewarm build-macos-cli prewarms through the shared composite between pub get and its first dart build, with per-arch targets the script can resolve
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring gh-2105 — build-macos.yml release legs ride the hardened prewarm desktop build step prewarms post-clean with the hardened script and the composite retry budget
+✅ test/ci_sqlite3_prewarm_guard_test.dart: gh-2072 — sqlite3 native-assets prewarm wiring gh-2105 — build-macos.yml release legs ride the hardened prewarm build-macos.yml no longer references the retired prewarm script
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC1: the pre-warm script exists and is the safe fetcher
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC2: build-mobile.yml build-android restores the hooks-shared cache for both roots
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC2: build-mobile.yml build-android pre-warms flutter_app android assets after pub get, before build (composite — gh-2072 migration)
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC2: build-mobile.yml build-android-apks restores the hooks-shared cache for both roots
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC2: build-mobile.yml build-android-apks pre-warms flutter_app android assets after pub get, before build (composite — gh-2072 migration)
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC3: assert-builtin-skills pre-warms the root host assets
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC4: ci.yml keeps its 2026-09-21 hooks-shared cache
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml test-core restores the hooks-shared cache and pre-warms the host asset after pub get, before dart test
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml integration-mock restores the hooks-shared cache and pre-warms the host asset after pub get, before dart bin/fah.dart
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml hostile-env restores the hooks-shared cache and pre-warms the host asset after pub get, before dart test
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml fa-aot-build restores the hooks-shared cache and pre-warms the host asset after pub get, before dart build cli
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml pty-integration-linux restores the hooks-shared cache and pre-warms the host asset after pub get, before dart test
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml pty-visual restores the hooks-shared cache and pre-warms the host asset after pub get, before dart bin/fah.dart
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC6: ci.yml binaries-pr restores the hooks-shared cache and pre-warms the host asset after pub get, before dart build cli
+✅ test/ci_sqlite3_hook_prewarm_guard_test.dart: AC7: one implementation per caller — the composite owns CI prewarm wiring, the legacy script survives only where a plain run needs it, and every invocation stays hook-free
+✅ test/release_attach_or_create_mint_test.dart: tag mint with GH_TOKEN unset fails fast: ::error:: names the env gap, no empty-URL push
+✅ test/workflow_ios_archive_observability_test.dart: AC2 — archive failure is diagnosable from the GH run page Fastfile build_app pins xcbeautify, never xcpretty (gh-1692)
+✅ test/workflow_ios_archive_observability_test.dart: AC2 — archive failure is diagnosable from the GH run page build-ios installs xcbeautify before the archive step
+✅ test/workflow_ios_archive_observability_test.dart: AC2 — archive failure is diagnosable from the GH run page build-ios uploads ~/Library/Logs/gym as a failure artifact
+✅ test/workflow_ios_archive_observability_test.dart: AC3 — no single-shot origin transfer in the iOS chain build-ios checkout clone retries a bounded number of times
+✅ test/workflow_ios_archive_observability_test.dart: AC3 — no single-shot origin transfer in the iOS chain submit-ios checkout clone retries a bounded number of times
+✅ test/workflow_ios_archive_observability_test.dart: AC3 — no single-shot origin transfer in the iOS chain the mirror update itself keeps its bounded retry (gh-1644)
+✅ test/js_ext/registry_sync_test.dart: registry manifest.json == kCrapGuardManifestJson byte-for-byte
+✅ test/js_ext/registry_sync_test.dart: registry main.js == kCrapGuardMainJs byte-for-byte
+✅ test/js_ext/ext_install_test.dart: planLocalInstall directory: manifest+main+extra text files, dotfiles skipped
+✅ test/js_ext/ext_install_test.dart: planLocalInstall root-less zip extracts with no prefix
+✅ test/js_ext/ext_install_test.dart: planLocalInstall zip with a single root dir strips it
+✅ test/js_ext/ext_install_test.dart: planLocalInstall missing path throws
+✅ test/js_ext/ext_install_test.dart: planLocalInstall directory without main.js throws
+✅ test/js_ext/ext_install_test.dart: planLocalInstall zip-slip entry rejected and nothing written
+✅ test/js_ext/ext_install_test.dart: planGithubInstall happy path: branch resolved, sha trusted, root stripped
+✅ test/js_ext/ext_install_test.dart: planGithubInstall missing manifest => named exception
+✅ test/js_ext/ext_install_test.dart: planGithubInstall no default_branch and unresolvable ref => HEAD fallback
+✅ test/js_ext/ext_install_test.dart: planGithubInstall malformed owner/repo rejected
+✅ test/js_ext/ext_install_test.dart: applyInstall TOFU deny: null prompt writes nothing
+✅ test/js_ext/ext_install_test.dart: applyInstall TOFU prompt accepted => installed and trusted
+✅ test/js_ext/ext_install_test.dart: applyInstall TOFU prompt declined => deny
+✅ test/js_ext/ext_install_test.dart: applyInstall trustFlag grants TOFU without a prompt
+✅ test/js_ext/ext_install_test.dart: applyInstall same hash => up-to-date, nothing rewritten
+✅ test/js_ext/ext_install_test.dart: applyInstall hash-only change => silent re-grant, no prompt
+✅ test/js_ext/ext_install_test.dart: applyInstall capability diff => re-prompt; denial keeps the old install
+✅ test/js_ext/ext_install_test.dart: applyInstall trustFlag does not bypass an update re-prompt
+✅ test/js_ext/ext_install_test.dart: applyInstall pinned hash mismatch rejects loudly, nothing written
+✅ test/js_ext/ext_install_test.dart: applyInstall correct pin installs
+✅ test/js_ext/ext_install_test.dart: planCatalogInstall happy path: catalog entry downloaded and planned
+✅ test/js_ext/ext_install_test.dart: planCatalogInstall unknown catalog id throws
+✅ test/js_ext/ext_install_test.dart: planCatalogInstall tampered zip => throw and nothing written
+✅ test/release_attach_or_create_mint_test.dart: tag mint with GH_TOKEN set pushes the annotated tag through the token URL, then creates the release
+✅ test/js_ext/parity_fake_test.dart: commit payload matches the fixture contract exactly (plus bootstrap)
+✅ test/js_ext/parity_fake_test.dart: parity_echo bridges has+fs and echoes, host-normalized text
+✅ test/js_ext/parity_fake_test.dart: parity_exec runs `echo ok` through the exec bridge allowlist
+✅ test/js_ext/parity_fake_test.dart: hooks (all six registered, three wired by the host) beforeToolCall blocks only on args.block=yes
+✅ test/js_ext/parity_fake_test.dart: hooks (all six registered, three wired by the host) afterToolCall appends to parity_echo results only
+✅ test/js_ext/parity_fake_test.dart: hooks (all six registered, three wired by the host) prepareNextTurn returns undefined (transparent pass-through)
+✅ test/js_ext/parity_fake_test.dart: slash parity-slash writes its args through io.writeln
+✅ test/js_ext/parity_fake_test.dart: flow parity-flow submits the provider object (secret field kept)
+✅ test/js_ext/parity_fake_test.dart: sessionStart/sessionEnd append their notes
+✅ test/js_ext/agent_loop_ext_test.dart: AC3b: the afterToolCall append reaches the model in the next request
+✅ test/js_ext/agent_loop_ext_test.dart: AC2: exec-tier JS tool goes through the approval gate prompt path
+✅ test/js_ext/agent_loop_ext_test.dart: AC9: two extensions keep bridge state fully separate
+✅ test/js_ext/agent_loop_ext_test.dart: AC10: the bridge method set is closed and value-free
+✅ test/release_attach_or_create_mint_test.dart: gh-2026: the mint strips the persisted checkout extraheader BEFORE the push
+✅ test/release_attach_or_create_mint_test.dart: gh-2026: the mint verifies the tag train started before creating the draft
+✅ test/release_attach_or_create_mint_test.dart: gh-2026: a mint whose push fired no workflow run fails loud and never creates the draft
+✅ test/js_ext/bundled_crap_guard_test.dart: crap-guard manifest parses as a cli-extension with the declared capabilities
+✅ test/js_ext/bundled_crap_guard_test.dart: crap-guard manifest kBundledExtensions entries carry manifest.json + main.js
+✅ test/js_ext/bundled_crap_guard_test.dart: planBundledInstall returns a bundled-trust plan for crap-guard
+✅ test/js_ext/bundled_crap_guard_test.dart: planBundledInstall content sha via extContentHash is deterministic 64-hex
+✅ test/js_ext/bundled_crap_guard_test.dart: planBundledInstall unknown name throws ExtInstallException
+✅ test/js_ext/bundled_crap_guard_test.dart: host wiring smoke (commit payload fixture) registers exactly the two hooks, no tools/slash/flows
+✅ test/js_ext/ext_bootstrap_js_test.dart: kExtBootstrapCoreJs defines every host entry point exactly once
+✅ test/js_ext/ext_bootstrap_js_test.dart: kExtBootstrapCoreJs defines every documented jsr.ext.* method exactly once
+✅ test/js_ext/ext_bootstrap_js_test.dart: kExtBootstrapCoreJs routes host calls through the transport; does not define one
+✅ test/js_ext/ext_bootstrap_js_test.dart: kExtBootstrapCoreJs braces balance; no module or import syntax
+✅ test/js_ext/ext_bootstrap_js_test.dart: transports each defines a distinct __extEngineId exactly once
+✅ test/js_ext/ext_bootstrap_js_test.dart: transports each defines __extTransport with a call method; braces balance; no imports
+✅ test/js_ext/ext_bootstrap_js_test.dart: transports stdio transport frames JSON lines and keeps both loop branches
+✅ test/js_ext/ext_bootstrap_js_test.dart: transports send-message transport posts to the __ext_host channel, no stdin loop
+✅ test/js_ext/ext_bootstrap_js_test.dart: transports post-message transport wraps in the __ext__ envelope and routes onmessage
+✅ test/js_ext/ext_bootstrap_js_test.dart: total bootstrap JS stays under the size budget
+✔ registers exactly the two hooks and nothing else (4.213546ms)
+✔ skips non-write/edit tools, errors, and excluded paths (1.477448ms)
+✔ over-2800-lines file produces the split-the-file append (1.758583ms)
+✔ CRAP offender row produces the regression append (fallback threshold 12) (0.749509ms)
+✔ threshold is read from the crap4dart.yaml fixture (0.497379ms)
+✔ absolute edited paths still match relative analyze rows (0.556709ms)
+✔ debounce collapses an edit burst into one aggregated check (0.986422ms)
+✔ exec.run is invoked as dart pub global run crap4dart analyze (180s) (0.518958ms)
+✔ missing tool: one append note (E17), then silent — also at sessionEnd (0.741955ms)
+✔ sessionEnd missing-tool note fires once when never noted before (0.674499ms)
+✔ sessionEnd reports offenders via note + follow-up (0.480256ms)
+✔ no guarded edits => sessionEnd is a no-op (no analyze run) (0.185917ms)
+✔ coverage-stale complexity-only note appears once per session (0.460139ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 107.528433
+✅ test/js_ext/bundled_crap_guard_node_test.dart: node --test test/js_ext/node/*.mjs passes when node is on PATH
+node v24.22.2
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit valid payloads full payload maps every section
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit valid payloads omitted optional fields get documented defaults; unknown keys tolerated
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit valid payloads absent sections mean nothing registered, not an error
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit accumulates every problem non-map payloads
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit accumulates every problem one exception names every problem across all sections
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit accumulates every problem wrong section types and wrong field types are problems
+✅ test/js_ext/ext_protocol_test.dart: parseExtCommit accumulates every problem empty and missing required names
+✅ test/js_ext/ext_protocol_test.dart: ExtProtocolException carries the message and toString is the message
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson parses a full manifest
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson kind absent => widget (back-compat)
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson accepts 'id' alias for name
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson flat capability forms
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson fs bool form
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson fs true only when read===true in nested form
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson toJson/fromJson round-trip
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson accumulates EVERY problem (E12)
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson missing name and missing version are problems
+✅ test/js_ext/ext_manifest_test.dart: ExtensionManifest.fromJson invalid name pattern and wrong name type
+✅ test/js_ext/ext_manifest_test.dart: json name helpers kind round-trips through json names
+✅ test/js_ext/ext_manifest_test.dart: json name helpers hook events round-trip through json names
+✅ test/js_ext/ext_manifest_test.dart: json name helpers platform tags parse case-insensitively
+✅ test/js_ext/ext_manifest_test.dart: json name helpers ExtCapabilities equality on all fields
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) parses entries with optional pins
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) empty document and empty section => no entries
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) unknown top key rejected, naming the key
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) unknown entry key rejected, naming the key
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) entry without source rejected
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) non-string pin rejected, naming the key
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) non-list extensions rejected
+✅ test/js_ext/ext_bootstrap_config_test.dart: ExtBootstrapConfig.fromYaml (strict) broken yaml rejected as ConfigException
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap first apply installs, second is up-to-date (idempotent)
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap hash drift reports updated (hash changed)
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap planner failure => named FAILED line, session proceeds
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap strict mode rethrows planner failures
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap denied trust (no prompt) => named FAILED line
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap prompt approval installs through the bootstrap loop
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap pin mismatch soft-skips with a named line; strict rethrows
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap planner returning null => skipped line
+✅ test/js_ext/ext_bootstrap_config_test.dart: applyExtBootstrap capability drift without re-approval keeps reporting FAILED
+✅ test/js_ext/trust_test.dart: TrustRecord toJson emits UTC ISO timestamps
+✅ test/js_ext/trust_test.dart: TrustRecord fromJson/toJson round-trip preserves UTC instant
+✅ test/js_ext/trust_test.dart: TrustRecord fromJson converts local timestamps to UTC
+✅ test/js_ext/trust_test.dart: TrustRecord fromJson rejects bad fields
+✅ test/js_ext/trust_test.dart: TrustRecord equality on (source, sourceRef, contentSha256, capabilities)
+✅ test/js_ext/trust_test.dart: extCapabilitiesEqual equal maps with different key order
+✅ test/js_ext/trust_test.dart: extCapabilitiesEqual nested value differences are detected
+✅ test/js_ext/trust_test.dart: extCapabilitiesEqual list element order is significant
+✅ test/js_ext/trust_test.dart: ExtTrustRequest.humanSummary one line per capability
+✅ test/js_ext/trust_test.dart: ExtTrustRequest.humanSummary omits undeclared capabilities
+✅ test/js_ext/trust_test.dart: ExtTrustRequest.humanSummary no capabilities => empty summary
+✅ test/js_ext/extension_store_test.dart: write + list round-trip writes files, trust.json, and reads them back
+✅ test/js_ext/extension_store_test.dart: write + list round-trip list skips dirs without a manifest silently
+✅ test/js_ext/extension_store_test.dart: write + list round-trip list of an empty store works
+✅ test/js_ext/extension_store_test.dart: shadowing project shadows user by name; find agrees
+✅ test/js_ext/extension_store_test.dart: shadowing user entry is used when project has none
+✅ test/js_ext/extension_store_test.dart: invalid extension dirs invalid manifest skipped into problems
+✅ test/js_ext/extension_store_test.dart: invalid extension dirs unparseable manifest skipped into problems
+✅ test/js_ext/extension_store_test.dart: invalid extension dirs manifest without main.js skipped into problems
+✅ test/js_ext/extension_store_test.dart: platform filter forPlatform keeps only supporting extensions
+✅ test/js_ext/extension_store_test.dart: trust trust.json absent => trust null (untrusted)
+✅ test/js_ext/extension_store_test.dart: trust corrupt trust.json => untrusted, not a crash
+✅ test/js_ext/extension_store_test.dart: trust setTrust writes and updates the record
+✅ test/js_ext/extension_store_test.dart: trust setTrust on missing extension throws
+✅ test/js_ext/extension_store_test.dart: remove deletes the directory; missing is silent
+✅ test/js_ext/extension_store_test.dart: remove removes user-scope copy when no project copy exists
+✅ test/js_ext/extension_store_test.dart: write validation requires manifest.json and main.js
+✅ test/js_ext/extension_store_test.dart: write validation rejects invalid manifest content
+✅ test/js_ext/extension_store_test.dart: write validation rejects path escapes
+✅ test/js_ext/extension_store_test.dart: extContentHash pinned fixture digest
+✅ test/js_ext/extension_store_test.dart: extContentHash sorts paths before hashing
+✅ test/js_ext/extension_store_test.dart: extContentHash order-sensitive: different content => different hash
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime start records bootstrap, main, and bridges without running them
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime engineId echoes the constructor value
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime invoke dispatches to constructor globals and counts calls
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime onGlobal registers and replaces globals
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime defaultTimeoutBehavior timeout throws TimeoutException with the caller timeout
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime bridges set at start dispatch
+✅ test/js_ext/jsr_runtime_test.dart: FakeJsrRuntime dispose sets the flag and gates start and invoke
+✅ test/js_ext/extension_host_test.dart: loadAll load + commit happy path wires tools, hooks, slash, flows
+✅ test/js_ext/extension_host_test.dart: loadAll untrusted: tombstone skip without prompt, prompt denial, grant
+✅ test/js_ext/extension_host_test.dart: loadAll platform-incompatible extension never loads (E7)
+✅ test/js_ext/extension_host_test.dart: loadAll engine unavailable is a skip, not an error (E1)
+✅ test/js_ext/extension_host_test.dart: loadAll start failure other than engine-unavailable lands in errors
+✅ test/js_ext/extension_host_test.dart: loadAll capability violations fail the extension, never register (E-cap)
+✅ test/js_ext/extension_host_test.dart: loadAll cross-extension collision fails the later extension (E4)
+✅ test/js_ext/extension_host_test.dart: loadAll reserved names collide and slash namespaces collide likewise
+✅ test/js_ext/extension_host_test.dart: loadAll second loadAll does not duplicate already loaded extensions
+✅ test/js_ext/extension_host_test.dart: tool execution result shapes String, {text}, {content:[...]} normalize; {error} throws
+✅ test/js_ext/extension_host_test.dart: tool execution result shapes tier maps read/write/exec with exec default
+✅ test/js_ext/extension_host_test.dart: attachHooks beforeToolCall block and prompt verdicts are prefixed and block
+✅ test/js_ext/extension_host_test.dart: attachHooks beforeToolCall existing hook blocking denies first; JS hook never runs
+✅ test/js_ext/extension_host_test.dart: attachHooks beforeToolCall hook throw is logged and ignored
+✅ test/js_ext/extension_host_test.dart: attachHooks afterToolCall append lands redacted after the redacted base (double pass)
+✅ test/js_ext/extension_host_test.dart: attachHooks afterToolCall append-only: rewrite and unknown shapes ignored, base unchanged
+✅ test/js_ext/extension_host_test.dart: attachHooks afterToolCall chained hooks each see the original base; appends accumulate
+✅ test/js_ext/extension_host_test.dart: prepareNextTurn non-null JS result rejected and logged; existing result kept (E3)
+✅ test/js_ext/extension_host_test.dart: session bridges follow-up cap collapses overflow into one aggregate (E14)
+✅ test/js_ext/extension_host_test.dart: session bridges sessionEnd delivers pending, hook enqueues land next turn
+✅ test/js_ext/extension_host_test.dart: session bridges appendNote and io sinks wired
+✅ test/js_ext/extension_host_test.dart: session bridges fs.readFile confined to cwd; escapes refused
+✅ test/js_ext/extension_host_test.dart: session bridges exec.run gated by allowedCommands prefix match
+✅ test/js_ext/extension_host_test.dart: session bridges keys.request never returns a value (AC10); has() reads manifest
+✅ test/js_ext/extension_host_test.dart: session bridges lifecycle hooks fire in load order; errors never escape
+✅ test/js_ext/extension_host_test.dart: enable/disable (E9) disable detaches registrations synchronously, enable restores
+✅ test/js_ext/extension_host_test.dart: enable/disable (E9) unknown names throw
+✅ test/js_ext/extension_host_test.dart: dispose releases every engine
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog v1 back-compat: no schemaVersion, widgets key, absent kind => widget
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog v2: schemaVersion honored and extensions key parsed
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog widgets and extensions keys are UNIONED
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog unknown kind skipped, missing id/version/zipFile skipped
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog platform names parsed case-insensitively, unknown dropped
+✅ test/js_ext/ext_catalog_test.dart: parseExtCatalog entries sorted by id regardless of file order
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog fetches, parses, and writes a TTL cache through env
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog fresh cache is served without hitting the network
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog force bypasses the freshness check
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog expired cache + server failure => stale-on-error
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog server failure without cache throws
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog invalid catalog json throws ExtCatalogException
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog happy path: sha verified, root stripped, binary skipped
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog empty declared sha skips verification
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog tampered zip rejected with nothing written
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog asset name with a slash rejected up front
+✅ test/js_ext/ext_catalog_test.dart: fetchExtCatalog HTTP failure surfaces as ExtCatalogException
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules entry outside the required root rejected
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules zip-slip via .. segment rejected
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules backslash traversal is normalized to .. and rejected
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules absolute entry rejected
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules archive without main.js rejected
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules discovered root: single manifest dir is stripped
+✅ test/js_ext/ext_catalog_test.dart: extractExtensionZip hostile-zip rules ambiguous manifests rejected when root is discovered
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced lockfile exists on disk
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced lockfile is not gitignored (library lockfiles still are)
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced lockfile is in sync with the current package versions
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced packaging scripts resolve flutter_app with --enforce-lockfile
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced root .gitignore has no duplicated rule blocks
+✅ test/nightly_desktop_leg_guard_test.dart: AC2 — flutter_app/pubspec.lock is committed and enforced the shared pub-get action fails fast on deterministic skew
+✅ test/nightly_desktop_leg_guard_test.dart: AC1 — desktop plugin impls carry no native registration flutter_inappwebview_linux is overridden to a stub with no plugin section
+✅ test/nightly_desktop_leg_guard_test.dart: AC1 — desktop plugin impls carry no native registration flutter_inappwebview_windows is overridden to a stub with no plugin section
+✅ test/nightly_desktop_leg_guard_test.dart: AC3 — the drift parent is pinned and named the committed lockfile pins the drift chain
+✅ test/nightly_desktop_leg_guard_test.dart: AC3 — the drift parent is pinned and named nightly build-release still exercises linux + windows
+✅ test/release_ipa_strip_test.dart: gh-1403 — IPA strip step executes its MAIN path (not just the guard) an IPA WITH Symbols/ is stripped in place — valid zip, Payload intact
+✅ test/release_ipa_strip_test.dart: gh-1403 — IPA strip step executes its MAIN path (not just the guard) guard: an IPA without Symbols/ passes through untouched
+✅ test/release_ipa_strip_test.dart: gh-1403 — IPA strip step executes its MAIN path (not just the guard) missing IPA fails loudly with the ::error:: annotation
+✅ test/jsr_host_call_pin_guard_test.dart: pubVersion parses a plain triple
+✅ test/jsr_host_call_pin_guard_test.dart: pubVersion tolerates a build-suffixed version
+✅ test/jsr_host_call_pin_guard_test.dart: pubVersion tolerates a prerelease-suffixed version
+✅ test/jsr_host_call_pin_guard_test.dart: pubVersion a suffixed version equals its plain triple
+✅ test/jsr_host_call_pin_guard_test.dart: pubspec.yaml has no js_widget_runtime dependency_override
+✅ test/jsr_host_call_pin_guard_test.dart: pubspec.yaml requires js_widget_runtime >= 0.4.156
+✅ test/jsr_host_call_pin_guard_test.dart: committed lockfile resolves js_widget_runtime hosted >= 0.4.156
+✅ test/ci_macos_signing_window_guard_test.dart: AC1 — build-macos has NO per-job keychain auto-lock windows (gh-1798 class retired by ci-sign)
+✅ test/ci_macos_signing_window_guard_test.dart: AC2 — Fastfile unlocks the signing keychain at point of use (gh-1798 replacement)
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml parses defaults for a minimal section
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml parses settings
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml parses a full rule
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml accepts a pattern list and a scope string
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml a rule without scope gets the default scope
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml an explicit rule path wins over the source path
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml strict errors surface as ConfigException
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml invalid scope tokens are collected as warnings
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml round-trips through toYaml
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.fromYaml serializes an empty rule list
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.rulesFromYaml (project rules file) parses a rules-only file with the file path as provenance
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.rulesFromYaml (project rules file) rejects a non-map file
+✅ test/ttsr/ttsr_config_test.dart: TtsrConfig.rulesFromYaml (project rules file) an absent rules key yields no rules
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) schedule = daily-publish + exactly 120 minutes (owner ruling)
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) manual dispatch with a stores choice + horizon input
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) read-only token + issues:write for the stub lifecycle
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) concurrency group + explicit timeout (watch arithmetic stays real)
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) reuses the submit legs credentials — no new secrets (I3)
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) runs the shared check script (logic stays in one tested place)
+✅ test/store_appearance_check_test.dart: workflow — store-appearance-check.yml (AC2) dispatch inputs reach the script through env:, never {} interpolation (review gh-1041 thread 4 — script injection hardening)
+✅ test/store_appearance_check_test.dart: Fastfile — the 900s wait leaves the failing path (AC1) no verify timeout env, no deadline loop, no poll sleep
+✅ test/store_appearance_check_test.dart: Fastfile — the 900s wait leaves the failing path (AC1) the verify becomes a non-failing note linking the deferred check
+✅ test/store_appearance_check_test.dart: Fastfile — the 900s wait leaves the failing path (AC1) fastlane processing wait is untouched (upload-owned, not the custom wait)
+✅ test/store_appearance_check_test.dart: Fastfile — the 900s wait leaves the failing path (AC1) touched workflows are still valid YAML
+✅ test/store_appearance_check_test.dart: check logic wiring (AC5) pure decision module exists and the plain-ruby suite covers it
+✅ test/store_appearance_check_test.dart: check logic wiring (AC5) the script routes every decision through the module
+✅ test/store_appearance_check_test.dart: check logic wiring (AC5) ci.yml picks the ruby suite up automatically (pre-flight loop)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) all stores present → green summary on the publish stubs, exit 0
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) real JWTs ride the wire: ES256 to ASC, RS256 assertion to the Play token endpoint
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) absent past the horizon → exactly one stub per absent store, exit 1
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) a second identical check updates the stubs in place (no duplicates, REG)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) absence below the horizon only reports — no stub, exit 0
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) version rollover resolves: stubs close, exit 0
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration registers a valid rule
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration duplicate names are ignored (first wins)
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration disabled rules are skipped
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration disabled manager refuses registration and matching
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration invalid regex conditions are skipped with a warning
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration a rule with no compilable condition is refused
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager registration an unreachable scope is refused with a warning
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching matches a text delta
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching matches a pattern split across chunks (cumulative buffer)
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching does not match unrelated content
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching multiple conditions are ORed
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching default scope matches text and tools but not thinking
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching thinking-scoped rule matches thinking deltas
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching tool-name scope matches only the named tool
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching scope tokens parse text/thinking/tool/tool:name
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching the tool/toolcall token admits any tool
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching buffers are isolated per stream key
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching resetBuffer clears accumulated content
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager matching matching stops at the first scope shortcut for text-only rules
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager repeat policy once: an injected rule never re-triggers
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager repeat policy after-gap: re-triggers only after repeatGap completed turns
+✅ test/ttsr/ttsr_manager_test.dart: TtsrManager repeat policy injected names round-trip through restoreInjected
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) API errors never file stubs (noise guard) — but the run stays red
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) once-a-day guard: the green summary is not repeated within the day (REG)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) --only scopes the run, and missing secrets skip green-neutrally
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) the play leg stays read-only: the edit is always deleted, never committed
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) a failed gh READ aborts the lifecycle — never a duplicate stub (review gh-1041 thread 3)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) a partial --only run posts no all-green summary (review gh-1041 thread 2)
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry aborts mid-stream, injects the reminder, and retries corrected
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry the retry context carries the injection, not the violation
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry contextMode keep retains the partial before the reminder
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry a fired rule does not re-fire on the retry
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry the per-turn injection cap stops the retry storm
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry thinking deltas trigger rules scoped to thinking
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry default-scope rules do not watch thinking deltas
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry tool-call argument deltas trigger tool-scoped rules
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry tool-name-scoped rules ignore other tools
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry no rules configured: the stream is never interrupted
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry disabled TTSR never interrupts
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController abort/inject/retry reset clears pending state and injected rules
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController persistence injection persists as records and survives compaction rebuild
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController persistence an older injection joins the compaction summary input
+✅ test/ttsr/ttsr_controller_test.dart: TtsrController persistence a session-less host degrades to in-memory injection only
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) the horizon follows the REAL leg state: still running → report only (review gh-1041 thread 5)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) a leg that FAILED never went green → no absence stubs at all (review gh-1041 thread 7)
+✅ test/store_appearance_check_test.dart: IT — check script against fake store endpoints (no real network) a failed gh WRITE turns the run red and is recorded (review gh-1041 thread 8)
+✅ test/ci_2030_extension_size_floor_test.dart: extension size floor gates the run-41276487426 artifact shape green (gh-2030)
+✅ test/ci_2030_extension_size_floor_test.dart: a +10% inflated artifact is still rejected — the ratchet stays armed (gh-2030)
+✅ test/ci_2030_extension_size_floor_test.dart: committed floor is the byte-exact --reseed output for that shape (gh-2030)
+✅ test/publish_staging_test.dart: publish staging self-consistency (issue #584) staging rsync block carries filter rules
+✅ test/publish_staging_test.dart: publish staging self-consistency (issue #584) every pubspec path dependency lands in the staged tree
+✅ test/publish_staging_test.dart: publish staging self-consistency (issue #584) pubspec_overrides.yaml never leaks into the staged tree
+✅ test/publish_staging_test.dart: publish staging self-consistency (issue #584) root-scoped excludes prune only the repo root (issue #613)
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) .pubignore exists and parses
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) fastlane fake-key fixtures never ride the publish payload
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) dev path-dependency subtrees still ship (issue #584)
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) package surface is not over-excluded
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) root-scoped staging excludes are mirrored in .pubignore
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) pubspec_overrides.yaml never rides the pub payload
+✅ test/publish_staging_test.dart: publish .pubignore mirrors the staged surface (gh-1220) CHANGELOG_ARCHIVE.md never rides the publish payload (gh-1452)
+✅ test/publish_staging_test.dart: gh-1511 — sub-package publish sees its own tree fa_llm payload carries its own required files
+✅ test/publish_staging_test.dart: gh-1511 — sub-package publish sees its own tree .pubignore negations are an explicit allowlist
+✅ test/publish_staging_test.dart: gh-1511 — sub-package publish sees its own tree other packages/* trees stay out of the pub payload
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp committed pubspecs carry the 0.0.0-dev placeholder
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp stage script forwards an optional version to the stamper, after the size guard
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp stamper enforces the tag↔staged-version invariant before upload
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp staged changelog is capped: guard runs, oldest sections trim, re-check
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp ci.yml publish stage passes the tag version and verifies the staged stamp
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp install_local.sh stamps version.txt from git describe, not the pubspec
+✅ test/publish_staging_test.dart: gh-1522 — tag-sourced version stamp pre-merge publish dry-run rehearses the tag-stamped stage
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior stamps the pubspec to exactly the tag version
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior stamps the pubspec without GNU sed -i too (BSD/macOS dev hosts)
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior folds the curated Unreleased body under the tag section; no Unreleased header survives
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior over-cap staged file trims oldest-first, keeping the fresh section
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior a curated ## <version> section for the same version never duplicates
+✅ test/publish_staging_test.dart: gh-1522 rework — stamp_staged_release.sh behavior staged pubspec missing the version line fails loud
+✅ test/browser_ext/manifest_json_test.dart: browser_ext/manifest.json is strict JSON (Chrome rejects comments)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) valid single-manifest package passes (AC1 GREEN shape)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) REG (CWS upload 2026-10-11): a //-commented root manifest FAILS — the store parses strictly even though Chrome local load is lenient
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) REG (CWS upload 2026-10-11): a root manifest with "key" FAILS — the store owns the signing key, the dev pin must be stripped
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) nested panel/app/manifest.json fails naming BOTH manifests (AC1)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) manifest not at the root fails (E2 — no silent allowlist)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) .DS_Store and __MACOSX junk entries fail (bonus hygiene)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) empty directory entry fails (bonus hygiene)
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) icon referenced by the root manifest missing from zip fails
+✅ test/browser_ext/cws_compliance_test.dart: AC5: the four dead permissions are gone from the manifest
+✅ test/browser_ext/cws_compliance_test.dart: F2′: `downloads` stays declared — the `download` tool is its shipped call site
+✅ test/browser_ext/cws_compliance_test.dart: I5/AC5: CSP = self + wasm-unsafe-eval, no remote origins
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) non-MV3 root manifest fails (AC4 — CWS shape, MV3 parse)
+✅ test/browser_ext/cws_compliance_test.dart: AC1 (source level): packaged-verbatim browser_ext/ files carry no remote-code markers
+✅ test/browser_ext/cws_compliance_test.dart: I3/I4: interpreter loader URLs are selected per build — extension compiles vendor paths only, web keeps the CDN
+✅ test/browser_ext/cws_compliance_test.dart: I2/AC3: vendor.lock.json pins every engine artifact with sha256
+✅ test/browser_ext/package_shape_guard_test.dart: check (CWS shape on the packaged zip) missing zip file fails loudly (bad invocation)
+✅ test/browser_ext/package_shape_guard_test.dart: strip (staged panel app — sources untouched) removes the PWA manifest and the link tag, keeps the rest
+✅ test/browser_ext/package_shape_guard_test.dart: strip (staged panel app — sources untouched) handles the reversed attribute order too
+✅ test/browser_ext/cws_compliance_test.dart: AC3/E1: fetch_vendor_assets.sh exists, is executable, wired into the build, and fails loud on checksum mismatch
+✅ test/browser_ext/package_shape_guard_test.dart: strip (staged panel app — sources untouched) idempotent: a second run is a no-op, not a failure (E3)
+✅ test/browser_ext/package_shape_guard_test.dart: strip (staged panel app — sources untouched) index.html without the link tag (template change) → no-op (E3)
+✅ test/browser_ext/cws_compliance_test.dart: AC3/E2: a full fetch lands the REPLACEMENT-TRANSFORMED bytes, not the raw download
+✅ test/browser_ext/package_shape_guard_test.dart: strip (staged panel app — sources untouched) missing index.html in the staged dir fails loudly
+✅ test/browser_ext/cws_compliance_test.dart: AC3/E1: a drifted on-disk artifact is RE-FETCHED from the lock (the "re-fetching" path actually fetches)
+✅ test/browser_ext/package_shape_guard_test.dart: end-to-end fixture: strip then check is green (AC1 GREEN)
+✅ test/browser_ext/cws_compliance_test.dart: F1/AC2: extension panel staging swaps CDN engine loaders for package-local vendor loaders (no failure stub)
+✅ test/browser_ext/cws_compliance_test.dart: REG-1/AC7: the packaging guard scans the built zip for remote code and CI enforces the compliance check
+✅ test/browser_ext/panel_app_layout_test.dart: panel.js probes the panel-relative app bundle
+✅ test/browser_ext/panel_app_layout_test.dart: the packaging script bundles the app where the panel probes it
+✅ test/browser_ext/panel_app_layout_test.dart: packaging strips the PWA manifest from the staged app only (#291)
+✅ test/browser_ext/panel_app_layout_test.dart: packaging guards the zip shape — single manifest, hard fail (#291)
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: AC3 — ReleaseNoSandbox.entitlements is exactly the shipped trio (golden)
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: AC3 — the DebugNoSandbox twin matches the shipped set
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: AC6 — sandboxed dev entitlements stay untouched (REG)
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: Wiring — the pbxproj references ReleaseNoSandbox.entitlements
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: Leg shape — the no-sandbox DMG is notarized + stapled like the sandboxed one
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: Consume — the leg builds the ReleaseNoSandbox configuration (review 5876405113: the wired config is the BUILT config)
+✅ test/ci_macos_nosandbox_entitlements_guard_test.dart: Seal order — prune runs inside the script BEFORE the re-sign (and not in the workflow step)
+✅ test/power_config_test.dart: parsePowerSection absent section parses to the defaults (level null, hold null)
+✅ test/power_config_test.dart: parsePowerSection parses every documented level
+✅ test/power_config_test.dart: parsePowerSection parses the hold lifecycle (#326)
+✅ test/power_config_test.dart: parsePowerSection a bad hold value throws ConfigException naming the key
+✅ test/power_config_test.dart: parsePowerSection a bad value throws ConfigException naming the key
+✅ test/power_config_test.dart: parsePowerSection an unknown member throws ConfigException
+✅ test/power_config_test.dart: parsePowerSection a non-map section throws ConfigException
+✅ test/power_config_test.dart: PowerAssertionLevel fromValue maps labels and rejects everything else
+✅ test/power_config_test.dart: PowerAssertionLevel toString renders the config label
+✅ test/power_config_test.dart: powerAssertionOptions (cumulative levels) off asks for no assertion at all
+✅ test/power_config_test.dart: powerAssertionOptions (cumulative levels) idle prevents idle sleep only
+✅ test/power_config_test.dart: powerAssertionOptions (cumulative levels) display adds the display assertion
+✅ test/power_config_test.dart: powerAssertionOptions (cumulative levels) system adds system sleep + user activity
+✅ test/power_config_test.dart: caffeinateArguments idle: caffeinate -i -w <pid>
+✅ test/power_config_test.dart: caffeinateArguments display: caffeinate -i -d -w <pid>
+✅ test/power_config_test.dart: caffeinateArguments system: caffeinate -i -d -s -u -w <pid>
+✅ test/power_config_test.dart: systemdInhibitArguments idle level inhibits idle only, with a pid watchdog
+✅ test/power_config_test.dart: systemdInhibitArguments system level also inhibits sleep
+✅ test/types_test.dart: Usage zero constant has zeroed fields
+✅ test/types_test.dart: Usage copyWith replaces only given fields
+✅ test/types_test.dart: Usage cacheWrite1h and reasoning are optional
+✅ test/types_test.dart: UsageCost copyWith replaces only given fields
+✅ test/types_test.dart: ContentBlock TextContent copyWith
+✅ test/types_test.dart: ContentBlock ThinkingContent copyWith and redacted flag
+✅ test/types_test.dart: ContentBlock ToolCall copyWith
+✅ test/types_test.dart: AssistantMessage copyWith replaces only given fields
+✅ test/types_test.dart: AssistantMessage JSON round-trip preserves rawStopReason
+✅ test/types_test.dart: StopReason has pi's exact value set
+✅ test/types_test.dart: thinking events carry contentIndex, payload, and partial
+✅ test/types_test.dart: classifyFinishReason (issue #312) vendor-tagged table sorts transient, terminal, unknown
+✅ test/types_test.dart: classifyFinishReason (issue #312) finishReasonRetryClass reads the wire verdict off the message
+✅ test/types_test.dart: isBudgetExhaustion (issue #926) matches the budget/spending wordings
+✅ test/types_test.dart: isBudgetExhaustion (issue #926) transport and plain rate-limit wordings are not budget exhaustion
+✅ test/types_test.dart: isBudgetExhaustion (issue #926) a bare "spending" mention is not budget exhaustion (review #929)
+✅ test/types_test.dart: isBudgetExhaustion (issue #926) only error stops classify
+✅ test/types_test.dart: isBudgetExhaustion (issue #926) finishReasonRetryClass: budget wording is terminal regardless of wire form
+✅ test/barrel_media_export_guard_test.dart: the public barrel does not export src/tools/generate_image.dart (its MediaKeyResolver/MediaEndpoint/generateImageTool names collide with flutter_app's parallel copies)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC1 — build-mobile.yml pins the iOS identity by SHA-1 via ci-sign (gh-1865)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC2 — build-macos.yml pins every macOS signing site by SHA-1 via ci-sign (gh-1865)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC3 — no workflow resolves a signing identity by a generic certificate name (gh-1865 r2: the CN class varies by era)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC4 — ci-sign resolves identities by the stored fingerprint, never by name (gh-1865)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC5 — owner option B: profile serials are asserted BEFORE the build in both legs (gh-1865, v1.0.659 regression)
+✅ test/ci_cert_sha1_pin_guard_test.dart: AC6 — the Fastfile threads the env-provided fingerprint into both update_code_signing_settings calls (gh-1865)
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — test-faui artifact uploads ride a retry the leg carries the evidence uploads and their retries
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — test-faui artifact uploads ride a retry AC1: every primary upload step carries an id the retry references
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — test-faui artifact uploads ride a retry AC2: each primary upload is followed by an overwrite:true retry
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — test-faui artifact uploads ride a retry AC3: retries stay always()-reachable and never continue-on-error
+✅ test/cancel_token_test.dart: CancelToken starts uncancelled
+✅ test/cancel_token_test.dart: CancelToken cancel flips isCancelled and records reason
+✅ test/cancel_token_test.dart: CancelToken cancel is idempotent; first reason wins
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — test-faui artifact uploads ride a retry AC4: the job-level gate still scopes every upload (incl. retries)
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — flutter-tests artifact uploads ride a retry the leg carries the evidence uploads and their retries
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — flutter-tests artifact uploads ride a retry AC1: every primary upload step carries an id the retry references
+✅ test/cancel_token_test.dart: CancelToken onCancel completes after cancel
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — flutter-tests artifact uploads ride a retry AC2: each primary upload is followed by an overwrite:true retry
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — flutter-tests artifact uploads ride a retry AC3: retries stay always()-reachable and never continue-on-error
+✅ test/cancel_token_test.dart: CancelToken onCancel completes immediately when already cancelled
+✅ test/cancel_token_test.dart: CancelToken multiple listeners all complete
+✅ test/cancel_token_test.dart: CancelToken throwIfCancelled throws only after cancel
+✅ test/cancel_token_test.dart: CancelToken CancelledException toString includes reason
+✅ test/ci_shard_evidence_upload_retry_guard_test.dart: gh-1724 follow-up — flutter-tests artifact uploads ride a retry AC4: the job-level gate still scopes every upload (incl. retries)
+✅ test/integration/pty_harness_lost_space_test.dart: erased-cell extraction loss (gh-1372) a skipped interior space cell vanishes from the screen text
+✅ test/integration/pty_harness_lost_space_test.dart: erased-cell extraction loss (gh-1372) lostSpaceTolerant matches the collapsed screen and the intact one
+✅ test/integration/pty_harness_lost_space_test.dart: lostSpaceTolerant semantics accepts the intact phrase on a plain screen row
+✅ test/integration/pty_harness_lost_space_test.dart: lostSpaceTolerant semantics accepts the phrase with any single interior space dropped
+✅ test/integration/pty_harness_lost_space_test.dart: lostSpaceTolerant semantics refuses shifted spaces, other words, and unrelated rows
+✅ test/integration/pty_harness_lost_space_test.dart: lostSpaceTolerant semantics escapes regex metacharacters in the phrase
+✅ test/integration/memory_taggen_script_pin_test.dart: memory leg scripts a sticky wildcard for every taggen call (gh-1171 pin)
+✅ test/integration/pty_harness_settled_skill_row_test.dart: settledMidSessionSkillRow refuses both gh-1639 mid-paint frames — the wait keeps polling instead of anchoring a partial listing
+✅ test/integration/pty_harness_settled_skill_row_test.dart: settledMidSessionSkillRow the completed `latecomer` row alone does NOT satisfy the `latecomer2` anchor — the exact early-return that flaked
+✅ test/integration/pty_harness_settled_skill_row_test.dart: settledMidSessionSkillRow accepts the settled listing; its match is the fully painted second flagged row
+✅ test/integration/pty_harness_settled_skill_row_test.dart: settledMidSessionSkillRow a mid-paint frame can never carry the flag on the truncated row — the flag renders at row END, so a same-row match implies the whole row landed
+✅ test/integration/pty_harness_masked_value_row_test.dart: maskedValueRow finds the frame-closed bullet row among history and chrome
+✅ test/integration/pty_harness_masked_value_row_test.dart: maskedValueRow ignores the history tool row — a lone bullet not frame-closed
+✅ test/integration/pty_harness_masked_value_row_test.dart: maskedValueRow a frame-closed row without bullets does not match (e.g. the name row)
+✅ test/integration/pty_harness_masked_value_row_test.dart: maskedValueRow empty screen never matches
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand explicit faBin wins over the ambient environment
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand ambient FA_BIN applies when the caller pins nothing
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand no FA_BIN anywhere falls back to the default JIT prefix
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand custom JIT prefix is preserved verbatim (dart run shape)
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand JIT prefix may carry VM flags before the script path
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand args are appended verbatim in the AOT shape (2+ items)
+✅ test/integration/pty_harness_fa_bin_test.dart: faCliCommand empty args reduce to the binary itself
+✅ test/integration/pty_screen_wait_reg_test.dart: no bare waitForScreen is followed by a mid-render screen read (gh-1049)
+✅ test/integration/pty_screen_wait_reg_test.dart: no waitForOutput result is harvested for settle notices (gh-1250 drain family)
+✅ test/integration/pty_screen_wait_reg_test.dart: _statementEnd ignores parens inside string literals (gh-1049 review)
+✅ test/integration/pty_harness_poll_until_test.dart: pollUntil a match landing between the last poll and the deadline returns instead of throwing (CI 2026-10-05 fa_cli boot regression)
+✅ test/integration/pty_harness_poll_until_test.dart: pollUntil a genuine timeout still throws with the screen and raw-tail dump
+✅ test/integration/pty_harness_poll_until_test.dart: pollUntil waitForScreen semantics: onHit returns the snapshot that matched, not a re-read
+✅ test/integration/pty_harness_frame_content_test.dart: frameContentLines written-space and EL-erased tails of the same row normalize equal
+✅ test/integration/pty_harness_frame_content_test.dart: frameContentLines genuine content differences stay visible
+✅ test/integration/pty_harness_frame_content_test.dart: frameContentLines strips only trailing blanks — leading layout is preserved
+✅ test/integration/pty_harness_frame_content_test.dart: emulator materialization (the gh-982 artifact class) same row text reads padded or unpadded depending on the renderer path that last touched the line
+✅ test/integration/fa_cli_mock_server_reg_test.dart: MockOpenAiServer: a client abort mid-request leaks no unhandled error
+✅ test/integration/pty_harness_settled_jobs_test.dart: settledJobNumbers one distinct number per settle notice; repaint re-emits do not inflate the set
+✅ test/integration/pty_harness_settled_jobs_test.dart: settledJobNumbers a mid-id fragmentation (CI-load cursor escapes) still counts by number prefix
+✅ test/integration/pty_harness_settled_jobs_test.dart: settledJobNumbers a FAILED job (non-zero exit) is settled too — the #1345 review regression: the drain predicate must not hang on it
+✅ test/integration/pty_harness_settled_jobs_test.dart: settledJobNumbers the drained-wait predicate rejects a truncated capture (the v1.0.520 {1..7} shape) and accepts only the full set
+✅ test/redact/layer_pii_test.dart: layerPii email
+✅ test/redact/layer_pii_test.dart: layerPii phone: +7 formatted and compact
+✅ test/redact/layer_pii_test.dart: layerPii phone: +1 NANP
+✅ test/redact/layer_pii_test.dart: layerPii phone: trunk 8 form
+✅ test/redact/layer_pii_test.dart: layerPii credit card: Luhn-valid only
+✅ test/redact/layer_pii_test.dart: layerPii SSN
+✅ test/redact/layer_pii_test.dart: layerPii IBAN
+✅ test/redact/layer_pii_test.dart: layerPii several PII items in one text
+✅ test/redact/layer_pii_test.dart: layerPii nothing sensitive
+✅ test/redact/redaction_hooks_test.dart: isRedactionExemptTool write-side built-ins are exempt (issue #24 AC7)
+✅ test/redact/redaction_hooks_test.dart: isRedactionExemptTool MCP write-ish tools are exempt, read tools are not
+✅ test/redact/redaction_hooks_test.dart: isCredentialFilePath credential files
+✅ test/redact/redaction_hooks_test.dart: isCredentialFilePath ordinary files are not credentials
+✅ test/redact/redaction_hooks_test.dart: credentialPathOf read path argument
+✅ test/redact/redaction_hooks_test.dart: credentialPathOf bash credential read command
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.afterToolCall masks vendor keys in tool results and records stats
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.afterToolCall passes the read path as the path hint (whole-file dumps)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.afterToolCall write-side tool results are never redacted (AC7)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.afterToolCall tool policy deny skips the tool
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.afterToolCall untouched content returns null (no override)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.beforeToolCall (blockMode, AC6) blocks a read of a credential file
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.beforeToolCall (blockMode, AC6) blocks a bash cat of a private key
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.beforeToolCall (blockMode, AC6) ordinary reads pass in blockMode
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.beforeToolCall (blockMode, AC6) mask mode never blocks (default)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.transformContext masks user messages (prompt echo path)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.transformContext write-side tool results survive byte-identical (AC7)
+✅ test/redact/redaction_hooks_test.dart: redactionPipelineHooks.transformContext masks read tool results and assistant text
+✅ test/redact/redaction_hooks_test.dart: redactPrompt (AC8) masks and counts under user_input
+✅ test/redact/redaction_hooks_test.dart: redactPrompt (AC8) clean prompt returns unchanged
+✅ test/redact/redaction_hooks_test.dart: attachRedactionPipeline existing afterToolCall output is redacted afterwards
+✅ test/redact/redaction_hooks_test.dart: attachRedactionPipeline prior hook result carrying a secret gets masked
+✅ test/redact/redaction_hooks_test.dart: attachRedactionPipeline existing beforeToolCall block verdict wins
+✅ test/redact/redaction_hooks_test.dart: attachRedactionPipeline redaction block applies when no prior hook blocks
+✅ test/redact/redaction_hooks_test.dart: attachRedactionPipeline transformContext composition masks the composed list
+✅ test/redact/redaction_hooks_test.dart: persisted tool-call arguments (gh-1952 review) masks a registered secret in a bash call argument
+✅ test/redact/redaction_hooks_test.dart: persisted tool-call arguments (gh-1952 review) leaves the LIVE message untouched — persist-path only
+✅ test/redact/redaction_hooks_test.dart: persisted tool-call arguments (gh-1952 review) write-tool arguments stay byte-identical (AC7)
+✅ test/redact/redaction_hooks_test.dart: persisted tool-call arguments (gh-1952 review) masks inside nested argument structures
+✅ test/redact/redaction_hooks_test.dart: persisted tool-call arguments (gh-1952 review) non-call messages pass through unchanged
+✅ test/redact/redaction_hooks_test.dart: credential paths: tilde-prefixed legacy forms (issue #1999) `~/` paths stay detected without the dead caret pattern
+✅ test/redact/stats_test.dart: RedactionStats starts empty
+✅ test/redact/stats_test.dart: RedactionStats byLayer and total count surviving matches per layer
+✅ test/redact/stats_test.dart: RedactionStats idempotent re-redaction adds no counts
+✅ test/redact/stats_test.dart: RedactionStats record() counts redaction events per tool
+✅ test/redact/stats_test.dart: RedactionStats exposed maps are unmodifiable copies
+✅ test/redact/perf_test.dart: 100 KB clean text redacts in < 100ms (generous CI bound)
+✅ test/redact/perf_test.dart: 100 KB + 1000 base64 tokens redacts in < 150ms
+✅ test/redact/layer_registered_test.dart: layerRegistered finds an exact occurrence
+✅ test/redact/layer_registered_test.dart: layerRegistered finds every occurrence of one secret
+✅ test/redact/layer_registered_test.dart: layerRegistered longest secret wins when one contains another
+✅ test/redact/layer_registered_test.dart: layerRegistered multiple distinct secrets
+✅ test/redact/layer_registered_test.dart: layerRegistered empty secrets list yields nothing
+✅ test/redact/layer_registered_test.dart: layerRegistered empty text yields nothing
+✅ test/redact/layer_registered_test.dart: layerRegistered empty secret strings are skipped
+✅ test/redact/layer_asn1_test.dart: layerAsn1 base64 run starting MII of length >= 200 matches
+✅ test/redact/layer_asn1_test.dart: layerAsn1 runs shorter than 200 do not match
+✅ test/redact/layer_asn1_test.dart: layerAsn1 base64 not starting with MII does not match
+✅ test/redact/layer_asn1_test.dart: layerAsn1 runs inside prior (already matched) spans are skipped
+✅ test/redact/layer_asn1_test.dart: layerAsn1 short text and MII-less text short-circuit
+✅ test/redact/config_test.dart: RedactionConfig defaults scalars
+✅ test/redact/config_test.dart: RedactionConfig defaults layer toggles: pii off, everything else on
+✅ test/redact/config_test.dart: RedactionConfig defaults explicit toggles override defaults
+✅ test/redact/config_test.dart: RedactionConfig.fromJson round-trips through toJson
+✅ test/redact/config_test.dart: RedactionConfig.fromJson null and unknown keys are ignored
+✅ test/redact/config_test.dart: RedactionConfig.fromJson unknown layer names and non-bool toggle values are ignored
+✅ test/redact/config_test.dart: RedactionConfig.fromJson allowlist accepts pattern strings and skips junk entries
+✅ test/redact/config_test.dart: RedactionConfig.fromJson null json yields defaults
+✅ test/redact/config_test.dart: config honored by the pipeline per-layer toggle disables a layer
+✅ test/redact/config_test.dart: config honored by the pipeline pii toggle opts in to PII masking
+✅ test/redact/config_test.dart: config honored by the pipeline allowlist from JSON suppresses matches
+✅ test/redact/layer_entropy_test.dart: layerEntropy long high-entropy token matches
+✅ test/redact/layer_entropy_test.dart: layerEntropy low-entropy runs of the same length do not match
+✅ test/redact/layer_entropy_test.dart: layerEntropy tokens shorter than minLength do not match
+✅ test/redact/layer_entropy_test.dart: layerEntropy custom minLength and minEntropy are honored
+✅ test/redact/layer_entropy_test.dart: layerEntropy non-ASCII runs are skipped
+✅ test/redact/layer_entropy_test.dart: layerEntropy tokens inside prior spans are skipped
+✅ test/redact/layer_entropy_test.dart: layerEntropy empty and short texts yield nothing
+✅ test/redact/layer_entropy_test.dart: layerEntropy a filesystem path is never one entropy token (no slash gluing)
+✅ test/redact/layer_entropy_test.dart: layerEntropy uuid and pure-hex tokens are structural, not secrets
+✅ test/redact/layer_entropy_test.dart: layerEntropy subresource-integrity hashes survive
+✅ test/redact/layer_entropy_test.dart: layerEntropy a contextless high-entropy secret still matches
+✅ test/redact/layer_entropy_test.dart: define / assignment carve-out (gh-1952 I3 / AC3) define shapes never match the entropy layer
+✅ test/redact/layer_entropy_test.dart: define / assignment carve-out (gh-1952 I3 / AC3) a standalone high-entropy value without an assignment shape still matches
+✅ test/redact/layer_entropy_test.dart: define / assignment carve-out (gh-1952 I3 / AC3) a define key alone (no =) is not carved out
+✅ test/redact/layer_entropy_test.dart: carve-out must not silence the entropy net (gh-1952 review) a padded-base64 secret is still entropy-masked
+✅ test/redact/layer_entropy_test.dart: carve-out must not silence the entropy net (gh-1952 review) a KEY=<random> assignment in tool output is still masked
+✅ test/redact/layer_entropy_test.dart: structured-identifier anchors (issue #1999) uuid/hex shapes match as end-anchored regexes
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) every layer label renders whitespace-free
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) whitespace runs inside a label become single hyphens
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) a whitespace-free label is unchanged
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) tabs and newlines are sanitized too
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) the pipeline emits whitespace-free markers for every layer
+✅ test/redact/marker_single_token_test.dart: redactionMarker renders single-token markers (gh-1952 I2) re-redaction stays idempotent on hyphenated markers
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan agent file-reading scenarios (entropy once shredded paths) a package-lock read keeps integrity hashes and URLs, masks keys
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan agent file-reading scenarios (entropy once shredded paths) an ls/find listing keeps every path intact
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan returns priority-ordered, non-overlapping matches
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan registered beats vendor on the same span
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan PEM body does not produce a second entropy match
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan disabled pipeline yields nothing
+✅ test/redact/pipeline_test.dart: RedactionPipeline.scan empty text yields nothing
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact marker format [REDACTED:<kindLabel>]
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact context value next to a vendor token: vendor wins, key survives
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact slices are applied by concat, not global replace
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact idempotent: redact(redact(x)) == redact(x)
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E3: registered secret containing "[REDACTED:" is still masked
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact JSON shape is preserved after redaction
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact line count is preserved for a 30-line PEM block
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E4: CRLF line count is preserved
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact data URLs pass through verbatim
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E10: scan finds nothing inside a data URL
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E1: git SHA and UUID survive by default
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E1/E9: allowlist suppresses matches fully covered by it
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E9: allowlisted long token survives
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact E8: pathHint of a credential file masks the whole dump
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact live config re-toggle via config setter
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact registerSecret enforces the 8-char minimum (parity)
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact unregisterSecret stops masking
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact registeredSecrets getter reflects registrations
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact same-start same-layer overlap keeps the longer span
+✅ test/redact/pipeline_test.dart: RedactionPipeline.redact empty text passes through
+✅ test/redact/pipeline_test.dart: define carve-out at the pipeline level (gh-1952 I3 / AC3) a non-secret define survives a full pipeline scan untouched
+✅ test/redact/pipeline_test.dart: define carve-out at the pipeline level (gh-1952 I3 / AC3) a vendor-shaped secret inside a define still matches
+✅ test/redact/pipeline_test.dart: define carve-out at the pipeline level (gh-1952 I3 / AC3) a registered secret inside a define still matches
+✅ test/redact/config_section_test.dart: redact: config section absent section parses to null
+✅ test/redact/config_section_test.dart: redact: config section parses enabled/blockMode/layers/allowlist/toolPolicy
+✅ test/redact/config_section_test.dart: redact: config section invalid values fall back to defaults (tolerant parse)
+✅ test/redact/config_section_test.dart: redact: config section toYaml round-trips layers + allowlist too
+✅ test/redact/config_section_test.dart: redact: config section toYaml round-trips non-default values
+✅ test/redact/config_section_test.dart: redact: config section defaults are never written to yaml
+✅ test/redact/config_section_test.dart: redact: config section /redact command disabled pipeline prints the enable hint
+✅ test/redact/config_section_test.dart: redact: config section /redact command bare command prints status + usage
+✅ test/redact/config_section_test.dart: redact: config section /redact command on/off toggles enabled
+✅ test/redact/config_section_test.dart: redact: config section /redact command block on/off toggles blockMode, validates args
+✅ test/redact/config_section_test.dart: redact: config section /redact command stats prints totals per layer and per tool
+✅ test/redact/config_section_test.dart: redact: config section /redact command layers prints each layer toggle state
+✅ test/redact/config_section_test.dart: redact: config section /redact command unknown subcommand prints usage
+✅ test/redact/config_section_test.dart: redact: config section buildRedactionPipeline: defaults, disabled → null
+✅ test/redact/layer_path_test.dart: isCredentialPath credential basenames
+✅ test/redact/layer_path_test.dart: isCredentialPath ordinary files are not credential paths
+✅ test/redact/layer_path_test.dart: layerPath pathHint of a credential file masks the whole text
+✅ test/redact/layer_path_test.dart: layerPath pathHint of an ordinary file yields only inline tokens
+✅ test/redact/layer_path_test.dart: layerPath inline path tokens are masked (the token itself)
+✅ test/redact/layer_path_test.dart: layerPath inline credentials dirs and pem tokens
+✅ test/redact/layer_path_test.dart: layerPath process.env is not a credential path (false-positive guard)
+✅ test/redact/layer_path_test.dart: layerPath a bare .env filename stays visible (no location info)
+✅ test/redact/layer_path_test.dart: layerPath directory-qualified .env paths are still masked
+✅ test/redact/layer_path_test.dart: layerPath process.env is not a credential path (false-positive guard)
+✅ test/redact/layer_path_test.dart: layerPath plain text yields nothing
+✅ test/redact/layer_path_test.dart: layerPath empty text yields nothing
+✅ test/redact/layer_connection_test.dart: layerConnection postgres URL: only the password span matches
+✅ test/redact/layer_connection_test.dart: layerConnection E6: special chars in password up to the last @ before host
+✅ test/redact/layer_connection_test.dart: layerConnection postgresql scheme
+✅ test/redact/layer_connection_test.dart: layerConnection mongodb+srv scheme
+✅ test/redact/layer_connection_test.dart: layerConnection redis and rediss schemes
+✅ test/redact/layer_connection_test.dart: layerConnection https URL with basic auth
+✅ test/redact/layer_connection_test.dart: layerConnection multiple URLs in one text
+✅ test/redact/layer_connection_test.dart: layerConnection URLs without passwords do not match
+✅ test/redact/layer_connection_test.dart: layerConnection plain text without URLs does not match
+✅ test/redact/layer_pem_test.dart: layerPem complete PRIVATE KEY block with base64 body
+✅ test/redact/layer_pem_test.dart: layerPem CERTIFICATE block label
+✅ test/redact/layer_pem_test.dart: layerPem OPENSSH / EC / ENCRYPTED / RSA private key labels
+✅ test/redact/layer_pem_test.dart: layerPem PGP PRIVATE KEY BLOCK
+✅ test/redact/layer_pem_test.dart: layerPem truncated block (begin without end) masks to end of text
+✅ test/redact/layer_pem_test.dart: layerPem complete block then a truncated one: both reported
+✅ test/redact/layer_pem_test.dart: layerPem unknown labels are ignored
+✅ test/redact/layer_pem_test.dart: layerPem text without PEM markers yields nothing
+✅ test/redact/layer_vendor_test.dart: layerVendor GitHub ghp_ token
+✅ test/redact/layer_vendor_test.dart: layerVendor GitHub gho_ token
+✅ test/redact/layer_vendor_test.dart: layerVendor GitHub fine-grained github_pat_ token
+✅ test/redact/layer_vendor_test.dart: layerVendor AWS access key
+✅ test/redact/layer_vendor_test.dart: layerVendor OpenAI key
+✅ test/redact/layer_vendor_test.dart: layerVendor JWT with three base64url segments
+✅ test/redact/layer_vendor_test.dart: layerVendor GitLab token
+✅ test/redact/layer_vendor_test.dart: layerVendor Slack token
+✅ test/redact/layer_vendor_test.dart: layerVendor Google API key
+✅ test/redact/layer_vendor_test.dart: layerVendor npm token
+✅ test/redact/layer_vendor_test.dart: layerVendor multiple tokens in one text
+✅ test/redact/layer_vendor_test.dart: layerVendor near-miss shapes do not match
+✅ test/redact/layer_vendor_test.dart: quickScreen false for text without vendor prefixes
+✅ test/redact/layer_vendor_test.dart: quickScreen true when a distinctive prefix is present
+✅ test/redact/layer_vendor_test.dart: layerPrefix flags the same spans as vendor when vendor is enabled
+✅ test/redact/layer_vendor_test.dart: layerPrefix returns nothing on its own when vendor is disabled
+✅ test/redact/layer_context_test.dart: layerContext password= masks the value span only
+✅ test/redact/layer_context_test.dart: layerContext colon separators and spaces around =
+✅ test/redact/layer_context_test.dart: layerContext export SECRET=... form
+✅ test/redact/layer_context_test.dart: layerContext JSON quoted form
+✅ test/redact/layer_context_test.dart: layerContext E7: unicode (Cyrillic) values
+✅ test/redact/layer_context_test.dart: layerContext unquoted values end at the first space
+✅ test/redact/layer_context_test.dart: layerContext value stops at delimiters
+✅ test/redact/layer_context_test.dart: layerContext variable placeholders are not masked
+✅ test/redact/layer_context_test.dart: layerContext keys without values do not match
+✅ test/redact/layer_context_test.dart: layerContext word-boundary guard
+✅ test/redact/layer_context_test.dart: layerContext cert dump: subject=/issuer= values masked
+✅ test/redact/layer_context_test.dart: layerContext cert dump: CN values in cert lines masked
+✅ test/redact/layer_context_test.dart: layerContext CN outside a cert-dump line is left alone
+✅ test/redact/layer_context_test.dart: layerContext escaped quotes inside quoted values
+✅ test/redact/layer_context_test.dart: layerContext DN value trimmed of trailing spaces
+✅ test/redact/layer_context_test.dart: layerContext empty text yields nothing
+✅ test/redact/layer_credential_test.dart: layerCredential login form: password masked, user untouched
+✅ test/redact/layer_credential_test.dart: layerCredential credit-card form: cc-* autocomplete values masked
+✅ test/redact/layer_credential_test.dart: layerCredential SSO form: token/secret names, any attribute order, any quotes
+✅ test/redact/layer_credential_test.dart: layerCredential JSON capture: secret values masked, other keys untouched
+✅ test/redact/layer_credential_test.dart: layerCredential no over-redaction golden: zero matches
+✅ test/redact/layer_credential_test.dart: layerCredential marker-only value never re-matches
+✅ test/redact/layer_credential_test.dart: layerCredential JSON keys are quote-anchored, not substrings
+✅ test/redact/layer_credential_test.dart: layerCredential empty text yields nothing
+✅ test/redact/layer_credential_test.dart: layerCredential UT-S7 pipeline integration: masked, line-preserving, idempotent
+✅ test/redact/layer_credential_test.dart: layerCredential UT-S7 extension: page captures get full-pipeline scanning
+✅ test/memory_search_degrade_test.dart: memory_search survives a broken LLM core via keyword fallback
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+- #note
+- #source_agent
+- t
+
+Query: "alpha"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/memory_search_degrade_test.dart: memory_list survives a broken project store
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "listable fact"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/memory_search_degrade_test.dart: a config swap resets the plain-store fallback caches — no lost memory
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "cached fallback note"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "note after swap"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/memory_search_degrade_test.dart: a config swap racing the fallback write never crashes the never-throw path
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "mid-flight note"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "swap note"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/memory_search_degrade_test.dart: user-scope add survives a broken LLM core via the plain fallback
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "user scope fact"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/memory_search_degrade_test.dart: search/add degrades are observable through onDegrade
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+(No existing tag list provided)
+
+Query: "observable fact"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+[KBTagGeneratorAgent] generateTags prompt:
+<prompt>
+  <![CDATA[Convert the user's query into a small set of search tags for a knowledge base.
+
+Rules:
+- Output ONLY lines in the exact format TAG=<tag>.
+- Tags must be lowercase, 1-3 words, hyphenated if needed.
+- Prefer exact names of tools, frameworks, services, or concepts from the query.
+- Reuse tags from the existing list ONLY when they directly match the query.
+- Do NOT output generic tags like "question", "issue", or "help" by themselves.
+- Do NOT invent tags that are not in the query or the existing list.
+- Maximum 5 TAG= lines.
+- If the query is empty, contains only whitespace, or has no meaningful keywords, output nothing.
+
+Existing tags:
+- #note
+- #source_agent
+
+Query: "observable"
+
+Example (for format only):
+Existing tags: dart, flutter, riverpod, state-management, provider
+Query: "Flutter state management with Riverpod"
+Output:
+TAG=flutter
+TAG=riverpod
+TAG=state-management
+]]>
+</prompt>
+✅ test/hub/hub_plugin_host_test.dart: publicChannelFor distinguishes keyless, keyed, and other-hub channels
+✅ test/hub/hub_plugin_host_test.dart: a torn priv-without-pub membership is never public and fails closed instead of auto-keygen (gh-1888 review)
+✅ test/hub/hub_plugin_host_test.dart: boot surfaces malformed scoped-membership warnings to the user
+✅ test/hub/hub_plugin_host_test.dart: plugin dispose removes the runtime plaintext-key overlay
+✅ test/hub/hub_plugin_host_test.dart: dispose waits for in-flight boot seeding before final cleanup
+✅ test/hub/hub_plugin_host_test.dart: dispose() before register() never lets the host seed plaintext keys and does not permanently disable cleanup (gh-1895 review)
+✅ test/hub/hub_plugin_host_test.dart: the public/private decision comes from the STORED shape: an undecryptable private envelope is still PRIVATE, and the missing key is reported for a loud send refusal (gh-1888 review)
+✅ test/hub/hub_plugin_host_test.dart: private key lookup fails closed when the membership store errors
+✅ test/hub/hub_plugin_host_test.dart: AC8/AC14: the DAP env secrets AND runtime-resolved in-memory keys are registered with both masking systems at plugin register time
+✅ test/hub/hub_plugin_host_test.dart: status and menu connect preserve output and default prompt semantics
+✅ test/hub/hub_plugin_host_test.dart: headless connected status includes identity, name, and url
+✅ test/hub/hub_plugin_host_test.dart: dap_dm resolves exact ids and unique names, and diagnoses bad names
+✅ test/hub/hub_plugin_host_test.dart: pending probes do not drain direct or channel mail; drain maps and filters
+✅ test/hub/dap_command_test.dart: fa dap start (AC1) clean machine, interactive: prompts the master key (hidden), starts a protected hub, enrolls, persists clientSecret — a second start attaches WITHOUT prompting
+✅ test/hub/dap_command_test.dart: fa dap start (AC1) clean machine, non-interactive: open hub, zero prompts (AC5)
+✅ test/hub/dap_command_test.dart: fa dap start (AC1) master key already in ~/.dap/hub.json: restart enrolls without a prompt (hub crash recovery, E2/E4)
+✅ test/hub/dap_command_test.dart: fa dap start (AC1) secrets hygiene (AC6): modes and byte-scan
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) a lost secret is repaired from the captured value, url kept
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) a torn config repairs the lost secret (the #1293 red)
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) secret already on disk: durable without a rewrite
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) nothing on disk and nothing captured: honestly false
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) a failing repair write is false, never a throw
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) poll expiry is a failed dial: exit 1 + the recovery hint, no success lines (issue #1293)
+✅ test/hub/dap_command_test.dart: dial credential durability (issue #1293) a failed durability check flips the exit and suppresses the success lines (issue #1293)
+✅ test/hub/dap_command_test.dart: E1: foreign server on the port start detects a non-DAP /healthz answer and refuses to enroll
+✅ test/hub/dap_command_test.dart: E3: wrong master key re-prompts up to 3x, then exits with the manual hint; the rejected secrets are never persisted
+✅ test/hub/dap_command_test.dart: fa dap start pid-state hygiene (issue #792 review) the spawner preserves a child-written relaySecret in the pid file (read-modify-write, never a clobber to null)
+✅ test/hub/dap_command_test.dart: fa dap stop (AC2, E4) stop names connected peers, stops the hub, clears the state file; a second stop is a calm no-op
+✅ test/hub/dap_command_test.dart: fa dap status running: url + peers; stopped after termination
+✅ test/hub/dap_command_test.dart: E6: the fabric.hub kill-switch gate hubFabricWired mirrors the images.registry pattern
+✅ test/hub/dap_command_test.dart: stop on hosts without a pid probe (the Windows fix) dapPortAnswers: a live listener answers, a drained one does not
+✅ test/hub/hub_client_test.dart: hello → welcome handshake; hub verifies the ed25519 signature
+✅ test/hub/hub_client_test.dart: hub rejects a hello with a bad signature
+✅ test/hub/dap_command_test.dart: stop on hosts without a pid probe (the Windows fix) no pid probe: the port draining (not the pid) decides, no escalation
+✅ test/hub/hub_client_test.dart: signed channel send is relayed and decryptable by the other member
+✅ test/hub/hub_client_test.dart: DM round-trip: whois first, then E2E decrypt on the recipient
+✅ test/hub/hub_client_test.dart: reconnect: re-hello and flush re-receives the queued DM
+✅ test/hub/hub_client_test.dart: presence query lists connected agents
+✅ test/hub/hub_client_test.dart: status: connected, identity, url, known channels, counters
+✅ test/hub/hub_client_test.dart: peers: includes self with online=true and self=true
+✅ test/hub/hub_client_test.dart: peers: online-only always — offline agents never listed (0.2.0)
+✅ test/hub/dap_command_test.dart: stop on hosts without a pid probe (the Windows fix) port never drains: SIGTERM → SIGKILL escalation, then honest false (no false success, no stale "stopped" claim)
+✅ test/hub/dap_command_test.dart: stop on hosts without a pid probe (the Windows fix) POSIX path still probes the pid (platform-guarded)
+✅ test/hub/dap_command_test.dart: presence probe matches the ANSWER by replyTo a racing presence push (no replyTo) never completes the probe
+✅ test/hub/hub_client_test.dart: retarget/connectTo: bare host + name + room → second welcome, new agentId, lobby joined, retired loop stays retired
+✅ test/hub/hub_client_test.dart: 401 on stale config secret + master present → drop secret, re-enroll once, agentId stable, new secret persisted
+✅ test/hub/hub_client_test.dart: 401 on env-sourced secret → hard fail, frozen hint, no re-enroll
+✅ test/hub/hub_client_test.dart: 401 on config secret without master → frozen hint, no retry, stale secret stays persisted
+✅ test/hub/hub_client_test.dart: re-enroll retry rejected too → exactly one retry, then frozen hint
+✅ test/hub/dap_command_test.dart: presence probe matches the ANSWER by replyTo a hub that never echoes replyTo degrades to "roster unknown", not a partial guess
+✅ test/hub/dap_identity_notice_test.dart: scoped boot restores the enrollment instance into the dial env
+✅ test/hub/dap_identity_notice_test.dart: direct client-secret boot uses the scoped instance connector
+✅ test/hub/dap_identity_notice_test.dart: direct env boot keeps independent same-name instances online
+✅ test/hub/dap_identity_notice_test.dart: boot channel notice includes the own DAP name and agentId
+✅ test/hub/hub_messaging_repository_test.dart: AC1 UT-hub-repo register → send → receive round trip with a CLI peer
+✅ test/hub/hub_messaging_repository_test.dart: AC1 UT-hub-repo resolveTarget: exact id resolves; unknown names fall through
+✅ test/hub/hub_messaging_repository_test.dart: AC1 UT-hub-repo queue while disconnected → drain on reconnect in order, no dupes
+✅ test/hub/hub_messaging_repository_test.dart: AC1 UT-hub-repo inbound dedup by frame id: a redelivered frame lands once
+✅ test/hub/hub_messaging_repository_test.dart: AC4 IT-ios-lan (token auth) the pairing token joins the protected hub
+✅ test/hub/hub_messaging_repository_test.dart: AC4 IT-ios-lan (token auth) wrong token: clean reject, no register, no welcome
+✅ test/hub/hub_messaging_repository_test.dart: AC4 IT-ios-lan (token auth) absent token: same clean reject
+✅ test/hub/hub_messaging_repository_test.dart: AC7 UT-presence busy accepts mail; directory reports busy for self, live for peers
+✅ test/hub/hub_messaging_repository_test.dart: link lifecycle E4: an unreachable hub boots disconnected and keeps retrying
+✅ test/hub/hub_messaging_repository_test.dart: link lifecycle stop → start: clean disconnect, reconnect drains the hub mailbox
+✅ test/hub/hub_messaging_repository_test.dart: link lifecycle a drop mid-handshake fails the welcome wait (no hang), logs, retries
+✅ test/hub/hub_messaging_repository_test.dart: AC4 IT-ios-lan (host half): --bind lan listens on all interfaces
+✅ test/hub/hub_messaging_repository_test.dart: identity a passed identity is stable across restarts
+✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) pre-start register sets name + capabilities on the first hello; a live re-register re-announces
+✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) a failed live re-announce never breaks register
+✅ test/hub/hub_messaging_repository_test.dart: register semantics (CRAP coverage) a link drop fails pending whois/presence waiters (no hang)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC1: loopback fixture — no credential and wrong credential → 401
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC1: lan fixture — the master bearer is the relay credential
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) fail closed: a hub with no secret at all serves nothing
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) REG: fail closed over the wire — a null credential answers 401, never proxies (issue #792 AC5)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC3: metadata / loopback / private destinations are denied before any outbound attempt
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC4: a redirect into denied space is refused by the hop verdict; a disallowed origin is a 403 with the upstream untouched
+hub: --bind lan requires a master secret — pass --secret <secret> or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)
+✅ test/hub/hub_relay_auth_reg_test.dart: relay auth on every scope (SEC-04) AC2: --bind lan without a secret refuses to start (named)
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC1: a hung upstream does NOT delay a second, independent request
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC2: an oversized body is a named 413 and the worker is released
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC2 paced: an over-cap upload is cut off at the cap — the 413 does not wait for the upload (no whole-upload worker pin)
+hub [relay-1]: relay body too large → 413
+✅ test/hub/local_hub_relay_concurrency_test.dart: REG gh-2065: a pump tick landing after the close-only 413 RST must not leak a write-side socket error
+hub [relay-1]: upstream idle timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC3: a client disconnect mid-relay never pins the worker past the idle window
+✅ test/hub/dap_macos_keychain_test.dart: MacOsDapChannelKeychain.read returns null when the security CLI is unavailable
+AC3 counter: kernel did not report the reset on this platform (upstreamChunks kept flowing into the void) — bound test covers the guarantee
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: AC3 counter: a reset peer aborts the upstream where the kernel reports write errors
+hub [relay-3]: relay worker queue full (1 waiters) — 503
+hub [relay-2]: queued relay dropped (client gone or hub stopping)
+hub [relay-1]: upstream unreachable → 502
+✅ test/hub/local_hub_relay_concurrency_test.dart: queue overflow is a named 503 backpressure answer
+hub [relay-1]: upstream connect timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: a hung upstream is a named 504 after the connect window
+hub [relay-1]: upstream idle timeout → 504
+✅ test/hub/local_hub_relay_concurrency_test.dart: a mid-stream upstream stall ends the relay within the idle window (SSE truncation, not a hang)
+hub [relay-1]: relay request stalled → 408
+✅ test/hub/local_hub_relay_concurrency_test.dart: a stalled client body is a named 408 (no slowloris worker pin)
+✅ test/hub/payload_crypto_test.dart: hkdfSha256 matches RFC 5869 test case 1 (SHA-256)
+✅ test/hub/payload_crypto_test.dart: payload encrypt/decrypt round-trip (DM shape)
+✅ test/hub/payload_crypto_test.dart: tampered ciphertext is rejected
+✅ test/hub/payload_crypto_test.dart: wrong AAD target is rejected
+✅ test/hub/dap_env_channels_test.dart: null/empty env → no channels, no warnings
+✅ test/hub/dap_env_channels_test.dart: plaintext priv + keyless public + mixed set joins together (AC15)
+✅ test/hub/dap_env_channels_test.dart: per-entry hubUrl wins over the default (E3)
+✅ test/hub/dap_env_channels_test.dart: malformed entries warn loudly and are skipped, valid ones join
+✅ test/hub/dap_env_channels_test.dart: entry without any hub is skipped with a warning, never guessed
+✅ test/hub/dap_env_channels_test.dart: garbage JSON and non-list shapes degrade to one loud warning
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing an int priv is skipped with a warning, valid entries still join
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing a list-typed pub is skipped (YAML-ism pasted into the CI secret)
+✅ test/hub/dap_env_channels_test.dart: wrong-typed pub/priv warn and skip instead of crashing null pub/priv stay keyless (public) — tolerated, not skipped
+✅ test/hub/silent_hub_test.dart: BUG 1: silent presence_query must not hang peers() (socket alive)
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown matches the fa_hub_client teardown marker
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown rejects other StateError messages — real bugs stay fatal
+✅ test/hub/hub_teardown_error_test.dart: isHubConnectionTeardown rejects other error types with the same text
+✅ test/hub/silent_hub_test.dart: BUG 1: silent whois must not hang sendDm() (socket alive)
+✅ test/hub/silent_hub_test.dart: BUG 2: error-answered presence_query must not hang peers()
+✅ test/hub/silent_hub_test.dart: BUG 3: concurrent presenceQuery must not orphan the first caller (poller vs tool clobber — hub answers INSTANTLY)
+✅ test/hub/silent_hub_test.dart: BUG 4: concurrent whois of the same target must not orphan the first caller (inbound-DM sender resolution vs sendDm)
+✅ test/hub/silent_hub_test.dart: BUG 5: an unsolicited presence broadcast must not satisfy a pending full-roster query (live: "only self online" every other restart)
+✅ test/hub/repository_test.dart: repository delivers inbound to the steering source and drains once
+✅ test/hub/repository_test.dart: peek is non-consuming; drain takes the whole inbox
+✅ test/hub/repository_test.dart: send maps #channel to channel sends and agent ids to DMs
+✅ test/hub/repository_test.dart: directory maps hub presence onto mailbox entries
+✅ test/hub/repository_test.dart: HubPlugin: config wiring, persisted 0600 key, steering delivery
+✅ test/hub/repository_test.dart: HubPlugin.connectTo: bare host + name + channel → new identity on hub 2, lobby joined, url/name/channels persisted
+✅ test/hub/plain_repro_test.dart: PLAIN: after connectTo(name:) the agent still receives DMs
+✅ test/hub/plain_repro_test.dart: mismatched x25519pub line in a key file must not deafen the agent
+✅ test/hub/plain_repro_test.dart: identity round-trip: derived pub equals generated pub; stable id
+✅ test/hub/plain_repro_test.dart: torn x25519pub line does not break load
+✅ test/hub/dap_identity_path_test.dart: scoped identities are per project and stable across restarts
+✅ test/hub/dap_identity_path_test.dart: null and empty instances preserve the exact legacy project path
+✅ test/hub/dap_identity_path_test.dart: a nonempty instance is stable across projects and distinct by value
+✅ test/hub/dap_identity_path_test.dart: an explicit keyPath is respected verbatim, even with an instance
+✅ test/hub/zero_config_test.dart: settings precedence: env > yaml > ~/.dap/config.json > defaults; fah key dir, shared channels file
+✅ test/hub/zero_config_test.dart: auto-keygen: first send persists keys; a second instance picks them up, auto-joins, and decrypts
+✅ test/hub/zero_config_test.dart: invite: chankey E2E DM auto-persists + joins + notices on the steering source; later channel sends decrypt
+✅ test/hub/zero_config_test.dart: HubPlugin zero-config: no yaml url/keyPath defaults still work — fah key dir (mkdir -p, 0600), DAP_CHANNELS_FILE store
+✅ test/hub/fah_hub_serve_test.dart: watchHubTerminateSignals (Windows SIGTERM guard) host without SIGTERM (the Windows shape): SIGINT only, no throw
+✅ test/hub/fah_hub_serve_test.dart: watchHubTerminateSignals (Windows SIGTERM guard) default guard matches the host (POSIX: SIGTERM + SIGINT)
+DAP hub on ws://127.0.0.1:37779/ws (password-protected)
+LAN: ws://10.1.0.246:37779/ws + password
+LAN: ws://172.17.0.1:37779/ws + password
+✅ test/hub/fah_hub_serve_test.dart: hubServe --bind lan (issue #402 AC4 pairing surface) lists LAN URLs for each non-loopback IPv4 address
+✅ test/hub/fah_hub_serve_test.dart: hubServe refuses a secretless LAN start (issue #792 AC2) the named refusal fires only for lan + no secret
+hub: --bind lan requires a master secret — pass --secret <secret> or set DAP_HUB_SECRET (a LAN-reachable hub must not run open)
+✅ test/hub/fah_hub_serve_test.dart: hubServe refuses a secretless LAN start (issue #792 AC2) hubServe exits 1 without binding or serving
+✅ test/hub/network_wizard_test.dart: join via args defaults to session scope + trust notice (AC1/AC8)
+✅ test/hub/network_wizard_test.dart: E4: garbage invite → inline error, nothing stored, no join
+✅ test/hub/network_wizard_test.dart: menu flow: Join → paste → project scope → encrypted .fah/dap.json (AC6)
+✅ test/hub/network_wizard_test.dart: bare channel id joins on the configured hub (AC1 form 3)
+✅ test/hub/dap_membership_test.dart: DapChannelMembership json round-trip preserves all fields
+✅ test/hub/dap_membership_test.dart: DapChannelMembership keyless (public channel) round-trip omits keys
+✅ test/hub/dap_membership_test.dart: DapChannelMembership malformed records fail loudly
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion same channel at two scopes → one effective membership
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion scopesOf lists every scope for the badges
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion same channel id on DIFFERENT hubs stays separate (E3)
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion E1: leave(session) keeps global; leaving the last stops it
+✅ test/hub/dap_membership_test.dart: DapMembershipUnion effective output is deterministic (sorted by key)
+✅ test/hub/network_wizard_test.dart: composer-prefilled form: the whole fa dap import command parses (AC7 same wizard)
+✅ test/hub/network_wizard_test.dart: legacy enrollment clears a previously applied instance
+✅ test/hub/pending_invite_test.dart: config back-compat: missing/non-array invites → [], persist replaces authoritatively and keeps other keys
+✅ test/hub/pending_invite_test.dart: dapHostOf: scheme and trailing /ws stripped for connect lines
+✅ test/hub/pending_invite_test.dart: arm: unknown name does not error — channel auto-created + joined at arm time, invite persisted (deduped), connect line returned
+✅ test/hub/pending_invite_test.dart: online name: immediate chankey DM (case-insensitive), nothing armed in config
+✅ test/hub/pending_invite_test.dart: 16-hex agent id: immediate chankey DM on the explicit channel
+✅ test/hub/pending_invite_test.dart: ambiguous name: honest error listing both ids, nothing armed
+✅ test/hub/pending_invite_test.dart: poller tick: invitee connects later → chankey DM, joins, keypair persisted, pending removed, notice surfaced
+✅ test/hub/pending_invite_test.dart: shared-config self-invite guard: own name never self-delivers
+✅ test/hub/pending_invite_test.dart: welcome-time redelivery: a fresh inviter instance delivers without waiting a tick
+✅ test/hub/pending_invite_test.dart: HubPlugin.inviteTo: pending result, invites persisted under ~/.dap/config.json, StateError before start
+✅ test/hub/network_wizard_test.dart: channels menu: copy invite round-trips; leave(session) tombstones (AC4/E6)
+✅ test/hub/network_wizard_test.dart: the AGENT learns about the joined channel and the write path (agent_message to: #channel) via the notice inbox
+✅ test/hub/hub_fallback_drill_test.dart: AC6 E2E-drill: kill mid-conversation, file carries on, restart drains with zero loss/dupe and order preserved
+✅ test/hub/hub_fallback_drill_test.dart: AC2 UT-fallback: hub down → file inbox; hub back → drains once; inbound mail sent while suspended flushes on rejoin
+✅ test/hub/network_wizard_test.dart: boot notice: existing memberships are announced to the agent on the first drain (resume awareness)
+✅ test/hub/network_wizard_test.dart: the full app DAP one-liner joins with the enrolled credential (name-bound secret stored encrypted, honest NOT-live verdict)
+✅ test/hub/network_wizard_test.dart: headless /network prints a one-line status, no menus (AC10)
+✅ test/hub/io_hub_identity_test.dart: load creates a fresh identity on first boot (load-or-create)
+✅ test/hub/io_hub_identity_test.dart: a saved identity reloads with the same address
+✅ test/hub/io_hub_identity_test.dart: save locks the file to owner-only where the OS supports it
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos returns immediately when n hellos were already seen
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos times out when no client ever says hello
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellos resolves once a real client says hello
+✅ test/hub/dap_scoped_passphrase_test.dart: import auto-provisions a random Keychain passphrase without a prompt and encrypts every new secret
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) resolves when a late hello lands past the first chunk window
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) times out at the ceiling, not at the first chunk, when nobody ever says hello
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) returns immediately when n hellos were already seen
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) asserts when chunk is zero or negative
+✅ test/hub/local_hub_wait_for_hellos_test.dart: waitForHellosUnderLoad (gh-1007) asserts when ceiling is zero or negative
+✅ test/hub/dap_scoped_passphrase_test.dart: a second run decrypts with the auto-provisioned Keychain item, without prompting or replacing it
+✅ test/hub/dap_scoped_passphrase_test.dart: decrypting with a missing Keychain item still prompts and never auto-creates a replacement passphrase
+✅ test/hub/dap_scoped_passphrase_test.dart: DAP_KEY_PASSPHRASE wins over Keychain and import auto-provisioning
+✅ test/hub/dap_scoped_passphrase_test.dart: without a Keychain, import keeps the interactive prompt fallback
+✅ test/hub/dap_scoped_passphrase_test.dart: headless import without Keychain or prompt stays memory-only and prints recovery without exposing secrets
+✅ test/hub/dap_key_envelope_test.dart: round-trip: encrypt → decrypt restores the plaintext key
+✅ test/hub/dap_key_envelope_test.dart: envelope carries kdf params and version (self-describing)
+✅ test/hub/dap_key_envelope_test.dart: same input + different random → different envelopes
+✅ test/hub/dap_key_envelope_test.dart: wrong passphrase → clear FormatException, never silent garbage
+✅ test/hub/dap_key_envelope_test.dart: tampered ciphertext rejected (AEAD)
+✅ test/hub/dap_key_envelope_test.dart: plaintext priv passes through (pure-env CI path, AC15)
+✅ test/hub/dap_key_envelope_test.dart: malformed envelopes fail loudly
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) iter above the max is rejected BEFORE any KDF work
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) iter below 1 is rejected too
+✅ test/hub/dap_key_envelope_test.dart: iteration count sanity bound (review: boot-DoS via committed config) just above the cap maps to the single FormatException warning path (AC15: one clear warning, primary job proceeds)
+✅ test/hub/dap_scoped_passphrase_test.dart: missing decryption passphrase warns with recovery and no secrets
+✅ test/hub/dap_scoped_passphrase_test.dart: failed decryption warns with recovery and no secret values
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-directory: hub peers merge with name, presence and [hub] marker
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-roundtrip: agent_message-shaped send by NAME rides sendDm; the reply lands in the sender inbox at the drain boundary (E5)
+✅ test/hub/dap_fabric_roundtrip_test.dart: IT-dedup: a duplicated-delivery primary yields exactly one message (at-least-once + dedup by id and by sender|ts|body)
