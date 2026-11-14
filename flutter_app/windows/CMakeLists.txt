@@ -4,7 +4,10 @@ project(flutter_agent_example LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "flutter_agent_example")
+# gh-2140 (2026-11-12): the stock "flutter_agent_example" naming leaked the
+# create-time scaffold name into the shipped product (exe name, %APPDATA%
+# data dir) — the desktop app is Fa now.
+set(BINARY_NAME "Fa")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
