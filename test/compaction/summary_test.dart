@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 AssistantMessage _assistant(String text, {Usage usage = Usage.zero}) {
@@ -24,6 +28,28 @@ class _FakeSummarizer {
     requests.add(request);
     return results.removeAt(0);
   }
+}
+
+/// A plain [StreamFunction] closure fake completing with [text] and the
+/// given [usage].
+AssistantMessageEventStream _okStream(
+  String text, {
+  Usage usage = Usage.zero,
+}) {
+  final message = AssistantMessage(
+    content: [TextContent(text: text)],
+    api: 'a',
+    provider: 'p',
+    model: 'm',
+    usage: usage,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.utc(2026),
+  );
+  final stream = AssistantMessageEventStream();
+  stream.push(StartEvent(partial: message));
+  stream.push(DoneEvent(reason: StopReason.stop, message: message));
+  stream.end();
+  return stream;
 }
 
 /// A plain [StreamFunction] closure fake recording the active
@@ -273,8 +299,8 @@ void main() {
       expect(result.error, contains('adapter exploded'));
     });
 
-    test('cache-routing streams are bypassed: retention none, fresh session id '
-        'per call', () async {
+    test('digest calls ride ONE stable run-scoped routing id, retention '
+        'short (gh-2101 cache-affine policy)', () async {
       final recording = _ZoneRecordingStream();
       final summarize = streamFunctionSummarizer(recording.call, model);
 
@@ -286,17 +312,103 @@ void main() {
       expect(recording.routings, hasLength(2));
       for (final routing in recording.routings) {
         expect(routing, isNotNull);
-        expect(routing!.cacheRetention, 'none');
+        expect(routing!.cacheRetention, 'short',
+            reason: 'the digest rides the deliberate short-retention policy');
         expect(routing.sessionId, isNotNull);
       }
-      // A fresh routing id per call keeps summaries out of the session's
-      // cache-affinity bucket.
+      // ONE stable routing id per summarizer construction (per compaction
+      // run): the second call can hit the prompt-cache prefix the first
+      // call wrote, instead of the legacy fresh-per-call ids.
       expect(
         recording.routings[0]!.sessionId,
-        isNot(recording.routings[1]!.sessionId),
+        recording.routings[1]!.sessionId,
       );
       // The override does not leak past the summarization call.
       expect(StreamCacheRouting.current, isNull);
+    });
+
+    test('the legacy isolated policy opts back out: retention none, fresh '
+        'session id per call', () async {
+      final recording = _ZoneRecordingStream();
+      final summarize = streamFunctionSummarizer(
+        recording.call,
+        model,
+        cachePolicy: CompactionCachePolicy.isolated(),
+      );
+
+      await summarize(const SummarizationRequest(prompt: 'a'));
+      await summarize(const SummarizationRequest(prompt: 'b'));
+
+      expect(recording.routings, hasLength(2));
+      for (final routing in recording.routings) {
+        expect(routing!.cacheRetention, 'none');
+        expect(routing.sessionId, isNotNull);
+      }
+      expect(
+        recording.routings[0]!.sessionId,
+        isNot(recording.routings[1]!.sessionId),
+        reason: 'legacy shape: a fresh routing id per call',
+      );
+    });
+
+    test('judge and digest adapters share the injected run policy', () async {
+      final digestRouting = <({String? sessionId, String? cacheRetention})?>[];
+      final digest = streamFunctionSummarizer(
+        (model, context, {cancelToken}) {
+          digestRouting.add(StreamCacheRouting.current);
+          return _okStream('ok');
+        },
+        model,
+        cachePolicy: CompactionCachePolicy.affine(sessionId: 'run-7'),
+      );
+      await digest(const SummarizationRequest(prompt: 'p'));
+      expect(digestRouting.single!.sessionId, 'run-7');
+      expect(digestRouting.single!.cacheRetention,
+          CompactionCachePolicy.digestRetention);
+    });
+
+    test('onUsage surfaces the provider-reported response usage', () async {
+      final usage = <Usage>[];
+      final summarize = streamFunctionSummarizer(
+        (model, context, {cancelToken}) => _okStream(
+          'ok',
+          usage: const Usage(
+            input: 100,
+            output: 7,
+            cacheRead: 900,
+            cacheWrite: 0,
+            totalTokens: 1007,
+            cost: UsageCost(total: 0.01),
+          ),
+        ),
+        model,
+        onUsage: usage.add,
+      );
+      final result = await summarize(const SummarizationRequest(prompt: 'p'));
+      expect(result.isSuccess, isTrue);
+      expect(usage, hasLength(1));
+      expect(usage.single.input, 100);
+      expect(usage.single.cacheRead, 900);
+      expect(usage.single.cost.total, 0.01);
+    });
+
+    test('onUsage skips zero usage and survives a failed call', () async {
+      final usage = <Usage>[];
+      final summarize = streamFunctionSummarizer(
+        (model, context, {cancelToken}) => _okStream('x'),
+        model,
+        onUsage: usage.add,
+      );
+      await summarize(const SummarizationRequest(prompt: 'p'));
+      expect(usage, isEmpty, reason: 'zero usage reports nothing');
+      final failing = streamFunctionSummarizer(
+        (model, context, {cancelToken}) => throw StateError('down'),
+        model,
+        onUsage: usage.add,
+      );
+      final result = await failing(const SummarizationRequest(prompt: 'p'));
+      expect(result.isSuccess, isFalse);
+      expect(usage, isEmpty);
     });
 
     test('plain closures keep the legacy call path', () async {
@@ -735,6 +847,83 @@ void main() {
       expect(preparation.turnPrefixMessages, hasLength(3));
       // File ops come from both regions.
       expect(preparation.readFiles, contains('/x.dart'));
+    });
+  });
+
+  group('gh-2101: prefix reuse at the payload level (wire fixtures)', () {
+    // Captures the outbound request body/headers and answers a minimal SSE
+    // completion — the same harness test/providers/openai_prompt_cache_test
+    // uses for the adapter-level cache fixtures.
+    final okSse =
+        'data: {"id":"1","choices":[{"delta":{"content":"ok"}}]}\n\n'
+        'data: {"id":"1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        'data: [DONE]\n\n';
+    final bodies = <Map<String, dynamic>>[];
+    final headers = <Map<String, String>>[];
+    http.Client captureClient() => http_testing.MockClient.streaming((
+      request,
+      requestBody,
+    ) async {
+      bodies.add(
+        jsonDecode(await requestBody.bytesToString()) as Map<String, dynamic>,
+      );
+      headers.add(request.headers);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(okSse)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    final digestModel = Model(
+      id: 'gpt-4o-mini',
+      name: 'GPT-4o mini',
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      contextWindow: 128000,
+      maxTokens: 16384,
+    );
+
+    test('affine digest calls carry the run-scoped prompt_cache_key on '
+        'every call (prefix reuse)', () async {
+      bodies.clear();
+      headers.clear();
+      final stream = providerStreamFunction(
+        'openai-completions',
+        'key',
+        httpClient: captureClient(),
+      );
+      final summarize = streamFunctionSummarizer(stream, digestModel);
+      await summarize(const SummarizationRequest(prompt: 'one'));
+      await summarize(const SummarizationRequest(prompt: 'two'));
+
+      expect(bodies, hasLength(2));
+      // The legacy 'none' shape stripped the key entirely; the affine
+      // policy sends it so the provider routes both calls into one cache
+      // bucket and the second call hits the shared prefix.
+      expect(bodies[0]['prompt_cache_key'], isNotNull);
+      expect(bodies[1]['prompt_cache_key'], bodies[0]['prompt_cache_key']);
+      // 'short' retention rides no retention field (ephemeral default).
+      expect(bodies[0].containsKey('prompt_cache_retention'), isFalse);
+    });
+
+    test('isolated digest calls keep the legacy payload: no cache key', () async {
+      bodies.clear();
+      final stream = providerStreamFunction(
+        'openai-completions',
+        'key',
+        httpClient: captureClient(),
+      );
+      final summarize = streamFunctionSummarizer(
+        stream,
+        digestModel,
+        cachePolicy: CompactionCachePolicy.isolated(),
+      );
+      await summarize(const SummarizationRequest(prompt: 'one'));
+
+      expect(bodies, hasLength(1));
+      expect(bodies.single.containsKey('prompt_cache_key'), isFalse);
     });
   });
 }

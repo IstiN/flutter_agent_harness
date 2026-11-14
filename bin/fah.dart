@@ -28,6 +28,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+// Windows console code-page tables (fah_console_cp.dart): kernel32 FFI —
+// the second VM-only boundary besides dart:io above.
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
 import 'package:http/http.dart' as http; // the auto-update probe client
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
@@ -77,6 +81,7 @@ import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 part 'fah_util.dart';
 part 'fah_model.dart';
 part 'fah_io.dart';
+part 'fah_console_cp.dart';
 part 'fah_trajectory.dart';
 part 'fah_import.dart';
 part 'fah_runapp.dart';

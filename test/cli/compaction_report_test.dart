@@ -245,6 +245,116 @@ void main() {
     });
   });
 
+  group('formatCompactionReport: gh-2101 pass metrics', () {
+    final metered = CompactionUsageTotals(
+      calls: 2,
+      inputTokens: 6000,
+      outputTokens: 700,
+      cacheReadTokens: 45000,
+      cacheWriteTokens: 700,
+      costUsd: 0.0412,
+    );
+
+    test('the one-liner carries the duration', () {
+      final pass = AutoCompactorPass(
+        pass: 2,
+        tokensBefore: 105866,
+        tokensAfter: 59496,
+        fallback: 'structured·ckpt',
+        ok: true,
+        durationMs: 18234,
+      );
+      expect(formatCompactionReport(pass, auto: true), [
+        'auto-compacted · structured·ckpt · pass 2: 105866 → 59496 tokens '
+            '(46370 freed · 44%) · 18.2s',
+      ]);
+    });
+
+    test('a pass without duration renders byte-identical (legacy)', () {
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 8451,
+        tokensAfter: 8481,
+        fallback: 'main=test-provider/test-model',
+        ok: true,
+        summary: 's',
+      );
+      expect(
+        formatCompactionReport(pass, auto: false).single,
+        'compacted · main=test-provider/test-model: '
+            '8451 → 8481 tokens (0 freed · 0%)',
+      );
+    });
+
+    test('details render the llm line: calls, duration, cost, cache hit', () {
+      final pass = AutoCompactorPass(
+        pass: 3,
+        tokensBefore: 105866,
+        tokensAfter: 59496,
+        fallback: 'structured·ckpt',
+        ok: true,
+        summarizedMessages: 9,
+        durationMs: 18234,
+        usage: metered,
+      );
+      final lines = formatCompactionReport(pass, auto: true, details: true);
+      expect(lines[2],
+          'llm: 2 calls · 18.2s · \$0.0412 · cache 87% (45k/51.7k tok)');
+    });
+
+    test('zero-cost usage keeps the llm line without a cost part', () {
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 105866,
+        tokensAfter: 59496,
+        fallback: 'structured·hide',
+        ok: true,
+        hiddenRecords: 4,
+        durationMs: 900,
+        usage: CompactionUsageTotals(
+          calls: 1,
+          inputTokens: 6000,
+          outputTokens: 300,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
+        ),
+      );
+      final lines = formatCompactionReport(pass, auto: true, details: true);
+      expect(lines[2], 'llm: 1 call · 0.9s · cache 0% (0/6k tok)');
+    });
+
+    test('a zero-cache-call pass renders no llm line', () {
+      final pass = AutoCompactorPass(
+        pass: 1,
+        tokensBefore: 105866,
+        tokensAfter: 59496,
+        fallback: 'structured·hide-lru',
+        ok: true,
+        hiddenRecords: 4,
+        durationMs: 3,
+      );
+      final lines = formatCompactionReport(pass, auto: true, details: true);
+      expect(lines.join(), isNot(contains('llm:')));
+    });
+
+    test('the one-liner never carries the usage breakdown', () {
+      final pass = AutoCompactorPass(
+        pass: 2,
+        tokensBefore: 105866,
+        tokensAfter: 59496,
+        fallback: 'structured·ckpt',
+        ok: true,
+        durationMs: 18234,
+        usage: metered,
+      );
+      final line = formatCompactionReport(pass, auto: true).single;
+      expect(line, contains('18.2s'));
+      expect(line, isNot(contains('cache')));
+      expect(line, isNot(contains(r'$')));
+    });
+  });
+
   group('manual /compact (UT-report)', () {
     late MemoryExecutionEnv env;
     late FakeCliIO io;

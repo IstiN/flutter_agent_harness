@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2101): cache-aware compaction calls + pass metrics — one
+  compaction run is now ONE provider-cache family: the judge and digest
+  adapters share a run-scoped routing session id (`prompt_cache_key` /
+  `x-session-id`) with a deliberate per-call-class `short` retention
+  (`CompactionCachePolicy`, `lib/src/compaction/cache_policy.dart`), so
+  each pass's request prefix is served from the cache the previous pass
+  wrote instead of the legacy blanket `cacheRetention: 'none'` +
+  fresh-per-call ids; the id is never the session's id (the session's
+  cache bucket stays untouched) and providers without cache knobs degrade
+  to uncached behavior. Hides stay batched per pass (one `hidden_range`
+  append per pass). Pass reports gain metrics: the one-liner carries the
+  pass duration (`… tokens (N freed · P%) · 12.4s`); the details view
+  renders the metered LLM line (`llm: 2 calls · 18.2s · $0.0412 · cache
+  87% (45k/51.7k tok)`) folded from the providers' `Usage` — absent
+  (never fake zero) when no usage is reported, with cache 0% kept visible
+  as the regression signal. Legacy runs render byte-identically
+  (#2101)
+
 - feat(gh-210): post-compaction continuity — a bounded working set
   re-injects at the context tail after any compaction (structured hide,
   checkpoint, or classic fold): the recited goal first, then recently
@@ -28,6 +46,54 @@ block a release again.
   append-only tail extension — byte-identical prefix. Sessions without a
   recitation or a compaction boundary project exactly as before
   (#2100)
+
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
 
 - feat(2117): console logging dial — `lib/src/logging/` levels
   (`off < error < warn < info < debug < trace`), categories
@@ -53,6 +119,48 @@ block a release again.
   passing them at its `debug` default). Background-chatter and echo
   reassignment follow in #2118's follow-up.
 
+- fix(gh-2115): Russian (non-ASCII) typing works in the Windows line REPL.
+  A legacy RU-locale console delivers keystrokes in two broken shapes —
+  CP-6501 translation mojibake ('п' arrives as the UTF-8 of 'ï') and raw
+  OEM single bytes (0xEF), the latter killing the whole input line with a
+  `FormatException` out of the strict UTF-8 decoder. `ConsoleLineDecoder`
+  (pure Dart, `lib/src/cli/`) repairs both via kernel32-built code-page
+  tables (GetACP + GetConsoleCP through MultiByteToWideChar, built once in
+  `bin/fah_console_cp.dart`); true UTF-8 passes through untouched and
+  non-Windows behavior is byte-identical. The vendored dart_tui parser
+  repairs its Latin-1 fallback path the same way (`consoleTextRepair`
+  hook, set by `enableWindowsVtInput`, cleared on restore — gh-1973
+  completion), pinned by the windows_terminal contract test.
+- ci(windows-release): daily Windows desktop app pipeline — new
+  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
+  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
+  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
+  cert `.cer` to the latest auto-release, and fa1.dev's download section
+  gains a Windows button whose "latest" link resolves through a static
+  `download/windows/latest` pointer file updated by the same workflow
+  (site tests extended to pin the new markup). The daily-publish
+  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
+  quality gate builds and attaches the Windows app exactly like the
+  TestFlight/macOS track, and the windows runner's product identity no
+  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
+  renamed to `Fa`).
+- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
+  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
+  packed with the Windows SDK makeappx, signed with a per-run
+  self-signed cert whose public `.cer` ships beside it) so dev/corporate
+  machines can install via Add-AppxPackage; a Microsoft Store submission
+  stays a separate Partner Center track.
+- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
+  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
+  threw `Unsupported operation` on platforms with no Firebase
+  registration (the template options register only android/ios/web/macos
+  — Windows/Linux throw before the `YOUR_` placeholder check could run),
+  killing boot before the first frame: the boot-watchdog fired and no
+  window ever opened. The read is now guarded — Firebase is
+  telemetry-only, so the services stage degrades with a debug print and
+  the app boots without it. Test: `bootServices degrades on platforms
+  with no Firebase registration` (windows-target override; previously
+  threw, now completes).
 - feat(gh-209): two-tier compaction engine — the mid-turn relief paths
   (the loop's over-window guard and the gh-1680 message-cap self-heal,
   CLI and Flutter app) now run ONLY the deterministic emergency tier
@@ -92,18 +200,6 @@ block a release again.
   follow + composer → owner mailbox via `AttachedSessionController`)
   with a banner naming the owner (host + pid) instead of a dead-end
   snack, and the transport's transcript poller is disposed on detach.
-- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
-  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
-  threw `Unsupported operation` on platforms with no Firebase
-  registration (the template options register only android/ios/web/macos
-  — Windows/Linux throw before the `YOUR_` placeholder check could run),
-  killing boot before the first frame: the boot-watchdog fired and no
-  window ever opened. The read is now guarded — Firebase is
-  telemetry-only, so the services stage degrades with a debug print and
-  the app boots without it. Test: `bootServices degrades on platforms
-  with no Firebase registration` (windows-target override; previously
-  threw, now completes).
-
 - feat(gh-2098): the auto-compact trigger is user-configurable —
   `compaction.triggerRatio` / `compaction.reserveTokens` /
   `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
