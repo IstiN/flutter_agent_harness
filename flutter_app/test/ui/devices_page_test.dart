@@ -148,6 +148,12 @@ final class FakeDevicesService implements DeviceConnectorService {
   /// Emits the connector invalidation that triggers a REST roster refresh.
   void emitRoster(NetworkEnvelope envelope) => _rosterFrames.add(envelope);
 
+  /// Frames that arrived BEFORE the page subscribed (service replay cache).
+  final List<NetworkEnvelope> seededRoster = [];
+
+  @override
+  List<NetworkEnvelope> get currentRosterFrames => seededRoster;
+
   @override
   DeviceConnectorPhase get phase => _phase;
 
@@ -939,6 +945,49 @@ void main() {
     expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
     expect(find.byKey(const ValueKey('sessionRow:sess-rest')), findsOneWidget);
     expect(find.byKey(const ValueKey('sessionRow:sess-other')), findsNothing);
+  });
+
+  testWidgets('roster frames that arrived BEFORE the page opened still '
+      'populate remote sessions via the service replay cache', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      personalNetworkId: 'net-personal',
+    );
+    // The server pushes roster frames once per connect — long before the
+    // user opens the Devices page. Seed the replay cache up front; no live
+    // emitRoster happens in this test at all.
+    service.seededRoster.add(
+      _devicesEnvelope(
+        network: 'net-shared',
+        devices: const [
+          {
+            'deviceId': 'dev-remote',
+            'name': 'thinkpad',
+            'presence': 'online',
+            'userId': 'user-1',
+            'sessions': [
+              {
+                'id': 'sess-cached',
+                'state': 'live',
+                'networks': ['net-personal'],
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('sessionRow:sess-cached')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('single-device presence flips update the dot without wiping '

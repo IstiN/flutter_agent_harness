@@ -300,6 +300,16 @@ class DeviceConnectorService {
   Future<void> _rosterWrites = Future<void>.value();
 
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
+
+  /// Latest roster frame per network. The server pushes roster frames ONCE
+  /// per (re)connect, but the Devices page subscribes long after the
+  /// handshake — and REST /api/devices carries NO session projections — so
+  /// without this replay a late-opening page would never see any sessions.
+  final _lastRosterByNetwork = <String, NetworkEnvelope>{};
+
+  /// The most recent roster frame per network, for late subscribers.
+  List<NetworkEnvelope> get currentRosterFrames =>
+      List.unmodifiable(_lastRosterByNetwork.values);
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast();
   final _presence = StreamController<PresenceFrame>.broadcast();
   final _wakeHints = StreamController<NetworkEnvelope>.broadcast();
@@ -604,7 +614,12 @@ class DeviceConnectorService {
   /// Forwards the connector's surface onto the service's long-lived
   /// streams and maps link states to UI phases.
   void _wireForwarding(MachineConnector connector, int generation) {
-    _subscriptions.add(connector.rosterFrames.listen(_rosterFrames.add));
+    _subscriptions.add(
+      connector.rosterFrames.listen((envelope) {
+        _lastRosterByNetwork[envelope.network ?? ''] = envelope;
+        _rosterFrames.add(envelope);
+      }),
+    );
     _subscriptions.add(
       connector.presenceFrames.listen((envelope) {
         _presenceFrames.add(envelope);
@@ -863,6 +878,7 @@ class DeviceConnectorService {
   }
 
   Future<void> _teardown() async {
+    _lastRosterByNetwork.clear();
     _sessionProjectionRevision++;
     _rosterTimer?.cancel();
     _rosterTimer = null;

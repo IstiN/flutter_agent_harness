@@ -130,6 +130,12 @@ class _DevicesPageState extends State<DevicesPage> {
     final service = widget.service;
     _remote.clear();
     _fetchingRoster = false;
+    // Seed from the cached per-network roster frames: the server pushes
+    // them once per connect (before this page exists), and REST carries no
+    // sessions — without the replay every remote pane stays empty.
+    for (final envelope in service.currentRosterFrames) {
+      _onFrame(envelope);
+    }
     _framesSubscription = service.presenceFrames.listen(_onFrame);
     _rosterSubscription = service.rosterFrames.listen((envelope) {
       _onFrame(envelope);
