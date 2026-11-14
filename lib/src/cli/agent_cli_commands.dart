@@ -363,7 +363,15 @@ extension SlashCommandDispatch on AgentCli {
     switch (command) {
       case '/exit':
         io.writeln('bye');
+        // gh-2168 bounded-exit: quitting never waits out an in-flight run.
+        // Mark the exit first (the settle edge skips the idle prompt), then
+        // fire the run's — or a bare compaction's — cancel token so the
+        // settle lands before the teardown's bounded drain; `bye` stays the
+        // observable farewell and the abort marker drops queued messages
+        // (kimi semantics: an abort discards the queue).
         _exited = true;
+        _abortRequested = true;
+        _abortRunOrCompaction();
       case '/help':
         _printHelp(filter: rest);
       case '/stats':
