@@ -1909,3 +1909,1415 @@ note: provider 'chatgpt' loads as kind 'chatgpt-codex' — the next config save 
 ✅ test/cli/fa_tui_band_composer_test.dart: tui.classic kill switch (#806 AC3.5) legacy composer tail is byte-identical (rule + dim footer)
 ✅ test/cli/fa_tui_band_composer_test.dart: tui.classic kill switch (#806 AC3.5) classic wrap width is the full terminal width
 ✅ test/cli/fa_tui_band_composer_test.dart: NO_COLOR degrade (#806 E4) the band renders shape-only without any SGR
+✅ test/cli/task_list_test.dart: a two-generation chain renders as ONE row annotated with supersedes
+✅ test/cli/task_list_test.dart: a three-generation chain folds into the head row with the full chain
+✅ test/cli/task_list_test.dart: a superseded job whose successor is NOT listed still renders (never hide a row without showing its head)
+✅ test/cli/task_list_test.dart: unrelated jobs never fold
+✅ test/cli/fah_dap_dispatch_test.dart: dapPortUrl a valid port becomes the loopback ws url
+✅ test/cli/fah_dap_dispatch_test.dart: dapPortUrl missing, non-numeric, and non-positive values are rejected
+✅ test/cli/fah_dap_dispatch_test.dart: parseDapInvocation no flags: the zero-config default, not explicit
+✅ test/cli/fah_dap_dispatch_test.dart: parseDapInvocation --port and --url are explicit; the last one wins
+✅ test/cli/fah_dap_dispatch_test.dart: parseDapInvocation a bad flag or a missing value rejects the invocation
+usage: fa dap start [--port N] | fa dap stop | fa dap status | fa dap import <invite>
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch no verb: usage, exit 1
+usage: fa dap start [--port N] | fa dap stop | fa dap status | fa dap import <invite>
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch unknown verb: usage, exit 1
+usage: fa dap start [--port N] | fa dap stop | fa dap status | fa dap import <invite>
+usage: fa dap start [--port N] | fa dap stop | fa dap status | fa dap import <invite>
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch bad flags after a known verb: usage, exit 1
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch status on a dead port: exit 0, "not running"
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch status against a live hub: exit 0, running line
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch start: prompt + spawn seams flow through, hub up, exit 0
+✅ test/cli/fah_dap_dispatch_test.dart: runDapCommand dispatch stop with no hub running: exit 0, calm no-op
+✅ test/cli/fah_dap_dispatch_test.dart: buildDapController: DAP_LOCAL_HUB_URL wins unless a flag set the url
+✅ test/cli/fa_tui_kaomoji_test.dart: gh-1446 AC4: the busy row carries NO face in any cell
+✅ test/cli/fa_tui_kaomoji_test.dart: gh-1446 AC4: the row renders single-color dim chrome
+✅ test/cli/fa_tui_kaomoji_test.dart: AC2: the face swaps every kKaomojiSwapTicks ticks, never in place
+✅ test/cli/fa_tui_kaomoji_test.dart: the swap never lands back on the showing face
+✅ test/cli/fa_tui_kaomoji_test.dart: AC4: an idle tick animates nothing — the chain dies with the phase
+✅ test/cli/fa_tui_kaomoji_test.dart: FA_KAOMOJI_FACE pin: deterministic frames — the face never swaps
+✅ test/cli/fa_tui_kaomoji_test.dart: the pin clamps out-of-range values into the face set
+✅ test/cli/fa_tui_kaomoji_test.dart: herdr contract: the busy_row rule matches the LIVE row shape
+✅ test/cli/agent_cli_persist_close_obligation_test.dart: close without a session reports the empty ledger, not an error
+✅ test/cli/agent_cli_persist_close_obligation_test.dart: full lifecycle: discovery, unknown id/status, done + superseded
+✅ test/cli/agent_cli_persist_close_obligation_test.dart: unknown id on an empty ledger names the (none) open-id list
+✅ test/cli/provider_tuning_seed_test.dart: seedProviderTuning a tuned entry registers and the boot notice names it with its endpoint and sources
+✅ test/cli/provider_tuning_seed_test.dart: seedProviderTuning per-field fallthrough: an entry declaring only connect leaves the idle leg at the built-in default
+✅ test/cli/provider_tuning_seed_test.dart: seedProviderTuning AC6 fast path: entries without overrides never reach the table
+✅ test/cli/provider_tuning_seed_test.dart: seedProviderTuning E4: reset drops removed entries — a deleted config entry cannot outlive its config
+✅ test/cli/provider_tuning_seed_test.dart: seedProviderTuning without reset the seeder ADDS (boot runs two passes)
+✅ test/cli/provider_tuning_seed_test.dart: resolution built-in defaults are 180s connect / 300s idle (source: default)
+✅ test/cli/provider_tuning_seed_test.dart: resolution the wire seam resolves per request URL under the entry base
+✅ test/cli/provider_tuning_seed_test.dart: resolution a request to an unrelated host keeps the defaults
+✅ test/cli/agent_cli_empty_continuation_test.dart: headless clean-empty budget (gh-1603 AC1) two consecutive empties: two continuation turns, then recovery finishes with exit 0
+✅ test/cli/agent_cli_empty_continuation_test.dart: headless clean-empty budget (gh-1603 AC1) three consecutive unrecoverable empties end the run with the __FA_INCOMPLETE marker and a non-zero exit
+✅ test/cli/agent_cli_empty_continuation_test.dart: headless terminal paths stay distinct (gh-1603) hiccup exhaustion keeps its loud error exit and does NOT emit the incomplete marker
+✅ test/cli/agent_cli_empty_continuation_test.dart: headless terminal paths stay distinct (gh-1603) a healthy first answer never triggers the incomplete path
+✅ test/cli/folder_model_state_test.dart: folderModelStatePath namespaces the state file under the encoded cwd
+✅ test/cli/folder_model_state_test.dart: folderModelStateApplies applies when nothing explicit was given on this launch
+✅ test/cli/folder_model_state_test.dart: folderModelStateApplies explicit launch flags win over the folder state
+✅ test/cli/folder_model_state_test.dart: save/load roundtrip restores provider, model and base URL
+✅ test/cli/folder_model_state_test.dart: save/load roundtrip a null base URL survives the roundtrip
+✅ test/cli/folder_model_state_test.dart: save/load roundtrip folders do not see each other (per-folder scoping)
+✅ test/cli/folder_model_state_test.dart: tolerant reads a missing file loads as null
+✅ test/cli/folder_model_state_test.dart: tolerant reads corrupt JSON loads as null
+✅ test/cli/folder_model_state_test.dart: tolerant reads wrong field types load as null
+✅ test/cli/folder_model_state_test.dart: tolerant reads a JSON array loads as null
+✅ test/cli/folder_model_state_test.dart: tolerant reads a missing modelId loads as null
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) round-trips the pinned entry name
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) a pre-change state file loads with a null pin (AC4)
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) a non-string pin degrades to null
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) pinnedEntry resolves the named entry among same-modelId twins (AC1)
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) pin resolution is case-insensitive
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) a deleted entry yields the E1 note with the model kept
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) no pin → no entry and no note (legacy state)
+✅ test/cli/folder_model_state_test.dart: customProvider pin (gh-1000) a null state yields nothing
+✅ test/cli/agent_cli_connection_retry_test.dart: headless: a mid-turn Operation timed out retries and the run exits 0
+✅ test/cli/agent_cli_connection_retry_test.dart: headless: the retry is visible as a [net] notice, never silent
+✅ test/cli/agent_cli_connection_retry_test.dart: headless: an auth error stays fatal — exit 1 and the error line
+✅ test/cli/tui_hit_regions_test.dart: TuiHitRegionRegistry overlap resolves to the LAST added region (topmost wins)
+✅ test/cli/tui_hit_regions_test.dart: TuiHitRegionRegistry hitTest returns null on unclaimed chrome
+✅ test/cli/tui_hit_regions_test.dart: TuiHitRegionRegistry contains() bounds are half-open (w/h excluded)
+✅ test/cli/tui_hit_regions_test.dart: TuiHitRegionRegistry clear() drops every region — unmounted widgets cannot ghost-click
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter press + release inside a region classifies a click
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter the click carries the region under the RELEASE point
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter release outside every region routes nothing (unclaimed chrome)
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter motion past the threshold turns the release into a drag (E1)
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter motion within the threshold keeps the click
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter release without a press routes nowhere
+✅ test/cli/tui_hit_regions_test.dart: TuiMouseRouter a new press resets the drag state
+✅ test/cli/agent_cli_tui_sync_test.dart: tuiSyncOutput: true wires DEC 2026 BSU/ESU framing through the real AgentCli boot (#274)
+✅ test/cli/agent_cli_tui_sync_test.dart: tuiSyncOutput: false keeps the same boot free of sync framing
+✅ test/cli/headless_provider_key_test.dart: copilot resolves COPILOT_GITHUB_TOKEN from the environment first
+✅ test/cli/headless_provider_key_test.dart: copilot falls back to the stored catalog env name
+✅ test/cli/headless_provider_key_test.dart: a non-default copilot endpoint resolves the saved entry key
+✅ test/cli/headless_provider_key_test.dart: copilot without any key resolves null (headless then fails loudly)
+✅ test/cli/headless_provider_key_test.dart: both identifiers resolve the same key slot (issue #772) name and kind both answer the ChatGPT OAuth credential
+✅ test/cli/headless_provider_key_test.dart: both identifiers resolve the same key slot (issue #772) an unknown kind never invents a key
+✅ test/cli/headless_provider_key_test.dart: the chatgpt-codex KIND resolves key names through the chatgpt spec (gh-760 review)
+✅ test/cli/headless_provider_key_test.dart: codex env creds resolve on the DEFAULT endpoint, never on a foreign one (gh-760 review)
+✅ test/cli/headless_provider_key_test.dart: pinned key name (gh-1000 AC1) the pinned entry slot beats the host-scoped slot
+✅ test/cli/headless_provider_key_test.dart: pinned key name (gh-1000 AC1) the pinned name resolves from the environment first
+✅ test/cli/headless_provider_key_test.dart: pinned key name (gh-1000 AC1) a missing pinned slot falls through to the legacy order
+✅ test/cli/headless_provider_key_test.dart: endpoint normalization (gh-1570 L10/S4/E1) a trailing-slash spelling of the DEFAULT endpoint still resolves the catalog env names
+✅ test/cli/headless_provider_key_test.dart: endpoint normalization (gh-1570 L10/S4/E1) a trailing-slash default endpoint is not "custom" in startupApiKey — a missing required key still fails loud
+✅ test/cli/headless_provider_key_test.dart: boot-time legacy slot migration (gh-1570 incident REG) a key stranded under the previous release slot is COPIED onto the canonical slot, non-destructively, with a notice
+✅ test/cli/headless_provider_key_test.dart: boot-time legacy slot migration (gh-1570 incident REG) a canonical slot that already holds a value is never touched
+✅ test/cli/headless_provider_key_test.dart: boot-time legacy slot migration (gh-1570 incident REG) an unavailable store stays quiet — never a boot failure
+✅ test/cli/headless_provider_key_test.dart: boot-time legacy slot migration (gh-1570 incident REG) a failing keychain write degrades to the fallback notice — resolution still probes the legacy slot
+✅ test/cli/pi_mode_gate_test.dart: L2: the pi tool-surface pin exactly read/write/edit/bash stay registered
+✅ test/cli/pi_mode_gate_test.dart: L2: the pi tool-surface pin every other known tool tombstones off (the /tools surface)
+✅ test/cli/pi_mode_gate_test.dart: L2: the pi tool-surface pin a configured MCP server never registers its tools in pi mode
+✅ test/cli/pi_mode_gate_test.dart: L2: the pi tool-surface pin the same MCP config registers its tool in default mode (control)
+✅ test/cli/pi_mode_gate_test.dart: L2: the bare prompt profile pi prompt is the bare template plus project context only
+✅ test/cli/pi_mode_gate_test.dart: L2: the bare prompt profile default mode keeps the legacy prompt (REG)
+✅ test/cli/pi_mode_gate_test.dart: L3: the boot print pi boot prints the initial-context token estimate
+✅ test/cli/pi_mode_gate_test.dart: L3: the boot print default boot prints no benchmark line (REG)
+✅ test/cli/pi_mode_gate_test.dart: L3: the boot print default boot leaves the full tool surface (REG)
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet saves when name and value are provided
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet uses the provided name without prompting
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet reports invalid key name
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet reports cancelled on empty value
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet reports could not save on write failure
+✅ test/cli/interactive_helpers_test.dart: interactiveKeySet aborts silently on cancel (null result)
+✅ test/cli/settings_flow_model_caps_test.dart: AC3: caps persist exactly the resolver override keys
+✅ test/cli/settings_flow_model_caps_test.dart: a below-floor value prints the parser error and writes NOTHING
+✅ test/cli/settings_flow_model_caps_test.dart: the pre-write parse guard refuses a malformed edited doc
+✅ test/cli/settings_flow_model_caps_test.dart: removing the last override drops the emptied yaml blocks
+✅ test/cli/settings_flow_model_caps_test.dart: unpinning thinkingLevel (off) removes ONLY that field
+✅ test/cli/settings_flow_model_caps_test.dart: unpinning on a host without a user config prints and writes nothing
+✅ test/cli/settings_flow_model_caps_test.dart: unpinning with an unreadable config file prints and writes nothing
+✅ test/cli/settings_flow_model_caps_test.dart: unpinning that would leave an invalid models block saves NOTHING
+✅ test/cli/settings_flow_model_caps_test.dart: the hub carries ONE model-limits row with the effective summary
+✅ test/cli/settings_flow_model_caps_test.dart: pinning an override for the ACTIVE model applies live
+✅ test/cli/settings_flow_model_caps_test.dart: a pin rides the role-slot layer: the rebuild cannot swap it
+✅ test/cli/settings_flow_model_caps_test.dart: unpinning drops the stale userPin from the window registry
+✅ test/cli/settings_flow_model_caps_test.dart: the live rebuild carries the catalog image cap
+✅ test/cli/settings_flow_model_caps_test.dart: the lowest window preset pins exactly the parse floor
+✅ test/cli/settings_flow_model_caps_test.dart: gh-1787 repro: maxTokens 65536 lands beside a host-rendered quoted contextWindow pin (the copilot incident)
+✅ test/cli/settings_flow_model_caps_test.dart: pinning one field keeps the boot-carried caps of the live model
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) plain ids (no slash) stay on the current triple
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) the explicit ACTIVE-identity form strips to the bare id
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) a vendor-prefixed id the active endpoint lists stays put (E2)
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) a KNOWN other-provider prefix moves the WHOLE triple
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) an unknown prefix passes through as a model id (coherent)
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) degenerate splits (leading/trailing slash) stay same-provider
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) openrouter vendor ids survive when the active endpoint lists them (E2 precedence 2)
+✅ test/cli/model_switch_coherence_test.dart: parseTypedModelTarget (UT-1, E2) router actives with a COLD cache: rule 3 crosses to the vendor record — the documented trade-off
+✅ test/cli/model_switch_coherence_test.dart: crossProviderSwitchRefusal (UT-1, E1/E3) unresolvable target provider refuses naming it (E1)
+✅ test/cli/model_switch_coherence_test.dart: crossProviderSwitchRefusal (UT-1, E1/E3) legacy wiring with no target key refuses up front (E3)
+✅ test/cli/model_switch_coherence_test.dart: crossProviderSwitchRefusal (UT-1, E1/E3) roles mode with an unresolved key is allowed (request-time resolution handles it)
+✅ test/cli/model_switch_coherence_test.dart: crossProviderSwitchRefusal (UT-1, E1/E3) a resolved target key passes
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) a coherent quadruple passes
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) an unresolvable provider identity refuses naming the field
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) every wire-mismatch permutation over the fixture kinds refuses naming both sides (UT-2 matrix)
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) a rejected binding refuses carrying the binding verdict
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) the mixed-key tell refuses: key belongs to a foreign family while the active family resolves a different value (the incident shape)
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) a key matching NO configured family never refuses (explicit tokens, OAuth blobs, synthetic test keys)
+✅ test/cli/model_switch_coherence_test.dart: requestCoherenceRefusal (UT-2, UT-4) explicit-token, header-auth and keyless wiring never refuse
+✅ test/cli/model_switch_coherence_test.dart: refusal message contract (UT-4, AC6) messages name fields + repair, never "re-authorize", never key enumeration
+✅ test/cli/model_switch_coherence_test.dart: restoreGateDecision (UT-3) a coherent persisted triple restores
+✅ test/cli/model_switch_coherence_test.dart: restoreGateDecision (UT-3) a mixed persisted triple auto-repairs WITH the diagnostic (OQ3)
+✅ test/cli/model_switch_coherence_test.dart: restoreGateDecision (UT-3) a deleted provider record refuses and names the conflict (E4)
+✅ test/cli/model_switch_coherence_test.dart: REG-1 (property): the enumerated pick space is coherent (AC1) no enumerated pick resolves to a silent mixed state
+✅ test/cli/model_switch_coherence_test.dart: REG-1 (property): the enumerated pick space is coherent (AC1) spot: the incident pick never lands on the copilot triple
+✅ test/cli/roles_custom_providers_boot_test.dart: IT-1 — boot path with the bycom fixture (AC1) explicit apiKeyName refs resolve every role from the env
+✅ test/cli/roles_custom_providers_boot_test.dart: IT-1 — boot path with the bycom fixture (AC1) a bare ref picks the ENTRY-pinned key from the store
+✅ test/cli/roles_custom_providers_boot_test.dart: IT-1 — boot path with the bycom fixture (AC1) a keyless entry picks the endpoint-scoped slot from the store
+✅ test/cli/roles_custom_providers_boot_test.dart: AC4 — the roles-drop warning reaches the notice stream line mode prints the configured drop notice
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs defaults: 60s start, 60s tick, 300s escalation
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml(null) keeps defaults
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml parses all five keys
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml parses the toolNudge kill switch (issue #1185 E5)
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml rejects unknown and negative values
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml rejects an escalation threshold below an enabled liveness start (the hint is supposed to come at a longer threshold)
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs fromYaml accepts escalate == liveness and 0-disabled sides
+✅ test/cli/tool_liveness_test.dart: WaitingConfig liveness knobs toYaml round-trips the liveness knobs
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker a fresh tracker watches nothing
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker AC2: quiet below the threshold — silence-is-progress preserved
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker AC1/AC5: the reminder cites elapsed from the injected clock
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker the reminder repeats at every evaluation past the threshold
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker AC3: the escalation fires exactly once per stuck call
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker a NEW stuck call escalates afresh (per-call, not per-tracker)
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker a call ended under the threshold never reminds
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker two concurrent calls each get their own line, oldest first
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker livenessSeconds 0 is the reminder kill switch
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker escalateSeconds 0 disables the hint; reminders continue
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker callEnded clears the escalated state with the call
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert detects drifted flags, clears them, and names the drift
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert no drift = single probe, no clear, no spam
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert never throws: missing stty (ProcessException) = silent no-op
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert never throws: probe failure (no /dev/tty) = silent no-op
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert never throws: clear failure after drift = silent no-op
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert drift without an onDrift sink still re-asserts silently
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert parseTermiosDrift: GNU-style rows (bare = on, dash = off)
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert no terminal (headless host) never spawns stty
+✅ test/cli/termios_guard_test.dart: TermiosGuard.reassert drift parsing ignores control chars (discard = ^O)
+✅ test/cli/termios_guard_test.dart: TermiosGuard.dumpSettings returns the stty -a dump for /termios diagnostics
+✅ test/cli/termios_guard_test.dart: TermiosGuard.dumpSettings null when the probe fails
+✅ test/cli/termios_guard_test.dart: TermiosGuard.dumpSettings null when the probe exits non-zero (no /dev/tty)
+✅ test/cli/termios_guard_test.dart: TermiosGuard.dumpSettings null without a terminal (headless hosts)
+✅ test/cli/termios_guard_test.dart: attachTermiosGuard re-asserts after every tool call and reports drift
+✅ test/cli/termios_guard_test.dart: attachTermiosGuard guard failure never breaks the tool phase
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker timer chain (production legs) callStarted arms the chain; the fired leg ticks, re-arms, and escalates through the real chain
+✅ test/cli/waiting_heartbeat_test.dart: WaitingConfig defaults: 20-minute heartbeat, 30-minute ceiling
+✅ test/cli/waiting_heartbeat_test.dart: WaitingConfig fromYaml(null) keeps defaults
+✅ test/cli/waiting_heartbeat_test.dart: WaitingConfig fromYaml parses both keys
+✅ test/cli/waiting_heartbeat_test.dart: WaitingConfig fromYaml rejects unknown and negative values
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig defaults: 24h age belt, 3-day log retention, 50 MB log ceiling
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml(null) keeps defaults
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml parses both keys
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml parses maxLogBytes (issue #919)
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml rejects a disabled or non-integer log ceiling
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml still rejects unknown keys alongside maxLogBytes
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig fromYaml rejects unknown and negative values
+✅ test/cli/waiting_heartbeat_test.dart: JobsConfig toYaml includes the maxLogBytes line (issue #919)
+✅ test/cli/waiting_heartbeat_test.dart: WaitingHeartbeat tick fires the beat only while armed
+✅ test/cli/waiting_heartbeat_test.dart: WaitingHeartbeat zero cadence disables arming (kill switch)
+✅ test/cli/waiting_heartbeat_test.dart: WaitingHeartbeat pulse arms when idle and keeps the chain alive when running
+✅ test/cli/waiting_heartbeat_test.dart: WaitingHeartbeat the real timer fires the beat after the cadence
+✅ test/cli/waiting_heartbeat_test.dart: wait-loop pure helpers heartbeat cadence beats a farther ceiling
+✅ test/cli/waiting_heartbeat_test.dart: wait-loop pure helpers the nearest timer wins
+✅ test/cli/waiting_heartbeat_test.dart: wait-loop pure helpers heartbeat cadence can be the nearest wake
+✅ test/cli/waiting_heartbeat_test.dart: wait-loop pure helpers disabled heartbeat never wakes
+✅ test/cli/waiting_heartbeat_test.dart: wait-loop pure helpers waitingBeatDue gates on cadence and elapsed time
+✅ test/cli/waiting_heartbeat_test.dart: waiting snapshot text waitingDescribe counts jobs and timers with grammar
+✅ test/cli/waiting_heartbeat_test.dart: waiting snapshot text waitingDetachSummary uses the exact AC7 shape
+✅ test/cli/waiting_heartbeat_test.dart: waiting snapshot text waitingMinutesElapsed floors and defaults to zero
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker timer chain (production legs) the last callEnded disarms the chain — no fire after
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker timer chain (production legs) tickSeconds: 0 keeps the chain disarmed; the tick seam still evaluates
+✅ test/cli/ttsr_cli_test.dart: no ttsr config: no controller is attached
+✅ test/cli/ttsr_cli_test.dart: rule violation aborts, injects, retries, and persists records
+✅ test/cli/ttsr_cli_test.dart: invalid rule regexes are reported at startup
+✅ test/cli/tool_liveness_test.dart: ToolLivenessTracker timer chain (production legs) a manual tick restarts the full leg (the WaitingHeartbeat mirror: tick cancels the pending leg)
+✅ test/cli/tool_liveness_test.dart: liveness line formatters the reminder line is single-line, tool + detail + elapsed + hint
+✅ test/cli/tool_liveness_test.dart: liveness line formatters issue #1349: every periodic reminder names the background escape before the escalation threshold
+✅ test/cli/tool_liveness_test.dart: liveness line formatters the escalation line names the whole background escape hatch
+✅ test/cli/tool_liveness_test.dart: liveness line formatters AC6: the escalation line carries the cancellation affordance (background stop + foreground levers + unwinding note)
+✅ test/cli/tool_liveness_test.dart: liveness line formatters a multi-line detail flattens to one physical line
+✅ test/cli/tool_liveness_test.dart: liveness line formatters a very long detail clips at the budget with an ellipsis
+✅ test/cli/tool_liveness_test.dart: liveness line formatters an empty detail degrades to glyph + tool + elapsed
+✅ test/cli/tool_liveness_test.dart: liveness line formatters the elapsed floors fractional seconds
+✅ test/cli/tool_liveness_test.dart: toolNudgeNotice (issue #1185) names the tool, the elapsed, and the three decisions
+✅ test/cli/tool_liveness_test.dart: toolNudgeNotice (issue #1185) a multi-line command tail stays single-line inside the notice
+✅ test/cli/tui_repl_test.dart: typing / opens the command menu
+✅ test/cli/tui_repl_test.dart: escape closes the command menu
+✅ test/cli/tui_repl_test.dart: arrow down + enter selects a slash command then submits it
+✅ test/cli/tui_repl_test.dart: typing after / filters the command menu
+✅ test/cli/tui_repl_test.dart: typing /models opens the model picker
+✅ test/cli/tui_repl_test.dart: openModelMenu opens the model picker
+✅ test/cli/tui_repl_test.dart: enter in the model picker selects a model
+✅ test/cli/tui_repl_test.dart: selecting /model from slash menu opens model picker
+✅ test/cli/tui_repl_test.dart: refresh updates the model picker while open
+✅ test/cli/tui_repl_test.dart: typing /models open filters the model picker
+✅ test/cli/tui_repl_test.dart: typing in model picker filters the list
+✅ test/cli/tui_repl_test.dart: tab in model picker accepts the current selection
+✅ test/cli/tui_repl_test.dart: appendOutput adds lines above the prompt
+✅ test/cli/tui_repl_test.dart: alt screen is entered and exited
+✅ test/cli/tui_repl_test.dart: cursor motion and editing keys edit the buffer
+✅ test/cli/tui_repl_test.dart: unknown keys are ignored
+✅ test/cli/tui_repl_test.dart: tab accepts the selected slash command
+✅ test/cli/tui_repl_test.dart: slash menu arrows, shiftTab, and page keys move the selection
+✅ test/cli/tui_repl_test.dart: model picker backspace edits the filter
+✅ test/cli/tui_repl_test.dart: model picker escape closes the picker
+✅ test/cli/tui_repl_test.dart: model picker navigation clamps and page keys jump
+✅ test/cli/tui_repl_test.dart: model picker ignores editing and unknown keys
+✅ test/cli/tui_repl_test.dart: stripAnsi removes SGR and cursor sequences
+✅ test/cli/tui_repl_test.dart: truncateAnsiLine returns a short line as-is
+✅ test/cli/tui_repl_test.dart: truncateAnsiLine cuts a long plain line to the width
+✅ test/cli/tui_repl_test.dart: truncateAnsiLine preserves ANSI sequences across the cut
+✅ test/cli/tui_repl_test.dart: truncateAnsiLine counts a lone ESC as a visible column
+✅ test/cli/agent_cli_exit_midrun_test.dart: line mode: /exit mid-run aborts the run and exits bounded
+✅ test/cli/agent_cli_exit_midrun_test.dart: line mode: EOF mid-run aborts the run and exits bounded
+✅ test/cli/agent_cli_exit_midrun_test.dart: TUI mode: /exit submit boundary aborts the run and exits bounded
+✅ test/cli/copilot_provider_test.dart: Copilot connect /provider copilot device flow: auth, default name, individual plan, entry + key saved, switch
+✅ test/cli/agent_cli_model_test.dart: /model prints and switches the model
+✅ test/cli/agent_cli_model_test.dart: /model switch prints the role-models note
+✅ test/cli/copilot_provider_test.dart: Copilot connect /provider copilot paste-token variant stores and switches
+✅ test/cli/copilot_provider_test.dart: Copilot connect entry-name clash retries; a re-auth default name updates only that entry
+✅ test/cli/copilot_provider_test.dart: Copilot connect a rejected device flow surfaces endpointDisabled and aborts
+✅ test/cli/copilot_provider_test.dart: Copilot connect paste flow accepts a fine-grained PAT with a permission hint
+✅ test/cli/copilot_provider_test.dart: Copilot connect paste flow warns that classic ghp_ tokens are unsupported and re-asks
+✅ test/cli/agent_cli_model_test.dart: /models lists known models for the active provider
+✅ test/cli/copilot_provider_test.dart: Copilot connect a dead token exchange is reported before manual model entry
+✅ test/cli/copilot_provider_test.dart: Copilot connect a dead OAuth exchange is reported before manual model entry
+✅ test/cli/copilot_provider_test.dart: Copilot connect picking an existing account switches to it
+✅ test/cli/copilot_provider_test.dart: Copilot connect a custom plan base URL lands in the entry
+✅ test/cli/copilot_provider_test.dart: Copilot connect /provider copilot rejects invalid usage
+✅ test/cli/copilot_provider_test.dart: PAT connect (no exchange) a pasted fine-grained PAT connects without touching the exchange
+✅ test/cli/agent_cli_model_test.dart: /models filters known models by substring
+✅ test/cli/agent_cli_model_test.dart: /model ? lists models and /model <id> switches
+✅ test/cli/agent_cli_model_test.dart: parseModelsResponse reads ids sorted and context windows from all known fields
+✅ test/cli/agent_cli_model_test.dart: parseModelsResponse reads max completion caps (flat and top_provider nested)
+✅ test/cli/agent_cli_model_test.dart: parseModelsResponse tolerates an empty payload
+✅ test/cli/agent_cli_model_test.dart: /model-edit bare shows the active limits; setting applies them
+✅ test/cli/agent_cli_model_test.dart: /model-edit rejects bad input without touching the model
+✅ test/cli/agent_cli_model_test.dart: two-step model picker several providers show the provider list, not flat models
+✅ test/cli/agent_cli_model_test.dart: two-step model picker a single provider goes straight to its models
+✅ test/cli/agent_cli_model_test.dart: two-step model picker settled no-hit filter yields empty rows, not a loading row
+✅ test/cli/agent_cli_model_test.dart: two-step model picker selecting a provider row opens its model list
+✅ test/cli/agent_cli_model_test.dart: two-step model picker minimax entry without a key falls back to the bundled catalog
+✅ test/cli/agent_cli_model_test.dart: two-step model picker a saved chatgpt entry lists the codex /models answer (#1706)
+✅ test/cli/agent_cli_model_test.dart: two-step model picker the /model table renders catalog pricing, not just an em dash
+✅ test/cli/agent_cli_model_test.dart: two-step model picker status label uses the ACTIVE custom entry, not the first baseUrl match
+✅ test/cli/agent_cli_model_test.dart: two-step model picker status label in a restored session resolves the entry by the pinned key name
+✅ test/cli/agent_cli_model_test.dart: two-step model picker status label falls back to the baseUrl scan without an active custom entry, and to the catalog provider without any match
+✅ test/cli/agent_cli_model_test.dart: env-keyed catalog providers an env key lists the catalog provider with its live /models ids
+✅ test/cli/agent_cli_model_test.dart: env-keyed catalog providers without an env key the catalog provider stays hidden
+✅ test/cli/agent_cli_model_test.dart: env-keyed catalog providers picking an env-keyed provider model switches to its endpoint
+✅ test/cli/agent_cli_model_test.dart: env-keyed catalog providers a failing /models fetch still lists the provider with the catalog seeds
+✅ test/cli/agent_cli_model_test.dart: roles-mode /model on a saved CodeMie JWT entry the switch resolves the entry key instead of OPENAI_API_KEY
+✅ test/cli/agent_cli_model_test.dart: persisted model cache (stale-while-revalidate) a persisted list renders instantly before the live fetch lands
+✅ test/cli/agent_cli_model_test.dart: persisted model cache (stale-while-revalidate) a fresh disk entry is trusted: no live refetch this session
+✅ test/cli/agent_cli_model_test.dart: persisted model cache (stale-while-revalidate) a stale (>24h) disk entry renders instantly and revalidates in background
+✅ test/cli/agent_cli_model_test.dart: persisted model cache (stale-while-revalidate) the live fetch is persisted for the next process
+✅ test/cli/copilot_provider_test.dart: /provider export (issue #2090 absorbed gh-1606) current copilot account: the container carries its token
+✅ test/cli/copilot_provider_test.dart: /provider export (issue #2090 absorbed gh-1606) no current provider: a named refusal
+✅ test/cli/copilot_provider_test.dart: /provider export (issue #2090 absorbed gh-1606) no stored token: a named reconnect hint
+✅ test/cli/copilot_provider_test.dart: /provider export (issue #2090 absorbed gh-1606) a failed clipboard write names the reason, never the container
+✅ test/cli/copilot_provider_test.dart: /provider export (issue #2090 absorbed gh-1606) /provider export rejects a non-flag operand
+✅ test/cli/copilot_provider_test.dart: endpoint-reported context window in roles mode a chain entry on catalog defaults learns the real window
+✅ test/cli/copilot_provider_test.dart: endpoint-reported context window in roles mode a CONFIRMING report verifies the registry window (gh-1742 review round 1, comment 4)
+✅ test/cli/copilot_provider_test.dart: endpoint-reported context window in roles mode an explicitly pinned roles window wins over the endpoint
+✅ test/cli/copilot_provider_test.dart: endpoint-reported context window in roles mode an endpoint without window data gets an explicit fallback note instead of silently trusting the carried default
+✅ test/cli/console_log_dial_test.dart: the stall banner obeys the console dial (issue #2117) the interactive default (warn) hides the passive info variant
+✅ test/cli/console_log_dial_test.dart: the stall banner obeys the console dial (issue #2117) an explicit info config level shows it byte-for-byte
+✅ test/cli/console_log_dial_test.dart: the stall banner obeys the console dial (issue #2117) /log info switches the console sink live, no restart
+✅ test/cli/console_log_dial_test.dart: /log command (issue #2117 AC4) bare /log prints the current level
+✅ test/cli/console_log_dial_test.dart: /log command (issue #2117 AC4) a valid level switches and reports the old one
+✅ test/cli/console_log_dial_test.dart: /log command (issue #2117 AC4) an invalid level answers loudly and keeps the current level
+✅ test/cli/console_log_dial_test.dart: /log command (issue #2117 AC4) the switch actually gates subsequent lines
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) the default file shape gains ONLY the level tag
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) the file gate drops below-level lines and keeps at-level ones
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) every rendered file line passes the redaction pipeline
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) a configured format renders the pattern on the file sink
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) the console sink redacts and formats (AC3 property)
+✅ test/cli/console_log_dial_test.dart: fa.log level tags, gate, and redaction (issue #2117 AC3/AC6) the console gate (interactive default) hides info chatter
+✅ test/cli/log_file_tee_test.dart: TeeCliIO write tees the chunk verbatim and delegates
+✅ test/cli/log_file_tee_test.dart: TeeCliIO writeln tees the chunk with its newline and delegates
+✅ test/cli/log_file_tee_test.dart: TeeCliIO interleaved channels land in the log in print order
+✅ test/cli/log_file_tee_test.dart: TeeCliIO the rest of the CliIO surface delegates to the inner io
+✅ test/cli/prompt_overrides_io_test.dart: looksLikePromptFilePath classifies paths vs inline text
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides empty raw map yields empty overrides
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides inline text resolves verbatim (trimmed)
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides file values read the file and strip frontmatter
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides relative file paths resolve against the base dir
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides absolute file paths are used as-is
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides a missing file is a ConfigException, never a silent fallback
+✅ test/cli/prompt_overrides_io_test.dart: resolvePromptOverrides an empty prompt file is a ConfigException
+✅ test/cli/prompt_overrides_io_test.dart: loadPromptFile (--system-prompt-file) reads a file with any extension, stripping frontmatter
+✅ test/cli/prompt_overrides_io_test.dart: loadPromptFile (--system-prompt-file) expands ~ against the home dir
+✅ test/cli/prompt_overrides_io_test.dart: loadPromptFile (--system-prompt-file) a missing file is a ConfigException naming the flag
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) content_filter finish_reason renders category, endpoint and ONE recovery
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) the whole terminal finish_reason family classifies as content filter
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) rate limit renders the quota category with a Retry-After hint when the text carries one
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) an HOUR-scale Retry-After hint renders hours, never seconds (review: the unit-group miss made ~2h read as ~2s)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) a compact hour hint (`1h`) and a fractional render honestly
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) a MINUTE-scale Retry-After hint renders minutes; past the hour boundary the budget reads in hours (one honest scale)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) a scaled hint renders at ONE decimal, never a raw float (review round 2: 100s must not print ~1.6666666666666667m)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) an UNKNOWN unit (`2 days`, `weeks`) claims NO time — no claim beats a wrong claim (review round 2)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) a bare-number hint (header-style) stays seconds; a bare 3600-class value upgrades to hours
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) rate limit without a Retry-After hint claims no time
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) transient finish_reason network_error classifies as network
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) transport wordings classify as network
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) idle-watchdog stall wording classifies as stall (the gh-1395 taxonomy, reused)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) UNKNOWN finish_reason words stay unclassified passthrough — never a wrong category (issue #2119 border case)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) every classified line keeps the `error: ` headless grammar (issue #2119 AC5)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) the dedup key is the category + compacted message: the same failure shares one key, a distinct failure gets another (AC1)
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) auth and connection-refused keep their hints byte-identical (REG): the classifier runs AFTER those branches
+✅ test/cli/provider_error_classification_test.dart: classifyProviderFailure (issue #2119 AC2) errorLine renders the classified line for a content_filter message
+✅ test/cli/provider_error_classification_test.dart: context-aware stall banner (issue #2119 AC3) without images the banner offers wait/abort/restart — no image levers
+✅ test/cli/provider_error_classification_test.dart: context-aware stall banner (issue #2119 AC3) with images the banner keeps the historical levers byte-identical (the #1786 REG-3 shape, budgetOffer=false)
+✅ test/cli/settings_flow_auto_update_drop_test.dart: off → notify drops the auto_update line; the rest is byte-identical
+✅ test/cli/settings_flow_auto_update_drop_test.dart: no home directory: the policy stays off, nothing is saved
+✅ test/cli/settings_flow_auto_update_drop_test.dart: unreadable config file: refused, the policy stays off
+✅ test/cli/settings_flow_auto_update_drop_test.dart: a file that would not parse after the drop: not saved
+✅ test/cli/agent_cli_job_block_single_render_test.dart: AC1: one TUI job lifecycle renders the settle card once and never echoes the settle notice — one command echo total (the duplicate source: the notice echo in AgentCliShellJobSettle._onShellJobSettled)
+✅ test/cli/agent_cli_job_block_single_render_test.dart: AC2: two sequential jobs render two disjoint settle blocks at the write-sequence level — ordered, one card each, no cross-job bleed
+✅ test/cli/agent_cli_job_block_single_render_test.dart: AC2b: two sequential jobs in the TUI paint two settle cards and no notice echo (redraw stays disjoint — captured frames pass)
+✅ test/cli/agent_cli_job_block_single_render_test.dart: AC5: the settle writer mix keeps every glass row single-source
+✅ test/cli/ext_cli_test.dart: list shows engine, entries, scope, trust, and platform markers
+✅ test/cli/ext_cli_test.dart: list engine-unavailable line still lists entries
+✅ test/cli/ext_cli_test.dart: list --json emits one machine row per extension
+✅ test/cli/ext_cli_test.dart: install local dir happy path with interactive TOFU y
+✅ test/cli/ext_cli_test.dart: install local dir interactive TOFU n denies without writing
+✅ test/cli/ext_cli_test.dart: install interactive denial exits 1 under --strict
+✅ test/cli/ext_cli_test.dart: install non-interactive requires --trust and --pin (AC8b)
+✅ test/cli/ext_cli_test.dart: install non-interactive --trust --pin installs
+✅ test/cli/ext_cli_test.dart: install pin mismatch rejects loudly and writes nothing
+✅ test/cli/ext_cli_test.dart: install re-install of identical content is up-to-date
+✅ test/cli/ext_cli_test.dart: install multiple sources install sequentially; failure keeps going
+✅ test/cli/ext_cli_test.dart: install bare id installs from the catalog via the injected client
+✅ test/cli/ext_cli_test.dart: bundled install --bundled [name] seeds the named bundled extension
+✅ test/cli/ext_cli_test.dart: bundled install bare --bundled installs every bundled extension
+✅ test/cli/ext_cli_test.dart: bundled install unknown bundled name fails loud
+✅ test/cli/ext_cli_test.dart: remove removes an installed extension
+✅ test/cli/ext_cli_test.dart: remove missing extension exits 1
+✅ test/cli/ext_cli_test.dart: update hash-only change auto-applies headless
+✅ test/cli/ext_cli_test.dart: update capability change headless fails loud and keeps the grant
+✅ test/cli/ext_cli_test.dart: update capability change interactively re-prompts and re-grants
+✅ test/cli/ext_cli_test.dart: update up-to-date and unknown names behave
+✅ test/cli/ext_cli_test.dart: update bundled-source update re-plans from the bundled seed
+✅ test/cli/ext_cli_test.dart: update github-source update re-plans over the injected client
+✅ test/cli/ext_cli_test.dart: audit prints the trust record and untrusted tombstones
+✅ test/cli/ext_cli_test.dart: audit --json emits one row per extension
+✅ test/cli/ext_cli_test.dart: audit unknown name exits 1
+✅ test/cli/ext_cli_test.dart: enable/disable are REPL-only
+✅ test/cli/ext_cli_test.dart: bootstrap applies a local source interactively, then is idempotent
+✅ test/cli/ext_cli_test.dart: bootstrap pre-trusted extension is up-to-date headless
+✅ test/cli/ext_cli_test.dart: bootstrap E15: unreachable entry is a named line, session proceeds
+✅ test/cli/ext_cli_test.dart: bootstrap E15 strict rethrows
+✅ test/cli/ext_cli_test.dart: bootstrap E16: project scope wins; the user loser is reported once
+✅ test/cli/ext_cli_test.dart: bootstrap config change re-applies (new marker hash)
+✅ test/cli/env_provider_preconfig_test.dart: feature off null / blank type returns null
+✅ test/cli/env_provider_preconfig_test.dart: required fields a missing config with a set type is an error
+✅ test/cli/env_provider_preconfig_test.dart: required fields an empty config with a set type is an error
+✅ test/cli/env_provider_preconfig_test.dart: required fields a missing baseUrl is named, not defaulted
+✅ test/cli/env_provider_preconfig_test.dart: required fields a missing model is named, not defaulted
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar: optional but strict a declared, set key ref is applied
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar: optional but strict a declared but missing key ref fails loud, naming the var
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar: optional but strict a declared but empty key ref fails loud too
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar: optional but strict no key ref boots keyless — spec env names are NOT probed
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar genericity: any catalog type anthropic boots end-to-end from env with a custom key var
+✅ test/cli/env_provider_preconfig_test.dart: apiKeyEnvVar genericity: any catalog type openai boots end-to-end from env the same way
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: config blob the _BASE64 twin is used when the plain var is unset
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: config blob the plain var wins when both carry the same value
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: config blob both set with different values is ambiguous — error
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: config blob malformed base64 is an error naming the twin var
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: key var the _BASE64 twin is used when the plain var is unset
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: key var the plain var wins when both carry the same value
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: key var both set with different values is ambiguous — error
+✅ test/cli/env_provider_preconfig_test.dart: base64 twins: key var malformed base64 is an error naming the twin var
+✅ test/cli/env_provider_preconfig_test.dart: no-fallback regressions (catalog values never fill gaps) a catalog-backed type with no baseUrl throws instead of guessing
+✅ test/cli/env_provider_preconfig_test.dart: no-fallback regressions (catalog values never fill gaps) a catalog-backed type with no model throws instead of guessing
+✅ test/cli/env_provider_preconfig_test.dart: config strictness unknown key names the key and the supported set
+✅ test/cli/env_provider_preconfig_test.dart: config strictness non-string value is rejected
+✅ test/cli/env_provider_preconfig_test.dart: config strictness malformed JSON quotes the problem
+✅ test/cli/env_provider_preconfig_test.dart: config strictness non-object JSON is rejected
+✅ test/cli/env_provider_preconfig_test.dart: config strictness blank required values are treated as absent — error
+✅ test/cli/env_provider_preconfig_test.dart: name auto-resolve taken default name gets -2, then -3
+✅ test/cli/env_provider_preconfig_test.dart: name auto-resolve a non-colliding explicit name is kept verbatim
+✅ test/cli/env_provider_preconfig_test.dart: name auto-resolve an explicit name colliding with a saved entry gets -2
+✅ test/cli/env_provider_preconfig_test.dart: name auto-resolve a name colliding with a catalog provider gets -2
+✅ test/cli/env_provider_preconfig_test.dart: FA_PROVIDERS filter interplay a filtered-out type no longer resolves
+✅ test/cli/env_provider_preconfig_test.dart: FA_PROVIDERS filter interplay uniquify still avoids names filtered out of resolution
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) input: ["text","image"] parses onto the preconfig
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) input parses identically through the BASE64 twin
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) absent input leaves the preconfig input null (catalog stands)
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) an unknown input entry is named, not coerced
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) a non-list input is named
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) an empty input list is named
+✅ test/cli/env_provider_preconfig_test.dart: input modalities (issue #638 AC2) a non-string input entry is named
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) a declared rung parses onto the preconfig
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) absent thinkingLevel leaves the field null (legacy boot)
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) xhigh and max are accepted and normalize to high
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) an off-ladder value fails loud naming the ladder
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) a non-string thinkingLevel is named
+✅ test/cli/env_provider_preconfig_test.dart: thinkingLevel (issue #734) thinkingLevel parses identically through the BASE64 twin
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) contextWindow/maxTokens parse as the declared ints
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) absent capability fields stay null (byte-identical legacy)
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) capability fields parse identically through the BASE64 twin
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) a non-integer capability field fails loud naming the key
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) a below-floor capability field fails loud naming the floor
+✅ test/cli/env_provider_preconfig_test.dart: capability fields (gh-1471 D4) a blank capability field is absent, not an error
+✅ test/cli/env_provider_preconfig_test.dart: cross-layer: bench workflow custom resolve output (gh-1471) the documented custom example output boots end to end
+✅ test/cli/env_provider_preconfig_test.dart: cross-layer: bench workflow custom resolve output (gh-1471) the preflight whitelist admits every key the workflow can emit
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) the bifrost incident configuration boots with a binding warning (gh-1624 AC1 — was exit 64)
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) a vendor-prefix mismatch on a KNOWN vendor endpoint still dies at parse time (gh-1624 AC2)
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) a known endpoint of another dialect is rejected
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) an explicit wire: override passes and is echoed (E6)
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) an unknown wire: value is rejected
+✅ test/cli/env_provider_preconfig_test.dart: wire ⇄ endpoint validation (gh-1570 AC2) a consistent declaration resolves its binding
+✅ test/cli/fa_tui_boot_output_race_test.dart: output sent before run() and inside run()'s pre-program window both render (no dropped boot output, #538)
+✅ test/cli/agent_cli_roles_test.dart: banner key status follows the resolved role provider
+✅ test/cli/agent_cli_roles_test.dart: /model shows the roles overview with the active chain position
+✅ test/cli/agent_cli_roles_test.dart: /model <id> pins the default chain for the session
+✅ test/cli/agent_cli_roles_test.dart: compaction summarizes through the smol role
+✅ test/cli/agent_cli_roles_test.dart: a resolver without a default role keeps the legacy wiring
+✅ test/cli/agent_cli_roles_test.dart: /provider pins the default chain to the new endpoint
+✅ test/cli/agent_cli_roles_test.dart: /provider with an explicit token in roles mode threads it through the resolver
+✅ test/cli/agent_cli_roles_test.dart: /provider without a token preserves the scoped key name on the pinned chain (the "key reset itself" regression)
+✅ test/cli/agent_cli_roles_test.dart: /provider reports a clean error when no key resolves
+✅ test/cli/agent_cli_roles_test.dart: /provider custom in roles mode still asks for the key
+✅ test/cli/agent_cli_roles_test.dart: /provider custom in roles mode stores a typed key
+✅ test/cli/settings_flow_providers_queue_test.dart: no queue set: the hub row reads "not set" and the line-mode summary keeps a queue row
+✅ test/cli/settings_flow_providers_queue_test.dart: queue set: the hub row names the entry count and current head
+✅ test/cli/settings_flow_providers_queue_test.dart: line-mode /settings summary prints the queue status row
+✅ test/cli/paste_image_test.dart: sniffImageMime recognizes png/jpeg/gif/webp magic
+✅ test/cli/paste_image_test.dart: sniffImageMime rejects text and short buffers
+✅ test/cli/paste_image_test.dart: imageMimeExtension maps mime to canonical extension
+✅ test/cli/paste_image_test.dart: formatPasteBytes scales B/KB/MB
+✅ test/cli/paste_image_test.dart: pasteImageError accepts an in-cap png (null)
+✅ test/cli/agent_cli_inbox_drain_timeout_test.dart: a wedged hub drain cannot hold the steering poll past the timeout
+✅ test/cli/paste_image_test.dart: pasteImageError names the size cap with both numbers
+✅ test/cli/paste_image_test.dart: pasteImageError names the not-an-image case
+✅ test/cli/agent_hub_test.dart: AgentHubProjection main leads and children sort status-ordered under the parent
+✅ test/cli/agent_hub_test.dart: AgentHubProjection a child whose parent is unknown surfaces top-level (orphan rule)
+✅ test/cli/agent_hub_test.dart: AgentHubProjection active duration accumulates across running spans (observer clock)
+✅ test/cli/agent_hub_test.dart: AgentHubProjection evictStale drops long-idle terminal agents and keeps running ones
+✅ test/cli/agent_hub_test.dart: AgentHubProjection upsert keeps the best-known metrics when a snapshot omits them
+✅ test/cli/agent_hub_test.dart: AgentHubProjection footer aggregates the whole fleet regardless of visibility
+✅ test/cli/agent_hub_test.dart: hub view rows render metrics only when known; footer omits zero cost
+✅ test/cli/agent_hub_test.dart: hub view a positive mail count appends the mail:N marker; zero/absent never does
+✅ test/cli/agent_hub_test.dart: FaHubState selection moves over visible rows and clamps at the edges
+✅ test/cli/agent_hub_test.dart: FaHubState collapse hides only descendants; footer stays host-owned
+✅ test/cli/agent_hub_test.dart: FaHubState transcript scroll detaches at the live edge and re-arms there
+✅ test/cli/agent_hub_test.dart: FaHubState handleKey routes enter/esc to host actions
+✅ test/cli/agent_hub_test.dart: FaHubState carryingFrom keeps the selection across a re-push
+✅ test/cli/agent_hub_test.dart: FaHubState carryingFrom keeps a detached transcript scroll across a re-push
+✅ test/cli/agent_hub_test.dart: FaHubState carryingFrom keeps following a running transcript
+✅ test/cli/agent_hub_test.dart: FaHubState carryingFrom keeps the collapsed set across a tree re-push
+✅ test/cli/agent_hub_test.dart: FaHubState carryingFrom starts fresh on a mode change or first open
+✅ test/cli/agent_hub_test.dart: renderHubFrame tree frame renders title, rows, footer and hint within width
+✅ test/cli/agent_hub_test.dart: renderHubFrame the selected row paints inverse video
+✅ test/cli/agent_hub_test.dart: renderHubFrame an empty fleet renders the stub row
+✅ test/cli/agent_hub_test.dart: renderHubFrame a tall fleet windows around the selection with markers
+✅ test/cli/agent_hub_test.dart: renderHubFrame a following transcript pins to the live edge with the marker
+✅ test/cli/agent_hub_test.dart: renderHubFrame a detached transcript shows its window with both markers
+✅ test/cli/agent_hub_test.dart: renderHubFrame an empty transcript renders the stub row
+✅ test/cli/agent_hub_test.dart: renderHubFrame oversized lines clip to the frame width
+✅ test/cli/agent_hub_test.dart: deferred panels the log assigns ids and evicts beyond capacity
+✅ test/cli/agent_hub_test.dart: deferred panels transitionRunning moves only the running panels
+✅ test/cli/agent_hub_test.dart: deferred panels panel lines fit the width and carry the reply hint
+✅ test/cli/agent_hub_test.dart: deferred panels a multi-line body renders as a bounded preview
+✅ test/cli/agent_hub_test.dart: deferred panels steering panels carry the delivery lifecycle states
+✅ test/cli/agent_hub_test.dart: deferred panels run settle completes ride-along panels but never steering
+✅ test/cli/agent_hub_test.dart: task blocks headline header + label + dim detail, id out of the header
+✅ test/cli/agent_hub_test.dart: task blocks failed headline carries the exit code
+✅ test/cli/agent_hub_test.dart: task blocks content clips to the requested width — every line fits
+✅ test/cli/agent_hub_test.dart: task blocks summary card renders terminal counts with the hint line
+✅ test/cli/agent_hub_test.dart: task blocks live summary line is signal-only (gh-1446 AC2)
+✅ test/cli/agent_hub_test.dart: AC4 issue #599 capped-card goldens golden: capped heredoc card (default)
+✅ test/cli/agent_hub_test.dart: AC4 issue #599 capped-card goldens golden: capped heredoc card (ohmypi-light)
+✅ test/cli/agent_cli_inbox_drain_timeout_test.dart: a wedged hub drain timeout drops only the hub batch, not the fabric mail
+✅ test/cli/agent_hub_test.dart: /mail and /reply commands /mail with no panels prints the empty state
+✅ test/cli/agent_hub_test.dart: /mail and /reply commands /mail <unknown> points at the bare listing
+✅ test/cli/agent_hub_test.dart: /mail and /reply commands /reply without a target prints usage
+✅ test/cli/agent_hub_test.dart: /mail and /reply commands /reply queues the text to the resolved mailbox
+✅ test/cli/cli_secret_token_test.dart: formatTokenPreset formats K values
+✅ test/cli/cli_secret_token_test.dart: formatTokenPreset formats M values
+✅ test/cli/cli_secret_token_test.dart: formatTokenPreset leaves non-aligned values as raw numbers
+✅ test/cli/cli_secret_token_test.dart: formatTokenPreset round-trips with parseTokenPreset
+✅ test/cli/cli_secret_token_test.dart: parseTokenPreset parses K suffix
+✅ test/cli/cli_secret_token_test.dart: parseTokenPreset parses M suffix
+✅ test/cli/cli_secret_token_test.dart: parseTokenPreset parses bare numbers
+✅ test/cli/cli_secret_token_test.dart: parseTokenPreset handles lowercase suffix
+✅ test/cli/cli_secret_token_test.dart: parseTokenPreset returns 0 for garbage
+✅ test/cli/cli_secret_token_test.dart: extractDefaultValue extracts (empty = X) hint
+✅ test/cli/cli_secret_token_test.dart: extractDefaultValue extracts (empty keeps 'X') hint
+✅ test/cli/cli_secret_token_test.dart: extractDefaultValue returns null when no hint present
+✅ test/cli/gh1602_rate_limit_headless_test.dart: headless: a scripted 429-then-200 run retries, completes with exit 0 — no exit 1 (AC1)
+✅ test/cli/gh1602_rate_limit_headless_test.dart: headless: the rate-limit retry is visible as a `[net] rate limited` notice and the session keeps a `429_retry` record
+✅ test/cli/gh1602_rate_limit_headless_test.dart: headless: rate-limit wording past the 120-char display cap still faces `[net] rate limited` and records (gh-1602 review)
+✅ test/cli/cli_secret_token_test.dart: _answerSecretRequest (line mode) returns the entered value
+✅ test/cli/cli_secret_token_test.dart: _answerSecretRequest (line mode) returns null (declined) on empty input
+✅ test/cli/cli_secret_token_test.dart: bundledCatalogModelIds exposes the offline fallback ids the leak guard must subtract
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText macos: pipes the text into pbcopy via stdin
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText linux: tries xclip, falls back to wl-copy
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText linux: a missing xclip falls through to wl-copy
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText windows: pipes the text into clip
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText every path failing becomes a named unavailable
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText an unknown platform is unavailable without running anything
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText no platform pin: the host platform resolves the clipboard path
+✅ test/cli/fa_tui_chip_reservation_test.dart: AC1 UT-chip-reservation: a paste chip never moves the composer zone nor grows the frame past the terminal height
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText a wedged writer times out into the named unavailable (gh-1606 review: an unbounded writer holds the /provider flow gate shut)
+✅ test/cli/clipboard_writer_test.dart: writeClipboardText a timed-out path falls through to the next one (the wedge does not block the fallback writer)
+✅ test/cli/busy_depth_test.dart: BusyDepth single bracket signals both edges
+✅ test/cli/busy_depth_test.dart: BusyDepth nested brackets collapse to one edge pair
+✅ test/cli/busy_depth_test.dart: BusyDepth an unpaired release clamps at zero
+✅ test/cli/busy_depth_test.dart: BusyDepth the inbox-wake scenario: wake bracket inside a submit bracket
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1: every switch path resolves the whole triple (AC1) typed `/model kimi/kimi-for-coding` switches provider + endpoint + key family, not just the id
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1: every switch path resolves the whole triple (AC1) numbered pick of a cross-provider row moves the whole triple
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1: every switch path resolves the whole triple (AC1) picker pick (provider|model key) moves the whole triple
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1: every switch path resolves the whole triple (AC1) a same-provider pick keeps the current triple (no provider hop)
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1/E1: provider removed after listing refuses a cross-provider pick of an unresolvable provider refuses and applies no partial triple
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-1/E3: cross-provider pick with no target key refuses up front the refusal names the TARGET key slot; no request is built
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-2/REG-2: the request-build gate refuses before any socket a forced mixed active model surfaces the refusal and issues ZERO requests (AC2, AC4)
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-2/REG-2: the request-build gate refuses before any socket a coherent model streams through the same wrapper (no false refusal)
+✅ test/cli/agent_cli_model_coherence_test.dart: IT-4/REG-2: the 2026-10-22 incident replay fails closed (AC4) mixed boot + picker pick of kimi-for-coding + message never produces a copilot-endpoint request carrying kimi-for-coding
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: review-thread coverage (gh-1788 rework) a refused turn records stopReason error and fires no continuation nudge
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: review-thread coverage (gh-1788 rework) a nested vendor-prefixed id behind the ACTIVE identity head switches instead of being re-refused by the backstop
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: review-thread coverage (gh-1788 rework) the backstop refuses a forced cross-provider shape and leaves the state untouched
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: review-thread coverage (gh-1788 rework) a persisted triple that fails the binding boots on the launch model with the loud G3 note and unchanged wiring
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: the saved-family key check (G2 conservative arm, gh-1788) a saved foreign family whose key slot holds the WIRING key refuses the request
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: the saved-family key check (G2 conservative arm, gh-1788) a saved foreign family holding a DIFFERENT key never refuses (the conservative arm)
+✅ test/cli/agent_cli_model_coherence_test.dart: rework: the saved-family key check (G2 conservative arm, gh-1788) a KEYLESS saved entry is never judged (no slot, no verdict)
+✅ test/cli/fa_tui_test.dart: initial view shows framed input zone and status
+✅ test/cli/fa_tui_test.dart: typing characters appends to input
+✅ test/cli/fa_tui_test.dart: typing / opens slash menu
+✅ test/cli/fa_tui_test.dart: typing /models opens model picker
+✅ test/cli/fa_tui_test.dart: typing /models a filters the picker
+✅ test/cli/fa_tui_test.dart: enter submits the input line
+✅ test/cli/fa_tui_test.dart: enter on empty input submits the empty line (guided flows use "empty = keep the default")
+✅ test/cli/fa_tui_test.dart: enter in model picker selects the model
+✅ test/cli/fa_tui_test.dart: output message appends lines above the input zone
+✅ test/cli/fa_tui_test.dart: isExited causes quit
+✅ test/cli/fa_tui_test.dart: submit echoes the user line framed between rules
+✅ test/cli/fa_tui_test.dart: a long single-line input soft-wraps into physical rows
+✅ test/cli/fa_tui_test.dart: an exact-width input gives the cursor its own empty row
+✅ test/cli/fa_tui_test.dart: hard newlines and soft wraps stack in the input zone
+✅ test/cli/fa_tui_test.dart: gh-1446 AC4: busy ticks leave the Working… row motionless — the ring lives in the brand zone; the caret stays hidden in the composer
+✅ test/cli/fa_tui_test.dart: history cap trims in batches, not on every overflowing append
+✅ test/cli/fa_tui_test.dart: history cap never lands inside a fenced code block
+✅ test/cli/fa_tui_test.dart: a mid-run phase relabel swaps the label over the same elapsed window
+✅ test/cli/fa_tui_test.dart: an idle-host phase relabel cannot strand the busy spinner
+✅ test/cli/fa_tui_test.dart: in-busy relabels never stack extra spinner tick chains
+✅ test/cli/fa_tui_test.dart: busy row renders the provenance source tag
+✅ test/cli/fa_tui_test.dart: busy transitions are logged to the diagnostics sink
+✅ test/cli/fa_tui_test.dart: a silent busy stretch shows the quiet hint
+✅ test/cli/fa_tui_test.dart: the watchdog releases a wedged busy row after ten silent minutes
+✅ test/cli/fa_tui_test.dart: a post-run phase straggler cannot resurrect the busy row
+✅ test/cli/fa_tui_test.dart: a duplicate busy start keeps the window and the single chain
+✅ test/cli/fa_tui_test.dart: escape aborts the run via onInterrupt without quitting
+✅ test/cli/fa_tui_test.dart: busy message shows the Working indicator above the input zone
+✅ test/cli/fa_tui_test.dart: a busy row under an open host picker waits, not "works"
+✅ test/cli/fa_tui_test.dart: generic picker opens with a title and resolves via onPickerSelected
+✅ test/cli/fa_tui_test.dart: generic picker type-to-filter narrows the static items
+✅ test/cli/fa_tui_test.dart: generic picker filter with no matches keeps the title row
+✅ test/cli/fa_tui_test.dart: accepting a picker command from the slash menu submits it
+✅ test/cli/fa_tui_test.dart: sticky user echo pins to the top while streaming past it
+✅ test/cli/fa_tui_test.dart: a mid-session theme switch repaints the pinned echo (E1)
+✅ test/cli/fa_tui_test.dart: chrome rows never exceed the terminal width
+✅ test/cli/fa_tui_test.dart: the status row is padded to the width so a shorter status overwrites the previous tail
+✅ test/cli/fa_tui_test.dart: message queue (busy) enter enqueues plain messages without submitting
+✅ test/cli/fa_tui_test.dart: message queue (busy) slash commands submit immediately even while busy
+✅ test/cli/fa_tui_test.dart: message queue (busy) up pops the last queued message into the input
+✅ test/cli/fa_tui_test.dart: message queue (busy) ctrl+s steers the input plus the whole queue
+✅ test/cli/fa_tui_test.dart: message queue (busy) drain echoes queued messages and hands them out
+✅ test/cli/fa_tui_test.dart: message queue (busy) ctrl+x deletes the last queued row while busy
+✅ test/cli/fa_tui_test.dart: message queue (busy) steer rows render badged and drain in queue order
+✅ test/cli/fa_tui_test.dart: message queue (busy) ClearQueueMsg empties the queue without draining
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) up/down cycles submitted messages, past-newest restores empty
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) editing a recalled entry exits browsing
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) the message queue pop wins over history browsing
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) slash commands are not recorded in history
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) steered messages are recorded in history
+✅ test/cli/fa_tui_test.dart: input history (submitted messages) a resumed session restores its history for recall
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) opening a picker does not break auto-follow
+✅ test/cli/agent_cli_resume_boot_cap_test.dart: AC3 (goal_builder contract): an over-window resume boots INSTANTLY — the local-trim valve caps it with NO LM call — and the next request fits the window
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) scrolling up detaches, scrolling back to the bottom re-attaches
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) esc on a wizard picker reports onPickerCancelled
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) esc on the models picker does not report a cancel
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) a long single-line message marks the sticky echo with an ellipsis
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) the sticky echo truncates by cell width, never mid-glyph (JVzl)
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) the scroll indicator lights only when the user scrolled away
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) the physical cursor stays in the input while busy and homes idle
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) an idle output append keeps the frame tail and cursor byte-stable
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) a submit after scrolling up re-attaches follow and pins the echo
+✅ test/cli/fa_tui_test.dart: follow latch (auto-scroll) the sticky echo stays off while the message is still visible
+✅ test/cli/fa_tui_test.dart: mouse wheel scrolling wheel up scrolls the transcript up by three rows
+✅ test/cli/fa_tui_test.dart: mouse wheel scrolling wheel down scrolls the transcript down by three rows
+✅ test/cli/fa_tui_test.dart: mouse wheel scrolling the view captures the mouse by default; FA_TUI_MOUSE=0 opts out
+✅ test/cli/fa_tui_test.dart: input kill keys ctrl+u kills from the cursor back to the start of the line
+✅ test/cli/fa_tui_test.dart: input kill keys ctrl+a moves to the line start, ctrl+e to the end — no text leaks (macOS Cmd+Left/Right send ^A/^E)
+✅ test/cli/fa_tui_test.dart: input kill keys an unhandled ctrl combo never inserts its letter
+✅ test/cli/fa_tui_test.dart: input kill keys ctrl+w kills the previous word and trailing whitespace first
+✅ test/cli/fa_tui_test.dart: output coalescing a merged burst produces the same lines as separate messages
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) slash prefix opens a fuzzy-ranked command menu with groups
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) matched runes are highlighted in the rendered menu
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) @token opens the paths menu and accept splices in place
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) accept keeps text after the cursor
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) shell words on a bang line complete as paths
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) no match closes the menu and esc dismisses it
+✅ test/cli/fa_tui_test.dart: fuzzy autocomplete overlay (issue #275) empty @ fragment browses all candidates
+✅ test/cli/fa_tui_test.dart: editing and picker keys home/end/right/backspace/delete edit the buffer
+✅ test/cli/fa_tui_test.dart: editing and picker keys alt+left and alt+right jump by words
+✅ test/cli/fa_tui_test.dart: editing and picker keys ctrl+o inserts a newline at the cursor
+✅ test/cli/fa_tui_test.dart: editing and picker keys shift+enter inserts a newline when the host reports shift
+✅ test/cli/fa_tui_test.dart: editing and picker keys a kitty-protocol shift+enter key inserts a newline
+✅ test/cli/fa_tui_test.dart: editing and picker keys a legacy ESC+CR shift+enter (alt+enter key) inserts a newline
+✅ test/cli/fa_tui_test.dart: editing and picker keys a streamed paragraph is hard-split before it grows unbounded
+✅ test/cli/fa_tui_test.dart: editing and picker keys ctrl+s submits the input when idle
+✅ test/cli/fa_tui_test.dart: editing and picker keys generic picker arrows and page keys navigate with clamping
+✅ test/cli/fa_tui_test.dart: editing and picker keys generic picker backspace is a no-op
+✅ test/cli/fa_tui_test.dart: editing and picker keys models picker backspace edits the filter
+✅ test/cli/fa_tui_test.dart: editing and picker keys slash menu escape closes it
+✅ test/cli/fa_tui_test.dart: editing and picker keys slash menu arrows navigate the items
+✅ test/cli/fa_tui_test.dart: editing and picker keys accepting /model from the slash menu opens the model picker
+✅ test/cli/fa_tui_test.dart: editing and picker keys slash menu backspace keeps editing the input
+✅ test/cli/fa_tui_test.dart: editing and picker keys pageDown scrolls the history back down
+✅ test/cli/fa_tui_test.dart: editing and picker keys paste inserts at the cursor
+✅ test/cli/fa_tui_test.dart: editing and picker keys paste repairs dart_tui byte-as-charcode mojibake (Cyrillic)
+✅ test/cli/fa_tui_test.dart: editing and picker keys a multi-char rune splits into single key events
+✅ test/cli/fa_tui_test.dart: editing and picker keys resize clamps the scroll offset and requests a clear
+✅ test/cli/fa_tui_test.dart: editing and picker keys same-size WindowSizeMsg is a no-op (no clear request, #1977)
+✅ test/cli/agent_cli_resume_boot_cap_test.dart: AC5 (lazy rework): an over-trigger-UNDER-window resume boots with ZERO LM calls; a dead summarizer degrades at the FIRST TURN's pre-flight — the local-trim valve caps it with a visible note and the request is still ≤ window
+✅ test/cli/agent_cli_resume_boot_cap_test.dart: AC3 backstop (lazy rework): a broken-stdout boot never wedges — zero LM calls at boot, and the first turn's pre-flight compact + answer both survive the throwing IO
+✅ test/cli/agent_cli_resume_boot_cap_test.dart: E1 pass (gh-1729 review): a cap-unknown refusal arms the one-shot pre-emptive pass; a mid-REPL switch to an over-trigger-UNDER-window session DEFERS without consuming it — the first turn's pre-flight still fires the pass and compacts before the request
+✅ test/cli/agent_cli_resume_boot_cap_test.dart: AC3 lazy switch (gh-1729 un-skip): a mid-REPL /session switch to an over-trigger session settles instantly (no LM calls) and the FIRST turn's pre-flight compacts before the request
+✅ test/cli/headless_config_test.dart: HeadlessConfig default drain ceiling is 30 minutes
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml(null) keeps defaults
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml parses shellJobDrainMs
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml accepts 0 (the drain kill switch)
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml rejects unknown keys, negatives, and non-integers
+✅ test/cli/headless_config_test.dart: HeadlessConfig toYaml round-trips through fromYaml
+✅ test/cli/headless_config_test.dart: HeadlessConfig default liveness cadence is 5 minutes
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml parses shellJobQuietMs
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml accepts 0 for shellJobQuietMs (liveness off)
+✅ test/cli/headless_config_test.dart: HeadlessConfig fromYaml rejects a bad shellJobQuietMs like the drain knob
+✅ test/cli/headless_config_test.dart: headlessJobDrainAction (the pure drain decision, gh-1459) active jobs with ceiling budget → drain
+✅ test/cli/headless_config_test.dart: headlessJobDrainAction (the pure drain decision, gh-1459) no active jobs → exit (regardless of the ceiling)
+✅ test/cli/headless_config_test.dart: headlessJobDrainAction (the pure drain decision, gh-1459) ceiling exceeded with active jobs → detach (the shared ceiling)
+✅ test/cli/headless_config_test.dart: headlessJobDrainAction (the pure drain decision, gh-1459) shellDrainDisabled (shellJobDrainMs: 0) with ONLY subagents → drain — the kill switch is shell-job-scoped; the pre-gh-1459 subagent drain stays unconditional
+✅ test/cli/headless_config_test.dart: headlessJobDrainAction (the pure drain decision, gh-1459) shellDrainDisabled with shell jobs → detach immediately (even with ceiling budget)
+✅ test/cli/headless_config_test.dart: headlessDrainDetachCause (the detach-line attribution, gh-1459) the ceiling spent names the ceiling
+✅ test/cli/headless_config_test.dart: headlessDrainDetachCause (the detach-line attribution, gh-1459) the 10-round cap ending the drain names the cap, not the ceiling
+✅ test/cli/headless_config_test.dart: headlessDrainRoundSleep (the round ceiling sleep, gh-1459) a positive wake sleeps its bound
+✅ test/cli/headless_config_test.dart: headlessDrainRoundSleep (the round ceiling sleep, gh-1459) a due steer keeps the instant wake — the crossing fires right after the round, on cadence
+✅ test/cli/headless_config_test.dart: headlessDrainRoundSleep (the round ceiling sleep, gh-1459) a non-positive wake with nothing to consume sleeps the remaining ceiling — never a spin that beats the wall budget to the round cap (run 38120494810)
+✅ test/cli/headless_config_test.dart: headlessJobLivenessAction (the pure liveness decision, gh-1459 ask #4) a crossed quiet threshold with no probe → steer
+✅ test/cli/headless_config_test.dart: headlessJobLivenessAction (the pure liveness decision, gh-1459 ask #4) below the first threshold, or a consumed one → wait
+✅ test/cli/headless_config_test.dart: headlessJobLivenessAction (the pure liveness decision, gh-1459 ask #4) a probe since the last consumption → skip (the crossing is consumed, never re-steered)
+✅ test/cli/headless_config_test.dart: headlessJobLivenessAction (the pure liveness decision, gh-1459 ask #4) quietMs 0 disables liveness entirely
+✅ test/cli/headless_config_test.dart: headlessLivenessElapsedText (the notice elapsed clause) minutes at and past the first minute, seconds below
+✅ test/cli/headless_config_test.dart: headlessLivenessElapsedText (the notice elapsed clause) a negative elapsed (fake-clock seam) clamps to 0s, never "-3s"
+✅ test/cli/fa_tui_picker_viewport_test.dart: /model picker viewport follows the terminal height (#706) the first row lands on the glass in a short terminal
+✅ test/cli/fa_tui_picker_viewport_test.dart: /model picker viewport follows the terminal height (#706) every row is visible while the selection walks the list
+✅ test/cli/fa_tui_picker_viewport_test.dart: /model picker viewport follows the terminal height (#706) a tall terminal keeps the classic 6-row window and hints
+✅ test/cli/fa_tui_picker_viewport_test.dart: grouped picker window pays for its header rows (#706) the title and first row stay on the glass when headers crowd
+✅ test/cli/fa_tui_picker_viewport_test.dart: grouped picker window pays for its header rows (#706) selection walks the whole list on the glass
+✅ test/cli/fa_tui_picker_viewport_test.dart: grouped picker window pays for its header rows (#706) a terminal tall enough for headers keeps the 6-row window
+✅ test/cli/approval_cli_test.dart: non-interactive input prompt-policy calls are denied with a reason
+✅ test/cli/approval_cli_test.dart: non-interactive input critical bash commands are denied even under yolo
+✅ test/cli/headless_hep_test.dart: events run: header first, ordered frames, stdout stays empty
+✅ test/cli/headless_hep_test.dart: REG: without a HepWriter stdout stays prose (no frames)
+✅ test/cli/approval_cli_test.dart: interactive prompt "y" approves once: the command executes
+✅ test/cli/headless_hep_test.dart: attachments ride the first user message as image blocks
+✅ test/cli/approval_cli_test.dart: interactive prompt "n" denies: the model receives an error result
+✅ test/cli/headless_hep_test.dart: interrupt mid-run: cancelled frame, exit 130, partial persisted
+✅ test/cli/approval_cli_test.dart: interactive prompt "a" approves always: later calls skip the prompt
+✅ test/cli/approval_cli_test.dart: interactive prompt critical commands still prompt after "approve always"
+✅ test/cli/headless_hep_test.dart: compaction over threshold emits compaction_start/end frames
+✅ test/cli/approval_cli_test.dart: slash commands /approval shows and switches the mode
+✅ test/cli/approval_cli_test.dart: slash commands /approval persists via onApprovalChanged
+✅ test/cli/headless_hep_test.dart: unknown session key on a clean root starts a fresh session
+✅ test/cli/approval_cli_test.dart: slash commands /approval autopilot: renamed unattended mode, legacy alias kept
+✅ test/cli/approval_cli_test.dart: slash commands /allow adds a known tool and lists the set
+✅ test/cli/approval_cli_test.dart: slash commands config alwaysAllowTools seeds the manager
+✅ test/cli/approval_cli_test.dart: slash commands /help mentions the approval commands
+✅ test/cli/approval_cli_test.dart: TUI approval picker items always-ask mode is the single (current) row
+✅ test/cli/approval_cli_test.dart: TUI approval picker items /approval <mode> moves the (current) marker
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile costs collapse including the bracketed spend form
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile token counts collapse; the tok unit stays (structural)
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile elapsed forms collapse
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile paths collapse, home-abbreviated and raw
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile large raw numbers and gauge fills collapse
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structural words survive scrubbing
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile scrub order: cost survives, generic number does not eat it
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile findStatusBarRow picks the densest separator row
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile barSignature: same scenario shape survives volatile drift
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile barSignature: a missing segment shifts the signature
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile splitBarSegments drops blank padding tokens
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile dropVolatileRows scrubs the network update notice
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structuralDiff reports chrome and bar drift, silent on parity
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structuralDiff reports bar-presence drift in BOTH directions
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structuralDiff is silent when neither side has a status bar
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structuralDiff reports a segment-count mismatch as ONE finding
+✅ test/cli/omp_reg_normalizer_test.dart: scrubVolatile structuralDiff reports EVERY drifted segment with raw tokens
+✅ test/cli/settings_flow_harness_mode_test.dart: harness mode settings flow (issue #679) AC1: hub picker row and line-mode summary carry the mode
+✅ test/cli/settings_flow_harness_mode_test.dart: harness mode settings flow (issue #679) AC3: picking pi round-trips agent.mode through the yaml file
+✅ test/cli/settings_flow_harness_mode_test.dart: harness mode settings flow (issue #679) cancelled at the menu writes nothing
+✅ test/cli/agent_cli_theme_test.dart: /theme bare lists the built-ins with the current marked
+✅ test/cli/agent_cli_theme_test.dart: /theme <name> switches, repaints and persists tui.theme
+✅ test/cli/agent_cli_theme_test.dart: /theme reset returns to the default and persists it
+✅ test/cli/agent_cli_theme_test.dart: /theme with an unknown name is a named error, nothing persisted
+✅ test/cli/agent_cli_theme_test.dart: boot applies the persisted tui.theme
+✅ test/cli/agent_cli_theme_test.dart: TUI boot without tui.theme: COLORFGBG light resolves ohmypi-light
+✅ test/cli/agent_cli_theme_test.dart: TUI boot auto tier: dark COLORFGBG keeps the default palette
+✅ test/cli/agent_cli_theme_test.dart: line mode never runs the auto tier (byte-unchanged)
+✅ test/cli/agent_cli_theme_test.dart: boot: an explicit tui.theme outranks COLORFGBG and disarms
+✅ test/cli/agent_cli_theme_test.dart: user themes load at boot: a persisted user theme applies (AC4)
+✅ test/cli/agent_cli_theme_test.dart: /theme resolves a user theme written mid-session (AC5)
+✅ test/cli/agent_cli_theme_test.dart: broken and shadowing user themes warn at boot, default survives
+✅ test/cli/agent_cli_theme_test.dart: boot with an unknown tui.theme warns and keeps the default
+✅ test/cli/agent_cli_theme_test.dart: colored sessions get the truecolor profile
+✅ test/cli/agent_cli_theme_test.dart: NO_COLOR degrades the whole session to plain text
+✅ test/cli/tui_helpers_test.dart: drainQueueRounds an empty queue ends immediately
+✅ test/cli/tui_helpers_test.dart: drainQueueRounds runs each drained batch as a round until the queue is empty
+✅ test/cli/tui_helpers_test.dart: drainQueueRounds an abort drops the pending batch without running it
+✅ test/cli/tui_helpers_test.dart: drainQueueRounds the round cap drops a self-sustaining queue
+✅ test/cli/tui_helpers_test.dart: runQueuedTurns runs each message and waits for it to settle
+✅ test/cli/tui_helpers_test.dart: runQueuedTurns an abort discards the rest of the queue after the running turn
+✅ test/cli/tui_helpers_test.dart: resolveLeftoverSteering returns null when nothing is queued
+✅ test/cli/tui_helpers_test.dart: resolveLeftoverSteering runs non-empty steering joined as the next turn prompt
+✅ test/cli/tui_helpers_test.dart: resolveLeftoverSteering an abort turns the leftover into a loud drop
+✅ test/cli/tui_helpers_test.dart: resolveLeftoverSteering non-text and blank messages are skipped
+✅ test/cli/tui_helpers_test.dart: listItemAt returns the element for a valid index
+✅ test/cli/tui_helpers_test.dart: listItemAt returns null for out-of-bounds and null lists
+✅ test/cli/fa_tui_emitters_test.dart: OSC 11 background probe drives the auto tier (issue #804) a light terminal reply flips the boot-dark palette mid-session
+✅ test/cli/fa_tui_emitters_test.dart: OSC 11 background probe drives the auto tier (issue #804) a dark reply on a dark boot changes nothing
+✅ test/cli/agent_cli_resume_hint_test.dart: exit hint keeps the NAME after a windowed marathon resume (#503)
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window hidden before the first delta (never 0 t/s)
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window a same-ms burst has no elapsed time yet — still hidden
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window UT-RATE-1: the rate tracks scripted delta timing
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window UT-RATE-1: the window decays toward hidden (AC7)
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window the window length is the constructor knob (rateWindowMs seam)
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window E5: malformed (non-positive) deltas are skipped, never fatal
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window cold start: no spike while the first span is under 250ms
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter live window cold start: a whole-message burst hides through warm-up too
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter calibration (AC4) turn-end usage corrects the char→token base for the next turn
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter calibration (AC4) the factor is clamped: one outlier cannot swing it past 4x
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter calibration (AC4) the factor is clamped downward at 0.25
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter calibration (AC4) a zero-usage response skips calibration instead of zeroing
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter session average (AC3/AC7) hidden until real output AND real stream time exist
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter session average (AC3/AC7) equals output over accumulated active-stream time
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter session average (AC3/AC7) sub-measurable active time (scheduler noise) hides the average
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter session average (AC3/AC7) UT-RATE-6: long tool gaps are capped out of the denominator
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter whole-message arrival (AC6) the unobserved remainder lands as one arrival burst
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter whole-message arrival (AC6) a fully-streamed message tops up ~nothing
+✅ test/cli/live_token_rate_test.dart: LiveTokenRateMeter whole-message arrival (AC6) calibration sees the top-up baseline (estimate beats deltas)
+✅ test/cli/live_token_rate_test.dart: settled average (turn-granular, classic-footer seam) frozen at the last settle while the next turn keeps streaming
+✅ test/cli/live_token_rate_test.dart: settled average (turn-granular, classic-footer seam) hidden until the first settled turn
+✅ test/cli/live_token_rate_test.dart: settled average (turn-granular, classic-footer seam) reset clears the settled denominator too
+✅ test/cli/live_token_rate_test.dart: reset re-warms the meter (E6: no stale rate across a resume)
+✅ test/cli/live_token_rate_test.dart: formatTokenRate (the shared formatter) thresholds: one decimal below 100, integer at and above
+✅ test/cli/live_token_rate_test.dart: band segments token_rate renders the live number, hidden when absent/zero
+✅ test/cli/live_token_rate_test.dart: band segments token_rate_avg renders beside it, hidden until a turn exists
+✅ test/cli/live_token_rate_test.dart: tui.statusLine.rateWindowMs knob parses a positive int
+✅ test/cli/live_token_rate_test.dart: tui.statusLine.rateWindowMs knob defaults to null (the meter applies 5000)
+✅ test/cli/live_token_rate_test.dart: tui.statusLine.rateWindowMs knob rejects non-positive and non-integer values
+✅ test/cli/live_token_rate_test.dart: tui.statusLine.rateWindowMs knob unknown keys stay strict (the knob joins the known set)
+✅ test/cli/live_token_rate_test.dart: tui.statusLine.rateWindowMs knob the config round-trips through toYaml
+✅ test/cli/live_token_rate_test.dart: presets (AC5) default preset: no context_total, the rate pair present
+✅ test/cli/live_token_rate_test.dart: presets (AC5) custom configs referencing context_total still render it (REG)
+✅ test/cli/live_token_rate_test.dart: presets (AC5) a default-band render with rate data shows both segments
+✅ test/cli/live_token_rate_test.dart: presets (AC5) an idle default-band render shows neither
+✅ test/cli/header_only_session_sweep_test.dart: boot sweeps an old header-only session, keeps fresh and real ones
+✅ test/cli/agent_cli_attach_test.dart: presence registers on run and unregisters on /exit
+✅ test/cli/fa_tui_sticky_scroll_test.dart: streaming under the pinned sticky echo never scrolls the screen (chrome=true)
+✅ test/cli/fa_tui_sticky_scroll_test.dart: streaming under the pinned sticky echo never scrolls the screen (chrome=false)
+✅ test/cli/fa_tui_sticky_scroll_test.dart: deleting a wrapped draft mid-run never duplicates the pinned echo (chrome=true, #917)
+✅ test/cli/fa_tui_sticky_scroll_test.dart: detached follow never double-paints the echo nor crashes on a tall window (chrome=true, #917)
+✅ test/cli/fa_tui_sticky_scroll_test.dart: deleting a wrapped draft mid-run never duplicates the pinned echo (chrome=false, #917)
+✅ test/cli/fa_tui_sticky_scroll_test.dart: detached follow never double-paints the echo nor crashes on a tall window (chrome=false, #917)
+✅ test/cli/agent_cli_attach_test.dart: a user-kind fabric message wakes the CLI and lands as user input
+✅ test/cli/agent_cli_attach_test.dart: user-kind mail still wakes the CLI after the agent-chat streak is capped
+✅ test/cli/agent_cli_headless_seal_test.dart: post-completion settle (shellJobDrainMs: 50) a settle after runHeadless completes: bookkeeping only — no reaction run, no post-exit append, one warning per class
+✅ test/cli/agent_cli_headless_seal_test.dart: post-completion settle (shellJobDrainMs: 50) the post-exit settle drops the registry snapshot with exactly one warning, and the persist chain never poisons
+✅ test/cli/agent_cli_headless_seal_test.dart: post-completion settle (shellJobDrainMs: 0) a settle after runHeadless completes: bookkeeping only — no reaction run, no post-exit append, one warning per class
+✅ test/cli/agent_cli_headless_seal_test.dart: post-completion settle (shellJobDrainMs: 0) the post-exit settle drops the registry snapshot with exactly one warning, and the persist chain never poisons
+✅ test/cli/agent_cli_headless_seal_test.dart: an honest drain (E7): settle lands mid-drain, the reaction run's records are legal inside the boundary, and the file is byte-stable after exit
+✅ test/cli/agent_cli_headless_seal_test.dart: the settle→reaction fence is per-run: a second runHeadless on the same CLI instance resets it (I5 fence twin)
+✅ test/cli/agent_cli_headless_seal_test.dart: REG-2: the REPL quit seals the session with the SAME implementation and close order as headless
+✅ test/cli/mcp_reload_test.dart: _printMcpStatus shows guidance when no MCP servers configured
+✅ test/cli/mcp_reload_test.dart: _printMcpStatus lists configured servers
+✅ test/cli/mcp_reload_test.dart: _printMcpStatus shows HTTP server url detail
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig warns when homeDir not set
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig reports nothing to reload when config absent
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig reports unchanged when config identical
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig reloads when config changed
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig handles invalid YAML gracefully
+✅ test/cli/mcp_reload_test.dart: _reloadMcpConfig handles empty file gracefully
+✅ test/cli/agent_cli_orphan_report_test.dart: persist: a resumed session with a fresh orphan notes it on the request and appends the orphan_report record
+✅ test/cli/agent_cli_orphan_report_test.dart: seed: a resumed session whose orphan_report record holds the key does not re-note and appends nothing
+✅ test/cli/agent_cli_orphan_report_test.dart: the latch is per-session: session A's report never suppresses session B's first report of the same-shaped orphan
+✅ test/cli/agent_cli_bench_compaction_test.dart: the bench trigger fires mid-run where the default would not; the compaction event lands in the JSONL; obligations + latest tool result survive
+✅ test/cli/agent_cli_bench_compaction_test.dart: without the env the same session does NOT compact (byte-identical default behavior)
+✅ test/cli/agent_cli_bench_compaction_test.dart: bench trigger vs an explicit compactionSettings override (gh-1604 rework) an explicit config pin wins over the env knob — the knob retunes the DEFAULTS, it never rewrites a pinned section
+✅ test/cli/agent_cli_bench_compaction_test.dart: bench trigger vs an explicit compactionSettings override (gh-1604 rework) an explicit enabled:false pin stays disabled — the env knob cannot re-enable compaction
+✅ test/cli/agent_cli_bench_compaction_test.dart: bench trigger vs an explicit compactionSettings override (gh-1604 rework) without a pin the env knob applies (regression anchor)
+✅ test/cli/agent_cli_bench_compaction_test.dart: bench trigger vs an explicit compactionSettings override (gh-1604 rework) without a pin and without the env the defaults apply (byte-identical legacy)
+✅ test/cli/agent_cli_bench_compaction_test.dart: compaction tuning vs bench env (gh-2098) the ratio moves the trigger line to r × window
+✅ test/cli/agent_cli_bench_compaction_test.dart: compaction tuning vs bench env (gh-2098) a pinned tuning beats the bench env knob — the knob retunes the DEFAULTS, it never rewrites a user-pinned section
+✅ test/cli/agent_cli_bench_compaction_test.dart: compaction tuning vs bench env (gh-2098) the token-budget overrides apply over the scaled curve
+✅ test/cli/agent_cli_bench_compaction_test.dart: compaction tuning vs bench env (gh-2098) an empty tuning (an engine-only section) keeps the bench knob in charge
+✅ test/cli/agent_cli_bench_compaction_test.dart: compaction tuning vs bench env (gh-2098) without tuning and without the env the defaults apply (byte-identical legacy)
+✅ test/cli/system_notice_render_test.dart: notice blocks become dim quote lines; plain text untouched
+✅ test/cli/system_notice_render_test.dart: task-result blocks and service receipts get the same treatment
+✅ test/cli/system_notice_render_test.dart: needsSystemNoticeRewrite gates the TUI output path
+✅ test/cli/agent_cli_viewer_test.dart: AC3: a live lease makes the second CLI a viewer — exact banner, mail to the owner, zero session writes, no presence, no takeover
+✅ test/cli/agent_cli_viewer_test.dart: AC4/AC8: a free session is acquired on first drive-open (lazy sidecar), released on /exit, and adds no idle session bytes
+✅ test/cli/agent_cli_viewer_test.dart: AC7: an expired lease is re-acquired fresh with the dead-owner warning naming host and pid
+✅ test/cli/agent_cli_viewer_test.dart: E7: a headless run over a live-leased session refuses with the banner, exit 3, and no provider call
+✅ test/cli/agent_cli_viewer_test.dart: #2138: a refused /reset claim restores the previous session — no unleased drive follows the error panel
+✅ test/cli/agent_cli_viewer_test.dart: #2138: a double-refused /reset claim STOPS the CLI cleanly — the contained boundary cannot resume an unleased drive
+✅ test/cli/agent_cli_viewer_test.dart: #2138: a headless run over an unprovable session refuses loudly with exit 4 — never the crash handler, never an unleased drive
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-1636 one-line default the auto report is the single marker line by default
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-1636 one-line default the manual header rides the same one-liner
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-1636 one-line default details: true keeps the full block (records + fenced summary)
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-1636 one-line default the one-liner never carries the checkpoint text
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) renders exact numbers, the engine, and the record counts
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) the auto header and pass number ride the same line
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) a pass without an engine names nothing instead of lying
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) an empty summary omits the block entirely (issue #578)
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) a restamp that grew the transcript clamps to 0 freed
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) a local-trim pass names its in-memory drop (issue #673 AC3)
+✅ test/cli/compaction_report_test.dart: formatCompactionReport (UT-report) a summarizer pass keeps the hidden/summarized-only line
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2097 basis flip an upward basis jump renders as an explicit re-read, not 0 freed
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2097 basis flip details: true renders the flip on the tokens line
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2097 basis flip a small restamp with no flip metadata keeps the 0 freed clamp
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics the one-liner carries the duration
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics a pass without duration renders byte-identical (legacy)
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics details render the llm line: calls, duration, cost, cache hit
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics zero-cost usage keeps the llm line without a cost part
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics a zero-cache-call pass renders no llm line
+✅ test/cli/compaction_report_test.dart: formatCompactionReport: gh-2101 pass metrics the one-liner never carries the usage breakdown
+✅ test/cli/compaction_report_test.dart: manual /compact (UT-report) an empty session prints the clean note, never a fake block
+✅ test/cli/compaction_report_test.dart: manual /compact (UT-report) manual /compact renders the block with the real numbers and engine
+✅ test/cli/compaction_report_test.dart: manual /compact (UT-report) the report never leaks into the model context (REG-leak)
+✅ test/cli/agent_cli_viewer_test.dart: AC2: viewer composer lands in the LIVE owner transcript with attribution (two real CLIs, one writer)
+✅ test/cli/agent_cli_viewer_test.dart: AC2/#1152: a path-led viewer line is composer mail too — the owner runs it, the viewer never starts a local run
+✅ test/cli/agent_cli_viewer_test.dart: AC4: a viewer switching to a free session exits viewer mode and drives it
+✅ test/cli/agent_cli_viewer_test.dart: AC9: viewer row rendering, backlog cap, and stale notice text
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) add-only change counts added lines, removes none
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) delete-only change counts removed lines, adds none
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) mixed change counts both directions
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) identical text yields an empty stat with no label
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) reordered identical lines are a no-op (multiset accounting)
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) duplicate lines are counted per occurrence
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) exact-match edit args derive the stat from oldText/newText
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) hashline patch args derive lines touched from the parsed edits
+✅ test/cli/tool_row_content_test.dart: UT-diffstat (gh-1933 AC2) non-editable args (no oldText/newText/patch) derive nothing
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) no selector renders the bare brief path
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) offset/limit args render the legacy :A-B shape
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) trailing :N selector renders compactly
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) trailing :A-B selector renders compactly
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) :A+C selector normalizes to the inclusive :A-B shape
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) multi-range selectors render comma-joined, merged order
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) :raw renders the raw token; a compound keeps both chunks
+✅ test/cli/tool_row_content_test.dart: UT-read-selector (gh-1933 AC1) archive and sqlite colon syntax stays part of the path
+✅ test/cli/tool_row_content_test.dart: UT-read-outcome (gh-1933 AC1) a plain result counts its lines
+✅ test/cli/tool_row_content_test.dart: UT-read-outcome (gh-1933 AC1) a truncated read reports shown-of-total from the notice
+✅ test/cli/tool_row_content_test.dart: UT-read-outcome (gh-1933 AC1) a notice QUOTED mid-content is not an outcome meta (review thread PRRT_kwDOTXdlLc6w5WAf — the notice anchors to the tail)
+✅ test/cli/tool_row_content_test.dart: UT-read-outcome (gh-1933 AC1) the notice is recognized as the last line even after blank padding
+✅ test/cli/tool_row_content_test.dart: UT-read-outcome (gh-1933 AC1) an empty result contributes no count fragment
+✅ test/cli/tool_row_content_test.dart: UT-bash-row (gh-1933 AC3) the intent label is the collapsed command when it is short
+✅ test/cli/tool_row_content_test.dart: UT-bash-row (gh-1933 AC3) a long command truncates the label to its first words
+✅ test/cli/tool_row_content_test.dart: UT-bash-row (gh-1933 AC3) a heredoc command previews its first line only
+✅ test/cli/tool_row_content_test.dart: UT-bash-row (gh-1933 AC3) the output-lines count pluralizes and detects empties
+✅ test/cli/tool_row_content_test.dart: UT-thinking-row (gh-1933 AC4) the collapsed row carries the streamed seconds
+✅ test/cli/tool_row_content_test.dart: UT-thinking-row (gh-1933 AC4) collapsed rendering is one row; expanded appends the text
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) read: path + selector detail, lines-read meta
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) edit: path detail + diffstat fragment; write: path + +N
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) bash: intent detail + lines meta + dim command preview
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) task rows name the child and the transition
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) a task call with no tasks list keeps the #36 context detail
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) a non-list tasks value falls back to the first string arg
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) an empty tasks list falls back to the first string arg
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) the fallback skips non-string and blank values
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) nothing string-y yields an empty detail
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) non-map entries and name-less entries are skipped, not fatal
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) UT-task-fallback (the #36 no-tasks shape — CRAP ratchet coverage for the first-string-arg arm) entries with no names and no task text count the children
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) checkpoint/rewind rows carry the span summary
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) request_secret names the credential
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) ask keeps the question-text contract (#366)
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) unknown tools degrade to their first string argument
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) an error result leads with the failure line, no counts
+✅ test/cli/tool_row_content_test.dart: UT-content-contract (gh-1933 capability table) AC5: the derivation is pure — persisted record material is never mutated (rendering-only)
+✅ test/cli/tool_row_content_test.dart: UT-width (gh-1933 AC6) right-aligned elapsed never wraps and ends at the edge
+✅ test/cli/tool_row_content_test.dart: UT-width (gh-1933 AC6) at a degenerate width the elapsed drops rather than wrapping
+✅ test/cli/tool_row_content_test.dart: UT-theme (gh-1933 AC7) diffstat/dim-preview/right-zone roles exist in every shipped theme
+✅ test/cli/tool_row_content_test.dart: UT-theme (gh-1933 AC7) the diffstat paints through the theme roles, never raw SGR
+✅ test/cli/ext_provider_flow_test.dart: menu lists extension flows under their namespaced keys
+✅ test/cli/ext_provider_flow_test.dart: wizard round-trips values to JS and persists key + registry entry
+✅ test/cli/ext_provider_flow_test.dart: E10: a bare id always reaches the core entry, never the flow
+✅ test/cli/ext_provider_flow_test.dart: empty answer cancels before submit; nothing persists
+✅ test/cli/ext_provider_flow_test.dart: submit failure prints a structured error and persists nothing
+✅ test/cli/ext_provider_flow_test.dart: no flows: no extension providers section
+✅ test/cli/agent_cli_viewer_test.dart: AC9: the viewer tick prints the stale notice exactly once when the owner dies mid-view
+✅ test/cli/codemie_sso_server_test.dart: CodeMieSsoCallbackServer completes with the token on a valid callback
+✅ test/cli/codemie_sso_server_test.dart: CodeMieSsoCallbackServer answers 400 when the token is missing
+✅ test/cli/codemie_sso_server_test.dart: CodeMieSsoCallbackServer answers 400 when the token is empty
+✅ test/cli/codemie_sso_server_test.dart: CodeMieSsoCallbackServer keeps waiting on a tokenless hit (favicon)
+✅ test/cli/codemie_sso_server_test.dart: CodeMieSsoCallbackServer returns null on timeout
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow returns credentials on a valid callback
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow returns null when browser opens successfully
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow emits the cannot-open-browser status
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow skips the launch when the policy says so (gh-1450 AC2/AC3)
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow a throwing launcher degrades to the failure branch with the URL (gh-1450 E3)
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow the timeout status carries the authorization URL (gh-1450 AC4)
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow no token/cookie value ever appears in the printed lines (gh-1450 AC5)
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow succeeds with non-access-token cookies (cookie-based auth)
+✅ test/cli/codemie_sso_server_test.dart: runCodeMieSsoCliFlow returns null on a malformed token
+✅ test/cli/agent_cli_viewer_test.dart: heartbeat: losing the lease mid-run demotes this CLI to a viewer of the new owner
+✅ test/cli/terminal_setup_test.dart: detectTerminalFamily tmux wins over the inner terminal markers
+✅ test/cli/terminal_setup_test.dart: detectTerminalFamily protocol terminals are named directly
+✅ test/cli/terminal_setup_test.dart: detectTerminalFamily TERM_PROGRAM names macOS and editor terminals
+✅ test/cli/terminal_setup_test.dart: detectTerminalFamily VTE terminals land on vte; nothing matches unknown
+✅ test/cli/terminal_setup_test.dart: terminalSetupLines the detected family is announced before the other recipes
+✅ test/cli/terminal_setup_test.dart: terminalSetupLines tmux recipe names extended-keys
+✅ test/cli/terminal_setup_test.dart: terminalSetupLines VTE users get the honest cannot-rebind answer plus fallbacks
+✅ test/cli/terminal_setup_test.dart: terminalSetupLines every page carries the universal fallback keys
+✅ test/cli/terminal_setup_test.dart: terminalSetupLines unknown terminals still get recipes and the fallback footer
+✅ test/cli/session_info_command_test.dart: heavy-scan guard (issue #1882 AC3) fires over 500 MB with the exact size and the escapes
+✅ test/cli/session_info_command_test.dart: heavy-scan guard (issue #1882 AC3) sessionSizeIfHeavy: null under the bound, size over it
+✅ test/cli/session_info_command_test.dart: fa session info (issue #1882 AC5) breaks down records and ledgers with the reclaim hints
+✅ test/cli/session_info_command_test.dart: fa session info (issue #1882 AC5) renders json
+✅ test/cli/session_info_command_test.dart: fa session info (issue #1882 AC5) cancellation reports a partial tally with exit 130
+✅ test/cli/session_info_command_test.dart: fa session info (issue #1882 AC5) an empty target resolves to the most recently updated session
+✅ test/cli/session_info_command_test.dart: fa session info (issue #1882 AC5) unknown and ambiguous ids fail honestly
+✅ test/cli/paste_regression_test.dart: REG-redact: pipeline runs on pasted image metadata a secret in the mime label is masked, the payload rides intact
+✅ test/cli/paste_regression_test.dart: REG-redact: pipeline runs on pasted image metadata a clean paste passes through byte-identical
+✅ test/cli/paste_regression_test.dart: REG-once: pasted chips keep the send-once invariant (#171) the same bytes pasted twice ride one payload with refs
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference absolute .txt path becomes an attachment reference with stats
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference a directory path stays a plain message
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference a multi-line paste gets an accurate line count
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference large text shows k-scale token estimate, never content
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference path-only paste yields just the reference
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference binary file reports only its size
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference a text-extension file with undecodable content still attaches
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference oversized files are not read just for stats
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference nonexistent path stays literal text
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference plain sentences stay untouched
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference relative ./ and ~/ references resolve like absolute ones
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference a bare word never resolves even when it looks like one token
+✅ test/cli/interactive_file_reference_test.dart: resolveInteractiveFileReference leading whitespace is tolerated
+✅ test/cli/fresh_install_provider_flow_test.dart: freshInstallProviderState (the executable boot decision) fresh: no saved providers, no env keys, empty store
+✅ test/cli/fresh_install_provider_flow_test.dart: freshInstallProviderState (the executable boot decision) a catalog env key — or its rotation stack — is not fresh
+✅ test/cli/fresh_install_provider_flow_test.dart: freshInstallProviderState (the executable boot decision) a secure-store key is not fresh
+✅ test/cli/fresh_install_provider_flow_test.dart: freshInstallProviderState (the executable boot decision) a saved custom provider is not fresh
+✅ test/cli/fresh_install_provider_flow_test.dart: fresh boot opens the add-provider wizard before the first prompt and lands the chosen connection
+✅ test/cli/fresh_install_provider_flow_test.dart: cancelling the boot wizard (Ctrl-C) keeps the default boot usable and restores the idle prompt
+✅ test/cli/fresh_install_provider_flow_test.dart: boarding provider choice first: a preset opens the wizard with its api type preselected (issue #1705)
+✅ test/cli/fresh_install_provider_flow_test.dart: a boot without the fresh-install flag never opens the wizard
+✅ test/cli/fresh_install_provider_flow_test.dart: piped input (non-interactive io) never enters the wizard
+✅ test/cli/ext_engine_protocol_test.dart: composeExtScript wraps main in a fatal reporter and try/catch
+✅ test/cli/ext_engine_protocol_test.dart: extReplyValue returns value on ok
+✅ test/cli/ext_engine_protocol_test.dart: extReplyValue null value on ok is preserved
+✅ test/cli/ext_engine_protocol_test.dart: extReplyValue throws ExtProtocolException with the engine error
+✅ test/cli/ext_engine_protocol_test.dart: extReplyValue missing error falls back to a generic message
+✅ test/cli/ext_engine_protocol_test.dart: bridge reply shaping extBridgeArgs maps objects and empties the rest
+✅ test/cli/ext_engine_protocol_test.dart: bridge reply shaping ok and error payloads match the wire contract
+✅ test/cli/ext_engine_protocol_test.dart: probe parsing working binary has no problem
+✅ test/cli/ext_engine_protocol_test.dart: probe parsing failure exit or wrong output is a problem
+✅ test/cli/ext_engine_protocol_test.dart: probe parsing version line only from a clean -v run
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter blank lines are handled with no note
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter undecodable and non-object lines become notes
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter unrecognized objects become notes
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter invoke reply completes the pending waiter
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter invoke error reply fails the waiter with ExtProtocolException
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter bridge request reaches the sink with its args
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter bridge request without args hands over null
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter non-int seq or non-string method is unrecognized
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter fatal line fails every pending invoke and later ones stay open
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter timeout drops the waiter, runs the kill hook, and throws
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter failAll fails waiters without killing the router
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter note buffer keeps only the last 200 lines
+✅ test/cli/ext_engine_protocol_test.dart: ExtEngineRouter invoke ids increase monotonically
+✅ test/cli/foreground_budget_cli_test.dart: IT-4+AC2+REG-1: the watchdog surfaces the offer (no duplicate nudge), the accept hands the call back with the steering draining, and the session records the announcement
+✅ test/cli/foreground_budget_cli_test.dart: REG-3: with the ladder unable to act (no pending steering) the escalation keeps its legacy cadence
+✅ test/cli/foreground_budget_cli_test.dart: the affordance state machine: nothing to accept, a stale offer clears on a declined accept
+✅ test/cli/tools_command_test.dart: /tools lists every known id with tier, state, scope, and reason
+✅ test/cli/tools_command_test.dart: /tools disable <id> project persists the config section and hides the tool from the next turn; enable restores
+✅ test/cli/tools_command_test.dart: /tools disable <id> global routes through the host hook
+✅ test/cli/tools_command_test.dart: /tools disable <id> session writes tools.yaml next to the session
+✅ test/cli/tools_command_test.dart: unknown tool id warns and leaves the other tools alone (AC5)
+✅ test/cli/tools_command_test.dart: a broken scope file errors instead of changing state (AC15)
+✅ test/cli/tools_command_test.dart: settings Tools flow disables then re-enables a tool (project scope)
+✅ test/cli/tools_command_test.dart: settings Tools flow cancelled at the scope pick pins nothing
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing bare ext is a usage error listing the verbs
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing --help inside the family wins
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing unknown verb is a usage error
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing list with --json
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing install parses sources and install-only flags
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing --bundled alone means all bundled
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing --bundled takes an optional name
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing install without a source or --bundled is a usage error
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing --pin requires a value
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing install-only flags are rejected on other verbs
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing remove/enable/disable need exactly one name
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing update/audit take an optional single name
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing list takes no operands
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing unknown flag is an error
+✅ test/cli/cli_args_ext_test.dart: fa ext parsing ext does not leak into prompt parsing and vice versa
+✅ test/cli/tui_status_line_test.dart: segment registry covers exactly the omp 27 ids plus the fa extensions
+✅ test/cli/tui_status_line_test.dart: segment registry every id renders without data or throws never
+✅ test/cli/tui_status_line_test.dart: segment registry data absence hides segments instead of placeholders
+✅ test/cli/tui_status_line_test.dart: segment registry hidden-by-design ids stay valid but render nothing
+✅ test/cli/tui_status_line_test.dart: segment registry model segment carries the thinking-level suffix
+✅ test/cli/tui_status_line_test.dart: segment registry model renders provider / model (#920)
+✅ test/cli/tui_status_line_test.dart: segment registry stream stays hidden while working (#920: the composer header owns the spinner)
+✅ test/cli/tui_status_line_test.dart: presets exactly the 7 omp presets
+✅ test/cli/tui_status_line_test.dart: presets every preset id list stays within the known-id table
+✅ test/cli/tui_status_line_test.dart: presets shapes pin the omp table
+✅ test/cli/tui_status_line_test.dart: presets resolve defaults, explicit preset and custom implication
+✅ test/cli/tui_status_line_test.dart: timer countdown chip (gh-1556) renders the live remaining budget while armed
+✅ test/cli/tui_status_line_test.dart: timer countdown chip (gh-1556) hides when no deadline is armed (data absence, E7)
+✅ test/cli/tui_status_line_test.dart: timer countdown chip (gh-1556) a non-positive budget reads 0s, never negative
+✅ test/cli/tui_status_line_test.dart: timer countdown chip (gh-1556) unarmed default band renders byte-identically to the pre-chip row
+✅ test/cli/tui_status_line_test.dart: timer countdown chip (gh-1556) armed default band shows the chip next to the other segments
+✅ test/cli/tui_status_line_test.dart: separators all 7 styles resolve glyphs
+✅ test/cli/tui_status_line_test.dart: separators nerd table swaps the powerline and block glyphs
+✅ test/cli/tui_status_line_test.dart: separators parse and strict errors
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 40 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 45 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 50 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 55 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 60 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 65 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 70 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 75 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 80 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 85 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 90 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 95 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 100 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 105 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 110 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 115 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 120 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 125 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 130 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 135 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 140 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 145 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 150 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 155 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 160 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 165 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 170 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 175 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 180 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 185 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 190 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 195 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) width 200 renders one width-exact row
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) everything fits at a generous width
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) full bar fits at 45+
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) step 1: session_name shrinks to the ellipsis form first
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) step 1 again: then to 4 cells, still keeping the model
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) step 2: session_name pops before the model drops
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) step 4: left drops left-to-right last
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) step 3: the path re-renders at shrinking maxLengths
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) irreducible overflow never exceeds the width
+✅ test/cli/tui_status_line_test.dart: truncation ladder (widths 40..200) empty groups render nothing
+✅ test/cli/tui_status_line_test.dart: context gauge thresholds: 50 warn, 90 error
+✅ test/cli/tui_status_line_test.dart: context gauge percent format: one decimal only below 1%
+✅ test/cli/tui_status_line_test.dart: context gauge minimum width covers both labels plus the bridge
+✅ test/cli/tui_status_line_test.dart: context gauge fill lands between the groups at the right level
+✅ test/cli/tui_status_line_test.dart: context gauge unknown window hides the gauge, keeps the groups
+✅ test/cli/tui_status_line_test.dart: config parse valid full section
+✅ test/cli/tui_status_line_test.dart: config parse unknown segment ids warn and drop at resolve, never throw
+✅ test/cli/tui_status_line_test.dart: config parse  CliConfig parses and round-trips the tui section
+✅ test/cli/tui_status_line_test.dart: config parse showCompactionDetails parses, defaults false, validates strictly (gh-1636)
+✅ test/cli/tui_status_line_test.dart: config parse strict errors
+✅ test/cli/tui_status_line_test.dart: config parse toYaml writes only non-defaults and re-parses
+✅ test/cli/tui_status_line_test.dart: config parse nerdSymbols strict bool, yaml round-trip, preset precedence
+✅ test/cli/tui_status_line_test.dart: config parse CliConfig carries the fields and emits the section
+✅ test/cli/tui_status_line_test.dart: config parse CliConfig carries showCompactionDetails and emits it only when set (gh-1636)
+✅ test/cli/tui_status_line_test.dart: snapshot purity render is deterministic and read-only
+✅ test/cli/tui_status_line_test.dart: snapshot purity git porcelain fixture parses (host seam format)
+✅ test/cli/tui_status_line_test.dart: snapshot purity path abbreviation and work-root strip
+✅ test/cli/tui_status_line_test.dart: snapshot purity clock and duration formats
+✅ test/cli/tui_status_line_test.dart: snapshot purity brand fade tweens on the virtual clock
+✅ test/cli/tui_status_line_test.dart: snapshot purity write-time style seam resolves through the role table
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) pi brand mark text is pinned
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) cache_read/cache_write text pins: matched ⟲/⟳ pair
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) role table covers every StatusLineRoleKey
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) mode segment: autopilot rides the dedicated highlight role
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) mode segment: autopilot keeps the load-mode tail muted
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) autopilot highlight resolves to the accent and never idle-dims
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) registries are unmodifiable
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) transparent drops the gap fill, keeps content
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) session renders the short id; session_name the title
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) session hides without an id (E7, no placeholder)
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) unknown id in a hand-built spec hides instead of crashing
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) brand fade snaps on degenerate frame tuning (no NaN)
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) powerline end caps match omp (thin style: full-width caps)
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) ignored (!) files never count as untracked
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) no-commits header is not adopted as a branch name
+✅ test/cli/tui_status_line_test.dart: review pins (#831 round 2) detached HEAD stays branch-less, keeps dirty counts (#920)
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) polls once per ttl, serves the cache between frames
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) failure hides the segment and caches the negative
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) cwd switch re-probes immediately and flips the served branch
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) repo → non-repo switch hides the segment after the failed probe
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) a transient failure clears the stale value in the same cwd
+✅ test/cli/tui_status_line_test.dart: git probe seam (#920) a throwing runner is a failure, never an unhandled async error
+✅ test/cli/agent_cli_compaction_continuation_failure_test.dart: a failing over-window continuation surfaces the named error and keeps the session resumable (AC4)
+✅ test/cli/agent_cli_submit_containment_test.dart: runContainedSubmit (the containment wrapper, UT-1) a synchronous throw is reported, never rethrown
+✅ test/cli/agent_cli_submit_containment_test.dart: runContainedSubmit (the containment wrapper, UT-1) a Future completing with an error is reported, never rethrown
+✅ test/cli/agent_cli_submit_containment_test.dart: runContainedSubmit (the containment wrapper, UT-1) a clean body is reported zero times
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) a single-line message rides verbatim, exactly one line
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) a multi-line parser error collapses to its first meaningful line
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) the incident stack shape (replayed as data) renders frame-less
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) the zone-dump header never rides the panel — the cause line does
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) a leading header behind blank space still resolves to the cause
+✅ test/cli/agent_cli_submit_containment_test.dart: submitErrorPanelLine (the one-line renderer, UT-2/REG-2) a body that merely mentions the header keeps its message
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) AC1: hub picker row and line-mode summary carry the effective value
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) AC2: toggle and cap round-trip every field; other sections intact
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) AC3: the write republishes the live global and names when it lands
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) AC4: an invalid cap shows the parser error, writes nothing; an empty answer keeps the value
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) E1: absent section offers defaults and writes a fresh block
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) E2: an unreadable config file refuses with a clear error
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) no user config on this host prints and writes nothing
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) E3: a concurrent images edit survives the write
+✅ test/cli/settings_flow_images_test.dart: images settings flow (issue #395) cancelled at the menu writes nothing
+✅ test/cli/agent_cli_submit_containment_test.dart: the live TUI submit boundary (IT-2/IT-3, REG-1) a throwing onModelChanged renders the one-line panel; the write landed, the session stays usable (IT-2/REG-1)
+✅ test/cli/agent_cli_submit_containment_test.dart: the live TUI submit boundary (IT-2/IT-3, REG-1) a forced throw between validation and write leaves the config byte-identical (IT-3, AC4)
+✅ test/cli/agent_cli_submit_containment_test.dart: the settings-hub picker route (IT-4, gh-1787 rework) a throwing onModelChanged through the hub's Model capabilities row renders the one-line panel, never a raw stack (IT-4)
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) round-trips an entry bundle through the yaml shape
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) round-trips a catalog preset bundle
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle wizard add writes the key under the entry keyName; a restart resolves it from the store
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle two providers on one host keep distinct scoped keys
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle roles mode: a token switch persists to the store AND pins the chain to that name
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle roles mode: /model switch preserves the scoped key name
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle roles mode: a cross-provider model pick keeps the endpoint key — the stale startup key must not clobber it
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle deleting a provider keeps its key in the store
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle /key set writes the store; /key lists it as store-sourced
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle /key status surfaces save degradations (gh-1059 review: saves happen after boot — the status print is where they are live)
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle copilot entry: env FA_KEY_COPILOT_<NAME> wins over the empty store slot (legacy mode)
+✅ test/cli/provider_key_lifecycle_test.dart: provider key lifecycle copilot entry: the FA_KEY_COPILOT_<NAME> env ring (_2) reaches the roles key ring
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses the legacy all-providers payload by name
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses a wrong payload kind and a bad key kind
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses a non-map payload
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses an unsupported payload version by number
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses a provider section that is not a map
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) refuses a catalog subject without catalog or model
+✅ test/cli/provider_transfer_test.dart: payload codec (pure) wraps a malformed entry subject with the config reason
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd current api-key provider: exact JSON schema with embedded key, no transcript leak
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd gate decline writes nothing
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd cicd usage: unknown flags and extra operands print usage
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd AC3: a CI job consumes a cicd auth export end-to-end
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd a non-exportable current provider is refused
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd no stored credential is refused with the auth-flow suggestion
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd cicd auth: ENV_NAME=<value>, stdout only via --stdout
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd cicd auth: a ChatGPT current provider exports the OAuth blob
+✅ test/cli/provider_transfer_test.dart: UC1 /provider export cicd path operand writes the cicd JSON to a file
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import api-key entry round-trip: import lands entry + key + switch
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import catalog preset round-trip: key lands in the env-name slot
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --help
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag -h
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --version
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --pi
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --debug-secrets
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --model
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --provider
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --base-url
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --system-prompt
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --system-prompt-file
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --vision-model
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --vision-base-url
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --transcribe-model
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --transcribe-base-url
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --plugin
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --prompt-template-dir
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --mode
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --cwd
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --session-root
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --session
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --cube
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --cube-config
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --tools
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --log-file
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --log-level
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --attach
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --output
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --output-format
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --prompt
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag -p
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --prompt-file
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag -f
+✅ test/cli/cli_help_test.dart: cliHelpText mentions flag --stream-thinking
+✅ test/cli/cli_help_test.dart: cliHelpText mentions interactive REPL
+✅ test/cli/cli_help_test.dart: cliHelpText mentions headless
+✅ test/cli/cli_help_test.dart: cliHelpText mentions update
+✅ test/cli/cli_help_test.dart: cliHelpText mentions uninstall
+✅ test/cli/cli_help_test.dart: cliHelpText mentions Exit codes: 0 ok
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa trajectory
+✅ test/cli/cli_help_test.dart: cliHelpText mentions trajectory <view|tail|cost|inspect|
+✅ test/cli/cli_help_test.dart: cliHelpText mentions [--json] [--at N]
+✅ test/cli/cli_help_test.dart: cliHelpText mentions [--format atif] [--output path]
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /trajectory
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa session repair
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa config export-providers
+✅ test/cli/cli_help_test.dart: cliHelpText mentions --passphrase-stdin
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fahx
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa ext
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa ext <list|install|remove|update|audit|
+✅ test/cli/cli_help_test.dart: cliHelpText mentions enable|disable> [--json]
+✅ test/cli/cli_help_test.dart: cliHelpText mentions --bundled [name]
+✅ test/cli/cli_help_test.dart: cliHelpText mentions --pin <sha256>
+✅ test/cli/cli_help_test.dart: cliHelpText mentions REPL-only
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fa/bootstrap.yaml
+✅ test/cli/cli_help_test.dart: cliHelpText mentions FA_EXT_BOOTSTRAP_
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /ext
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fa jsr
+✅ test/cli/cli_help_test.dart: cliHelpText mentions widget:test
+✅ test/cli/cli_help_test.dart: cliHelpText mentions widget:screenshot
+✅ test/cli/cli_help_test.dart: cliHelpText mentions --expect-state JSON
+✅ test/cli/cli_help_test.dart: cliHelpText mentions --freeze-clock
+✅ test/cli/cli_help_test.dart: cliHelpText mentions js_widget_runtime
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .dart_tool/package_config.json
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /jsr
+✅ test/cli/cli_help_test.dart: cliHelpText mentions openai-completions
+✅ test/cli/cli_help_test.dart: cliHelpText mentions kimi
+✅ test/cli/cli_help_test.dart: cliHelpText mentions anthropic
+✅ test/cli/cli_help_test.dart: cliHelpText mentions google
+✅ test/cli/cli_help_test.dart: cliHelpText mentions dial
+✅ test/cli/cli_help_test.dart: cliHelpText mentions OPENROUTER_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions KIMI_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions OPENAI_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ANTHROPIC_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions GOOGLE_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions DIAL_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions DIAL_API_VERSION
+✅ test/cli/cli_help_test.dart: cliHelpText mentions VISION_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions TRANSCRIBE_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions BRAVE_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions TAVILY_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ZAI_API_KEY
+✅ test/cli/cli_help_test.dart: cliHelpText mentions glm-5.3
+✅ test/cli/cli_help_test.dart: cliHelpText mentions minimax
+✅ test/cli/cli_help_test.dart: cliHelpText mentions Ollama
+✅ test/cli/cli_help_test.dart: cliHelpText mentions OPENROUTER_API_KEY_2
+✅ test/cli/cli_help_test.dart: cliHelpText mentions whisper-1
+✅ test/cli/cli_help_test.dart: cliHelpText mentions roles:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions modelOverrides:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions retry:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions smol
+✅ test/cli/cli_help_test.dart: cliHelpText mentions retriesPerEntry
+✅ test/cli/cli_help_test.dart: cliHelpText mentions models:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions imageGeneration
+✅ test/cli/cli_help_test.dart: cliHelpText mentions audioTts
+✅ test/cli/cli_help_test.dart: cliHelpText mentions musicGeneration
+✅ test/cli/cli_help_test.dart: cliHelpText mentions videoGeneration
+✅ test/cli/cli_help_test.dart: cliHelpText mentions transcription
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /models config
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /models set <slot> <model> [baseUrl]
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /models remove <slot>
+✅ test/cli/cli_help_test.dart: cliHelpText mentions prompts:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cli/mode_code
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cli/mode_architect
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cli/mode_review
+✅ test/cli/cli_help_test.dart: cliHelpText mentions compaction/summary
+✅ test/cli/cli_help_test.dart: cliHelpText mentions compaction/summary_system
+✅ test/cli/cli_help_test.dart: cliHelpText mentions compaction/summary_update
+✅ test/cli/cli_help_test.dart: cliHelpText mentions compaction/turn_prefix
+✅ test/cli/cli_help_test.dart: cliHelpText mentions {{cwd}}
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /code
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /architect
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /review
+✅ test/cli/cli_help_test.dart: cliHelpText mentions always-ask
+✅ test/cli/cli_help_test.dart: cliHelpText mentions yolo
+✅ test/cli/cli_help_test.dart: cliHelpText mentions autopilot
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /approval
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /settings
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /allow
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ~/.fah/sessions
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /reset
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /compact
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /stats
+✅ test/cli/cli_help_test.dart: cliHelpText mentions checkpoint
+✅ test/cli/cli_help_test.dart: cliHelpText mentions rewind
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /tasks
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /skills
+✅ test/cli/cli_help_test.dart: cliHelpText mentions SKILL.md
+✅ test/cli/cli_help_test.dart: cliHelpText mentions CLAUDE.md
+✅ test/cli/cli_help_test.dart: cliHelpText mentions GOAL.md
+✅ test/cli/cli_help_test.dart: cliHelpText mentions DESIGN.md
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ttsr:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cube:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /cube
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cube sandbox
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fah/cubes
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fah/rules.yaml
+✅ test/cli/cli_help_test.dart: cliHelpText mentions read
+✅ test/cli/cli_help_test.dart: cliHelpText mentions write
+✅ test/cli/cli_help_test.dart: cliHelpText mentions edit
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ls
+✅ test/cli/cli_help_test.dart: cliHelpText mentions bash
+✅ test/cli/cli_help_test.dart: cliHelpText mentions web_search
+✅ test/cli/cli_help_test.dart: cliHelpText mentions web_fetch
+✅ test/cli/cli_help_test.dart: cliHelpText mentions lsp
+✅ test/cli/cli_help_test.dart: cliHelpText mentions task
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ask
+✅ test/cli/cli_help_test.dart: cliHelpText mentions inspect_image
+✅ test/cli/cli_help_test.dart: cliHelpText mentions transcribe_audio
+✅ test/cli/cli_help_test.dart: cliHelpText mentions FA_TOOLS
+✅ test/cli/cli_help_test.dart: cliHelpText mentions FA_LOG_FILE
+✅ test/cli/cli_help_test.dart: cliHelpText mentions tools:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fah/lsp.json
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fah/packages.yaml
+✅ test/cli/cli_help_test.dart: cliHelpText mentions .fah/prompts
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /exit
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /model
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /model-edit
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /provider
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /providers
+✅ test/cli/cli_help_test.dart: cliHelpText mentions openrouter oauth
+✅ test/cli/cli_help_test.dart: cliHelpText mentions codemie sso
+✅ test/cli/cli_help_test.dart: cliHelpText mentions dial setup
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /provider copilot
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /provider export
+✅ test/cli/cli_help_test.dart: cliHelpText mentions passphrase-encrypted clipboard
+✅ test/cli/cli_help_test.dart: cliHelpText mentions cicd
+✅ test/cli/cli_help_test.dart: cliHelpText mentions fine-grained PAT
+✅ test/cli/cli_help_test.dart: cliHelpText mentions device flow
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /key
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /key
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /mode
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /session
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /session-new
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /sessions
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /resume
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /help
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /help hotkeys
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /tools
+✅ test/cli/cli_help_test.dart: cliHelpText mentions ~/.fah/config.yaml
+✅ test/cli/cli_help_test.dart: cliHelpText mentions auto_update:
+✅ test/cli/cli_help_test.dart: cliHelpText mentions /update
+✅ test/cli/cli_help_test.dart: cliHelpText renders the version in the header line
+✅ test/cli/cli_help_test.dart: cliHelpText documents the flag > config > built-in resolution order
+✅ test/cli/cli_help_test.dart: cliHelpText lists the overridable prompt names from the registry
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import ChatGPT OAuth round-trip: the blob lands in the entry slot
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import Copilot OAuth round-trip lands the token in its entry slot
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import CodeMie SSO round-trip keeps the sso auth method
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import wrong passphrase fails loudly with zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a tampered container fails loudly with zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a truncated container is not a container: zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a wrong key-kind tag inside the container fails loudly with zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a path operand imports from the file, not the clipboard
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a missing container file is refused with zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a directory operand is refused as unreadable, zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import an unavailable pasteboard points at the path operand
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import an image clipboard is refused with a path hint, zero writes
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import a legacy all-providers .fahx export is refused by name
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import clipboard write failure falls back to --path, never stdout
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import declining the switch offer leaves the current provider active and the entry untouched
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import mismatched passphrase confirmation cancels
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import AC8: switching providers between exports changes the subject
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import AC9: import over an existing name resolves per-prompt
+✅ test/cli/provider_transfer_test.dart: UC2 /provider export + /provider import AC7: no secure-store value substring in any transcript
+✅ test/cli/tui_roles_pty_test.dart: boot banner paints the composed Fa mark on a live PTY (#444)
+✅ test/cli/agent_cli_headless_over_window_test.dart: headless over-window stop compacts and continues the turn
+✅ test/cli/agent_cli_headless_over_window_test.dart: headless guard stop without freed window exits 1, not masked 0
