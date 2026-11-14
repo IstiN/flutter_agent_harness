@@ -14029,3 +14029,635 @@ oh-my-pi baseline: initial=12345 turns=10 total=12355
 ✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) a batched [rewind, checkpoint] after mid-detour steering does not destroy the checkpoint being rewound
 ✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) auto-close flushes the pending detour before the audit record
 ✅ test/tools/checkpoint_tool_test.dart: stale checkpoint lifecycle (issue #286) non-turn user-role injections (widget events, system notices) do not make an in-scope checkpoint stale
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig resolves a concrete vision slot into an InspectImageConfig
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig returns null without a models config or a vision slot
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig useMainConnection opt-in does NOT serve inspect_image
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig unsupported vision slot removes the capability (#2085)
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig an unresolvable key still builds the config (empty key)
+✅ test/tools/media_slot_configs_test.dart: resolveVisionSlotInspectConfig same-host slots reuse the main key when no apiKeyName is set
+✅ test/tools/media_slot_configs_test.dart: resolveTranscriptionSlotConfig resolves a concrete transcription slot
+✅ test/tools/media_slot_configs_test.dart: resolveTranscriptionSlotConfig returns null without a slot or on the main-connection opt-in
+✅ test/tools/media_slot_configs_test.dart: resolveTranscriptionSlotConfig each resolver reads only its own slot
+✅ test/tools/media_slot_configs_test.dart: slot schema sanity vision and transcription are declared media slots
+✅ test/tools/media_slot_configs_test.dart: slot schema sanity MediaSlotModelConfig carries the fields the resolvers consume
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) the --vision-model flag is the override even when a slot exists
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) flagless: the slot serves from the LIVE models instance (a mid-session set is visible — review thread 6)
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) flagless: marking the slot unsupported mid-session removes the capability live (#2085)
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) flagless: a same-host slot with no apiKeyName reuses the MAIN key (review thread 2 — one rule with generate_image/generate_video)
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) flagless: a cross-host slot without apiKeyName resolves empty
+✅ test/tools/media_slot_configs_test.dart: cliVisionSlotResolver (the host wiring builder) flagless: the main connection is read LIVE per resolution (a /provider switch re-points the same-host match — review thread 10)
+✅ test/tools/media_slot_configs_test.dart: cliTranscriptionSlotResolver (the host wiring builder) the --transcribe-model flag is the override
+✅ test/tools/media_slot_configs_test.dart: cliTranscriptionSlotResolver (the host wiring builder) flagless: the slot serves live and the same-host main-key rule applies
+✅ test/tools/media_slot_configs_test.dart: cliTranscriptionSlotResolver (the host wiring builder) flagless: the transcription main connection is read LIVE too (review thread 10)
+✅ test/tools/shell_job_settle_zone_test.dart: onSettled fires in the construction zone, not the starting call’s
+✅ test/tools/shell_job_settle_zone_test.dart: settle bookkeeping (settledAt, GC) still runs on every exit
+✅ test/tools/sqlite_read_test.dart: parseSqlitePathCandidates splits database from table and query
+✅ test/tools/sqlite_read_test.dart: parseSqlitePathCandidates handles bare paths and every extension
+✅ test/tools/sqlite_read_test.dart: parseSqlitePathCandidates prefers the longest database prefix
+✅ test/tools/sqlite_read_test.dart: parseSqlitePathCandidates splits at the first question mark only
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector bare path lists tables
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector table alone renders the schema
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector table:key is a row lookup
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector query parameters page a table
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector q= runs a raw query
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects raw queries combined with anything else
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects an empty q
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects parameters without a table
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects row lookups combined with parameters
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects unknown parameters
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector rejects invalid limit and offset values
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector caps the limit at the maximum
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector strips leading colons from the sub path
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector where validation rejects statement terminators and comments
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector where validation rejects control keywords
+✅ test/tools/sqlite_read_test.dart: parseSqliteSelector where validation allows keywords inside string literals
+✅ test/tools/sqlite_read_test.dart: truncateSqliteWidth keeps short values intact
+✅ test/tools/sqlite_read_test.dart: truncateSqliteWidth truncates with an ellipsis
+✅ test/tools/sqlite_read_test.dart: stringifySqliteValue renders null, numbers, strings, and blobs
+✅ test/tools/sqlite_read_test.dart: buildSqliteAsciiTable renders an aligned table
+✅ test/tools/sqlite_read_test.dart: buildSqliteAsciiTable renders an empty result
+✅ test/tools/sqlite_read_test.dart: buildSqliteAsciiTable caps cell width at the column maximum
+✅ test/tools/sqlite_read_test.dart: buildSqliteAsciiTable shrinks the widest columns until the table fits the render width
+✅ test/tools/sqlite_read_test.dart: buildSqliteAsciiTable falls back to vertical blocks beyond 19 columns
+✅ test/tools/sqlite_read_test.dart: render helpers renderSqliteTableList
+✅ test/tools/sqlite_read_test.dart: render helpers renderSqliteSchema appends the sample table
+✅ test/tools/sqlite_read_test.dart: render helpers renderSqliteRow lists column values
+✅ test/tools/sqlite_read_test.dart: render helpers renderSqliteTable adds the continuation note
+✅ test/tools/sqlite_read_test.dart: readFileTool without a SQLite engine returns a clean not-supported note
+✅ test/tools/sqlite_read_test.dart: readFileTool without a SQLite engine selector errors still surface before the engine check
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml null yields an empty config
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml non-map node throws ConfigException
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml non-boolean value throws ConfigException naming the key
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml nested mcp map flattens to mcp:<server> keys
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml non-boolean mcp server value throws naming it
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml non-string mcp server key throws
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml unknown top-level ids are accepted at parse time
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml flat mcp boolean parses as the mcp id
+✅ test/tools/availability_test.dart: ToolsConfig.fromYaml non-string key throws ConfigException
+✅ test/tools/availability_test.dart: ToolsConfig.mergedOver receiver (deeper) wins per key
+✅ test/tools/availability_test.dart: ToolsConfig.mergedOver key absent at the deeper scope falls back to the shallower
+✅ test/tools/availability_test.dart: ToolsConfig.mergedOver empty receiver keeps the shallower map intact
+✅ test/tools/availability_test.dart: ToolsConfig.toYaml empty config serializes to an empty string
+✅ test/tools/availability_test.dart: ToolsConfig.toYaml flat keys sort; nested mcp renders as an indented map
+✅ test/tools/availability_test.dart: ToolsConfig.toYaml round trip through yaml preserves the tool map
+✅ test/tools/availability_test.dart: ToolsConfig JSON envelope round trip preserves the tool map
+✅ test/tools/availability_test.dart: ToolsConfig JSON envelope non-map envelope throws ConfigException
+✅ test/tools/availability_test.dart: ToolsConfig JSON envelope non-map tools section throws ConfigException
+✅ test/tools/availability_test.dart: ToolsConfig JSON envelope non-boolean tool value throws ConfigException
+✅ test/tools/availability_test.dart: ToolsConfig JSON envelope missing tools section yields an empty config
+✅ test/tools/availability_test.dart: resolveToolAvailability capability absent: force-enable cannot win
+✅ test/tools/availability_test.dart: resolveToolAvailability id without a capability entry is "not wired by this host"
+✅ test/tools/availability_test.dart: resolveToolAvailability present capability, no intent: enabled at builtin scope
+✅ test/tools/availability_test.dart: resolveToolAvailability merge precedence global < project < session < runtime per key
+✅ test/tools/availability_test.dart: resolveToolAvailability deeper true overrides shallower false
+✅ test/tools/availability_test.dart: resolveToolAvailability deepest false wins with scope and reason
+✅ test/tools/availability_test.dart: resolveToolAvailability byId covers every known tool id
+✅ test/tools/availability_test.dart: resolveToolAvailability unknown config ids land in unknownIds without failing
+✅ test/tools/availability_test.dart: resolveToolAvailability mcp:<server> keys never leak into unknownIds
+✅ test/tools/availability_test.dart: resolveToolAvailability per-server mcp keys merge across scopes, deepest wins
+✅ test/tools/availability_test.dart: resolveToolAvailability mcp:false kill-switch forces every declared server off
+✅ test/tools/availability_test.dart: parseToolsSpec parses ids, on/off values, and mcp:<server> keys
+✅ test/tools/availability_test.dart: parseToolsSpec values are case-insensitive and tokens are trimmed
+✅ test/tools/availability_test.dart: parseToolsSpec empty string yields an empty config
+✅ test/tools/availability_test.dart: parseToolsSpec malformed token throws ConfigException naming it
+✅ test/tools/availability_test.dart: parseToolsSpec unknown value throws ConfigException naming the token
+✅ test/tools/availability_test.dart: coreToolFamilies every member tool name appears in exactly ONE family
+✅ test/tools/availability_test.dart: coreToolFamilies family ids stay inside knownToolIds; host-wired ids stay out
+✅ test/tools/availability_test.dart: coreToolFamilies toolAvailabilityIdOf spot checks
+✅ test/tools/availability_test.dart: toolScopeStack is shallow→deep without the builtin floor
+✅ test/tools/read_video_route_test.dart: video-capable chat model read of an mp4 attaches VideoContent (bytes ride to the model)
+✅ test/tools/read_video_route_test.dart: video-capable chat model a line selector on a video file is refused like on an image
+✅ test/tools/read_video_route_test.dart: video-capable chat model an oversized video is NOT attached — note names the size + hint
+✅ test/tools/read_video_route_test.dart: non-video chat model + vision slot (the auto-route) describes the video with attribution and ONE video_url call
+✅ test/tools/read_video_route_test.dart: non-video chat model + vision slot (the auto-route) autoInspect off → the honest note names the configured model
+✅ test/tools/read_video_route_test.dart: non-video chat model + vision slot (the auto-route) a slot failure degrades to an honest note (never throws)
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor null size defaults to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor empty size defaults to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor 1920x1080 maps to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor 1280x720 maps to 1080P 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor 1024x1024 maps to 1080P 1:1
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor invalid format falls back to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor single dimension falls back to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor zero width falls back to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.sizeFor negative height falls back to 2K 16:9
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.matches matches minimax baseUrl
+✅ test/tools/generate_video_test.dart: MiniMaxVideoDialect.matches does not match openai baseUrl
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor null size defaults to 1080P 6s
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor 1920x1080 maps to 1080P
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor 1280x720 maps to 768P
+✅ test/tools/read_video_route_test.dart: non-video chat model + vision slot (the auto-route) a mid-flight cancel stays a cancel (CancelledException)
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor invalid format falls back to 1080P
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor single dimension falls back to 1080P
+✅ test/tools/read_video_route_test.dart: non-video chat model + no slot (the honest note) mediaFileReadNotes → note names the slot/configure path
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.sizeFor zero width falls back to 1080P
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.matches matches minimax baseUrl with a Hailuo model
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.matches does not match the H3 chat-family model
+✅ test/tools/generate_video_test.dart: HailuoVideoDialect.matches does not match a non-minimax baseUrl
+✅ test/tools/read_video_route_test.dart: non-video chat model + no slot (the honest note) REG: mediaFileReadNotes off keeps today's fall-through
+✅ test/tools/read_video_route_test.dart: video mime ↔ extension agreement (gh-2007 thread 2) every routed extension carries its real container MIME
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo endpoint dispatches to the V1 flow and saves the mp4
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows H3 endpoint still dispatches to the MiniMax V2 flow
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo task failure surfaces a VideoException
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo success without file_id surfaces a VideoException
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo create non-200 surfaces the HTTP status
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo create without task_id surfaces a VideoException
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo retrieve failure surfaces the HTTP status
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo retrieve without download_url surfaces a VideoException
+✅ test/tools/generate_video_test.dart: video dialect dispatch and flows Hailuo download failure surfaces the HTTP status
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint null models config resolves to no endpoint
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint no videoGeneration slot override resolves to no endpoint
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint unsupported slot refuses with the un-mark guidance (#2085)
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint slot override without a key name reuses the main key same-host
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint slot override without a key name on another host throws an actionable error
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint slot override with apiKeyName resolves the key via the seam
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint missing key resolution falls back to same-host reuse, else throws
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint useMainConnection (gh-1844) opt-in serves the slot from the main connection
+✅ test/tools/generate_video_test.dart: resolveVideoGenerationEndpoint useMainConnection (gh-1844) opt-in with an empty main connection resolves to no endpoint
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) matches openrouter.ai endpoints only
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) poll budget matches OpenRouter job durations (review, gh-1844)
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) a job that never completes exhausts the poll window
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) a failed job surfaces the provider error
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) a cancelled job surfaces without requiring an error field
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) a non-200 status poll throws with the HTTP status
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) a non-map status poll response throws
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) declares reference-image support
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) submit/poll/download flow saves the mp4
+✅ test/tools/generate_video_test.dart: OpenRouterVideoDialect (gh-1844) reference videos ride input_references
+✅ test/tools/generate_video_test.dart: generate_video reference videos (gh-1844) MiniMax endpoint rejects reference videos before any call
+✅ test/tools/generate_video_test.dart: generate_video reference videos (gh-1844) declared text-only modalities reject reference videos
+✅ test/tools/bash_timeout_text_test.dart: timeoutSecondsFromMessage parses the shell timeout shape (H:MM:SS)
+✅ test/tools/bash_timeout_text_test.dart: timeoutSecondsFromMessage sub-second caps round up to 1
+✅ test/tools/bash_timeout_text_test.dart: timeoutSecondsFromMessage returns null for messages without a duration
+✅ test/tools/bash_timeout_text_test.dart: bashTimeoutStatus the model cap wins verbatim
+✅ test/tools/bash_timeout_text_test.dart: bashTimeoutStatus a shell default parses from the exec error message
+✅ test/tools/bash_timeout_text_test.dart: bashTimeoutStatus a job-recorded effective timeout renders its seconds
+✅ test/tools/bash_timeout_text_test.dart: bashTimeoutStatus no recoverable cap states the timeout without a number
+✅ test/tools/bash_timeout_text_test.dart: bashTimeoutStatus never renders the forbidden strings (AC5)
+✅ test/tools/builtin_tools_test.dart: builtinTools creates the pi-shaped tools
+✅ test/tools/builtin_tools_test.dart: readFileTool reads a whole small file
+✅ test/tools/builtin_tools_test.dart: readFileTool honors offset and limit with a continuation notice
+✅ test/tools/builtin_tools_test.dart: readFileTool reads the tail without a notice when limit reaches EOF
+✅ test/tools/builtin_tools_test.dart: readFileTool throws when the offset is beyond end of file
+✅ test/tools/builtin_tools_test.dart: readFileTool throws for a missing file
+✅ test/tools/builtin_tools_test.dart: readFileTool truncates at 2000 lines with a continuation notice
+✅ test/tools/builtin_tools_test.dart: readFileTool truncates at 50KB with a byte-limit notice
+✅ test/tools/builtin_tools_test.dart: readFileTool reports a first line that alone exceeds the byte limit
+✅ test/tools/builtin_tools_test.dart: readFileTool throws when the cancel token is already cancelled
+✅ test/tools/builtin_tools_test.dart: readFileTool validates arguments through the registry
+✅ test/tools/builtin_tools_test.dart: writeFileTool writes content, creating parent directories
+✅ test/tools/builtin_tools_test.dart: writeFileTool counts UTF-8 bytes, not characters
+✅ test/tools/builtin_tools_test.dart: writeFileTool requires path and content
+✅ test/tools/builtin_tools_test.dart: editFileTool replaces a unique occurrence
+✅ test/tools/builtin_tools_test.dart: editFileTool replaces a multiline block exactly once
+✅ test/tools/builtin_tools_test.dart: editFileTool errors when the text is missing, with an actionable message
+✅ test/tools/builtin_tools_test.dart: editFileTool errors when the text is ambiguous
+✅ test/tools/builtin_tools_test.dart: editFileTool errors for a missing file
+✅ test/tools/builtin_tools_test.dart: editFileTool deletes text when newText is empty
+✅ test/tools/builtin_tools_test.dart: editFileTool throws when the cancel token is already cancelled
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode prefixes lines and prepends the [path#TAG] header
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode legacy output is unchanged when the flag is off
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode records the full file text plus displayed lines
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode offset/limit numbering stays 1-indexed to the file
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode a full read marks every line as seen
+✅ test/tools/builtin_tools_test.dart: readFileTool hashline mode re-reading identical content fuses onto one tag
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode applies a patch and answers with the fresh header
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode the response tag chains into the next edit without a re-read
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode path is optional in hashline mode (header carries it)
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode coerces a valid patch + complete exact-match payload: patch applies, notice names the ignored payload (issue #862 AC1)
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode coerces a malformed patch + complete exact-match payload: exact-match applies with the same notice shape (issue #862 AC2)
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode rejects calls with neither mode fully specified, with a remedy example (issue #862 AC3)
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode a stale tag rejects the edit with drift context
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode a byte-identical body returns the no-change diagnostic
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode unsupported ops surface a focused error
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode malformed patches with no rescue surface the parse error plus the remedy example (issue #862)
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode multi-section patches apply all-or-nothing
+✅ test/tools/builtin_tools_test.dart: editFileTool hashline mode edits on lines a partial read never displayed are rejected
+✅ test/tools/builtin_tools_test.dart: hashline round-trip read with hashes → edit by anchors → content correct
+✅ test/tools/builtin_tools_test.dart: hashline round-trip header-less patch with a path still applies through the patcher
+✅ test/tools/builtin_tools_test.dart: hashline round-trip external drift between read and edit reports the stale lines
+✅ test/tools/builtin_tools_test.dart: hashline round-trip the tools created by builtinTools share one snapshot store
+✅ test/tools/builtin_tools_test.dart: listDirTool lists entries sorted, directories suffixed with /
+✅ test/tools/builtin_tools_test.dart: listDirTool lists an explicit subdirectory
+✅ test/tools/builtin_tools_test.dart: listDirTool caps entries at the limit with a notice
+✅ test/tools/builtin_tools_test.dart: listDirTool reports an empty directory
+✅ test/tools/builtin_tools_test.dart: listDirTool returns the file name when the path is a file
+✅ test/tools/builtin_tools_test.dart: listDirTool throws for a missing path
+✅ test/tools/builtin_tools_test.dart: shellTool returns stdout of a successful command
+✅ test/tools/builtin_tools_test.dart: shellTool forwards cwd: env.cwd so write/read/ls and bash share the root
+✅ test/tools/builtin_tools_test.dart: shellTool appends stderr after stdout
+✅ test/tools/builtin_tools_test.dart: shellTool reports (no output) for silent success
+✅ test/tools/builtin_tools_test.dart: shellTool throws with output and exit code on failure
+✅ test/tools/builtin_tools_test.dart: shellTool throws a timeout message when the shell times out
+✅ test/tools/builtin_tools_test.dart: shellTool a shell-default timeout names its real seconds (gh-1444 AC5)
+✅ test/tools/builtin_tools_test.dart: shellTool timeout error surfaces the shell-captured partial output
+✅ test/tools/builtin_tools_test.dart: shellTool abort error surfaces the shell-captured partial output
+✅ test/tools/builtin_tools_test.dart: shellTool retries a timed-out command and succeeds on attempt 2
+✅ test/tools/builtin_tools_test.dart: shellTool retries on a thrown TimeoutException (outer future cap)
+✅ test/tools/builtin_tools_test.dart: shellTool exhausted retries surface the timeout error with notices
+✅ test/tools/builtin_tools_test.dart: shellTool never retries aborted commands
+✅ test/tools/builtin_tools_test.dart: shellTool never retries real command failures (non-zero exit)
+✅ test/tools/builtin_tools_test.dart: shellTool never retries shell-unavailable errors
+✅ test/tools/builtin_tools_test.dart: shellTool throws an aborted message when the shell is cancelled
+✅ test/tools/builtin_tools_test.dart: shellTool surfaces shell-unavailable errors
+✅ test/tools/builtin_tools_test.dart: shellTool passes timeout and cancel token to the shell
+✅ test/tools/builtin_tools_test.dart: shellTool rejects non-positive timeouts
+✅ test/tools/builtin_tools_test.dart: shellTool rejects timeouts above the maximum
+✅ test/tools/builtin_tools_test.dart: shellTool keeps the last 2000 lines of long output
+✅ test/tools/builtin_tools_test.dart: shellTool denies a bare long foreground sleep with the instructive message
+✅ test/tools/builtin_tools_test.dart: shellTool a timeout-bounded long sleep is allowed to run
+✅ test/tools/builtin_tools_test.dart: shellTool fractional seconds: 60.5 denied, 90.5 labeled with the fraction
+✅ test/tools/builtin_tools_test.dart: shellTool the sleep deny threshold allows sleep 60, denies sleep 61
+✅ test/tools/builtin_tools_test.dart: shellTool GNU sleep suffixes are measured (sleep 2m denied, sleep 1m allowed)
+✅ test/tools/builtin_tools_test.dart: shellTool a sleep wrapped in shell constructs is NOT denied (phase 2 scope)
+✅ test/tools/builtin_tools_test.dart: shellTool a long quiet legit command is NOT denied
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool returns ImageContent for a PNG and resizes large images
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool resize hint carries the coordinate scale factor
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk parses a bare line number as an open range
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk parses an inclusive range
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk parses start+count into an inclusive end
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk parses the open-ended dash form
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk parses the .. alias as -
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk accepts the L prefix and mixed case
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk returns null for non-range input
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk throws on a zero start line
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk throws on a count below 1
+✅ test/tools/read_selector_test.dart: parseLineRangeChunk throws when the end precedes the start
+✅ test/tools/read_selector_test.dart: parseLineRanges parses a single range
+✅ test/tools/read_selector_test.dart: parseLineRanges sorts ranges ascending
+✅ test/tools/read_selector_test.dart: parseLineRanges merges overlapping ranges
+✅ test/tools/read_selector_test.dart: parseLineRanges merges adjacent ranges
+✅ test/tools/read_selector_test.dart: parseLineRanges keeps disjoint ranges separate
+✅ test/tools/read_selector_test.dart: parseLineRanges dedupes identical ranges
+✅ test/tools/read_selector_test.dart: parseLineRanges an open-ended range absorbs everything after it
+✅ test/tools/read_selector_test.dart: parseLineRanges an open-ended later range extends a merged earlier one
+✅ test/tools/read_selector_test.dart: parseLineRanges returns null when any chunk is malformed
+✅ test/tools/read_selector_test.dart: splitPathAndSel keeps paths without a selector tail intact
+✅ test/tools/read_selector_test.dart: splitPathAndSel peels a line range
+✅ test/tools/read_selector_test.dart: splitPathAndSel peels raw
+✅ test/tools/read_selector_test.dart: splitPathAndSel peels a compound range+raw in either order
+✅ test/tools/read_selector_test.dart: splitPathAndSel is case-insensitive
+✅ test/tools/read_selector_test.dart: splitPathAndSel leaves archive and sqlite colon syntax alone
+✅ test/tools/read_selector_test.dart: splitPathAndSel leaves unrecognized tails alone
+✅ test/tools/read_selector_test.dart: splitPathAndSel does not peel from a bare selector
+✅ test/tools/read_selector_test.dart: splitPathAndSel peels after any colon past index 0 (omp parity)
+✅ test/tools/read_selector_test.dart: splitPathAndSelPreferringLiteral a literal file with a selector-shaped name wins
+✅ test/tools/read_selector_test.dart: splitPathAndSelPreferringLiteral falls back to the strict split when the literal is missing
+✅ test/tools/read_selector_test.dart: splitPathAndSelPreferringLiteral passes through paths without a selector
+✅ test/tools/read_selector_test.dart: parseSel none for null, empty, or unrecognized selectors
+✅ test/tools/read_selector_test.dart: parseSel raw alone
+✅ test/tools/read_selector_test.dart: parseSel single and multi ranges
+✅ test/tools/read_selector_test.dart: parseSel compound range+raw in either order
+✅ test/tools/read_selector_test.dart: parseSel throws on read-like but malformed compounds
+✅ test/tools/read_selector_test.dart: parseSel isRawSelector covers raw alone and raw ranges
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool huge noisy PNG is degraded below the 4.5MB base64 budget
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool returns ImageContent unchanged for a small image
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool passes small JPEG and GIF originals through untouched
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool bakes EXIF orientation before measuring and resizing
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool converts BMP to an inline format with a conversion hint
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool throws a clean error for undecodable image bytes
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool passes a small WebP original through untouched
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool resizes a tall portrait image by its height
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool degrades an over-budget image within the dimension limit to JPEG
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool adds a non-vision note when the model cannot take images
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool omits the non-vision note for vision-capable models
+✅ test/tools/builtin_tools_test.dart: Image support in readFileTool empty files are treated as text, not images
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC2: non-vision model + configured vision → inline description with attribution, no ImageContent
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC3: images.autoInspect: false → the note names inspect_image + the vision model, image stays
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC4: no vision configured → the note instructs how to configure
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC4 REG: vision chat model rides in place — no note, no call
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC6: vision provider failure degrades to the omission note + reason; the read still succeeds
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) AC6: cancellation mid-call aborts the auto-route
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) live re-read: the resolver runs per read (slot edits apply live)
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) images.maxBytesPerRequest budget applies to the auto-route
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) the auto-route uploads the PROCESSED payload — gate, mime, and bytes agree (review: resized/converted images)
+✅ test/tools/builtin_tools_test.dart: read image auto-route (gh-1984) the budget gate bounds the bytes the auto-route uploads (a large original whose processed payload fits still uploads ≤ budget)
+✅ test/tools/builtin_tools_test.dart: read audio/video notes (gh-1984 AC10) audio with a transcription slot → the note names transcribe_audio
+✅ test/tools/builtin_tools_test.dart: read audio/video notes (gh-1984 AC10) audio without a slot → the note names what to configure
+✅ test/tools/builtin_tools_test.dart: read audio/video notes (gh-1984 AC10) video in the CLI → the note names the video-model configuration (gh-1985 C1 replaced the app-host-only hint)
+✅ test/tools/builtin_tools_test.dart: read audio/video notes (gh-1984 AC10) gate off (app host) → audio falls through unchanged (REG)
+✅ test/tools/builtin_tools_test.dart: inline image shrink helpers nextShrinkStep shrinks by 0.75 with a floor of 1
+✅ test/tools/builtin_tools_test.dart: inline image shrink helpers shrinkStepStalls at 1x1 or when the step stops making progress
+✅ test/tools/transcript_document_test.dart: buildTranscriptDocument — OpenAI verbose fixture with words UT-02: parses into a document satisfying every invariant
+✅ test/tools/transcript_document_test.dart: buildTranscriptDocument — OpenAI verbose fixture with words UT-02: words nest inside the segments containing their start
+✅ test/tools/transcript_document_test.dart: buildTranscriptDocument — OpenAI verbose fixture with words AC14: identical fixture bytes produce identical documents
+✅ test/tools/transcript_document_test.dart: UT-02: Groq segment-only fixture parses segments, no words, invariants hold
+✅ test/tools/transcript_document_test.dart: UT-02: plain json and bare-text bodies plain json {"text": ...} parses to a text-only document
+✅ test/tools/transcript_document_test.dart: UT-02: plain json and bare-text bodies bare text body (whisper.cpp style) parses as text-only
+✅ test/tools/transcript_document_test.dart: E4: words without segments word list stays at document level with invariants
+✅ test/tools/transcript_document_test.dart: E2: silent audio / empty payloads empty text and absent segments yield a valid empty document
+✅ test/tools/transcript_document_test.dart: E2: silent audio / empty payloads null text is treated as empty, not an exception
+✅ test/tools/transcript_document_test.dart: E2: silent audio / empty payloads empty word array counts as absent
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps negative timestamps are dropped with a warning, never clamped
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps NaN/Infinity bounds are dropped with a warning
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps start > end is dropped with a warning
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps unsorted segments are dropped, never reordered silently
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps non-object entries are dropped with warnings
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps non-numeric bounds are dropped with a warning
+✅ test/tools/transcript_document_test.dart: E3/UT-05: malformed timestamps negative/non-finite duration is omitted with a warning
+✅ test/tools/transcript_document_test.dart: word clamping (never silent) word outside its segment is clamped and reported
+✅ test/tools/transcript_document_test.dart: text fidelity invariant segment text mismatch is repaired with an explicit warning
+✅ test/tools/transcript_document_test.dart: text fidelity invariant whitespace-only differences are NOT mismatches
+✅ test/tools/transcript_document_test.dart: UT-04: Unicode fidelity Cyrillic and profanity are preserved byte-exactly, unfiltered
+✅ test/tools/transcript_document_test.dart: UT-04: Unicode fidelity language hint and detected language coexist (E11)
+✅ test/tools/transcript_document_test.dart: UT-05: serialization shape (schema v1) non-list segments/words shapes degrade with warnings, not crashes
+✅ test/tools/transcript_document_test.dart: UT-05: serialization shape (schema v1) toMap carries schemaVersion, source, and ordered fields
+✅ test/tools/transcript_document_test.dart: UT-05: serialization shape (schema v1) round-trips through JSON without losing fidelity
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors reads an inclusive range with :A-B
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors reads start+count with :A+C
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors reads from a line to EOF with :N
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors reads the .. alias
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors a single range past EOF returns a graceful note
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors throws on an invalid selector
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors coerces offset/limit combined with a selector: the selector wins with an ignore notice (issue #862 AC4)
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors selector + limit only still reads the full selector range (issue #862)
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors multi-range renders blocks joined by an elision separator
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors multi-range merges overlapping and out-of-order ranges
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors multi-range reports ranges past EOF as skipped notices
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors multi-range an open-ended range absorbs later ranges
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors multi-range over-limit multi-range output truncates with a hint
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw returns the whole file verbatim without notices
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw returns exact lines for :raw:A-B with no notices
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw a limited single range emits a notice unless raw
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw multi-range raw joins blocks with the separator
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw a first line over the byte limit yields a byte prefix snippet
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors :raw the byte prefix snippet walks back to a UTF-8 boundary
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors hashline interplay ranged hashline reads carry real line numbers
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors hashline interplay multi-range hashline numbers each block
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors hashline interplay a ranged hashline read anchors edits on displayed lines
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors hashline interplay :raw suppresses the hashline header
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors hashline interplay :raw with a range suppresses the header too
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors images and literals rejects selectors on images politely
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors images and literals reads a literal file whose name matches the grammar
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors backward compatibility offset/limit still page through a file
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors backward compatibility offset beyond EOF still throws
+✅ test/tools/read_tool_selectors_test.dart: readFileTool selectors backward compatibility plain reads are byte-identical to before
+✅ test/tools/ask_tool_test.dart: schema validation accepts a multi-question payload with all field kinds
+✅ test/tools/ask_tool_test.dart: schema validation rejects a missing questions list
+✅ test/tools/ask_tool_test.dart: schema validation rejects a question without text
+✅ test/tools/ask_tool_test.dart: schema validation rejects an option without a label
+✅ test/tools/ask_tool_test.dart: schema validation rejects non-object question entries
+✅ test/tools/ask_tool_test.dart: schema validation coerces scalar fields like other tools
+✅ test/tools/ask_tool_test.dart: execute a null callback throws (error tool result for the model)
+✅ test/tools/ask_tool_test.dart: execute an empty questions list throws
+✅ test/tools/ask_tool_test.dart: execute single-select answer maps to "User selected"
+✅ test/tools/ask_tool_test.dart: execute multi-select answer joins the labels
+✅ test/tools/ask_tool_test.dart: execute free-text answer maps to "User provided custom input"
+✅ test/tools/ask_tool_test.dart: execute multiline free text is indented like omp
+✅ test/tools/ask_tool_test.dart: execute selection plus free text both appear
+✅ test/tools/ask_tool_test.dart: execute a recommended label resolves to an index
+✅ test/tools/ask_tool_test.dart: execute an out-of-range recommended index is ignored
+✅ test/tools/ask_tool_test.dart: execute an unknown recommended label is ignored
+✅ test/tools/ask_tool_test.dart: execute a free-form question passes an empty option list
+✅ test/tools/ask_tool_test.dart: execute multi-question answers use the "User answers:" format
+✅ test/tools/ask_tool_test.dart: execute missing answers become (no answer) lines
+✅ test/tools/ask_tool_test.dart: execute an unanswered single question reports as such
+✅ test/tools/ask_tool_test.dart: execute a null callback result is a cancelled result, not an error
+✅ test/tools/ask_tool_test.dart: execute a pre-cancelled token throws before invoking the callback
+✅ test/tools/ask_tool_test.dart: execute cancelling mid-wait unwinds with CancelledException
+✅ test/tools/ask_tool_test.dart: execute runs its tool batch sequentially (omp exclusive)
+✅ test/tools/session_search_tool_test.dart: the graceful-null contract a host without session-file access says so, never throws
+✅ test/tools/session_search_tool_test.dart: argument validation surfaces as one-line errors missing query
+✅ test/tools/session_search_tool_test.dart: argument validation surfaces as one-line errors invalid regex
+✅ test/tools/session_search_tool_test.dart: argument validation surfaces as one-line errors bad timestamp
+✅ test/tools/session_search_tool_test.dart: search-mode formatting one pointer line per hit, never full content
+✅ test/tools/session_search_tool_test.dart: search-mode formatting a capped scan carries the continuation hint
+✅ test/tools/session_search_tool_test.dart: search-mode formatting a capped ZERO-hit page still carries the stop reason and hint
+✅ test/tools/session_search_tool_test.dart: search-mode formatting an unavailable archive is said verbatim, never as no-match
+✅ test/tools/session_search_tool_test.dart: search-mode formatting zero hits reports the honest no-match line
+✅ test/tools/session_search_tool_test.dart: map-mode formatting counts, hidden totals and the checkpoint tree, no content
+✅ test/tools/session_search_tool_test.dart: map-mode formatting an empty archive maps honestly
+✅ test/tools/inspect_image_test.dart: inspectImageTool describes an image using a vision model
+✅ test/tools/inspect_image_test.dart: inspectImageTool uses default prompt when none is supplied
+✅ test/tools/inspect_image_test.dart: inspectImageTool throws when the file is missing
+✅ test/tools/inspect_image_test.dart: inspectImageTool throws for a non-image file
+✅ test/tools/inspect_image_test.dart: inspectImageTool refuses the chatgpt-codex kind with a named error (gh-760 sweep)
+✅ test/tools/inspect_image_test.dart: inspectImageTool throws when the vision model returns an error event
+✅ test/tools/inspect_image_test.dart: inspectImageTool forwards a mid-stream cancel to the vision call (AC6)
+✅ test/tools/inspect_image_test.dart: inspectImageTool reports the vision call usage via onUsage (/cost parity)
+✅ test/tools/generate_image_test.dart: generateImageTool generates an image via the imageGeneration slot override
+✅ test/tools/generate_image_test.dart: generateImageTool aiin endpoint rides the default OpenAI image dialect (#2068)
+✅ test/tools/generate_image_test.dart: generateImageTool resolves the slot apiKeyName through the resolveKey callback
+✅ test/tools/generate_image_test.dart: generateImageTool no slot override fails with an actionable unconfigured error
+✅ test/tools/generate_image_test.dart: generateImageTool an unsupported slot refuses the call with the un-mark guidance (#2085)
+✅ test/tools/generate_image_test.dart: generateImageTool useMainConnection: true serves the slot from the main connection
+✅ test/tools/generate_image_test.dart: generateImageTool throws when the endpoint errors
+✅ test/tools/generate_image_test.dart: generateImageTool throws when prompt is empty
+✅ test/tools/generate_image_test.dart: generateImageTool uses the MiniMax dialect for minimax endpoints
+✅ test/tools/generate_image_test.dart: generateImageTool surfaces MiniMax base_resp errors hidden behind HTTP 200
+✅ test/tools/generate_image_test.dart: generateImageTool accepts a zero base_resp alongside the image data
+✅ test/tools/generate_image_test.dart: generateImageTool a slot override without apiKeyName never takes the main key
+✅ test/tools/generate_image_test.dart: generateImageTool an unresolvable slot apiKeyName fails without falling back
+✅ test/tools/generate_image_test.dart: generateImageTool uses the DIAL dialect for ai-proxy/dial endpoints
+✅ test/tools/generate_image_test.dart: generateImageTool slot override with matching host falls back to main key when apiKeyName is omitted
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) matches openrouter.ai endpoints
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) does not match non-openrouter endpoints
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) declares reference-image support
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) extension from media_type (review, gh-1844) structured types map to the clean subtype (svg+xml → svg)
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) extension from media_type (review, gh-1844) known types keep their subtype
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) extension from media_type (review, gh-1844) unknown or missing media types fall back to png
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) generate response shapes (CRAP coverage) forwards size and quality when given
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) generate response shapes (CRAP coverage) a non-200 response throws with the provider body
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) generate response shapes (CRAP coverage) an empty data list throws
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) generate response shapes (CRAP coverage) downloads the image from a url response entry
+✅ test/tools/generate_image_test.dart: OpenRouterImageDialect (gh-1844) generate response shapes (CRAP coverage) an entry with neither b64_json nor url throws
+✅ test/tools/generate_image_test.dart: generateImageTool reference images (gh-1844) MiniMax endpoint rejects reference images before any call
+✅ test/tools/generate_image_test.dart: generateImageTool reference images (gh-1844) OpenAI-compatible endpoint rejects reference images too
+✅ test/tools/generate_image_test.dart: generateImageTool reference images (gh-1844) OpenRouter endpoint with text-only declared modalities rejects
+✅ test/tools/generate_image_test.dart: generateImageTool reference images (gh-1844) probe-discovered text-only modalities reject reference images
+✅ test/tools/generate_image_test.dart: generateImageTool reference images (gh-1844) OpenRouter endpoint carries reference images as input_references
+✅ test/tools/shell_jobs_run_token_isolation_test.dart: cancelling the caller run token does not stop a registry job
+✅ test/tools/shell_jobs_run_token_isolation_test.dart: a run-token cancel during foreground-as-job bash hands the running job back to the background instead of killing it
+✅ test/tools/bash_password_flow_test.dart: bash tool password flow (issue #367) a password ask fires the host callback and the answer reaches the running job through live stdin
+✅ test/tools/shell_jobs_run_token_isolation_test.dart: a supervisor cancel-retry (StuckCallFollowUp on the call token) fails the call with Command aborted but keeps the job running
+✅ test/tools/bash_password_flow_test.dart: bash tool password flow (issue #367) declining writes a bare newline so the command fails on its own
+✅ test/tools/bash_password_flow_test.dart: bash tool password flow (issue #367) without a host callback no stdin channel is attached
+✅ test/tools/bash_auto_background_test.dart: autoBackgroundHandbackText carries job id, elapsed, log path and both guidance branches
+✅ test/tools/bash_auto_background_test.dart: autoBackgroundHandbackText names the carried timeout only when the call had one
+✅ test/tools/obligation_tool_test.dart: null callback yields the graceful cannot-execute result
+✅ test/tools/obligation_tool_test.dart: no id is the discovery mode: the host lists open obligations
+✅ test/tools/obligation_tool_test.dart: close passes id and status through to the host callback
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC1: at the threshold the call resolves with the backgrounded result and the same job keeps running
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC4: a command that settles before the threshold is unchanged (inline result, settle notice suppressed)
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC4: threshold 0 is the kill switch — the classic path runs
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC4: an explicit timeout at or below the threshold keeps the classic foreground path (no job)
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC1: an explicit timeout above the threshold carries over as the job cap and is named in the result
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC4: a steering yield before the threshold still produces the steering hand-back, not the conversion
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) AC4: without the BackgroundShell capability the legacy foreground behavior is kept
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) the command-rewrite notice rides the conversion result
+✅ test/tools/bash_auto_background_test.dart: bash auto-background (gh-1835) the command-rewrite notice rides the background: true start result
+✅ test/tools/bash_auto_background_test.dart: bash tool description (gh-1835 review) teaches the conversion only when armed
+✅ test/tools/bash_auto_background_test.dart: bash tool description (gh-1835 review) a converted carried timeout is NOT auto-retried
+✅ test/tools/bash_auto_background_test.dart: bash auto-background through the agent loop (AC1/AC2/AC3) the conversion notice IS the tool result: exactly-once resolution, pairing intact, the turn continues, no extra record
+✅ test/tools/bash_auto_background_test.dart: WaitingConfig.autoBackgroundSeconds defaults to the 60s liveness threshold
+✅ test/tools/bash_auto_background_test.dart: WaitingConfig.autoBackgroundSeconds parses the yaml leaf; 0 is the kill switch
+✅ test/tools/bash_auto_background_test.dart: WaitingConfig.autoBackgroundSeconds rejects negative and non-integer values
+✅ test/tools/bash_auto_background_test.dart: WaitingConfig.autoBackgroundSeconds rejects unknown keys and round-trips through toYaml
+✅ test/memory/note_id_scheme_test.dart: gh-1845 recovery-playbook note (n_1012) body references the filed systemic-fix follow-up issue
+✅ test/memory/note_id_scheme_test.dart: gh-1845 recovery-playbook note (n_1012) id hash suffix matches the note body (MemoryIdScheme)
+✅ test/memory/note_id_scheme_test.dart: gh-1845 recovery-playbook note (n_1012) body heading id matches frontmatter id and filename
+✅ test/memory/git_rebase_delete_modify_test.dart: harness tombstone on one branch + edit on the other rebases cleanly (AC3)
+✅ test/memory/memory_tools_test.dart: memory tool governance memory_add description IS the memory repo policy
+✅ test/memory/memory_tools_test.dart: memoryTools memory_add fires onChanged after a successful save
+✅ test/memory/memory_tools_test.dart: memoryTools memoryTools without onChanged still works
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries parses a plain JSON array
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries parses a fenced JSON array
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries parses JSON embedded in prose (outermost span)
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries empty array yields no entries
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries malformed JSON yields no entries (skip silently)
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries entries with empty text are dropped
+✅ test/memory/compaction_memory_hook_test.dart: parseExtractedEntries topics and tags are capped at 3
+✅ test/memory/compaction_memory_hook_test.dart: extractDurableEntries returns entries from a scripted model response
+✅ test/memory/compaction_memory_hook_test.dart: extractDurableEntries model error stop reason yields no entries
+✅ test/memory/compaction_memory_hook_test.dart: extractDurableEntries the span is capped with head+tail
+✅ test/memory/compaction_memory_hook_test.dart: compactionMemoryHook returns null when memory or model wiring is missing
+✅ test/memory/compaction_memory_hook_test.dart: compactionMemoryHook hook never throws even when the stream fails
+✅ test/memory/compaction_memory_hook_test.dart: hook extracts entries into the memory store
+✅ test/memory/compaction_memory_hook_test.dart: hook with zero extracted entries adds nothing
+✅ test/memory/compaction_memory_hook_test.dart: a cancelled token aborts the extraction stream — the hook yields no entries (the bounded-extraction contract)
+✅ test/memory/memory_delete_test.dart: ledger clobber regression (0.2.1 append-only) deleting over a legacy count-line ledger preserves every entry
+✅ test/memory/memory_delete_test.dart: memory_delete removes an entry by id from the project scope
+✅ test/memory/memory_delete_test.dart: memory_delete returns null for an unknown id
+✅ test/memory/memory_delete_test.dart: the memory_delete tool reports deletion and unknown ids
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) delete keeps the entity file as a tombstone and hides it from list (AC1)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) the deleted/ record is byte-identical across independent stores (UT-2 merge-triviality invariant)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) double delete is idempotent and keeps a single deleted/ file (E2)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) set-difference consolidation progress works over the adapter (library 0.2.3 unprocessedDeletions, no harness change)
+✅ test/memory/tombstone_integration_test.dart: tombstone deletions through MemoryController (gh-1032 IT-1) legacy ledger-only store still answers isDeleted/hasDeletedText (E1)
+✅ test/memory/tombstone_integration_test.dart: git-support migration 0.2.1 → 0.2.3 (AC4) ensureGitSupport appends exactly the new lines, idempotently
+✅ test/memory/memory_controller_test.dart: MemoryController add stores and returns a MemoryEntry
+✅ test/memory/memory_controller_test.dart: MemoryController the storage adapter is append-capable (ledger race fix 0.2.1)
+✅ test/memory/memory_controller_test.dart: MemoryController the project store gets git support files (idempotent)
+✅ test/memory/memory_controller_test.dart: MemoryController sequential adds allocate incrementing note ids
+✅ test/memory/memory_controller_test.dart: MemoryController add with user scope and no userRoot returns no-store entry
+✅ test/memory/memory_controller_test.dart: MemoryController list returns entries from project storage
+✅ test/memory/memory_controller_test.dart: MemoryController list returns empty when storage has no notes
+✅ test/memory/memory_controller_test.dart: MemoryController formatPromptSection returns empty string with no entries
+✅ test/memory/memory_controller_test.dart: MemoryController formatPromptSection returns memory block with entries
+✅ test/memory/memory_controller_test.dart: MemoryController search falls back to keywords without LLM provider
+✅ test/memory/memory_controller_test.dart: MemoryController MemoryEntry.displayLine formats tags and text
+✅ test/memory/memory_controller_test.dart: MemoryController MemoryEntry.displayLine without tags
+✅ test/memory/memory_controller_test.dart: MemoryController list and the prompt section include the USER scope
+✅ test/memory/memory_controller_test.dart: MemoryController gh-1276 AC1: user add → list → search round-trip
+✅ test/memory/memory_controller_test.dart: MemoryController config source hot-swaps the project store without a restart
+✅ test/memory/memory_controller_test.dart: MemoryController a throwing config source keeps the current store
+✅ test/memory/memory_controller_test.dart: MemoryController onConfigChanged fires once per actual swap
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) the adapter is tombstone-capable (0.2.3)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) tombstoneEntity rewrites the file in place with the marker (AC1 seam)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) readEntity reports a tombstoned entity as absent
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) readEntity filters a hand-written tombstone of foreign shape
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) listEntityIds still yields tombstoned ids (no silent id reuse)
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) purgeTombstones removes only tombstones and returns sorted ids
+✅ test/memory/tombstone_storage_test.dart: ExecutionEnvKbStorage tombstones (flutter_agent_memory 0.2.3) deleteEntityById unlinks one existing entity, unknown id is false
+✅ test/memory/tombstone_storage_test.dart: cross-tool tombstone consistency (AC2) a store tombstoned by the library FileKbStorage reads as absent through the harness adapter
+✅ test/memory/tombstone_storage_test.dart: cross-tool tombstone consistency (AC2) a harness tombstone carries the library marker format
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider chat returns the joined text of a successful stream
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider defaultModel reflects the per-call resolution
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider defaultModel is "unknown" when no slot resolves
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider system messages merge into the context system prompt
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider an error stream throws and invokes onCancel
+✅ test/memory/harness_llm_provider_test.dart: HarnessLlmProvider a null slot throws StateError
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance maintenanceDue is true when never maintained
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance maintain writes the stamp and clears the due flag
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance the running guard makes a concurrent maintain a no-op
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance noteAddForMaintenance crosses the threshold at N adds
+✅ test/memory/memory_maintenance_test.dart: MemoryController maintenance noteAddForMaintenance stays false before the threshold
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines counts entries per type sorted
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines due flag appends the maintenance hint
+✅ test/memory/memory_maintenance_test.dart: formatMemoryStatsLines last maintenance timestamp renders when set
+✅ test/memory/memory_config_test.dart: memory: section parsing absent section leaves the config null (defaults apply)
+✅ test/memory/memory_config_test.dart: memory: section parsing projectPath + userPath parse verbatim
+✅ test/memory/memory_config_test.dart: memory: section parsing an unknown key throws ConfigException (strict schema)
+✅ test/memory/memory_config_test.dart: memory: section parsing a non-string value throws ConfigException
+✅ test/memory/memory_config_test.dart: memory: section parsing a non-map section throws ConfigException
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig absent project file → null (user config applies)
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig a project memory: section parses and wins
+✅ test/memory/memory_config_test.dart: loadProjectMemoryConfig an invalid project section throws ConfigException (strict)
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a custom project path receives the notes (not .fah/memory)
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a RELATIVE project path resolves against the project root
+✅ test/memory/memory_config_test.dart: MemoryController storage paths no override keeps the .fah/memory default
+✅ test/memory/memory_config_test.dart: MemoryController storage paths a custom user path with ~ expands against the user root
+::endgroup::
+::group::⏭️ Skipped tests
+⏭️ test/import/import_e2e_machine_test.dart: real omp store: discovery + full read of the newest session (skipped)
+machine-gated: requires FA_IMPORT_E2E=1 and a real ~/.omp/agent/sessions store
+⏭️ test/cli/ctx_preflight_compact_test.dart: an over-window history is compacted BEFORE the next request (skipped)
+Skip: giant-transcript second-process resume/input stall (own bug)
+⏭️ test/quickjs_runtime_vendor_pin_test.dart: quickjs_runtime vendored fork pins (PR #1785 CI reds) vendored hook/build.dart compiles to kernel (skipped)
+flutter_app is not pub-resolved in this leg — the hook kernel compile runs wherever the app package_config exists
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) AC2: a wrapped shell READS a file under the rw mount (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) AC3: a wrapped shell still WRITES under the rw mount (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_rw_live_test.dart: macOS kernel mode live: rw mount under a read-denied prefix (issue 709) the /Users read deny still blocks non-mounted paths (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live a redirect above the workspace fails (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live a redirect inside the workspace succeeds (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live reading /etc/hosts fails (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_live_test.dart: macOS kernel mode live writing /dev/null succeeds (skipped)
+Skip: live macOS kernel mode: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_nested_rw_live_test.dart: macOS kernel mode live: nested rw mount under a broader ro mount (issue 732) AC3: the nested rw mount READS its seed, WRITES and reads back a probe (skipped)
+Skip: live nested-rw leg: sandbox-exec not on this host
+⏭️ test/cube/backends/macos_sandbox_nested_rw_live_test.dart: macOS kernel mode live: nested rw mount under a broader ro mount (issue 732) the broader ro mount still confines the workspace around the child (skipped)
+Skip: live nested-rw leg: sandbox-exec not on this host
+⏭️ test/ci_profile_serial_precheck_test.dart: ci-sign doctor end-to-end fixtures (macOS-only — skipped) (skipped)
+scripts/ci-sign drives the macOS-only `security` CLI; this suite runs on macOS runners only
+::endgroup::
+
+🎉 14114 tests passed, 13 skipped.
+unit exit: 0
+Running build hooks...
+
+::group::✅ Passing tests
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing bare jsr is a usage error listing the verbs
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing --help inside the family wins
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing unknown verb is a usage error
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing AC1 shape: widget:test with repeated and wildcard events
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing widget:screenshot flags pass through untouched
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing unknown jsr flags are FORWARDED, never rejected (I1)
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing missing widget path operand is a usage error
+✅ test/cli/jsr_cli_test.dart: package resolution absolute file:// rootUri resolves to the package root
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing the jsr verb words never become a prompt (REG)
+✅ test/cli/cli_args_jsr_test.dart: fa jsr parsing non-jsr invocations still parse as prompts (REG)
+✅ test/cli/jsr_cli_test.dart: package resolution relative rootUri resolves against the .dart_tool directory
+✅ test/cli/jsr_cli_test.dart: package resolution missing package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution config without a jsr entry is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution malformed package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution non-map package_config is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution config without a packages list is JsrPackageMissing
+✅ test/cli/jsr_cli_test.dart: package resolution jsr without the CLI entrypoint is JsrCliEntrypointMissing
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe finds flutter in a later PATH entry (2+ entries)
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe empty PATH is not found
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe no entry carries flutter is not found
+✅ test/cli/jsr_cli_test.dart: flutter PATH probe finds the .bat candidate through a windows-style PATH
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC1: widget:test execs the jsr CLI with the verb and passthrough args
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC2: stdout/stderr chunks stream through verbatim
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC4: a failing widget test maps its exit code 1:1
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand widget:screenshot passes its flags through too
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: no jsr dependency fails clean, before any exec
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: jsr entrypoint missing names the 0.4.128 upgrade
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand AC3: flutter missing from PATH fails fast with a named hint
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand a null pathEnv (no env accessor) skips the preflight instead of claiming flutter is missing
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand spawn failure surfaces as a note and exit 1
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand quoted project paths keep the command a single sh word
+✅ test/cli/jsr_cli_test.dart: runJsrCliCommand dart executable is injectable
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error an unparseable rootUri (:::) is JsrPackageMissing, not a throw
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error a non-file rootUri (https:) is JsrPackageMissing, not a throw
+✅ test/cli/jsr_cli_test.dart: package resolution: malformed rootUri stays a clean error runJsrCliCommand surfaces both as the add-dependency note
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting POSIX default quoting is unchanged: embedded quote sh-escapes only
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting reviewer breakout shape: '& calc keeps every & inactive for cmd
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting a quote later in the arg: metachars inside the re-opened quotes stay bare, cmd never sees them active
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting trailing backslashes double; plain path backslashes survive
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting a %-bearing argument is refused clean, before any exec — cmd expands %VAR% before quote/caret parsing and quotes do not protect
+✅ test/cli/jsr_cli_test.dart: windows (cmd) quoting the same arg carries fine on the POSIX path (no refusal)
+✅ test/cli/agent_cli_jsr_test.dart: /jsr widget:test runs the jsr delegate through the session env
+✅ test/cli/agent_cli_jsr_test.dart: /jsr with an unknown verb prints usage, no exec
+✅ test/cli/agent_cli_jsr_test.dart: /jsr usage reuses the shared jsrUsage flag matrix (single source) and names the whitespace limitation
+✅ test/cli/agent_cli_jsr_test.dart: /jsr with no env accessor still execs — the harness never claims flutter is missing when it could not see PATH at all
+::endgroup::
+
+🎉 45 tests passed.
+jsr exit: 0
+format exit: 0
