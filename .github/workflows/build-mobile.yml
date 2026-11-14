@@ -150,7 +150,14 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'temurin'
-          java-version: '17'
+# gh-2176: JDK 21 — AGP 9.3.1's bundled lint (the #2112 3.50-train
+          # bump) parses javadoc through an IntelliJ platform compiled
+          # against the JDK-21 API `List.removeLast()`; under JDK 17 the
+          # call throws NoSuchMethodError inside CommentDetector and
+          # lintVitalAnalyzeRelease fails EVERY Android release build
+          # (debug builds never run lintVital — the PR gate stayed green).
+          # Guard: test/ci_android_release_jdk_guard_test.dart.
+          java-version: '21'
           cache: 'gradle'
 
       - name: Setup Flutter
@@ -343,7 +350,9 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'temurin'
-          java-version: '17'
+# gh-2176: JDK 21 fleet coherence — same rationale as build-android
+          # above (release lint needs the AGP 9.3.1 JDK floor).
+          java-version: '21'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -454,7 +463,9 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'temurin'
-          java-version: '17'
+# gh-2176: JDK 21 fleet coherence — same rationale as build-android
+          # above (release lint needs the AGP 9.3.1 JDK floor).
+          java-version: '21'
           cache: 'gradle'
 
       - name: Setup Flutter
@@ -651,7 +662,9 @@ jobs:
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: 'temurin'
-          java-version: '17'
+# gh-2176: JDK 21 fleet coherence — same rationale as build-android
+          # above (release lint needs the AGP 9.3.1 JDK floor).
+          java-version: '21'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
