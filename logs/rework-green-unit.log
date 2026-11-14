@@ -4443,3 +4443,1114 @@ updated to 9.9.9 — restart fa to use it.
 ✅ test/cli/compact_provider_error_test.dart: compactProviderError passes plain text through untouched
 ✅ test/cli/compact_provider_error_test.dart: compactProviderError caps overly long messages
 ✅ test/cli/agent_cli_transcript_command_test.dart: /transcript expand toggles the collapsed-detail state (gh-1933)
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy empty needle matches everything with score 0
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy non-matching needle returns null
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy needle longer than the haystack returns null
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy maxIndices keeps the tail of the index list
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy case-insensitive subsequence match with ascending indices
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy exact match outranks scattered subsequence
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy boundary (snake) hit outranks mid-word hit
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy camelCase hump counts as a boundary
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy contiguous runs outrank gappy matches of the same needle
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy shorter haystack wins the tie (tight-match penalty)
+✅ test/cli/fuzzy_matcher_test.dart: scoreFuzzy compareTo: score desc, then shorter text, then lexicographic
+✅ test/cli/fuzzy_matcher_test.dart: rankFuzzy drops non-matches and sorts best-first
+✅ test/cli/fuzzy_matcher_test.dart: rankFuzzy empty needle keeps candidate order up to the limit
+✅ test/cli/fuzzy_matcher_test.dart: rankFuzzy caps the result at limit
+✅ test/cli/fuzzy_matcher_test.dart: FuzzyMatch value semantics equality and hashCode compare indices elementwise
+✅ test/cli/fuzzy_matcher_test.dart: FuzzyMatch value semantics compareTo breaks score ties by length then lexicographic
+✅ test/cli/fuzzy_matcher_test.dart: FuzzyMatch value semantics toString carries score and text
+✅ test/cli/session_vacuum_boot_test.dart: sessions.vacuumLedgers at resume (issue #1882 AC2) opt-in: the resume drops superseded snapshots and reports the reclaim
+✅ test/cli/session_vacuum_boot_test.dart: sessions.vacuumLedgers at resume (issue #1882 AC2) default (no section): the boot never vacuums
+✅ test/cli/session_vacuum_boot_test.dart: sessions.vacuumLedgers at resume (issue #1882 AC2) a live presence row (another instance) skips the vacuum
+✅ test/cli/session_vacuum_boot_test.dart: sessions.vacuumLedgers at resume (issue #1882 AC2) the resume vacuum never drops request summaries (review coherence: snapshots only, deep clean stays explicit)
+✅ test/cli/add_provider_picker_test.dart: the preset picker lists GitHub Copilot
+✅ test/cli/add_provider_picker_test.dart: every preset key routes to a handler
+✅ test/cli/add_provider_picker_test.dart: every TUI picker id routes to a dispatch handler
+✅ test/cli/add_provider_picker_test.dart: the picker covers the whole catalog — preset or documented exclusion
+✅ test/cli/add_provider_picker_test.dart: routing a copilot pick starts the connect flow
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: cap-unknown refusals arm one pre-emptive pass (E1) the pass is pending after a cap-unknown refusal
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: cap-unknown refusals arm one pre-emptive pass (E1) the pass is one-shot — a second gate check finds nothing
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: cap-unknown refusals arm one pre-emptive pass (E1) a new cap-unknown refusal re-arms the pass
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: cap-unknown refusals arm one pre-emptive pass (E1) learning a numeric cap disarms the pending pass
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: cap-unknown refusals arm one pre-emptive pass (E1) the pending pass never leaks into the persisted sidecar
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: config override pin is the second tier (thread 3) the pin parses, validates, and round-trips through yaml
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: config override pin is the second tier (thread 3) a messageCap below the margin floor is rejected
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: config override pin is the second tier (thread 3) unknown override fields stay rejected (pin is no exception)
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: config override pin is the second tier (thread 3) an all-null override still counts as empty
+✅ test/cli/agent_cli_message_cap_test.dart: PR #1695: config override pin is the second tier (thread 3) the CLI policy resolves the pin over the learned record
+✅ test/cli/agent_cli_queue_slash_test.dart: /queue prints the queue hint; /queue clear without a TUI is a no-op
+✅ test/cli/settings_flow_test.dart: /settings prints the line-mode summary (bare and with args)
+✅ test/cli/settings_flow_test.dart: chat-model flow: saved provider by number, then manual model entry
+✅ test/cli/settings_flow_test.dart: chat-model flow: catalog provider, model picked from the endpoint list
+✅ test/cli/settings_flow_test.dart: chat-model flow: "+ enter manually" and an empty id keeps the model
+✅ test/cli/settings_flow_test.dart: chat-model flow cancelled at the provider pick changes nothing
+✅ test/cli/settings_flow_test.dart: chat-model flow cancelled at the manual entry changes nothing
+✅ test/cli/settings_flow_test.dart: aiin chat pick offers the fetched /models ids (#2068)
+✅ test/cli/settings_flow_test.dart: chat-model flow lists DIAL deployments for a dial provider
+✅ test/cli/settings_flow_test.dart: agent-models flow pins the subagent role to a listed DIAL deployment
+✅ test/cli/settings_flow_test.dart: agent-models flow: clear drops the role chain
+✅ test/cli/settings_flow_test.dart: dap hub flow view renders the injected snapshot
+✅ test/cli/settings_flow_test.dart: dap hub flow view without hub wiring reports the state as unavailable
+✅ test/cli/settings_flow_test.dart: dap hub flow set hub url persists through the hook
+✅ test/cli/settings_flow_test.dart: dap hub flow set agent name persists through the hook
+✅ test/cli/settings_flow_test.dart: dap hub flow set hub url notes when a higher-precedence value shadows it
+✅ test/cli/settings_flow_test.dart: dap hub flow set url without a persistence hook refuses before prompting
+✅ test/cli/settings_flow_test.dart: dap hub flow opt-out appends hub: false; the real loader opts the plugin out
+✅ test/cli/settings_flow_test.dart: dap hub flow opt-out replaces an existing hub section in place
+✅ test/cli/settings_flow_test.dart: dap hub flow opt-out creates the file when none exists yet
+✅ test/cli/settings_flow_test.dart: dap hub flow test connection reports success and failure via the seam
+✅ test/cli/settings_flow_test.dart: dap hub flow /settings summary carries the dap line
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) session scope switches the live engine without touching files
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) project scope writes the validated yaml section and goes live
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) the session-scoped engine is never persisted by the host save hook
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) cancelled at the engine pick changes nothing
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) cancelled at the scope pick changes nothing
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) global scope writes the user config and goes live
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) global scope without a home directory refuses to save
+✅ test/cli/settings_flow_test.dart: compaction engine flow (issue #288) project scope keeps the live engine when the config read fails
+✅ test/cli/settings_flow_test.dart: memory stores flow (issue #288) sets the project memory path in the project config
+✅ test/cli/settings_flow_test.dart: memory stores flow (issue #288) user path without a home directory refuses before prompting
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC1: hub picker row and line-mode summary carry the ttsr value
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC1: summary reports the not-configured state
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC2: toggle round-trips every field and keeps other sections
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC2: add persists a new rule with guards through the real parser
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC2: delete removes only the picked rule
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC3: a live engine applies the same diff and says so
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC3: without a live engine the flow names the next boot
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) AC4: a malformed section shows the verbatim error, writes nothing
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) E1: absent section offers defaults and writes a fresh block
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) E2: an unwritable config file refuses with a clear error
+✅ test/cli/settings_flow_test.dart: ttsr rules flow (issue #392) E3: every action re-reads — a concurrent edit survives
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC1: the hub picker and the /settings summary carry redaction
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC1: summary reads off when the boot disabled redaction
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) every hub row has a dispatch target (Enter never no-ops)
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC2: every section field round-trips through the yaml file
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC3: with a pipeline the write applies live; without, next boot
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC3: a pipeline-less boot states the change waits for next boot
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) AC4: an invalid allowlist regex shows the parser error, no write
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) E1: absent section — the flow writes a fresh block
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) E2: unreadable config — clear error, pipeline untouched
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) E3: reload-after-write picks up a concurrent hand edit
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) reset stats zeroes the pipeline counters
+✅ test/cli/settings_flow_test.dart: redaction flow (issue #391) cancelled at the menu writes nothing
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC1: the hub picker and the /settings summary carry the cap
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC1: the summary reads off when no cap is set
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) every hub row has a dispatch target (Enter never no-ops)
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC2: setting the cap round-trips through the yaml file
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC2: clearing the cap removes the whole agent block
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC2: clearing the cap keeps the sibling agent keys (gh-1572)
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC3: the flow states the change waits for the next boot
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC4: below the floor shows the parser error, writes nothing
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) AC4: a non-integer shows the parser error, writes nothing
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) a cap at or above the model window warns it clamps nothing
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) E1: absent section — the flow writes a fresh block
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) E2: unreadable config — clear error, nothing written
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) clearing with no cap set is a no-op
+✅ test/cli/settings_flow_test.dart: context cap flow (issue #394) cancelled at the menu writes nothing
+✅ test/cli/provider_wizard_loud_save_test.dart: wizard loud save failure (gh-1679 UT-1, IT-1, AC1, AC4) a failing store prints slot + label + diagnostic on the spot, records the entry flagged, and never renders the key value
+✅ test/cli/provider_wizard_loud_save_test.dart: wizard loud save failure (gh-1679 UT-1, IT-1, AC1, AC4) a working store keeps the flow byte-identical (no loud message, no flag)
+✅ test/cli/provider_wizard_loud_save_test.dart: wizard loud save failure (gh-1679 UT-1, IT-1, AC1, AC4) wizard and /key set failure handling converge (AC5 parity)
+✅ test/cli/provider_wizard_loud_save_test.dart: macOS default-keychain repair offer (gh-1679 AC7) an explicit "n" degrades to advisory text; nothing runs without the yes
+✅ test/cli/provider_wizard_loud_save_test.dart: macOS default-keychain repair offer (gh-1679 AC7) a "y" runs the exact repair command and re-attempts the save
+✅ test/cli/provider_wizard_loud_save_test.dart: macOS default-keychain repair offer (gh-1679 AC7) the canceled-authorization failure shape also gets the repair offer (gh-1679 review: the incident second live shape)
+✅ test/cli/provider_wizard_loud_save_test.dart: macOS default-keychain repair offer (gh-1679 AC7) a repaired keychain whose retried save fails again prints the loud line again (gh-1679 review: the retry is never mute)
+✅ test/cli/provider_wizard_loud_save_test.dart: no-token edit keeps the keyNotPersisted marker (gh-1679 review) a store-independent edit (model-only, no fresh token) does not clear the flag
+✅ test/cli/provider_wizard_loud_save_test.dart: no-token edit keeps the keyNotPersisted marker (gh-1679 review) a no-token RENAME carries the flag onto the rebuilt entry
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt no prompt and no positionals means interactive REPL (null)
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt -p text is used verbatim, never resolved as a file
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt --prompt-file content is the prompt verbatim
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt --prompt-file content is never further resolved
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a missing --prompt-file is a usage error
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt an unreadable --prompt-file is a usage error
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt an undecodable --prompt-file is a usage error
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a markdown file is inlined as the prompt
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt .markdown and .txt files are inlined too
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt the extension match is case-insensitive
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt trailing text after a text file appends as the instruction
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a binary file becomes a path reference
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt trailing text after a binary file appends as the instruction
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a text file that fails to decode falls back to the path reference
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a missing file is plain prompt text, joined with the rest
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt a sentence containing slashes is not treated as a file
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt plain positionals join with spaces
+✅ test/cli/headless_prompt_test.dart: resolveHeadlessPrompt relative paths resolve against the process working directory
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie sso saves a custom provider, stores the cookie and switches
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO same-account re-login still shows the project picker and the keep-current row preserves the pair (gh-1809)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO re-login finds a renamed entry by base URL and keeps its name
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie sso with an existing entry asks for a name so a second account gets its own entry
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO selecting a saved CodeMie provider with an expired cookie re-runs SSO
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO a failed projects fetch is loud and the entry has no project (gh-1809 AC3/AC4)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO first connect picks a project and it persists and rides the requests (gh-1809 AC4)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO the models list rides the picked project (issue #1941 AC1)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie sso rejects a bad org URL
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie jwt rejects a bad org URL
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie jwt rejects an invalid token format
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie jwt rejects an expired token
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie jwt cancels on empty token
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie bogus shows usage
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie jwt saves a custom provider, stores the token and switches
+✅ test/cli/agent_cli_prompt_recall_test.dart: structured engine (the default): the recall contract is present
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO /provider codemie shows the URL prompt then the auth-method picker (gh-1809 AC1 default URL)
+✅ test/cli/agent_cli_prompt_recall_test.dart: an explicit structured setting composes the contract too
+✅ test/cli/agent_cli_prompt_recall_test.dart: classic engine: the contract is absent (byte-scan, AC6/E3)
+✅ test/cli/agent_cli_prompt_recall_test.dart: an explicit systemPrompt override stays byte-exact (no contract)
+✅ test/cli/agent_cli_prompt_recall_test.dart: the contract appends after the mode prompt, byte-identical to the md
+✅ test/cli/agent_cli_prompt_recall_test.dart: session_search is registered under BOTH engines (always-on tool)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO bare /provider codemie cancels on Ctrl-C, rejects a non-http URL, and https-defaults a bare host (gh-1809 AC1)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO bare /provider codemie accepts a custom org URL end-to-end (gh-1809 AC1)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO JWT re-login to an existing entry leads with the keep-current row (gh-1809 AC2/AC5)
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO selecting a saved CodeMie JWT provider switches with Bearer auth
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO selecting a saved CodeMie JWT provider with an expired token reports expiry
+✅ test/cli/codemie_setup_test.dart: CodeMie SSO selecting a saved CodeMie JWT provider with a missing token reports it
+✅ test/cli/codemie_setup_test.dart: startup restore rides the saved CodeMie project as a header (gh-1809 AC4)
+✅ test/cli/scripted_test_stream_test.dart: streams a text turn verbatim and stops
+✅ test/cli/scripted_test_stream_test.dart: streams a tool call with toolUse stop reason
+✅ test/cli/scripted_test_stream_test.dart: consumes turns in call order, then repeats the last
+✅ test/cli/scripted_test_stream_test.dart: a script-less boot yields no scripted function
+✅ test/cli/agent_cli_folder_model_restore_test.dart: resuming a session applies that folder’s saved model triple
+✅ test/cli/agent_cli_folder_model_restore_test.dart: a folder-state restore adopts the saved entry’s authHeader (issue #964)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: a folder-state restore adopts the saved entry’s CodeMie project (issue #1941)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: a saved entry spelled with a trailing slash still supplies its authHeader on restore (sameEndpoint rule — round-4 follow-up)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: a name-shaped folder state restores through the seam (issue #772)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: an explicit launch pin disables the folder restore
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) UT-1: two providers sharing a modelId — the session resumes onto the NAMED entry (AC1)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) IT-3: a store-backed key resumes with no env var exported (AC3)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) E3: a missing store key degrades to a named re-auth note
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) E1: a deleted provider entry degrades to endpoint-keyed restore
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) REG-5: a pre-change state file (no provider name) restores like today
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) roles mode: the restored pin re-points the default chain (AC3)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) roles mode: the restored pin keeps the saved entry authHeader (issue #964)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) roles mode: a failed re-pin keeps the previous model AND chain (no status/stream split)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) E1: a stale LEAF pin degrades with the named note (model kept)
+✅ test/cli/agent_cli_folder_model_restore_test.dart: provider pin restore (gh-1000) AC1: a live-switch leaf pin survives a folder-state drift
+✅ test/cli/agent_cli_schedule_recipient_test.dart: gh-1947 AC1: a main-agent schedule defaults to MAIN, not the child
+✅ test/cli/agent_cli_schedule_recipient_test.dart: gh-1947 AC2: an explicit to: is honored and the response names the recorded recipient
+✅ test/cli/agent_cli_schedule_recipient_test.dart: gh-970 preserved: a live child scheduling inside its own run keeps the child mailbox (the in-flight guard only rejects STALE scopes)
+✅ test/cli/agent_cli_schedule_recipient_test.dart: gh-1947 review: the in-flight guard rejects a STALE zone scope and keeps a LIVE child’s mailbox
+✅ test/cli/agent_cli_folder_model_restore_test.dart: mail-wake credential binding (gh-1226 AC1) the mail-wake turn serves the session’s own z.ai binding, not the launch-default provider — restore → turn → wake boot with no folder state (gh-1226 AC1)
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: a schedule_message result arms a pending-wait that persists and renders
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: re-arming the same timer is a no-op, not a duplicate
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: a result line without a scheduled id is reported, not written
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: classic-engine sessions never grow the ledger (E3)
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: the live watcher records a schedule_message hit into the ledger
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: error results and foreign tools never reach the ledger
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: a schedule result without a scheduled id is reported on io
+✅ test/cli/agent_cli_persist_pending_wait_test.dart: a ledger crash cannot fail the tool call the schedule succeeded
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec collapses --flag value pairs; later duplicates win
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec positional noise and valueless trailing flags are ignored
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec bare boolean flags never consume the next flag (issue #792 review: --relay-allow-any-host --bind lan)
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec fa hub token: hubTokenHint reads the running hub relay bearer and names the pane storage key (issue #792 provisioning)
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec fa hub token: no pid file or no relay secret answers null (the command refuses by name, never prints an empty hint)
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec fa hub token refusal: hubTokenRefusalMessage names the actual situation (protected hub vs not running)
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec writeSecretFile0600: content survives a chmod-less platform (guarded chmod, never an empty state file)
+✅ test/cli/fah_hub_serve_dispatch_test.dart: parseFlagValues / parseHubServeSpec port: a bad value keeps the default; secret passes through
+✅ test/cli/fah_hub_serve_dispatch_test.dart: hubPidFileFor DAP_HUB_PID_FILE wins, then home, then HOME/USERPROFILE
+✅ test/cli/fah_hub_serve_dispatch_test.dart: resolveHubServeSecret --secret beats DAP_HUB_SECRET beats the persisted state
+✅ test/cli/fah_hub_serve_dispatch_test.dart: resolveHubServeSecret nothing stored and no interactive terminal: null, no prompt
+✅ test/cli/fah_hub_serve_dispatch_test.dart: persistHubSecretChoice a chosen password is stored
+✅ test/cli/fah_hub_serve_dispatch_test.dart: persistHubSecretChoice an explicit empty choice is remembered as open
+✅ test/cli/fah_hub_serve_dispatch_test.dart: persistHubSecretChoice persistence failure never throws (best-effort)
+usage: fa hub serve [--port N] [--secret S] [--bind lan] | fa hub token
+usage: fa hub serve [--port N] [--secret S] [--bind lan] | fa hub token
+✅ test/cli/fah_hub_serve_dispatch_test.dart: runHubCommand dispatch no verb / unknown verb: usage, exit 1
+✅ test/cli/fah_hub_serve_dispatch_test.dart: hubGracefulExit (the seam) stops the hub, clears the pid state, exits 0
+✅ test/cli/fah_hub_serve_dispatch_test.dart: hubGracefulExit (the seam) a stuck pid file never blocks shutdown
+✅ test/cli/fah_hub_serve_dispatch_test.dart: wireHubTerminate: wired but not fired — the hub keeps serving
+✅ test/cli/fah_hub_serve_dispatch_test.dart: hubTerminateHandler: firing it runs the graceful exit
+✅ test/cli/console_logging_test.dart: LogLevel.parse accepts the six keywords, case-insensitive, trimmed
+✅ test/cli/console_logging_test.dart: LogLevel.parse invalid input is LOUD — never a silent fallthrough
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) defaults: interactive warn, file debug, nothing explicit
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) flag > env > project > user
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) env > project > user
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) project > user > default; config alone is NOT explicit
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) blank FA_LOG_LEVEL keeps the chain
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) invalid FA_LOG_LEVEL throws ConfigException naming the var
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) file level resolves independently; format+timeFormat chain
+✅ test/cli/console_logging_test.dart: resolveLogSettings precedence (issue #2117 AC1) --debug-secrets/FA_DEBUG_KEYS map to the keys=debug floor
+✅ test/cli/console_logging_test.dart: per-sink gating (issue #2117 AC1) console warn passes error/warn, hides info/debug/trace
+✅ test/cli/console_logging_test.dart: per-sink gating (issue #2117 AC1) sinks filter independently
+✅ test/cli/console_logging_test.dart: per-sink gating (issue #2117 AC1) file off silences fa.log; console off silences the console
+✅ test/cli/console_logging_test.dart: per-sink gating (issue #2117 AC1) the keys floor lifts keys-category lines to debug, never past it, and never resurrects off
+✅ test/cli/console_logging_test.dart: pattern rendering (issue #2117 AC2) every placeholder renders
+✅ test/cli/console_logging_test.dart: pattern rendering (issue #2117 AC2) a custom timeFormat rides the render
+✅ test/cli/console_logging_test.dart: pattern rendering (issue #2117 AC2) unknown placeholders stay literal
+✅ test/cli/console_logging_test.dart: pattern rendering (issue #2117 AC2) time tokens pad; unsupported tokens pass through
+✅ test/cli/console_logging_test.dart: pattern rendering (issue #2117 AC2) error level renders its own tag
+✅ test/cli/key_model_edit_test.dart: line-mode key set prompt /key set NAME (no value) prompts for value in line mode
+✅ test/cli/key_model_edit_test.dart: line-mode key set prompt /key set NAME (no value) cancels on empty input
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip parses console/file/format/timeFormat
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip unknown key throws; bad level throws; non-map throws
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip null node parses as null
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip a blank format/timeFormat is UNSET, never an empty pattern (issue #2117 review)
+✅ test/cli/key_model_edit_test.dart: line-mode model-edit /model-edit shows limits with no args in line mode
+✅ test/cli/key_model_edit_test.dart: line-mode model-edit /model-edit contextWindow 128000 applies
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip CliConfig round-trips a hand-written section through saveCliConfig
+✅ test/cli/console_logging_test.dart: parseLoggingSection + CliConfig round-trip an apostrophe in the format survives the save (issue #2117 review — ' doubled, never corrupting the yaml)
+✅ test/cli/key_model_edit_test.dart: line-mode model-edit /model-edit maxTokens 8192 applies
+✅ test/cli/console_logging_test.dart: loadProjectLoggingSection missing project file loads as null
+✅ test/cli/key_model_edit_test.dart: line-mode model-edit /model-edit surfaces the resolved capability notes and pin source
+✅ test/cli/console_logging_test.dart: loadProjectLoggingSection parses the project section
+✅ test/cli/console_logging_test.dart: loadProjectLoggingSection file without a logging section is null
+✅ test/cli/console_logging_test.dart: loadProjectLoggingSection invalid section throws loudly (strict, like the user config)
+✅ test/cli/key_model_edit_test.dart: line-mode model-edit /model-edit bad field shows usage
+✅ test/cli/console_logging_test.dart: loadProjectLoggingSection corrupt yaml loads as null
+✅ test/cli/key_model_edit_test.dart: formatTokenPreset formats K, M, and raw
+✅ test/cli/key_model_edit_test.dart: parseTokenPreset parses K, M, and raw
+✅ test/cli/fa_tui_resume_anchor_controller_test.dart: resumed boot at 80 x 24 keeps the summary and the WHOLE replayed tail on the first glass (wave-14 AC1)
+✅ test/cli/fa_tui_resume_anchor_controller_test.dart: resumed boot at 100 x 40 keeps the summary and the WHOLE replayed tail on the first glass (wave-14 AC1)
+✅ test/cli/fa_tui_resume_anchor_controller_test.dart: the first LIVE submit dissolves the boot anchor — the window rides the bottom (#1348)
+✅ test/cli/fa_tui_resume_anchor_controller_test.dart: a boot whose transcript fits the glass NEVER folds the banner (CI round-2 regression: the queue-lag anchor parked the window at the transcript end and [Model] never reached the glass)
+✅ test/cli/fa_tui_resume_anchor_controller_test.dart: a marathon transcript still rides the bottom — the tail outranks the boot region when the two cannot share the glass
+✅ test/cli/agent_cli_submit_cancel_compaction_test.dart: interactive submit cancel during the pre-flight compaction esc mid-pre-flight cancels the submission: no crash, neutral status, prompt not sent, next prompt recovers (IT-1)
+✅ test/cli/agent_cli_submit_cancel_compaction_test.dart: headless submit cancel during the pre-flight compaction esc mid-pre-flight exits 130 with no error line, prompt not sent (IT-2)
+✅ test/cli/agent_cli_submit_cancel_compaction_test.dart: the live TUI submit boundary esc mid-pre-flight restores the composer text (IT-3)
+✅ test/cli/agent_cli_submit_cancel_compaction_test.dart: regression: esc during a normal streaming run keeps its current behavior: aborted transcript, no cancel receipt, no error line (REG-1)
+✅ test/cli/tui_editor_fork_sync_guard_test.dart: vendored tui_editor documents its deliberate fork deviation (undoStack → _undoStack, gh-1547)
+✅ test/cli/stream_liveness_test.dart: streamLivenessLine distinct (streaming) suffix over the pinned grep anchor
+✅ test/cli/stream_liveness_test.dart: AC1: heartbeat while unrendered events flow prints at the cadence; elapsed counts from the request start
+✅ test/cli/stream_liveness_test.dart: AC1: heartbeat while unrendered events flow events arriving before the threshold still produce the first line at the first tick past it (dirty survives a silent tick)
+✅ test/cli/stream_liveness_test.dart: AC1: heartbeat while unrendered events flow disarms the moment a renderable byte prints (text delta)
+✅ test/cli/stream_liveness_test.dart: AC1: heartbeat while unrendered events flow per-request lifecycle: the next request re-arms (E2)
+✅ test/cli/stream_liveness_test.dart: AC1: heartbeat while unrendered events flow re-arming resets the dirty window (a fresh request starts silent until its own first event)
+✅ test/cli/stream_liveness_test.dart: AC2: dead-stream discrimination a request that emits NO events never heartbeats (tier-2 owns that window)
+✅ test/cli/stream_liveness_test.dart: AC2: dead-stream discrimination a request that heartbeats and then goes event-silent prints at most one more line, then silence — the watchdog still arbitrates
+✅ test/cli/stream_liveness_test.dart: E6: misconfigured cadence falls back, never spins toolLivenessSeconds 0 falls back to the tool-liveness default
+✅ test/cli/stream_liveness_test.dart: E6: misconfigured cadence falls back, never spins a negative cadence falls back too
+✅ test/cli/stream_liveness_test.dart: E6: misconfigured cadence falls back, never spins tickSeconds 0 disables the production chain; the tick seam still evaluates
+✅ test/cli/stream_liveness_test.dart: lifecycle edges stop() disarms and drops the dirty window (message end, E4)
+✅ test/cli/stream_liveness_test.dart: lifecycle edges events on a disarmed tracker are no-ops (host hooks fire on every event; the tracker stays out when the feature is not active — TUI / --stream-thinking)
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing sendOutput before run buffers and flushes without a program
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing openPicker resolves the initial selection by key
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing openPrompt completer survives copyWith (regression test)
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing prompt mode: a ctrl combo never leaks its letter into the buffer (the Cmd+Left/aaaa regression)
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing openPrompt Esc cancels and resolves with TuiPromptCancelled
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing prompt mode hides the physical cursor (inline caret only)
+✅ test/cli/fa_tui_controller_overlay_test.dart: FaTuiController pre-run queueing generic picker hides the cursor; slash menu keeps it
+✅ test/cli/fa_tui_controller_overlay_test.dart: terminal input sanitization helpers sttyDeviceFlag is -f on macOS and -F elsewhere
+✅ test/cli/fa_tui_controller_overlay_test.dart: terminal input sanitization helpers sttySanitizeInput returns trimmed saved termios
+✅ test/cli/fa_tui_controller_overlay_test.dart: terminal input sanitization helpers sttySanitizeInput returns null when saving fails
+✅ test/cli/fa_tui_controller_overlay_test.dart: terminal input sanitization helpers sttySanitizeInput returns null when clearing fails
+✅ test/cli/fa_tui_controller_overlay_test.dart: terminal input sanitization helpers sttySanitizeInput returns null on ProcessException
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled follow-ups indicator (issue #115) pending follow-ups render on top of the Working row while busy
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled follow-ups indicator (issue #115) the indicator stays visible while idle
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled follow-ups indicator (issue #115) a zero count clears the indicator
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled follow-ups indicator (issue #115) an already-due record reads "due now", never a negative delay
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled countdown tick (issue #213) UT-tick: the idle countdown flips 14m -> 13m at the minute boundary
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled countdown tick (issue #213) UT-no-timer: idle-and-unscheduled arms no tick and a stray tick never re-arms
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled countdown tick (issue #213) UT-due: crossing the due time while idle flips the row to "due now" on the next tick
+✅ test/cli/fa_tui_controller_overlay_test.dart: scheduled countdown tick (issue #213) UT-busy-parity: repeated status pushes never stack a second tick, and a fired tick disarms once the count drops to 0
+✅ test/cli/fa_tui_controller_overlay_test.dart: readline editing keys (issue #275) ctrl+k kills to line end; at the cursor end it is a no-op
+✅ test/cli/fa_tui_controller_overlay_test.dart: readline editing keys (issue #275) ctrl+y yanks the last kill; consecutive yanks walk the ring
+✅ test/cli/fa_tui_controller_overlay_test.dart: readline editing keys (issue #275) ctrl+t transposes at the cursor; empty input is a no-op
+✅ test/cli/fa_tui_controller_overlay_test.dart: readline editing keys (issue #275) ctrl+z undoes the last edit group
+✅ test/cli/fa_tui_controller_overlay_test.dart: readline editing keys (issue #275) a ! line completes the trailing shell word from workspace paths
+✅ test/cli/fa_tui_controller_overlay_test.dart: composer overlay helpers groupOf classifies skill keys apart from commands
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) hub keys drive the tree selection
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) tree aliases: hjkl move/collapse, q closes, unknown is a no-op
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) enter keeps the overlay open and calls back with the selection
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) esc closes the overlay and reports close
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) transcript esc goes back with the overlay still open
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) ctrl+c double-press works with the overlay open (issue #830)
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) a host re-push carries the selection
+✅ test/cli/fa_tui_controller_overlay_test.dart: agents hub overlay (issue #277) view renders the hub frame while open
+✅ test/cli/agent_cli_headless_shell_job_liveness_test.dart: a 12m quiet job at a 5m cadence steers exactly 2 interim notices (at 5m and 10m) with the correct id/elapsed/tail, then the settle still drains normally
+✅ test/cli/agent_cli_headless_shell_job_liveness_test.dart: a model probe (bash_job status) after the first notice suppresses the next threshold crossing
+✅ test/cli/agent_cli_headless_shell_job_liveness_test.dart: a late drain wake (a long reaction run) steers ONE notice PER newly-crossed quiet bucket — a burst never collapses crossings
+✅ test/cli/text_format_test.dart: formatArgs renders key=value pairs joined by commas
+✅ test/cli/text_format_test.dart: formatArgs string values are JSON-quoted, numbers are bare
+✅ test/cli/text_format_test.dart: formatArgs caps at 100 columns with an ellipsis
+✅ test/cli/text_format_test.dart: formatArgs unquoted rendering of exactly 100 chars is not truncated
+✅ test/cli/text_format_test.dart: formatArgs quoted rendering counts the 2 JSON quote chars toward the cap
+✅ test/cli/text_format_test.dart: formatArgs one char over the cap truncates mid-quote (closing quote cut)
+✅ test/cli/text_format_test.dart: formatArgs empty args render as an empty string
+✅ test/cli/text_format_test.dart: safeJsonEncode encodes plain values as JSON
+✅ test/cli/text_format_test.dart: safeJsonEncode a cyclic structure degrades to the placeholder, never throws
+✅ test/cli/text_format_test.dart: safeJsonEncode an unserializable object degrades to the placeholder
+✅ test/cli/text_format_test.dart: safeJsonEncode matches jsonEncode for serializable input (lossless)
+✅ test/cli/finalize_gate_ledger_persist_test.dart: the persisted final assistant record contains no task-ledger block
+✅ test/cli/finalize_gate_ledger_persist_test.dart: ledger free-text is redacted through the host pipeline
+✅ test/cli/finalize_gate_ledger_persist_test.dart: structured fields survive the redaction pass intact
+✅ test/cli/finalize_gate_ledger_persist_test.dart: no pipeline: the record persists verbatim (byte-identical legacy)
+✅ test/cli/agent_cli_over_window_windowed_resume_test.dart: over-window continuation survives a hidden range with evicted records (windowed marathon resume)
+✅ test/cli/ask_menu_test.dart: askQuestionLines one question renders header + one row per option
+✅ test/cli/ask_menu_test.dart: askQuestionLines a multi-question batch shows 1-based progress on the header
+✅ test/cli/ask_menu_test.dart: askQuestionLines a single question shows no progress suffix
+✅ test/cli/ask_menu_test.dart: askQuestionLines options are numbered 1-based and keep their descriptions
+✅ test/cli/ask_menu_test.dart: askQuestionLines only the recommended option carries the marker
+✅ test/cli/ask_menu_test.dart: askQuestionLines a blank description renders like none at all
+✅ test/cli/ask_menu_test.dart: pickedLabel an empty selection renders as a dash
+✅ test/cli/ask_menu_test.dart: pickedLabel selections render 1-based, sorted, comma-separated
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) a stale snapshot save keeps providers another process added (IT-clobber: kimi_me survives)
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) concurrent writers adding different providers both land (no lost update under interleaved writes)
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) concurrent writers adding the SAME provider yield one entry (E1)
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) an edit to an existing entry and another writer's add both land (E2)
+warning: dropped customProviders entries named after built-in providers (openai) — reserved names, see issue #221
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) a deleted ghost stays deleted: a stale save never resurrects an entry named after a built-in provider
+warning: dropped customProviders entries named after built-in providers (openai) — reserved names, see issue #221
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) a ghost entry built in memory is never persisted
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) corrupt yaml on disk makes the save refuse loudly without clobbering the file (E3)
+✅ test/cli/cli_config_merge_test.dart: saveCliConfig merge-before-write (issue #221) writes are atomic: concurrent large saves leave no temp files and always a parseable document
+✅ test/cli/cli_config_merge_test.dart: reserved provider names (issue #221 ghost) CustomProviderRegistry.add rejects catalog names
+✅ test/cli/cli_config_merge_test.dart: reserved provider names (issue #221 ghost) CustomProviderRegistry.add still accepts ordinary names
+✅ test/cli/cli_config_merge_test.dart: reserved provider names (issue #221 ghost) load drops reserved-name entries with the rest intact
+✅ test/cli/cli_config_merge_test.dart: tui.theme (issue #279) fromYaml reads the nested tui.theme key
+✅ test/cli/cli_config_merge_test.dart: tui.theme (issue #279) absent key stays null
+✅ test/cli/cli_config_merge_test.dart: tui.theme (issue #279) toYaml round-trips a set theme and omits a null one
+✅ test/cli/pi_hello_parity_test.dart: AC2: fa-pi initial context ≤ pi bare prompt baseline (chars/4 both sides)
+✅ test/cli/pi_hello_parity_test.dart: fa-pi initial context is strictly leaner than default mode
+✅ test/cli/agent_hub_overlay_guard_test.dart: child events never force the closed hub open; /agents still opens and live-refreshes it (#382)
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the macOS read uses the fa-clip transport the image probe never shells out to osascript
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the macOS read uses the fa-clip transport the probe walks the helper flavor ladder png → jpeg → tiff
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the macOS read uses the fa-clip transport a png-flavor hit returns the raw bytes untouched
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the macOS read uses the fa-clip transport a jpeg hit on a png-less pasteboard skips the rest
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: fa-clip failure shapes degrade to named unavailable a missing helper names the transport and the expected location
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: fa-clip failure shapes degrade to named unavailable a crashing helper surfaces the transport failure by name
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: fa-clip failure shapes degrade to named unavailable a helper dying mid-ladder does not reach the sips conversion
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the TIFF ladder keeps the gh-1575 sips conversion a tiff-only pasteboard converts to PNG via sips
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: the TIFF ladder keeps the gh-1575 sips conversion a failing tiff→png conversion stays a named unavailable
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: transport gates (REG, CI) AC1 — osascript is absent from the clipboard read path (bin/ + lib/src/cli/)
+✅ test/cli/fa_clip_helper_test.dart: gh-2040: transport gates (REG, CI) AC7 — the fa-clip helper source carries no AppleScript surface
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC1: line mode, flag on thinking deltas print dimmed, in order, before the answer; the answer still renders once at message end (#774)
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC1: line mode, flag on mixed interleave (E1): each burst dims around the buffered answer
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC1: line mode, flag on a PURE-THINKING message (no text delta) closes the dimmed stream line at message end
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC2: headless -p, flag on captured stdout carries the dimmed thinking before the answer, interleaved with the tool card across turns
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC3: flag off (default) is byte-identical line mode styled surface: thinking never reaches the output
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC3: flag off (default) is byte-identical headless raw passthrough: unchanged text stream, no thinking
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC5: SGR discipline a 10KB single-delta burst dims verbatim — one SGR pair, no per-delta markdown
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC4: reasoning liveness (flag off) a silent stream prints the periodic `… reasoning Ns` line on the waiting cadence and stops at the first event
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC4: reasoning liveness (flag off) a normally streaming model produces zero liveness lines
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC4: reasoning liveness (flag off) a provider request that FAILS before its first event disarms the watch (the error turn is visible progress)
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC4: reasoning liveness (flag off) flag on: the watch never arms — the live stream owns visibility
+✅ test/cli/agent_cli_thinking_stream_test.dart: AC4: reasoning liveness (flag off) line mode arms the same watch (same records as headless)
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) AC3: thinking-only deltas keep stdout growing with `… reasoning Ns (streaming)` heartbeat lines; the tier-2 line stops at the first event
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) AC2: an event-silent stream stops heartbeating — at most one more line after the last event, then pane silence
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) AC2: a request with NO events still heartbeats via tier-2 only (no `(streaming)` line)
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) AC5: a NON-reasoning stream (text renders immediately) produces zero heartbeat lines
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) --stream-thinking: rendered deltas own the signal, no heartbeat (AC5 output unchanged)
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) E2: tool rows disarm the heartbeat; the next request re-arms it
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) line mode arms the same heartbeat (shared code path)
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) E3: the compaction window arms the tier-2 reasoning line — no silent multi-minute summarization span in the pane
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) E4: abort mid-heartbeat — the run ends cleanly and no `(streaming)` line ever prints after the abort
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) E5: stream-json mode — stdout stays structured, the heartbeat rides stderr, the FIRST-line contract is unchanged
+✅ test/cli/agent_cli_thinking_stream_test.dart: gh-1430: stream liveness heartbeat (flag off) E5: HEP events mode — stdout stays the frame stream, the heartbeat rides stderr, hep_header stays FIRST
+✅ test/cli/agent_cli_thinking_stream_test.dart: reasoningLivenessLine the pinned grep-friendly format
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC1 — above-the-fold indicator during tail-follow rows hiding above the fold render the textless rule under the history window
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC1 — above-the-fold indicator during tail-follow the rule keys on WRAPPED rows, not logical lines (CJK-safe)
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC1 — above-the-fold indicator during tail-follow no rule at offset 0 and none when the tail latch is detached
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC2 — user scroll releases the pin, bottom re-latches (#1348) a wheel-up releases the pin; the percent rule owns the row
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC2 — user scroll releases the pin, bottom re-latches (#1348) detached, new activity never moves the window — the percent rule is the jump-to-bottom affordance
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC2 — user scroll releases the pin, bottom re-latches (#1348) page-down to the exact bottom re-latches tail-follow
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC3 — submit lands at the bottom, no blank void (#1348 AC1) a submitted message rides the bottom with prior history directly above it
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC3 — submit lands at the bottom, no blank void (#1348 AC1) a short turn into a long transcript shows NO blank void below the echo (the reported symptom)
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC4 — the indicator lives inside the frame budget one-row viewport history still paints the rule without stealing the prompt chrome
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC4 — the indicator lives inside the frame budget zero-history viewport yields the rule entirely (E2)
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC5 — reset-to-bottom paths re-evaluate the rule submit re-anchors the window at the live edge
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC5 — reset-to-bottom paths re-evaluate the rule steering re-anchors the window at the live edge
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC5 — reset-to-bottom paths re-evaluate the rule queue drain re-anchors the window at the live edge
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC6/E4 — mouse-mode interplay unchanged captured wheel scrolls the in-app viewport (percent shows)
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC6/E4 — mouse-mode interplay unchanged native wheel does not repaint or move the viewport
+✅ test/cli/fa_tui_viewport_fold_test.dart: Edge cases E1: resize mid-stream re-renders the rule, latch survives
+✅ test/cli/fa_tui_viewport_fold_test.dart: Edge cases E3: one-row response never shows the rule (idle and busy)
+✅ test/cli/fa_tui_viewport_fold_test.dart: Edge cases E5: tall from the first streamed row — rule present from the first overflow
+✅ test/cli/fa_tui_viewport_fold_test.dart: Edge cases E6: a single hidden row already renders the rule
+✅ test/cli/fa_tui_viewport_fold_test.dart: Edge cases AC1 byte-scan: the streaming rule row carries NO text glyphs
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim keeps the window on the live edge — the tail stays on the glass
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim shifts the pinned sticky index by the cut
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim landing in an open code fence shifts by cut - 1
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim that swallows the pinned echo drops the pin
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest the submit echo trim keeps the echo on the glass at the bottom
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim during queue drain shifts the pinned sticky index
+✅ test/cli/fa_tui_viewport_fold_test.dart: head-trim keeps the pinned echo honest a trim during steering shifts the sticky pin and the boot anchor
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC7 — byte-identical rendering where the feature is inert offset-0 and detached-percent frames match pristine bytes
+✅ test/cli/fa_tui_viewport_fold_test.dart: AC7 — byte-identical rendering where the feature is inert follow frame after a live submit (drift guard)
+✅ test/cli/fa_tui_viewport_fold_test.dart: resume rides the closed moment (bottom); live rides the bottom a resumed transcript that fits the glass shows every row
+✅ test/cli/fa_tui_viewport_fold_test.dart: resume rides the closed moment (bottom); live rides the bottom a resumed transcript taller than the glass rides the bottom under the textless rule
+✅ test/cli/fa_tui_viewport_fold_test.dart: resume rides the closed moment (bottom); live rides the bottom the first LIVE submit after a resume rides the bottom
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder without repair hooks (default = strict utf8) ASCII lines pass through
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder without repair hooks (default = strict utf8) true UTF-8 multi-byte text passes through
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 2 — legacy single-byte pages lone CP866 byte decodes through singleByteDecode
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 2 — legacy single-byte pages a run of legacy bytes decodes one by one
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 2 — legacy single-byte pages legacy bytes interleaved with ASCII
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 2 — legacy single-byte pages without singleByteDecode legacy bytes surface as U+FFFD
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 1 — CP-6501 translation mojibake C3 AF pair decodes to ï then repairs to п
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 1 — CP-6501 translation mojibake a mojibake word repairs fully
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 1 — CP-6501 translation mojibake mojibake mixed with true UTF-8 Cyrillic
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 1 — CP-6501 translation mojibake true Latin-1 range chars also repair (documented trade-off)
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder shape 1 — CP-6501 translation mojibake chars outside the Latin-1 range never repair
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder chunked streaming multi-byte sequence split across chunks decodes once complete
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder chunked streaming true UTF-8 Cyrillic split across chunks
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder chunked streaming a legacy byte after a partial sequence head
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder chunked streaming incomplete tail is held across events, dropped at stream end
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder chunked streaming incomplete tail without singleByteDecode is held too
+✅ test/cli/console_line_decoder_test.dart: ConsoleLineDecoder line-splitter integration works under Stream.transform like the CLI wires it
+✅ test/cli/agent_cli_handoff_test.dart: handoffEditorCommand platform quoting (gh-2102 review) POSIX sh -c: single quotes with the '\'' escape
+✅ test/cli/agent_cli_handoff_test.dart: handoffEditorCommand platform quoting (gh-2102 review) Windows cmd /c: double quotes — single quotes are LITERAL there and used to ride into the file name, so the editor could never open the real digest (gh-2102 review)
+✅ test/cli/agent_cli_handoff_test.dart: /handoff edits the digest and seeds a fresh session; the old session stays byte-identical
+✅ test/cli/agent_cli_handoff_test.dart: /handoff without an editor keeps the generated digest and says so
+✅ test/cli/agent_cli_handoff_test.dart: an emptied digest cancels the handoff — no new session
+✅ test/cli/agent_cli_handoff_test.dart: a failed digest keeps the session — no switch, visible error
+✅ test/cli/agent_cli_handoff_test.dart: /handoff on an empty session is a no-op with a hint
+✅ test/cli/agent_cli_handoff_test.dart: /help lists /handoff
+✅ test/cli/agent_cli_handoff_test.dart: an aborted digest stays in the session
+✅ test/cli/agent_cli_handoff_test.dart: a failing editor keeps the generated digest
+✅ test/cli/agent_cli_handoff_test.dart: Ctrl-C cancels the digest call (#1085 M3): "handoff interrupted", no session switch, and the next turn is not insta-aborted (gh-2102 review)
+✅ test/cli/fa_tui_boot_output_coalesce_test.dart: pre-run sendOutput coalesces into one markdown pass (#503)
+✅ test/cli/fa_tui_boot_output_coalesce_test.dart: pre-run output interleaved with a non-output message keeps order
+✅ test/cli/transcript_markdown_perf_test.dart: growing tail throttle: huge single-line stream updates ~10Hz, final state byte-exact
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #0: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #1: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #2: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #3: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #4: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #5: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #6: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) fixture #7: stepped syncs match formatAll
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown parity (incremental ≡ one-shot) adversarial mixed document, one line per sync
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters cumulative appends format only the suffix after a load
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters appends trigger zero full rebuilds
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters replacing a committed tail line is a documented safe rebuild
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters width change is a documented full rebuild
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters front-trim (history cap) takes the documented rebuild path and stays byte-exact
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters streaming a markdown table line-by-line stays incremental
+✅ test/cli/transcript_markdown_perf_test.dart: TranscriptMarkdown work counters unclosed fence resumes correctly without rebuilding
+✅ test/cli/transcript_markdown_perf_test.dart: fa_tui streaming mutation pattern grow stays O(delta); cap-trim falls back safely
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) a growing last line resumes instead of rebuilding
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) growth inside an open fence stays byte-exact
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) a rewritten (non-prefix) tail still rebuilds safely
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) growth then newline-append then growth again
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) 32KB tail hard-split after commit resumes instead of rebuilding
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) streaming continues on the last chunk after a split
+✅ test/cli/transcript_markdown_perf_test.dart: streaming tail growth (no-newline deltas) a split that does not reproduce the boundary still rebuilds
+✅ test/cli/obligations_ledger_throttle_wiring_test.dart: N classifying user messages leave a small constant of obligations_ledger records; the teardown flush lands every entry (gh-1590)
+✅ test/cli/obligations_ledger_throttle_wiring_test.dart: a session that classifies nothing grows zero obligations_ledger records (the teardown flush must not append empty snapshots)
+✅ test/cli/secure_key_save_degradation_boot_test.dart: secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2) boot with no failures and no flagged entries prints nothing new
+✅ test/cli/secure_key_save_degradation_boot_test.dart: secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2) in-process failed saves print one line per slot with the last error and the retry command
+✅ test/cli/secure_key_save_degradation_boot_test.dart: secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2) a wizard-flagged entry whose slot is still empty prints the degradation line on the next boot
+✅ test/cli/secure_key_save_degradation_boot_test.dart: secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2) a flagged entry whose slot resolved prints nothing (the failure generation ended)
+✅ test/cli/secure_key_save_degradation_boot_test.dart: secureKeySaveDegradationLines (gh-1679 UT-2, IT-2, AC2) a successful save clears the in-process name from the boot note
+✅ test/cli/secure_key_save_degradation_boot_test.dart: CustomProviderEntry.keyNotPersisted yaml round-trip (gh-1679) the flag survives a yaml round-trip; unset stays byte-absent
+✅ test/cli/secure_key_save_degradation_boot_test.dart: boot ordering — degradation note AFTER the legacy-slot migration (gh-1679 review) bin/fah_runapp.dart prints the degradation lines after the migration block
+✅ test/cli/secure_key_save_degradation_boot_test.dart: boot ordering — degradation note AFTER the legacy-slot migration (gh-1679 review) migration first, then the note: a flagged entry whose key sits under a legacy slot prints nothing
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: headless drains a live shell job: settle → notice steered → reaction run executes → exit 0 AFTER the result landed
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: an error settle (nonzero exit) steers as an error result the model can react to
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: a suppressed job (the result already landed in-turn) is not awaited — no reaction run for it
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: a job that never settles hits the shellJobDrainMs ceiling and the run detaches with the summary (the documented degradation)
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: shellJobDrainMs: 0 disables the drain — a live job detaches immediately (the pre-gh-1459 behavior as a kill switch)
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: the drain ended by the 10-round cap names the cap (not the ceiling) — chained background jobs keep every round busy
+✅ test/cli/agent_cli_headless_shell_job_drain_test.dart: shellJobDrainMs: 0 keeps the legacy subagent drain — an in-flight subagent still drains before exit (the kill switch is shell-job-scoped)
+✅ test/cli/agent_cli_tool_liveness_test.dart: headless (fa "prompt") AC1: a call outlasting the threshold emits single-line reminders at the cadence
+✅ test/cli/agent_cli_tool_liveness_test.dart: headless (fa "prompt") AC2: a call finishing under the threshold stays quiet
+✅ test/cli/agent_cli_tool_liveness_test.dart: headless (fa "prompt") AC3+AC6: the escalation names the background hatch and the cancellation levers exactly once per stuck call
+✅ test/cli/agent_cli_tool_liveness_test.dart: headless (fa "prompt") AC5: the printed elapsed cites the waiting clock — the same value the tracker state carries
+✅ test/cli/agent_cli_tool_liveness_test.dart: AC4: the same scenario through headless and line mode produces the same console records
+✅ test/cli/agent_cli_tool_liveness_test.dart: TUI mode: the watch arms for the #1185 nudge (AC4), the console lines stay out
+✅ test/cli/agent_cli_tool_liveness_test.dart: line mode (non-TUI): the watch prints through the seams
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model AC1: an escalated call steers ONE nudge — the model sees it next turn and the session records it
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model AC2: ladder extensions never re-nudge a stuck call; a NEW stuck call gets its own single injection
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model E2: at most three nudges per turn; the budget refills next turn
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model no-yield: the nudge must NOT fire the soft-yield token — a stuck yield-aware bash stays in the foreground until the model decides
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model E5: waiting.toolNudge false keeps the console line, drops the injection
+✅ test/cli/agent_cli_tool_liveness_test.dart: #1185: escalation nudges the model AC4: the nudge fires in TUI runs too — only the console lines stay out
+✅ test/cli/session_switch_prompt_reuse_test.dart: a same-cwd switch keeps the live prompt (no project reload)
+✅ test/cli/session_switch_prompt_reuse_test.dart: a different-cwd switch reloads the session project
+✅ test/cli/shell_job_ledger_throttle_wiring_test.dart: N shell-job state changes leave a small constant of shell_job_registry records; the last carries every terminal state (gh-1590)
+✅ test/cli/shell_job_ledger_throttle_wiring_test.dart: a job start reaches the file inside the persist window: a crash cannot strand started jobs off the record (gh-1622)
+✅ test/cli/shell_job_ledger_throttle_wiring_test.dart: a session with NO background jobs never grows a shell_job_registry record (gh-1590: the finalize flush must not append empty snapshots)
+✅ test/cli/session_tree_test.dart: buildSessionListRows tree mode nests child rows under their numbered parent
+✅ test/cli/session_tree_test.dart: buildSessionListRows an orphaned child renders top-level and marked
+✅ test/cli/session_tree_test.dart: buildSessionListRows flat mode restores the legacy list: every row numbered
+✅ test/cli/session_tree_test.dart: buildSessionListRows unnamed children get a subagent label, named keep their name
+✅ test/cli/session_tree_test.dart: formatSessionListLines parent line carries the [+N agents] suffix; children indent
+✅ test/cli/session_tree_test.dart: formatSessionListLines the active session row is starred
+✅ test/cli/session_tree_test.dart: runSessionListCliCommand (headless fa session list) --json emits NDJSON rows carrying agent and parent
+✅ test/cli/session_tree_test.dart: runSessionListCliCommand (headless fa session list) text mode prints the tree; --flat restores the legacy view
+✅ test/cli/session_tree_test.dart: parseCliArgs session subcommand list parses bare, --json, and --flat
+✅ test/cli/session_tree_test.dart: parseCliArgs session subcommand help, empty args, unknown verb, unknown flag all fail fast
+✅ test/cli/session_tree_test.dart: parseCliArgs session subcommand repair parses the target and --dry-run (gh-1073)
+✅ test/cli/session_tree_test.dart: sessionPickerItems toggle rides first; children indent; parents carry agent counts
+✅ test/cli/session_tree_test.dart: sessionPickerItems flat items renumber everything with the tree toggle offered
+✅ test/cli/session_tree_test.dart: sessionDisplayNames resolves names paged out of the windowed resident tail
+✅ test/cli/agent_cli_stalled_run_test.dart: AC1: a wedged run reads stalled everywhere — one classifier drives the banner (with the /restart affordance), the panel label and the busy-row state
+✅ test/cli/session_tree_test.dart: sessionDisplayNames falls back to windowed opens for non-JSONL repos, paging resolveSessionName as needed
+✅ test/cli/session_tree_test.dart: resolveSessionName pages older chunks and stops at the cap
+✅ test/cli/agent_cli_stalled_run_test.dart: /restart is a registered slash command and refuses politely while idle
+✅ test/cli/agent_cli_stalled_run_test.dart: AC2: /restart aborts the wedged run and delivers the saved steering into a fresh turn (delivered + consumed exactly once)
+✅ test/cli/sessions_picker_test.dart: line-mode /sessions nests children under the parent
+✅ test/cli/sessions_picker_test.dart: picker builds the tree with a toggle; flat/tree keys flip it
+✅ test/cli/sessions_picker_test.dart: picker row keys open and switch to the picked session
+✅ test/cli/sessions_picker_test.dart: a broken session file surfaces inline instead of killing the TUI
+✅ test/cli/provider_error_render_dedup_test.dart: AC2/AC5: a content_filter failure renders ONE classified line — category, endpoint, one recovery, `error:` grammar — and the raw dump stays out of the console
+✅ test/cli/provider_error_render_dedup_test.dart: AC1 stall-then-retry: a continuation leg re-dying with the SAME failure renders ONE notice, not a second raw dump
+✅ test/cli/provider_error_render_dedup_test.dart: AC1: a user re-invoked prompt renders honestly again; a DISTINCT failure always renders (no blind merging)
+✅ test/cli/provider_error_render_dedup_test.dart: AC4: the raw provider payload is reachable at the diagnostic surface (fa.log), default level, no content lost
+✅ test/cli/provider_error_render_dedup_test.dart: the unclassified passthrough keeps today's raw text (border case)
+✅ test/cli/fa_tui_subagent_board_test.dart: UT-4 / AC4: an empty board renders zero extra rows (quiet zero)
+✅ test/cli/fa_tui_subagent_board_test.dart: UT-2 / AC2: 10 subagents stack as 10 rows above the busy row
+✅ test/cli/fa_tui_subagent_board_test.dart: AC7: sibling regions keep their slots (board → waiting → subagents → busy)
+✅ test/cli/fa_tui_subagent_board_test.dart: squeeze: the newest subagent rows keep the region, never wrap
+✅ test/cli/fa_tui_subagent_board_test.dart: squeeze: live rows win, settled summaries yield oldest-first (review thread 4)
+✅ test/cli/agent_cli_checkpoint_restore_budget_test.dart: AC4: a user turn that auto-closes a checkpoint over the trigger gets the remainder compacted before the next request (window − reserve)
+✅ test/cli/agent_cli_checkpoint_restore_budget_test.dart: AC4 no-op: an auto-close UNDER the trigger compacts nothing — the existing behavior is preserved for healthy sessions
+✅ test/cli/load_mode_cli_test.dart: --omp flag (issue #680) parses the flag; absent by default
+✅ test/cli/agent_cli_provider_test.dart: /provider prints the active provider and the catalog
+✅ test/cli/agent_cli_provider_test.dart: /provider lists saved providers and marks the active one
+✅ test/cli/load_mode_cli_test.dart: REG: default mode keeps today's schema default boot has no discover_tools; omp round-trip restores the bytes exactly
+✅ test/cli/agent_cli_provider_test.dart: /provider <name> switches provider, endpoint, and env key
+✅ test/cli/agent_cli_provider_test.dart: /provider with a custom baseUrl runs keyless
+✅ test/cli/agent_cli_provider_test.dart: /provider accepts an explicit session token
+✅ test/cli/agent_cli_provider_test.dart: /provider rejects an unknown provider without state changes
+✅ test/cli/agent_cli_provider_test.dart: /key lists key sources without exposing values
+✅ test/cli/load_mode_cli_test.dart: REG: default mode keeps today's schema --omp schema differs from default at the byte level
+✅ test/cli/agent_cli_provider_test.dart: /key set stores, redacts, and updates the active provider key
+✅ test/cli/agent_cli_provider_test.dart: /key set reports when secure storage is unavailable
+✅ test/cli/agent_cli_provider_test.dart: /key set reports a failing keychain write instead of crashing
+✅ test/cli/load_mode_cli_test.dart: omp session loop (issue #680 L3) unmounted discoverable tombstones through the real loop
+✅ test/cli/agent_cli_provider_test.dart: /provider token falls back to session-only when the write fails
+✅ test/cli/agent_cli_provider_test.dart: /key delete removes the stored key
+✅ test/cli/agent_cli_provider_test.dart: /key validates its arguments
+✅ test/cli/agent_cli_provider_test.dart: /provider persists the explicit token in the secure store
+✅ test/cli/agent_cli_provider_test.dart: /provider resolves the endpoint-scoped store key
+✅ test/cli/load_mode_cli_test.dart: omp session loop (issue #680 L3) discover_tools listing mounts a discoverable into the schema
+✅ test/cli/agent_cli_provider_test.dart: /provider still resolves a legacy env-name store key
+✅ test/cli/load_mode_cli_test.dart: settings load-mode flow (issue #680 AC3/L4) picking omp writes agent.mode and live-applies without restart
+✅ test/cli/agent_cli_provider_test.dart: /provider key order: env beats scoped on the default endpoint, scoped wins on custom endpoints
+✅ test/cli/load_mode_cli_test.dart: settings load-mode flow (issue #680 AC3/L4) modes coexist: default → omp → pi rebuilds the schema live
+✅ test/cli/agent_cli_provider_test.dart: /provider custom runs the guided openai-like setup
+✅ test/cli/agent_cli_provider_test.dart: /provider custom offers the endpoint model list
+✅ test/cli/agent_cli_provider_test.dart: /provider custom stores the typed key in the secure store
+✅ test/cli/agent_cli_provider_test.dart: two accounts on one endpoint keep separate keys
+✅ test/cli/agent_cli_provider_test.dart: /provider custom supports anthropic-like endpoints
+✅ test/cli/agent_cli_provider_test.dart: /provider custom validates the api type and base URL
+✅ test/cli/agent_cli_provider_test.dart: /provider custom cancels on interrupt without state changes
+✅ test/cli/agent_cli_provider_test.dart: /provider custom consumes piped answers without leaking into runs
+✅ test/cli/agent_cli_provider_test.dart: /provider custom applies the spec default URL on an empty answer
+✅ test/cli/agent_cli_provider_test.dart: /provider custom saves the provider and switching restores its model
+✅ test/cli/agent_cli_provider_test.dart: deleting a saved provider notifies the host so it persists
+✅ test/cli/agent_cli_provider_test.dart: /provider-edit line-mode is gone — typed command falls through
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth /provider openrouter oauth headless exchanges, stores key and switches
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth openrouter oauth saves a registry entry so it shows in /provider
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth openrouter oauth lets the user name the saved entry
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth /provider openrouter picker offers the already-stored key first
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth oauth overwrites a stale endpoint-scoped key so it cannot shadow it
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth /provider openrouter oauth rejects invalid usage
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter OAuth /provider openrouter oauth headless cancels on empty code
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth /provider chatgpt oauth headless exchanges, stores credentials and switches
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth /provider chatgpt oauth headless rejects a bad-state URL
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth a second codex auth re-auths the same identity (#1706: rename, never a twin entry)
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth /provider chatgpt oauth offers the saved accounts first
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth re-auth to the SAME entry keeps its model
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth a new name on a second auth renames the entry and re-picks its model (#1706)
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth a NEW account with no model answer keeps the bundled default
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT OAuth /provider chatgpt oauth rejects invalid usage
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT codex import imports the default ~/.codex/auth.json into the account slot
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT codex import a missing codex session names the path and the fix
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT codex import an explicit path operand is honored
+✅ test/cli/agent_cli_chatgpt_oauth_test.dart: ChatGPT codex import a non-auth.json shape is refused
+✅ test/cli/agent_cli_empty_completion_hiccup_test.dart: headless runHeadless (IT-1/IT-2/IT-3, AC4, REG-2) IT-1: partial stream → empty → healthy completion finishes the task with exit 0 and the retried empty in the transcript
+✅ test/cli/agent_cli_empty_completion_hiccup_test.dart: headless runHeadless (IT-1/IT-2/IT-3, AC4, REG-2) E2/E5: an abort landing with the FINAL hiccup retry (a length-flagged empty) exits 130 — never a silent exit 0 on an aborted run
+✅ test/cli/agent_cli_empty_completion_hiccup_test.dart: interactive REPL (IT-4/AC5, REG-1) IT-4/AC5: exhaustion prints the error and returns to the prompt; the session stays steerable
+✅ test/cli/agent_cli_empty_completion_hiccup_test.dart: interactive REPL (IT-4/AC5, REG-1) REG-1: clean empties keep the #1085 M2b semantics — one nudge, then settle
+✅ test/prompts/steerability_contract_test.dart: task tool prompt carries the idle-not-blocked contract (#520) background spawn ends the turn — completions and mail wake
+✅ test/prompts/steerability_contract_test.dart: messaging prompt carries the owner-routes-through-main contract children are never the owner address; route via task_send
+✅ test/cli/agent_cli_provider_test.dart: DIAL setup /provider dial setup saves a registry entry, stores the key and switches
+✅ test/prompts/project_context_test.dart: walks from cwd to the git root, closest last
+✅ test/prompts/project_context_test.dart: collects all five filenames and the user file first
+✅ test/prompts/project_context_test.dart: picks up copilot-instructions.md from a walked dir
+✅ test/prompts/project_context_test.dart: instructions file without applyTo is included unmarked
+✅ test/prompts/project_context_test.dart: instructions file with applyTo carries the applies-to marker
+✅ test/prompts/project_context_test.dart: instructions file with applyTo "**" is included unmarked
+✅ test/prompts/project_context_test.dart: budget allocates leaf-first, truncating the shallow file
+✅ test/prompts/project_context_test.dart: empty content and no matches render nothing
+✅ test/prompts/project_context_test.dart: truncated file keeps the head excerpt and the read-full instruction naming the absolute path (issue #1761 AC1/AC3)
+✅ test/prompts/project_context_test.dart: truncation reports a user-facing notice line (issue #1761 AC2)
+✅ test/prompts/project_context_test.dart: dropped file leaves a tombstone naming the path (issue #1761 AC1)
+✅ test/prompts/project_context_test.dart: copilot instructions files get the same treatment (issue #1761 AC6)
+✅ test/prompts/project_context_test.dart: maxBytes: 0 disables the section and reads no files (issue #1761 AC5 fast boot)
+✅ test/prompts/project_context_test.dart: notice sizes label MB files readably
+✅ test/prompts/project_context_test.dart: ProjectContextConfig parses tolerantly (issue #1761 AC5)
+✅ test/prompts/project_context_test.dart: ProjectContextConfig.toYaml emits only the non-default value
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap returns empty for a missing section
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap accepts known names with string values (paths and inline)
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap accepts multi-line inline text
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap rejects an unknown prompt name
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap rejects a non-string value
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap rejects an empty value
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap rejects a non-map section
+✅ test/prompts/prompt_overrides_test.dart: parsePromptOverrideMap rejects system and cli/mode_code together (aliases)
+✅ test/prompts/prompt_overrides_test.dart: PromptOverrides resolve returns the override or the fallback
+✅ test/prompts/prompt_overrides_test.dart: PromptOverrides empty resolves every name to the fallback
+✅ test/prompts/prompts_sync_test.dart: generated files are in sync with the Markdown sources lib/src/prompts/prompts.g.dart
+✅ test/prompts/prompts_sync_test.dart: generated files are in sync with the Markdown sources flutter_app/lib/prompts.g.dart
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/compaction/summary_system.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/compaction/summary.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/compaction/summary_update.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/compaction/turn_prefix.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/cli/mode_code.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/cli/mode_architect.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/cli/mode_review.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies prompts/tools/inspect_image.md
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies CLI mode templates keep the {{cwd}} placeholder
+✅ test/prompts/prompts_sync_test.dart: constants equal the Markdown bodies example sandbox prompt body is embedded verbatim
+✅ test/cli/agent_cli_provider_test.dart: DIAL setup re-running setup reuses the entry name and updates the model
+✅ test/prompts/delegation_nudge_test.dart: UT-1: the nudge rides the task-tool description (task registered) the generated prompt carries the three sentences
+✅ test/prompts/delegation_nudge_test.dart: UT-1: the nudge rides the task-tool description (task registered) default-mode boot: the task tool is the only surface carrying it
+✅ test/prompts/delegation_nudge_test.dart: UT-2: pi mode (task absent) never shows the nudge the pinned tool surface carries no nudge text
+✅ test/bin_herdr_spawn_drain_test.dart: spawnHerdrReport a chatty child (>64 KiB on stdout) cannot block the report on a full pipe
+✅ test/bin_herdr_spawn_drain_test.dart: spawnHerdrReport a hung child is killed within the kill window
+✅ test/bin_herdr_spawn_drain_test.dart: spawnHerdrReport a clean child completes with the process, exit untouched
+✅ test/ci_sign_host_keychain_guard_test.dart: AC1 — no keychain lifecycle / user-global keychain writes outside scripts/ci-sign (gh-1865 model v3)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC2 — scripts/ci-sign implements the persistent-keychain model
+✅ test/ci_sign_host_keychain_guard_test.dart: AC3 — every signing surface routes through ci-sign
+✅ test/ci_sign_host_keychain_guard_test.dart: AC4 — the retired additive helper is gone (gh-1866 model v2 → v3)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC5 — the host provisioning workflow exists and is dispatch-only on ONE pinned registration
+✅ test/ci_sign_host_keychain_guard_test.dart: AC6 — incident-forensics breadcrumbs keep full issue numbers (gh-1865 / gh-1866, review thread)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC7 — every ci-sign self-provision creates $HOME/bin first (gh-1954: install(1) does not mkdir parents, run 40822964468)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC8 — every openssl pkcs12 call carries the conditional legacy provider flag (gh-1954: RC2-40-CBC P12 payloads, run 40840166571)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC9 — err() writes to stderr in CI too (gh-1954: diagnostics swallowed by $(...) capture)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC10 — build_only pins the user keychain search list around gym (gh-1954: xcodebuild resolves identities only via the search list, concurrent legs rewrite it mid-build, run 40843155381)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC11 — ci-sign keychain never auto-locks; FORCE recreates fresh (gh-1954: gym xcodebuild -showBuildSettings hung on a locked keychain GUI prompt, run 40849468765)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC12 — print_gym_log_tail ignores stale gym logs (gh-1954: the Oct-27 log printed a phantom profile error while the REAL failure was -showBuildSettings timeout, run 40849468765)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC13 — build_only re-unlocks the keychain immediately before gym (gh-1954: point-of-use unlock after the long pod phase)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC14 — set-keychain-settings is GONE from ci-sign (gh-2008 final: the call raises the SecurityAgent password dialog EVEN AFTER unlock-keychain -p — proven by wave 05:23:45Z alarm kill; bounding it only left an orphan dialog on the host screen; anti-lock is the unlock watchdog, so the call is deleted, not bounded)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC15 — build_only runs a keychain re-unlock watchdog during gym (gh-1954: the keychain auto-locks after ~5 min; re-unlock every 60 s via unlock-keychain -p which never prompts)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC16 — ci-sign install waits on the lock up to 600s (gh-1964: concurrent waves on the shared host; 120s was shorter than a real import, so the later wave died with exit 1, run 40857285170)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC17 — NO set-keychain-settings anywhere in ci-sign (gh-2008 final: the call raises the SecurityAgent password dialog EVEN AFTER unlock-keychain -p — wave 05:23:45Z alarm kill, the orphan dialog the owner kept seeing; it never applied non-interactively on existing keychains and never provided anti-lock)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC18 — install rewrites the search list defensively: login kept first, ci-signing appended last, duplicates removed (gh-1972: the naive append garbled the list — System twice, login missing, default dangling → "A keychain cannot be found to store" dialogs and gh auth failures on the shared host)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC19 — Fastfile gym guard has NO save/restore of the search list (gh-1972 root cause: the restore wrote back whatever it captured, entrenching a System duplicate across runs; the pinned list is canonical — restore removed)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC20 — install sweeps shadow identities on the up-to-date path (gh-2008: Xcode export -allowProvisioningUpdates silently imported an extra "Apple Distribution" cert into the persistent keychain, shadowing the pinned "iPhone Distribution" same-CN cert — any codesigning identity that is not the pinned SHA-1 is deleted, even when the pinned one is already current)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC21 — sweep spares OTHER labels pinned identities + no undefined vars (gh-2026 hotfix: the persistent keychain is shared by fa-ios, fa-macos and fa-macos-installer — the #2009 sweep deleted every identity that was not the CURRENT label pin, i.e. the other labels live identities; run 41276487426 arm64 attempt 2 then died on the sweep echo: "KC_BASE: unbound variable" under set -u)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC22 — Fastfile gives xcodebuild -showBuildSettings a real budget (gh-2026: fastlane probes build settings with a 3 s base timeout; on this one-Mac/three-runner host the nightly wave runs build-macos, build-mobile and the extension build concurrently — run 41276490153 attempts 1-2 completed the 663 s archive and then died timing out at 3/6/12/24 s. A healthy build must not fail on a contended probe)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC23 — identity VALIDITY checks must not filter by codesigning policy (gh-2026: the fa-macos-installer P12 imports fine but its "3rd Party Mac Developer Installer" identity NEVER matches find-identity -p codesigning — that policy lists only codesign certs, not productsign/installer ones. All three label checks (verify, idempotent, post-import) died on run 41276487426 arm64 attempt 3 with "imported P12 ... not a valid codesigning identity" while plain find-identity -v lists it as VALID identity #1. The SWEEP enumeration keeps -p codesigning on purpose: installer identities are not shadow candidates)
+✅ test/ci_sign_host_keychain_guard_test.dart: AC24 — import ACL authorizes every CI signing consumer, not just codesign (gh-2026: run 41354303751 arm64 hung 1h42m in a GUI SecurityAgent dialog — productbuild --sign F54136E3 waited for key access that the apple-tool:/apple: partition never grants it; the job lease outlived the worker and x86_64 queued behind the ghost. The fastlane-match recipe is import-time -T for every consumer + the partition set twice)
+✅ test/agent/image_drop_ux_test.dart: AC1 — the flood collapses to one notice 37 window images, cap 20, 5 requests ⇒ exactly one notice
+✅ test/agent/image_drop_ux_test.dart: AC1 — the flood collapses to one notice the same flood keeps every per-image event in the report
+✅ test/agent/image_drop_ux_test.dart: AC1 — the flood collapses to one notice per-request [Image N] labels do NOT defeat the latch
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions a changed dropped set ⇒ one new notice
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions recovery ⇒ one all-clear, then silence
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions the all-clear names the now-riding count and cap
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions a cap raise is a new situation (new notice with the new cap)
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions a learned-cap change re-notices (#1750 interplay)
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions same set after compaction (renumbered labels) ⇒ no repeat
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions a different model id re-notices (latch is per model)
+✅ test/agent/image_drop_ux_test.dart: AC2 — latch transitions reset re-latches from the first post-reset request (R4)
+✅ test/agent/image_drop_ux_test.dart: AC3 — severity split 25 attached, cap 20 ⇒ one prominent warning naming counts+remedy
+✅ test/agent/image_drop_ux_test.dart: AC3 — severity split repeated identical turns do not re-warn
+✅ test/agent/image_drop_ux_test.dart: AC3 — severity split history-only drops never produce the prominent variant
+✅ test/agent/image_drop_ux_test.dart: AC3 — severity split mixed current + history drops: prominent, both counts named
+✅ test/agent/image_drop_ux_test.dart: AC3 — severity split current-drop recovery flows through the same latch
+✅ test/agent/image_drop_ux_test.dart: #1916 — the byte budget in notices and the surface a byte drop names the budget in the history notice
+✅ test/agent/image_drop_ux_test.dart: #1916 — the byte budget in notices and the surface no byte budget info keeps the #1889 lines byte-identical
+✅ test/agent/image_drop_ux_test.dart: #1916 — the byte budget in notices and the surface /images explains BOTH count- and byte-drops (AC1)
+✅ test/agent/image_drop_ux_test.dart: AC4 — the shared projection with drops: counts, per-image previews, cap, knobs
+✅ test/agent/image_drop_ux_test.dart: AC4 — the shared projection before the first report: quiet one-liner, no window claim
+✅ test/agent/image_drop_ux_test.dart: AC4 — the shared projection kill switch: the disabled line, nothing else
+✅ test/agent/image_drop_ux_test.dart: AC4 — the shared projection a below-every-config cap is labeled as learned (#1750)
+✅ test/agent/image_drop_ux_test.dart: AC4 — the shared projection a perModel cap is labeled as the override, not learned
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface an eviction-only history names the cause, never a cap
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface the eviction notice latches like every drop situation
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface mixed capped + evicted drops keep the cap line and append
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface /images renders the evicted dropWhy and the placeholder summary
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface review — pass-2 eviction of CURRENT-message images: prominent, eviction wording, the right knob
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface review — mixed current capped + current evicted: cap line counts only capped, eviction appended
+✅ test/agent/image_drop_ux_test.dart: gh-1934 — evictions in notices and the surface review — the latch is reason-aware: a cap→evicted transition of the SAME key set re-notices
+✅ test/cli/agent_cli_provider_test.dart: DIAL setup a custom dial name scopes the store key (second org)
+✅ test/cli/agent_cli_provider_test.dart: DIAL setup /provider dial setup rejects extra args
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter auth method picker /provider openrouter shows auth-method picker
+✅ test/cli/agent_cli_provider_test.dart: OpenRouter auth method picker /provider openrouter api-key connect saves a named entry
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi prompts for the API key when none resolves
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi saves a typed key as a named entry
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider the provider-name step rejects a built-in (catalog) name
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider the provider-name step re-prompts on junk names (issue #555)
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider a catalog kimi switch stops recording /model into the previous custom entry
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi resolves a named entry’s key without re-prompting
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi offers the resolved key or a second account
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi with a resolved key can add a second account as a named entry
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi with an empty key answer switches keyless
+✅ test/cli/agent_cli_provider_test.dart: Kimi provider /provider kimi <baseUrl> skips the resolved-key picker
+✅ test/cli/agent_cli_provider_test.dart: saved provider switching switching to a keyless saved entry stays keyless
+✅ test/cli/agent_cli_provider_test.dart: saved provider switching /model rewrite goes to the ACTIVE saved entry only
+✅ test/cli/agent_cli_provider_test.dart: saved provider switching the edit wizard prefills from the entry, not the active model
+✅ test/cli/agent_cli_provider_test.dart: saved provider switching renaming in the edit wizard replaces the old entry
+✅ test/agent/foreground_call_budget_test.dart: config parsing (UT-2) defaults: B is 600s, offerAt is B/2, autoConvert is off
+✅ test/agent/foreground_call_budget_test.dart: config parsing (UT-2) explicit leaves parse: 300 seconds and auto
+✅ test/agent/foreground_call_budget_test.dart: config parsing (UT-2) rejects 0 / negative / non-int / map budgets with the positive-integer message (per-tool map is the second-tier shape)
+✅ test/agent/foreground_call_budget_test.dart: config parsing (UT-2) rejects unknown autoConvert strings and non-string autoConvert
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) UT-1a: silent call + steering pending surfaces the offer exactly once and the call keeps running (no cancel)
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) E8: output activity kills the offer condition, but rung 2 still fires at B regardless of output
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) E2: an empty steering FIFO skips rung 1 entirely; rung 2 still escalates at B
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) autoConvert converts at B/2 instead of offering: a yield-obeying call is backgrounded with a rung-offer background record
+✅ test/agent/session_deadline_loop_test.dart: armed: every request payload carries the trailing time-left line
+✅ test/agent/session_deadline_loop_test.dart: armed: the line refreshes per request (live provider per turn)
+✅ test/agent/session_deadline_loop_test.dart: disarmed: payloads are byte-for-byte the provider-less shape
+✅ test/agent/session_deadline_loop_test.dart: the line is payload-only: the recorded transcript never sees it
+✅ test/agent/session_deadline_loop_test.dart: Agent.budgetLineProvider threads into the loop config
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) rung 2 fires at B regardless (IT-3): a zombie call is aborted with the captured partial output on the error result
+✅ test/agent/foreground_call_budget_test.dart: ladder timing (UT-1, real ms timers) E1: a call that returns before B leaves no budget events at all and a clean result
+✅ test/agent/foreground_call_budget_test.dart: fallback selection (UT-3) a yield-obeying tool hands back at B: background record + the hand-back result marked
+✅ test/agent/foreground_call_budget_test.dart: fallback selection (UT-3) a token-ignoring tool cannot hand back at B: abort record + the StateError-derived error result
+✅ test/agent/foreground_call_budget_test.dart: fallback selection (UT-3) a rewrite-notice-prefixed hand-back still classifies as a background conversion (gh-1835 review)
+✅ test/agent/foreground_call_budget_test.dart: token propagation (UT-5/IT-5, AC5 + E3) AC5: agent.abort() cancels the in-flight call token within the cancel grace, and E3: no budget event fires after the abort
+✅ test/agent/foreground_call_budget_test.dart: accept offer (IT-2, AC2) the one-key accept escalates the offered call and the queued steering is delivered into the next turn
+✅ test/agent/foreground_call_budget_test.dart: watchdog hook (rung 3) steering pending + silent call: requestOffer surfaces a watchdog-rung offer and returns true
+✅ test/agent/foreground_call_budget_test.dart: watchdog hook (rung 3) empty FIFO or output seen: requestOffer returns false and fires no event
+✅ test/agent/foreground_call_budget_test.dart: budget preempts stuck retry a budget force inside the stuck grace leaves no retry: one executor invocation, the result is the budget abort
+✅ test/agent/foreground_call_budget_test.dart: announcement formatter (UT-6) rung numbers are 1 / 2 / 3
+✅ test/agent/foreground_call_budget_test.dart: announcement formatter (UT-6) the announcement names rung, tool, elapsed, and the steering count (singular / plural)
+✅ test/agent/foreground_call_budget_test.dart: announcement formatter (UT-6) every budget event raised by the other groups carries the REG-1 announcement prefix
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) learn → record → toJson → fromJson round trip (AC2)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) persist → load across restarts via the disk file
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) a corrupt or missing file boots empty, never crashes
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) the key is (provider, modelId) — same model id never collides across providers (E5)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) a cap-unknown refusal flags the model but never unlearns a numeric cap (E1 + differently-shaped retry)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) re-learning refreshes a stale cap (E4)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) second-tier: learnedCapOr consults the pinned override first
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) a cap-unknown refusal arms exactly one pre-emptive pass (E1)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) a numeric refusal does not arm the pre-emptive pass
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) learning a numeric cap disarms a pending pre-emptive pass
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) the pending pass is session state — never serialized (AC2)
+✅ test/agent/message_cap_store_test.dart: ModelCapsStore (UT-2) an empty store serializes to an empty map — nothing hardcoded (AC5)
+✅ test/agent/message_cap_store_test.dart: messageCapTriggerReached (AC4 gate) fires at cap − margin, not before
+✅ test/agent/message_cap_store_test.dart: messageCapTriggerReached (AC4 gate) a null cap never triggers (AC8)
+✅ test/agent/message_cap_store_test.dart: messageCapTriggerReached (AC4 gate) a custom margin is honored
+✅ test/agent/message_cap_store_test.dart: messageCapTriggerReached (AC4 gate) a cap at or below the margin never triggers (PR #1695: the unclamped `cap − margin` ≤ 0 made the trigger permanently true)
+✅ test/agent/image_registry_test.dart: ImageRegistry.scan assigns one entry per unique payload in first-seen order
+✅ test/agent/image_registry_test.dart: ImageRegistry.scan keys are content keys: same bytes different mime are distinct (E1)
+✅ test/agent/image_registry_test.dart: ImageRegistry.scan tool-result images participate like user images (AC7)
+✅ test/agent/image_registry_test.dart: ImageRegistry.scan deterministic: two scans of one window build identical maps (AC2)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages image-free input returns the identical list instance
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages same image in three messages rides once with text refs (AC1)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages all-history image rides in a carrier before the first ref
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages current message images ride in place, never referenced (AC6/I3)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages carrier lands after a tool-result run, never inside it
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages cap: current first, then newest; drops carry key previews (AC3)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages the cap applies to the current batch too (#1889 R2/AC3)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages a current-dropped key never also rides from history (#1889)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages E2: one slot left among same-message images rides the first-seen
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages stale mention in a summary resolves to the note (AC4/I4)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages mention of a riding image stays intact (I4)
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages assistant citations of dropped images resolve to the note
+✅ test/agent/image_registry_test.dart: rewriteHistoryImages no dangling refs: every surviving label has its original (I4)
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) a stale citation degrades instead of rebinding to the wrong image
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) fresh citations survive when the window was never renumbered
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) structured hidden/checkpoint markers open the stale epoch too
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) a hidden tool_result marker (visible call) opens the stale epoch too
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) a branch summary marker opens the stale epoch too
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) the local trim valve marker does too
+✅ test/agent/image_registry_test.dart: renumbering boundaries: stale citations degrade (issue #195 F2) current-message citations stay trusted after compaction
+✅ test/agent/image_registry_test.dart: current-message labels (issue #195 F3) in-place current images carry their [Image N] label
+✅ test/agent/image_registry_test.dart: current-message labels (issue #195 F3) a string-only current message is left alone
+✅ test/agent/image_registry_test.dart: per-model image caps (issue #1750) AC2: resolution matrix — perModel > catalog > default
+✅ test/agent/image_registry_test.dart: per-model image caps (issue #1750) the catalog seed names gemini-4-argon: 10
+✅ test/agent/image_registry_test.dart: per-model image caps (issue #1750) AC1: a model with a perModel cap rides ≤ cap uniques
+✅ test/agent/image_registry_test.dart: per-model image caps (issue #1750) imageCapLatchKey is scoped per (provider, model) pair (E2)
+✅ test/agent/image_registry_test.dart: #1916: per-request image byte budget AC1: the byte budget drops oldest history first, reason bytes
+✅ test/agent/image_registry_test.dart: #1916: per-request image byte budget AC1: a byte drop never stops the scan — a smaller older image still fits (greedy pass)
+✅ test/agent/image_registry_test.dart: #1916: per-request image byte budget AC1: the count cap and the byte budget both name their reason
+✅ test/agent/image_registry_test.dart: #1916: per-request image byte budget AC1: an over-budget current image drops as a current byte drop
+✅ test/agent/image_registry_test.dart: #1916: per-request image byte budget AC1: report carries the budget; 0 keeps #1889 surfaces quiet
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: the request-590 shape — 9 history text screenshots, one registered block — folds and never replays raw
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: the current message keeps its text data URL verbatim (I3)
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: small text data URLs stay text (icons are legitimate)
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: tool-result text data URLs fold too
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: surrounding text survives the fold (split at URL edges)
+✅ test/agent/image_registry_test.dart: #1916: legacy text-embedded images fold into the registry (AC2) AC2: image-free fast path still returns the caller instance
+✅ test/agent/pin_carrier_loop_test.dart: IT-PIN-1: the assembled request carries the verbatim pin block
+✅ test/agent/pin_carrier_loop_test.dart: IT-PIN-2: the carrier sits immediately after the compaction boundary
+✅ test/agent/pin_carrier_loop_test.dart: IT-PIN-3/F2: body folded and summary oblivious — the pin still rides verbatim (repaired from the registry, never the summary)
+✅ test/agent/pin_carrier_loop_test.dart: E6: a pre-boundary window (body still in context) renders no carrier
+✅ test/agent/pin_carrier_loop_test.dart: E9: a tiny model window shrinks the pin budget proportionally
+✅ test/agent/pin_carrier_loop_test.dart: P1: the carrier is payload-only — Agent transcript state is never mutated
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration Agent(toolRegistry:) wires tools and executor
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration explicit toolExecutor wins over toolRegistry
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration unknown tool call yields error tool result, not an exception
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration invalid arguments yield error tool result; tool not executed
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration stringly-typed arguments are coerced before execute
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration cancelToken reaches tool execute
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration onUpdate streams partial results through loop events
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration per-tool sequential executionMode forces sequential batch
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration parallel default overlaps executions
+✅ test/agent/agent_tool_test.dart: Agent + ToolRegistry integration tools assigned to state are picked up by the registry executor
+✅ test/agent/foreground_budget_real_bash_test.dart: AC8: silent foreground bash with a huge explicit timeout is handed to the background at the budget, announced, and the turn continues
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) merges old tool pairs + turns into compact carriers under the target, keeping the newest user message verbatim
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) 2+ tool pairs in the droppable region merge (not just one)
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) pairing invariants hold on the wire after coalescing (AC6)
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) a transcript already under target is returned unchanged
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) nothing droppable (only one message): returned unchanged (E3)
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) the cut never lands mid tool-pair: an over-target tail keeps a whole trailing pair
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) pre-broken pairing in the input is repaired, never propagated
+✅ test/agent/message_cap_coalesce_test.dart: coalesceMessagesForCap (UT-4, AC6) text-only old turns merge too (not only tool pairs)
+✅ test/agent/message_cap_coalesce_test.dart: steering interleave across the newest-user cut (PR #1695) a tool call whose result rides the kept tail stays verbatim — the pairing repair hoists the result back, content survives
+✅ test/agent/message_cap_coalesce_test.dart: steering interleave across the newest-user cut (PR #1695) a mid-region steering interleave keeps the pair verbatim too
+✅ test/agent/message_cap_source_scan_test.dart: gh-1680 no-hardcode source scan (AC5) no incident provider/model identity in the repair path
+✅ test/agent/message_cap_source_scan_test.dart: gh-1680 no-hardcode source scan (AC5) the new store/coalesce module carries no provider identity at all
+✅ test/agent/message_cap_source_scan_test.dart: gh-1680 no-hardcode source scan (AC5) no incident cap value is compiled into the store/coalesce module
+✅ test/agent/message_cap_source_scan_test.dart: gh-1680 no-hardcode source scan (AC5) the classifier regex is the only built-in: overflow.dart parses the cap from the error, never from a table
+✅ test/agent/orphan_notice_loop_test.dart: IT-ONESHOT: one orphan, N consecutive requests, exactly one note across runs on the same Agent
+✅ test/agent/orphan_notice_loop_test.dart: IT-ONESHOT: one orphan, N consecutive requests, exactly one note across the pairing-heal retry inside one request
+✅ test/agent/orphan_notice_loop_test.dart: IT-RESUME: a restored agent does not re-report a reported orphan a fresh Agent seeded with the persisted keys stays silent
+✅ test/agent/orphan_notice_loop_test.dart: AC2: the note is never a stand-alone user turn on the wire every request carries the note INSIDE an existing user message
+✅ test/agent/steering_stream_test.dart: UT-steer-stream: steering during the stream phase does not abort the provider call — the stream runs to natural completion and the steer is delivered at the next boundary
+✅ test/agent/steering_stream_test.dart: UT-cancel-distinct: an explicit cancelTurn during the stream still aborts (user intent keeps its surface)
+✅ test/agent/steering_stream_test.dart: UT-steer-teardown: a steer landing in the run stop-check window opens its own turn inside the SAME run (never left queued)
+✅ test/agent/relief_watchdog_suspension_test.dart: UT-1: watchdog suspended across a slow relief — the run survives (was: aborted mid-relief)
+✅ test/agent/relief_watchdog_suspension_test.dart: UT-2: user abort DURING the relief ends the run aborted, promptly — suspension never swallows an explicit abort
+✅ test/agent/relief_watchdog_suspension_test.dart: UT-2b: classic-engine compaction tokens are linked to the run token — the cancel reaches the in-flight summarizer
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: compaction boundary eviction images outside the kept region evict to placeholders
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: compaction boundary eviction the current user message still rides its images in place (I3)
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: compaction boundary eviction no boundary in the window — history images ride as before
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: compaction boundary eviction eviction is reported, never silent (evicted reason)
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: compaction boundary eviction structured markers and local-trim notes evict too
+✅ test/agent/image_registry_eviction_test.dart: gh-1934: recovery strip-all (ladder pass 2) stripAll evicts every image period, current message included
+✅ test/agent/image_registry_eviction_test.dart: gh-1934: recovery strip-all (ladder pass 2) stripAll is reported with the stripped count
+✅ test/agent/image_registry_eviction_test.dart: gh-1934: recovery strip-all (ladder pass 2) mentions degrade to the note — no silent rebinding (AC7)
+✅ test/agent/image_registry_eviction_test.dart: gh-1934: session-latched evicted keys an evicted key never rides again, boundary or not
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC3: payload-only — inputs are never mutated eviction + strip leave every input message untouched
+✅ test/agent/image_registry_eviction_test.dart: gh-1934 AC2: token accounting counts the placeholder the rewritten payload estimates far lighter than the raw window
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) a clean transcript validates empty
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) whitespace user text and blockless assistants are wire-invisible
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) a leading orphan result is flagged (any position)
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) an orphan mid-context is flagged even inside a merged group
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) a steering user message between call and result is flagged
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) a steering message between two results of one batch is flagged
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) an unanswered trailing call is flagged
+✅ test/agent/tool_pairing_test.dart: validateToolPairing (wire-equivalent sequence) duplicate ids across calls and results are flagged
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) returns the same instance and empty report when valid
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) E1: an orphan as the ONLY message becomes the note (message 0)
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) production shape: orphan after a compaction summary user message
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) middle position: orphan dropped, note appended, rest untouched
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) second block of a merged group: orphan dropped, real result kept
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) E2: multiple orphans repaired in one pass with one note
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — orphaned results (UT-repair) repair is idempotent
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — steering interleave a user message between call and result is hoisted after the result
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — steering interleave a user message between two results of one batch is hoisted
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — duplicate ids (UT-dupes) later occurrences are uniquified symmetrically
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — duplicate ids (UT-dupes) renames skip ids already in use
+✅ test/agent/tool_pairing_test.dart: repairToolPairing — unanswered calls a call without its result gets the synthetic interrupted result
+✅ test/agent/tool_pairing_test.dart: isToolPairingProviderError (E5 signatures) matches the four known gateway families
+✅ test/agent/tool_pairing_test.dart: isToolPairingProviderError (E5 signatures) matching is case-insensitive
+✅ test/agent/tool_pairing_test.dart: isToolPairingProviderError (E5 signatures) other provider errors do not match
+✅ test/agent/tool_pairing_test.dart: canonical wire-form ids (PR #93 wire-view) canonicalToolCallId mirrors the adapters
+✅ test/agent/tool_pairing_test.dart: canonical wire-form ids (PR #93 wire-view) raw ids that collapse to one wire id validate as duplicates
+✅ test/agent/tool_pairing_test.dart: canonical wire-form ids (PR #93 wire-view) canonical collisions repair symmetrically to distinct wire ids
+✅ test/agent/tool_pairing_test.dart: canonical wire-form ids (PR #93 wire-view) ids colliding past the 40-char wire cap still rename uniquely
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: the note names the tool, the call id and the cut reference
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: the note names the CANONICAL call id — the same identity the latch key and the kept-in-summary probe use
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: every cut boundary arm is named (table-driven)
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: the nearest boundary wins over an earlier one
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: the kept-in-summary hint probes the boundary text
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TEXT: an orphan with no boundary in context says "context cut"
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-ROLE: the note never becomes a new message — it rides the last existing user message
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-ROLE: a payload whose last message is a tool result carries the note on the preceding user message
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-ROLE: a steering-hoisted user message carries the note after its results
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-ROLE: block-content user message keeps its blocks and gains the note block
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) UT-TRANSCRIPT: the transcript is byte-identical after the repair
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) one-shot: an already-reported orphan is dropped without a note
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) one-shot: IT-ONESHOT shape — N consecutive repairs of the same context note exactly once through a shared latch
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) E1: an id reused later (ids reset per run) reports once per (id, position)
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) E2: two orphans in one request produce ONE combined note naming both
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) E2: the combined note stays ONE line for any orphan count — a multi-line note escapes the gh-1131 summary-sanitizer strip window and would re-render forever
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) E5: a payload with NO user message degrades to the legacy standalone note (unavoidable carrier) and still repairs valid
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) REG-PAIRING: synthesized interrupted results and duplicate-id renames are unchanged by the latch
+✅ test/agent/tool_pairing_test.dart: orphan-result notices (gh-1449) the report record round-trips the orphan-report record shape
+✅ test/agent/tool_pairing_test.dart: property: every cut of a random transcript repairs to a valid context (UT-property) every legal cut position yields a context passing the invariant
+✅ test/agent/over_window_relief_test.dart: gross mid-turn overflow: one relief + one retry completes the turn
+✅ test/agent/over_window_relief_test.dart: the loop adopts the relieved context for later requests
+✅ test/agent/over_window_relief_test.dart: nothing hideable: the verbatim guard error survives, no loop
+✅ test/agent/over_window_relief_test.dart: relief that stays over the window counts as failure (E1: never loops)
+✅ test/agent/over_window_relief_test.dart: no relief configured: today's behavior is byte-identical
+✅ test/agent/over_window_relief_test.dart: a throwing relief degrades to the plain guard error
+✅ test/agent/stuck_tool_test.dart: StuckToolConfig thresholds threshold is the greater of (factor × declared timeout) and floor
+✅ test/agent/stuck_tool_test.dart: StuckToolConfig thresholds heartbeats start at half the threshold — before the follow-up
+✅ test/agent/stuck_tool_test.dart: StuckToolConfig thresholds default exclude list keeps user-interaction and subagent tools out of supervision
+✅ test/agent/stuck_tool_test.dart: StuckToolConfig thresholds yaml round-trip keeps non-default values
+✅ test/agent/stuck_tool_test.dart: StuckToolConfig thresholds yaml parse is strict
+✅ test/agent/tool_registry_test.dart: AgentTool is a Tool usable in a Context
+✅ test/agent/tool_registry_test.dart: AgentTool label and executionMode are optional
+✅ test/agent/tool_registry_test.dart: ToolRegistry registers and looks up tools by name
+✅ test/agent/tool_registry_test.dart: ToolRegistry operator [] throws ToolNotFoundException for unknown tool
+✅ test/agent/tool_registry_test.dart: ToolRegistry duplicate name replaces the earlier registration and notes it (issue #862: replace-and-note, later registration wins)
+✅ test/agent/tool_registry_test.dart: ToolRegistry duplicate via constructor records the same warning
+✅ test/agent/tool_registry_test.dart: ToolRegistry empty name throws ConfigException
+✅ test/agent/tool_registry_test.dart: ToolRegistry register and unregister mutate the registry
+✅ test/agent/tool_registry_test.dart: ToolRegistry tools getter exposes Tool list for Context building
+✅ test/agent/tool_registry_test.dart: ToolRegistry agentTools getter exposes the registered AgentTools
+✅ test/agent/tool_registry_test.dart: ToolRegistry executor throws ToolNotFoundException for unknown tool
+✅ test/agent/tool_registry_test.dart: ToolRegistry executor throws ToolValidationException for invalid arguments
+✅ test/agent/tool_registry_test.dart: ToolRegistry executor valid arguments reach execute coerced
+✅ test/agent/tool_registry_test.dart: ToolRegistry executor cancelToken and onUpdate are passed through
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC1: a hanging call emits heartbeat records while it is outstanding
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC2: at the threshold the stuck call is cancelled and retried once with a marked result
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC2 (token-obeying executor): an abort-shaped throw at the supervisor cancel never short-circuits the marked retry — the real bash shape (`Command aborted` once the job registry kills the process), not just a cancel-ignoring zombie
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC4 (token-obeying retry): a retry that throws at its yield cancel instead of handing back still escalates session-visibly
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC3: a retry that hangs again is converted to a background job and the turn continues with the job id + log path
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC4: when recovery fails an escalation names the call, the elapsed time, and the partial output
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop AC6: a legitimately long call (declared timeout) emits heartbeats but is NOT cancelled before its declared timeout + margin
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop advisory mode: the threshold only advises, it never cancels
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine arms a corrective note at the 3rd identical failure, once
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine a different error restarts the consecutive count
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine marks the identical call stopped at the 6th failure and the loop refusal names the misuse
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine E2: counters are per tool, not global
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine a success clears that tool's consecutive-failure state
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine aborted calls never count
+✅ test/agent/misuse_breaker_test.dart: ToolMisuseBreaker state machine beginRun wipes counters, notes, and stopped keys
+✅ test/agent/misuse_breaker_test.dart: IT-3: breaker over the real agent loop (AC6) 3 identical validation failures arm the corrective note in the NEXT request payload; 6 stop executing the identical call
+✅ test/agent/misuse_breaker_test.dart: IT-3: breaker over the real agent loop (AC6) E5: breaker off (null) preserves pre-breaker behavior
+✅ test/agent/misuse_breaker_test.dart: IT-3: breaker over the real agent loop (AC6) operational failures never count: the same bash-style error 6 times stays runnable (issue #862 review)
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop output size rides the heartbeat when the tool reports updates
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a zero cancel grace abandons the attempt immediately
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a user abort during supervision ends the run without a retry storm
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop excluded tools are never supervised
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop advisory mode: a tool error after the threshold is the executor's own — rethrown with no retry and no follow-up record
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a call that completes right after the cancel lands no cancel_retry record — the retry never happened
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a retry that self-completes past the threshold is not marked as a background conversion
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a retry whose output merely mentions the hand-back text is not marked as a background conversion
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a hand-back carrying a leading rewrite notice is still marked as a background conversion (gh-1835 review)
+✅ test/agent/agent_test.dart: lifecycle prompt while idle emits full lifecycle and updates state
+✅ test/agent/agent_test.dart: lifecycle isStreaming and streamingMessage track the active run
+✅ test/agent/agent_test.dart: lifecycle prompt throws while a run is active
+✅ test/agent/agent_test.dart: lifecycle waitForIdle resolves only after agent_end listeners settle
+✅ test/agent/agent_test.dart: lifecycle a second prompt after idle reuses the transcript
+✅ test/agent/agent_test.dart: lifecycle promptMessage starts a run from a single message
+✅ test/agent/agent_test.dart: lifecycle continueRun throws while a run is active
+✅ test/agent/agent_test.dart: lifecycle subscribe returns an unsubscribe function
+✅ test/agent/agent_test.dart: lifecycle state.tools and state.messages copy assigned lists
+✅ test/agent/agent_test.dart: steering steer mid-run is consumed at the next turn boundary without interrupting the current turn
+✅ test/agent/agent_test.dart: steering external steering source is drained before the first turn and merged ahead of the in-process queue
+✅ test/agent/agent_test.dart: steering one-at-a-time mode consumes one steering message per turn
+✅ test/agent/agent_test.dart: steering all mode drains every queued steering message at one boundary
+✅ test/agent/agent_test.dart: steering steer after the run ended is picked up by the next run
+✅ test/agent/agent_test.dart: follow-up follow-up queued during a run is processed after the run would stop
+✅ test/agent/agent_test.dart: follow-up follow-up queued during follow-up processing extends the run
+✅ test/agent/agent_test.dart: follow-up all mode drains every queued follow-up at once
+✅ test/agent/agent_test.dart: agent_settled fires once after agent_end when the run is fully idle
+✅ test/agent/agent_test.dart: agent_settled queued follow-up: settled fires only after the follow-up ends
+✅ test/agent/agent_test.dart: agent_settled settled listeners settle before waitForIdle resolves
+✅ test/agent/agent_test.dart: hooks beforeToolCall fires with pi context and can block with a reason
+✅ test/agent/agent_test.dart: hooks beforeToolCall block without a reason uses the default message
+✅ test/agent/agent_test.dart: hooks beforeToolCall throwing becomes an error tool result
+✅ test/agent/agent_test.dart: hooks beforeToolCall aborting the run yields an aborted tool result
+✅ test/agent/agent_test.dart: hooks afterToolCall can replace content and force termination
+✅ test/agent/agent_test.dart: hooks afterToolCall can flip the error flag
+✅ test/agent/agent_test.dart: hooks afterToolCall throwing turns the result into an error
+✅ test/agent/agent_test.dart: hooks transformContext rewrites provider input, not the transcript
+✅ test/agent/agent_test.dart: hooks prepareNextTurn can swap the model for the next turn
+✅ test/agent/agent_test.dart: hooks prepareNextTurn can replace the context for the next turn
+✅ test/agent/agent_test.dart: abort abort mid-stream ends with aborted semantics and idle state
+✅ test/agent/agent_test.dart: abort abort during tool execution: steering is consumed at the boundary, follow-ups stay queued
+✅ test/agent/agent_test.dart: abort abort with no active run is a no-op
+✅ test/agent/agent_test.dart: errors provider error event sets errorMessage and completes the prompt
+✅ test/agent/agent_test.dart: errors a throwing transformContext fails the run with a synthetic error message
+✅ test/agent/agent_test.dart: continueRun throws with no messages
+✅ test/agent/agent_test.dart: continueRun throws when the transcript ends with an assistant message and no queued messages
+✅ test/agent/agent_test.dart: continueRun drains queued steering when the transcript ends with an assistant message
+✅ test/agent/agent_test.dart: continueRun continues from a tool-result message without new prompts
+✅ test/agent/agent_test.dart: queue management clearing queues removes pending messages
+✅ test/agent/agent_test.dart: queue management reset clears transcript, runtime state, and queues
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop the anchor sentence quoted mid-body (after ordinary output) is still not a conversion under the rewrite-notice skip
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a retry that self-completes inside the grace leaves no background-convert record — the record waits for the conversion
+✅ test/agent/stuck_tool_test.dart: stuck-call supervision in the agent loop a declared timeout is honored for bash only — a stray timeout arg on another tool cannot suppress supervision
+✅ test/agent/auto_compactor_test.dart: gh-2101: a classic pass carries its duration and metered usage on the receipt
+✅ test/agent/auto_compactor_test.dart: a successful pass clears the stale usage anchor — the estimate drops and the loop stops after one pass
+✅ test/agent/auto_compactor_test.dart: the compaction gate counts request overhead (system prompt + tool schemas) the transcript-only estimate misses
+✅ test/agent/auto_compactor_test.dart: a no-op pass (already compacted at the leaf) stops the loop instead of spinning to maxPasses
+✅ test/agent/auto_compactor_test.dart: a hung summarizer burns the attempt budget, not the session — the local trim still rescues the turn
+✅ test/agent/auto_compactor_test.dart: a hung summarizer with nothing to trim fails the run honestly
+✅ test/agent/auto_compactor_test.dart: both summarizers down over the window: local trim bounds the context and reports an honest local-trim pass
+✅ test/agent/auto_compactor_test.dart: gh-1425 clamp edge 1: the kept region reserves headroom for the [context trimmed] marker — the trim lands UNDER the trigger, so the next pre-flight does not re-fire a doomed pass
+✅ test/agent/auto_compactor_test.dart: gh-1425 clamp edge 2: degenerate overhead (overhead ≥ trigger) still trims — at least the newest message is kept, never an empty window (mirror of projectedBranchBudgetCut's rule)
+✅ test/agent/auto_compactor_test.dart: AC2 (#729): an overflow-classified compaction failure routes to chunk/trim with ZERO backoff retries
+✅ test/agent/auto_compactor_test.dart: a transient 5xx failure is retried before the local trim (the transient regex is the retry contract, issue #729 AC2 boundary)
+✅ test/agent/auto_compactor_test.dart: a browser fetch death is transient-classified and retried before the local trim (gh-2059 arch 7: the MV3 SW stream dies with exactly "TypeError: Failed to fetch")
+✅ test/agent/auto_compactor_test.dart: local trim never leaves an orphaned tool result (Kimi 400 tool_call_id wedge)
+✅ test/agent/auto_compactor_test.dart: local trim repairs a NON-leading orphan inside the kept region (issue #85 merged-block wedge)
+✅ test/agent/auto_compactor_test.dart: both summarizers down but the transcript fits the keep budget: no trim, honest failure
+✅ test/agent/auto_compactor_test.dart: default budgets are roomy — 300 s per attempt, 15 min total
+✅ test/agent/auto_compactor_test.dart: an exhausted total budget skips further summarizer attempts and falls to the local trim
+✅ test/agent/auto_compactor_test.dart: onAttemptStart reports each summarizer attempt with its budget
+✅ test/agent/auto_compactor_test.dart: the factory forwards attempt and total budgets
+✅ test/agent/auto_compactor_test.dart: the structured factory run closes the hooks bracket (onDone) like the classic run
+✅ test/agent/finalize_gate_grader_parity_test.dart: REG: a cwd-dependent entry point is caught (fail, not passed)
+✅ test/agent/finalize_gate_grader_parity_test.dart: REG: a session-env-dependent entry point is caught (clean env)
+✅ test/agent/finalize_gate_grader_parity_test.dart: REG: a cwd/env-independent entry point parity-passes (no false positive)
+✅ test/agent/auto_compactor_structured_budget_test.dart: structured engine: a never-answering judge no longer bricks the run — budget kill aborts the call, the deterministic fallback compacts, and the session survives
+✅ test/agent/param_validator_test.dart: validateToolArguments empty schema passes arguments through unchanged
+✅ test/agent/param_validator_test.dart: validateToolArguments valid typed arguments pass unchanged
+✅ test/agent/param_validator_test.dart: validateToolArguments missing required parameter throws
+✅ test/agent/param_validator_test.dart: validateToolArguments null value for required parameter throws
+✅ test/agent/param_validator_test.dart: validateToolArguments missing optional parameter is omitted from result
+✅ test/agent/param_validator_test.dart: validateToolArguments default value is injected for missing parameter
+✅ test/agent/param_validator_test.dart: validateToolArguments required parameter with default uses default when missing
+✅ test/agent/param_validator_test.dart: validateToolArguments unknown parameters pass through
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion string "42" coerces to number and integer
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion fractional string coerces to number but not integer
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion integral double coerces to integer
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion boolean coerces to number
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion non-numeric string fails number coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion empty string fails number coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion string coerces to boolean (case-insensitive)
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion numbers 1 and 0 coerce to boolean
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion non-boolean string fails boolean coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion number and bool coerce to string
+✅ test/agent/param_validator_test.dart: validateToolArguments scalar coercion list fails string coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments enum value in enum passes
+✅ test/agent/param_validator_test.dart: validateToolArguments enum value outside enum throws
+✅ test/agent/param_validator_test.dart: validateToolArguments enum enum is checked after coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments union types value matching a union member passes
+✅ test/agent/param_validator_test.dart: validateToolArguments union types value matching a union member is kept as-is (pi semantics)
+✅ test/agent/param_validator_test.dart: validateToolArguments union types value matching no union member is coerced to the first fit
+✅ test/agent/param_validator_test.dart: validateToolArguments union types nullable union accepts null for optional parameter
+✅ test/agent/param_validator_test.dart: validateToolArguments union types value matching no union member throws
+✅ test/agent/param_validator_test.dart: validateToolArguments nested objects valid nested object passes
+✅ test/agent/param_validator_test.dart: validateToolArguments nested objects nested coercion applies
+✅ test/agent/param_validator_test.dart: validateToolArguments nested objects missing nested required reports dotted path
+✅ test/agent/param_validator_test.dart: validateToolArguments nested objects non-object value for object schema throws
+✅ test/agent/param_validator_test.dart: validateToolArguments arrays valid array passes
+✅ test/agent/param_validator_test.dart: validateToolArguments arrays items are coerced
+✅ test/agent/param_validator_test.dart: validateToolArguments arrays invalid item reports indexed path
+✅ test/agent/param_validator_test.dart: validateToolArguments arrays non-array value throws
+✅ test/agent/param_validator_test.dart: validateToolArguments arrays array of nested objects validates each item
+✅ test/agent/param_validator_test.dart: validateToolArguments multiple errors are collected into one exception
+✅ test/agent/param_validator_test.dart: validateToolArguments input map is not mutated
+✅ test/agent/param_validator_test.dart: validateToolArguments required key without a property schema only checks presence
+✅ test/agent/param_validator_test.dart: validateToolArguments non-map property schema passes the raw value through
+✅ test/agent/param_validator_test.dart: validateToolArguments fractional double fails integer coercion
+✅ test/agent/param_validator_test.dart: validateToolArguments empty-ish scalars coerce to null for null-typed unions
+✅ test/agent/param_validator_test.dart: validateJsonValue returns no violations for a conforming value
+✅ test/agent/param_validator_test.dart: validateJsonValue reports missing required properties by name
+✅ test/agent/param_validator_test.dart: validateJsonValue labels root type mismatches as (root)
+✅ test/agent/param_validator_test.dart: validateJsonValue reports nested violations with dotted, indexed paths
+✅ test/agent/param_validator_test.dart: validateJsonValue applies the same coercion rules as tool arguments
+✅ test/agent/param_validator_test.dart: validateJsonValue enforces enum and union types
+✅ test/agent/param_validator_test.dart: validateJsonValue ignores keywords outside the supported subset
+✅ test/agent/auto_compactor_structured_budget_test.dart: classic engine: budget expiry cancels the wedged summarizer call instead of abandoning it
+✅ test/agent/auto_compactor_structured_budget_test.dart: structured engine, direct: the hide judge budget kill is a counted failure — the token still aborts the call, and the deterministic fallback compacts instead of bricking
+✅ test/agent/auto_compactor_structured_budget_test.dart: structured engine, direct: the checkpoint summarizer budget kill propagates as a named error instead of a null summary
+✅ test/agent/auto_compactor_structured_budget_test.dart: gh-1743: a factory-level budget timeout (wedged judge past the total budget) falls back to the local trim instead of aborting the session
+✅ test/agent/auto_compactor_structured_budget_test.dart: gh-1743: when nothing is droppable the budget timeout keeps the failure verdict
+✅ test/agent/auto_compactor_structured_budget_test.dart: gh-1743: a cancelled run token surfaces the abort — the rescue valve never trims (nor reports success) on a run the user stopped
+✅ test/agent/tool_cancelled_error_test.dart: a CancelledException from a tool renders as a deliberate cancel, not a harness defect
+✅ test/agent/image_cap_loop_test.dart: IT-1 (AC3): 400 → latch → exactly ONE re-send at the learned cap
+✅ test/agent/image_cap_loop_test.dart: IT-2 (AC4): a second refusal at the learned cap surfaces the error
+✅ test/agent/image_cap_loop_test.dart: IT-3 (AC5): a near-miss 400 without the refusal family never re-sends
+✅ test/agent/image_cap_loop_test.dart: IT-4 (AC6): images.registry:false — no cap logic, no re-send, legacy request shape
+✅ test/agent/image_cap_loop_test.dart: IT-5 (E2): a latch for model A never constrains model B
+✅ test/agent/image_cap_loop_test.dart: IT-6 (E3): a degenerate learned cap (is 0) never re-sends
+✅ test/agent/image_cap_loop_test.dart: IT-7 (E5): the re-send rebuilds through the registry at the latched cap, never a stale payload
+✅ test/agent/image_cap_loop_test.dart: REG-1: no config, no catalog entry — the request carries up to 20, exactly today’s shape
+✅ test/agent/image_cap_loop_test.dart: AC1 (#1889): 37 history images, cap 20, 5 consecutive requests ⇒ five full per-image reports, ONE aggregated notice
+✅ test/agent/image_recovery_loop_test.dart: IT-1 (AC1): the 5MB-capped ladder converges — drop pass, recovery note rides the retry
+✅ test/agent/image_recovery_loop_test.dart: IT-2 (AC2): a compacted poisoned session sends ZERO image bytes
+✅ test/agent/image_recovery_loop_test.dart: IT-3 (AC3): the transcript messages are never mutated by recovery
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) zero-byte stalled submit: steering interrupts immediately, rides the rebuilt request, and the run completes healthy
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) mid-stream stall: steering waits out the stall window, then interrupts; the partial content is preserved
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) a productive stream is never cancelled — steering keeps its next-boundary delivery
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) no steering: a stalled-then-completing run is byte-identical legacy (REG parity — no interrupt, no resubmit)
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) a run-token abort (esc) still wins: the run ends aborted with no resubmit
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) the interrupt respects maxSteeringTurns: over-cap steering ends the run aborted with the mail left queued
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) the AC4 notices fire with the pinned copy at the interrupt and the delivery
+✅ test/agent/image_recovery_loop_test.dart: IT-4 (AC4): the ladder is bounded — 2 passes, halved budget, ONE actionable failure, then a latched image-free session
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) a disposed watch can never cancel the live run token (r1 blocker regression): a probe completing after dispose fires nothing, and the next attempt stays healthy
+✅ test/agent/agent_loop_steering_yield_test.dart: provider-phase steering interrupt (#1923 AC1) the steering cancel reason is SteeringInterruptFire, never a retry-ladder class
+✅ test/agent/image_recovery_loop_test.dart: IT-5 (AC5): the learned budget rides subsequent requests — config still honored when lower
+✅ test/agent/image_recovery_loop_test.dart: IT-6 (AC6): a text-only session never engages the ladder
