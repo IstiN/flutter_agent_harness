@@ -23,6 +23,16 @@ final _mac = Hmac.sha256();
 final _aead = Chacha20.poly1305Aead();
 const _hkdfInfo = 'dap1/v1';
 
+/// Generates the X25519 keypair used by DAP/1 payload encryption.
+///
+/// Device-connector DM provisioning shares this primitive with the hub
+/// identity so both paths use the same cryptography implementation.
+Future<SimpleKeyPair> hubGenerateX25519KeyPair() => _x25519.newKeyPair();
+
+/// Restores an X25519 keypair from its 32-byte private seed.
+Future<SimpleKeyPair> hubX25519KeyPairFromSeed(List<int> privateKey) =>
+    _x25519.newKeyPairFromSeed(privateKey);
+
 /// Recursively key-sorted, whitespace-free JSON encoding of [value].
 String hubCanonicalJson(Object? value) => jsonEncode(_sorted(value));
 
@@ -108,14 +118,51 @@ Future<String> hubEncryptPayload({
   required String frameId,
   required String aadTarget,
   required String plaintext,
+}) => hubEncryptPayloadWithKeyPair(
+  senderDhKeyPair: sender.dhKeyPair,
+  recipientDhPubkey: recipientDhPubkey,
+  frameId: frameId,
+  aadTarget: aadTarget,
+  plaintext: plaintext,
+);
+
+/// Encrypts a raw DAP/1 payload with an explicit X25519 sender keypair.
+Future<String> hubEncryptPayloadWithKeyPair({
+  required SimpleKeyPair senderDhKeyPair,
+  required SimplePublicKey recipientDhPubkey,
+  required String frameId,
+  required String aadTarget,
+  required String plaintext,
 }) async {
-  final key = await _deriveDmKey(sender.dhKeyPair, recipientDhPubkey, frameId);
+  final key = await _deriveDmKey(senderDhKeyPair, recipientDhPubkey, frameId);
   final box = await _aead.encrypt(
     utf8.encode(plaintext),
     secretKey: key,
     aad: utf8.encode('dap1|$frameId|$aadTarget'),
   );
   return base64Encode([...box.nonce, ...box.cipherText, ...box.mac.bytes]);
+}
+
+/// Seals the self-describing fa_network `fanet1` layout:
+/// `base64(0x01 || senderX25519Pub || nonce || ciphertext || tag)`.
+/// The inner AEAD uses [frameId] and [aadTarget] exactly, so a connector's
+/// minted msgId can be supplied without re-encrypting on outbox retries.
+Future<String> hubSealFanet1({
+  required SimpleKeyPair senderDhKeyPair,
+  required SimplePublicKey recipientDhPubkey,
+  required String frameId,
+  required String aadTarget,
+  required String plaintext,
+}) async {
+  final senderPub = await senderDhKeyPair.extractPublicKey();
+  final encrypted = await hubEncryptPayloadWithKeyPair(
+    senderDhKeyPair: senderDhKeyPair,
+    recipientDhPubkey: recipientDhPubkey,
+    frameId: frameId,
+    aadTarget: aadTarget,
+    plaintext: plaintext,
+  );
+  return base64Encode([1, ...senderPub.bytes, ...base64Decode(encrypted)]);
 }
 
 /// Decrypts a DM payload produced by [hubEncryptPayload]: [ourIdentity]

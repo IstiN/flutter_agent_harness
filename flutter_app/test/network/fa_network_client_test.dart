@@ -157,7 +157,12 @@ void main() {
         await deviceClient.patchDeviceRoster(
           'dev/1',
           agents: const [
-            DeviceRosterAgent(name: 'goal', state: 'live', exposed: true),
+            DeviceRosterAgent(
+              name: 'goal',
+              state: 'live',
+              exposed: true,
+              dmPub: 'pub-1',
+            ),
           ],
           sessions: const [
             DeviceRosterSession(
@@ -174,7 +179,12 @@ void main() {
         expect(captured.headers['content-type'], contains('application/json'));
         expect(jsonDecode(captured.body), {
           'agents': [
-            {'name': 'goal', 'state': 'live', 'exposed': true},
+            {
+              'name': 'goal',
+              'state': 'live',
+              'exposed': true,
+              'dmPub': 'pub-1',
+            },
           ],
           'sessions': [
             {
@@ -254,7 +264,7 @@ void main() {
     );
 
     test(
-      'listNetworkDevices decodes friendly name and offline presence',
+      'listNetworkDevices decodes friendly name, presence, and agent DM keys',
       () async {
         late http.Request captured;
         final mock = MockClient((request) async {
@@ -262,7 +272,13 @@ void main() {
           return http.Response(
             '{"devices":[{"deviceId":"dev-remote","name":"thinkpad",'
             '"friendlyName":"Workstation","presence":"offline",'
-            '"userId":"user-1"}]}',
+            '"userId":"user-1","agents":['
+            '{"name":"goal","state":"live","exposed":true,'
+            '"dmPub":"cHViLWdvYWw="},'
+            '{"address":"scout@dev-remote","state":"busy","exposed":true,'
+            '"dmPub":"cHViLXNjb3V0"},'
+            '{"name":"missing-key","state":"live","exposed":true}'
+            ']}]}',
             200,
           );
         });
@@ -283,6 +299,10 @@ void main() {
         expect(devices.single.name, 'thinkpad');
         expect(devices.single.presence, 'offline');
         expect(devices.single.userId, 'user-1');
+        expect(devices.single.agentDmPubs, {
+          'goal@dev-remote': 'cHViLWdvYWw=',
+          'scout@dev-remote': 'cHViLXNjb3V0',
+        });
       },
     );
 
@@ -546,6 +566,45 @@ void main() {
       expect(req.url.queryParameters.containsKey('kinds'), isFalse);
       expect(req.headers['authorization'], 'Bearer jwt-tok');
     });
+
+    test(
+      'listDmInbox windows a DM view and parses connector-wire rows',
+      () async {
+        client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+        httpClient.respond(
+          200,
+          body:
+              '{"items":[{"msgId":"dm-1","channel":'
+              '"dm:user:u1:goal@dev-1","from":"user:u1",'
+              '"to":"goal@dev-1","ciphertext":"ZmFuZXQx",'
+              '"ts":"2026-11-12T10:00:00.000Z","seq":7}],'
+              '"nextCursor":"older-dm"}',
+        );
+
+        final page = await client.listDmInbox(
+          'dm:user:u1:goal@dev-1',
+          limit: 20,
+          cursor: 'current cursor',
+        );
+
+        final row = page.items.single;
+        expect(row.id, 'dm-1');
+        expect(row.channelId, 'dm:user:u1:goal@dev-1');
+        expect(row.senderId, 'user:u1');
+        expect(row.payload, 'ZmFuZXQx');
+        expect(row.createdAt, DateTime.utc(2026, 11, 12, 10));
+        expect(page.nextCursor, 'older-dm');
+        final req = httpClient.requests.single;
+        expect(req.method, 'GET');
+        expect(req.url.path, '/api/inbox');
+        expect(req.url.queryParameters, {
+          'channel': 'dm:user:u1:goal@dev-1',
+          'limit': '20',
+          'cursor': 'current cursor',
+        });
+        expect(req.headers['authorization'], 'Bearer jwt-tok');
+      },
+    );
 
     test('deleteNetwork accepts 204', () async {
       httpClient.respond(204);

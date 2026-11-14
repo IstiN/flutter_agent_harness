@@ -2700,6 +2700,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDeviceConnecting => 'Connecting…';
 
   @override
+  String get networkDeviceConversationEmpty =>
+      'No messages yet — say hi. The session wakes on your message.';
+
+  @override
+  String get networkDeviceConversationOlder => 'Load older';
+
+  @override
+  String get networkDeviceConversationHint => 'Message…';
+
+  @override
   String get networkDeviceReconnecting => 'Reconnecting…';
 
   @override

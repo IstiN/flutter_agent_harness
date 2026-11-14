@@ -40,7 +40,7 @@ import 'upstream_client.dart';
 /// see. Slice-1 default ([plainCiphertextDecoder]) treats the ciphertext
 /// as plain text (personal-network/dev mode); the DM fanet1 decode rides a
 /// later slice through this seam (contract §7).
-typedef MailDecoder = String Function(NetworkEnvelope envelope);
+typedef MailDecoder = FutureOr<String> Function(NetworkEnvelope envelope);
 
 /// The plain-ciphertext pass-through decoder.
 String plainCiphertextDecoder(NetworkEnvelope envelope) =>
@@ -241,17 +241,23 @@ final class MachineConnector {
     required String channel,
     required String from,
     String? to,
-    required String ciphertext,
+    String? ciphertext,
+    FutureOr<String> Function(String frameId)? ciphertextFor,
   }) async {
+    if ((ciphertext == null) == (ciphertextFor == null)) {
+      throw ArgumentError('provide exactly one of ciphertext or ciphertextFor');
+    }
+    final msgId = idFactory();
+    final body = ciphertext ?? await ciphertextFor!(msgId);
     final envelope = NetworkEnvelope(
       kind: NetworkEnvelopeKind.mail,
-      msgId: idFactory(),
+      msgId: msgId,
       network: network,
       channel: channel,
       from: from,
       to: to,
       ts: rfc3339Timestamp(DateTime.now().toUtc()),
-      ciphertext: ciphertext,
+      ciphertext: body,
     )..requireValid();
     await outbox.put(OutboxEntry(envelope: envelope));
     unawaited(_drainOutbox());
@@ -276,7 +282,7 @@ final class MachineConnector {
     NetworkEnvelope envelope,
     Future<void> Function(InboundMail mail) sink,
   ) async {
-    final text = decodeMail(envelope);
+    final text = await decodeMail(envelope);
     final decision = sanitizeRemoteWrite(text);
     if (decision is AclReject) {
       _rejections.add(

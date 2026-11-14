@@ -6,10 +6,11 @@
 /// file store exported from `lib/io.dart`; tests can use [MemoryNetworkStore].
 library;
 
+import '../network/connector/device_dm_keys.dart';
 import '../network/network_account.dart';
 
 /// Account and device persistence for the CLI device-network commands.
-abstract interface class NetworkCredentialStore {
+abstract interface class NetworkCredentialStore implements DeviceDmKeyStore {
   /// Reads the account, or null when signed out.
   Future<NetworkAccount?> readAccount();
 
@@ -49,6 +50,17 @@ final class MemoryNetworkStore implements NetworkCredentialStore {
   @override
   Future<void> writeDevice(NetworkDeviceCredentials value) async =>
       device = value;
+
+  @override
+  Future<Map<String, String>> readDmPrivateKeys() async =>
+      Map.of(device?.dmPrivateKeys ?? const {});
+
+  @override
+  Future<void> writeDmPrivateKeys(Map<String, String> keys) async {
+    final current = device;
+    if (current == null) throw StateError('device not enrolled');
+    device = current.withDmPrivateKeys(keys);
+  }
 
   @override
   Future<void> clearDevice() async => device = null;

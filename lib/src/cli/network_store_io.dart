@@ -5,7 +5,8 @@
 /// `~/.fah/network/` credential storage (Unix mode 0700 directory, 0600
 /// files):
 /// - `account.json`: access JWT, optional refresh token and absolute expiries;
-/// - `device.json`: deviceId/deviceToken/personalNetworkId plus host metadata.
+/// - `device.json`: deviceId/deviceToken/personalNetworkId, host metadata,
+///   and per-agent-address X25519 DM private seeds.
 /// Writes use a sibling temporary file + rename, and no content is logged.
 library;
 
@@ -47,6 +48,17 @@ final class FileNetworkCredentialStore implements NetworkCredentialStore {
   @override
   Future<void> writeDevice(NetworkDeviceCredentials device) =>
       _write(_device, device.toJson());
+
+  @override
+  Future<Map<String, String>> readDmPrivateKeys() async =>
+      Map.of((await readDevice())?.dmPrivateKeys ?? const {});
+
+  @override
+  Future<void> writeDmPrivateKeys(Map<String, String> keys) async {
+    final current = await readDevice();
+    if (current == null) throw StateError('device not enrolled');
+    await writeDevice(current.withDmPrivateKeys(keys));
+  }
 
   @override
   Future<void> clearDevice() => _delete(_device);

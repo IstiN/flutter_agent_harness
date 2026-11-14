@@ -190,6 +190,35 @@ void main() {
     },
   );
 
+  test(
+    'dm: prefix route receives every virtual DM channel, not groups',
+    () async {
+      final mux = ConnectorMux();
+      final delivered = <String>[];
+      mux.registerSink(
+        const MailRoute(
+          network: 'net-a',
+          channel: dmChannelPrefix,
+          to: 'goal_builder@macbook',
+        ),
+        (envelope) async => delivered.add(envelope.msgId),
+      );
+
+      expect(
+        mux.demux(mail('dm-1', channel: 'dm:user:u1:goal_builder@macbook')),
+        DemuxOutcome.delivered,
+      );
+      expect(
+        mux.demux(mail('dm-2', channel: 'dm:user:u2:goal_builder@macbook')),
+        DemuxOutcome.delivered,
+      );
+      expect(mux.demux(mail('group-1')), DemuxOutcome.unrouted);
+      await mux.settle();
+      expect(delivered, ['dm-1', 'dm-2']);
+      mux.dispose();
+    },
+  );
+
   test('multiple sinks per route fan out in registration order', () async {
     final mux = ConnectorMux();
     final order = <String>[];

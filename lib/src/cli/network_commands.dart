@@ -380,6 +380,7 @@ fa network rename --clear               Clear THIS device's friendly name''';
         name: device.name,
         friendlyName: friendly.isEmpty ? null : friendly,
         platform: device.platform,
+        dmPrivateKeys: device.dmPrivateKeys,
       ),
     );
     _out(

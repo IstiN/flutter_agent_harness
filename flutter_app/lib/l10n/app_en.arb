@@ -1396,6 +1396,18 @@
   "@networkDeviceConnecting": {
     "description": "Device roster skeleton line while the connector dials"
   },
+  "networkDeviceConversationEmpty": "No messages yet — say hi. The session wakes on your message.",
+  "@networkDeviceConversationEmpty": {
+    "description": "Empty-history line in the remote-agent DM conversation pane"
+  },
+  "networkDeviceConversationOlder": "Load older",
+  "@networkDeviceConversationOlder": {
+    "description": "Button loading an older DM history window"
+  },
+  "networkDeviceConversationHint": "Message…",
+  "@networkDeviceConversationHint": {
+    "description": "Composer hint in the remote-agent DM conversation pane"
+  },
   "networkDeviceReconnecting": "Reconnecting…",
   "@networkDeviceReconnecting": {
     "description": "Device roster muted line while the upstream link is down"

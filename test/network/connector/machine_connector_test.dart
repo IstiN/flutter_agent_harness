@@ -532,6 +532,68 @@ void main() {
       connector.dispose();
     },
   );
+
+  test(
+    'sealed send encrypts with the exact minted msgId before queueing',
+    () async {
+      server.seedDevice('macbook', networks: ['personal-x']);
+      final connector = buildConnector();
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+
+      final id = await connector.sendMail(
+        network: 'personal-x',
+        channel: 'dm:user:u1:goal_builder@macbook',
+        from: 'goal_builder@macbook',
+        to: 'user:u1',
+        ciphertextFor: (frameId) async => 'sealed-$frameId',
+      );
+
+      await _waitUntil(() => server.persistedMail.isNotEmpty);
+      final sent = server.persistedMail.single;
+      expect(sent.msgId, id);
+      expect(sent.ciphertext, 'sealed-$id');
+      await connector.stop();
+      connector.dispose();
+    },
+  );
+
+  test('async MailDecoder resolves before ACL and sink delivery', () async {
+    final written = <String>[];
+    final upstream = ConnectorUpstreamClient(
+      url: Uri.parse('wss://fake/ws'),
+      transport: server.transport,
+      ticketProvider: () async => 'ticket-2',
+      deviceId: 'macbook',
+      deviceToken: 'tok-1',
+      backoff: (attempt) => const Duration(milliseconds: 20),
+      timers: const SystemTimers(),
+    );
+    final decoded =
+        MachineConnector(
+          registry: registry,
+          upstream: upstream,
+          decodeMail: (envelope) async {
+            await Future<void>.delayed(Duration.zero);
+            return 'DECODED(${envelope.ciphertext})';
+          },
+          onLog: logs.add,
+        )..registerLocalSink(
+          network: 'personal-x',
+          channel: 'chan-1',
+          sink: (mail) async => written.add(mail.text),
+        );
+    await decoded.start();
+    await _waitUntil(() => decoded.isConnected);
+    server.deliverTo(
+      deviceId: 'macbook',
+      mail: _mailFor('async-dec-1', 'chan-1', ciphertext: 'cipher-blob'),
+    );
+    await _waitUntil(() => written.isNotEmpty);
+    expect(written.single, 'DECODED(cipher-blob)');
+    await decoded.stop();
+    decoded.dispose();
+  });
 }
 
 NetworkEnvelope _mailFor(

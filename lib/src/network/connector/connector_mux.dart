@@ -213,10 +213,23 @@ final class ConnectorMux {
         )] ??
         const <MailSink>[];
     if (exact.isNotEmpty) return exact;
-    return _sinks[MailRoute(
-          network: envelope.network ?? '',
-          channel: envelope.channel ?? '',
-        )] ??
+    final network = envelope.network ?? '';
+    final channel = envelope.channel ?? '';
+    final channelCatchAll =
+        _sinks[MailRoute(network: network, channel: channel)] ??
+        const <MailSink>[];
+    if (channelCatchAll.isNotEmpty || !isDmChannel(channel)) {
+      return channelCatchAll;
+    }
+    return _dmPrefixSinks(network, envelope.to ?? '');
+  }
+
+  List<MailSink> _dmPrefixSinks(String network, String to) {
+    final exact =
+        _sinks[MailRoute(network: network, channel: dmChannelPrefix, to: to)] ??
+        const <MailSink>[];
+    if (exact.isNotEmpty) return exact;
+    return _sinks[MailRoute(network: network, channel: dmChannelPrefix)] ??
         const <MailSink>[];
   }
 

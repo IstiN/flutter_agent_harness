@@ -2728,6 +2728,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get networkDeviceConnecting => 'Подключение…';
 
   @override
+  String get networkDeviceConversationEmpty =>
+      'Собщений пока нет — напишите первым. Сессия проснётся при получении.';
+
+  @override
+  String get networkDeviceConversationOlder => 'Загрузить старые';
+
+  @override
+  String get networkDeviceConversationHint => 'Собщение…';
+
+  @override
   String get networkDeviceReconnecting => 'Переподключение…';
 
   @override

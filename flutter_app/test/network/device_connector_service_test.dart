@@ -14,6 +14,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_dm_session_host.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_registry.dart';
@@ -41,6 +42,17 @@ final class MemoryDeviceTokenStore implements DeviceTokenStore {
   Future<void> write(DeviceCredentials credentials) async {
     stored = credentials;
     writes++;
+  }
+
+  @override
+  Future<Map<String, String>> readDmPrivateKeys() async =>
+      Map.of(stored?.dmPrivateKeys ?? const {});
+
+  @override
+  Future<void> writeDmPrivateKeys(Map<String, String> keys) async {
+    final current = stored;
+    if (current == null) throw StateError('device not enrolled');
+    await write(current.withDmPrivateKeys(keys));
   }
 
   @override
@@ -130,6 +142,9 @@ buildService({
   MemoryDeviceTokenStore? tokenStore,
   OutboxStore? outbox,
   DeviceChatSessionSource? chatSessionSource,
+  DeviceDmSessionHost? dmSessionHost,
+  Future<String> Function()? userIdProvider,
+  IdFactory idFactory = defaultIdFactory,
   Duration rosterDebounce = const Duration(milliseconds: 500),
 }) async {
   final manager = await _manager(httpClient: httpClient, jwt: jwt);
@@ -141,6 +156,9 @@ buildService({
     transport: usedTransport,
     outbox: outbox ?? MemoryOutboxStore(),
     chatSessionSource: chatSessionSource,
+    dmSessionHost: dmSessionHost,
+    userIdProvider: userIdProvider,
+    idFactory: idFactory,
     rosterDebounce: rosterDebounce,
   );
   return (service, manager, httpClient, usedTransport, usedTokens);
@@ -203,6 +221,13 @@ List<Map<String, Object?>> rosterPatches(FakeHttpClient httpClient) =>
               (jsonDecode(request.body) as Map).cast<String, Object?>(),
         )
         .toList();
+
+Map<String, Object?> agentPatch(String state, bool exposed) => {
+  'name': 'fa',
+  'state': state,
+  'exposed': exposed,
+  'dmPub': isA<String>(),
+};
 
 void main() {
   late FakeHttpClient httpClient;
@@ -374,7 +399,7 @@ void main() {
       hasLength(1),
       reason: 'the persisted credentials skip a second enrollment',
     );
-    expect(tokens.writes, 1);
+    expect(tokens.writes, 2); // enrollment + first DM key provisioning
     expect(transport.dials, hasLength(2));
     expect(transport.dials.last.url.queryParameters['ticket'], 'tk-2');
     expect(service.phase, DeviceConnectorPhase.online);
@@ -470,6 +495,95 @@ void main() {
     expect(request.headers['authorization'], 'Bearer jwt-1');
   });
 
+  test(
+    'keychain token store persists DM keys beside device credentials',
+    () async {
+      final values = <String, String>{};
+      final store = KeychainDeviceTokenStore(
+        readAll: () async => values,
+        setValue: (name, value) async {
+          values[name] = value;
+          return true;
+        },
+      );
+      await store.write(
+        const DeviceCredentials(
+          deviceId: 'dev-1',
+          deviceToken: 'dt-secret',
+          personalNetworkId: 'net-personal',
+        ),
+      );
+
+      await store.writeDmPrivateKeys(const {'fa@dev-1': 'private-seed'});
+
+      final restored = await store.read();
+      expect(restored?.deviceToken, 'dt-secret');
+      expect(restored?.personalNetworkId, 'net-personal');
+      expect(restored?.dmPrivateKeys, {'fa@dev-1': 'private-seed'});
+      expect(await store.readDmPrivateKeys(), {'fa@dev-1': 'private-seed'});
+      expect(values, hasLength(1));
+    },
+  );
+
+  test(
+    'DM public key is stable across service instances and stored once',
+    () async {
+      final http = FakeHttpClient()
+        ..respond(200, body: '{"ticket":"tk-dm-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"ticket":"tk-dm-2"}')
+        ..respond(200, body: '{"patched":"dev-1"}')
+        ..respond(200, body: '{"patched":"dev-1"}');
+      final tokens = enrolledTokens();
+      const sourceRows = <DeviceChatSession>[(id: 'chat-1', live: true)];
+      final (first, _, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: tokens,
+        chatSessionSource: FakeChatSessionSource(sourceRows),
+        rosterDebounce: Duration.zero,
+      );
+      addTearDown(first.dispose);
+
+      await first.start();
+      await pumpUntilOnline(first);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final firstLive = rosterPatches(http).firstWhere(
+        (patch) => (patch['agents'] as List).single['state'] == 'live',
+      );
+      final firstPub = (firstLive['agents'] as List).single['dmPub'] as String;
+      final privateKeys = tokens.stored?.dmPrivateKeys;
+      expect(base64Decode(firstPub), hasLength(32));
+      expect(privateKeys?.keys, {'fa@dev-1'});
+      expect(tokens.writes, 1);
+      await first.stop();
+
+      final (second, _, _, _, _) = await buildService(
+        httpClient: http,
+        tokenStore: tokens,
+        chatSessionSource: FakeChatSessionSource(sourceRows),
+        rosterDebounce: Duration.zero,
+      );
+      addTearDown(second.dispose);
+      await second.start();
+      await pumpUntilOnline(second);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final secondLive = rosterPatches(http).lastWhere(
+        (patch) => (patch['agents'] as List).single['state'] == 'live',
+      );
+      expect((secondLive['agents'] as List).single['dmPub'], firstPub);
+      expect(tokens.stored?.dmPrivateKeys, privateKeys);
+      expect(tokens.writes, 1, reason: 'a restored key must not be rotated');
+      expect(
+        http.requests.where(
+          (request) => request.url.path == '/api/devices/enroll',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   group('REST roster projection', () {
     const debounce = Duration(milliseconds: 40);
     const settle = Duration(milliseconds: 100);
@@ -495,9 +609,7 @@ void main() {
       final patches = rosterPatches(http);
       expect(patches, hasLength(1));
       expect(patches.single, {
-        'agents': [
-          {'name': 'fa', 'state': 'live', 'exposed': true},
-        ],
+        'agents': [agentPatch('live', true)],
         'sessions': [
           {
             'id': 'session-1',
@@ -543,9 +655,7 @@ void main() {
             'networks': ['net-personal'],
           },
         ]);
-        expect(patches.last['agents'], [
-          {'name': 'fa', 'state': 'live', 'exposed': true},
-        ]);
+        expect(patches.last['agents'], [agentPatch('live', true)]);
         expect(
           service.connector!.registry.sessions.map((session) => session.id),
           containsAll(['session-1', 'session-2']),
@@ -638,9 +748,7 @@ void main() {
 
       expect(rosterPatches(http), [
         {
-          'agents': [
-            {'name': 'fa', 'state': 'live', 'exposed': true},
-          ],
+          'agents': [agentPatch('live', true)],
           'sessions': [
             {
               'id': 'chat-live',
@@ -696,9 +804,7 @@ void main() {
           'networks': ['net-personal'],
         },
       ]);
-      expect(patches.last['agents'], [
-        {'name': 'fa', 'state': 'live', 'exposed': true},
-      ]);
+      expect(patches.last['agents'], [agentPatch('live', true)]);
       expect(
         service.connector!.registry.sessions.map((session) => session.id),
         ['chat-created'],
@@ -842,9 +948,7 @@ void main() {
         final patches = rosterPatches(http);
         expect(patches, hasLength(2));
         expect(patches.last, {
-          'agents': [
-            {'name': 'fa', 'state': 'offline', 'exposed': false},
-          ],
+          'agents': [agentPatch('offline', false)],
           'sessions': [
             {
               'id': 'session-1',

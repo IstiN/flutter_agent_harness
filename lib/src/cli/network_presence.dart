@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 
 import '../network/connector/device_api.dart';
+import '../network/connector/device_dm_keys.dart';
 import '../network/connector/device_registry.dart';
 import '../network/connector/envelope.dart';
 import '../network/connector/machine_connector.dart';
@@ -55,6 +56,8 @@ abstract interface class CliNetworkPresence {
 final class NetworkPresenceController implements CliNetworkPresence {
   /// Builds a controller. [ticketProvider] must mint a fresh single-use
   /// device ticket for every dial; [transport] is fakeable in unit tests.
+  /// Production passes its credential store as [dmKeyStore] so agent DM keys
+  /// survive restarts; omitting it gives an ephemeral in-memory key store.
   NetworkPresenceController({
     required this.device,
     required this.baseUrl,
@@ -64,7 +67,8 @@ final class NetworkPresenceController implements CliNetworkPresence {
     this.rosterDebounce = const Duration(milliseconds: 500),
     this.idFactory = defaultIdFactory,
     this.onLog,
-  });
+    DeviceDmKeyStore? dmKeyStore,
+  }) : _dmKeys = DeviceDmKeyProvider(dmKeyStore ?? MemoryDeviceDmKeyStore());
 
   /// Enrolled device identity.
   final NetworkDeviceCredentials device;
@@ -91,6 +95,8 @@ final class NetworkPresenceController implements CliNetworkPresence {
   /// Optional diagnostics. Callers must not pass secret-bearing log lines.
   final void Function(String message)? onLog;
 
+  final DeviceDmKeyProvider _dmKeys;
+  final _dmPubs = <String, String>{};
   MachineConnector? _connector;
   DeviceRegistry? _registry;
   CliNetworkSession? _session;
@@ -145,8 +151,14 @@ final class NetworkPresenceController implements CliNetworkPresence {
     _busy = false;
     final address = agentAddress(session.agentName, device.deviceId);
     _agentAddress = address;
+    final dmKey = await _dmKeys.loadOrCreate(address);
+    _dmPubs[address] = dmKey.publicKey;
     registry
-      ..registerAgent(session.agentName, device.deviceId)
+      ..registerAgent(
+        session.agentName,
+        device.deviceId,
+        dmPub: dmKey.publicKey,
+      )
       ..registerSession(
         SessionRegistration(id: session.sessionId, agentAddressOf: address),
       );
@@ -216,6 +228,7 @@ final class NetworkPresenceController implements CliNetworkPresence {
           name: session.agentName,
           state: _busy ? 'busy' : 'live',
           exposed: true,
+          dmPub: _dmPubs[_agentAddress],
         ),
       ],
       sessions: [
@@ -235,6 +248,7 @@ final class NetworkPresenceController implements CliNetworkPresence {
           name: session.agentName,
           state: 'offline',
           exposed: false,
+          dmPub: _dmPubs[agentAddress(session.agentName, device.deviceId)],
         ),
       ],
       sessions: [

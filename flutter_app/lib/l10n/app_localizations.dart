@@ -4838,6 +4838,24 @@ abstract class AppLocalizations {
   /// **'Connecting…'**
   String get networkDeviceConnecting;
 
+  /// Empty-history line in the remote-agent DM conversation pane
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet — say hi. The session wakes on your message.'**
+  String get networkDeviceConversationEmpty;
+
+  /// Button loading an older DM history window
+  ///
+  /// In en, this message translates to:
+  /// **'Load older'**
+  String get networkDeviceConversationOlder;
+
+  /// Composer hint in the remote-agent DM conversation pane
+  ///
+  /// In en, this message translates to:
+  /// **'Message…'**
+  String get networkDeviceConversationHint;
+
   /// Device roster muted line while the upstream link is down
   ///
   /// In en, this message translates to:

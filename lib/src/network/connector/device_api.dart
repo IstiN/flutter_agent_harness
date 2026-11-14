@@ -107,6 +107,7 @@ final class DeviceRosterAgent {
     required this.name,
     required this.state,
     required this.exposed,
+    this.dmPub,
   });
 
   /// Bare agent name; the server scopes it to the patched device.
@@ -118,11 +119,15 @@ final class DeviceRosterAgent {
   /// Whether other devices may discover this agent.
   final bool exposed;
 
+  /// Base64 X25519 DM public key for this agent's full address (§7).
+  final String? dmPub;
+
   /// JSON representation for the roster endpoint.
   Map<String, Object?> toJson() => {
     'name': name,
     'state': state,
     'exposed': exposed,
+    if (dmPub != null) 'dmPub': dmPub,
   };
 }
 

@@ -271,6 +271,7 @@ void main() {
         deviceId: 'device-1',
         deviceToken: 'device-secret',
         name: 'old-host',
+        dmPrivateKeys: {'agent@device-1': 'private-seed'},
       );
     final requests = <http.Request>[];
     final runner = commandRunner(
@@ -317,6 +318,7 @@ void main() {
     expect(jsonDecode(requests[1].body), {'name': 'New Mac'});
     expect(requests[1].headers['authorization'], 'Bearer account-jwt');
     expect(store.device?.friendlyName, 'New Mac');
+    expect(store.device?.dmPrivateKeys, {'agent@device-1': 'private-seed'});
   });
 
   group('rename validation', () {

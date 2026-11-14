@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/fa_network_client.dart';
+import 'package:fa/ui/network/device_conversation_pane.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
@@ -108,6 +109,10 @@ class _DevicesPageState extends State<DevicesPage> {
   /// rail's constant first entry).
   String? _selectedDeviceId;
 
+  /// The open DM conversation (a remote session/agent tap); null shows
+  /// the selected device's pane. Switching devices clears it.
+  ({String deviceId, String agentAddress, String? sessionId})? _conversation;
+
   StreamSubscription<NetworkEnvelope>? _framesSubscription;
   StreamSubscription<NetworkEnvelope>? _rosterSubscription;
   var _fetchingRoster = false;
@@ -176,6 +181,9 @@ class _DevicesPageState extends State<DevicesPage> {
           _remote[device.deviceId] = _RemoteDeviceNode(
             roster: device,
             presence: previous?.presence,
+            agentDmPubs: device.agentDmPubs.isNotEmpty
+                ? device.agentDmPubs
+                : previous?.agentDmPubs ?? const {},
           );
         }
       });
@@ -195,6 +203,11 @@ class _DevicesPageState extends State<DevicesPage> {
     _rosterSubscription = null;
     super.dispose();
   }
+
+  /// Test seam for the full-address DM public-key projection on one device.
+  @visibleForTesting
+  Map<String, String> debugRemoteAgentDmPubs(String deviceId) =>
+      Map.unmodifiable(_remote[deviceId]?.agentDmPubs ?? const {});
 
   /// Server roster and presence frames carry their device projections in
   /// `payload.devices`. The legacy device-level `payload.deviceId` shape
@@ -218,6 +231,7 @@ class _DevicesPageState extends State<DevicesPage> {
       _remote[deviceId] = _RemoteDeviceNode(
         roster: _remote[deviceId]?.roster,
         presence: frame,
+        agentDmPubs: _remote[deviceId]?.agentDmPubs ?? const {},
       );
     });
   }
@@ -256,6 +270,9 @@ class _DevicesPageState extends State<DevicesPage> {
         MachinePresence.offline;
     return _RemoteDeviceNode(
       roster: roster,
+      agentDmPubs: device['agents'] is List
+          ? roster.agentDmPubs
+          : previous?.agentDmPubs ?? const {},
       presence: PresenceFrame(
         msgId: envelope.msgId,
         ts: envelope.ts,
@@ -443,6 +460,7 @@ class _DevicesPageState extends State<DevicesPage> {
               ownSnapshot.data,
             );
             final selected = _resolveSelected(devices);
+            final conversation = _conversation;
             return Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -451,18 +469,38 @@ class _DevicesPageState extends State<DevicesPage> {
                   child: _DeviceRail(
                     devices: devices,
                     selectedId: selected.id,
-                    onSelect: (id) => setState(() => _selectedDeviceId = id),
+                    onSelect: (id) => setState(() {
+                      _selectedDeviceId = id;
+                      _conversation = null;
+                    }),
                     onRenameOwn: () => unawaited(_renameOwnDevice()),
                   ),
                 ),
                 VerticalDivider(width: 1, color: FahColors.of(context).border),
                 Expanded(
-                  child: _DevicePane(
-                    device: selected,
-                    onOpenSession: widget.onOpenSession,
-                    selectedSessionId: widget.selectedSessionId,
-                    onRenameOwn: () => unawaited(_renameOwnDevice()),
-                  ),
+                  child: conversation != null
+                      ? DeviceConversationPane(
+                          service: widget.service,
+                          deviceId: conversation.deviceId,
+                          deviceLabel: selected.label,
+                          agentAddress: conversation.agentAddress,
+                          sessionId: conversation.sessionId,
+                          onBack: () => setState(() => _conversation = null),
+                        )
+                      : _DevicePane(
+                          device: selected,
+                          onOpenSession: widget.onOpenSession,
+                          selectedSessionId: widget.selectedSessionId,
+                          onRenameOwn: () => unawaited(_renameOwnDevice()),
+                          onOpenConversation:
+                              (deviceId, agentAddress, sessionId) => setState(
+                                () => _conversation = (
+                                  deviceId: deviceId,
+                                  agentAddress: agentAddress,
+                                  sessionId: sessionId,
+                                ),
+                              ),
+                        ),
                 ),
               ],
             );
@@ -491,6 +529,36 @@ class _DevicesPageState extends State<DevicesPage> {
     final controller = widget.sessions;
     final defaultOwnLabel = context.l10n.networkDeviceThisDevice;
     final ownFriendlyName = ownDevice?.friendlyName;
+    final ownMachineKey = machineGroupKey(ownDevice?.name);
+
+    // One physical machine = one card: remote devices sharing a
+    // non-generic enrollment hostname (the macOS app + its CLI) merge;
+    // the machine hosting THIS app merges into the own card.
+    final remoteGroups = <String, List<_RemoteDeviceNode>>{};
+    final groupDevices = <String, List<String>>{};
+    final order = <String>[];
+    final ownMerged = <_RemoteDeviceNode>[];
+    for (final entry in _remote.entries) {
+      final node = entry.value;
+      final key = machineGroupKey(node.roster?.name);
+      if (key != null && key == ownMachineKey) {
+        ownMerged.add(node);
+        continue;
+      }
+      final groupKey = key ?? 'device:${entry.key}';
+      if (!remoteGroups.containsKey(groupKey)) order.add(groupKey);
+      (remoteGroups[groupKey] ??= []).add(node);
+      (groupDevices[groupKey] ??= []).add(entry.key);
+    }
+
+    Map<String, AgentRunState> mergedAgents(Iterable<_RemoteDeviceNode> nodes) {
+      final result = <String, AgentRunState>{};
+      for (final node in nodes) {
+        result.addAll(node.presence?.agents ?? const {});
+      }
+      return result;
+    }
+
     return [
       _DeviceEntry(
         id: widget.service.deviceId ?? _ownFallbackId,
@@ -501,29 +569,95 @@ class _DevicesPageState extends State<DevicesPage> {
                   ? ownDevice!.name
                   : defaultOwnLabel),
         isOwn: true,
+        icon: devicePlatformIcon(
+          name: ownDevice?.name,
+          friendlyName: ownFriendlyName,
+        ),
         // The app is running on this machine — ONLINE locally, the
         // connector's link state stays the banners' story above.
         dotColor: FahColors.of(context).teal,
-        agents: ownFrame?.agents ?? const {},
+        agents: {...?ownFrame?.agents, ...mergedAgents(ownMerged)},
+        agentDmPubs: {for (final node in ownMerged) ...node.agentDmPubs},
+        exposedSessions: {
+          for (final node in ownMerged) ...?node.presence?.sessions,
+        },
+        sessionDeviceIds: {
+          for (final entry in _remote.entries)
+            if (ownMerged.contains(entry.value))
+              for (final id
+                  in entry.value.presence?.sessions.keys ?? const <String>{})
+                id: entry.key,
+        },
+        agentDeviceIds: {
+          for (final entry in _remote.entries)
+            if (ownMerged.contains(entry.value))
+              for (final name
+                  in entry.value.presence?.agents.keys ?? const <String>{})
+                name: entry.key,
+        },
         localSessions: controller == null
             ? const <ChatListEntry>[]
             : deviceVisibleLocalSessions(controller),
       ),
-      for (final entry in _remote.entries)
-        _DeviceEntry(
-          id: entry.key,
-          label: entry.value.roster?.displayName ?? entry.key,
-          subtitle: entry.value.roster?.friendlyName == null
-              ? null
-              : entry.value.roster!.name,
-          dotColor: deviceMachineDotColor(
-            FahColors.of(context),
-            entry.value.machine,
-          ),
-          agents: entry.value.presence?.agents ?? const {},
-          exposedSessions: entry.value.presence?.sessions ?? const {},
+      for (final groupKey in order)
+        _remoteGroupEntry(
+          context,
+          groupKey,
+          remoteGroups[groupKey]!,
+          groupDevices[groupKey]!,
         ),
     ];
+  }
+
+  /// One remote card: a single device keeps its id/label; a same-hostname
+  /// group merges agents/sessions with any-online presence.
+  _DeviceEntry _remoteGroupEntry(
+    BuildContext context,
+    String groupKey,
+    List<_RemoteDeviceNode> nodes,
+    List<String> deviceIds,
+  ) {
+    final colors = FahColors.of(context);
+    final first = nodes.first;
+    final single = nodes.length == 1;
+    // Any-online group presence: the BEST member state wins (online >
+    // degraded > offline — enum declaration order).
+    final best = nodes
+        .map((node) => node.machine)
+        .reduce((a, b) => a.index <= b.index ? a : b);
+    final label = single
+        ? (first.roster?.displayName ?? deviceIds.first)
+        : (nodes
+                  .map((node) => node.roster?.friendlyName)
+                  .whereType<String>()
+                  .firstOrNull ??
+              first.roster?.name ??
+              groupKey);
+    return _DeviceEntry(
+      id: single ? deviceIds.first : 'machine:$groupKey',
+      label: label,
+      subtitle: single
+          ? (first.roster?.friendlyName == null ? null : first.roster!.name)
+          : first.roster?.name,
+      dotColor: deviceMachineDotColor(colors, best),
+      icon: devicePlatformIcon(
+        name: first.roster?.name,
+        friendlyName: first.roster?.friendlyName,
+      ),
+      agents: {for (final node in nodes) ...?node.presence?.agents},
+      agentDmPubs: {for (final node in nodes) ...node.agentDmPubs},
+      exposedSessions: {for (final node in nodes) ...?node.presence?.sessions},
+      sessionDeviceIds: {
+        for (var i = 0; i < nodes.length; i++)
+          for (final id in nodes[i].presence?.sessions.keys ?? const <String>{})
+            id: deviceIds[i],
+      },
+      agentDeviceIds: {
+        for (var i = 0; i < nodes.length; i++)
+          for (final name in nodes[i].presence?.agents.keys ?? const <String>{})
+            name: deviceIds[i],
+      },
+    );
   }
 
   /// The pane's device: the stored selection while the device exists,
@@ -551,13 +685,50 @@ class _DevicesPageState extends State<DevicesPage> {
   );
 }
 
+/// The machine-group key for an enrollment hostname: normalized lowercase,
+/// null for generic/empty names (those NEVER group — 'device' is every
+/// platform's default). One physical machine (app + CLI) shares one card.
+String? machineGroupKey(String? name) {
+  final normalized = name?.trim().toLowerCase() ?? '';
+  if (normalized.isEmpty || normalized == 'device') return null;
+  return normalized;
+}
+
+/// The platform glyph for a device avatar: laptop for desktop-class
+/// hostnames, phone for mobile enrollments, null = the generic device
+/// glyph. Heuristic until the server carries a platform field.
+FaSemanticIcon? devicePlatformIcon({String? name, String? friendlyName}) {
+  final text = '${name ?? ''} ${friendlyName ?? ''}'.toLowerCase();
+  if (text.contains('iphone') ||
+      text.contains('ipad') ||
+      text.contains('android') ||
+      text.contains('phone') ||
+      text.contains('duo')) {
+    return FaSemanticIcon.phone;
+  }
+  if (text.contains('mac') ||
+      text.contains('imac') ||
+      RegExp(r'\b(epby|epam|mbp|pc|win|ubuntu|linux)\b').hasMatch(text) ||
+      RegExp(r'^[a-z]{2,}[0-9]{2,}').hasMatch(text.trim())) {
+    return FaSemanticIcon.laptop;
+  }
+  return null;
+}
+
 /// The merge point for one remote machine's REST identity and live presence.
 /// Before either source reports a state, the honest fallback is offline.
 class _RemoteDeviceNode {
-  const _RemoteDeviceNode({this.roster, this.presence});
+  const _RemoteDeviceNode({
+    this.roster,
+    this.presence,
+    this.agentDmPubs = const {},
+  });
 
   final DeviceInfo? roster;
   final PresenceFrame? presence;
+
+  /// Roster `agents[].dmPub`, keyed by full agent address for DM sending.
+  final Map<String, String> agentDmPubs;
 
   MachinePresence get machine =>
       presence?.machine ??
@@ -576,8 +747,12 @@ class _DeviceEntry {
     required this.dotColor,
     this.isOwn = false,
     this.agents = const {},
+    this.agentDmPubs = const {},
     this.exposedSessions = const {},
+    this.sessionDeviceIds = const {},
+    this.agentDeviceIds = const {},
     this.localSessions = const [],
+    this.icon,
   });
 
   /// The selection identity + avatar hue seed (the device id; the own
@@ -593,8 +768,22 @@ class _DeviceEntry {
   final bool isOwn;
   final Color dotColor;
   final Map<String, AgentRunState> agents;
+
+  /// Full agent address → base64 X25519 public key from the server roster.
+  final Map<String, String> agentDmPubs;
   final Map<String, ConnectorSessionPresence> exposedSessions;
+
+  /// Exposed session id → its origin device id (machine-grouped cards
+  /// merge sessions from several devices; the DM target needs the origin).
+  final Map<String, String> sessionDeviceIds;
+
+  /// Agent name → its origin device id (the same grouping merge; agent
+  /// rows key by plain name, so the DM address is rebuilt per device).
+  final Map<String, String> agentDeviceIds;
   final List<ChatListEntry> localSessions;
+
+  /// The platform glyph override (null = the generic device vector glyph).
+  final FaSemanticIcon? icon;
 }
 
 /// The device avatar rail — the NETWORKS strip over devices (owner pass):
@@ -693,6 +882,7 @@ class _DeviceRailCell extends StatelessWidget {
                     ),
                     dotColor: device.dotColor,
                     selected: selected,
+                    icon: device.icon,
                   ),
                 ),
               ),
@@ -737,11 +927,15 @@ class _DeviceAvatar extends StatelessWidget {
     required this.dotKey,
     required this.dotColor,
     required this.selected,
+    this.icon,
   });
 
   final String seed;
   final Key dotKey;
   final Color dotColor;
+
+  /// The platform glyph (null = the generic device vector glyph).
+  final FaSemanticIcon? icon;
 
   /// The selected cell's squircle (the networks strip's treatment — no
   /// ring: the capsule is the selection indicator).
@@ -772,7 +966,7 @@ class _DeviceAvatar extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: FaIcon(
-              FaSemanticIcon.devices,
+              icon ?? FaSemanticIcon.devices,
               size: 22,
               color: Colors.white.withValues(alpha: .95),
             ),
@@ -806,10 +1000,15 @@ class _DevicePane extends StatelessWidget {
     this.onOpenSession,
     this.selectedSessionId,
     this.onRenameOwn,
+    this.onOpenConversation,
   });
 
   final _DeviceEntry device;
   final VoidCallback? onRenameOwn;
+
+  /// Opens the DM conversation for (deviceId, full agent address, sessionId?).
+  final void Function(String deviceId, String agentAddress, String? sessionId)?
+  onOpenConversation;
 
   /// The shell's open flow for [_DeviceEntry.localSessions]; null keeps
   /// them read-only (remote machines never carry local sessions).
@@ -918,6 +1117,17 @@ class _DevicePane extends StatelessWidget {
             stateColor: entry.value == AgentRunState.offline
                 ? colors.dim
                 : colors.teal,
+            onTap: onOpenConversation == null
+                ? null
+                : () {
+                    final deviceId =
+                        device.agentDeviceIds[entry.key] ?? device.id;
+                    onOpenConversation!(
+                      deviceId,
+                      '${entry.key}@$deviceId',
+                      null,
+                    );
+                  },
           ),
         ),
       for (final entry in device.localSessions)
@@ -934,10 +1144,26 @@ class _DevicePane extends StatelessWidget {
             dotColor: deviceSessionDotColor(colors, entry.value),
             title: entry.key,
             subtitle: deviceSessionLabel(context, entry.value),
+            onTap: _sessionConversation(entry.key),
           ),
         ),
     ],
   );
+
+  /// The DM target for an exposed session card: its origin device (the
+  /// group-merge map) plus that device's first exposed agent address.
+  /// Null keeps the card read-only (no agent published for the device).
+  VoidCallback? _sessionConversation(String sessionId) {
+    final open = onOpenConversation;
+    if (open == null) return null;
+    final deviceId = device.sessionDeviceIds[sessionId] ?? device.id;
+    for (final name in device.agents.keys) {
+      if ((device.agentDeviceIds[name] ?? device.id) == deviceId) {
+        return () => open(deviceId, '$name@$deviceId', sessionId);
+      }
+    }
+    return null;
+  }
 
   /// One local chat session card: the chat list's presence colors the
   /// glyph-tile badge, the subtitle is the last-activity timestamp, and

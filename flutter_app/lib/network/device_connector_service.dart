@@ -26,10 +26,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:fa_ui/fa_ui.dart' show KeychainStore;
 import 'package:flutter/foundation.dart' show Listenable;
 // The machine-connector core is pure Dart; the src imports follow the
 // lib/network implementation-import convention (key_wallet.dart).
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/connector_mux.dart';
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/device_registry.dart';
 // ignore: implementation_imports
@@ -48,6 +55,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flutter_agent_harness/io.dart'
     hide DeviceRosterAgent, DeviceRosterSession;
 
+import 'device_dm_session_host.dart';
 import 'device_outbox_store.dart';
 import 'fa_network_client.dart';
 import 'network_session_manager.dart';
@@ -134,6 +142,7 @@ class DeviceCredentials {
     required this.deviceId,
     required this.deviceToken,
     this.personalNetworkId,
+    this.dmPrivateKeys = const {},
   });
 
   /// Stable device id minted at enroll.
@@ -144,6 +153,10 @@ class DeviceCredentials {
 
   /// The personal network id the server provisioned, when known.
   final String? personalNetworkId;
+
+  /// Base64 X25519 DM private seeds keyed by full agent address. Secret:
+  /// this map is serialized only to the platform keychain, never logged.
+  final Map<String, String> dmPrivateKeys;
 
   /// Parses stored JSON; null on garbage (the caller re-enrolls).
   static DeviceCredentials? tryFromJson(Object? json) {
@@ -163,6 +176,7 @@ class DeviceCredentials {
       personalNetworkId: personal is String && personal.isNotEmpty
           ? personal
           : null,
+      dmPrivateKeys: _parseDmPrivateKeys(json['dmPrivateKeys']),
     );
   }
 
@@ -171,14 +185,33 @@ class DeviceCredentials {
     'deviceId': deviceId,
     'deviceToken': deviceToken,
     if (personalNetworkId != null) 'personalNetworkId': personalNetworkId,
+    if (dmPrivateKeys.isNotEmpty) 'dmPrivateKeys': dmPrivateKeys,
   };
+
+  /// Returns the same enrollment record with updated DM private keys.
+  DeviceCredentials withDmPrivateKeys(Map<String, String> keys) =>
+      DeviceCredentials(
+        deviceId: deviceId,
+        deviceToken: deviceToken,
+        personalNetworkId: personalNetworkId,
+        dmPrivateKeys: Map.unmodifiable(keys),
+      );
+}
+
+Map<String, String> _parseDmPrivateKeys(Object? value) {
+  if (value is! Map) return const {};
+  return Map.unmodifiable({
+    for (final entry in value.entries)
+      if (entry.key is String && entry.value is String)
+        entry.key as String: entry.value as String,
+  });
 }
 
 /// Persistence seam for [DeviceCredentials]. Production backs it with
 /// the platform keychain — the same fa_ui [KeychainStore] storage the
 /// wallet uses ([KeychainDeviceTokenStore]); tests inject an in-memory
 /// fake.
-abstract interface class DeviceTokenStore {
+abstract interface class DeviceTokenStore implements DeviceDmKeyStore {
   /// The stored credentials, or null when none (or garbage) is stored.
   Future<DeviceCredentials?> read();
 
@@ -225,6 +258,17 @@ class KeychainDeviceTokenStore implements DeviceTokenStore {
       _setValue(storageName, jsonEncode(credentials.toJson()));
 
   @override
+  Future<Map<String, String>> readDmPrivateKeys() async =>
+      Map.of((await read())?.dmPrivateKeys ?? const {});
+
+  @override
+  Future<void> writeDmPrivateKeys(Map<String, String> keys) async {
+    final current = await read();
+    if (current == null) throw StateError('device not enrolled');
+    await write(current.withDmPrivateKeys(keys));
+  }
+
+  @override
   Future<void> clear() =>
       _setValue(storageName, jsonEncode(const <String, Object?>{}));
 }
@@ -239,7 +283,9 @@ class DeviceConnectorService {
   DeviceConnectorService({
     required this.sessionManager,
     DeviceChatSessionSource? chatSessionSource,
+    this.dmSessionHost,
     DeviceTokenStore? tokenStore,
+    this.userIdProvider,
     OutboxStore? outbox,
     ConnectorTransport? transport,
     Future<String> Function()? supportDirProvider,
@@ -254,6 +300,7 @@ class DeviceConnectorService {
            (() async => (await getApplicationSupportDirectory()).path) {
     _chatSessionSource =
         chatSessionSource ?? _NetworkMembershipSessionSource(sessionManager);
+    _dmKeys = DeviceDmKeyProvider(_tokenStore);
     sessionManager.addListener(_onManagerChanged);
     _chatSessionSource.changes.addListener(_onChatSessionsChanged);
   }
@@ -264,7 +311,21 @@ class DeviceConnectorService {
   final NetworkSessionManager sessionManager;
 
   late final DeviceChatSessionSource _chatSessionSource;
+
+  /// Routes inbound viewer turns into the app's real session owner.
+  final DeviceDmSessionHost? dmSessionHost;
+
+  /// Supplies the signed-in ai-native user id (test/alternate-auth seam).
+  final Future<String> Function()? userIdProvider;
   final DeviceTokenStore _tokenStore;
+  late final DeviceDmKeyProvider _dmKeys;
+  final _dmPubs = <String, String>{};
+  final _remoteDmPubs = <String, ({String network, String dmPub})>{};
+  final _dmUserPubs = <String, SimplePublicKey>{};
+  final _dmSessionTargets = <String, String>{};
+  Future<SimpleKeyPair>? _userDmKeyPair;
+  String? _accountUserId;
+  SinkRegistration? _dmSink;
   final OutboxStore? _outboxOverride;
   final ConnectorTransport _transport;
   final Future<String> Function() _supportDirProvider;
@@ -356,6 +417,92 @@ class DeviceConnectorService {
 
   /// The personal network provisioned at enrollment, when the server sent it.
   String? get personalNetworkId => _credentials?.personalNetworkId;
+
+  /// Sends an already-sealed connector envelope, or seals through
+  /// [ciphertextFor] with the exact msgId minted by [MachineConnector].
+  /// Outbox retries retain that id and ciphertext byte-for-byte.
+  Future<String> sendMail({
+    required String network,
+    required String channel,
+    required String from,
+    String? to,
+    String? ciphertext,
+    FutureOr<String> Function(String frameId)? ciphertextFor,
+  }) {
+    final connector = _connector;
+    if (connector == null) throw StateError('device connector is not running');
+    return connector.sendMail(
+      network: network,
+      channel: channel,
+      from: from,
+      to: to,
+      ciphertext: ciphertext,
+      ciphertextFor: ciphertextFor,
+    );
+  }
+
+  /// Resolves the stable virtual channel for history and send UIs.
+  Future<String> dmChannelForAgent({
+    required String deviceId,
+    required String agentName,
+  }) async => dmChannelId(
+    await _resolveAccountUserId(),
+    agentAddress(agentName, deviceId),
+  );
+
+  /// The signed-in account user id (DM sender identity), cached after the
+  /// first resolution. Public for the Devices conversation pane.
+  Future<String> accountUserId() => _resolveAccountUserId();
+
+  /// The roster-published DM public key for `agentName@deviceId`, or null
+  /// when the device has not published one yet. The conversation pane
+  /// recomputes the shared key for the USER's OWN history rows with it.
+  String? agentDmPub({required String deviceId, required String agentName}) {
+    try {
+      return _findDmTarget(deviceId, agentName).dmPub;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Sends one E2E user DM to a roster agent. The recipient key is resolved
+  /// from the latest cached WS roster by full `agentName@deviceId` address;
+  /// [sessionId] rides inside the ciphertext, never in relay-visible fields.
+  Future<String> sendDmToAgent({
+    required String deviceId,
+    required String agentName,
+    String? sessionId,
+    required String text,
+  }) async {
+    if (text.trim().isEmpty) {
+      throw ArgumentError.value(text, 'text', 'must not be empty');
+    }
+    final target = _findDmTarget(deviceId, agentName);
+    final userId = await _resolveAccountUserId();
+    final userKeyPair = await _userIdentity();
+    final address = agentAddress(agentName, deviceId);
+    final channel = dmChannelId(userId, address);
+    final plaintext = jsonEncode({
+      'text': text,
+      if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+    });
+    return sendMail(
+      network: target.network,
+      channel: channel,
+      from: 'user:$userId',
+      to: address,
+      ciphertextFor: (frameId) => hubSealFanet1(
+        senderDhKeyPair: userKeyPair,
+        recipientDhPubkey: SimplePublicKey(
+          base64Decode(target.dmPub),
+          type: KeyPairType.x25519,
+        ),
+        frameId: frameId,
+        aadTarget: channel,
+        plaintext: plaintext,
+      ),
+    );
+  }
 
   /// The latest account-roster information for this machine. In particular,
   /// [DeviceInfo.friendlyName] is the local label source after a rename.
@@ -495,6 +642,137 @@ class DeviceConnectorService {
     if (_rosterActive) unawaited(_syncRosterSessions());
   }
 
+  ({String network, String dmPub}) _findDmTarget(
+    String deviceId,
+    String agentName,
+  ) {
+    final address = agentAddress(agentName, deviceId);
+    final target = _remoteDmPubs[address];
+    if (target != null) return target;
+    throw StateError(
+      'no roster dmPub for $address; wait for the device roster and try again',
+    );
+  }
+
+  void _cacheRosterDmPubs(NetworkEnvelope envelope) {
+    final network = envelope.network;
+    final devices = envelope.payload['devices'];
+    if (network == null || devices is! List) return;
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = DeviceInfo.fromJson(rawDevice.cast<String, Object?>());
+      for (final entry in device.agentDmPubs.entries) {
+        _remoteDmPubs[entry.key] = (network: network, dmPub: entry.value);
+      }
+    }
+  }
+
+  Future<String> _resolveAccountUserId() async {
+    final cached = _accountUserId;
+    if (cached != null) return cached;
+    final provider = userIdProvider;
+    late final String userId;
+    if (provider != null) {
+      userId = await provider();
+    } else {
+      final jwt = await sessionManager.ensureFreshJwt();
+      final client = await sessionManager.accountClient();
+      if (jwt == null || client == null) throw StateError('not signed in');
+      userId = (await client.authUser(jwt)).id;
+    }
+    if (userId.isEmpty) throw StateError('signed-in account has no user id');
+    _accountUserId = userId;
+    return userId;
+  }
+
+  Future<SimpleKeyPair> _userIdentity() async {
+    final pending = _userDmKeyPair ??= () async {
+      final wallet = sessionManager.wallet;
+      if (!wallet.hasIdentity) await wallet.createIfMissing();
+      return wallet.identityKeyPair();
+    }();
+    try {
+      return await pending;
+    } on Object {
+      if (identical(_userDmKeyPair, pending)) _userDmKeyPair = null;
+      rethrow;
+    }
+  }
+
+  Future<String> _decodeDmMail(NetworkEnvelope envelope) async {
+    final channel = envelope.channel ?? '';
+    final ciphertext = envelope.ciphertext ?? '';
+    if (!isDmChannel(channel)) return ciphertext;
+    final frame = hubTryOpenFanet1(ciphertext);
+    if (frame == null) throw const FormatException('DM is not fanet1');
+    final key = await _dmKeys.loadOrCreate(_localAgentAddress());
+    final plaintext = await hubDecryptPayloadWithKeyPair(
+      recipientDhKeyPair: key.keyPair,
+      senderDhPubkey: frame.senderPubkey,
+      frameId: envelope.msgId,
+      aadTarget: channel,
+      ciphertextB64: frame.ciphertextB64,
+    );
+    if (_dmUserPubs.length >= 256 && !_dmUserPubs.containsKey(channel)) {
+      _dmUserPubs.remove(_dmUserPubs.keys.first);
+    }
+    _dmUserPubs[channel] = frame.senderPubkey;
+    return _decodeDmPlaintext(envelope.msgId, plaintext);
+  }
+
+  String _decodeDmPlaintext(String msgId, String plaintext) {
+    try {
+      final decoded = jsonDecode(plaintext);
+      if (decoded is! Map || decoded['text'] is! String) return plaintext;
+      final sessionId = decoded['sessionId'];
+      if (sessionId is String && sessionId.isNotEmpty) {
+        if (_dmSessionTargets.length >= 256) {
+          _dmSessionTargets.remove(_dmSessionTargets.keys.first);
+        }
+        _dmSessionTargets[msgId] = sessionId;
+      }
+      return decoded['text'] as String;
+    } on FormatException {
+      return plaintext;
+    }
+  }
+
+  Future<void> _receiveDm(InboundMail mail) async {
+    final host = dmSessionHost;
+    if (host == null) throw StateError('no DM session host configured');
+    final envelope = mail.envelope;
+    final sessionId = _dmSessionTargets.remove(envelope.msgId);
+    final reply = await host.deliverUserText(
+      sessionId: sessionId,
+      text: mail.text,
+    );
+    if (reply == null || reply.trim().isEmpty) return;
+    final channel = envelope.channel;
+    final network = envelope.network;
+    final sender = envelope.from;
+    final userPub = _dmUserPubs[channel];
+    if (channel == null ||
+        network == null ||
+        sender == null ||
+        userPub == null) {
+      throw StateError('incomplete DM reply route');
+    }
+    final agent = await _dmKeys.loadOrCreate(_localAgentAddress());
+    await sendMail(
+      network: network,
+      channel: channel,
+      from: _localAgentAddress(),
+      to: sender,
+      ciphertextFor: (frameId) => hubSealFanet1(
+        senderDhKeyPair: agent.keyPair,
+        recipientDhPubkey: userPub,
+        frameId: frameId,
+        aadTarget: channel,
+        plaintext: reply,
+      ),
+    );
+  }
+
   Future<void> _start(int generation) async {
     final jwt = await sessionManager.ensureFreshJwt();
     if (generation != _generation) return;
@@ -506,6 +784,10 @@ class DeviceConnectorService {
     final credentials = await _resolveCredentials();
     _credentials = credentials;
     if (generation != _generation) return;
+    final localAddress = _localAgentAddress();
+    final dmKey = await _dmKeys.loadOrCreate(localAddress);
+    if (generation != _generation) return;
+    _dmPubs[localAddress] = dmKey.publicKey;
 
     final registry = DeviceRegistry();
     final personal = credentials.personalNetworkId ?? 'personal';
@@ -539,8 +821,15 @@ class DeviceConnectorService {
         idFactory: idFactory,
       ),
       leases: () async => sessionManager.sessions.keys.toSet(),
+      decodeMail: _decodeDmMail,
       idFactory: idFactory,
       onLog: onLog,
+    );
+    final dmSink = connector.registerLocalSink(
+      network: personal,
+      channel: dmChannelPrefix,
+      to: localAddress,
+      sink: _receiveDm,
     );
     if (generation != _generation) {
       unawaited(connector.stop());
@@ -550,6 +839,7 @@ class DeviceConnectorService {
     }
     _registry = registry;
     _connector = connector;
+    _dmSink = dmSink;
     _wireForwarding(connector, generation);
     await connector.start();
     if (generation != _generation) return;
@@ -617,6 +907,7 @@ class DeviceConnectorService {
     _subscriptions.add(
       connector.rosterFrames.listen((envelope) {
         _lastRosterByNetwork[envelope.network ?? ''] = envelope;
+        _cacheRosterDmPubs(envelope);
         _rosterFrames.add(envelope);
       }),
     );
@@ -777,6 +1068,7 @@ class DeviceConnectorService {
         ? <String>{...extraAgentNames, ..._registeredAgentNames(projected)}
         : <String>{};
     final networkId = personalNetworkId;
+    final deviceId = _credentials?.deviceId ?? 'local';
     final networks = [if (networkId != null && networkId.isNotEmpty) networkId];
     return (
       agents: [
@@ -785,6 +1077,7 @@ class DeviceConnectorService {
             name: name,
             state: agentState,
             exposed: agentState != 'offline',
+            dmPub: _dmPubs[agentAddress(name, deviceId)],
           ),
       ],
       sessions: [
@@ -879,6 +1172,13 @@ class DeviceConnectorService {
 
   Future<void> _teardown() async {
     _lastRosterByNetwork.clear();
+    _remoteDmPubs.clear();
+    _dmUserPubs.clear();
+    _dmSessionTargets.clear();
+    _accountUserId = null;
+    _userDmKeyPair = null;
+    _dmSink?.close();
+    _dmSink = null;
     _sessionProjectionRevision++;
     _rosterTimer?.cancel();
     _rosterTimer = null;

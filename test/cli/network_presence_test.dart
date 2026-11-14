@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_api.dart';
 import 'package:flutter_agent_harness/src/cli/network_presence.dart';
+import 'package:flutter_agent_harness/src/cli/network_store.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
 import 'package:flutter_agent_harness/src/network/network_account.dart';
@@ -72,12 +73,15 @@ void main() {
   test('start publishes the personal roster projection and dispose retracts '
       'it', () async {
     final requests = <http.Request>[];
+    const device = NetworkDeviceCredentials(
+      deviceId: 'device-1',
+      deviceToken: 'device-secret',
+      personalNetworkId: 'personal-1',
+    );
+    final store = MemoryNetworkStore()..device = device;
     final controller = NetworkPresenceController(
-      device: const NetworkDeviceCredentials(
-        deviceId: 'device-1',
-        deviceToken: 'device-secret',
-        personalNetworkId: 'personal-1',
-      ),
+      device: device,
+      dmKeyStore: store,
       baseUrl: 'https://relay.test',
       ticketProvider: () async => 'ticket-1',
       transport: _FakeTransport(_FakeSocket()),
@@ -104,7 +108,12 @@ void main() {
     expect(requests.single.headers['authorization'], 'Bearer device-secret');
     expect(jsonDecode(requests.single.body), {
       'agents': [
-        {'name': 'mailbox-1', 'state': 'live', 'exposed': true},
+        {
+          'name': 'mailbox-1',
+          'state': 'live',
+          'exposed': true,
+          'dmPub': isA<String>(),
+        },
       ],
       'sessions': [
         {
@@ -114,13 +123,22 @@ void main() {
         },
       ],
     });
+    final livePatch = jsonDecode(requests.single.body) as Map;
+    final liveDmPub = (livePatch['agents'] as List).single['dmPub'] as String;
+    expect(base64Decode(liveDmPub), hasLength(32));
+    expect(store.device?.dmPrivateKeys.keys, {'mailbox-1@device-1'});
 
     await controller.dispose();
 
     expect(requests, hasLength(2));
     expect(jsonDecode(requests.last.body), {
       'agents': [
-        {'name': 'mailbox-1', 'state': 'offline', 'exposed': false},
+        {
+          'name': 'mailbox-1',
+          'state': 'offline',
+          'exposed': false,
+          'dmPub': liveDmPub,
+        },
       ],
       'sessions': [
         {
@@ -130,6 +148,59 @@ void main() {
         },
       ],
     });
+  });
+
+  test('controller restart restores the persisted agent DM key', () async {
+    final requests = <http.Request>[];
+    const device = NetworkDeviceCredentials(
+      deviceId: 'device-1',
+      deviceToken: 'device-secret',
+      personalNetworkId: 'personal-1',
+    );
+    final store = MemoryNetworkStore()..device = device;
+    final rosterClient = DeviceEnrollmentClient(
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+      }),
+    );
+
+    NetworkPresenceController controller() => NetworkPresenceController(
+      device: device,
+      dmKeyStore: store,
+      baseUrl: 'https://relay.test',
+      ticketProvider: () async => 'ticket-1',
+      transport: _FakeTransport(_FakeSocket()),
+      rosterClient: rosterClient,
+      rosterDebounce: Duration.zero,
+      idFactory: sequentialIds(),
+    );
+
+    final first = controller();
+    await first.startSession(
+      const CliNetworkSession(
+        sessionId: 'session-1',
+        mailboxPrefix: 'mailbox-1',
+      ),
+    );
+    await _waitForRosterPatches(requests, 1);
+    final firstPatch = jsonDecode(requests.single.body) as Map;
+    final firstPub = (firstPatch['agents'] as List).single['dmPub'];
+    final storedKeys = store.device?.dmPrivateKeys;
+    await first.dispose();
+
+    final second = controller();
+    await second.startSession(
+      const CliNetworkSession(
+        sessionId: 'session-1',
+        mailboxPrefix: 'mailbox-1',
+      ),
+    );
+    await _waitForRosterPatches(requests, 3);
+    final restartedPatch = jsonDecode(requests[2].body) as Map;
+    expect((restartedPatch['agents'] as List).single['dmPub'], firstPub);
+    expect(store.device?.dmPrivateKeys, storedKeys);
+    await second.dispose();
   });
 
   test(
@@ -174,7 +245,12 @@ void main() {
       expect(requests, hasLength(2));
       final patch = jsonDecode(requests.last.body) as Map<String, Object?>;
       expect(patch['agents'], [
-        {'name': 'mailbox-1', 'state': 'live', 'exposed': true},
+        {
+          'name': 'mailbox-1',
+          'state': 'live',
+          'exposed': true,
+          'dmPub': isA<String>(),
+        },
       ]);
       expect(patch['sessions'], [
         {

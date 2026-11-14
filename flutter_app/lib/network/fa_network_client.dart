@@ -95,6 +95,7 @@ final class DeviceInfo {
     this.revokedAt,
     this.presence,
     this.userId,
+    this.agentDmPubs = const {},
   });
 
   /// Stable server-minted device id.
@@ -117,6 +118,10 @@ final class DeviceInfo {
 
   /// Owner account id, supplied by the network roster.
   final String? userId;
+
+  /// Agent X25519 DM public keys keyed by full `<agent>@<device>` address.
+  /// Parsed from the roster's `agents[].dmPub`; empty on older backends.
+  final Map<String, String> agentDmPubs;
 
   /// Friendly name first, then enrollment name, then the stable id.
   String get displayName {
@@ -145,8 +150,35 @@ final class DeviceInfo {
       revokedAt: revokedAt is String ? DateTime.tryParse(revokedAt) : null,
       presence: presence is String && presence.isNotEmpty ? presence : null,
       userId: userId is String && userId.isNotEmpty ? userId : null,
+      agentDmPubs: _agentDmPubs(json['agents'], id),
     );
   }
+}
+
+Map<String, String> _agentDmPubs(Object? value, String deviceId) {
+  if (value is! List) return const {};
+  final keys = <String, String>{};
+  for (final agent in value) {
+    final parsed = _agentDmPub(agent, deviceId);
+    if (parsed != null) keys[parsed.address] = parsed.dmPub;
+  }
+  return Map.unmodifiable(keys);
+}
+
+({String address, String dmPub})? _agentDmPub(Object? value, String deviceId) {
+  if (value is! Map || value['exposed'] != true) return null;
+  final dmPub = value['dmPub'];
+  if (dmPub is! String || dmPub.isEmpty) return null;
+  final address = _rosterAgentAddress(value, deviceId);
+  return address == null ? null : (address: address, dmPub: dmPub);
+}
+
+String? _rosterAgentAddress(Map<Object?, Object?> agent, String deviceId) {
+  final address = agent['address'];
+  if (address is String && address.isNotEmpty) return address;
+  final name = agent['name'];
+  if (name is String && name.isNotEmpty) return '$name@$deviceId';
+  return null;
 }
 
 /// One agent entry in a device-roster merge patch.
@@ -158,6 +190,7 @@ final class DeviceRosterAgent {
     required this.name,
     required this.state,
     required this.exposed,
+    this.dmPub,
   });
 
   /// The local agent name (without the `@deviceId` suffix).
@@ -169,10 +202,14 @@ final class DeviceRosterAgent {
   /// Whether this agent is exposed to other devices.
   final bool exposed;
 
+  /// Base64 X25519 DM public key for this agent's full address (§7).
+  final String? dmPub;
+
   Map<String, Object?> toJson() => {
     'name': name,
     'state': state,
     'exposed': exposed,
+    if (dmPub != null) 'dmPub': dmPub,
   };
 }
 
@@ -428,6 +465,28 @@ class FaNetworkClient {
       expected: {200},
     );
     return InboxPage.fromJson(_decodeMap(res));
+  }
+
+  /// `GET /api/inbox?channel=<dm-id>&limit&cursor` — one window of the
+  /// signed-in user's virtual DM channel. Rows retain opaque fanet1 payloads;
+  /// decryption stays with the user/agent key holders.
+  Future<MessagePage> listDmInbox(
+    String channelId, {
+    int? limit,
+    String? cursor,
+  }) async {
+    final res = await _request(
+      'GET',
+      '/api/inbox',
+      query: {
+        'channel': channelId,
+        'limit': ?limit?.toString(),
+        'cursor': ?cursor,
+      },
+      management: true,
+      expected: {200},
+    );
+    return MessagePage.fromJson(_decodeMap(res));
   }
 
   // ---------------------------------------------------------------- admins

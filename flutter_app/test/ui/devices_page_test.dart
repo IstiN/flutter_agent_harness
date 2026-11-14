@@ -905,8 +905,18 @@ void main() {
             'presence': 'online',
             'userId': 'user-1',
             'agents': [
-              {'name': 'goal_builder', 'state': 'live', 'exposed': true},
-              {'name': 'hidden', 'state': 'live', 'exposed': false},
+              {
+                'name': 'goal_builder',
+                'state': 'live',
+                'exposed': true,
+                'dmPub': 'cHViLWdvYWw=',
+              },
+              {
+                'name': 'hidden',
+                'state': 'live',
+                'exposed': false,
+                'dmPub': 'cHViLWhpZGRlbg==',
+              },
             ],
             'sessions': [
               {
@@ -934,6 +944,10 @@ void main() {
       dotColor(tester, const ValueKey('deviceDot:dev-remote')),
       paletteOf(tester).teal,
     );
+    final dynamic pageState = tester.state(find.byType(DevicesPage));
+    expect(pageState.debugRemoteAgentDmPubs('dev-remote'), {
+      'goal_builder@dev-remote': 'cHViLWdvYWw=',
+    });
 
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
@@ -1010,7 +1024,12 @@ void main() {
             'presence': 'online',
             'userId': 'user-1',
             'agents': [
-              {'name': 'goal_builder', 'state': 'live', 'exposed': true},
+              {
+                'name': 'goal_builder',
+                'state': 'live',
+                'exposed': true,
+                'dmPub': 'cHViLWdvYWw=',
+              },
             ],
             'sessions': [
               {
@@ -1026,6 +1045,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
+    final dynamic pageState = tester.state(find.byType(DevicesPage));
 
     service.emitEnvelope(
       _devicesEnvelope(
@@ -1050,6 +1070,9 @@ void main() {
     );
     expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsOneWidget);
     expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
+    expect(pageState.debugRemoteAgentDmPubs('dev-remote'), {
+      'goal_builder@dev-remote': 'cHViLWdvYWw=',
+    });
 
     service.emitEnvelope(
       _devicesEnvelope(
@@ -1076,6 +1099,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsNothing);
     expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsNothing);
+    expect(pageState.debugRemoteAgentDmPubs('dev-remote'), isEmpty);
   });
 
   testWidgets('server devices[] skips the own device without dropping later '
@@ -1304,5 +1328,150 @@ void main() {
           .enabled,
       isTrue,
     );
+  });
+
+  group('machine grouping + DM conversation', () {
+    test('machineGroupKey normalizes and rejects generic names', () {
+      expect(machineGroupKey('EPBYGROW03B0'), 'epbygrow03b0');
+      expect(machineGroupKey(' epbygrow03b0 '), 'epbygrow03b0');
+      expect(machineGroupKey('device'), isNull);
+      expect(machineGroupKey(''), isNull);
+      expect(machineGroupKey(null), isNull);
+    });
+
+    test('devicePlatformIcon heuristics', () {
+      expect(devicePlatformIcon(name: 'EPBYGROW03B0'), FaSemanticIcon.laptop);
+      expect(devicePlatformIcon(name: 'macbook-pro'), FaSemanticIcon.laptop);
+      expect(devicePlatformIcon(name: 'iPhone 15'), FaSemanticIcon.phone);
+      expect(
+        devicePlatformIcon(name: 'Pixel 8', friendlyName: 'Duo'),
+        FaSemanticIcon.phone,
+      );
+      expect(devicePlatformIcon(name: 'device'), isNull);
+    });
+
+    testWidgets('same-hostname devices merge into one card, any-online', (
+      tester,
+    ) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-1',
+        rosterDevices: const [
+          DeviceInfo(deviceId: 'dev-cli', name: 'EPBYGROW03B0'),
+          DeviceInfo(deviceId: 'dev-mac', name: 'epbygrow03b0'),
+        ],
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      service
+        ..emitEnvelope(
+          _envelope(
+            deviceId: 'dev-cli',
+            agents: const {'fa': AgentRunState.live},
+          ),
+        )
+        ..emitEnvelope(
+          _envelope(
+            deviceId: 'dev-mac',
+            machine: MachinePresence.offline,
+            agents: const {'fa': AgentRunState.offline},
+          ),
+        );
+      await tester.pump();
+
+      // One machine card (not two device cells), teal = any member online.
+      expect(
+        find.byKey(const ValueKey('deviceRow:machine:epbygrow03b0')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('deviceRow:dev-cli')), findsNothing);
+      expect(find.byKey(const ValueKey('deviceRow:dev-mac')), findsNothing);
+      expect(
+        dotColor(tester, const ValueKey('deviceDot:machine:epbygrow03b0')),
+        paletteOf(tester).teal,
+      );
+    });
+
+    testWidgets('generic device names never group', (tester) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-1',
+        rosterDevices: const [
+          DeviceInfo(deviceId: 'dev-a', name: 'device'),
+          DeviceInfo(deviceId: 'dev-b', name: 'device'),
+        ],
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('deviceRow:dev-a')), findsOneWidget);
+      expect(find.byKey(const ValueKey('deviceRow:dev-b')), findsOneWidget);
+    });
+
+    testWidgets('own-hostname remote merges into the own card', (tester) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-1',
+        ownDevice: const DeviceInfo(deviceId: 'dev-1', name: 'test-host'),
+        rosterDevices: const [
+          DeviceInfo(deviceId: 'dev-cli', name: 'test-host'),
+        ],
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      service.emitEnvelope(
+        _envelope(
+          deviceId: 'dev-cli',
+          agents: const {'fa': AgentRunState.live},
+        ),
+      );
+      await tester.pump();
+
+      // No separate rail cell — the CLI's agent rides the own pane.
+      expect(find.byKey(const ValueKey('deviceRow:dev-cli')), findsNothing);
+      expect(find.byKey(const ValueKey('agentRow:fa')), findsOneWidget);
+    });
+
+    testWidgets('agent tap opens the conversation pane; back returns', (
+      tester,
+    ) async {
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
+        deviceId: 'dev-1',
+        rosterDevices: const [
+          DeviceInfo(deviceId: 'dev-mac', name: 'mac-host'),
+        ],
+      );
+      await tester.pumpWidget(_wrap(devicesPage(service)));
+      await tester.pump();
+      service.emitEnvelope(
+        _envelope(
+          deviceId: 'dev-mac',
+          agents: const {'fa': AgentRunState.live},
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('agentRow:fa')));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('deviceConversation:dev-mac')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('conversationComposer')),
+        findsOneWidget,
+      );
+      // The fake has no account client — the pane surfaces its error
+      // line instead of hanging or crashing.
+      expect(find.byKey(const ValueKey('conversationError')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('conversationBack')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('devicePane:dev-mac')), findsOneWidget);
+    });
   });
 }

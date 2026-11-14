@@ -15,6 +15,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_dm_session_host.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -319,6 +320,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     return _deviceConnector ??= DeviceConnectorService(
       sessionManager: sessions!,
       chatSessionSource: createDeviceChatSessionSource(widget.manager),
+      dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
       // Enrollment/keychain/WS failures surface in the app log — the
       // connector has no other voice on this surface.
       onLog: (line) => AppLog.i('devices', line),

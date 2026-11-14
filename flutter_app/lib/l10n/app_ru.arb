@@ -1097,6 +1097,18 @@
   "@networkDeviceConnecting": {
     "description": "Device roster skeleton line while the connector dials"
   },
+  "networkDeviceConversationEmpty": "Собщений пока нет — напишите первым. Сессия проснётся при получении.",
+  "@networkDeviceConversationEmpty": {
+    "description": "Empty-history line in the remote-agent DM conversation pane"
+  },
+  "networkDeviceConversationOlder": "Загрузить старые",
+  "@networkDeviceConversationOlder": {
+    "description": "Button loading an older DM history window"
+  },
+  "networkDeviceConversationHint": "Собщение…",
+  "@networkDeviceConversationHint": {
+    "description": "Composer hint in the remote-agent DM conversation pane"
+  },
   "networkDeviceReconnecting": "Переподключение…",
   "@networkDeviceReconnecting": {
     "description": "Device roster muted line while the upstream link is down"

@@ -111,6 +111,7 @@ final class NetworkDeviceCredentials {
     this.name,
     this.friendlyName,
     this.platform,
+    this.dmPrivateKeys = const {},
   });
 
   /// Stable server-issued device id.
@@ -131,6 +132,10 @@ final class NetworkDeviceCredentials {
   /// Host platform supplied at enrollment.
   final String? platform;
 
+  /// Base64 X25519 DM private seeds keyed by full `<agent>@<device>` address.
+  /// Secret key material: never log this map.
+  final Map<String, String> dmPrivateKeys;
+
   /// Parses a stored JSON document.
   factory NetworkDeviceCredentials.fromJson(Object? json) {
     if (json is! Map) throw const FormatException('device must be an object');
@@ -146,6 +151,7 @@ final class NetworkDeviceCredentials {
       name: _nonEmpty(json['name']),
       friendlyName: _nonEmpty(json['friendlyName']),
       platform: _nonEmpty(json['platform']),
+      dmPrivateKeys: _dmPrivateKeys(json['dmPrivateKeys']),
     );
   }
 
@@ -158,7 +164,20 @@ final class NetworkDeviceCredentials {
     if (name != null) 'name': name,
     if (friendlyName != null) 'friendlyName': friendlyName,
     if (platform != null) 'platform': platform,
+    if (dmPrivateKeys.isNotEmpty) 'dmPrivateKeys': dmPrivateKeys,
   };
+
+  /// Returns the same enrollment record with an updated DM private-key map.
+  NetworkDeviceCredentials withDmPrivateKeys(Map<String, String> keys) =>
+      NetworkDeviceCredentials(
+        deviceId: deviceId,
+        deviceToken: deviceToken,
+        personalNetworkId: personalNetworkId,
+        name: name,
+        friendlyName: friendlyName,
+        platform: platform,
+        dmPrivateKeys: Map.unmodifiable(keys),
+      );
 
   @override
   String toString() =>
@@ -196,5 +215,14 @@ DateTime? _parseDate(Object? value) {
 
 String? _stringClaim(Object? value) =>
     value is String && value.isNotEmpty ? value : null;
+
+Map<String, String> _dmPrivateKeys(Object? value) {
+  if (value is! Map) return const {};
+  return Map.unmodifiable({
+    for (final entry in value.entries)
+      if (entry.key is String && entry.value is String)
+        entry.key as String: entry.value as String,
+  });
+}
 
 String? _nonEmpty(Object? value) => _stringClaim(value);

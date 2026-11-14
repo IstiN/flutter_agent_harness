@@ -293,7 +293,12 @@ void main() {
         deviceId: 'dev-42',
         deviceToken: 'device-secret',
         agents: const [
-          DeviceRosterAgent(name: 'mailbox-1', state: 'busy', exposed: true),
+          DeviceRosterAgent(
+            name: 'mailbox-1',
+            state: 'busy',
+            exposed: true,
+            dmPub: 'pub-1',
+          ),
         ],
         sessions: const [
           DeviceRosterSession(
@@ -314,7 +319,12 @@ void main() {
       expect(captured!.headers['content-type'], 'application/json');
       expect(jsonDecode(captured!.body), {
         'agents': [
-          {'name': 'mailbox-1', 'state': 'busy', 'exposed': true},
+          {
+            'name': 'mailbox-1',
+            'state': 'busy',
+            'exposed': true,
+            'dmPub': 'pub-1',
+          },
         ],
         'sessions': [
           {
