@@ -535,11 +535,16 @@ void main() {
         );
         // The frame capture carries the rows joined by cursor-positioning
         // (diff paint) — no literal newline survives _normalize, so the
-        // multi-row v2 card is asserted row-by-row.
+        // multi-row v2 card is asserted row-by-row. The header row's
+        // trailing cell is the LIVE wall-clock seconds
+        // (`_onToolExecutionEnd` renders `now − started`, issue #366/#807),
+        // never a fixed '0s' — a loaded coverage runner can push even this
+        // in-process call past the 1s boundary (the v1.0.721 tag run went
+        // red exactly here, gh-2169), so the wall-clock cell generalizes.
         for (final row in settled) {
           expect(
             _normalize(frames.text),
-            contains(_normalize(row)),
+            _settledCardRow(row),
             reason: 'the settled card row landed — frames=${frames.text}',
           );
         }
@@ -553,6 +558,117 @@ void main() {
       }
     },
   );
+
+  test(
+    'E3: a call that crosses the wall-clock second still lands the settled '
+    'card — the elapsed cell is REAL seconds, not the oracle pin (gh-2169)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      // The v1.0.721 tag run went red exactly here: the settled-card
+      // oracle was pinned at elapsed '0s' while the live edge renders
+      // `DateTime.now().difference(started)` (issue #366/#807) — a loaded
+      // coverage runner pushed even this in-process call past the 1s
+      // boundary and the byte-exact contains() failed. This rig makes the
+      // crossing DETERMINISTIC: the shell sits 1.1s between the start
+      // stamp and the end event, so the settled header paints '1s'+.
+      final frames = _FrameSink();
+      final keys = StreamController<List<int>>();
+      addTearDown(keys.close);
+      final shell = _SlowShell(
+        stdout: 'hi',
+        delay: const Duration(milliseconds: 1100),
+      );
+      final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final io = FakeCliIO();
+      final config = AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive-Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        approvalMode: ApprovalMode.yolo,
+        skillsAccess: SkillsAccess.granted,
+        tuiProgramHooks: TuiProgramHooks(
+          input: keys.stream,
+          output: frames,
+          width: 80,
+          height: 24,
+        ),
+      );
+      final cli = AgentCli(
+        config: config,
+        io: io,
+        useTui: true,
+        streamFunction: FakeStreamFunction([
+          toolTurn([
+            const ToolCall(
+              id: 't1',
+              name: 'bash',
+              arguments: {'command': 'echo hi'},
+            ),
+          ]),
+          textTurn('done'),
+        ]).call,
+      );
+      final run = cli.run();
+      try {
+        await waitForIt(
+          () => frames.text.contains('\x1b[?1049h'),
+          reason: 'the TUI boot reached the frame renderer',
+        );
+        keys.add(utf8.encode('hi'));
+        keys.add([0x0d]);
+        await waitForIt(
+          () => _normalize(frames.text).contains('done'),
+          reason: 'the turn settled with the final text',
+        );
+
+        final settled = settledCallCardRows(
+          toolName: 'bash',
+          args: const {'command': 'echo hi'},
+          resultContent: [const TextContent(text: 'hi\n')],
+          isError: false,
+          width: 80,
+          elapsed: '0s',
+          cwd: '/work',
+          home: config.homeDir,
+        );
+        for (final row in settled) {
+          expect(
+            _normalize(frames.text),
+            _settledCardRow(row),
+            reason: 'the settled card row landed — frames=${frames.text}',
+          );
+        }
+        expect(shell.commands, contains('echo hi'));
+      } finally {
+        keys.add([0x03]);
+        keys.add([0x03]);
+        await run.timeout(const Duration(seconds: 10), onTimeout: () {});
+        await io.close();
+        await keys.close();
+      }
+    },
+  );
+}
+
+/// A [Shell] that holds every exec for [delay] before answering — the
+/// deterministic wall-clock-crossing rig for the gh-2169 flake.
+class _SlowShell implements Shell {
+  _SlowShell({this.stdout = '', this.delay = Duration.zero});
+
+  final String stdout;
+  final Duration delay;
+  final commands = <String>[];
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add(command);
+    await Future<void>.delayed(delay);
+    return Ok(ShellExecResult(stdout: stdout, stderr: '', exitCode: 0));
+  }
 }
 
 /// Collects rendered frame bytes (dart_tui wraps this into an IOSink).
@@ -580,3 +696,19 @@ class _FrameSink implements StreamConsumer<List<int>> {
 String _normalize(String s) => s
     .replaceAll(RegExp('\x1b\\[[0-9;?]*[a-zA-Z]'), '')
     .replaceAll(RegExp(' +'), ' ');
+
+/// The oracle matcher for one settled-card row. The row is built through
+/// the REAL shared builder (`settledCallCardRows`) — parity by
+/// construction stays pinned — but its trailing right-aligned cell is the
+/// LIVE wall-clock seconds, which no test can pin: the fake-provider turn
+/// crosses the 1s boundary whenever the runner stalls a beat (gh-2169's
+/// v1.0.721 tag run). Elapsed-free rows (the dim command preview) stay
+/// byte-exact; the elapsed-bearing header matches `<row prefix> <digits>s`
+/// so the cell's SHAPE (a real seconds readout) is still enforced.
+Matcher _settledCardRow(String row) {
+  final normalized = _normalize(row);
+  final elapsed = RegExp(r'\d+s$').firstMatch(normalized);
+  if (elapsed == null) return contains(normalized);
+  final prefix = normalized.substring(0, elapsed.start);
+  return matches(RegExp('${RegExp.escape(prefix)}\\d+s'));
+}
