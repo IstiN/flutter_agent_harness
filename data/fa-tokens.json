@@ -13,15 +13,6 @@
   "pr-2010": [
     {
       "leg": "review",
-      "at": "2026-10-31T07:05:00Z",
-      "prompt": 79585,
-      "completion": 19584,
-      "total": 99169,
-      "cacheRead": 1652736,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-10-31T07:50:04Z",
       "prompt": 116241,
       "completion": 16188,
@@ -3539,6 +3530,15 @@
       "completion": 59767,
       "total": 656995,
       "cacheRead": 14635072,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T07:10:48Z",
+      "prompt": 206186,
+      "completion": 11825,
+      "total": 218011,
+      "cacheRead": 4835776,
       "model": "glm-5.3-flash"
     }
   ]
