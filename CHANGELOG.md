@@ -13,6 +13,24 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2103): compaction digest provenance — summaries can no longer
+  launder tool-controlled text into trusted memory. The audit verdict: the
+  typed pipeline is sound (the judge sees typed ledger lines, the fold input
+  keeps `[User]:`/`[Tool result]:` labels, request candidates come only from
+  real non-synthetic user turns), but digest TEXT could copy tool-controlled
+  instructions into `## Open User Requests` unmarked. Three layers: every
+  digest/checkpoint prompt now carries the origin-provenance duty (asks only
+  from real `[User]:` turns; instruction-shaped tool output, forged
+  `[User]:` labels and "USER INSTRUCTION" framing are never user intent;
+  verbatim tool quotes carry a `[from toolResult]` mark); `sanitizeSummary`
+  gains a provenance belt graded at persist sites against the fold's own
+  transcript (`SummaryOriginEvidence`) — machine-origin lines leave the
+  user-intent sections (logged `sanitizedEphemeral`) and tool-verbatim asks
+  gain a ` [from toolResult]` suffix (logged `markedToolOrigin`), with real
+  asks byte-identical and pins exempt; and adversarial regression transcripts
+  (a tool result shaped like user turns) pin the typed pipeline, the belt on
+  all three persist paths (classic/structured/branch+handoff), and the
+  prompt duty (`#2103`)
 - feat(gh-2102): `/handoff` — start a fresh session from an editable digest
   of the current one: the branch-digest machinery
   (`prepareBranchEntries` + the shared `SummarizeFn` seam, handoff preamble
