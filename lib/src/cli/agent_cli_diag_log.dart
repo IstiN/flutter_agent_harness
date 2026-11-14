@@ -62,6 +62,17 @@ extension AgentCliDiagLog on AgentCli {
     LogCategory category = LogCategory.lifecycle,
   }) => _logDiagnostic(message, level: level, category: category);
 
+  /// gh-2178: wires the quarantine report onto the CLI notice channel —
+  /// the same line rides fa.log at warn level (the diagnostics file
+  /// keeps the forensic copy; the reporter's per-record dedupe keeps a
+  /// repeated turn from spamming either surface).
+  void wireQuarantineNotice(void Function(String message) onNotice) {
+    SessionQuarantine.onQuarantined = (line) {
+      onNotice(line);
+      _logDiagnostic(line, level: LogLevel.warn);
+    };
+  }
+
   /// Short session id for diagnostic log lines: parallel fa processes share
   /// one fa.log, so every lifecycle line names its session (post-mortem
   /// "who held the busy row" starts here).

@@ -794,17 +794,6 @@ extension SlashCommandDispatch on AgentCli {
   }
 }
 
-/// Wires the gh-2178 quarantine report onto the CLI notice channel; the
-/// same line rides fa.log at warn level (the diagnostics file keeps the
-/// forensic copy; the reporter's per-record dedupe keeps a repeated turn
-/// from spamming either surface).
-void wireQuarantineNotice(void Function(String message) onNotice) {
-  SessionQuarantine.onQuarantined = (line) {
-    onNotice(line);
-    _logDiagnostic(line, level: LogLevel.warn);
-  };
-}
-
 /// Builds the session's sleep-prevention controller (issues #325/#326)
 /// from the host-injected runner + configured level + hold lifecycle; a
 /// null runner (tests, web) means no assertions — power is
