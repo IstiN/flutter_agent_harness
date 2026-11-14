@@ -110,6 +110,38 @@ AssistantMessage _readCalls(List<String> paths) => AssistantMessage(
 void main() {
   const digestAnswer = '## Goal\nfinish the handoff work';
 
+  group('handoffEditorCommand platform quoting (gh-2102 review)', () {
+    test('POSIX sh -c: single quotes with the \'\\\'\' escape', () {
+      expect(
+        handoffEditorCommand('vi', '/work/.fah/a b.md', isWindows: false),
+        "vi '/work/.fah/a b.md'",
+      );
+      expect(
+        handoffEditorCommand("vi", "/work/.fah/it's.md", isWindows: false),
+        r"vi '/work/.fah/it'\''s.md'",
+      );
+    });
+
+    test(
+      'Windows cmd /c: double quotes — single quotes are LITERAL there '
+      'and used to ride into the file name, so the editor could never '
+      'open the real digest (gh-2102 review)',
+      () {
+        final command = handoffEditorCommand(
+          'code --wait',
+          r'C:\work\.fah\handoff-digest-1.md',
+          isWindows: true,
+        );
+        expect(
+          command,
+          r'code --wait "C:\work\.fah\handoff-digest-1.md"',
+        );
+        expect(command.contains("'"), isFalse,
+            reason: 'no single quote may reach the cmd /c argv');
+      },
+    );
+  });
+
   /// The .jsonl session file paths of the '/work' folder, sorted — via the
   /// repo listing (sessions are grouped under `<root>/<encoded-cwd>/`).
   Future<List<String>> sessionFiles(JsonlSessionRepo repo) async =>
@@ -452,6 +484,65 @@ void main() {
       )).valueOrNull!;
       expect(newRaw, contains('finish the handoff work'));
       expect(newRaw, contains('/src/one.dart'));
+
+      io.sendLine('/exit');
+      await run.timeout(const Duration(seconds: 30), onTimeout: () {});
+      await io.close();
+    },
+  );
+
+  test(
+    'Ctrl-C cancels the digest call (#1085 M3): "handoff interrupted", '
+    'no session switch, and the next turn is not insta-aborted '
+    '(gh-2102 review)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final env = EditorSimEnv(MemoryExecutionEnv(cwd: '/work'), edited: 'x');
+      final repo = await repoFor(env);
+      await seedOldSession(repo, name: 'old');
+      final io = FakeCliIO();
+      // The digest call hangs until cancelled (the user's Ctrl-C); every
+      // later call (the next prompt) completes instantly.
+      final hanging = AbortableStreamFunction();
+      final followup = _InstantStream('still here');
+      AssistantMessageEventStream stream(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        if (!hanging.started) {
+          return hanging.call(model, context, cancelToken: cancelToken);
+        }
+        return followup.call(model, context);
+      }
+
+      final cli = bootCli(
+        env,
+        io,
+        stream,
+        sessionName: 'old',
+        envVarValue: (name) => name == 'FA_EDITOR' ? 'true-editor' : null,
+      );
+      final run = cli.run();
+      io.sendLine('/handoff');
+      await waitForIt(() => hanging.started, reason: 'digest call started');
+      io.interrupt();
+      await waitForIt(
+        () => io.out.toString().contains('handoff interrupted'),
+        reason: 'interrupt note',
+      );
+
+      // No editor ran, no session switch — the handoff stopped mid-flow.
+      expect(env.commands, isEmpty);
+      expect(await sessionFiles(repo), hasLength(1));
+      // The sticky abort belt must NOT ride into the next turn (#1085 M3
+      // round-2): the interrupt cancelled the digest call ONLY — the next
+      // prompt starts a fresh run and completes it.
+      io.sendLine('after the interrupt');
+      await waitForIt(
+        () => followup.calls >= 1 && !cli.isBusy,
+        reason: 'the next turn completes',
+      );
 
       io.sendLine('/exit');
       await run.timeout(const Duration(seconds: 30), onTimeout: () {});

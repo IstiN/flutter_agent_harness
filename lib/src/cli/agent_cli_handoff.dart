@@ -56,6 +56,25 @@ extension HandoffSlashCommand on AgentCli {
     // 1. Generate the digest (branch-digest machinery, handoff preamble).
     _pushBusyPhase('Writing handoff digest…');
     _waiting.compactionLivenessStart();
+    // User-wired digest cancellation (gh-2102 review, issue #1085 M3
+    // parity): the digest LM call is a multi-minute summarization and
+    // Ctrl-C used to abort NOTHING — `_abortRunOrCompaction` found no
+    // registered token, latched the sticky `_runAbortRequested`, and the
+    // call ground to completion (the flag even riding toward the fresh
+    // session). Mirror the compaction wiring: a per-flow CancelTokenSource
+    // registered in `_activeCompactionAbort` (the interrupt routing's
+    // `else if` arm — /handoff runs OUTSIDE a run bracket, `isBusy` false),
+    // LINKED to the live run token when one exists, and cleared in the
+    // `finally`. The digest.aborted → "handoff interrupted" receipt below
+    // is the visible result.
+    final abort = CancelTokenSource();
+    _activeCompactionAbort = abort;
+    final runToken = _agent.cancelToken;
+    if (runToken != null) {
+      unawaited(
+        runToken.onCancel.then((_) => abort.cancel(runToken.cancelReason)),
+      );
+    }
     final HandoffDigestResult digest;
     try {
       final slot = _resolveMemoryLlmSlot();
@@ -72,8 +91,10 @@ extension HandoffSlashCommand on AgentCli {
         // overflowing the summarizer with one giant prompt.
         summarizerWindow: slot.model.contextWindow,
         settings: _effectiveCompactionSettings,
+        cancelToken: abort.token,
       );
     } finally {
+      _activeCompactionAbort = null;
       _waiting.compactionLivenessEnd();
       _pushBusyPhase('');
     }
