@@ -51,6 +51,7 @@ Future<List<NetworkDeviceRow>> _readNetworkRoster({
       ticketProvider: () =>
           devices.wsTicket(baseUrl: baseUrl, deviceToken: device.deviceToken),
       transport: const IoConnectorTransport(),
+      rosterClient: devices,
     ),
   );
 }
@@ -73,6 +74,7 @@ Future<CliNetworkPresence?> _restoreNetworkPresence() async {
       ticketProvider: () =>
           devices.wsTicket(baseUrl: baseUrl, deviceToken: device.deviceToken),
       transport: const IoConnectorTransport(),
+      rosterClient: devices,
     );
   } on Object {
     // Corrupt/unreadable local network state must not prevent local coding.

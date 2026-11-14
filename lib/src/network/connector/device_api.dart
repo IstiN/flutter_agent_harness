@@ -100,6 +100,58 @@ final class DeviceSummary {
   }
 }
 
+/// One agent entry in a device roster merge patch.
+final class DeviceRosterAgent {
+  /// Builds an agent projection entry.
+  const DeviceRosterAgent({
+    required this.name,
+    required this.state,
+    required this.exposed,
+  });
+
+  /// Bare agent name; the server scopes it to the patched device.
+  final String name;
+
+  /// Roster presence: `live`, `busy`, or `offline`.
+  final String state;
+
+  /// Whether other devices may discover this agent.
+  final bool exposed;
+
+  /// JSON representation for the roster endpoint.
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'state': state,
+    'exposed': exposed,
+  };
+}
+
+/// One session entry in a device roster merge patch.
+final class DeviceRosterSession {
+  /// Builds a session projection entry.
+  const DeviceRosterSession({
+    required this.id,
+    required this.state,
+    this.networks = const [],
+  });
+
+  /// Stable CLI session id.
+  final String id;
+
+  /// Session presence: `live`, `wake-on-DM`, or `offline`.
+  final String state;
+
+  /// Networks on which this session is exposed.
+  final List<String> networks;
+
+  /// JSON representation for the roster endpoint.
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'state': state,
+    'networks': networks,
+  };
+}
+
 DeviceEnrollment _enrollmentFromJson(Map<String, Object?> body) {
   final deviceId = body['deviceId'];
   final deviceToken = body['deviceToken'];
@@ -227,6 +279,29 @@ final class DeviceEnrollmentClient {
     }
     final friendly = body['friendlyName'];
     return friendly is String ? friendly : name;
+  }
+
+  /// `PATCH /api/devices/{deviceId}/roster` (deviceToken bearer). Entries
+  /// are merged by agent name/session id; omitted roster rows are unchanged.
+  Future<void> patchRoster({
+    required String baseUrl,
+    required String deviceId,
+    required String deviceToken,
+    List<DeviceRosterAgent> agents = const [],
+    List<DeviceRosterSession> sessions = const [],
+  }) async {
+    await _request(
+      'PATCH',
+      _endpoint(
+        baseUrl,
+        '/api/devices/${Uri.encodeComponent(deviceId)}/roster',
+      ),
+      bearer: deviceToken,
+      body: {
+        'agents': [for (final agent in agents) agent.toJson()],
+        'sessions': [for (final session in sessions) session.toJson()],
+      },
+    );
   }
 
   /// One bearer-authenticated POST; returns the decoded JSON object body.

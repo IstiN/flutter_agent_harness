@@ -48,20 +48,31 @@ void main() {
       expect(decoded.hashCode, envelope.hashCode);
     });
 
-    test('control frame payload survives the round trip', () {
+    test('control frame payload is spread across the top-level wire frame', () {
       final hello = NetworkEnvelope(
         kind: NetworkEnvelopeKind.hello,
         msgId: 'h-1',
         ts: '2026-11-12T10:00:00.000Z',
         payload: {'deviceId': 'macbook', 'rosterDigest': 'abc'},
       );
-      final decoded = NetworkEnvelope.fromJson(hello.toJson());
+      final wire = hello.toJson();
+      expect(wire, {
+        'v': 1,
+        'kind': 'hello',
+        'msgId': 'h-1',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'deviceId': 'macbook',
+        'rosterDigest': 'abc',
+      });
+      expect(wire.containsKey('payload'), isFalse);
+
+      final decoded = NetworkEnvelope.fromJson(wire);
       expect(decoded, hello);
       expect(decoded.payload['deviceId'], 'macbook');
       expect(decoded.payload['rosterDigest'], 'abc');
     });
 
-    test('fromJson tolerates unknown extra keys and missing optionals', () {
+    test('fromJson folds unknown extra keys into payload', () {
       final decoded = NetworkEnvelope.fromJson({
         'v': 1,
         'kind': 'ping',
@@ -74,7 +85,136 @@ void main() {
       expect(decoded.network, isNull);
       expect(decoded.seq, isNull);
       expect(decoded.ciphertext, isNull);
-      expect(decoded.payload, isEmpty);
+      expect(decoded.payload, {
+        'futureField': {'x': 1},
+      });
+    });
+
+    test('top-level fields take precedence over a legacy nested payload', () {
+      final decoded = NetworkEnvelope.fromJson({
+        'v': 1,
+        'kind': 'presence',
+        'msgId': 'p-1',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'machine': 'online',
+        'payload': {
+          'machine': 'offline',
+          'agents': [
+            {'name': 'nested', 'state': 'live'},
+          ],
+        },
+        'sessions': [
+          {'id': 'top-level', 'state': 'live'},
+        ],
+      });
+      expect(decoded.payload, {
+        'machine': 'online',
+        'agents': [
+          {'name': 'nested', 'state': 'live'},
+        ],
+        'sessions': [
+          {'id': 'top-level', 'state': 'live'},
+        ],
+      });
+    });
+
+    test('raw production roster keeps top-level entries and devices', () {
+      final rawRoster = <String, Object?>{
+        'v': 1,
+        'kind': 'roster',
+        'msgId': 'roster-prod-1',
+        'network': '09bc-personal',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'entries': [
+          {'id': 'entry-owner', 'class': 'owner', 'userId': 'user-1'},
+        ],
+        'devices': [
+          {
+            'deviceId': '750f-device',
+            'name': 'device',
+            'presence': 'offline',
+            'userId': 'user-1',
+          },
+          {
+            'deviceId': 'c5b0-device',
+            'name': 'EPBYGROW03B0',
+            'presence': 'online',
+            'userId': 'user-2',
+          },
+        ],
+      };
+
+      final decoded = NetworkEnvelope.fromJson(rawRoster);
+      expect(decoded.network, '09bc-personal');
+      expect(decoded.payload, {
+        'entries': rawRoster['entries'],
+        'devices': rawRoster['devices'],
+      });
+      expect(decoded.toJson(), rawRoster);
+    });
+
+    test('top-level presence agents and sessions round trip byte-shape', () {
+      final wire = <String, Object?>{
+        'v': 1,
+        'kind': 'presence',
+        'msgId': 'presence-prod-1',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'agents': [
+          {'name': 'mailbox-1', 'state': 'live', 'exposed': true},
+        ],
+        'sessions': [
+          {
+            'id': 'session-1',
+            'state': 'live',
+            'networks': ['09bc-personal'],
+          },
+        ],
+      };
+
+      final decoded = NetworkEnvelope.fromJson(wire);
+      expect(decoded.payload, {
+        'agents': wire['agents'],
+        'sessions': wire['sessions'],
+      });
+      expect(decoded.toJson(), wire);
+    });
+
+    test('payload entries cannot replace reserved envelope fields', () {
+      final envelope = NetworkEnvelope(
+        kind: NetworkEnvelopeKind.presence,
+        msgId: 'real-id',
+        network: 'real-network',
+        ts: '2026-11-12T10:00:00.000Z',
+        payload: {
+          'v': 2,
+          'kind': 'mail',
+          'msgId': 'forged-id',
+          'network': 'forged-network',
+          'ts': 'forged-ts',
+          'payload': {'machine': 'offline'},
+          'machine': 'online',
+        },
+      );
+      expect(envelope.toJson(), {
+        'v': 1,
+        'kind': 'presence',
+        'msgId': 'real-id',
+        'network': 'real-network',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'machine': 'online',
+      });
+
+      final decoded = NetworkEnvelope.fromJson({
+        'v': 1,
+        'kind': 'presence',
+        'msgId': 'real-id',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'payload': {'msgId': 'forged-id', 'kind': 'mail'},
+        'machine': 'online',
+      });
+      expect(decoded.msgId, 'real-id');
+      expect(decoded.kind, NetworkEnvelopeKind.presence);
+      expect(decoded.payload, {'machine': 'online'});
     });
 
     test('unknown kind and wrong version throw FormatException', () {

@@ -5,11 +5,13 @@
 /// The `dart:io` device transport + enrollment of the machine connector
 /// (contract `docs/fa_network_connector.md` §4/§9): the real upstream WS
 /// dial ([IoConnectorTransport] over `dart:io`'s `WebSocket.connect`) and
-/// the two device REST calls ([DeviceEnrollmentClient]):
+/// the device REST calls ([DeviceEnrollmentClient]):
 /// - `POST /api/devices/enroll` (JWT bearer) → `{deviceId, deviceToken}` —
 ///   the stable §1 identity pair persisted by the host;
 /// - `POST /api/ws-ticket` (deviceToken bearer) → a single-use ticket,
-///   TTL 60 s, one dial each (§4).
+///   TTL 60 s, one dial each (§4);
+/// - `PATCH /api/devices/{deviceId}/roster` (deviceToken bearer) → the
+///   agent/session exposure projection visible to other devices.
 ///
 /// The socket adapter ([ConnectorSocketAdapter]) mirrors the fake-device-
 /// server client-socket semantics: writes after close throw, close is
@@ -36,6 +38,8 @@ export 'device_api.dart'
         DeviceEnrollment,
         DeviceEnrollmentClient,
         DeviceEnrollmentException,
+        DeviceRosterAgent,
+        DeviceRosterSession,
         DeviceSummary;
 
 /// A plain text duplex between a socket and the adapter — the seam that
@@ -145,6 +149,10 @@ final class ConnectorSocketAdapter implements ConnectorSocket {
   void _onText(String text) {
     if (_closed) return;
     try {
+      if (const bool.fromEnvironment('FA_RAW_WS')) {
+        // ignore: avoid_print
+        print('RAW_INBOUND: $text');
+      }
       _frames.add(NetworkEnvelope.fromJson(jsonDecode(text)));
     } on FormatException catch (error) {
       onLog?.call('skipping malformed device frame: $error');

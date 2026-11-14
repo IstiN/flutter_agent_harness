@@ -364,6 +364,12 @@ void main() {
         ConnectorSessionPresence.live,
         reason: 'lease delegate says live',
       );
+      final wire = presenceFrame.toJson();
+      expect(wire.containsKey('payload'), isFalse);
+      expect(wire['machine'], 'online');
+      expect(wire['sessions'], [
+        {'id': 'sess-1', 'state': 'live'},
+      ]);
 
       // Exposure toggle propagates within one heartbeat (§6): hide the
       // session, the next published frame drops it.

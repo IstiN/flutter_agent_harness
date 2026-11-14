@@ -4,6 +4,11 @@
 
 import 'dart:async';
 
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:flutter_agent_harness/src/network/connector/device_api.dart';
 import 'package:flutter_agent_harness/src/cli/network_presence.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
@@ -61,6 +66,129 @@ void main() {
       await _waitForPresence(socket, state: 'busy');
       await controller.dispose();
       expect(socket.closed, isTrue);
+    },
+  );
+
+  test('start publishes the personal roster projection and dispose retracts '
+      'it', () async {
+    final requests = <http.Request>[];
+    final controller = NetworkPresenceController(
+      device: const NetworkDeviceCredentials(
+        deviceId: 'device-1',
+        deviceToken: 'device-secret',
+        personalNetworkId: 'personal-1',
+      ),
+      baseUrl: 'https://relay.test',
+      ticketProvider: () async => 'ticket-1',
+      transport: _FakeTransport(_FakeSocket()),
+      rosterClient: DeviceEnrollmentClient(
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+        }),
+      ),
+      rosterDebounce: const Duration(milliseconds: 10),
+      idFactory: sequentialIds(),
+    );
+
+    await controller.startSession(
+      const CliNetworkSession(
+        sessionId: 'session-1',
+        mailboxPrefix: 'mailbox-1',
+      ),
+    );
+    await _waitForRosterPatches(requests, 1);
+
+    expect(requests.single.method, 'PATCH');
+    expect(requests.single.url.path, '/api/devices/device-1/roster');
+    expect(requests.single.headers['authorization'], 'Bearer device-secret');
+    expect(jsonDecode(requests.single.body), {
+      'agents': [
+        {'name': 'mailbox-1', 'state': 'live', 'exposed': true},
+      ],
+      'sessions': [
+        {
+          'id': 'session-1',
+          'state': 'live',
+          'networks': ['personal-1'],
+        },
+      ],
+    });
+
+    await controller.dispose();
+
+    expect(requests, hasLength(2));
+    expect(jsonDecode(requests.last.body), {
+      'agents': [
+        {'name': 'mailbox-1', 'state': 'offline', 'exposed': false},
+      ],
+      'sessions': [
+        {
+          'id': 'session-1',
+          'state': 'offline',
+          'networks': ['personal-1'],
+        },
+      ],
+    });
+  });
+
+  test(
+    'session switch merges the new live session and retires the old one',
+    () async {
+      final requests = <http.Request>[];
+      final socket = _FakeSocket();
+      final controller = NetworkPresenceController(
+        device: const NetworkDeviceCredentials(
+          deviceId: 'device-1',
+          deviceToken: 'device-secret',
+          personalNetworkId: 'personal-1',
+        ),
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket-1',
+        transport: _FakeTransport(socket),
+        rosterClient: DeviceEnrollmentClient(
+          httpClient: MockClient((request) async {
+            requests.add(request);
+            return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+          }),
+        ),
+        rosterDebounce: const Duration(milliseconds: 10),
+        idFactory: sequentialIds(),
+      );
+
+      await controller.startSession(
+        const CliNetworkSession(
+          sessionId: 'session-1',
+          mailboxPrefix: 'mailbox-1',
+        ),
+      );
+      await _waitForRosterPatches(requests, 1);
+      await controller.startSession(
+        const CliNetworkSession(
+          sessionId: 'session-2',
+          mailboxPrefix: 'mailbox-1',
+        ),
+      );
+      await _waitForRosterPatches(requests, 2);
+
+      expect(requests, hasLength(2));
+      final patch = jsonDecode(requests.last.body) as Map<String, Object?>;
+      expect(patch['agents'], [
+        {'name': 'mailbox-1', 'state': 'live', 'exposed': true},
+      ]);
+      expect(patch['sessions'], [
+        {
+          'id': 'session-1',
+          'state': 'offline',
+          'networks': ['personal-1'],
+        },
+        {
+          'id': 'session-2',
+          'state': 'live',
+          'networks': ['personal-1'],
+        },
+      ]);
+      await controller.dispose();
     },
   );
 
@@ -212,6 +340,17 @@ void main() {
       {'inherited'},
     );
   });
+}
+
+Future<void> _waitForRosterPatches(
+  List<http.Request> requests,
+  int count,
+) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    if (requests.length >= count) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  throw StateError('expected $count roster patches, got ${requests.length}');
 }
 
 Future<NetworkEnvelope> _waitForPresence(

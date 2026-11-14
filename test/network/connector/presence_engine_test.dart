@@ -235,45 +235,65 @@ void main() {
     expect(frames, isEmpty, reason: 'stop is idempotent');
   });
 
-  test('frame round trips through the envelope payload', () async {
-    final engine2 = PresenceEngine(
-      clock: clock,
-      timers: timers,
-      exposedSessions: () => {'sess-1'},
-      liveLeases: () => const <String>{},
-      idFactory: () => 'fixed-id',
-    );
-    engine2
-      ..start()
-      ..markConnected()
-      ..setAgentState('goal_builder@macbook', AgentRunState.live);
-    await pump();
-    final envelope = engine2.snapshot().toEnvelope(idFactory: () => 'fixed-id');
-    expect(envelope.kind, NetworkEnvelopeKind.presence);
-    expect(envelope.network, isNull, reason: 'device-level frame, §3');
-    expect(envelope.channel, isNull);
-    expect(envelope.isValid, isTrue);
-    final parsed = PresenceFrame.fromEnvelope(envelope);
-    expect(parsed, isNotNull);
-    expect(parsed!.msgId, 'fixed-id');
-    expect(parsed.machine, MachinePresence.online);
-    expect(parsed.agents, {'goal_builder@macbook': AgentRunState.live});
-    expect(parsed.sessions, {'sess-1': ConnectorSessionPresence.wakeOnDm});
-    expect(
-      PresenceFrame.fromEnvelope(
-        NetworkEnvelope(
-          kind: NetworkEnvelopeKind.mail,
-          msgId: 'm',
-          network: 'n',
-          channel: 'c',
-          ts: '2026-11-12T10:00:00.000Z',
-          ciphertext: 'c',
+  test(
+    'frame round trips with presence collections at the wire top level',
+    () async {
+      final engine2 = PresenceEngine(
+        clock: clock,
+        timers: timers,
+        exposedSessions: () => {'sess-1'},
+        liveLeases: () => const <String>{},
+        idFactory: () => 'fixed-id',
+      );
+      engine2
+        ..start()
+        ..markConnected()
+        ..setAgentState('goal_builder@macbook', AgentRunState.live);
+      await pump();
+      final envelope = engine2.snapshot().toEnvelope(
+        idFactory: () => 'fixed-id',
+      );
+      expect(envelope.kind, NetworkEnvelopeKind.presence);
+      expect(envelope.network, isNull, reason: 'device-level frame, §3');
+      expect(envelope.channel, isNull);
+      expect(envelope.isValid, isTrue);
+      expect(envelope.toJson(), {
+        'v': 1,
+        'kind': 'presence',
+        'msgId': 'fixed-id',
+        'ts': '2026-11-12T10:00:00.000Z',
+        'machine': 'online',
+        'agents': [
+          {'address': 'goal_builder@macbook', 'state': 'live'},
+        ],
+        'sessions': [
+          {'id': 'sess-1', 'state': 'wake_on_dm'},
+        ],
+      });
+      final parsed = PresenceFrame.fromEnvelope(
+        NetworkEnvelope.fromJson(envelope.toJson()),
+      );
+      expect(parsed, isNotNull);
+      expect(parsed!.msgId, 'fixed-id');
+      expect(parsed.machine, MachinePresence.online);
+      expect(parsed.agents, {'goal_builder@macbook': AgentRunState.live});
+      expect(parsed.sessions, {'sess-1': ConnectorSessionPresence.wakeOnDm});
+      expect(
+        PresenceFrame.fromEnvelope(
+          NetworkEnvelope(
+            kind: NetworkEnvelopeKind.mail,
+            msgId: 'm',
+            network: 'n',
+            channel: 'c',
+            ts: '2026-11-12T10:00:00.000Z',
+            ciphertext: 'c',
+          ),
         ),
-      ),
-      isNull,
-    );
-    engine2.dispose();
-  });
+        isNull,
+      );
+      engine2.dispose();
+    },
+  );
 
   test('toString hides payload details (diagnostics hygiene)', () async {
     engine.start();

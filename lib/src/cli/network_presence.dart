@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import '../network/connector/device_api.dart';
 import '../network/connector/device_registry.dart';
 import '../network/connector/envelope.dart';
 import '../network/connector/machine_connector.dart';
@@ -59,6 +60,8 @@ final class NetworkPresenceController implements CliNetworkPresence {
     required this.baseUrl,
     required this.ticketProvider,
     this.transport,
+    this.rosterClient,
+    this.rosterDebounce = const Duration(milliseconds: 500),
     this.idFactory = defaultIdFactory,
     this.onLog,
   });
@@ -78,6 +81,13 @@ final class NetworkPresenceController implements CliNetworkPresence {
   /// IO transport, or a hermetic fake in tests.
   final ConnectorTransport? transport;
 
+  /// REST client for the fa_network roster projection. Nullable so embedders
+  /// that only want the legacy socket can retain the original behaviour.
+  final DeviceEnrollmentClient? rosterClient;
+
+  /// Coalescing window for REST roster changes.
+  final Duration rosterDebounce;
+
   /// Optional diagnostics. Callers must not pass secret-bearing log lines.
   final void Function(String message)? onLog;
 
@@ -89,6 +99,12 @@ final class NetworkPresenceController implements CliNetworkPresence {
   final _phaseChanges = StreamController<ConnectorLinkState>.broadcast();
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
   final _subscriptions = <StreamSubscription<Object?>>[];
+  final _pendingRosterAgents = <String, DeviceRosterAgent>{};
+  final _pendingRosterSessions = <String, DeviceRosterSession>{};
+  Timer? _rosterTimer;
+  Future<void> _rosterWrites = Future<void>.value();
+  bool _rosterActive = false;
+  bool _busy = false;
 
   /// Current upstream phase (disconnected before [start]).
   ConnectorLinkState get phase => _phase;
@@ -105,7 +121,9 @@ final class NetworkPresenceController implements CliNetworkPresence {
   /// Starts a socket without a local session (used by `network devices`).
   Future<void> start() async {
     _ensureBuilt();
+    _rosterActive = _session != null;
     await _connector!.start();
+    _queueLiveRoster();
   }
 
   @override
@@ -121,8 +139,10 @@ final class NetworkPresenceController implements CliNetworkPresence {
         previousAddress,
         AgentRunState.offline,
       );
+      _queueRosterRetraction(previous);
     }
     _session = session;
+    _busy = false;
     final address = agentAddress(session.agentName, device.deviceId);
     _agentAddress = address;
     registry
@@ -130,13 +150,13 @@ final class NetworkPresenceController implements CliNetworkPresence {
       ..registerSession(
         SessionRegistration(id: session.sessionId, agentAddressOf: address),
       );
-    final connector = _connector!;
-    connector.presence.setAgentState(address, AgentRunState.live);
-    await connector.start();
+    _connector!.presence.setAgentState(address, AgentRunState.live);
+    await start();
   }
 
   @override
   void setBusy(bool busy) {
+    _busy = busy;
     final address = _agentAddress;
     final connector = _connector;
     if (address == null || connector == null) return;
@@ -144,10 +164,12 @@ final class NetworkPresenceController implements CliNetworkPresence {
       address,
       busy ? AgentRunState.busy : AgentRunState.live,
     );
+    _queueLiveRoster();
   }
 
   @override
   Future<void> stop() async {
+    await _retractRoster();
     await _connector?.stop();
     _setPhase(ConnectorLinkState.disconnected);
   }
@@ -168,6 +190,115 @@ final class NetworkPresenceController implements CliNetworkPresence {
     _registry = null;
     await _phaseChanges.close();
     await _rosterFrames.close();
+  }
+
+  Future<void> _retractRoster() async {
+    if (!_rosterActive) {
+      await _flushRoster();
+      return;
+    }
+    _rosterActive = false;
+    final session = _session;
+    if (session != null) _queueRosterRetraction(session);
+    await _flushRoster();
+  }
+
+  void _queueLiveRoster() {
+    final session = _session;
+    if (!_rosterActive ||
+        _phase != ConnectorLinkState.connected ||
+        session == null) {
+      return;
+    }
+    _queueRosterEntries(
+      agents: [
+        DeviceRosterAgent(
+          name: session.agentName,
+          state: _busy ? 'busy' : 'live',
+          exposed: true,
+        ),
+      ],
+      sessions: [
+        DeviceRosterSession(
+          id: session.sessionId,
+          state: 'live',
+          networks: _sessionNetworks,
+        ),
+      ],
+    );
+  }
+
+  void _queueRosterRetraction(CliNetworkSession session) {
+    _queueRosterEntries(
+      agents: [
+        DeviceRosterAgent(
+          name: session.agentName,
+          state: 'offline',
+          exposed: false,
+        ),
+      ],
+      sessions: [
+        DeviceRosterSession(
+          id: session.sessionId,
+          state: 'offline',
+          networks: _sessionNetworks,
+        ),
+      ],
+    );
+  }
+
+  List<String> get _sessionNetworks => [?device.personalNetworkId];
+
+  void _queueRosterEntries({
+    List<DeviceRosterAgent> agents = const [],
+    List<DeviceRosterSession> sessions = const [],
+  }) {
+    if (rosterClient == null) return;
+    for (final agent in agents) {
+      _pendingRosterAgents[agent.name] = agent;
+    }
+    for (final session in sessions) {
+      _pendingRosterSessions[session.id] = session;
+    }
+    _rosterTimer?.cancel();
+    _rosterTimer = Timer(rosterDebounce, () => unawaited(_flushRoster()));
+  }
+
+  Future<void> _flushRoster() {
+    _rosterTimer?.cancel();
+    _rosterTimer = null;
+    final write = _rosterWrites.then((_) => _writePendingRoster());
+    _rosterWrites = write;
+    return write;
+  }
+
+  Future<void> _writePendingRoster() async {
+    final client = rosterClient;
+    if (client == null ||
+        (_pendingRosterAgents.isEmpty && _pendingRosterSessions.isEmpty)) {
+      return;
+    }
+    final agents = _pendingRosterAgents.values.toList(growable: false);
+    final sessions = _pendingRosterSessions.values.toList(growable: false);
+    _pendingRosterAgents.clear();
+    _pendingRosterSessions.clear();
+    try {
+      await client.patchRoster(
+        baseUrl: baseUrl,
+        deviceId: device.deviceId,
+        deviceToken: device.deviceToken,
+        agents: agents,
+        sessions: sessions,
+      );
+    } on Object {
+      // Presence is strictly best-effort and must never break the local CLI.
+      onLog?.call('device roster patch failed');
+    }
+  }
+
+  void _handleUpstreamState(ConnectorLinkState state) {
+    _setPhase(state);
+    if (state == ConnectorLinkState.connected) _queueLiveRoster();
   }
 
   void _ensureBuilt() {
@@ -202,9 +333,7 @@ final class NetworkPresenceController implements CliNetworkPresence {
     );
     _registry = registry;
     _connector = connector;
-    _subscriptions.add(
-      upstream.stateChanges.listen((state) => _setPhase(state)),
-    );
+    _subscriptions.add(upstream.stateChanges.listen(_handleUpstreamState));
     _subscriptions.add(connector.rosterFrames.listen(_rosterFrames.add));
   }
 

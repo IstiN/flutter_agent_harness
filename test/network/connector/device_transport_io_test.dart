@@ -278,6 +278,55 @@ void main() {
     });
   });
 
+  group('DeviceEnrollmentClient.patchRoster', () {
+    test('sends typed merge entries with device-token auth', () async {
+      http.Request? captured;
+      final client = DeviceEnrollmentClient(
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response(jsonEncode({'patched': 'dev-42'}), 200);
+        }),
+      );
+
+      await client.patchRoster(
+        baseUrl: 'https://network.fa1.dev/',
+        deviceId: 'dev-42',
+        deviceToken: 'device-secret',
+        agents: const [
+          DeviceRosterAgent(name: 'mailbox-1', state: 'busy', exposed: true),
+        ],
+        sessions: const [
+          DeviceRosterSession(
+            id: 'session-1',
+            state: 'wake-on-DM',
+            networks: ['personal-1'],
+          ),
+        ],
+      );
+
+      expect(captured, isNotNull);
+      expect(captured!.method, 'PATCH');
+      expect(
+        captured!.url.toString(),
+        'https://network.fa1.dev/api/devices/dev-42/roster',
+      );
+      expect(captured!.headers['authorization'], 'Bearer device-secret');
+      expect(captured!.headers['content-type'], 'application/json');
+      expect(jsonDecode(captured!.body), {
+        'agents': [
+          {'name': 'mailbox-1', 'state': 'busy', 'exposed': true},
+        ],
+        'sessions': [
+          {
+            'id': 'session-1',
+            'state': 'wake-on-DM',
+            'networks': ['personal-1'],
+          },
+        ],
+      });
+    });
+  });
+
   group('ConnectorSocketAdapter', () {
     test(
       'decodes inbound JSON into envelopes and skips malformed text',

@@ -9,17 +9,34 @@
 /// Contract shape (§3): `v`/`kind`/`msgId`/`refId`/`network`/`channel`/
 /// `from`/`to`/`ts`/`seq`/`ciphertext`. Two documented additions beyond the
 /// literal example frame: control-plane kinds (`hello`, `hello_ok`,
-/// `presence`, `roster`, `wake_hint`, `error`) carry their plaintext data in
-/// `payload` (deviceId, roster digest, presence states, wake hints — §4/§5/§8
-/// mandate this data on non-mail frames), while `mail` stays ciphertext-only
-/// per the relay-only invariant (§3/§11): the server never reads mail
-/// content or keys.
+/// `presence`, `roster`, `wake_hint`, `error`) carry their plaintext data as
+/// top-level fields (deviceId, roster entries/devices, presence agents/
+/// sessions, wake hints — §4/§5/§8 mandate this data on non-mail frames),
+/// while `mail` stays ciphertext-only per the relay-only invariant (§3/§11):
+/// the server never reads mail content or keys.
 library;
 
 import 'dart:math';
 
 /// The wire protocol version this library speaks (contract §3: `"v": 1`).
 const int networkEnvelopeVersion = 1;
+
+/// Envelope-owned wire fields. Every other top-level field is control-plane
+/// payload; payload data can never replace these fields when re-encoded.
+const Set<String> _reservedEnvelopeKeys = {
+  'v',
+  'kind',
+  'msgId',
+  'refId',
+  'network',
+  'channel',
+  'from',
+  'to',
+  'ts',
+  'seq',
+  'ciphertext',
+  'payload',
+};
 
 /// Prefix of a DM virtual channel id (contract §7: DM is a virtual channel
 /// routed by `to`, not a channel object with members).
@@ -189,8 +206,10 @@ final class NetworkEnvelope {
 
   /// Structural decode: builds a frame from wire JSON. Throws
   /// [FormatException] on a non-map body, missing `msgId`, unknown `kind`
-  /// or a version other than 1; everything else is tolerant (unknown keys
-  /// are ignored — forward compatibility).
+  /// or a version other than 1; everything else is tolerant. Unknown
+  /// top-level keys fold into [payload], preserving forward compatibility
+  /// and the server's top-level collection fields. A legacy nested payload
+  /// map is merged first, so explicit top-level fields take precedence.
   factory NetworkEnvelope.fromJson(Object? json) {
     if (json is! Map) {
       throw FormatException('envelope must be a JSON object, got $json');
@@ -219,9 +238,7 @@ final class NetworkEnvelope {
       ts: _stringOrNull(json['ts']) ?? '',
       seq: json['seq'] is int ? json['seq'] as int : null,
       ciphertext: _stringOrNull(json['ciphertext']),
-      payload: json['payload'] is Map
-          ? Map<String, Object?>.from(json['payload'] as Map)
-          : const {},
+      payload: _decodePayload(json),
     );
   }
 
@@ -234,21 +251,30 @@ final class NetworkEnvelope {
   }
 
   /// Wire JSON: fixed key order mirroring the contract §3 example; null
-  /// optionals are omitted; [payload] is written only when non-empty.
-  Map<String, Object?> toJson() => {
-    'v': v,
-    'kind': kind.wireName,
-    'msgId': msgId,
-    if (refId != null) 'refId': refId,
-    if (network != null) 'network': network,
-    if (channel != null) 'channel': channel,
-    if (from != null) 'from': from,
-    if (to != null) 'to': to,
-    'ts': ts,
-    if (seq != null) 'seq': seq,
-    if (ciphertext != null) 'ciphertext': ciphertext,
-    if (payload.isNotEmpty) 'payload': payload,
-  };
+  /// optionals are omitted. Non-mail [payload] entries spread at the top
+  /// level, excluding reserved envelope keys. Mail retains the legacy shape
+  /// (and, in normal use, carries no payload) with its ciphertext untouched.
+  Map<String, Object?> toJson() {
+    final wire = <String, Object?>{
+      'v': v,
+      'kind': kind.wireName,
+      'msgId': msgId,
+      if (refId != null) 'refId': refId,
+      if (network != null) 'network': network,
+      if (channel != null) 'channel': channel,
+      if (from != null) 'from': from,
+      if (to != null) 'to': to,
+      'ts': ts,
+      if (seq != null) 'seq': seq,
+      if (ciphertext != null) 'ciphertext': ciphertext,
+    };
+    if (kind == NetworkEnvelopeKind.mail) {
+      if (payload.isNotEmpty) wire['payload'] = payload;
+    } else {
+      _addPayloadEntries(wire, payload);
+    }
+    return wire;
+  }
 
   /// Per-kind semantic validation (contract §3):
   /// - `mail` requires `network`, `channel` and `ciphertext`; DM mail
@@ -382,6 +408,23 @@ final class NetworkEnvelope {
         '${seq == null ? '' : ' seq=$seq'}'
         '${cipher == null ? '' : ' ciphertext:<${cipher.length} bytes>'}'
         '${payload.isEmpty ? '' : ' payload:$payload'})';
+  }
+}
+
+Map<String, Object?> _decodePayload(Map json) {
+  final payload = <String, Object?>{};
+  final nested = json['payload'];
+  if (nested is Map) _addPayloadEntries(payload, nested);
+  _addPayloadEntries(payload, json);
+  return payload;
+}
+
+void _addPayloadEntries(Map<String, Object?> target, Map source) {
+  for (final entry in source.entries) {
+    final key = entry.key;
+    if (key is String && !_reservedEnvelopeKeys.contains(key)) {
+      target[key] = entry.value;
+    }
   }
 }
 
