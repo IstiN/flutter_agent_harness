@@ -143,7 +143,8 @@ class _DeviceConversationPaneState extends State<DeviceConversationPane> {
       final frame = hubTryOpenFanet1(envelope.payload);
       if (frame == null) return null;
       final myId = await widget.service.accountUserId();
-      final mine = envelope.senderId == 'user:$myId';
+      final mine =
+          envelope.senderId == 'user:$myId' || envelope.senderId == myId;
       final senderPub = mine ? await _peerPubkey() : frame.senderPubkey;
       if (senderPub == null) return null;
       final plaintext = await hubDecryptPayloadWithKeyPair(

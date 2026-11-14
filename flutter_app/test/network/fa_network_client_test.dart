@@ -574,10 +574,10 @@ void main() {
         httpClient.respond(
           200,
           body:
-              '{"items":[{"msgId":"dm-1","channel":'
-              '"dm:user:u1:goal@dev-1","from":"user:u1",'
-              '"to":"goal@dev-1","ciphertext":"ZmFuZXQx",'
-              '"ts":"2026-11-12T10:00:00.000Z","seq":7}],'
+              '{"items":[{"id":"dm-1","channelId":'
+              '"dm:user:u1:goal@dev-1","senderId":"user:u1",'
+              '"payload":"ZmFuZXQx",'
+              '"createdAt":"2026-11-12T10:00:00.000Z"}],'
               '"nextCursor":"older-dm"}',
         );
 
@@ -596,9 +596,8 @@ void main() {
         expect(page.nextCursor, 'older-dm');
         final req = httpClient.requests.single;
         expect(req.method, 'GET');
-        expect(req.url.path, '/api/inbox');
+        expect(req.url.path, '/api/channels/dm:user:u1:goal@dev-1/messages');
         expect(req.url.queryParameters, {
-          'channel': 'dm:user:u1:goal@dev-1',
           'limit': '20',
           'cursor': 'current cursor',
         });

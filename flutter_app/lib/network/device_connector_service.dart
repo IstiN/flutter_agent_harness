@@ -487,7 +487,10 @@ class DeviceConnectorService {
       if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
     });
     return sendMail(
-      network: target.network,
+      // DM always rides the account-personal network: every device of
+      // the account registers its dm-prefix sink there; a shared-network
+      // id from the roster frame would demux as unrouted on the target.
+      network: _credentials?.personalNetworkId ?? target.network,
       channel: channel,
       from: 'user:$userId',
       to: address,
@@ -700,6 +703,10 @@ class DeviceConnectorService {
   }
 
   Future<String> _decodeDmMail(NetworkEnvelope envelope) async {
+    // Non-actionable DM traffic (own reply echo, mail for OTHER agents)
+    // skips crypto entirely: the sink guard acks it without delivery and
+    // a decrypt attempt on an own-address echo would always fail.
+    if (!_isActionableDm(envelope)) return '';
     final channel = envelope.channel ?? '';
     final ciphertext = envelope.ciphertext ?? '';
     if (!isDmChannel(channel)) return ciphertext;
@@ -737,7 +744,16 @@ class DeviceConnectorService {
     }
   }
 
+  /// True only for DM mail addressed TO this device's agent by someone
+  /// else — the one shape that may wake a session and auto-reply. Own
+  /// reply echoes and other agents' mail are acked and dropped.
+  bool _isActionableDm(NetworkEnvelope envelope) {
+    final local = _localAgentAddress();
+    return envelope.to == local && envelope.from != local;
+  }
+
   Future<void> _receiveDm(InboundMail mail) async {
+    if (!_isActionableDm(mail.envelope)) return;
     final host = dmSessionHost;
     if (host == null) throw StateError('no DM session host configured');
     final envelope = mail.envelope;
@@ -827,8 +843,11 @@ class DeviceConnectorService {
     );
     final dmSink = connector.registerLocalSink(
       network: personal,
+      // Catch-all dm-prefix route: actionable mail is filtered inside
+      // the sink (to == local agent, from != local agent); user-side
+      // echoes and other agents' traffic are acked and dropped so the
+      // server never redelivers them.
       channel: dmChannelPrefix,
-      to: localAddress,
       sink: _receiveDm,
     );
     if (generation != _generation) {

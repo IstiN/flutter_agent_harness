@@ -470,6 +470,10 @@ class FaNetworkClient {
   /// `GET /api/inbox?channel=<dm-id>&limit&cursor` — one window of the
   /// signed-in user's virtual DM channel. Rows retain opaque fanet1 payloads;
   /// decryption stays with the user/agent key holders.
+  ///
+  /// DM history rides the same windowed envelope view as channel
+  /// history (`GET /api/channels/{dm:id}/messages`, owner-only server
+  /// branch — §7), NOT `/api/inbox` (which lists conversations).
   Future<MessagePage> listDmInbox(
     String channelId, {
     int? limit,
@@ -477,12 +481,8 @@ class FaNetworkClient {
   }) async {
     final res = await _request(
       'GET',
-      '/api/inbox',
-      query: {
-        'channel': channelId,
-        'limit': ?limit?.toString(),
-        'cursor': ?cursor,
-      },
+      '/api/channels/$channelId/messages',
+      query: {'limit': ?limit?.toString(), 'cursor': ?cursor},
       management: true,
       expected: {200},
     );
