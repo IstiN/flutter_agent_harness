@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-14T14:05:09.617Z",
+  "ticketKey": "pr-2180",
+  "headSha": "ffc86b94ab8ba04269ce527c7b95a8ce93cf20f5",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:ab3f8d94122f4545",
+      "size": 12303
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:db0204cc509986c9",
+      "size": 20036
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:7347a10a9463cb99",
+      "size": 3499
+    },
+    "request.md": {
+      "hash": "fnv1a64:f424022e9a98b1ad",
+      "size": 3160
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:6987d751c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:b9e889af54cf9fe8",
+      "size": 3243
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:f424022e9a98b1ad",
+      "size": 3160
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:2f147469",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the new cycle guard truncates legitimate branch walks — silent context loss when below-window records exceed the resident set**\n\nThe rewritten guard bounds the walk by the **resident** count only:\n\n```dart\nvar walked = 0;\nwhile (current != null) {\n  if (!current.timestampDegraded) path.add(current);\n  if (++walked > _entries.length) break;   // ← _entries excludes _appendedBelow\n  ...\n  final parent = _byId[parentId] ?? _appendedBelow[parentId];\n```\n\nBut the walk itself traverses `_appendedBelow` records (leaf and parent lookups both fall through to it), and those are NOT members of `_entries` (`_ingestBelowWindow` indexes them \"without being indexed\" into the window; same for the deep-paged append path at `windowed_session_storage.dart:1198–1201`). Any legitimate branch longer than the resident set is silently cut.\n\n**Verified by execution** on this branch (repro: 650-record chain → `jumpToRecord('m1')` deep-pages the window → a second process appends 250 records chained from the tail → `ingestAppended()` → `getPathToRoot('x250')`):\n\n- expected (origin/main, no guard): **250** records\n- actual: **101** records — the oldest 149 ancestors of the live branch vanish from the path\n\nThis is precisely the shared-file scenario the incident describes (a second `fa` process appending to the same JSONL while this instance is deep-paged). `getPathToRoot` feeds `buildContextMessages`, so the model silently loses the oldest context of the appended region — a regression that also violates the card's own REG-1 invariant (\"zero behavior change for valid input\"). Note the sibling guard in `JsonlSessionStorage.getPathToRoot` (line 1914) is safe: there `_entries` holds every record and `walked ≡ path.length` for valid input.\n\n**Fix sketch**: bound by `_entries.length + _appendedBelow.length` (still finite, admits every legitimate walk), or carry a visited-id set."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:fe561392",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc63dAmC` — 🚨 BLOCKING: `_spanTextToWrite` byte-offsets-as-string-offsets\n\n**Fixed** in commit `0eddc5fc3` (`lib/src/session_repair.dart`, `_spanTextToWrite`), regression test in the same commit: `test/session/record_quarantine_test.dart` → repair scan mode group, `E3 (gh-2178 review, BLOCKING): a multi-byte UTF-8 line in the same merged span does not corrupt the splice`.\n\n## What changed\n\nThe splice now runs entirely in **byte space** — scanner byte offsets are never used as UTF-16 string offsets:\n\n```dart\nfinal out = BytesBuilder(copy: false);\nvar cursor = 0; // byte offset within the span\nfor (final key in keys) {\n  final lineStart = key - span.$1;\n  out.add(bytes.sublist(cursor, lineStart));\n  out.add(utf8.encode(lineRewrites[key]!.replacement));\n  // Advance past the ORIGINAL line (its newline included) — the same\n  // 0x0A byte split the scanner used to find it.\n  final lineEnd = bytes.indexOf(0x0A, lineStart);\n  cursor = lineEnd < 0 ? bytes.length : lineEnd + 1;\n}\nout.add(bytes.sublist(cursor));\nreturn utf8.decode(out.takeBytes(), allowMalformed: true);\n```\n\nThis is the review's per-line sketch: the span's raw bytes carry the original content verbatim, each rewrite key lands on its exact byte position, the replaced line's extent is the same `0x0A` split the scanner used, and the decoded string is built only for output — never indexed by byte offsets.\n\n## Test (TDD)\n\nThe new fixture reproduces the verified repro exactly: header + a message with the Russian payload `привет мир — длинная русская строка для многобайтности` + a poison custom line (`my_ledger` — a plain-kept type, so the poison line merges with its neighbors into ONE kept span, which is the precondition the old test fixtures missed) + a child message.\n\n- Before the fix (old splice restored and re-run): the repaired line tears mid-record (`FormatException` while decoding the repaired file — the review's `{\"type\":\"custom\",\"id\":\"poison-1\",\"parentId\":\"m1\"{\"type\":\"custom\",…}` signature).\n- After the fix: all 4 lines parse; the Cyrillic payload survives byte-verbatim; only the poison line's timestamp changed; the fixed record rejoins the branch (no `timestampDegraded` on `getPathToRoot('m2')`).\n\nAll suites green after the fix: the four affected suites (record_quarantine, session_repair, windowed storage, windowed property) run **97 tests passed** on the final tree, including every pre-existing repair/scan fixture (gh-1073 conservatism, E2 multiple-poison, dry-run, `.bak` rotation)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:09e5ba60",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc63dAm3` — ⚠️ IMPORTANT: walk guard truncates below-window branches\n\n**Fixed** in commit `0eddc5fc3` (`lib/src/session/windowed_session_storage.dart`, `getPathToRoot`), regression test in the same commit: `test/session/windowed_session_storage_test.dart` → live tail group, `gh-2178 review: a below-window branch longer than the resident set is NOT truncated by the walk guard`.\n\n## What changed\n\nThe cycle guard now bounds by the **whole reachable union** — resident records plus the below-window appended set — instead of the resident set alone:\n\n```dart\nif (++walked > _entries.length + _appendedBelow.length) break;\n```\n\nThis is exactly the review's fix sketch (still finite, still terminates an adversarial parentId cycle): the walk only ever visits records from `_byId ∪ _appendedBelow`, those two maps are disjoint (a record leaves `_appendedBelow` the moment it re-enters the window) and `_entries`/`_byId` move in lockstep, so `_entries.length + _appendedBelow.length` is exactly the union size — every legitimate (acyclic) walk fits, and a cycle still terminates after at most one pass over the union. The comment on the guard documents why the count rides the walk itself (degraded records shrink the path; the all-degraded cycle must terminate too).\n\n## Test (TDD)\n\nMirrors the verified repro at fixture scale: 10-record seed, `chunkRecords: 5`, `jumpToRecord('e2')` deep-pages the window, a second process appends a 10-record chain below the window (longer than the 5-record resident set), `ingestAppended()`.\n\n- Before the fix: `getPathToRoot('e19')` returned **6** records (`e14..e19`) — the oldest 14 ancestors silently vanished from model context (the review's 101-of-250 signature).\n- After the fix: the walk resolves the full 20-record path to root (`e0..e19`) — zero truncation, REG-1 zero-drift semantics restored.\n\nFull windowed suite green after the fix — the four affected suites (record_quarantine, session_repair, windowed storage, windowed property) run **97 tests passed** on the final tree, including the pre-existing walk/window/eviction tests."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:d01b839e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — BLOCK\n\n**Summary**: The gh-2178 protocol itself is sound — strict-first never-throwing `parseRecordTimestamp` (INV4 holds by construction), walk exclusion, deduped flood-capped reporting, and the repair scan all pass their 34-test suite plus the full `test/session test/providers test/env` run. Two verified defects block merge.\n\n**Key Issues**:\n- 🚨 `_spanTextToWrite` (`session_repair.dart:691`) splices line fixes using byte offsets as UTF-16 string offsets — any multi-byte UTF-8 content in the merged span corrupts the repaired session file (verified: unparseable spliced line; the poison record becomes a permanently torn line).\n- ⚠️ The new windowed walk guard (`windowed_session_storage.dart:1258`) bounds by the resident set only and ignores `_appendedBelow` — legitimate below-window branches truncate silently (verified: 250-record chain returns 101), losing model context in the incident's own shared-file scenario.\n\n**Next Steps**:\n1. Fix `_spanTextToWrite` to splice in byte space / per line; add a non-ASCII repair fixture.\n2. Bound the walk by `_entries.length + _appendedBelow.length`; add a below-window-chain test.\n3. Digest: no curated `## Unreleased` CHANGELOG entry (AGENTS.md:2036 convention); ticket E2E hooks (E2E-1/E2E-2) have no PR-level equivalent; `quarantineFixedLine`'s `jsonEncode` re-encodes non-ASCII payload as `\\uXXXX` (byte-delta beyond the timestamp); local-vs-UTC epoch-placeholder asymmetry with `ProviderQuota`'s missing-`updatedAt` fallback."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:c55114b3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: `fa session repair` corrupts the session file when the fixed line shares a merged span with multi-byte UTF-8 content**\n\n`_spanTextToWrite` splices gh-2178 line rewrites into a merged kept span using **byte offsets as UTF-16 code-unit offsets** on the decoded string:\n\n```dart\nfinal original = utf8.decode(bytes, allowMalformed: true); // code units\n...\nbuffer.write(original.substring(cursor - span.$1, key - span.$1)); // byte offsets!\nfinal lineEnd = original.indexOf('\\n', key - span.$1);             // byte offset!\ncursor = lineEnd < 0 ? span.$2 : span.$1 + lineEnd + 1;\n```\n\n`SessionScannedLine.start`/`end` are **byte** offsets (`session_line_scanner.dart:36–47`), and kept spans merge contiguous lines (`_appendSpan`), so any multi-byte UTF-8 content (non-ASCII payload — normal in this project) before the poison line inside the same merged span shifts every byte offset off the string positions.\n\n**Verified by execution** on this branch (repro: header + a message with Russian payload `привет мир — длинная русская строка для многобайтности` + poison custom line + a child message; `repairSessionLedgers`):\n\n```\nrepaired file has unparseable lines:\n{\"type\":\"custom\",\"id\":\"poison-1\",\"parentId\":\"m1\"{\"type\":\"custom\",\"id\":\"poison-1\",\"parentId\":\"m1\",\"ti…\n```\n\nThe splice cut mid-record and concatenated two half-lines — the repaired file replaces the live session file via the atomic swap, the poison record becomes a **permanently unreadable torn line** (gh-1073 conservatism keeps it verbatim on every future repair), and only `<file>.bak` remains recoverable. The PR's own tests pass only because their fixtures are pure ASCII (byte offsets ≡ char offsets). This is the sanctioned unbrick tool for exactly the incident's 664 MB Russian-language session — it must not mangle it.\n\n**Fix sketch**: splice in byte space, or per line — split the span's raw bytes on `0x0A` (`List<int>.indexOf`), then per line emit either `utf8.decode(lineBytes)` or `lineRewrites[key]!.replacement`, never mixing byte offsets into decoded-string positions. Add a non-ASCII fixture to the repair test (e.g. a Cyrilic message line adjacent to the poison line)."
+    }
+  ]
+}
