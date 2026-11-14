@@ -31,6 +31,138 @@ block a release again.
   as the regression signal. Legacy runs render byte-identically
   (#2101)
 
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+
+- fix(gh-2115): Russian (non-ASCII) typing works in the Windows line REPL.
+  A legacy RU-locale console delivers keystrokes in two broken shapes —
+  CP-6501 translation mojibake ('п' arrives as the UTF-8 of 'ï') and raw
+  OEM single bytes (0xEF), the latter killing the whole input line with a
+  `FormatException` out of the strict UTF-8 decoder. `ConsoleLineDecoder`
+  (pure Dart, `lib/src/cli/`) repairs both via kernel32-built code-page
+  tables (GetACP + GetConsoleCP through MultiByteToWideChar, built once in
+  `bin/fah_console_cp.dart`); true UTF-8 passes through untouched and
+  non-Windows behavior is byte-identical. The vendored dart_tui parser
+  repairs its Latin-1 fallback path the same way (`consoleTextRepair`
+  hook, set by `enableWindowsVtInput`, cleared on restore — gh-1973
+  completion), pinned by the windows_terminal contract test.
+
+- ci(windows-release): daily Windows desktop app pipeline — new
+  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
+  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
+  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
+  cert `.cer` to the latest auto-release, and fa1.dev's download section
+  gains a Windows button whose "latest" link resolves through a static
+  `download/windows/latest` pointer file updated by the same workflow
+  (site tests extended to pin the new markup). The daily-publish
+  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
+  quality gate builds and attaches the Windows app exactly like the
+  TestFlight/macOS track, and the windows runner's product identity no
+  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
+  renamed to `Fa`).
+
+- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
+  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
+  packed with the Windows SDK makeappx, signed with a per-run
+  self-signed cert whose public `.cer` ships beside it) so dev/corporate
+  machines can install via Add-AppxPackage; a Microsoft Store submission
+  stays a separate Partner Center track.
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
 - feat(gh-210): post-compaction continuity — a bounded working set
   re-injects at the context tail after any compaction (structured hide,
   checkpoint, or classic fold): the recited goal first, then recently
@@ -119,37 +251,18 @@ block a release again.
   passing them at its `debug` default). Background-chatter and echo
   reassignment follow in #2118's follow-up.
 
-- fix(gh-2115): Russian (non-ASCII) typing works in the Windows line REPL.
-  A legacy RU-locale console delivers keystrokes in two broken shapes —
-  CP-6501 translation mojibake ('п' arrives as the UTF-8 of 'ï') and raw
-  OEM single bytes (0xEF), the latter killing the whole input line with a
-  `FormatException` out of the strict UTF-8 decoder. `ConsoleLineDecoder`
-  (pure Dart, `lib/src/cli/`) repairs both via kernel32-built code-page
-  tables (GetACP + GetConsoleCP through MultiByteToWideChar, built once in
-  `bin/fah_console_cp.dart`); true UTF-8 passes through untouched and
-  non-Windows behavior is byte-identical. The vendored dart_tui parser
-  repairs its Latin-1 fallback path the same way (`consoleTextRepair`
-  hook, set by `enableWindowsVtInput`, cleared on restore — gh-1973
-  completion), pinned by the windows_terminal contract test.
-- ci(windows-release): daily Windows desktop app pipeline — new
-  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
-  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
-  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
-  cert `.cer` to the latest auto-release, and fa1.dev's download section
-  gains a Windows button whose "latest" link resolves through a static
-  `download/windows/latest` pointer file updated by the same workflow
-  (site tests extended to pin the new markup). The daily-publish
-  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
-  quality gate builds and attaches the Windows app exactly like the
-  TestFlight/macOS track, and the windows runner's product identity no
-  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
-  renamed to `Fa`).
-- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
-  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
-  packed with the Windows SDK makeappx, signed with a per-run
-  self-signed cert whose public `.cer` ships beside it) so dev/corporate
-  machines can install via Add-AppxPackage; a Microsoft Store submission
-  stays a separate Partner Center track.
+- fix: `fileInfo().name` returns the bare entry name on Windows — the
+  abspath resolution previously glued the drive-letter absolute path onto
+  the returned name (`C:\dirC:\dir\file.txt`), breaking the file browser
+  listings and any consumer that joins `dir` + `name` back into a path.
+- fix(flutter_app): the Windows desktop app can pick a project folder —
+  a file-selector-backed `ProjectFolderOps` (the folder dialog through
+  `file_selector_windows`) for Windows/Linux instead of the macOS-only
+  method channel, the desktop env layers the project-mount wrapper on
+  every desktop platform (the mount previously existed on macOS only, so
+  a picked folder never reached the agent env), and the Windows runner
+  identity is real (window title "Fa", `CompanyName` "Fa" — the support
+  dir moves from `%APPDATA%\com.example\...` to `%APPDATA%\Fa\...`).
 - fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
   `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
   threw `Unsupported operation` on platforms with no Firebase
