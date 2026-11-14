@@ -27,10 +27,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
-
+import 'device_api.dart';
 import 'envelope.dart';
 import 'upstream_client.dart';
+
+export 'device_api.dart'
+    show
+        DeviceEnrollment,
+        DeviceEnrollmentClient,
+        DeviceEnrollmentException,
+        DeviceSummary;
 
 /// A plain text duplex between a socket and the adapter — the seam that
 /// keeps [ConnectorSocketAdapter] unit-testable without dart:io sockets:
@@ -159,146 +165,5 @@ final class IoConnectorTransport implements ConnectorTransport {
   Future<ConnectorSocket> dial(Uri url, String ticket) async {
     final socket = await WebSocket.connect(url.toString());
     return ConnectorSocketAdapter(duplex: WebSocketDuplex(socket));
-  }
-}
-
-/// Thrown by [DeviceEnrollmentClient] for any failure: a non-success
-/// HTTP status ([statusCode] set) or a network-level error (null).
-final class DeviceEnrollmentException implements Exception {
-  /// Builds the exception; [statusCode] is null for network errors.
-  const DeviceEnrollmentException(this.message, {this.statusCode});
-
-  /// HTTP status when the server answered, else null (network error).
-  final int? statusCode;
-
-  /// Human-readable failure reason.
-  final String message;
-
-  @override
-  String toString() => statusCode == null
-      ? 'DeviceEnrollmentException: $message'
-      : 'DeviceEnrollmentException($statusCode): $message';
-}
-
-/// The enrollment result (§1): the stable device identity pair the host
-/// persists and resumes with (§4). `deviceToken` is a bearer — never
-/// logged.
-final class DeviceEnrollment {
-  /// Wraps the server-issued pair.
-  const DeviceEnrollment({required this.deviceId, required this.deviceToken});
-
-  /// Stable device id minted at enroll (§1).
-  final String deviceId;
-
-  /// Opaque bearer bound to (userId, deviceId); WS + device-REST auth.
-  final String deviceToken;
-
-  @override
-  String toString() =>
-      'DeviceEnrollment($deviceId, deviceToken:<${deviceToken.length} chars>)';
-}
-
-/// The device enrollment + ticket client (§9): the two REST calls a host
-/// needs before (and between) WS dials. [httpClient] is injectable —
-/// tests use `package:http/testing`.
-final class DeviceEnrollmentClient {
-  /// Builds a client; with no [httpClient] injected a fresh `http.Client`
-  /// is used.
-  DeviceEnrollmentClient({http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
-
-  final http.Client _http;
-
-  /// `POST /api/devices/enroll` (JWT bearer) → the {deviceId, deviceToken}
-  /// pair (§9). The server auto-provisions the personal network on first
-  /// enroll (§2) — irrelevant to this call's shape. Any 4xx/5xx status or
-  /// network failure throws [DeviceEnrollmentException].
-  Future<DeviceEnrollment> enrollDevice({
-    required String baseUrl,
-    required String jwt,
-  }) async {
-    final body = await _post(
-      _endpoint(baseUrl, '/api/devices/enroll'),
-      bearer: jwt,
-    );
-    final deviceId = body['deviceId'];
-    final deviceToken = body['deviceToken'];
-    if (deviceId is! String ||
-        deviceId.isEmpty ||
-        deviceToken is! String ||
-        deviceToken.isEmpty) {
-      throw const DeviceEnrollmentException(
-        'device enrollment response lacks deviceId/deviceToken',
-      );
-    }
-    return DeviceEnrollment(deviceId: deviceId, deviceToken: deviceToken);
-  }
-
-  /// `POST /api/ws-ticket` (deviceToken bearer) → the single-use ticket
-  /// string, TTL 60 s (§4) — feed it to [IoConnectorTransport.dial]
-  /// immediately (the upstream client mints one per dial). Accepts both
-  /// the JSON-object form (`{"ticket": ...}`) and a bare JSON string.
-  /// Any non-success status or network failure throws
-  /// [DeviceEnrollmentException].
-  Future<String> wsTicket({
-    required String baseUrl,
-    required String deviceToken,
-  }) async {
-    final body = await _post(
-      _endpoint(baseUrl, '/api/ws-ticket'),
-      bearer: deviceToken,
-    );
-    final ticket = body['ticket'];
-    if (ticket is String && ticket.isNotEmpty) return ticket;
-    throw const DeviceEnrollmentException(
-      'ws-ticket response lacks a ticket string',
-    );
-  }
-
-  /// One bearer-authenticated POST; returns the decoded JSON object body.
-  /// Maps non-success statuses and network errors to
-  /// [DeviceEnrollmentException].
-  Future<Map<String, Object?>> _post(Uri uri, {required String bearer}) async {
-    http.Response response;
-    try {
-      response = await _http.post(
-        uri,
-        headers: {
-          'content-type': 'application/json',
-          'authorization': 'Bearer $bearer',
-        },
-        body: jsonEncode(const <String, Object?>{}),
-      );
-    } on Object catch (error) {
-      throw DeviceEnrollmentException('device REST call failed: $error');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw DeviceEnrollmentException(
-        'device REST call rejected: ${_snippet(response.body)}',
-        statusCode: response.statusCode,
-      );
-    }
-    try {
-      final decoded = jsonDecode(response.body);
-      if (decoded is Map) return decoded.cast<String, Object?>();
-      if (decoded is String) return {'ticket': decoded};
-      throw FormatException('unexpected JSON ${decoded.runtimeType}');
-    } on FormatException catch (error) {
-      throw DeviceEnrollmentException('malformed device REST body: $error');
-    }
-  }
-
-  /// Joins [baseUrl] and [path] (tolerant of trailing slashes, like the
-  /// fa_network client's `_uri`).
-  Uri _endpoint(String baseUrl, String path) {
-    final base = baseUrl.replaceAll(RegExp(r'/+$'), '');
-    return Uri.parse('$base$path');
-  }
-
-  /// A one-line body snippet for error messages (never tokens — enroll
-  /// and ticket responses carry secrets only on success paths).
-  String _snippet(String body) {
-    final flat = body.replaceAll('\n', ' ').trim();
-    return flat.length <= 120 ? flat : '${flat.substring(0, 120)}…';
   }
 }

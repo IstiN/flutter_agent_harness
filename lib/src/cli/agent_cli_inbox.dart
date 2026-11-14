@@ -295,6 +295,8 @@ extension AgentCliMessagingFlow on AgentCli {
     if (fabric != null && prefix.isNotEmpty) {
       unawaited(_registerFabricMailbox(fabric, prefix));
     }
+    // Device-network presence follows interactive session switches too.
+    unawaited(_startNetworkPresenceFor(this));
   }
 
   /// Re-reads the pending scheduled records and pushes the count + nearest
@@ -327,6 +329,7 @@ extension AgentCliMessagingFlow on AgentCli {
   /// Best-effort fabric heartbeat: refreshes this instance's mailbox
   /// liveness marker so agent_directory reports it as live between mails.
   void _touchFabricHeartbeat() {
+    _updateNetworkPresenceBusyFor(this);
     final fabric = _subagentManager.messaging;
     if (fabric == null) return;
     unawaited(

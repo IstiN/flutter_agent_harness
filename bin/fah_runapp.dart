@@ -12,6 +12,11 @@ Future<void> _runApp(List<String> args) async {
   _applyProviderFilterEnv();
   // Platform-aware chord display (issue #809): Option/Cmd labels on macOS.
   tuiKeyHintDarwin = Platform.isMacOS;
+  // Device-network management has no model/provider dependency. Intercept
+  // before prompt/provider resolution so headless login needs only its JWT.
+  if (args.isNotEmpty && args.first == 'network') {
+    exit(await _runNetworkCommand(args.sublist(1)));
+  }
   // `fa serve [--a2a|--bridge] [--port N] [--token T]` — the parser does
   // not know the serve forms, so they are intercepted before CliArgs
   // parsing: serve-specific flags are stripped from the parsed args and
@@ -1564,6 +1569,7 @@ Future<void> _runApp(List<String> args) async {
   // _fail channel like every other boot-path ConfigException — never the
   // zone crash handler (review #1390: duplicate plugin tool ids were
   // landing as "fa crashed" + a crash.log append).
+  final networkPresence = await _restoreNetworkPresence();
   try {
     cli = AgentCli(
       // Same source of truth as the palette (issue #778 round 2): chrome
@@ -1591,6 +1597,7 @@ Future<void> _runApp(List<String> args) async {
       // process start, irrelevant in raw mode).
       markdownSurface: markdownSurface,
       config: AgentCliConfig(
+        networkPresence: networkPresence,
         // Issue #1552 AC4: the roles-drop warning re-prints into the TUI
         // notice stream (stderr alone is invisible in the alternate screen).
         rolesDropNotice: rolesDropNotice,

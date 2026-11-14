@@ -89,6 +89,7 @@ extension WireServeBoot on AgentCli {
       pumpSub();
       return null;
     }
+    await _startNetworkPresenceFor(this);
     // gh-1241: NO eager marker — a serve boot that never serves a turn
     // must leave the chain byte-untouched (same invariant as the REPL);
     // the segment opens lazily at the first wire-driven [_runPrompt].

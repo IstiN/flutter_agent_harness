@@ -46,6 +46,7 @@ import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_config.dart';
 import 'headless_prompt.dart';
+import 'network_presence.dart';
 import 'hep.dart';
 import 'stream_json.dart';
 import 'resumed_context_cache.dart';
@@ -372,6 +373,7 @@ part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
 part 'agent_cli_herdr.dart';
+part 'agent_cli_network.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).
@@ -2358,6 +2360,8 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
+    // Headless has no REPL mailbox sync; project this session explicitly.
+    await _startNetworkPresenceFor(this);
     // gh-1241: the owner opens a usage segment (viewer never appends).
     await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
@@ -2515,6 +2519,7 @@ class AgentCli {
       );
       return 1;
     } finally {
+      await _stopNetworkPresenceFor(this);
       _headlessMode = false;
       _autoFoldCount = 0;
       // gh-1589: the fence is up before the flushes — a settle racing the

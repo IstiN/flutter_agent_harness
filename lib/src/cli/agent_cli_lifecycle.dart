@@ -71,6 +71,7 @@ extension AgentCliLifecycle on AgentCli {
   ) async {
     _cancelPendingAnswers();
     _hubTeardown();
+    await _stopNetworkPresenceFor(this);
     unawaited(_subagentBoardSub?.cancel());
     _subagentBoardSub = null;
     _subagentBoard.dispose();

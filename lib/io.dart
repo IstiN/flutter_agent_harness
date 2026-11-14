@@ -18,6 +18,8 @@ export 'src/cli/startup.dart';
 export 'src/cli/shift_hid_stub.dart'
     if (dart.library.io) 'src/cli/shift_hid.dart';
 export 'src/cli/openrouter_oauth_server.dart';
+export 'src/cli/network_oauth_io.dart';
+export 'src/cli/network_store_io.dart';
 export 'src/cli/prompt_overrides_io.dart';
 export 'src/cli/ext_engine_process.dart';
 export 'src/env/isolate_session_parse_executor.dart';

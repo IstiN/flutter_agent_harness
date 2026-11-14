@@ -158,6 +158,63 @@ void main() {
         ),
       );
     });
+
+    test(
+      'accepts a flat personalNetworkId when the nested id is empty',
+      () async {
+        http.Request? captured;
+        final client = clientFor((request) async {
+          captured = request;
+          return http.Response(
+            jsonEncode({
+              'deviceId': 'dev-flat',
+              'deviceToken': 'dt-flat',
+              'personalNetwork': {'id': ''},
+              'personalNetworkId': 'net-flat',
+            }),
+            200,
+          );
+        });
+
+        final enrollment = await client.enrollDevice(
+          baseUrl: 'https://x',
+          jwt: 'jwt',
+          name: 'workstation',
+          platform: 'macos',
+        );
+
+        expect(enrollment.personalNetworkId, 'net-flat');
+        expect(jsonDecode(captured!.body), {
+          'name': 'workstation',
+          'platform': 'macos',
+        });
+      },
+    );
+
+    test(
+      'returns a null personal network when neither shape has an id',
+      () async {
+        final client = clientFor(
+          (_) async => http.Response(
+            jsonEncode({
+              'deviceId': 'dev-none',
+              'deviceToken': 'dt-none',
+              'personalNetwork': 'not-an-object',
+              'personalNetworkId': '',
+            }),
+            200,
+          ),
+        );
+
+        final enrollment = await client.enrollDevice(
+          baseUrl: 'https://x',
+          jwt: 'jwt',
+        );
+
+        expect(enrollment.deviceId, 'dev-none');
+        expect(enrollment.personalNetworkId, isNull);
+      },
+    );
   });
 
   group('DeviceEnrollmentClient.wsTicket', () {

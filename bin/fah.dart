@@ -33,6 +33,10 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/boot_update.dart';
+import 'package:flutter_agent_harness/src/cli/network_commands.dart';
+import 'package:flutter_agent_harness/src/cli/network_presence.dart';
+import 'package:flutter_agent_harness/src/network/network_account_client.dart';
+import 'package:flutter_agent_harness/src/network/network_roster.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
@@ -75,6 +79,7 @@ import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
 part 'fah_util.dart';
+part 'fah_network.dart';
 part 'fah_model.dart';
 part 'fah_io.dart';
 part 'fah_trajectory.dart';

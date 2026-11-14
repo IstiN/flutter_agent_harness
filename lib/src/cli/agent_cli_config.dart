@@ -31,6 +31,7 @@ final class AgentCliConfig {
     this.catalogStreamOverride,
     this.presenceStore,
     this.leaseStore,
+    this.networkPresence,
     this.parseExecutor,
     this.sessionName,
     this.resume = false,
@@ -184,6 +185,11 @@ final class AgentCliConfig {
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Optional fa_network device presence restored by the executable. Null
+  /// (tests, signed-out hosts, web) is a complete no-op. The CLI only passes
+  /// the live session/mailbox identity; credentials and IO stay in the host.
+  final CliNetworkPresence? networkPresence;
 
   /// Persisted TUI theme name (`tui.theme`, issue #279): a built-in key or
   /// a user theme file stem. `null`/unknown → default theme at boot.
