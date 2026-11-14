@@ -674,7 +674,10 @@ void main() {
         [
           headerLine(),
           m1,
-          poisonLine(parentId: 'm1'),
+          // A PLAIN-KEPT custom type: the poison line merges with m1/m2
+          // into one kept span (a keep-latest type like obligations_ledger
+          // would sit in its own span and never exercise the splice).
+          poisonLine(parentId: 'm1', customType: 'my_ledger'),
           messageLine('m2', parentId: incidentRecordId),
         ].join('\n'),
       );
@@ -683,9 +686,10 @@ void main() {
       expect(report.malformedRepaired, 1);
 
       // Every repaired line still parses — the splice must never cut
-      // mid-record or concatenate half-lines.
+      // mid-record or concatenate half-lines. (No trailing newline in
+      // the fixture — split yields exactly 4 lines.)
       final after = (await fs.readTextFile(sessionPath)).valueOrNull!;
-      final lines = after.split('\n')..removeLast();
+      final lines = after.split('\n');
       expect(lines, hasLength(4));
       final decoded = [
         for (final line in lines)
@@ -751,7 +755,7 @@ void main() {
       );
     });
 
-    test('the depth-0 gate ignores payload timestamps (exact top-level '
+    test('the top-level gate ignores payload timestamps (exact top-level '
         'extraction)', () {
       final tricky = jsonEncode({
         'type': 'message',
@@ -766,6 +770,70 @@ void main() {
       });
       expect(
         quarantineFindingForLine(tricky, filePath: sessionPath, lineNumber: 2),
+        isNull,
+      );
+    });
+  });
+
+  group('topLevelTimestampValue (the cheap top-level gate)', () {
+    test('extracts the timestamp of a REAL record-object line — top-level '
+        'object keys sit at depth 1 (gh-2178 review digest: the gate '
+        'never fired before, so every line paid the full decode and '
+        'isolate findings carried an empty raw value)', () {
+      expect(
+        topLevelTimestampValue(messageLine('m1')),
+        '2026-09-07T00:00:01.000Z',
+      );
+      expect(topLevelTimestampValue(poisonLine()), incidentTimestamp);
+    });
+
+    test('ignores payload-only timestamps (nested objects/strings)', () {
+      final payloadOnly = jsonEncode({
+        'type': 'message',
+        'id': 'm1',
+        'parentId': null,
+        'message': {
+          'role': 'user',
+          'content': '{"timestamp": "<garbage>"} nested text',
+        },
+      });
+      expect(topLevelTimestampValue(payloadOnly), isNull);
+    });
+
+    test('non-string and torn values return null (full decode confirms)',
+        () {
+      expect(
+        topLevelTimestampValue(
+          '{"type":"custom","id":"x","timestamp":42,"customType":"my_ledger"}',
+        ),
+        isNull,
+      );
+      expect(
+        topLevelTimestampValue('{"type":"custom","id":"x","timestamp":"torn'),
+        isNull,
+      );
+      expect(
+        topLevelTimestampValue('{"type":"custom","id":"x","timestamp":'),
+        isNull,
+      );
+    });
+
+    test('whitespace after the colon and escaped quotes inside the value '
+        'are handled', () {
+      expect(
+        topLevelTimestampValue('{"type":"custom","id":"x","timestamp": '
+            '"2026-11-13T14:35:18.198Z"}'),
+        '2026-11-13T14:35:18.198Z',
+      );
+      expect(
+        topLevelTimestampValue(
+          '{"type":"custom","id":"x","timestamp":"a \\"quoted\\" value"}',
+        ),
+        'a \\"quoted\\" value',
+      );
+      // An escape at EOF is a torn value, not a finding.
+      expect(
+        topLevelTimestampValue('{"type":"custom","id":"x","timestamp":"a\\'),
         isNull,
       );
     });

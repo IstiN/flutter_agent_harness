@@ -398,7 +398,7 @@ int _rewriteDelta(_RepairLedgerScan scan, (int, int) span) {
 /// the CRAP ratchet.
 ///
 /// gh-2178 scan mode: the same walk ALSO finds the malformed-timestamp
-/// records (cheap depth-0 gate first, full decode only to confirm a
+/// records (cheap top-level gate first, full decode only to confirm a
 /// finding) and fixes them in place on the real pass — the surviving
 /// line is rewritten with a valid timestamp, everything around it
 /// byte-verbatim.
@@ -503,7 +503,7 @@ final class _RepairLedgerScan {
   /// The gh-2178 scan-mode check for one surviving line: a record whose
   /// timestamp degraded is a finding — reported (bounded list + total
   /// count) and fixed in place (the replacement line rides
-  /// [lineRewrites]). The cheap depth-0 gate short-circuits every
+  /// [lineRewrites]). The cheap top-level gate short-circuits every
   /// well-formed line before any decode.
   void _scanForMalformedTimestamp(SessionScannedLine line) {
     final finding = quarantineFindingForLine(

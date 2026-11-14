@@ -181,25 +181,31 @@ final class SessionQuarantine {
   }
 }
 
-/// Extracts the TOP-LEVEL (`depth 0`) `"timestamp"` string value of one
-/// JSONL line without a full decode — a bounded char scan tracking
+/// Extracts the TOP-LEVEL `"timestamp"` string value of one JSONL line
+/// without a full decode — a bounded char scan tracking
 /// string/escape/depth state, exact for the writer-canonical field order
 /// and for any object whose top-level key sits after nested payload
-/// fields. Null when the line has no depth-0 timestamp key or the value
-/// is not a string. Serves the repair scan's cheap gate (gh-2178 AC6): a
-/// full `jsonDecode` of every line would defeat the point of the
+/// fields. Null when the line has no top-level timestamp key or the
+/// value is not a string. Serves the repair scan's cheap gate (gh-2178
+/// AC6): a full `jsonDecode` of every line would defeat the point of the
 /// header-only ledger scans.
 String? topLevelTimestampValue(String line) {
-  final colon = _depth0TimestampColon(line);
+  final colon = _topLevelTimestampColon(line);
   if (colon < 0) return null;
   return _stringValueAfter(line, colon);
 }
 
-/// The offset of the depth-0 colon whose key names `timestamp`, or -1.
+/// The offset of the top-level colon whose key names `timestamp`, or -1.
+/// "Top level" is a key of the line's OUTERMOST object: the scan opens
+/// at depth 0 and `{`/`[` increment, so those keys sit at depth 1 —
+/// keys inside nested payloads sit deeper and never match (gh-2178
+/// review digest: the original check compared against depth 0, which no
+/// object-key colon can ever satisfy, so the gate never fired and every
+/// line paid the full decode).
 /// A bounded char scan tracking string/escape/depth state — exact for
 /// the writer-canonical field order and for any object whose top-level
 /// timestamp key sits after nested payload fields.
-int _depth0TimestampColon(String line) {
+int _topLevelTimestampColon(String line) {
   var depth = 0;
   var inString = false;
   var escaped = false;
@@ -223,7 +229,7 @@ int _depth0TimestampColon(String line) {
       case '}' || ']':
         depth--;
       case ':':
-        if (depth == 0 && _isTimestampKeyBefore(line, i)) return i;
+        if (depth == 1 && _isTimestampKeyBefore(line, i)) return i;
     }
   }
   return -1;
@@ -237,7 +243,7 @@ bool _isTimestampKeyBefore(String line, int colon) {
       line.lastIndexOf(key, colon) == colon - key.length;
 }
 
-/// The JSON string value following the depth-0 colon at [colon] (the
+/// The JSON string value following the top-level colon at [colon] (the
 /// scanner already proved the key names timestamp). Null when the value
 /// is not a string or the line is torn mid-value.
 String? _stringValueAfter(String line, int colon) {
