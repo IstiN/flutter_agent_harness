@@ -19,17 +19,6 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "pr-2007": [
-    {
-      "leg": "review",
-      "at": "2026-10-31T00:02:33Z",
-      "prompt": 142643,
-      "completion": 31311,
-      "total": 173954,
-      "cacheRead": 7304320,
-      "model": "glm-5.3-flash"
-    }
-  ],
   "issue-2008": [
     {
       "leg": "dev",
@@ -3466,6 +3455,17 @@
       "completion": 49805,
       "total": 1145181,
       "cacheRead": 53347200,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2101": [
+    {
+      "leg": "dev",
+      "at": "2026-11-14T00:13:23Z",
+      "prompt": 377218,
+      "completion": 89098,
+      "total": 466316,
+      "cacheRead": 41689216,
       "model": "glm-5.3-flash"
     }
   ]
