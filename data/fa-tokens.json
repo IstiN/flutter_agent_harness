@@ -3650,6 +3650,15 @@
       "total": 329673,
       "cacheRead": 1140032,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T14:19:18Z",
+      "prompt": 348019,
+      "completion": 4020,
+      "total": 352039,
+      "cacheRead": 1176448,
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-2103": [
