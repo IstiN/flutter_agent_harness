@@ -1,15 +1,6 @@
 {
   "issue-2008": [
     {
-      "leg": "dev",
-      "at": "2026-10-31T05:52:44Z",
-      "prompt": 490213,
-      "completion": 43174,
-      "total": 533387,
-      "cacheRead": 16229376,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-10-31T06:42:06Z",
       "prompt": 291218,
@@ -3526,6 +3517,15 @@
       "completion": 98759,
       "total": 1082202,
       "cacheRead": 50255744,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-14T06:03:07Z",
+      "prompt": 565954,
+      "completion": 61545,
+      "total": 627499,
+      "cacheRead": 26176704,
       "model": "glm-5.3-flash"
     }
   ],
