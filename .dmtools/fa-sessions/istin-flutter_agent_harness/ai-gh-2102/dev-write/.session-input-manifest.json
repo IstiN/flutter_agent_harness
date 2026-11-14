@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-14T06:50:57.034Z",
+  "ticketKey": "pr-2174",
+  "headSha": "7b82ef8e6aae49f3ab50568fd0d5c41505af924a",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:c7a6bf5b3387342f",
+      "size": 128303
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:add60c9a58bd6c30",
+      "size": 2289713
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:a93b04812d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:a9a1f0eab3611c46",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:939ef756f0302d5e",
+      "size": 17060
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:48789091aec8eed1",
+      "size": 3443
+    },
+    "request.md": {
+      "hash": "fnv1a64:67be9e98156b1a03",
+      "size": 3104
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:36a23994c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7c5d7279a8648349",
+      "size": 3213
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:67be9e98156b1a03",
+      "size": 3104
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:f7639b5f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: `/handoff` on a resumed session digests only the resident window — the truncation is silent**\n\n`collectEntriesForHandoff` reads the branch through `session.getBranch(...)`, which on a windowed storage returns only the *resident* records:\n\n- Every resumed/booted CLI session is opened windowed — `_loadSessionInner` does `_repo.open(metadata, windowed: true)` (`lib/src/cli/session_commands.dart:868`).\n- `WindowedSessionStorage.getPathToRoot` \"stops silently at the window edge\" (`lib/src/session/windowed_session_storage.dart:48`).\n- The resume walk `ensureCompactionBoundaryResident(tokenBudget:)` stops as soon as the projected branch tokens cover the parity budget (`lib/src/session/session_tree.dart:285`, issue #503) — for a marathon without a compaction boundary that leaves only the tail resident.\n\nReproduced on this branch (temporary probe, since removed): a 40-record session, reopened windowed and walked with the resume budget → `collectEntriesForHandoff` returns **3 of 40 records**, `hasOlder` still `true`, no note printed. The digest is then generated from the tail alone, and the fresh session is seeded with it as a complete checkpoint — while this file's own docstring promises \"the whole conversation is what a handoff carries over\" and the PR description says \"whole current branch\".\n\nThis is the feature's primary flow: resume a long session → work more → `/handoff`.\n\nFix direction (pick one):\n1. Bring the branch fully resident before collecting — `session.ensureWholeLedgerResident()` is the established read-everything escape hatch (`lib/src/session/session_tree.dart:307`, used by the trajectory surfaces); catch its `tooLarge` backstop refusal and degrade loudly.\n2. At minimum, print a visible truncation note when the storage still has older pages after the walk (`getStorage() case WindowedSessionStorage(hasOlder: true)`), so the user knows the digest is partial and the old session must be consulted.\n\nPlease also add a regression test that opens a session windowed (the resume path), not just via `repo.create` (full storage) — the current suite cannot see this class of bug."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:506e838d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the digest prompt is unbounded — a long session overflows the digest model's window**\n\n`generateHandoffDigest` defaults `tokenBudget: 0`, which in `prepareBranchEntries` means *no limit*: the whole branch's serialized conversation rides ONE summarizer prompt (`generateBranchSummary` → `<conversation>` block), and `streamFunctionSumarizer` sends it as a single user message (`lib/src/compaction/compaction.dart:819`).\n\nThe compaction pipeline bounds exactly this with `summarizationPayloadBudget(summarizerWindow)` + chunk/fold (`lib/src/compaction/compaction.dart:544`, issue #729) so a summarizer never receives a payload past its own window. The handoff path bypasses that machinery: on a long session (the primary handoff use case) the digest call overflows the digest model's window (typically the smol role) → provider 400/413 → `handoff digest failed: Summarization failed: …` — on precisely the sessions where a handoff is most wanted. Some providers truncate oversized input silently instead of erroring, which would produce a quietly partial digest instead.\n\nSuggested fix: resolve the slot's context window (`slot.model` is available at the call site in `agent_cli_handoff.dart`) and pass a bounded `tokenBudget`, or route the digest through the same payload-budget/chunk-fold guard the compaction digest uses. Note this finding and the resident-window truncation (comment 1) are two sides of the same input-bounding gap: windowed input is silently truncated, full-open input is unbounded."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:550fe702",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: Ctrl-C cannot cancel the digest call — the issue #1085 M3 interrupt contract is not honored**\n\nCompaction wires its summarizer to the user's interrupt: `_runAutoCompact` creates a `CancelTokenSource`, bridges `_agent.cancelToken` into it, and stores it in `_activeCompactionAbort` so Ctrl-C during \"Compacting context…\" stops the LM call (`lib/src/cli/agent_cli_compaction.dart:819-823`; `_abortRunOrCompaction` in `lib/src/cli/agent_cli_run.dart:35`).\n\n`_handoffSlash` passes **no** `cancelToken` to `generateHandoffDigest` — the parameter exists on the API but is dead in the CLI wiring. During the \"Writing handoff digest…\" phase, Ctrl-C runs `_abortRunOrCompaction()`, which (with no `_activeCompactionAbort` set) only latches the sticky `_runAbortRequested = true` and aborts nothing: the digest LM call grinds to completion — potentially minutes for a big digest (see comment 2's unbounded payload) — and the sticky abort flag even rides into the FRESH session until the next prompt resets it.\n\nSuggested fix: mirror the compaction wiring — create a `CancelTokenSource` around the `generateHandoffDigest` call, register it (or bridge the agent token into it), pass `token` into `generateHandoffDigest(cancelToken:)`, and clear it in the `finally`. The `digest.aborted` → \"handoff interrupted\" path is already implemented and tested; it just can never fire today."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:f95d56c4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the editor invocation is POSIX-quote-only — the edit step silently never works on Windows**\n\n`handoffEditorCommand` wraps the digest path in POSIX single quotes (`'…'` with `'\\''` escaping). Production `exec` on Windows runs the command via `cmd /c` (`LocalShell._childCommand`, `lib/src/env/io_execution_env.dart`), where single quotes are **literal characters**: the editor receives `'C:\\…\\.fah\\handoff-digest-<ts>.md'` — quotes included — as the file name.\n\nConsequences on a supported platform (gh-2115 just repaired Windows REPL behavior, so Windows is in scope):\n- The editor cannot open the real digest file; the flow degrades with a misleading note (`editor exited (exit N) — using the digest as generated`) that invites the user to debug their editor when our quoting is the cause.\n- Worse, some editors open a *new* buffer for the nonexistent quoted name — the user edits and saves that buffer, and the handoff proceeds with the **unedited** digest with no visible anomaly at all.\n\nSuggested fix: platform-aware quoting for the editor argv (double quotes + `\"`/`^` escaping on Windows), or bypass the shell for this call with an argv-split exec seam so `FA_EDITOR=\"code --wait\"` still works. A Windows-specific test (or a documented POSIX-only caveat on the feature) would pin whichever behavior lands."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:1d79e85f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — 🚨 BLOCKING: `/handoff` on a resumed session digests only the resident window\n\n**Fixed in `7b82ef8e6a`** (`lib/src/compaction/handoff_digest.dart`, `lib/src/cli/agent_cli_handoff.dart`), fix direction 1 with the loud degrade you asked for.\n\n- `collectEntriesForHandoff` now primes **whole-ledger residency before the branch walk** — `session.ensureWholeLedgerResident()` (the established read-everything escape hatch, `session_tree.dart:325`, the same one the trajectory `view`/`cost`/`inspect` verbs use). The resident-tail truncation can no longer happen: the whole branch is resident when `getBranch` runs.\n- The `tooLarge` backstop refusal (`WindowedSessionStorage.loadAllOlder`'s gh-1073 pre-check) **propagates** out of `collectEntriesForHandoff` — it is never swallowed. `_handoffSlash` catches `SessionException(code: tooLarge)` and degrades LOUDLY: a plain (non-dim) line — `handoff: the session ledger exceeds the whole-ledger residency bound — the digest will cover only the resident tail; the old session keeps the full history` — plus the exception's own repair-hint message, then continues over the resident branch via the new `collectResidentBranchForHandoff` fallback. The digest is never presented as complete when it is partial.\n\n**Regression test — windowed open (the resume path), as requested** (`test/compaction/handoff_digest_test.dart`):\n\n- `a windowed (resumed) session collects the WHOLE branch, not just the resident tail…` — builds an 800-record session, reopens `windowed: true`, walks with the parity budget (`ensureCompactionBoundaryResident(tokenBudget: 50)`), asserts the windowed branch IS partial (the bug precondition, verified RED: collect returned **50 of 800** records before the fix), then asserts `collectEntriesForHandoff` returns all 800.\n- `a ledger past the whole-ledger bound refuses with the tooLarge SessionException…` — pins the propagate-don't-swallow contract (`maxWholeLedgerBytes: 1`).\n\nFull-storage sessions (the existing suite's `repo.create` shape) are a no-op for the priming — behavior unchanged there."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:e3b74c54",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — ⚠️ IMPORTANT: the digest prompt is unbounded\n\n**Fixed in `7b82ef8e6a`** (`lib/src/compaction/branch_summarization.dart`, `lib/src/compaction/handoff_digest.dart`, `lib/src/cli/agent_cli_handoff.dart`) — routed through the same payload-budget/chunk-fold guard the compaction digest uses (your suggested fix option 2), which also resolves the \"two sides of the same input-bounding gap\" asymmetry without sacrificing the whole-branch digest contract.\n\n- `generateBranchSummary` gains `int? maxPromptTokens` (default `null` = byte-identical legacy path, pinned by a new no-op-parity test). Over budget, it summarizes **chunk-wise**: `chunkSummarizableMessages` splits the region (chunk plan sized with the same 4096-token envelope reserve the compaction fold uses), each chunk's conversation is bounded by `truncateForSummaryBudget` (a single oversized message gets the explicit `[… N more characters truncated]` note, never silent), and every later call folds the prior summary in as `<previous-checkpoint>` — the result is the LAST fold. Abort/failure on any chunk surface as `aborted`/`error` on the result; the never-throw contract is kept.\n- `generateHandoffDigest` gains `int? summarizerWindow` + `CompactionSettings settings` and computes `summarizationPayloadBudget(summarizerWindow, settings)` — the exact bound the #729 compaction payloads ride.\n- The CLI call site passes `slot.model.contextWindow` (the digest model's own window — typically the smol/memory role) and `_effectiveCompactionSettings`, mirroring how `AutoCompactorFactory` passes `(sources.smolModel ?? sources.mainModel).contextWindow`.\n\n**Tests** (`test/compaction/handoff_digest_test.dart`):\n- an over-budget branch (~21k tokens vs a 32k-window smol role's 16384-token budget) is summarized chunk-wise: >1 call, **every outbound prompt ≤ budget** (the IT-C1 invariant), later prompts carry `<previous-checkpoint>` + the prior fold, and the composed digest still carries the handoff preamble + the `<read-files>` list (file ops accumulate across ALL entries even when the conversation rides chunks);\n- an under-budget branch with a window set produces **byte-identical** prompt to the unbounded path (single call);\n- a single message bigger than the budget is truncated with the explicit note."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:c53525fb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — ⚠️ IMPORTANT: Ctrl-C cannot cancel the digest call\n\n**Fixed in `7b82ef8e6a`** (`lib/src/cli/agent_cli_handoff.dart`) — exactly the wiring you suggested, mirroring `_runAutoCompact`'s #1085 M3 pattern:\n\n- `_handoffSlash` now creates a `CancelTokenSource` around the `generateHandoffDigest` call, registers it in **`_activeCompactionAbort`** — the slot `_abortRunOrCompaction()` and all three interrupt routings (line REPL, TUI `onInterrupt`, headless) already consult — passes `abort.token` into `generateHandoffDigest(cancelToken:)`, and clears the slot in the `finally`.\n- The run-token bridge is in place too (`_agent.cancelToken.onCancel → abort.cancel`), matching the compaction wiring, so a mid-run invocation cancels with the run.\n- Note the routing shape: `/handoff` runs outside a run bracket (`isBusy` false), so Ctrl-C hits the `else if (_activeCompactionAbort != null)` arm — the digest call is cancelled ALONE, no sticky `_runAbortRequested` latch, no `_agent.abort()`, and the \"handoff interrupted\" receipt (already implemented and tested, previously unreachable) finally fires.\n\n**Test** (`test/cli/agent_cli_handoff_test.dart`, verified RED before the fix — `timed out waiting: interrupt note`): `Ctrl-C cancels the digest call (#1085 M3)…` — the digest call hangs on the cancel token (`AbortableStreamFunction`), `io.interrupt()` fires, \"handoff interrupted\" prints, no editor ran, no session switch, and the next prompt completes a fresh run normally (`followup.calls ≥ 1 && !cli.isBusy`) — proving the sticky abort flag never rode out of the cancelled digest call."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:51295699",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — ⚠️ IMPORTANT: the editor invocation is POSIX-quote-only\n\n**Fixed in `7b82ef8e6a`** (`lib/src/cli/agent_cli_handoff.dart`, `lib/src/cli/host_shell_stub.dart` / `host_shell_io.dart` + the conditional import in `agent_cli.dart`) — platform-aware quoting (your suggested fix option 1):\n\n- `handoffEditorCommand(editor, path, {bool? isWindows})` now quotes for the HOST shell the env's `exec` actually runs the command under:\n  - POSIX `sh -c`: the unchanged single-quote form (`'…'` with `'\\''` escaping) — byte-identical to before, so every existing editor-sim test and the `EditorSimEnv` command-shape pin still hold;\n  - Windows `cmd /c` (`LocalShell._childCommand`): **double quotes** with defensive `\"` doubling — no single quote ever reaches the argv, so the editor receives the real digest path instead of a quoted (nonexistent) file name. Inside double quotes cmd treats `^` literally, so no caret escaping is needed.\n- The Windows arm is reachable in production via the new `hostShellIsWindows` probe (`Platform.isWindows` behind the web-safe conditional-import pattern this library uses for every `dart:io` seam — see `process_probe_stub.dart`/`process_probe_io.dart`).\n- Both arms are **unit-pinned** (`test/cli/agent_cli_handoff_test.dart`, `handoffEditorCommand platform quoting`): the POSIX test asserts the single-quote shape incl. the `'\\'` escape for an embedded quote; the Windows test asserts `code --wait \"C:\\work\\.fah\\handoff-digest-1.md\"` and that the command contains no single quote at all. The `isWindows` pin exists because the CI runners cannot exercise `cmd /c` in situ.\n\nNo POSIX-only caveat needed: the edit step now works on both platforms."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-14:85716696",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-14",
+      "updatedAt": "2026-11-14",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Summary**: The `/handoff` core is well built (branch-digest reuse, lossless old session, thorough tests, green suites), but the digest input is unbounded in both directions: on a resumed (windowed) session it silently digests only the resident tail (verified: 3 of 40 records), and on a full-open long session the digest prompt overflows the summarizer's window — so the feature fails or lies precisely on the long sessions it exists for. Two smaller gaps: Ctrl-C cannot cancel the digest call, and the Windows editor invocation can never open the digest file.\n\n**Key Issues**:\n1. 🚨 `handoff_digest.dart:75` — windowed sessions digest only the resident window, silently (BLOCKING, reproduced)\n2. ⚠️ `handoff_digest.dart:87` — `tokenBudget: 0` sends the whole branch as one unbounded summarizer prompt\n3. ⚠️ `agent_cli_handoff.dart:50` — no `cancelToken` wired; Ctrl-C cannot stop the digest call\n4. ⚠️ `agent_cli_handoff.dart:19` — POSIX-quote-only editor command is broken under Windows `cmd /c`\n\n**Next Steps**:\n1. Make `collectEntriesForHandoff` read the whole branch on windowed sessions (`ensureWholeLedgerResident()` precedent) or print a visible truncation note when `hasOlder` remains; add a windowed-open regression test\n2. Bound the digest payload via `summarizationPayloadBudget(summarizerWindow)` / chunk-fold as compaction does\n3. Wire `_agent.cancelToken` → `CancelTokenSource` → `generateHandoffDigest(cancelToken:)` so `digest.aborted` becomes reachable\n4. Quote the editor argv per-platform (double quotes on Windows) or exec it without a shell\n\n**Digest (ranked, non-thread)**:\n- `lib/src/cli/agent_cli_handoff.dart:174` — `_switchToHandoffSession` skips `_usage.reset()`/`_meter.reset()` + `_flushUsageLedger()` (which `_switchToMetadata` performs on every switch): the fresh session's `/stats` and footer open with the old session's tok/cost/turn (mirrors `/reset`, which shares the gap)\n- `lib/src/compaction/handoff_digest.dart:97-101` — the conversation-less guard walks `prepareBranchEntries` (whole-branch token estimation) a second time before `generateBranchSummary` repeats it internally\n- `lib/src/cli/agent_cli_handoff.dart:19` — third private re-implementation of POSIX single-quote quoting (`shellQuote` in `lib/src/cube/backends/cube_backend.dart:54`, `q()` in `lib/src/cli/agent_cli_inbox.dart:462`); consolidate when the Windows quoting fix lands"
+    }
+  ]
+}
