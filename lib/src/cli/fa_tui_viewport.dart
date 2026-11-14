@@ -234,7 +234,23 @@ extension _TuiViewport on FaTuiModel {
       // glass). The carried count = '\n's written before the anchor call
       // = the exact row the next write (the reconciliation summary)
       // lands on — the trailing phantom slot.
-      return (copyWith(bootAnchorLine: msg.line), null);
+      //
+      // The anchor landing re-runs the follow contract ONCE (issue
+      // #2172): every banner append happened BEFORE the anchor existed,
+      // so each one followed at the live edge — and when the wrapped
+      // banner alone overflows the viewport, that window sits past the
+      // banner's head ('[Model]' born above the fold). Nothing appends
+      // after the anchor on a fresh boot, so without this re-follow the
+      // wrong window would be the LAST word. With post-anchor content
+      // (a restored transcript) the replay's own appends re-follow
+      // anyway — same end state, one extra bounded pass.
+      final anchored = copyWith(bootAnchorLine: msg.line);
+      if (!followTail) return (anchored, null);
+      final wrapped = anchored._wrappedLines();
+      return (
+        anchored.copyWith(scrollOffset: anchored._followAnchor(wrapped)),
+        null,
+      );
     }
 
     if (msg is _SetInputTextMsg) {
@@ -278,12 +294,37 @@ extension _TuiViewport on FaTuiModel {
   /// '[Model]' never painted, every PTY suite timed out at waitForBoot).
   /// And when even the anchored region overflows, the tail outranks the
   /// boot region and the anchor degrades to the bottom.
+  ///
+  /// The park also needs CONTENT to park for (issue #2172): with an empty
+  /// post-anchor region — a FRESH boot whose banner alone overflows the
+  /// viewport (long temp-space workspace paths wrapping the [Context] and
+  /// [Session] rows past the transcript height) — `boot > bottom` holds
+  /// vacuously and the park showed a fully blank window while the whole
+  /// banner, [Model] block included, rode the fold: nothing repaints it,
+  /// so waitForBoot never saw the row. Parking is the replay tail's
+  /// privilege; with nothing after the anchor the window pins to the
+  /// banner's head instead, so the boot marker rows always paint.
   int _followAnchor(List<String> wrapped) {
     final bottom = _scrollBottom(wrapped);
     final boot = _bootAnchorRow();
     if (boot != null && wrapped.length > _viewportHeight) {
       final region = wrapped.length - boot;
-      if (region <= _viewportHeight && boot > bottom) return boot;
+      if (region > 1 && region <= _viewportHeight && boot > bottom) {
+        return boot;
+      }
+      if (region <= 1) {
+        // Fresh boot — nothing but the banner and the anchor's trailing
+        // phantom slot (issue #2172): pin the window to the banner's HEAD
+        // so the [Model] block paints even when the wrapped banner
+        // overflows the viewport (long temp-space workspace paths wrap
+        // the [Context]/[Session] rows past the transcript height). The
+        // live edge would pin to the bottom, and a head-born row like
+        // '[Model]' would never reach the glass; the banner's tail rides
+        // the fold instead. The pin dissolves on the first real
+        // post-anchor append (region > 1 resumes the park/bottom
+        // contract below).
+        return 0;
+      }
     }
     return bottom;
   }
