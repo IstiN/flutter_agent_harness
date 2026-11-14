@@ -19,7 +19,6 @@ import 'dart:typed_data';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../env/session_parse_executor.dart';
-import 'record_quarantine.dart' show SessionQuarantine;
 import 'session_record.dart';
 import 'session_storage.dart';
 
