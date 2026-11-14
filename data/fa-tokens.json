@@ -3543,15 +3543,6 @@
   "issue-2182": [
     {
       "leg": "dev",
-      "at": "2026-11-14T14:19:18Z",
-      "prompt": 348019,
-      "completion": 4020,
-      "total": 352039,
-      "cacheRead": 1176448,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "dev",
       "at": "2026-11-14T14:28:06Z",
       "prompt": 386692,
       "completion": 4017,
@@ -3899,6 +3890,15 @@
       "completion": 4805,
       "total": 139999,
       "cacheRead": 1035840,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-14T19:57:00Z",
+      "prompt": 147386,
+      "completion": 4805,
+      "total": 152191,
+      "cacheRead": 1133376,
       "model": "glm-5.3-flash"
     }
   ],
