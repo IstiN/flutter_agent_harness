@@ -39,6 +39,7 @@ import 'judge_health.dart';
 import 'ledger.dart';
 import 'markers.dart';
 import 'projection.dart';
+import '../cache_policy.dart';
 import '../../exceptions.dart' show CompactionException;
 
 /// Progress surface for the structured engine.
@@ -71,6 +72,8 @@ final class StructuredCompactionPass {
     this.judgeElapsedMs,
     this.judgeLatched = false,
     this.basisReadTokens,
+    this.durationMs,
+    this.usage,
   });
 
   /// `'hide'` or `'checkpoint'`.
@@ -145,6 +148,16 @@ final class StructuredCompactionPass {
   /// of a clamped `0 freed`. Null when the re-read landed on the same
   /// basis. A count only, never content.
   final int? basisReadTokens;
+
+  /// gh-2101: the pass's wall-clock duration (milliseconds) — the
+  /// one-line report's latency metric. Null on unmeasured receipts.
+  final int? durationMs;
+
+  /// gh-2101: the metered usage of the LM calls this pass consumed (call
+  /// count, token breakdown, cost) — the details report's cost/cache-hit
+  /// metrics. Null when the pass made no metered call (or no usage was
+  /// reported).
+  final CompactionUsageTotals? usage;
 }
 
 /// Rebuilds [state.messages] from the session projection, zeroing usage
@@ -185,6 +198,7 @@ final class StructuredCompactor {
     this.judgeProbeAfter = const Duration(minutes: 10),
     this.pinnedOperativeBlock,
     this.pinnedLines = const {},
+    this.usage,
   });
 
   /// The session being compacted.
@@ -268,6 +282,12 @@ final class StructuredCompactor {
   /// gh-1409 AC4: the raw pin lines the sanitizer protects when healing
   /// folded checkpoints re-entering the prompt.
   final Set<String> pinnedLines;
+
+  /// gh-2101: the run's LM usage ledger — the factory wires ONE ledger
+  /// shared by the judge and digest adapters; the engine folds per-pass
+  /// deltas into the pass receipts. `null` keeps the legacy shape (no
+  /// metrics).
+  final CompactionUsageAccumulator? usage;
 
   /// Consecutive judge failures before the deterministic fallback hide
   /// engages (issue #541): one retry, then the judge-less hide. The
@@ -368,6 +388,8 @@ final class StructuredCompactor {
       view.state.pinnedRecordIds,
     );
     if (evictions.isEmpty) return;
+    final watch = Stopwatch()..start();
+    final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: evictions.toList()..sort());
     final after = await _refreshState();
     hooks?.onPass(
@@ -380,6 +402,8 @@ final class StructuredCompactor {
         judgeCalls: 0,
         hiddenCount: evictions.length,
         basisReadTokens: _basisFlip(before, after),
+        durationMs: watch.elapsedMilliseconds,
+        usage: _usageDelta(usageBefore),
       ),
     );
   }
@@ -539,6 +563,11 @@ final class StructuredCompactor {
       // converge on the loop's own successful-verdict return.
       if (await _latchedGate(trigger, before) != null) return true;
 
+      // gh-2101: the pass's measured window opens HERE — the judge call,
+      // its parse and the hide append all belong to the pass's duration
+      // and usage.
+      final watch = Stopwatch()..start();
+      final usageBefore = usage?.snapshot();
       final call = await _callJudge(view);
       // F1: a failed judge call hides nothing — but since #541 it is
       // COUNTED, not fatal: one retry, then the deterministic
@@ -583,6 +612,8 @@ final class StructuredCompactor {
           judgeCalls: 1,
           hiddenCount: ids.length,
           basisReadTokens: _basisFlip(before, after),
+          durationMs: watch.elapsedMilliseconds,
+          usage: _usageDelta(usageBefore),
         ),
       );
     }
@@ -890,6 +921,8 @@ final class StructuredCompactor {
       );
       return false;
     }
+    final watch = Stopwatch()..start();
+    final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: ids.toList()..sort());
     final after = await _refreshState();
     hooks?.onPass(
@@ -901,6 +934,8 @@ final class StructuredCompactor {
         ok: true,
         hiddenCount: ids.length,
         basisReadTokens: _basisFlip(before, after),
+        durationMs: watch.elapsedMilliseconds,
+        usage: _usageDelta(usageBefore),
       ),
     );
     return true;
@@ -945,6 +980,10 @@ final class StructuredCompactor {
     for (var i = 0; i < maxCheckpointPasses; i++) {
       final before = _requestTokens();
       if (before <= trigger) return true;
+      // gh-2101: the pass's measured window — the summarizer call(s), the
+      // append and the refresh all belong to the pass's duration/usage.
+      final watch = Stopwatch()..start();
+      final usageBefore = usage?.snapshot();
       // Relief is required here (the pass only runs over the trigger), so
       // the whole-world decline does not apply: a transcript whose every
       // ledger token fits keepRecentTokens — typically one huge tool
@@ -992,6 +1031,8 @@ final class StructuredCompactor {
           summarizedCount: summarizedCount,
           summary: text,
           basisReadTokens: _basisFlip(before, after),
+          durationMs: watch.elapsedMilliseconds,
+          usage: _usageDelta(usageBefore),
         ),
       );
     }
@@ -1031,6 +1072,10 @@ final class StructuredCompactor {
     if (_runCancelled || _totalBudgetSpent) return false;
     final band = settings.reserveTokens;
     final before = _requestTokens();
+    // gh-2101: the escalation's measured window — the watch and the usage
+    // snapshot bracket the fold work below.
+    final watch = Stopwatch()..start();
+    final usageBefore = usage?.snapshot();
     final view = await _buildView();
     // Diagnostic count only — never rendered content.
     final hideableRemaining = _hideableRemainingOf(view);
@@ -1054,6 +1099,8 @@ final class StructuredCompactor {
           margin: margin,
           band: band,
           hideableRemaining: hideableRemaining,
+          durationMs: watch.elapsedMilliseconds,
+          usage: _usageDelta(usageBefore),
         ),
       );
     }
@@ -1206,6 +1253,8 @@ final class StructuredCompactor {
     int judgeCalls = 0,
     int summarizedCount = 0,
     String? summary,
+    int? durationMs,
+    CompactionUsageTotals? usage,
   }) => StructuredCompactionPass(
     kind: 'checkpoint-escalation',
     pass: ++_pass,
@@ -1220,6 +1269,8 @@ final class StructuredCompactor {
     bandTokens: band,
     hideableRemaining: hideableRemaining,
     basisReadTokens: _basisFlip(before, after),
+    durationMs: durationMs,
+    usage: usage,
   );
 
   /// Diagnostic count only — never rendered content.
@@ -1312,6 +1363,18 @@ final class StructuredCompactor {
   /// records entering the projection between the two measurements.
   int? _basisFlip(int before, int after) =>
       after > before ? after - before : null;
+
+  /// gh-2101: the usage this pass consumed over an [earlier] snapshot —
+  /// null when no run ledger is wired or no metered call landed in the
+  /// window (legacy runs keep null metrics).
+  CompactionUsageTotals? _usageDelta(CompactionUsageTotals? earlier) {
+    final ledger = usage;
+    if (ledger == null) return null;
+    final delta = ledger.snapshot().deltaFrom(
+      earlier ?? CompactionUsageTotals.zero,
+    );
+    return delta.calls == 0 ? null : delta;
+  }
 
   /// Projects the view path into sized entries: visible records at their
   /// full token cost, hidden ones at their marker's (issue #387 - a

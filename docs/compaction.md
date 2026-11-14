@@ -200,6 +200,39 @@ tier cannot free the window (e.g. a keep-recent floor pinning the whole
 transcript), the bounded classic/structured passes run and the exhaustion
 verdict stays honest about how many ran.
 
+### Cache-aware calls and pass metrics (gh-2101)
+
+The quality tier's LM calls used to opt out of prompt caching entirely
+(`cacheRetention: 'none'`, a fresh routing session id per call) — every
+judge pass and digest fold re-paid the full uncached input price. Since
+gh-2101 one compaction run is ONE cache family:
+
+- **One routing id per run, `short` retention** — the judge and digest
+  adapters share the run's `CompactionCachePolicy`
+  (`lib/src/compaction/cache_policy.dart`): every call carries the same
+  run-scoped routing session id (OpenAI `prompt_cache_key`, OpenRouter
+  `x-session-id`) and the ephemeral `short` retention (Anthropic
+  cache-control markers), so pass 2's request prefix is served from the
+  cache pass 1 wrote. The id is never the parent session's id —
+  compaction still never reads from nor writes to the session's
+  cache-affinity bucket. Providers without cache knobs (Google's implicit
+  caching) ignore the override — the policy degrades to uncached behavior
+  there with no extra work. `CompactionCachePolicy.isolated()` reproduces
+  the legacy opt-out (retention `none`, fresh id per call).
+- **Batched hides per pass** — every hide pass (judge picks,
+  deterministic fallback, LRU re-hide) applies its whole pick set in ONE
+  `appendHiddenRange` append, so the request prefix is rewritten once per
+  pass, not once per record.
+- **Pass metrics** — `duration` (the pass's wall-clock) renders on the
+  one-line compaction report (`… tokens (N freed · P%) · 12.4s`);
+  `cost` and the **cache-hit share** render on the details view
+  (`llm: 2 calls · 18.2s · $0.0412 · cache 87% (45k/51.7k tok)`).
+  The usage folds from the providers' metered `Usage` through the run's
+  `CompactionUsageAccumulator` — a provider that reports no usage (or a
+  pass with no LM call) renders no metrics, never a fake zero. A 0% cache
+  hit is shown, not hidden: it is the regression signal the metrics
+  exist for.
+
 ## The working set and the goal slot (gh-210)
 
 After any compaction, the context tail carries a bounded re-injection so
