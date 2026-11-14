@@ -123,6 +123,9 @@ const _nonSettingsCommands = <String, String>{
   '/timer':
       'session deadline countdown (gh-1556), in-memory clock only — never '
       'persisted anywhere',
+  '/log':
+      'console log dial (issue #2117), live in-memory level only — never '
+      'persisted to config.yaml',
   '/images':
       'read-only image registry/cap/drop projection (issue #1889), '
       'changes no persisted setting',

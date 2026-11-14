@@ -140,6 +140,11 @@ void main() {
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         steeringStaleAfter: steeringStaleAfter,
+        // Issue #2117: the passive `info:` stall banner obeys the console
+        // dial — this file pins its content, so it boots at `info` (the
+        // default `warn` hides it; console_log_dial_test.dart covers the
+        // suppressed side).
+        logging: const ResolvedLogSettings(consoleLevel: LogLevel.info),
       ),
       io: io,
       streamFunction: stream.call,
