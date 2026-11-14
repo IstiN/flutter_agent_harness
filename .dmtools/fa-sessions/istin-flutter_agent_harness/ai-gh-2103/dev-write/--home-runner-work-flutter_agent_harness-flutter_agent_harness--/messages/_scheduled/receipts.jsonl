@@ -1,0 +1,1 @@
+{"ts":"2026-11-14T17:30:19.203827Z","event":"scheduled","id":"1794677419203158_0000_rzgvmm","dueMs":1794678019203,"to":"main","text":"Fallback check: background job sh-25-ho5rboxrxn17xh1q7 (`dart test` full suite for pr-2183 rework lap) started 17:26. If it has not completed by now, check bash_job status/output — if no progress (~10"}
