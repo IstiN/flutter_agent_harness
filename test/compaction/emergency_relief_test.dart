@@ -33,7 +33,10 @@ import 'package:test/test.dart';
 
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
-    content: [TextContent(text: text), ...?calls],
+    content: [
+      TextContent(text: text),
+      ...?calls,
+    ],
     api: 'anthropic-messages',
     provider: 'p',
     model: 'm1',
@@ -119,9 +122,9 @@ void main() {
     for (final line in text.split('\n')) {
       if (!line.contains('"type":"hidden_range"')) continue;
       final record = jsonDecode(line) as Map;
-      ranges.add(
-        [for (final id in (record['recordIds'] as List)) id as String],
-      );
+      ranges.add([
+        for (final id in (record['recordIds'] as List)) id as String,
+      ]);
     }
     return ranges;
   }
@@ -154,8 +157,7 @@ void main() {
       return (session, _state(messages));
     }
 
-    test('the older read of a path folds, the newest copy survives',
-        () async {
+    test('the older read of a path folds, the newest copy survives', () async {
       final (session, state) = await dedupSession();
       final relief = EmergencyRelief(
         session: session,
@@ -197,7 +199,9 @@ void main() {
     });
 
     test('a failed newest read never folds its older good copy', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('inspect the config'));
       // The GOOD older copy is heavy (24k chars ≈ 6k tokens) so the
       // session is over the target; the NEWEST copy failed.
@@ -271,7 +275,9 @@ void main() {
     /// the target with no trim valve (candidates' net total > over is
     /// engine-guaranteed: after = before − freed, exactly).
     Future<(Session, AgentState, List<String>)> multiToolSession() async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       final carrierIds = <String>[];
       var callId = 0;
       Future<void> group(String tool, String payloadChar) async {
@@ -285,9 +291,7 @@ void main() {
             ],
           ),
         );
-        await session.appendMessage(
-          _result(id, tool, payloadChar * 800),
-        );
+        await session.appendMessage(_result(id, tool, payloadChar * 800));
       }
 
       await session.appendMessage(UserMessage.text('sweep the repo'));
@@ -307,50 +311,52 @@ void main() {
       reserveTokens: 800,
       keepRecentTokens: 400,
     );
-    final keepTwoRelief = {
-      'read': 2,
-      'exec': 2,
-      'other': 99,
-    };
+    final keepTwoRelief = {'read': 2, 'exec': 2, 'other': 99};
 
-    test('stalest-first hides past the per-class keep budget (multi-item)',
-        () async {
-      final (session, state, carrierIds) = await multiToolSession();
-      final relief = EmergencyRelief(
-        session: session,
-        state: state,
-        window: 2800,
-        settings: keepTwoSettings,
-        keepRecent: keepTwoRelief,
-        protectLastN: 2,
-      );
+    test(
+      'stalest-first hides past the per-class keep budget (multi-item)',
+      () async {
+        final (session, state, carrierIds) = await multiToolSession();
+        final relief = EmergencyRelief(
+          session: session,
+          state: state,
+          window: 2800,
+          settings: keepTwoSettings,
+          keepRecent: keepTwoRelief,
+          protectLastN: 2,
+        );
 
-      final outcome = await relief.run();
+        final outcome = await relief.run();
 
-      expect(outcome.ok, isTrue);
-      expect(outcome.usedTrimValve, isFalse);
-      expect(outcome.droppedMessages, 0);
-      // Multi-item: several groups fold (2 records each — carrier +
-      // result atomically).
-      expect(outcome.hiddenGroups, greaterThanOrEqualTo(2));
-      expect(outcome.hiddenRecords, outcome.hiddenGroups * 2);
-      // The per-class NEWEST copies stay live; the STALEST fold.
-      final live = state.messages
-          .whereType<ToolResultMessage>()
-          .map((m) => m.toolCallId)
-          .toSet();
-      expect(live.contains('c1'), isFalse, reason: 'oldest read folded');
-      expect(live.contains('c2'), isFalse, reason: 'second-oldest read folded');
-      expect(live.contains('c5'), isTrue, reason: 'a kept read stays live');
-      expect(live.contains('c6'), isTrue, reason: 'newest read kept');
-      expect(live.contains('c7'), isTrue, reason: 'oldest KEPT bash stays');
-      expect(live.contains('c12'), isTrue, reason: 'newest bash kept');
-      // Every folded record still sits in the session file — lossless.
-      final fileText = await sessionFileText(session);
-      for (final id in carrierIds) {
-        expect(fileText, contains('"$id"'));
-      }
-    });
+        expect(outcome.ok, isTrue);
+        expect(outcome.usedTrimValve, isFalse);
+        expect(outcome.droppedMessages, 0);
+        // Multi-item: several groups fold (2 records each — carrier +
+        // result atomically).
+        expect(outcome.hiddenGroups, greaterThanOrEqualTo(2));
+        expect(outcome.hiddenRecords, outcome.hiddenGroups * 2);
+        // The per-class NEWEST copies stay live; the STALEST fold.
+        final live = state.messages
+            .whereType<ToolResultMessage>()
+            .map((m) => m.toolCallId)
+            .toSet();
+        expect(live.contains('c1'), isFalse, reason: 'oldest read folded');
+        expect(
+          live.contains('c2'),
+          isFalse,
+          reason: 'second-oldest read folded',
+        );
+        expect(live.contains('c5'), isTrue, reason: 'a kept read stays live');
+        expect(live.contains('c6'), isTrue, reason: 'newest read kept');
+        expect(live.contains('c7'), isTrue, reason: 'oldest KEPT bash stays');
+        expect(live.contains('c12'), isTrue, reason: 'newest bash kept');
+        // Every folded record still sits in the session file — lossless.
+        final fileText = await sessionFileText(session);
+        for (final id in carrierIds) {
+          expect(fileText, contains('"$id"'));
+        }
+      },
+    );
 
     test('exempt user turns and the live tail never hide', () async {
       final (session, state, _) = await multiToolSession();
@@ -393,10 +399,11 @@ void main() {
       // shape), so the keep-N pass's buster rule folds the biggest
       // record. Lossless append: the full result stays in the session
       // file behind the marker.
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('go'));
-      for (final message
-          in _readPair('r1', 'huge.log', 'x', chars: 40000)) {
+      for (final message in _readPair('r1', 'huge.log', 'x', chars: 40000)) {
         await session.appendMessage(message);
       }
       final state = _state(await session.buildContextMessages());
@@ -431,7 +438,9 @@ void main() {
     });
 
     test('already-under target: no-op outcome, nothing written', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('tiny'));
       final state = _state(await session.buildContextMessages());
       final relief = EmergencyRelief(
@@ -450,21 +459,25 @@ void main() {
     });
 
     test('unanswered carriers never hide (pair integrity)', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('run it'));
       final live1Record = await session.appendMessage(
-        _assistant('running', calls: [
-          const ToolCall(id: 'live1', name: 'bash', arguments: {}),
-        ]),
+        _assistant(
+          'running',
+          calls: [const ToolCall(id: 'live1', name: 'bash', arguments: {})],
+        ),
       );
       // NO result for live1 — the carrier must never fold, whatever the
       // class budgets say. Its stale sibling (a completed pair) is the
       // relief food.
       await session.appendMessage(_result('done1', 'bash', 'x' * 8000));
       await session.appendMessage(
-        _assistant('again', calls: [
-          const ToolCall(id: 'live2', name: 'bash', arguments: {}),
-        ]),
+        _assistant(
+          'again',
+          calls: [const ToolCall(id: 'live2', name: 'bash', arguments: {})],
+        ),
       );
       await session.appendMessage(_result('live2', 'bash', 'y' * 8000));
       final state = _state(await session.buildContextMessages());
@@ -497,65 +510,71 @@ void main() {
       expect(liveCalls, contains('live1'));
     });
 
-    test('trim valve bounds the live context when hides free nothing',
-        () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
-      await session.appendMessage(UserMessage.text('big'));
-      // Two medium read pairs (each ~5k tokens — none ALONE busts the
-      // 8000 window, so the buster rule stays out) within the per-class
-      // keep budget, plus a small live tail. The hide passes free
-      // nothing; only the trim valve can bound the live context,
-      // keeping the tail and dropping the head.
-      await session.appendMessage(
-        _assistant(
-          'medium read one',
-          calls: [
-            const ToolCall(
-              id: 'm1',
-              name: 'read',
-              arguments: {'path': 'one.txt'},
-            ),
-          ],
-        ),
-      );
-      await session.appendMessage(_result('m1', 'read', 'H' * 20000));
-      await session.appendMessage(
-        _assistant(
-          'medium read two',
-          calls: [
-            const ToolCall(
-              id: 'm2',
-              name: 'read',
-              arguments: {'path': 'two.txt'},
-            ),
-          ],
-        ),
-      );
-      await session.appendMessage(_result('m2', 'read', 'H' * 20000));
-      for (var i = 0; i < 4; i++) {
-        await session.appendMessage(_assistant('tail $i'));
-      }
-      final state = _state(await session.buildContextMessages());
-      final relief = EmergencyRelief(
-        session: session,
-        state: state,
-        window: 8000,
-        settings: _settings,
-        protectLastN: 2,
-      );
+    test(
+      'trim valve bounds the live context when hides free nothing',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await session.appendMessage(UserMessage.text('big'));
+        // Two medium read pairs (each ~5k tokens — none ALONE busts the
+        // 8000 window, so the buster rule stays out) within the per-class
+        // keep budget, plus a small live tail. The hide passes free
+        // nothing; only the trim valve can bound the live context,
+        // keeping the tail and dropping the head.
+        await session.appendMessage(
+          _assistant(
+            'medium read one',
+            calls: [
+              const ToolCall(
+                id: 'm1',
+                name: 'read',
+                arguments: {'path': 'one.txt'},
+              ),
+            ],
+          ),
+        );
+        await session.appendMessage(_result('m1', 'read', 'H' * 20000));
+        await session.appendMessage(
+          _assistant(
+            'medium read two',
+            calls: [
+              const ToolCall(
+                id: 'm2',
+                name: 'read',
+                arguments: {'path': 'two.txt'},
+              ),
+            ],
+          ),
+        );
+        await session.appendMessage(_result('m2', 'read', 'H' * 20000));
+        for (var i = 0; i < 4; i++) {
+          await session.appendMessage(_assistant('tail $i'));
+        }
+        final state = _state(await session.buildContextMessages());
+        final relief = EmergencyRelief(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          protectLastN: 2,
+        );
 
-      final outcome = await relief.run();
+        final outcome = await relief.run();
 
-      expect(outcome.usedTrimValve, isTrue);
-      expect(outcome.droppedMessages, greaterThanOrEqualTo(1));
-      expect(outcome.alreadyUnder, isFalse);
-      // The session file keeps every record — the trim is in-memory.
-      final live = await session.buildContextMessages();
-      expect(live.length, greaterThan(state.messages.length));
-    });
+        expect(outcome.usedTrimValve, isTrue);
+        expect(outcome.droppedMessages, greaterThanOrEqualTo(1));
+        expect(outcome.alreadyUnder, isFalse);
+        // The session file keeps every record — the trim is in-memory.
+        final live = await session.buildContextMessages();
+        expect(live.length, greaterThan(state.messages.length));
+      },
+    );
 
     test('pinned expansions never hide', () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       await session.appendMessage(UserMessage.text('pin me'));
       final pinCarrier = await session.appendMessage(
         _assistant(
@@ -621,26 +640,25 @@ void main() {
     /// results (~300 records), written the pre-gh-209 way — plain
     /// appends, no migration.
     Future<(Session, AgentState)> largeOldSession() async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       for (var i = 0; i < 60; i++) {
         await session.appendMessage(UserMessage.text('request $i'));
         await session.appendMessage(
           _assistant(
             'reading file $i',
             calls: [
-              ToolCall(
-                id: 'r$i',
-                name: 'read',
-                arguments: {'path': 'f$i.txt'},
-              ),
+              ToolCall(id: 'r$i', name: 'read', arguments: {'path': 'f$i.txt'}),
             ],
           ),
         );
         await session.appendMessage(_result('r$i', 'read', 'x' * 4000));
         await session.appendMessage(
-          _assistant('running $i', calls: [
-            ToolCall(id: 'b$i', name: 'bash', arguments: {}),
-          ]),
+          _assistant(
+            'running $i',
+            calls: [ToolCall(id: 'b$i', name: 'bash', arguments: {})],
+          ),
         );
         await session.appendMessage(_result('b$i', 'bash', 'y' * 2000));
         await session.appendMessage(_assistant('done $i'));
@@ -674,14 +692,11 @@ void main() {
         // The prefix is byte-identical: nothing was rewritten or
         // migrated — the tier only APPENDS additive records.
         expect(afterBytes.length, greaterThan(beforeBytes.length));
-        expect(
-          afterBytes.sublist(0, beforeBytes.length),
-          equals(beforeBytes),
-        );
+        expect(afterBytes.sublist(0, beforeBytes.length), equals(beforeBytes));
         // The appended lines are hidden-range records only.
-        final appendedText = utf8.decode(afterBytes.sublist(
-          beforeBytes.length,
-        ));
+        final appendedText = utf8.decode(
+          afterBytes.sublist(beforeBytes.length),
+        );
         final appendedLines = appendedText
             .split('\n')
             .where((line) => line.trim().isNotEmpty)
@@ -703,8 +718,7 @@ void main() {
       },
     );
 
-    test('the tier never calls a language model (bounded wall time)',
-        () async {
+    test('the tier never calls a language model (bounded wall time)', () async {
       // A marathon-sized session (60 turns, ~300 records) relieves in
       // bounded wall time — the tier is pure-local arithmetic over the
       // ledger memo; no LM call exists on ANY of its paths (the class

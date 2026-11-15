@@ -50,12 +50,17 @@ void main() {
       final judge = policy.routingFor(CompactionCallClass.judge);
       final digest = policy.routingFor(CompactionCallClass.digest);
       expect(judge.sessionId, isNotNull);
-      expect(judge.sessionId, digest.sessionId,
-          reason: 'one cache bucket per compaction run');
+      expect(
+        judge.sessionId,
+        digest.sessionId,
+        reason: 'one cache bucket per compaction run',
+      );
       // A second run gets its own id — the cache family is per run.
       final other = CompactionCachePolicy.affine();
-      expect(other.routingFor(CompactionCallClass.judge).sessionId,
-          isNot(judge.sessionId));
+      expect(
+        other.routingFor(CompactionCallClass.judge).sessionId,
+        isNot(judge.sessionId),
+      );
     });
 
     test('a fixed session id can be seeded (factory wiring tests)', () {
@@ -66,10 +71,14 @@ void main() {
 
     test('retention is a deliberate per-call-class policy (never none)', () {
       final policy = CompactionCachePolicy.affine();
-      expect(policy.routingFor(CompactionCallClass.judge).cacheRetention,
-          CompactionCachePolicy.judgeRetention);
-      expect(policy.routingFor(CompactionCallClass.digest).cacheRetention,
-          CompactionCachePolicy.digestRetention);
+      expect(
+        policy.routingFor(CompactionCallClass.judge).cacheRetention,
+        CompactionCachePolicy.judgeRetention,
+      );
+      expect(
+        policy.routingFor(CompactionCallClass.digest).cacheRetention,
+        CompactionCachePolicy.digestRetention,
+      );
       // The whole point of gh-2101: the compaction calls stop opting OUT of
       // prompt caching. Retention is provider-default-compatible ('short' —
       // ephemeral markers / affinity keys), long enough to cover one
@@ -88,8 +97,11 @@ void main() {
       expect(second.cacheRetention, 'none');
       expect(first.sessionId, isNotNull);
       expect(second.sessionId, isNotNull);
-      expect(first.sessionId, isNot(second.sessionId),
-          reason: 'legacy shape: fresh routing id per call');
+      expect(
+        first.sessionId,
+        isNot(second.sessionId),
+        reason: 'legacy shape: fresh routing id per call',
+      );
     });
   });
 
@@ -123,8 +135,11 @@ void main() {
       final zero = now.deltaFrom(now);
       expect(zero.calls, 0);
       expect(zero.costUsd, 0);
-      expect(zero.cacheHitRatio, isNull,
-          reason: 'no input tokens — no ratio to report');
+      expect(
+        zero.cacheHitRatio,
+        isNull,
+        reason: 'no input tokens — no ratio to report',
+      );
     });
 
     test('cacheHitRatio divides cache reads by all input tokens', () {

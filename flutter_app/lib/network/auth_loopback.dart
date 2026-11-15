@@ -16,3 +16,6 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiver() =>
 
 /// Opens the provider authorization URL in the system browser.
 Future<void> openAuthUrl(Uri authUrl) => openAuthUrlImpl(authUrl);
+
+/// Reads the process-launch deep link on iOS/Android; null elsewhere.
+Future<Uri?> getOAuthInitialLink() => getOAuthInitialLinkImpl();

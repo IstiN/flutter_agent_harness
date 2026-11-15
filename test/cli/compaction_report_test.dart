@@ -282,7 +282,7 @@ void main() {
       expect(
         formatCompactionReport(pass, auto: false).single,
         'compacted · main=test-provider/test-model: '
-            '8451 → 8481 tokens (0 freed · 0%)',
+        '8451 → 8481 tokens (0 freed · 0%)',
       );
     });
 
@@ -298,8 +298,10 @@ void main() {
         usage: metered,
       );
       final lines = formatCompactionReport(pass, auto: true, details: true);
-      expect(lines[2],
-          'llm: 2 calls · 18.2s · \$0.0412 · cache 87% (45k/51.7k tok)');
+      expect(
+        lines[2],
+        'llm: 2 calls · 18.2s · \$0.0412 · cache 87% (45k/51.7k tok)',
+      );
     });
 
     test('zero-cost usage keeps the llm line without a cost part', () {

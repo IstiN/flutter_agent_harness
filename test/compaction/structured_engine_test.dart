@@ -177,10 +177,9 @@ void main() {
         judgeCalls++;
         // The two tool-call carrier lines of the ledger — two independent
         // pair groups in ONE answer (a multi-group pick).
-        final carriers = RegExp(r'\[(\d+)\] assistant-TOOLCALL')
-            .allMatches(ledger)
-            .map((m) => m.group(1)!)
-            .toList();
+        final carriers = RegExp(
+          r'\[(\d+)\] assistant-TOOLCALL',
+        ).allMatches(ledger).map((m) => m.group(1)!).toList();
         expect(carriers, hasLength(2), reason: 'the fixture has two pairs');
         return '[${carriers.join(', ')}]';
       },
@@ -196,8 +195,11 @@ void main() {
     // append — the request prefix is rewritten once per pass, not once per
     // group.
     expect(hiddenRanges, hasLength(1));
-    expect(hiddenRanges.single.recordIds, hasLength(4),
-        reason: 'both pair groups (carrier + result each) ride one append');
+    expect(
+      hiddenRanges.single.recordIds,
+      hasLength(4),
+      reason: 'both pair groups (carrier + result each) ride one append',
+    );
     expect(judgeCalls, 1);
   });
 
@@ -246,7 +248,8 @@ void main() {
         state: state,
         window: 8000,
         settings: _settings,
-        judge: (ledger, [token]) async => '[]', // Judge declines: straight to pass 2.
+        judge: (ledger, [token]) async =>
+            '[]', // Judge declines: straight to pass 2.
         summarize: (request) async {
           prompts.add(request.prompt);
           return SummarizationResult.success(
@@ -326,7 +329,8 @@ void main() {
       expect(
         prints,
         isEmpty,
-        reason: 'a stray print here interleaves into the live TUI glass '
+        reason:
+            'a stray print here interleaves into the live TUI glass '
             'and corrupts mid-run chrome (gh-1469)',
       );
     },
@@ -342,7 +346,8 @@ void main() {
       settings: _settings,
       summarize: (request) async => SummarizationResult.failure('boom'),
       checkpointPrompt: 'P',
-      judge: (ledger, [token]) async => '[]', // Judge declines: straight to pass 2.
+      judge: (ledger, [token]) async =>
+          '[]', // Judge declines: straight to pass 2.
     );
     final ok = await compactor.run();
 
@@ -403,191 +408,194 @@ void main() {
   });
 
   group('gh-2097 run-start re-anchor', () {
-    test(
-      'a run re-anchors on the session projection before the trigger '
-      'math (in-memory tail cut — the incident shape)',
-      () async {
-        final (session, state) = await overWindowSession();
-        // Writer B: the live in-memory view is a TAIL CUT of the session
-        // file — the incident shape (the live view lacked records the
-        // session holds). The stale basis estimates UNDER the trigger
-        // while the session projection is over it: everything after the
-        // first carrier is missing from memory.
-        final full = await session.buildContextMessages();
-        final cut = full.sublist(0, 2);
-        state.messages = cut;
-        final stale = estimateRequestTokens(
-          cut,
-          systemPrompt: state.systemPrompt,
-          tools: state.tools,
+    test('a run re-anchors on the session projection before the trigger '
+        'math (in-memory tail cut — the incident shape)', () async {
+      final (session, state) = await overWindowSession();
+      // Writer B: the live in-memory view is a TAIL CUT of the session
+      // file — the incident shape (the live view lacked records the
+      // session holds). The stale basis estimates UNDER the trigger
+      // while the session projection is over it: everything after the
+      // first carrier is missing from memory.
+      final full = await session.buildContextMessages();
+      final cut = full.sublist(0, 2);
+      state.messages = cut;
+      final stale = estimateRequestTokens(
+        cut,
+        systemPrompt: state.systemPrompt,
+        tools: state.tools,
+      );
+      final fresh = estimateRequestTokens(
+        full,
+        systemPrompt: state.systemPrompt,
+        tools: state.tools,
+      );
+      expect(
+        stale,
+        lessThan(600),
+        reason: 'fixture: stale basis under trigger',
+      );
+      expect(fresh, greaterThan(6000), reason: 'fixture: session over trigger');
+
+      final passes = <StructuredCompactionPass>[];
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        hooks: _CollectingHooks(passes),
+        judge: (ledger, [token]) async => '[]', // declines
+        summarize: (request) async => SummarizationResult.success('S'),
+        checkpointPrompt: 'P',
+      );
+      final ok = await compactor.run();
+
+      // gh-2097 RED: the stale basis gated the whole run off — zero
+      // passes while the session file was genuinely over pressure.
+      expect(ok, isTrue);
+      expect(
+        passes,
+        isNotEmpty,
+        reason:
+            'the run must see the fresh over-pressure basis, '
+            'not the stale in-memory one',
+      );
+      expect(
+        passes.first.tokensBefore,
+        greaterThan(6000),
+        reason: 'pass 1 measured the fresh session basis',
+      );
+      expect(passes.first.tokensBefore, isNot(stale));
+    });
+
+    test('records a second writer appended between runs re-baseline the '
+        'next run (two writers: messages + hidden ranges)', () async {
+      final (session, state) = await overWindowSession();
+      // RUN 1 on a fresh compactor (the production shape — the factory
+      // rebuilds per run over the same state): relieves, state
+      // refreshed.
+      final compactor1 = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        judge: (ledger, [token]) async => '[]',
+        summarize: (request) async => SummarizationResult.success('S'),
+        checkpointPrompt: 'P',
+      );
+      expect(await compactor1.run(), isTrue);
+
+      // WRITER B appends between the runs: its own conversation
+      // records plus a hidden range covering its older turns (its own
+      // compaction) — the session projection grows far past the
+      // trigger while writer A's memory still holds run 1's relieved
+      // view.
+      for (var i = 0; i < 5; i++) {
+        await session.appendMessage(
+          _assistant('writer-b turn $i ${'detail ' * 600}'),
         );
-        final fresh = estimateRequestTokens(
-          full,
-          systemPrompt: state.systemPrompt,
-          tools: state.tools,
-        );
+      }
+      final bEntries = await session.getEntries();
+      final bIds = [
+        for (final r in bEntries)
+          if (r is MessageRecord &&
+              r.message is AssistantMessage &&
+              (r.message as AssistantMessage).content
+                  .whereType<TextContent>()
+                  .any((b) => b.text.startsWith('writer-b turn 0 ')))
+            r.id,
+      ];
+      await session.appendHiddenRange(recordIds: bIds);
+
+      final fresh2 = estimateRequestTokens(
+        await session.buildContextMessages(),
+        systemPrompt: state.systemPrompt,
+        tools: state.tools,
+      );
+      expect(
+        fresh2,
+        greaterThan(6000),
+        reason: 'fixture: writer B pushed the session back over the trigger',
+      );
+
+      // RUN 2 over the SAME state object (writer A never saw B's
+      // records).
+      final passes2 = <StructuredCompactionPass>[];
+      final compactor2 = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        hooks: _CollectingHooks(passes2),
+        judge: (ledger, [token]) async => '[]',
+        summarize: (request) async => SummarizationResult.success('S2'),
+        checkpointPrompt: 'P',
+      );
+      final ok2 = await compactor2.run();
+
+      // gh-2097 RED: run 2 gated off the stale (relieved) basis and
+      // did nothing — the next request would ride an over-window
+      // context.
+      expect(ok2, isTrue);
+      expect(
+        passes2,
+        isNotEmpty,
+        reason: 'run 2 must act on the fresh over-pressure basis',
+      );
+      expect(passes2.first.tokensBefore, greaterThan(6000));
+      // The first pass measured the FRESH projection, not run 1's
+      // relieved stale view — correct over on the first pass.
+      expect(passes2.first.tokensBefore, fresh2);
+    });
+
+    test('a mid-run second-writer append rides out as basisReadTokens '
+        'on the pass receipt (basis flip metadata)', () async {
+      final (session, state) = await overWindowSession();
+      var appended = false;
+      final passes = <StructuredCompactionPass>[];
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        hooks: _CollectingHooks(passes),
+        judge: (ledger, [token]) async => '[]',
+        summarize: (request) async {
+          // Writer B appends DURING the summarizer call — the gap
+          // between the pass's before-measurement and its
+          // post-append refresh. The append outweighs the fold so
+          // the after-count lands above the before-count.
+          if (!appended) {
+            appended = true;
+            await session.appendMessage(
+              UserMessage.text('writer-b mid-run ${'w' * 20000}'),
+            );
+          }
+          return SummarizationResult.success('S');
+        },
+        checkpointPrompt: 'P',
+      );
+      await compactor.run();
+
+      final flips = [
+        for (final p in passes)
+          if ((p.basisReadTokens ?? 0) > 0) p,
+      ];
+      expect(
+        flips,
+        isNotEmpty,
+        reason:
+            'the pass whose re-read landed above its before-count '
+            'must carry the basis flip count',
+      );
+      for (final p in flips) {
         expect(
-          stale,
-          lessThan(600),
-          reason: 'fixture: stale basis under trigger',
+          p.tokensAfter,
+          greaterThan(p.tokensBefore),
+          reason: 'a flip receipt only rides an upward re-read',
         );
-        expect(
-          fresh,
-          greaterThan(6000),
-          reason: 'fixture: session over trigger',
-        );
-
-        final passes = <StructuredCompactionPass>[];
-        final compactor = StructuredCompactor(
-          session: session,
-          state: state,
-          window: 8000,
-          settings: _settings,
-          hooks: _CollectingHooks(passes),
-          judge: (ledger, [token]) async => '[]', // declines
-          summarize: (request) async =>
-              SummarizationResult.success('S'),
-          checkpointPrompt: 'P',
-        );
-        final ok = await compactor.run();
-
-        // gh-2097 RED: the stale basis gated the whole run off — zero
-        // passes while the session file was genuinely over pressure.
-        expect(ok, isTrue);
-        expect(passes, isNotEmpty,
-            reason: 'the run must see the fresh over-pressure basis, '
-                'not the stale in-memory one');
-        expect(passes.first.tokensBefore, greaterThan(6000),
-            reason: 'pass 1 measured the fresh session basis');
-        expect(passes.first.tokensBefore, isNot(stale));
-      },
-    );
-
-    test(
-      'records a second writer appended between runs re-baseline the '
-      'next run (two writers: messages + hidden ranges)',
-      () async {
-        final (session, state) = await overWindowSession();
-        // RUN 1 on a fresh compactor (the production shape — the factory
-        // rebuilds per run over the same state): relieves, state
-        // refreshed.
-        final compactor1 = StructuredCompactor(
-          session: session,
-          state: state,
-          window: 8000,
-          settings: _settings,
-          judge: (ledger, [token]) async => '[]',
-          summarize: (request) async => SummarizationResult.success('S'),
-          checkpointPrompt: 'P',
-        );
-        expect(await compactor1.run(), isTrue);
-
-        // WRITER B appends between the runs: its own conversation
-        // records plus a hidden range covering its older turns (its own
-        // compaction) — the session projection grows far past the
-        // trigger while writer A's memory still holds run 1's relieved
-        // view.
-        for (var i = 0; i < 5; i++) {
-          await session.appendMessage(
-            _assistant('writer-b turn $i ${'detail ' * 600}'),
-          );
-        }
-        final bEntries = await session.getEntries();
-        final bIds = [
-          for (final r in bEntries)
-            if (r is MessageRecord &&
-                r.message is AssistantMessage &&
-                (r.message as AssistantMessage).content
-                    .whereType<TextContent>()
-                    .any((b) => b.text.startsWith('writer-b turn 0 ')))
-              r.id,
-        ];
-        await session.appendHiddenRange(recordIds: bIds);
-
-        final fresh2 = estimateRequestTokens(
-          await session.buildContextMessages(),
-          systemPrompt: state.systemPrompt,
-          tools: state.tools,
-        );
-        expect(
-          fresh2,
-          greaterThan(6000),
-          reason: 'fixture: writer B pushed the session back over the trigger',
-        );
-
-        // RUN 2 over the SAME state object (writer A never saw B's
-        // records).
-        final passes2 = <StructuredCompactionPass>[];
-        final compactor2 = StructuredCompactor(
-          session: session,
-          state: state,
-          window: 8000,
-          settings: _settings,
-          hooks: _CollectingHooks(passes2),
-          judge: (ledger, [token]) async => '[]',
-          summarize: (request) async => SummarizationResult.success('S2'),
-          checkpointPrompt: 'P',
-        );
-        final ok2 = await compactor2.run();
-
-        // gh-2097 RED: run 2 gated off the stale (relieved) basis and
-        // did nothing — the next request would ride an over-window
-        // context.
-        expect(ok2, isTrue);
-        expect(passes2, isNotEmpty,
-            reason: 'run 2 must act on the fresh over-pressure basis');
-        expect(passes2.first.tokensBefore, greaterThan(6000));
-        // The first pass measured the FRESH projection, not run 1's
-        // relieved stale view — correct over on the first pass.
-        expect(passes2.first.tokensBefore, fresh2);
-      },
-    );
-
-    test(
-      'a mid-run second-writer append rides out as basisReadTokens '
-      'on the pass receipt (basis flip metadata)',
-      () async {
-        final (session, state) = await overWindowSession();
-        var appended = false;
-        final passes = <StructuredCompactionPass>[];
-        final compactor = StructuredCompactor(
-          session: session,
-          state: state,
-          window: 8000,
-          settings: _settings,
-          hooks: _CollectingHooks(passes),
-          judge: (ledger, [token]) async => '[]',
-          summarize: (request) async {
-            // Writer B appends DURING the summarizer call — the gap
-            // between the pass's before-measurement and its
-            // post-append refresh. The append outweighs the fold so
-            // the after-count lands above the before-count.
-            if (!appended) {
-              appended = true;
-              await session.appendMessage(
-                UserMessage.text('writer-b mid-run ${'w' * 20000}'),
-              );
-            }
-            return SummarizationResult.success('S');
-          },
-          checkpointPrompt: 'P',
-        );
-        await compactor.run();
-
-        final flips = [
-          for (final p in passes)
-            if ((p.basisReadTokens ?? 0) > 0) p,
-        ];
-        expect(flips, isNotEmpty,
-            reason: 'the pass whose re-read landed above its before-count '
-                'must carry the basis flip count');
-        for (final p in flips) {
-          expect(p.tokensAfter, greaterThan(p.tokensBefore),
-              reason: 'a flip receipt only rides an upward re-read');
-          expect(p.ok, isTrue);
-        }
-      },
-    );
+        expect(p.ok, isTrue);
+      }
+    });
   });
 
   group('classicTransform', () {

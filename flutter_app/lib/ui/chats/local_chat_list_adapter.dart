@@ -85,7 +85,8 @@ final class LocalChatListAdapter implements LocalChatListChangeSource {
   Set<String> _lastLiveIds = const {};
 
   @override
-  Listenable get changes => manager;
+  Listenable get changes =>
+      namesStore == null ? manager : Listenable.merge([manager, namesStore!]);
 
   @override
   Future<List<ChatListEntry>> load() async {

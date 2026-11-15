@@ -69,9 +69,9 @@ const androidReleaseBuildJobs = {
 
 String? pinnedAgpVersion() {
   final text = read(appSettingsGradlePath);
-  final match =
-      RegExp(r'id\("com\.android\.application"\) version "([^"]+)"')
-          .firstMatch(text);
+  final match = RegExp(
+    r'id\("com\.android\.application"\) version "([^"]+)"',
+  ).firstMatch(text);
   return match?.group(1);
 }
 
@@ -96,47 +96,65 @@ String? javaVersionOf(YamlMap step) {
 void main() {
   test('gh-2176: the pinned AGP has a reviewed Gradle JDK entry', () {
     final agp = pinnedAgpVersion();
-    expect(agp, isNotNull,
-        reason: 'cannot resolve the com.android.application pin in '
-            '$appSettingsGradlePath');
+    expect(
+      agp,
+      isNotNull,
+      reason:
+          'cannot resolve the com.android.application pin in '
+          '$appSettingsGradlePath',
+    );
     expect(
       agpVersionToGradleJdk.keys,
       contains(agp),
-      reason: 'AGP $agp is not mapped to a reviewed Gradle JDK — derive the '
+      reason:
+          'AGP $agp is not mapped to a reviewed Gradle JDK — derive the '
           'lint/IntelliJ JDK floor for it and add it to agpVersionToGradleJdk '
           'TOGETHER with the settings.gradle.kts bump (gh-2176 discipline)',
     );
   });
 
-  test('gh-2176 AC1/AC2: android release build jobs pin the AGP-derived JDK',
-      () {
-    final agp = pinnedAgpVersion()!;
-    final expectedJdk = agpVersionToGradleJdk[agp]!;
-    androidReleaseBuildJobs.forEach((workflowPath, jobKeys) {
-      final root = loadYaml(read(workflowPath)) as YamlMap;
-      final jobs = root['jobs'] as YamlMap;
-      for (final jobKey in jobKeys) {
-        final job = jobs[jobKey] as YamlMap?;
-        expect(job, isNotNull,
-            reason: '$workflowPath lost the `$jobKey` job — update '
-                'androidReleaseBuildJobs with the rename');
-        final step = setupJavaStep(job!);
-        expect(step, isNotNull,
-            reason: '$workflowPath:$jobKey builds Android in release but has '
-                'no actions/setup-java step');
-        final version = javaVersionOf(step!);
-        expect(version, expectedJdk,
-            reason: '$workflowPath:$jobKey runs Gradle on JDK $version while '
+  test(
+    'gh-2176 AC1/AC2: android release build jobs pin the AGP-derived JDK',
+    () {
+      final agp = pinnedAgpVersion()!;
+      final expectedJdk = agpVersionToGradleJdk[agp]!;
+      androidReleaseBuildJobs.forEach((workflowPath, jobKeys) {
+        final root = loadYaml(read(workflowPath)) as YamlMap;
+        final jobs = root['jobs'] as YamlMap;
+        for (final jobKey in jobKeys) {
+          final job = jobs[jobKey] as YamlMap?;
+          expect(
+            job,
+            isNotNull,
+            reason:
+                '$workflowPath lost the `$jobKey` job — update '
+                'androidReleaseBuildJobs with the rename',
+          );
+          final step = setupJavaStep(job!);
+          expect(
+            step,
+            isNotNull,
+            reason:
+                '$workflowPath:$jobKey builds Android in release but has '
+                'no actions/setup-java step',
+          );
+          final version = javaVersionOf(step!);
+          expect(
+            version,
+            expectedJdk,
+            reason:
+                '$workflowPath:$jobKey runs Gradle on JDK $version while '
                 'the pinned AGP $agp needs JDK $expectedJdk for its bundled '
                 'lint (gh-2176: JDK 17 reds every Android release build with '
                 "NoSuchMethodError 'java.util.List.removeLast()' in "
-                'lintVitalAnalyzeRelease)');
-      }
-    });
-  });
+                'lintVitalAnalyzeRelease)',
+          );
+        }
+      });
+    },
+  );
 
-  test('gh-2176 AC4: build-mobile.yml runs one JDK across its whole fleet',
-      () {
+  test('gh-2176 AC4: build-mobile.yml runs one JDK across its whole fleet', () {
     final root = loadYaml(read(mobileWorkflowPath)) as YamlMap;
     final jobs = root['jobs'] as YamlMap;
     final versions = <String, List<String>>{};
@@ -146,10 +164,17 @@ void main() {
       final version = javaVersionOf(step);
       versions.putIfAbsent(version ?? '<missing>', () => []).add(jobKey);
     });
-    expect(versions.keys, hasLength(1),
-        reason: 'build-mobile.yml Android jobs run mixed JDKs: $versions — '
-            'the mobile lane must stay on one Gradle JDK (gh-2176)');
-    expect(versions.keys.first, agpVersionToGradleJdk[pinnedAgpVersion()!],
-        reason: 'the fleet JDK must match the AGP-derived pin');
+    expect(
+      versions.keys,
+      hasLength(1),
+      reason:
+          'build-mobile.yml Android jobs run mixed JDKs: $versions — '
+          'the mobile lane must stay on one Gradle JDK (gh-2176)',
+    );
+    expect(
+      versions.keys.first,
+      agpVersionToGradleJdk[pinnedAgpVersion()!],
+      reason: 'the fleet JDK must match the AGP-derived pin',
+    );
   });
 }

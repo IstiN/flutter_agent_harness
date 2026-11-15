@@ -15,10 +15,7 @@ import 'package:flutter_agent_harness/src/compaction/structured/judge.dart'
     show streamFunctionHideJudge;
 import 'package:test/test.dart';
 
-AssistantMessage _assistant(
-  String text, {
-  Usage usage = Usage.zero,
-}) {
+AssistantMessage _assistant(String text, {Usage usage = Usage.zero}) {
   return AssistantMessage(
     content: [TextContent(text: text)],
     api: 'openai-completions',
@@ -67,10 +64,8 @@ final class _ScriptedRun {
           (m) => switch (m) {
             final UserMessage u => switch (u.content) {
               final String text => text,
-              final List<Object> blocks => blocks
-                  .whereType<TextContent>()
-                  .map((b) => b.text)
-                  .join('\n'),
+              final List<Object> blocks =>
+                blocks.whereType<TextContent>().map((b) => b.text).join('\n'),
               _ => '',
             },
             _ => '',
@@ -99,7 +94,10 @@ ToolResultMessage _result(String callId, String text) => ToolResultMessage(
 Future<Session> _buildSession(JsonlSessionRepo repo) async {
   AssistantMessage assistant(String text, {List<ToolCall>? calls}) =>
       AssistantMessage(
-        content: [TextContent(text: text), ...?calls],
+        content: [
+          TextContent(text: text),
+          ...?calls,
+        ],
         api: 'anthropic-messages',
         provider: 'p',
         model: 'm1',
@@ -216,11 +214,17 @@ void main() {
     final metered = hooks.passes
         .where((p) => p.usage != null && p.usage!.calls > 0)
         .toList();
-    expect(metered, isNotEmpty,
-        reason: 'at least the judged hide pass reports usage');
+    expect(
+      metered,
+      isNotEmpty,
+      reason: 'at least the judged hide pass reports usage',
+    );
     for (final pass in metered) {
-      expect(pass.durationMs, isNotNull,
-          reason: 'measured passes carry the one-line duration');
+      expect(
+        pass.durationMs,
+        isNotNull,
+        reason: 'measured passes carry the one-line duration',
+      );
       expect(pass.usage!.calls, greaterThanOrEqualTo(1));
       // Every scripted call reports 900 cache reads — the pass totals fold
       // per call (2 calls → 1800).
@@ -231,8 +235,9 @@ void main() {
     // The cache-affine run: judge AND digest calls share one bucket.
     expect(scripted.routings, hasLength(greaterThanOrEqualTo(2)));
     expect(
-      scripted.routings.every((r) => r!.sessionId == scripted.routings.first!
-          .sessionId),
+      scripted.routings.every(
+        (r) => r!.sessionId == scripted.routings.first!.sessionId,
+      ),
       isTrue,
       reason: 'one routing id per compaction run',
     );
@@ -271,8 +276,11 @@ void main() {
       0,
       (sum, p) => sum + (p.usage?.calls ?? 0),
     );
-    expect(totalCalls, scripted.routings.length,
-        reason: 'every metered call lands in exactly one pass receipt');
+    expect(
+      totalCalls,
+      scripted.routings.length,
+      reason: 'every metered call lands in exactly one pass receipt',
+    );
   });
 
   test('legacy usage-less runs keep the metrics null (byte-compatible '
@@ -304,14 +312,10 @@ void main() {
       expect(pass.usage, isNull);
     }
     // Duration stays measured — it is wall-clock, not provider-reported.
-    expect(
-      hooks.passes.any((p) => p.durationMs != null),
-      isTrue,
-    );
+    expect(hooks.passes.any((p) => p.durationMs != null), isTrue);
   });
 
-  test('the judge adapter forwards usage into the shared run ledger',
-      () async {
+  test('the judge adapter forwards usage into the shared run ledger', () async {
     final ledger = CompactionUsageAccumulator();
     const model = Model(
       id: 'm1',
@@ -322,8 +326,7 @@ void main() {
       maxTokens: 4096,
     );
     final judge = streamFunctionHideJudge(
-      (m, c, {cancelToken}) =>
-          _streamOf(_assistant('[1]', usage: _metered())),
+      (m, c, {cancelToken}) => _streamOf(_assistant('[1]', usage: _metered())),
       model,
       system: 'judge',
       onUsage: ledger.add,

@@ -42,19 +42,18 @@ import 'package:yaml/yaml.dart';
 String read(String path) => File(path).readAsStringSync();
 
 List<YamlMap> stepsOf(String workflowPath, String job) =>
-    (((loadYaml(read(workflowPath))['jobs'] as YamlMap)[job] as YamlMap)
-                ['steps'] as YamlList)
-            .whereType<YamlMap>()
-            .toList();
+    (((loadYaml(read(workflowPath))['jobs'] as YamlMap)[job]
+                as YamlMap)['steps']
+            as YamlList)
+        .whereType<YamlMap>()
+        .toList();
 
 void main() {
   const fastfile = 'flutter_app/fastlane/Fastfile';
   const mobile = '.github/workflows/build-mobile.yml';
 
-  group('AC1 — the archive builds into a workspace-local derived data path',
-      () {
-    test('build_app pins derived_data_path under the workspace build dir',
-        () {
+  group('AC1 — the archive builds into a workspace-local derived data path', () {
+    test('build_app pins derived_data_path under the workspace build dir', () {
       final source = read(fastfile);
       final buildApp = source.indexOf('build_app(');
       expect(buildApp, greaterThan(-1), reason: 'build_app must exist');
@@ -73,8 +72,9 @@ void main() {
             'Runner_const_extract_protocols.json + build.db disk I/O '
             'error). The lane must pin a per-run path.',
       );
-      final ddDecl =
-          RegExp(r'derived_data = File\.expand_path\("\.\./build/ios/[^"]+", __dir__\)');
+      final ddDecl = RegExp(
+        r'derived_data = File\.expand_path\("\.\./build/ios/[^"]+", __dir__\)',
+      );
       expect(
         ddDecl.hasMatch(source),
         isTrue,
@@ -138,14 +138,13 @@ void main() {
   });
 
   group('AC4 — the shared per-user root is isolated, never purged', () {
-    test('the Fastfile never deletes ~/Library/Developer/Xcode/DerivedData',
-        () {
+    test('the Fastfile never deletes ~/Library/Developer/Xcode/DerivedData', () {
       final source = read(fastfile);
       expect(
         RegExp(
-                r'(rm_rf|rm -rf|FileUtils\.remove_dir)[^\n]*~/Library/Developer/Xcode/DerivedData',
-                multiLine: true)
-            .hasMatch(source),
+          r'(rm_rf|rm -rf|FileUtils\.remove_dir)[^\n]*~/Library/Developer/Xcode/DerivedData',
+          multiLine: true,
+        ).hasMatch(source),
         isFalse,
         reason:
             'the shared per-user DerivedData root may hold a LIVE archive '
@@ -156,24 +155,28 @@ void main() {
       );
     });
 
-    test('build-ios has no step that blanket-purges the shared DerivedData',
-        () {
-      final steps = stepsOf(mobile, 'build-ios');
-      final purgers = steps
-          .map((s) => s['run']?.toString() ?? '')
-          .where((script) => RegExp(
-                  r'rm\s+-rf[^|\n;]*~/Library/Developer/Xcode/DerivedData')
-              .hasMatch(script))
-          .toList();
-      expect(
-        purgers,
-        isEmpty,
-        reason:
-            'a workflow-level rm -rf of the shared per-user DerivedData '
-            'root races the sibling registrations\' concurrent archives '
-            '(gh-2026/gh-2125). The fix is workspace-local isolation in '
-            'the lane, not a shared-root purge step.',
-      );
-    });
+    test(
+      'build-ios has no step that blanket-purges the shared DerivedData',
+      () {
+        final steps = stepsOf(mobile, 'build-ios');
+        final purgers = steps
+            .map((s) => s['run']?.toString() ?? '')
+            .where(
+              (script) => RegExp(
+                r'rm\s+-rf[^|\n;]*~/Library/Developer/Xcode/DerivedData',
+              ).hasMatch(script),
+            )
+            .toList();
+        expect(
+          purgers,
+          isEmpty,
+          reason:
+              'a workflow-level rm -rf of the shared per-user DerivedData '
+              'root races the sibling registrations\' concurrent archives '
+              '(gh-2026/gh-2125). The fix is workspace-local isolation in '
+              'the lane, not a shared-root purge step.',
+        );
+      },
+    );
   });
 }

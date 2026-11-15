@@ -363,6 +363,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get wideNavActivity => 'Activity';
 
   @override
+  String get wideNavDevices => 'Devices';
+
+  @override
   String get activityRunning => 'Running';
 
   @override
@@ -2666,6 +2669,13 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get networkDmEncryptedOnAnotherDevice => 'Encrypted on another device';
+
+  @override
+  String get networkDmEarlierEncrypted =>
+      'Earlier messages are encrypted on other devices';
+
+  @override
   String get networkNewChannel => 'New channel';
 
   @override
@@ -2690,6 +2700,59 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkPresenceBusy => 'Busy';
+
+  @override
+  String get networkDevicesTitle => 'My devices';
+
+  @override
+  String get networkDeviceThisDevice => 'This device';
+
+  @override
+  String get networkDeviceConnecting => 'Connecting…';
+
+  @override
+  String get networkDeviceConversationEmpty =>
+      'No messages yet — say hi. The session wakes on your message.';
+
+  @override
+  String get networkDeviceConversationOlder => 'Load older';
+
+  @override
+  String get networkDeviceConversationHint => 'Message…';
+
+  @override
+  String get networkDeviceReconnecting => 'Reconnecting…';
+
+  @override
+  String get networkDeviceNotRunning => 'Connector not running — tap to retry';
+
+  @override
+  String get networkDeviceRenameAction => 'Rename device';
+
+  @override
+  String get networkDeviceRenameTitle => 'Rename device';
+
+  @override
+  String get networkDeviceNameLabel => 'Friendly name';
+
+  @override
+  String get networkDeviceNameClearHint =>
+      'Leave empty to use the default device name.';
+
+  @override
+  String get networkDeviceNameTooLong =>
+      'Device names can be at most 64 characters.';
+
+  @override
+  String networkDeviceRenameError(String error) {
+    return 'Couldn’t rename the device: $error';
+  }
+
+  @override
+  String get noSessionsHint => 'No sessions yet';
+
+  @override
+  String get networkPresenceWakeOnDm => 'Wake on DM';
 
   @override
   String get networkMemberOwner => 'Owner';
