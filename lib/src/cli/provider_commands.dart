@@ -947,7 +947,7 @@ extension on AgentCli {
     );
   }
 
-  /// The plan step (goal/copilot_provider.md GetBaseURL): the three named
+  /// The plan step (docs/goals/copilot_provider.md GetBaseURL): the three named
   /// Copilot hosts, or an explicit base URL for anything new/corporate.
   /// Null = cancelled.
   Future<String?> _copilotAskAccountType() async {

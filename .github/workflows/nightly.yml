@@ -102,16 +102,16 @@ jobs:
           # (~1 s) instead of the JIT VM+CFE compile (~30 s on ARM).
           FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fa
         run: |
-          mkdir -p test-results
+          mkdir -p build/test-results
           # Issue #1696: capture the raw exit code so the classification
           # step below can tell the runner-process SIGABRT class (134)
           # apart from ordinary test failures.
           set +e
           dart test --tags integration --exclude-tags browser-ext \
-            --file-reporter="json:test-results/integration.json"
+            --file-reporter="json:build/test-results/integration.json"
           code=$?
           set -e
-          echo "$code" > test-results/exit-code
+          echo "$code" > build/test-results/exit-code
           exit "$code"
       # Issue #1696: the runner process itself can abort natively (glibc
       # heap detector, exit 134) with a fully green report — the leg goes
@@ -122,8 +122,8 @@ jobs:
         if: failure()
         run: >-
           python3 scripts/classify_native_abort.py
-          test-results/exit-code
-          test-results/integration.json >> "$GITHUB_STEP_SUMMARY"
+          build/test-results/exit-code
+          build/test-results/integration.json >> "$GITHUB_STEP_SUMMARY"
       # Issue #928 review: the file-reporter writes the json even on a RED
       # leg — convert + upload must not be chained into the failing step.
       # The RAW dart json is the machine-parseable form the gate itself
@@ -134,19 +134,19 @@ jobs:
         if: always()
         run: >-
           python3 scripts/junit_from_dart_json.py
-          test-results/integration.json
-          test-results/junit-integration.xml
+          build/test-results/integration.json
+          build/test-results/junit-integration.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: integration-json
-          path: test-results/integration.json
+          path: build/test-results/integration.json
           retention-days: 14
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: junit-integration
-          path: test-results/junit-integration.xml
+          path: build/test-results/junit-integration.xml
           retention-days: 14
 
   # Issue #280 AC3: nightly RELEASE-mode build matrix. The PR legs in
@@ -205,7 +205,7 @@ jobs:
       # golden baselines (issue #1856 leg below) are pixel-sensitive to
       # the engine's text stack, so the nightly renders them on the same
       # SDK they were captured with. Bump this together with a
-      # `flutter test test/golden --update-goldens` regen (eyes on every
+      # `flutter test test/goldens --update-goldens` regen (eyes on every
       # changed PNG).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -378,7 +378,7 @@ jobs:
 
       # Issue #1856 (from #177 E5): the golden suite's guarding leg — the
       # first one since gh-1538 retired the nightly full matrix. The
-      # pinned-font golden env (flutter_app/test/golden/
+      # pinned-font golden env (flutter_app/test/goldens/
       # golden_test_helper.dart) renders every glyph from bundled faces —
       # Inter/JetBrainsMono assets + Noto Sans Symbols 2 / Noto Emoji
       # coverage + the aliased mono stack — so a golden diff is a real
@@ -393,7 +393,7 @@ jobs:
         # TZ=UTC — the golden clock contract (see ci.yml flutter-app-goldens).
         env:
           TZ: UTC
-        run: flutter test test/golden
+        run: flutter test test/goldens
 
       - name: ${{ matrix.cmd }}
         working-directory: flutter_app

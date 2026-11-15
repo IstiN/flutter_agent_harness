@@ -53,7 +53,7 @@ void main() {
             '/fa/sessions/--Users-x-Library-App-dev.fa1.app--/messages'
             '/2026-09-01T23-24-12-542725_01a05ea4-c7fe-7cbe-9e93-1575eed34d59.json\n'
             '/Users/x/git/pkg/lib/src/redact/layer_entropy.dart\n'
-            '/Users/x/git/pkg/flutter_app/test/golden/goldens/settings_hosted.png\n';
+            '/Users/x/git/pkg/flutter_app/test/goldens/goldens/settings_hosted.png\n';
         final out = pipe().redact(listing);
         expect(out, contains('layer_entropy.dart'));
         expect(out, contains('settings_hosted.png'));

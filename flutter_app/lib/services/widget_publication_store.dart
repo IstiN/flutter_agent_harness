@@ -87,7 +87,7 @@ final class WidgetPublicationComment {
 }
 
 /// One widget-publishing submission recorded in the local ledger
-/// (card `goal/widget-publishing-github.md`, issue #35).
+/// (card `docs/goals/widget-publishing-github.md`, issue #35).
 ///
 /// The ledger is the kill-resume memory of the publish flow (edge case E7):
 /// [step] records how far a publish got, so a re-publish after an app kill

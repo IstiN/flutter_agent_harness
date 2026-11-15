@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import '../services/app_state_paths.dart';
 
 /// The top-level app mode of the Fa shell (issue #955): the classic local
 /// agent surface or the fa_network client surface. One app, one sidebar,
@@ -50,7 +51,7 @@ class NetworkModeStore {
     String? networkId;
     String? channelId;
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text != null) {
         final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic> && decoded['version'] == _version) {
@@ -83,7 +84,7 @@ class NetworkModeStore {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({
           'version': _version,
           'mode': _mode.wire,

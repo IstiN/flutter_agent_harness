@@ -1,6 +1,8 @@
 # Project-level fa config — committed on purpose (see .gitignore: only
 # this file and other curated .fah entries are tracked; logs/sessions/
-# bash_jobs stay local). The memory pointer makes the repo's memory/
-# directory the project memory: anyone cloning gets it out of the box.
-memory:
-  projectPath: ./memory
+# bash_jobs stay local). Currently an empty map: gh-2185 consolidated the
+# project memory into the default <projectRoot>/.fah/memory home
+# (local-only; the old `memory: projectPath: ./memory` pointer stopped
+# being tracked). Add project sections here when a repo default is needed
+# (memory:, cube:, tools:, spills: — strict sections, see docs).
+{}

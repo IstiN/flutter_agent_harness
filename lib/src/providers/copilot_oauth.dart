@@ -5,7 +5,7 @@
 ///
 /// Protocol migrated from copilot-proxy-go (internal/auth/github_client.go:
 /// FetchCopilotToken, internal/api/config.go: BuildCopilotHeaders) per
-/// goal/copilot_provider.md. Pure Dart: no `dart:io`.
+/// docs/goals/copilot_provider.md. Pure Dart: no `dart:io`.
 library;
 
 import 'dart:convert';
@@ -17,7 +17,7 @@ import '../types.dart';
 import 'provider_common.dart';
 
 /// Pinned editor identity (the proxy scrapes VS Code versions; we pin one
-/// constant — goal/copilot_provider.md).
+/// constant — docs/goals/copilot_provider.md).
 const _copilotEditorVersion = 'vscode/1.109.3';
 const _copilotPluginVersion = 'copilot-chat/0.37.6';
 const _copilotUserAgent = 'GitHubCopilotChat/0.37.6';
