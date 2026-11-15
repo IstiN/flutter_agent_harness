@@ -479,20 +479,27 @@ class DeviceConnectorService {
   /// Roster snapshots/patches from the server (§4).
   Stream<NetworkEnvelope> get rosterFrames => _rosterFrames.stream;
 
-  /// The current roster run state for [agentAddress] (`name@deviceId`),
-  /// or null when that agent is not published in any current roster frame.
-  /// Drives the DM conversation's 'agent is working' indicator: the owner
-  /// can see the remote agent pick their message up (owner feedback).
-  AgentRunState? agentRunState(String agentAddress) {
+  /// The current roster run state for [agentAddress] (`name@deviceId`)
+  /// in [networkId]'s roster frame, or null when that agent is not
+  /// published there. Drives the DM conversation's 'agent is working'
+  /// indicator: the owner can see the remote agent pick their message
+  /// up (owner feedback). Scoped to the DM channel's network (review
+  /// #2197): the same `name@deviceId` can be published in two networks,
+  /// and a first-match scan over every cached roster reported the
+  /// wrong one.
+  AgentRunState? agentRunState(
+    String agentAddress, {
+    required String networkId,
+  }) {
     final separator = agentAddress.lastIndexOf('@');
     if (separator < 1) return null;
-    final name = agentAddress.substring(0, separator);
-    final deviceId = agentAddress.substring(separator + 1);
-    for (final envelope in _lastRosterByNetwork.values) {
-      final state = _rosterAgentState(envelope.payload, deviceId, name);
-      if (state != null) return state;
-    }
-    return null;
+    final envelope = _lastRosterByNetwork[networkId];
+    if (envelope == null) return null;
+    return _rosterAgentState(
+      envelope.payload,
+      agentAddress.substring(separator + 1),
+      agentAddress.substring(0, separator),
+    );
   }
 
   /// One roster envelope's device list → the named agent's run state.
