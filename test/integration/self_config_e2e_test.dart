@@ -40,22 +40,63 @@ void main() {
 
     final env = LocalExecutionEnv(cwd: project.path);
     final io = FakeCliIO();
-    final fake = FakeStreamFunction([
-      toolTurn([
-        _call('c1', 'config', {
-          'op': 'set',
-          'key': 'memory.projectPath',
-          'value': mem2,
-        }),
-      ]),
-      toolTurn([
-        _call('c2', 'config', {'op': 'check'}),
-      ]),
-      toolTurn([
-        _call('c3', 'memory_add', {'text': 'lives in the new store'}),
-      ]),
-      textTurn('done'),
-    ]);
+    // Content-addressed responder, ONE tool round per turn: after each
+    // tool result the turn is ENDED with a distinctive marker text, so the
+    // next user input always starts a FRESH turn instead of being
+    // delivered as steering — the steering watchdog interrupts in-flight
+    // tools ("interrupting to deliver"), which is exactly what killed the
+    // scripted memory_add mid-run (its result came back "the run was
+    // interrupted before the tool finished" and mem2 stayed absent — CI
+    // run 43712787135; reproduced 0/6 locally on this head AND on
+    // origin/main, a pre-existing test-determinism gap, not a wrap
+    // regression). The continuation call after a tool is detected by the
+    // last context message being that tool's result; a fresh user turn is
+    // served with the next needed call by the tool results seen so far —
+    // a steering rebuild re-asks for the same step and gets the same
+    // answer, so the responder converges under any call pattern.
+    AssistantMessageEventStream respondByState(
+      Model model,
+      Context context, {
+      CancelToken? cancelToken,
+    }) {
+      final results = context.messages
+          .whereType<ToolResultMessage>()
+          .map((m) => m.toolCallId)
+          .toSet();
+      final last = context.messages.last;
+      final List<AssistantMessageEvent> events;
+      if (last is ToolResultMessage) {
+        events = textTurn(
+          last.toolCallId == 'c1'
+              ? 'SET-DONE'
+              : last.toolCallId == 'c2'
+              ? 'CHECK-DONE'
+              : 'ADD-DONE',
+        );
+      } else if (!results.contains('c1')) {
+        events = toolTurn([
+          _call('c1', 'config', {
+            'op': 'set',
+            'key': 'memory.projectPath',
+            'value': mem2,
+          }),
+        ]);
+      } else if (!results.contains('c2')) {
+        events = toolTurn([
+          _call('c2', 'config', {'op': 'check'}),
+        ]);
+      } else {
+        events = toolTurn([
+          _call('c3', 'memory_add', {'text': 'lives in the new store'}),
+        ]);
+      }
+      final stream = AssistantMessageEventStream();
+      for (final AssistantMessageEvent event in events) {
+        stream.push(event);
+      }
+      return stream;
+    }
+
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -66,14 +107,17 @@ void main() {
         providerKind: 'openai-completions',
       ),
       io: io,
-      streamFunction: fake.call,
+      streamFunction: respondByState,
     );
     final run = cli.run();
     await waitForIt(() => io.out.toString().contains('fa>'));
 
     // Turn 1: the set lands in the project config file.
     io.sendLine('go');
-    await waitForIt(() => fake.calls >= 2, reason: 'config set turn to finish');
+    await waitForIt(
+      () => io.out.toString().contains('SET-DONE'),
+      reason: 'config set turn to finish',
+    );
     final projectConfig = File('${project.path}/.fah/config.yaml');
     expect(projectConfig.existsSync(), isTrue);
     // The REAL consumer parses the file the agent wrote.
@@ -83,18 +127,19 @@ void main() {
 
     // Turn 2: the agent's mandatory check runs clean.
     io.sendLine('check');
-    await waitForIt(() => fake.calls >= 3, reason: 'check turn to finish');
+    await waitForIt(
+      () => io.out.toString().contains('CHECK-DONE'),
+      reason: 'check turn to finish',
+    );
     final report = await ConfigService(env: env, homeDir: home.path).check();
     expect(report.ok, isTrue, reason: '${report.errors}');
 
     // Turn 3: the SAME session's memory controller writes to the new store
     // — no restart.
     io.sendLine('remember');
-    await waitForIt(() => fake.calls >= 4, reason: 'memory_add turn to finish');
     final newStore = Directory(mem2);
-    expect(
-      newStore.existsSync(),
-      isTrue,
+    await waitForIt(
+      () => newStore.existsSync(),
       reason: 'the live re-read swapped the store to the new path',
     );
     await waitForIt(
