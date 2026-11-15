@@ -364,7 +364,8 @@ class MessengerBottomNavigation extends StatelessWidget {
   static const double maxWidth = 280;
   static const double expandedMaxWidth = 448;
   static const double horizontalMargin = 12;
-  static const double bottomGap = 8;
+  // Owner call: the dock rides ~20% closer to the screen's bottom edge.
+  static const double bottomGap = 6.4;
 
   final List<Widget> children;
   final int selectedIndex;

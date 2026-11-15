@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
@@ -1154,6 +1155,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Widget _buildNarrowHeader(FahColors colors) {
+    final compact =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+        FaWindowClass.small;
+    // Owner feedback: the phone Apps chrome (search row + text tabs) ate
+    // the list's scroll area. Search and the Widget Catalog live in the
+    // header as icon actions — the same layout the messages header uses.
     return MessengerFloatingPageHeader(
       key: const ValueKey('appsOverviewHeader'),
       title: context.l10n.appsGridTitle,
@@ -1161,6 +1168,46 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       icon: Icons.apps_rounded,
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
+      actions: [
+        if (compact && !_narrowSearchShown)
+          FaIconActionButton(
+            buttonKey: const ValueKey('appsNarrowSearchReveal'),
+            onPressed: _onSearchReveal,
+            tooltip: context.l10n.launcherSearchHint,
+            diameter: 32,
+            glyphSize: 21,
+            glass: false,
+            child: const FaIcon(FaSemanticIcon.search),
+          ),
+        FaIconActionButton(
+          buttonKey: const ValueKey('appsHeaderCatalog'),
+          onPressed: () => _selectLauncherTab(
+            _tab == _LauncherTab.getWidgets
+                ? _LauncherTab.widgets
+                : _LauncherTab.getWidgets,
+          ),
+          tooltip: context.l10n.appsWidgetCatalog,
+          diameter: 32,
+          glyphSize: 20,
+          glass: false,
+          child: FaIcon(
+            _tab == _LauncherTab.getWidgets
+                ? FaSemanticIcon.apps
+                : FaSemanticIcon.download,
+            size: 20,
+          ),
+        ),
+        if (_unpackedPicker != null)
+          FaIconActionButton(
+            buttonKey: const ValueKey('appsHeaderLoadUnpacked'),
+            onPressed: () => unawaited(_loadUnpacked()),
+            tooltip: context.l10n.launcherLoadUnpacked,
+            diameter: 32,
+            glyphSize: 20,
+            glass: false,
+            child: const FaIcon(FaSemanticIcon.folder, size: 20),
+          ),
+      ],
     );
   }
 
@@ -1226,6 +1273,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
+  /// The inline search field's visibility (non-compact hosts always show
+  /// it; compact shows it after the header search-icon reveal). Extracted
+  /// from [_buildGridArea] for the CRAP 12 ratchet.
+  bool _showsInlineSearch(BuildContext context) =>
+      !widget.fullScreen &&
+      (_narrowSearchShown ||
+          faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
+              FaWindowClass.small);
+
   Widget _buildGridArea(FahColors colors) {
     final error = _error;
     if (error != null) {
@@ -1239,7 +1295,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
-        if (!widget.fullScreen)
+        if (_showsInlineSearch(context))
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: _buildNarrowSearch(),
@@ -1248,8 +1304,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             _tab == _LauncherTab.widgets &&
             _searchController.text.trim().isEmpty)
           _buildFeaturedApps(colors),
-        // Desktop and phone keep their own tab chrome and geometry.
-        _buildLauncherTabs(),
+        // Desktop keeps its tab chrome; the phone's catalog moved into
+        // the header actions (owner feedback: reclaim the scroll area).
+        if (widget.fullScreen) _buildLauncherTabs(),
         if (widget.fullScreen)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1280,7 +1337,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       header: widget.fullScreen
           ? _buildOverviewHeader(colors)
           : _buildNarrowHeader(colors),
-      body: content,
+      body: !widget.fullScreen && _tab == _LauncherTab.widgets
+          // The reserved Widget-Catalog icon in the apps list itself
+          // (owner feedback): floating, so it costs no fixed chrome.
+          ? _NarrowAppsBody(
+              content: content,
+              onOpenCatalog: () => _selectLauncherTab(_LauncherTab.getWidgets),
+            )
+          : content,
     );
   }
 
@@ -2375,6 +2439,52 @@ final class _OverviewChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The narrow My Apps body: the grid content plus the reserved floating
+/// Widget-Catalog icon. Its own widget so [_AppLauncherScreenState
+/// ._buildGridArea] keeps its complexity under the CRAP 12 ratchet.
+class _NarrowAppsBody extends StatelessWidget {
+  const _NarrowAppsBody({required this.content, required this.onOpenCatalog});
+
+  final Widget content;
+  final VoidCallback onOpenCatalog;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Stack(
+      children: [
+        content,
+        Positioned(
+          right: 16,
+          // Clear the shell's floating dock even when the nested Apps
+          // navigator zeroes the ambient bottom padding.
+          bottom:
+              16 +
+              math.max(
+                MediaQuery.paddingOf(context).bottom,
+                MessengerFloatingDockInsets.minInflatedBottom,
+              ),
+          child: FaSurface(
+            key: const ValueKey('appsCatalogFab'),
+            circular: true,
+            borderRadius: BorderRadius.circular(24),
+            color: colors.panelAlt,
+            onTap: onOpenCatalog,
+            child: SizedBox.square(
+              dimension: 44,
+              child: FaIcon(
+                FaSemanticIcon.download,
+                size: 20,
+                color: colors.teal,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

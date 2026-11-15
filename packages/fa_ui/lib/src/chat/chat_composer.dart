@@ -1323,12 +1323,16 @@ class ChatComposerState extends State<ChatComposer>
   Widget _buildFieldRow() {
     final palette = fahChatColorsOf(context);
     final strings = FaChatStrings.of(context);
+    // With no leading control at all (attachments disabled, no host
+    // leadingBuilder) the 2pt icon-hugging inset would put the caret
+    // almost on the capsule rim — give the bare field real leading air.
+    final hasLeading = widget.leadingBuilder != null || _showAttach;
     return Padding(
       key: const ValueKey('faChatComposerFieldRow'),
       // Attachment hugs the leading edge; Send keeps two extra points of
       // trailing optical air so its arrow never crowds the capsule rim.
       // The text decorator owns the icon-to-text gap.
-      padding: const EdgeInsets.fromLTRB(2, 2, 4, 2),
+      padding: EdgeInsets.fromLTRB(hasLeading ? 2 : 12, 2, 4, 2),
       child: Row(
         children: [
           if (widget.leadingBuilder != null)

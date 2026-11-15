@@ -36,7 +36,8 @@ import 'package:fa/ui/widgets/messenger_section_header.dart'
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
-import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -178,7 +179,11 @@ void main() {
     tester,
   ) async {
     final conversations = <ChatListEntry>[
-      _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 21, 15, 4)),
+      _conversation(
+        'design-session',
+        'Fa 2.0 redesign',
+        DateTime.utc(2020, 1, 21, 15, 4),
+      ),
       for (var index = 0; index < 11; index++)
         _conversation(
           'phone-$index',
@@ -188,7 +193,11 @@ void main() {
     ];
     await _pumpNarrowShell(tester, conversations: conversations);
     final dock = _dockRect(tester);
-    expect(dock.top, 746, reason: '34pt home indicator + 8pt gap + 56pt pill');
+    expect(
+      dock.top,
+      closeTo(754 - MessengerBottomNavigation.bottomGap, .001),
+      reason: '34pt home indicator + bottomGap + 56pt pill',
+    );
 
     // Scroll the conversation list to its very end: the tail rows must
     // land ABOVE the dock instead of being cut behind the pill.
@@ -213,14 +222,20 @@ void main() {
     tester,
   ) async {
     final conversations = <ChatListEntry>[
-      _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 2, 15, 4)),
+      _conversation(
+        'design-session',
+        'Fa 2.0 redesign',
+        DateTime.utc(2020, 1, 2, 15, 4),
+      ),
     ];
     await _pumpNarrowShell(
       tester,
       conversations: conversations,
       activitySessions: 12,
     );
-    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-activity')));
+    await tester.tap(
+      find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+    );
     await tester.pumpAndSettle();
     final dock = _dockRect(tester);
 
@@ -252,7 +267,11 @@ void main() {
     // resolved inside SettingsCategoryPanel.build, where the shell context
     // actually lives, and the route list must clear the gesture area.
     final conversations = <ChatListEntry>[
-      _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 2, 15, 4)),
+      _conversation(
+        'design-session',
+        'Fa 2.0 redesign',
+        DateTime.utc(2020, 1, 2, 15, 4),
+      ),
     ];
     await _pumpNarrowShell(tester, conversations: conversations);
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-more')));
@@ -269,9 +288,7 @@ void main() {
     expect(find.byType(SettingsCategoryPanel), findsOneWidget);
 
     // The category list tail ('Others') stays above the 34pt gesture area.
-    final lastCategory = find.byKey(
-      const ValueKey('settingsCategory-others'),
-    );
+    final lastCategory = find.byKey(const ValueKey('settingsCategory-others'));
     expect(lastCategory, findsOneWidget);
     expect(
       tester.getRect(lastCategory).bottom,
@@ -284,7 +301,11 @@ void main() {
 
   testWidgets('iOS keyboard lifts the chat composer above it', (tester) async {
     final conversations = <ChatListEntry>[
-      _conversation('design-session', 'Fa 2.0 redesign', DateTime.utc(2020, 1, 2, 15, 4)),
+      _conversation(
+        'design-session',
+        'Fa 2.0 redesign',
+        DateTime.utc(2020, 1, 2, 15, 4),
+      ),
     ];
     await _pumpNarrowShell(tester, conversations: conversations);
     await tester.tap(find.text('Fa 2.0 redesign').hitTestable());
@@ -304,7 +325,10 @@ void main() {
       lessThanOrEqualTo(goldenSizePhone.height - 36),
       reason: 'the composer must sit fully above the keyboard',
     );
-    await expectGolden(tester, 'narrow_layout_shell_ios_bottom_chat_keyboard_open');
+    await expectGolden(
+      tester,
+      'narrow_layout_shell_ios_bottom_chat_keyboard_open',
+    );
 
     // The tap-to-dismiss contract: a pointer-down on the message area
     // drops the composer focus (the platform hides the keyboard), and the

@@ -153,16 +153,29 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
           listenable: _chatController,
           builder: (context, _) {
             final destinations = _railDestinations();
-            const primaryKeys = <String>{
+            // Devices takes Activity's primary slot (owner call): the
+            // remote-machines surface is the daily driver, Activity stays
+            // one tap away in the More sheet. Guests have no Devices
+            // destination (signed-in only), so Activity keeps their slot.
+            final hasDevices = destinations.any(
+              (destination) =>
+                  destination.rowKey ==
+                  const ValueKey('messengerPrimaryNav-devices'),
+            );
+            final primaryKeys = <String>{
               'chatFilter-all',
               'messengerPrimaryNav-local',
               'messengerPrimaryNav-network',
-              'messengerPrimaryNav-activity',
+              if (hasDevices)
+                'messengerPrimaryNav-devices'
+              else
+                'messengerPrimaryNav-activity',
               'messengerPrimaryNav-apps',
             };
-            const overflowOrder = <String>[
+            final overflowOrder = <String>[
               'chatFilter-channels',
               'chatFilter-unread',
+              if (hasDevices) 'messengerPrimaryNav-activity',
               'messengerPrimaryNav-settings',
             ];
             final screenWidth = MediaQuery.sizeOf(context).width;

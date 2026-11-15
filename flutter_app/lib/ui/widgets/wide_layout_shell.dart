@@ -184,7 +184,11 @@ DeviceChatSessionSource createDeviceChatSessionSource(
     if (!chatList.localLoadedOnce) return sessions;
     // The publisher must not resurrect the Local panel's hidden, unpersisted
     // live placeholders. The controller is the canonical visible corpus.
+    // Subagent sessions are NEVER exposed as DM targets (owner feedback on
+    // PR #2190): they ride their parent chat, mirroring
+    // groupLocalSessionFolders' isSubagent skip.
     final visibleIds = chatList.localEntries
+        .where((entry) => !entry.isSubagent)
         .map((entry) => entry.id.value)
         .toSet();
     return [
@@ -196,14 +200,16 @@ DeviceChatSessionSource createDeviceChatSessionSource(
       ? null
       : () async => [
           for (final entry in chatList.localEntries)
-            (
-              id: entry.id.value,
-              title: entry.title == entry.id.value || entry.title.trim().isEmpty
-                  ? deviceSessionPreviewTitle(entry.preview)
-                  : entry.title,
-              path: entry.folderPath,
-              lastActivity: entry.lastActivity ?? entry.createdAt,
-            ),
+            if (!entry.isSubagent)
+              (
+                id: entry.id.value,
+                title:
+                    entry.title == entry.id.value || entry.title.trim().isEmpty
+                    ? deviceSessionPreviewTitle(entry.preview)
+                    : entry.title,
+                path: entry.folderPath,
+                lastActivity: entry.lastActivity ?? entry.createdAt,
+              ),
         ],
   activityLoader: () async => [
     for (final session in manager.sessions)
@@ -283,15 +289,25 @@ Future<List<DeviceChatSession>> _loadDeviceChatSessions(
   FlutterSessionManager manager,
 ) async {
   final persisted = await manager.listPersistedSessions();
+  // Subagent transcripts are internal machinery (the Local panel hides
+  // them too) — they must never become remote DM targets: the owner
+  // address routes to the TOP-LEVEL session, so a published subagent row
+  // would DM the wrong conversation (owner feedback).
+  final subagentIds = <String>{
+    for (final metadata in persisted)
+      if (isSubagentSession(metadata)) metadata.id,
+  };
   // Persisted-but-closed chats are first-class roster rows. The service
-  // chunks large patches, so there is no live-only/recent-50 truncation here.
+  // chunks large patches, so there is no live-only/recent-50 truncation.
   final sessions = <String, DeviceChatSession>{
     for (final metadata in persisted)
-      metadata.id: (id: metadata.id, live: false),
+      if (!subagentIds.contains(metadata.id))
+        metadata.id: (id: metadata.id, live: false),
   };
   // Include a just-created live row even if its first disk listing has not
   // landed yet; loaded sessions always override their persisted offline row.
   for (final session in manager.sessions) {
+    if (subagentIds.contains(session.id)) continue;
     sessions[session.id] = (id: session.id, live: true);
   }
   return sessions.values.toList(growable: false);

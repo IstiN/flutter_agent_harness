@@ -1694,6 +1694,21 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
       await tester.pump();
 
+      // Two project folders → the remote rows collapse into folder groups
+      // (owner feedback: long home-dir histories flood the device pane).
+      expect(
+        find.byKey(
+          const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),
+        ),
+        findsNothing,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('remoteFolderHeader:/work/flutter_agent')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('remoteFolderHeader:')));
+      await tester.pump();
+
       final titled = tester.widget<DeviceSessionCard>(
         find.byKey(
           const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),
@@ -1789,5 +1804,72 @@ void main() {
         expect(find.text('Stable chat'), findsOneWidget);
       }
     });
+  });
+
+  testWidgets('folder hairlines survive repeated toggles (review #2196 r1)', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+      personalNetworkId: 'net-personal',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        devices: const [
+          {
+            'deviceId': 'dev-mac',
+            'name': 'Mac',
+            'presence': 'online',
+            'sessions': [
+              {
+                'id': 'aaa',
+                'state': 'live',
+                'networks': ['net-personal'],
+                'path': '/work/a',
+                'title': 'A',
+              },
+              {
+                'id': 'bbb',
+                'state': 'live',
+                'networks': ['net-personal'],
+                'path': '/work/b',
+                'title': 'B',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+    await tester.pump();
+
+    DeviceSessionCard card(String id) => tester.widget<DeviceSessionCard>(
+      find.byKey(ValueKey('sessionRow:$id')),
+    );
+    Future<void> tapFolder(String path) async {
+      await tester.tap(find.byKey(ValueKey('remoteFolderHeader:$path')));
+      await tester.pump();
+    }
+
+    await tapFolder('/work/a');
+    await tapFolder('/work/b');
+    expect(card('aaa').hairline, isTrue, reason: 'folder B follows');
+    expect(card('bbb').hairline, isFalse, reason: 'last visible row');
+
+    // Two full collapse/re-expand cycles: the pre-fix shared sessionIndex
+    // counter drifted on every section rebuild, dropping hairlines mid-list
+    // and leaving a dangling separator on the last row.
+    for (var cycle = 0; cycle < 2; cycle++) {
+      await tapFolder('/work/a');
+      await tapFolder('/work/b');
+      await tapFolder('/work/a');
+      await tapFolder('/work/b');
+      expect(card('aaa').hairline, isTrue, reason: 'cycle $cycle');
+      expect(card('bbb').hairline, isFalse, reason: 'cycle $cycle');
+    }
   });
 }
