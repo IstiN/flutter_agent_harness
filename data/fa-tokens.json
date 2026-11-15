@@ -2,15 +2,6 @@
   "issue-2026": [
     {
       "leg": "dev",
-      "at": "2026-11-01T06:16:03Z",
-      "prompt": 250541,
-      "completion": 97880,
-      "total": 348421,
-      "cacheRead": 14788608,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "dev",
       "at": "2026-11-01T06:46:05Z",
       "prompt": 60118,
       "completion": 5065,
@@ -3543,15 +3534,6 @@
   "issue-2182": [
     {
       "leg": "dev",
-      "at": "2026-11-14T18:41:38Z",
-      "prompt": 997694,
-      "completion": 4600,
-      "total": 1002294,
-      "cacheRead": 803264,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "dev",
       "at": "2026-11-14T18:46:28Z",
       "prompt": 50691,
       "completion": 4607,
@@ -3899,6 +3881,15 @@
       "completion": 4930,
       "total": 646132,
       "cacheRead": 1239168,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-15T06:20:18Z",
+      "prompt": 57348,
+      "completion": 6321,
+      "total": 63669,
+      "cacheRead": 554368,
       "model": "glm-5.3-flash"
     }
   ],
