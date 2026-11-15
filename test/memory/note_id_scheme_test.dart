@@ -23,8 +23,10 @@ void main() {
   group('gh-1845 recovery-playbook note (n_1012)', () {
     /// The note file is renamed whenever its hash suffix is recomputed,
     /// so resolve it by sequential index rather than full name.
+    /// gh-2185: the project memory store lives under `.fah/memory/`
+    /// (local-only — the root `memory/` dir is gone).
     File findNote() {
-      final files = Directory('memory/note')
+      final files = Directory('.fah/memory/note')
           .listSync()
           .whereType<File>()
           .where((f) => RegExp(r'n_1012_[0-9a-f]{4}\.md$').hasMatch(f.path))

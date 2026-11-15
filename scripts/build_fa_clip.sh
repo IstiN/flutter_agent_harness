@@ -12,8 +12,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$REPO_ROOT/tools/fa-clip/fa-clip.swift"
-OUT="${1:-$REPO_ROOT/tools/fa-clip/fa-clip}"
+SRC="$REPO_ROOT/tool/fa-clip/fa-clip.swift"
+OUT="${1:-$REPO_ROOT/tool/fa-clip/fa-clip}"
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "fa-clip is macOS-only — not building on $(uname -s)" >&2

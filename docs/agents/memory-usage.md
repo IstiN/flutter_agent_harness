@@ -14,7 +14,8 @@ difference between re-deriving a rule and silently violating it:
   top results before acting.
 - `memory_list` to skim recent entries when the topic is fuzzy or the
   user asks "what do you know about X".
-- Project-scope notes under `memory/note/` are **the user's** — read
+- Project-scope notes under `.fah/memory/note/` (local-only since
+  gh-2185) are **the user's** — read
   freely, write only via `memory_add` (which goes through the package's
   policy: durable facts, supersede via delete+add, never leave solved
   problems to rot).

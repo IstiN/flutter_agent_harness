@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'app_state_paths.dart';
 
 /// Whether the first-launch onboarding flow has been shown, persisted as JSON
 /// at `onboarding_seen.json` in the root of the sandbox filesystem
@@ -36,7 +37,7 @@ class OnboardingStore {
   static Future<OnboardingStore> load(ExecutionEnv env) async {
     var seen = false;
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text != null) {
         final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic> && decoded['version'] == _version) {
@@ -61,7 +62,7 @@ class OnboardingStore {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({'version': _version, 'seen': true}),
       );
     } on Object {

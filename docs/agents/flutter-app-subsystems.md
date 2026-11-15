@@ -111,8 +111,8 @@
   live pulse on the in-progress span, and the whole strip hidden when
   the session is untimed.
   Strings: `TrajectoryStrings` en/ru + `TrajectoryStringsScope`. Golden
-  baselines: `test/trajectory/golden/` (regenerate with
-  `flutter test test/trajectory/golden/ --update-goldens`, verify without
+  baselines: `test/trajectory/goldens/` (regenerate with
+  `flutter test test/trajectory/goldens/ --update-goldens`, verify without
   the flag) — `golden_test_setup.dart` loads the real `Inter` and
   `JetBrainsMono` families from `test/assets/fonts/` (test-only copies
   of flutter_app's bundled TTFs; the package itself ships no font
@@ -240,7 +240,7 @@
   key drift, placeholder mismatches, missing keys — opt out per line with
   `// l10n:ignore`, per file with `// l10n:ignore-file` (agent-facing/log
   strings stay literal).
-- `flutter_app/test/golden/` — golden tests (MANDATORY — see docs/agents/golden-tests.md).
+- `flutter_app/test/goldens/` — golden tests (MANDATORY — see docs/agents/golden-tests.md).
 - `flutter_app/test/cli_visual/` — CLI visual integration tests
   (integration-tagged, excluded from the pre-commit `flutter test`): the
   real `dart bin/fah.dart` runs in a PTY (package:pty2) and every step is

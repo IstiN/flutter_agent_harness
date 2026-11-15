@@ -209,6 +209,11 @@ stage_analyze() {
   # here. Same script the ci.yml static job runs (wiring pinned by
   # test/agents_md_size_guard_test.dart).
   bash scripts/check_agents_md_size.sh
+  # gh-2185 AC7: repo-root allow-list — the root carries only first-class
+  # artifacts; stray runtime state / logs / template-named entries fail
+  # here (same script the ci.yml static job runs; wiring pinned by
+  # test/root_allowlist_guard_test.dart).
+  python3 scripts/check_root_allowlist.py
   echo "🔍 Running dart analyze..."
   dart analyze
   if [ "$APP_IN_SCOPE" -eq 1 ] && command -v flutter >/dev/null 2>&1; then
@@ -277,8 +282,8 @@ stage_integration_mock() {
       --exclude-tags llm,browser-ext,perf,pty
     return
   fi
-  local log="test-results/gate-integration-mock.json"
-  mkdir -p test-results
+  local log="build/test-results/gate-integration-mock.json"
+  mkdir -p build/test-results
   local targets="test/integration"
   local attempt=0
   while true; do
@@ -442,7 +447,7 @@ stage_flutter() {
   # in ci.yml (flutter-tests job).
   local conc="${FA_FLUTTER_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
-  if ! (cd flutter_app && flutter test ${conc:+--concurrency=$conc} --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')); then
+  if ! (cd flutter_app && flutter test ${conc:+--concurrency=$conc} --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/goldens/*' ! -path '*/cli_visual/*')); then
     echo "❌ QUALITY GATE FAILED — FLUTTER APP TESTS" >&2
     exit 1
   fi

@@ -1,3 +1,4 @@
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
@@ -43,7 +44,7 @@ void main() {
       'corrupt file loads as the default mode instead of crashing',
       () async {
         final env = MemoryExecutionEnv();
-        await env.writeFile('${env.cwd}/theme.json', 'not json {');
+        await env.writeFile(appStateFilePath(env, ThemeController.fileName), 'not json {');
         final controller = await ThemeController.load(env);
         expect(controller.mode, FahThemeMode.system);
       },
@@ -52,7 +53,7 @@ void main() {
     test('wrong schema version loads as the default mode', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/theme.json',
+        appStateFilePath(env, ThemeController.fileName),
         '{"version": 99, "mode": "light"}',
       );
       final controller = await ThemeController.load(env);
@@ -62,7 +63,7 @@ void main() {
     test('unknown mode string parses as system', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/theme.json',
+        appStateFilePath(env, ThemeController.fileName),
         '{"version": 1, "mode": "solarized"}',
       );
       final controller = await ThemeController.load(env);
@@ -119,7 +120,7 @@ void main() {
         FaVisualDirection.porcelain,
       );
       await env.writeFile(
-        '${env.cwd}/theme.json',
+        appStateFilePath(env, ThemeController.fileName),
         '{"version": 1, "mode": "system", "direction": "unknown"}',
       );
       expect(
@@ -148,7 +149,7 @@ void main() {
         );
 
         await env.writeFile(
-          '${env.cwd}/theme.json',
+          appStateFilePath(env, ThemeController.fileName),
           '{"version": 1, "mode": "system", "font": "unknown"}',
         );
         expect(

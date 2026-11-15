@@ -1,7 +1,7 @@
 // Unit tests for the GitHub Copilot device flow (`/provider copilot`):
 // the device-code request, the polling loop, and the typed errors.
 //
-// Protocol per goal/copilot_provider.md (migrated from copilot-proxy-go
+// Protocol per docs/goals/copilot_provider.md (migrated from copilot-proxy-go
 // internal/auth/device_flow.go) and the Phase-0 live finding: GitHub routes
 // the device endpoints but rejects this app's device flow with
 // 404 {"error":"Not Found"} — surfaced as `endpointDisabled` naming the
