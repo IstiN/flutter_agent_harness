@@ -2,15 +2,6 @@
   "issue-2026": [
     {
       "leg": "dev",
-      "at": "2026-11-01T06:46:05Z",
-      "prompt": 60118,
-      "completion": 5065,
-      "total": 65183,
-      "cacheRead": 945152,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "dev",
       "at": "2026-11-01T07:16:05Z",
       "prompt": 16184,
       "completion": 7092,
@@ -4001,6 +3992,15 @@
       "completion": 124191,
       "total": 6650341,
       "cacheRead": 213017152,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-15T06:49:40Z",
+      "prompt": 127372,
+      "completion": 18062,
+      "total": 145434,
+      "cacheRead": 2657088,
       "model": "glm-5.3-flash"
     }
   ]
