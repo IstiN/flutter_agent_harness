@@ -1694,6 +1694,21 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
       await tester.pump();
 
+      // Two project folders → the remote rows collapse into folder groups
+      // (owner feedback: long home-dir histories flood the device pane).
+      expect(
+        find.byKey(
+          const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),
+        ),
+        findsNothing,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('remoteFolderHeader:/work/flutter_agent')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('remoteFolderHeader:')));
+      await tester.pump();
+
       final titled = tester.widget<DeviceSessionCard>(
         find.byKey(
           const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),

@@ -3451,7 +3451,14 @@ void main() {
             const ValueKey('narrowShellNavigation'),
           );
           final dock = tester.getRect(navigation);
-          expect(dock, const Rect.fromLTRB(12, 780, 378, 836), reason: reason);
+          expect(dock.left, 12, reason: reason);
+          expect(dock.right, 378, reason: reason);
+          expect(
+            dock.bottom,
+            closeTo(844 - MessengerBottomNavigation.bottomGap, .001),
+            reason: reason,
+          );
+          expect(dock.height, 56, reason: reason);
           final surfaceFinder = find.descendant(
             of: navigation,
             matching: find.byType(FaSurface),
@@ -3854,7 +3861,13 @@ void main() {
       final dock = tester.getRect(
         find.byKey(const ValueKey('narrowShellNavigation')),
       );
-      expect(dock, const Rect.fromLTRB(12, 636, 308, 692));
+      expect(dock.left, 12);
+      expect(dock.right, 308);
+      expect(
+        dock.bottom,
+        closeTo(700 - MessengerBottomNavigation.bottomGap, .001),
+      );
+      expect(dock.height, 56);
       final list = tester.widget<ListView>(
         find.byKey(const ValueKey('chatListScroll')),
       );
@@ -3923,7 +3936,11 @@ void main() {
       final fab = find.byKey(const ValueKey('narrowShellNewChat'));
       final fabRect = tester.getRect(fab);
       final content = tester.getRect(find.byType(ChatListPanel));
-      expect(dock.bottom, 802); // 844 - 34 SafeArea - 8 separation.
+      // 844 - 34 SafeArea - bottomGap separation.
+      expect(
+        dock.bottom,
+        closeTo(810 - MessengerBottomNavigation.bottomGap, .001),
+      );
       expect(dock.height, 56);
       expect(
         content.bottom,
@@ -3946,9 +3963,15 @@ void main() {
       // The first frame is already at Chats; there is no entrance animation.
       final initialPill = tester.getRect(pill);
       expect(initialPill.left, closeTo(16, .001));
-      expect(initialPill.top, 784);
+      expect(
+        initialPill.top,
+        closeTo(792 - MessengerBottomNavigation.bottomGap, .001),
+      );
       expect(initialPill.width, closeTo(366 / 6 - 8, .001));
-      expect(initialPill.bottom, 832);
+      expect(
+        initialPill.bottom,
+        closeTo(840 - MessengerBottomNavigation.bottomGap, .001),
+      );
       var animated = tester.widget<AnimatedPositioned>(pill);
       expect(animated.duration, const Duration(milliseconds: 200));
       expect(animated.curve, Curves.easeInOutCubic);

@@ -1465,6 +1465,36 @@ class _DevicePane extends StatelessWidget {
     });
     final sessionCount = device.localSessions.length + remote.length;
     var sessionIndex = 0;
+    // Owner feedback: long remote histories (dozens of home-dir sessions)
+    // flood the device pane. Mirror the Local panel's folder-first logic:
+    // with more than one project folder, remote sessions collapse into
+    // per-folder groups (single-folder devices keep the flat list).
+    final remoteFolders = _groupRemoteFolders(
+      context,
+      remote,
+      device.sessionMetadata,
+    );
+    final groupedRemote = remoteFolders.length > 1;
+    Widget remoteCard(MapEntry<String, ConnectorSessionPresence> entry) =>
+        DeviceSessionCard(
+          key: ValueKey('sessionRow:${entry.key}'),
+          dotKey: ValueKey('sessionDot:${entry.key}'),
+          dotColor: deviceSessionDotColor(colors, entry.value),
+          title: _sessionTitle(
+            entry.key,
+            device.sessionMetadata[entry.key]?.title,
+            path: device.sessionMetadata[entry.key]?.path,
+          ),
+          subtitle: device.sessionMetadata[entry.key]?.path ?? '',
+          timestamp: chatListRelativeTime(
+            context,
+            device.sessionMetadata[entry.key]?.lastActivity,
+          ),
+          showPresenceDot: entry.value == ConnectorSessionPresence.live,
+          hairline: sessionIndex++ < sessionCount - 1,
+          selected: entry.key == selectedRemoteSessionId,
+          onTap: _sessionConversation(entry.key),
+        );
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       children: [
@@ -1501,26 +1531,18 @@ class _DevicePane extends StatelessWidget {
             entry,
             hairline: sessionIndex++ < sessionCount - 1,
           ),
-        for (final entry in remote)
-          DeviceSessionCard(
-            key: ValueKey('sessionRow:${entry.key}'),
-            dotKey: ValueKey('sessionDot:${entry.key}'),
-            dotColor: deviceSessionDotColor(colors, entry.value),
-            title: _sessionTitle(
-              entry.key,
-              device.sessionMetadata[entry.key]?.title,
-              path: device.sessionMetadata[entry.key]?.path,
+        if (!groupedRemote)
+          for (final entry in remote) remoteCard(entry)
+        else
+          for (final folder in remoteFolders)
+            _RemoteSessionFolderSection(
+              key: ValueKey('remoteFolder:${folder.path}'),
+              folder: folder,
+              initiallyExpanded: folder.entries.any(
+                (entry) => entry.key == selectedRemoteSessionId,
+              ),
+              cardBuilder: remoteCard,
             ),
-            subtitle: device.sessionMetadata[entry.key]?.path ?? '',
-            timestamp: chatListRelativeTime(
-              context,
-              device.sessionMetadata[entry.key]?.lastActivity,
-            ),
-            showPresenceDot: entry.value == ConnectorSessionPresence.live,
-            hairline: sessionIndex++ < sessionCount - 1,
-            selected: entry.key == selectedRemoteSessionId,
-            onTap: _sessionConversation(entry.key),
-          ),
       ],
     );
   }
@@ -1722,6 +1744,166 @@ class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
                 )
               : Text(context.l10n.networkRename),
         ),
+      ],
+    );
+  }
+}
+
+/// One remote-session project folder (the Local panel's folder-first
+/// grouping applied to a remote device's exposed sessions).
+final class _RemoteFolder {
+  const _RemoteFolder({
+    required this.path,
+    required this.name,
+    required this.entries,
+    required this.latestActivity,
+  });
+
+  final String path;
+  final String name;
+  final List<MapEntry<String, ConnectorSessionPresence>> entries;
+  final DateTime? latestActivity;
+}
+
+/// Groups the recency-sorted [remote] sessions by their project path
+/// ('' = unknown/Personal). Folders order by latest activity desc; entries
+/// keep their input (recency) order.
+List<_RemoteFolder> _groupRemoteFolders(
+  BuildContext context,
+  List<MapEntry<String, ConnectorSessionPresence>> remote,
+  Map<String, ConnectorSessionMetadata> metadata,
+) {
+  final byPath = <String, List<MapEntry<String, ConnectorSessionPresence>>>{};
+  DateTime? activityOf(String id) => metadata[id]?.lastActivity;
+  for (final entry in remote) {
+    byPath.putIfAbsent(metadata[entry.key]?.path ?? '', () => []).add(entry);
+  }
+  String basename(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized.split('/').where((s) => s.isNotEmpty).toList();
+    return segments.isEmpty ? path : segments.last;
+  }
+
+  final folders = <_RemoteFolder>[
+    for (final entry in byPath.entries)
+      _RemoteFolder(
+        path: entry.key,
+        name: entry.key.isEmpty
+            ? context.l10n.sessionFolderPersonal
+            : basename(entry.key),
+        entries: entry.value,
+        latestActivity: entry.value
+            .map((session) => activityOf(session.key))
+            .whereType<DateTime>()
+            .fold<DateTime?>(
+              null,
+              (latest, activity) => latest == null || activity.isAfter(latest)
+                  ? activity
+                  : latest,
+            ),
+      ),
+  ];
+  folders.sort((left, right) {
+    final a = left.latestActivity;
+    final b = right.latestActivity;
+    if (a == null && b != null) return 1;
+    if (a != null && b == null) return -1;
+    final byActivity = b?.compareTo(a!) ?? 0;
+    return byActivity != 0 ? byActivity : left.name.compareTo(right.name);
+  });
+  return folders;
+}
+
+/// A collapsible remote folder: header (chevron + folder + name + count +
+/// latest activity) with the session cards nested underneath. Collapsed by
+/// default — the owner wants a SHORT device pane; the folder containing the
+/// open DM session starts expanded.
+final class _RemoteSessionFolderSection extends StatefulWidget {
+  const _RemoteSessionFolderSection({
+    super.key,
+    required this.folder,
+    required this.initiallyExpanded,
+    required this.cardBuilder,
+  });
+
+  final _RemoteFolder folder;
+  final bool initiallyExpanded;
+  final Widget Function(MapEntry<String, ConnectorSessionPresence> entry)
+  cardBuilder;
+
+  @override
+  State<_RemoteSessionFolderSection> createState() =>
+      _RemoteSessionFolderSectionState();
+}
+
+final class _RemoteSessionFolderSectionState
+    extends State<_RemoteSessionFolderSection> {
+  late var _expanded = widget.initiallyExpanded;
+
+  @override
+  void didUpdateWidget(covariant _RemoteSessionFolderSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Selecting a session inside a collapsed folder opens it (DM opened
+    // from elsewhere must reveal its card).
+    if (widget.initiallyExpanded && !_expanded) {
+      setState(() => _expanded = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final folder = widget.folder;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          key: ValueKey('remoteFolderHeader:${folder.path}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            child: Row(
+              children: [
+                FaIcon(
+                  _expanded
+                      ? FaSemanticIcon.expandMore
+                      : FaSemanticIcon.chevronRight,
+                  size: 16,
+                  color: colors.dim,
+                ),
+                const SizedBox(width: 4),
+                FaIcon(FaSemanticIcon.folder, size: 15, color: colors.dim),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    folder.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${folder.entries.length}',
+                  style: TextStyle(color: colors.dim, fontSize: 11),
+                ),
+                if (folder.latestActivity != null) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    chatListRelativeTime(context, folder.latestActivity),
+                    style: TextStyle(color: colors.dim, fontSize: 11),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (_expanded)
+          for (final entry in folder.entries) widget.cardBuilder(entry),
       ],
     );
   }

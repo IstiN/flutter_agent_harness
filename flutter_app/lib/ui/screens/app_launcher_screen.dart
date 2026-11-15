@@ -1154,6 +1154,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Widget _buildNarrowHeader(FahColors colors) {
+    final compact =
+        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
+        FaWindowClass.small;
+    // Owner feedback: the phone Apps chrome (search row + text tabs) ate
+    // the list's scroll area. Search and the Widget Catalog live in the
+    // header as icon actions — the same layout the messages header uses.
     return MessengerFloatingPageHeader(
       key: const ValueKey('appsOverviewHeader'),
       title: context.l10n.appsGridTitle,
@@ -1161,6 +1167,46 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       icon: Icons.apps_rounded,
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
+      actions: [
+        if (compact && !_narrowSearchShown)
+          FaIconActionButton(
+            buttonKey: const ValueKey('appsNarrowSearchReveal'),
+            onPressed: _onSearchReveal,
+            tooltip: context.l10n.launcherSearchHint,
+            diameter: 32,
+            glyphSize: 21,
+            glass: false,
+            child: const FaIcon(FaSemanticIcon.search),
+          ),
+        FaIconActionButton(
+          buttonKey: const ValueKey('appsHeaderCatalog'),
+          onPressed: () => _selectLauncherTab(
+            _tab == _LauncherTab.getWidgets
+                ? _LauncherTab.widgets
+                : _LauncherTab.getWidgets,
+          ),
+          tooltip: context.l10n.appsWidgetCatalog,
+          diameter: 32,
+          glyphSize: 20,
+          glass: false,
+          child: Icon(
+            _tab == _LauncherTab.getWidgets
+                ? Icons.apps_rounded
+                : Icons.download_rounded,
+            size: 20,
+          ),
+        ),
+        if (_unpackedPicker != null)
+          FaIconActionButton(
+            buttonKey: const ValueKey('appsHeaderLoadUnpacked'),
+            onPressed: () => unawaited(_loadUnpacked()),
+            tooltip: context.l10n.launcherLoadUnpacked,
+            diameter: 32,
+            glyphSize: 20,
+            glass: false,
+            child: const Icon(Icons.folder_open_outlined, size: 20),
+          ),
+      ],
     );
   }
 
@@ -1239,7 +1285,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
-        if (!widget.fullScreen)
+        if (!widget.fullScreen &&
+            (_narrowSearchShown ||
+                faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
+                    FaWindowClass.small))
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: _buildNarrowSearch(),
@@ -1248,8 +1297,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             _tab == _LauncherTab.widgets &&
             _searchController.text.trim().isEmpty)
           _buildFeaturedApps(colors),
-        // Desktop and phone keep their own tab chrome and geometry.
-        _buildLauncherTabs(),
+        // Desktop keeps its tab chrome; the phone's catalog moved into
+        // the header actions (owner feedback: reclaim the scroll area).
+        if (widget.fullScreen) _buildLauncherTabs(),
         if (widget.fullScreen)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1280,7 +1330,34 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       header: widget.fullScreen
           ? _buildOverviewHeader(colors)
           : _buildNarrowHeader(colors),
-      body: content,
+      body: !widget.fullScreen && _tab == _LauncherTab.widgets
+          // The reserved Widget-Catalog icon in the apps list itself
+          // (owner feedback): floating, so it costs no fixed chrome.
+          ? Stack(
+              children: [
+                content,
+                Positioned(
+                  right: 16,
+                  bottom: 16 + MediaQuery.paddingOf(context).bottom,
+                  child: FaSurface(
+                    key: const ValueKey('appsCatalogFab'),
+                    circular: true,
+                    borderRadius: BorderRadius.circular(24),
+                    color: colors.panelAlt,
+                    onTap: () => _selectLauncherTab(_LauncherTab.getWidgets),
+                    child: SizedBox.square(
+                      dimension: 44,
+                      child: Icon(
+                        Icons.download_rounded,
+                        size: 20,
+                        color: colors.teal,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : content,
     );
   }
 
