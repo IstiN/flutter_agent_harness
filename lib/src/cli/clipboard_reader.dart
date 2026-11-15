@@ -6,7 +6,7 @@
 /// pasteboard instead of touching a real one.
 ///
 /// - macOS: the native `fa-clip` helper (gh-2040, Swift/AppKit source in
-///   `tools/fa-clip/fa-clip.swift`, shipped beside the fa binary) reads the
+///   `tool/fa-clip/fa-clip.swift`, shipped beside the fa binary) reads the
 ///   pasteboard through `NSPasteboard.general.data(forType:)` — a plain
 ///   pasteboard read that sends no Apple Events, so the TCC
 ///   `SystemPolicyAppData` consent class («access data from other apps»)

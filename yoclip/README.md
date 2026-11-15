@@ -6,6 +6,16 @@ voiceover and an original synth music bed. Built with
 folder IS the yoclip project; see `CREATIVE.md` for the treatment and `QA.md`
 for the frame-by-frame quality pass.
 
+**Why this lives in the fa repo (gh-2185):** this is the fa marketing promo
+workspace — the videos advertise the fa agent itself, so the project
+(scenes, project config, creative docs, render tooling) is tracked here as a
+first-class artifact. Its heavy binaries are NOT tracked (gh-2185 AC11): the
+WAV masters and V1 device crops listed in the root `.gitignore` regenerate
+locally via `tools/build_audio.sh` / `build_music_v2.sh` (macOS `say` +
+ffmpeg) and re-cropping from `flutter_app/test/goldens/store`; the small
+mux-time inputs the render pipeline actually loads (m4a audio, GLB models,
+the promo crops in `yoclip.yaml` `external_assets`) stay in git.
+
 ## Outputs (`out/`, gitignored — regenerate with `tools/render_all.sh`)
 
 | File | Resolution | fps | Lang | Target |

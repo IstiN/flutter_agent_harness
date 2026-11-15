@@ -11,6 +11,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -123,7 +124,7 @@ void main() {
       expect(layout.gridColumns, 3);
       Future<String> layoutJson() async =>
           (await env.readTextFile(
-            '${env.cwd}/${LauncherLayoutStore.fileName}',
+            appStateFilePath(env, LauncherLayoutStore.fileName),
           )).valueOrNull ??
           '';
       expect(await layoutJson(), contains('"columns":3'));
@@ -177,7 +178,7 @@ void main() {
       expect(controller.mode, FahThemeMode.dark);
       expect(
         (await env.readTextFile(
-          '${env.cwd}/${ThemeController.fileName}',
+          appStateFilePath(env, ThemeController.fileName),
         )).valueOrNull,
         contains('"dark"'),
       );

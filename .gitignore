@@ -93,6 +93,32 @@ test/integration/screenshots/*.txt
 profile-reports/
 .crap_profile_temp/
 fa-local/
+# gh-2185 AC9: compiled fa-clip helper (swiftc output of
+# scripts/build_fa_clip.sh) — build artifact beside the Swift source.
+tool/fa-clip/fa-clip
+tool/fa-clip/fa-clip.dSYM/
+
+# gh-2185 AC11: yoclip/ (the fa promo-video workspace) keeps its CODE,
+# creative docs and render-bearing assets in git, but the heavy
+# regenerable binaries stay local-only:
+# - WAV masters (music/VO mixes): regenerable on macOS via
+#   yoclip/tools/build_audio.sh + build_music_v2.sh (say + ffmpeg);
+#   the m4a siblings of the same audio stay tracked (small, mux-time
+#   inputs of tools/render_all_v2.sh).
+# - V1 device crops (en_*/ru_*): derived crops of the committed
+#   flutter_app/test/goldens/store screenshots; the V1 scenes that used
+#   them are config-dead (not registered in yoclip.yaml/project.js).
+# - Unreferenced promo masters: the crops referenced by yoclip.yaml
+#   external_assets stay tracked; these uncropped parents do not.
+yoclip/assets/audio/*.wav
+yoclip/assets/voiceover/*.wav
+yoclip/assets/images/en_*.png
+yoclip/assets/images/ru_*.png
+yoclip/assets/images/promo/chat_dark.png
+yoclip/assets/images/promo/providers_dark.png
+yoclip/assets/images/promo/promo_stocks_dark.png
+yoclip/assets/images/promo/promo_fitness_light.png
+yoclip/assets/images/promo/promo_teacher_light.png
 # Runtime agent working directory (bash job logs, transient state).
 # .fah holds local-only junk (logs, sessions, bash_jobs, scratch) — but a
 # curated subset is committed on purpose: the project config, stream
@@ -111,7 +137,22 @@ fa-local/
 !.fah/dap.json
 
 # Rework/verification run logs (transient artifacts — never committed).
-logs/rework-*
+# gh-2185: logs never belong in git at all — the whole dir is local-only
+# (the tracked logs/app.log was purged from the index in the same change).
+/logs/
+
+# gh-2185: app runtime-state JSONs (chat read cursors, launcher layout,
+# network mode, onboarding/pin/pref flags) are written by the app stores
+# under the .fah/state root (flutter_app/lib/services/app_state_paths.dart).
+# The legacy root-level copies below stop being tracked; the class stays
+# ignored so a stale checkout (or an old app build) can never re-track one.
+/chat_read_cursors.json
+/chat_list_pins.json
+/launcher_layout.json
+/network_mode.json
+/onboarding_seen.json
+# /session_ui_prefs.json and /theme.json are covered by the runtime
+# preference rules further down.
 
 # Embedded browser-extension agent: dart2js output (built by
 # scripts/build_browser_ext.sh), plus the local package's tooling dirs.
@@ -153,7 +194,7 @@ browser_ext/vendor/
 __pycache__/
 # dart test --file-reporter outputs (local shard runs)
 test-results/
-packages/fa_ui/test/trajectory/golden/failures/
+packages/fa_ui/test/trajectory/goldens/failures/
 
 # Placeholder google-services.json is COMMITTED (the google-services
 # Gradle plugin hard-fails without it); CI overwrites it from the
@@ -186,10 +227,13 @@ factory-agents/
 # Agent runtime — rebuilt from the tracker every run, never commit
 # (a tracked input/ticket.md collides with the branch-setup stash and
 # bakes conflict markers into agent PRs; see dmtools-agents
-# setup-dark-factory skill). memory/ stays tracked: notes are the
-# source of truth there, only derivatives are ignored (memory/.gitignore).
+# setup-dark-factory skill). gh-2185: memory/ left git too — the project
+# memory store consolidated into .fah/memory (local-only, covered by the
+# .fah/* rules above); the root copy is ignored so the old path can never
+# re-track notes.
 /input/
 /outputs/
+/memory/
 
 # omp REFERENCE screen twins (issue #810): committed capture artifacts the
 # REG parity suite diffs — exempted from the *.txt screenshot ignores above

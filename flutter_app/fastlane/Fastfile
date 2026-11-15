@@ -1094,8 +1094,8 @@ platform :android do
     # The store-listing half of the Android release (issue #289), the
     # supply twin of the iOS/mac `app_store` lanes: the texts live in
     # fastlane/metadata/android/<locale>/ and the images are COMMITTED
-    # GOLDENS rendered by test/golden/store_screenshots_test.dart and
-    # test/golden/play_store_assets_test.dart (sizes enforced by
+    # GOLDENS rendered by test/goldens/store_screenshots_test.dart and
+    # test/goldens/play_store_assets_test.dart (sizes enforced by
     # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
     # upload_only — and never changelogs (Play release notes need a
     # version code and belong to the binary upload).

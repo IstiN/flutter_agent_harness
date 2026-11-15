@@ -30,8 +30,8 @@ analyze` sees single-run coverage and lies. After any green CI run,
 fetch the ranked report instead of gambling locally:
 
 ```bash
-tools/crap_top.sh          # latest artifact, top-40 table
-tools/crap_top.sh 100      # top-100
+tool/crap_top.sh          # latest artifact, top-40 table
+tool/crap_top.sh 100      # top-100
 ```
 
 or download the raw JSON: `gh run download -R IstiN/flutter_agent_harness -n crap_report`.

@@ -6,7 +6,7 @@
 // descent #12): `_showAppMenu` — Open / Publish… / Remove-widget items per
 // bundled flag, the remove confirmation dialog (cancel + confirm), the
 // removal-failure snackbar, and menu dismissal. Harness mirrors
-// test/golden/apps_panel_golden_test.dart (memory env + fake service).
+// test/goldens/apps_panel_golden_test.dart (memory env + fake service).
 
 import 'dart:convert' show jsonDecode, utf8;
 import 'dart:io' as io;

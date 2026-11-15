@@ -38,5 +38,5 @@ contention and stale-context confusion, agents follow this policy:
 - **Communicate with peer agents through the inbox fabric**, not by
   reading or writing their working files. `agent_directory` lists
   siblings; `agent_message` to the relevant mailbox id. Their
-  `memory/note/` files are theirs — leave them alone.
+  `.fah/memory/note/` files are theirs — leave them alone.
 

@@ -625,6 +625,16 @@ jobs:
       - name: AGENTS.md size ceiling guard (gh-2181)
         run: bash scripts/check_agents_md_size.sh
 
+      # gh-2185 AC7: repo-root allow-list guard — the root carries only
+      # first-class artifacts (the KEEP table); stray runtime state, logs
+      # or unexpanded-${...} template-named entries fail the gate.
+      # pre-commit path runs the same script via ci_fast_gate.sh
+      # stage_analyze. Wiring pinned by test/root_allowlist_guard_test.dart.
+      - name: Root allow-list guard (gh-2185)
+        run: |
+          python3 scripts/check_root_allowlist.py --self-test
+          python3 scripts/check_root_allowlist.py
+
       # Issue #1234: the ≤2800-line file guard MOVED into crap4dart's loc
       # gate (crap4dart.yaml, wc -l parity verified by the maintainer
       # recipe in the issue) — enforced whole-tree by the
@@ -969,13 +979,13 @@ jobs:
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_shards.json ${{ matrix.shard }})
           echo "shard targets: $targets"
-          mkdir -p test-results
+          mkdir -p build/test-results
           dart test --coverage=coverage --exclude-tags integration \
-            --file-reporter="json:test-results/dart-shard-${{ matrix.shard }}.json" \
+            --file-reporter="json:build/test-results/dart-shard-${{ matrix.shard }}.json" \
             $targets
           python3 scripts/junit_from_dart_json.py \
-            test-results/dart-shard-${{ matrix.shard }}.json \
-            test-results/junit-shard-${{ matrix.shard }}.xml
+            build/test-results/dart-shard-${{ matrix.shard }}.json \
+            build/test-results/junit-shard-${{ matrix.shard }}.xml
 
       # gh-1033 (review thread 7 + gate wiring): the fa jsr delegate suites
       # are integration-tagged (the PTY leg's CLI coverage ratchet measures
@@ -1032,7 +1042,7 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           name: junit-shard-${{ matrix.shard }}
-          path: test-results/junit-shard-${{ matrix.shard }}.xml
+          path: build/test-results/junit-shard-${{ matrix.shard }}.xml
           retention-days: 7
       - name: Retry junit upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1041,7 +1051,7 @@ jobs:
           && steps.upload_core_junit.outcome == 'failure'
         with:
           name: junit-shard-${{ matrix.shard }}
-          path: test-results/junit-shard-${{ matrix.shard }}.xml
+          path: build/test-results/junit-shard-${{ matrix.shard }}.xml
           retention-days: 7
           overwrite: true
 
@@ -1393,11 +1403,11 @@ jobs:
             echo "shard fully quarantined — nothing to run"
             exit 0
           fi
-          mkdir -p test-results
+          mkdir -p build/test-results
           dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
-            --file-reporter="json:test-results/integration-shard-${{ matrix.shard }}.json" \
+            --file-reporter="json:build/test-results/integration-shard-${{ matrix.shard }}.json" \
             $targets
       # The file-reporter writes the json even on a RED leg — convert +
       # upload must not be chained into the failing step (#928 review):
@@ -1406,8 +1416,8 @@ jobs:
         if: always()
         run: >-
           python3 scripts/junit_from_dart_json.py
-          test-results/integration-shard-${{ matrix.shard }}.json
-          test-results/junit-integration-shard-${{ matrix.shard }}.xml
+          build/test-results/integration-shard-${{ matrix.shard }}.json
+          build/test-results/junit-integration-shard-${{ matrix.shard }}.xml
       # Raw dart json for the #928 duration gate (per-test spans incl. suite
       # paths); junit is the human/rebalancer-facing form of the same data.
       # Upload MUST stay on the current upload-artifact line (gh-995): the
@@ -1431,14 +1441,14 @@ jobs:
         if: always()
         with:
           name: integration-json-shard-${{ matrix.shard }}
-          path: test-results/integration-shard-${{ matrix.shard }}.json
+          path: build/test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
       - name: Retry integration-json upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_json.outcome == 'failure'
         with:
           name: integration-json-shard-${{ matrix.shard }}
-          path: test-results/integration-shard-${{ matrix.shard }}.json
+          path: build/test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
           overwrite: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1446,14 +1456,14 @@ jobs:
         if: always()
         with:
           name: junit-integration-shard-${{ matrix.shard }}
-          path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
+          path: build/test-results/junit-integration-shard-${{ matrix.shard }}.xml
           retention-days: 7
       - name: Retry junit upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_junit.outcome == 'failure'
         with:
           name: junit-integration-shard-${{ matrix.shard }}
-          path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
+          path: build/test-results/junit-integration-shard-${{ matrix.shard }}.xml
           retention-days: 7
           overwrite: true
       # coverage/ is written incrementally — a red leg still formats and
@@ -2136,7 +2146,7 @@ jobs:
         # lines where NR % 2 == i — union == the old single job's list.
         run: |
           cd flutter_app
-          find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*' \
+          find test -name '*_test.dart' ! -path '*/goldens/*' ! -path '*/cli_visual/*' \
             | sort | awk -v i=${{ matrix.shard }} 'NR % 2 == i' > shard-files.txt
           echo "shard files: $(wc -l < shard-files.txt)"
           # --coverage (issue #433): each shard emits lcov for the
@@ -2301,7 +2311,7 @@ jobs:
           EOF
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
       - uses: ./.github/actions/flutter-pub-get
-      - name: flutter test/golden (issue #1856 pinned-font env)
+      - name: flutter test/goldens (issue #1856 pinned-font env)
         working-directory: flutter_app
         shell: bash
         # TZ=UTC: the golden clock contract (golden_test_helper.dart) —
@@ -2310,7 +2320,7 @@ jobs:
         # match or the helper fails loudly.
         env:
           TZ: UTC
-        run: flutter test test/golden
+        run: flutter test test/goldens
       # flutter_test writes the expected/actual/diff triple for every
       # failed comparison into goldens/failures/ — upload them so a
       # hosted-vs-capture drift can be EYEBALLED from the artifacts
@@ -2322,8 +2332,8 @@ jobs:
         with:
           name: golden-failure-diffs
           # flutter_test writes the failure triple relative to the TEST
-          # dir (test/golden/failures/), not the goldens/ dir.
-          path: flutter_app/test/golden/failures/
+          # dir (test/goldens/failures/), not the goldens/ dir.
+          path: flutter_app/test/goldens/failures/
           if-no-files-found: ignore
 
   flutter-app-lock-smoke:
@@ -2677,7 +2687,7 @@ jobs:
           path: flutter_app/crap_report.json
           retention-days: 30
 
-      - name: Pixel and flutter gates over test/golden/goldens (issue 447)
+      - name: Pixel and flutter gates over test/goldens/goldens (issue 447)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         run: cd flutter_app && dart pub global run crap4dart check
 
@@ -2735,13 +2745,13 @@ jobs:
           targets=$(python3 ../../scripts/shard_files.py \
             ../../scripts/faui_test_shards.json ${{ matrix.shard }} --exclude golden)
           echo "shard targets: $targets"
-          mkdir -p test-results
+          mkdir -p build/test-results
           flutter test --exclude-tags integration --coverage \
-            --file-reporter="json:test-results/flutter-shard-${{ matrix.shard }}.json" \
+            --file-reporter="json:build/test-results/flutter-shard-${{ matrix.shard }}.json" \
             $targets
           python3 ../../scripts/junit_from_dart_json.py \
-            test-results/flutter-shard-${{ matrix.shard }}.json \
-            test-results/junit-faui-shard-${{ matrix.shard }}.xml
+            build/test-results/flutter-shard-${{ matrix.shard }}.json \
+            build/test-results/junit-faui-shard-${{ matrix.shard }}.xml
 
       # gh-1724 review follow-up: the faui shard evidence uploads ride the
       # same gh-1412 one-shot retry as the pty/core shards — one transient
@@ -2775,14 +2785,14 @@ jobs:
         id: upload_faui_junit
         with:
           name: junit-faui-shard-${{ matrix.shard }}
-          path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
+          path: packages/fa_ui/build/test-results/junit-faui-shard-${{ matrix.shard }}.xml
           retention-days: 7
       - name: Retry junit upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_faui_junit.outcome == 'failure'
         with:
           name: junit-faui-shard-${{ matrix.shard }}
-          path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
+          path: packages/fa_ui/build/test-results/junit-faui-shard-${{ matrix.shard }}.xml
           retention-days: 7
           overwrite: true
 

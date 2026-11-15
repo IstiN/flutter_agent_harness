@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,7 +215,7 @@ void main() {
     test('corrupt file loads empty (defaults rebuild via syncApps)', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         'not json {{{',
       );
       final store = await LauncherLayoutStore.load(env);
@@ -226,7 +227,7 @@ void main() {
     test('dangling folder reference in order loads as corrupt', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         '{"version":1,"order":["folder:ghost"],"folders":[]}',
       );
       final store = await LauncherLayoutStore.load(env);
@@ -236,7 +237,7 @@ void main() {
     test('wrong schema version loads empty', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         '{"version":99,"order":["app:a"],"folders":[]}',
       );
       final store = await LauncherLayoutStore.load(env);
@@ -246,7 +247,7 @@ void main() {
     test('v1 file migrates: order/folders load, grid knobs default', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         '{"version":1,"order":["app:a","app:b"],'
             '"folders":[{"id":"f1","name":"Pair","tiles":["app:b"]}]}',
       );
@@ -281,7 +282,7 @@ void main() {
     test('grid.columns and tileSizes clamp/ignore garbage on load', () async {
       final env = MemoryExecutionEnv();
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         '{"version":2,"order":[],"folders":[],'
             '"grid":{"columns":99},'
             '"tileSizes":{"a":"9x9","b":"1x0","c":"big","d":42}}',
@@ -326,7 +327,7 @@ void main() {
 
       // An outside writer (the agent) reconfigures the home screen.
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         '{"version":2,"order":["app:notes","app:weather"],'
             '"folders":[],"grid":{"columns":3},'
             '"tileSizes":{"weather":"4x2"}}',
@@ -339,7 +340,7 @@ void main() {
 
       // A corrupt file keeps the current state.
       await env.writeFile(
-        '${env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(env, LauncherLayoutStore.fileName),
         'not json {{{',
       );
       await store.reload();
@@ -349,7 +350,7 @@ void main() {
     group('folder layout equality on reload', () {
       Future<void> writeFolders(ExecutionEnv env, String foldersJson) async {
         await env.writeFile(
-          '${env.cwd}/${LauncherLayoutStore.fileName}',
+          appStateFilePath(env, LauncherLayoutStore.fileName),
           '{"version":2,"order":["folder:f1"],"grid":{"columns":4},'
               '"tileSizes":{},"folders":$foldersJson}',
         );
@@ -430,7 +431,7 @@ void main() {
         // The order points at the new id so the file stays valid (a
         // dangling folder reference would load as corrupt instead).
         await env.writeFile(
-          '${env.cwd}/${LauncherLayoutStore.fileName}',
+          appStateFilePath(env, LauncherLayoutStore.fileName),
           '{"version":2,"order":["folder:f2"],"grid":{"columns":4},'
               '"tileSizes":{},'
               '"folders":[{"id":"f2","name":"Pair","tiles":["app:a","app:b"]}]}',

@@ -8,10 +8,10 @@
 // This gate runs the banned-phrase regex over every TEXT store surface
 // we generate:
 //
-//   * `kStoreCopy` (test/golden/store_marketing_frame.dart) — the five
+//   * `kStoreCopy` (test/goldens/store_marketing_frame.dart) — the five
 //     story frames' headline + subtitle, en + ru, rendered into BOTH the
 //     App Store goldens and the Play listing screenshots;
-//   * `kPlayFeatureTagline` (test/golden/play_feature_graphic.dart) —
+//   * `kPlayFeatureTagline` (test/goldens/play_feature_graphic.dart) —
 //     the Play feature-graphic tagline, en + ru;
 //   * `fastlane/metadata/android/<locale>/{title,short_description,
 //     full_description}.txt` — the Play listing texts.
@@ -32,8 +32,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show LinksConfig, renderAppStoreBlockHtml;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'golden/play_feature_graphic.dart';
-import 'golden/store_marketing_frame.dart';
+import 'goldens/play_feature_graphic.dart';
+import 'goldens/store_marketing_frame.dart';
 
 /// Banned claim words (Play Metadata policy classes: ranking, store
 /// performance, superlatives).

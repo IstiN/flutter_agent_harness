@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -208,9 +209,11 @@ void main() {
         await tester.tap(find.text('Open Fa'));
         await _settleUntil(tester, find.byType(WideLayoutShell));
         expect(onboarding.seen, isTrue);
+        // gh-2185: the onboarding flag persists in the .fah/state root —
+        // the writer never lands the file at the repo root anymore.
         expect(
           (await env.readTextFile(
-            '${env.cwd}/${OnboardingStore.fileName}',
+            appStateFilePath(env, OnboardingStore.fileName),
           )).valueOrNull,
           isNotNull,
         );

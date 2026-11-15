@@ -30,6 +30,10 @@ docs must be listed in this index (pinned by
 
 ## Core runtime & protocols
 
+- [docs/vendor.md](vendor.md) — why `vendor/` (patched forks) and `pubspec_overrides.yaml` exist and stay (gh-2185 AC12)
+- [docs/goals/](goals/) — goal cards (codex_gpt_auth, copilot_provider, widget-publishing-github) moved from the root `goal/` (gh-2185 AC5)
+- [docs/knowledgebase/](knowledgebase/) — dated issue-implementation notes moved from the root `knowledgebase/` (gh-2185 AC5)
+
 - [docs/compaction.md](compaction.md) — compaction policy (AutoCompactor, branch summaries)
 - [docs/memory-churn.md](memory-churn.md) — long-term memory policy: durable facts, supersede, churn pitfalls
 - [docs/dap.md](dap.md) — DAP hub (debug adapters, fa_network bridging caveats §14)
