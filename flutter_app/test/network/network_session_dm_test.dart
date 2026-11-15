@@ -358,6 +358,12 @@ void main() {
         final stored = foreign.channelStates[dmChannel]!.messages;
         expect(stored, hasLength(2));
         expect(stored.map((message) => message.text), [isNull, isNull]);
+        // Multi-device contract (PR review r1): the cross-device echo is
+        // the same ACCOUNT user on another wallet — an own-shaped
+        // placeholder, never projected as an assistant row — while the
+        // undecryptable agent reply stays agent-shaped.
+        expect(stored.map((message) => message.isOwn), [isTrue, isFalse]);
+        expect(stored[1].senderName, 'fa');
 
         final chat = ChannelChatService(
           session: foreign,
