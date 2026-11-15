@@ -936,107 +936,110 @@ void main() {
     expect(entries.whereType<CompactionRecord>(), isNotEmpty);
   });
 
-  test('over-window guard relief recovers the turn deterministically', () async {
-    // The guard refuses to send when a mid-run tool result balloons the
-    // outgoing request past the window. With the two-tier engine (gh-209)
-    // the host relief runs ONLY the deterministic emergency tier — its
-    // trim valve bounds the live context in-memory and the turn retries
-    // immediately: no summarizer call on the relief path, the post-run
-    // quality tier still fires at the turn boundary.
-    const window32k = Model(
-      id: 'test-model',
-      api: 'test-api',
-      provider: 'test-provider',
-      baseUrl: 'https://example.test',
-      contextWindow: 32768,
-      maxTokens: 4096,
-    );
-    final fake = FakeStreamFunction([
-      // 1. Three tool calls whose outputs (~8200 tokens each) balloon the
-      //    next request past the window (3 × 8200 + the ~8.4k system
-      //    prompt/tool-schema overhead > 32768).
-      toolTurn([
-        ToolCall(
-          id: 'c1',
-          name: 'bash',
-          arguments: const {'command': 'cat a.log'},
-        ),
-        ToolCall(
-          id: 'c2',
-          name: 'bash',
-          arguments: const {'command': 'cat b.log'},
-        ),
-        ToolCall(
-          id: 'c3',
-          name: 'bash',
-          arguments: const {'command': 'cat c.log'},
-        ),
-      ]),
-      // 2. Consumed as the retried request after the emergency relief
-      //    trimmed the live context — the turn completes in-run.
-      textTurn('continued after compaction'),
-      // 3. Consumed as the post-run compaction summary (the quality tier
-      //    at the turn boundary — the relief never touched it).
-      textTurn('S'),
-    ]);
-    final shell = FakeShell(stdout: 'x' * 32800);
-    final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final cli = cliFor(
-      fake.call,
-      model: window32k,
-      envOverride: shellEnv,
-      compactionEngine: CompactionEngine.classic,
-    );
-    final run = cli.run();
+  test(
+    'over-window guard relief recovers the turn deterministically',
+    () async {
+      // The guard refuses to send when a mid-run tool result balloons the
+      // outgoing request past the window. With the two-tier engine (gh-209)
+      // the host relief runs ONLY the deterministic emergency tier — its
+      // trim valve bounds the live context in-memory and the turn retries
+      // immediately: no summarizer call on the relief path, the post-run
+      // quality tier still fires at the turn boundary.
+      const window32k = Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 32768,
+        maxTokens: 4096,
+      );
+      final fake = FakeStreamFunction([
+        // 1. Three tool calls whose outputs (~8200 tokens each) balloon the
+        //    next request past the window (3 × 8200 + the ~8.4k system
+        //    prompt/tool-schema overhead > 32768).
+        toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'bash',
+            arguments: const {'command': 'cat a.log'},
+          ),
+          ToolCall(
+            id: 'c2',
+            name: 'bash',
+            arguments: const {'command': 'cat b.log'},
+          ),
+          ToolCall(
+            id: 'c3',
+            name: 'bash',
+            arguments: const {'command': 'cat c.log'},
+          ),
+        ]),
+        // 2. Consumed as the retried request after the emergency relief
+        //    trimmed the live context — the turn completes in-run.
+        textTurn('continued after compaction'),
+        // 3. Consumed as the post-run compaction summary (the quality tier
+        //    at the turn boundary — the relief never touched it).
+        textTurn('S'),
+      ]);
+      final shell = FakeShell(stdout: 'x' * 32800);
+      final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cli = cliFor(
+        fake.call,
+        model: window32k,
+        envOverride: shellEnv,
+        compactionEngine: CompactionEngine.classic,
+      );
+      final run = cli.run();
 
-    io.sendLine('go');
-    await waitForIt(
-      () => fake.calls >= 2 && !cli.isBusy,
-      reason: 'relief-retry completes the turn',
-    );
-    io.sendLine('/exit');
-    await run;
+      io.sendLine('go');
+      await waitForIt(
+        () => fake.calls >= 2 && !cli.isBusy,
+        reason: 'relief-retry completes the turn',
+      );
+      io.sendLine('/exit');
+      await run;
 
-    final output = io.out.toString();
-    // The guard refusal never surfaces at all when the deterministic
-    // relief succeeds inside the guard (gh-209) — no note, no red error
-    // line; the relief's own continuation note is the whole face.
-    expect(output, isNot(contains('Context window exhausted')));
-    expect(output, isNot(contains('error:')));
-    // The relieved turn continues visibly, deterministically.
-    expect(output, contains('[resuming]'));
-    // The relief brought the transcript under the trigger, so the
-    // post-run quality tier has nothing to do at the boundary — no
-    // mid-run summarizer call ever happened (gh-209).
-    expect(output, isNot(contains('● auto-compacted')));
-    // request 1 (tool turn) + the relief retry. The deterministic tier
-    // never calls the summarizer.
-    expect(fake.calls, 2);
-    final repo = JsonlSessionRepo(fs: shellEnv, sessionsRoot: '/sessions');
-    final sessions = await repo.list(cwd: '/work');
-    final session = await repo.open(sessions.first);
-    final entries = await session.getEntries();
-    // Nothing persisted a compaction artifact: the relief's trim is
-    // in-memory only (no CompactionRecord, no HiddenRangeRecord), and
-    // the relief left the transcript under the trigger so the post-run
-    // quality tier had nothing to fold either (gh-209).
-    expect(entries.whereType<CompactionRecord>(), isEmpty);
-    expect(entries.whereType<HiddenRangeRecord>(), isEmpty);
-    final answers = entries
-        .whereType<MessageRecord>()
-        .map((r) => r.message)
-        .whereType<AssistantMessage>()
-        .where((m) => m.stopReason == StopReason.stop)
-        .toList();
-    expect(
-      answers
-          .expand(
-            (m) => m.content.whereType<TextContent>().map((c) => c.text),
-          )
-          .join(),
-      contains('continued after compaction'),
-    );
-  });
+      final output = io.out.toString();
+      // The guard refusal never surfaces at all when the deterministic
+      // relief succeeds inside the guard (gh-209) — no note, no red error
+      // line; the relief's own continuation note is the whole face.
+      expect(output, isNot(contains('Context window exhausted')));
+      expect(output, isNot(contains('error:')));
+      // The relieved turn continues visibly, deterministically.
+      expect(output, contains('[resuming]'));
+      // The relief brought the transcript under the trigger, so the
+      // post-run quality tier has nothing to do at the boundary — no
+      // mid-run summarizer call ever happened (gh-209).
+      expect(output, isNot(contains('● auto-compacted')));
+      // request 1 (tool turn) + the relief retry. The deterministic tier
+      // never calls the summarizer.
+      expect(fake.calls, 2);
+      final repo = JsonlSessionRepo(fs: shellEnv, sessionsRoot: '/sessions');
+      final sessions = await repo.list(cwd: '/work');
+      final session = await repo.open(sessions.first);
+      final entries = await session.getEntries();
+      // Nothing persisted a compaction artifact: the relief's trim is
+      // in-memory only (no CompactionRecord, no HiddenRangeRecord), and
+      // the relief left the transcript under the trigger so the post-run
+      // quality tier had nothing to fold either (gh-209).
+      expect(entries.whereType<CompactionRecord>(), isEmpty);
+      expect(entries.whereType<HiddenRangeRecord>(), isEmpty);
+      final answers = entries
+          .whereType<MessageRecord>()
+          .map((r) => r.message)
+          .whereType<AssistantMessage>()
+          .where((m) => m.stopReason == StopReason.stop)
+          .toList();
+      expect(
+        answers
+            .expand(
+              (m) => m.content.whereType<TextContent>().map((c) => c.text),
+            )
+            .join(),
+        contains('continued after compaction'),
+      );
+    },
+  );
 
   test('/help lists the slash commands', () async {
     final fake = FakeStreamFunction([]);

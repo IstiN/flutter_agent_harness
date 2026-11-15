@@ -2,12 +2,18 @@
 // Use of this source code is governed by a MIT license that can be
 // found in the LICENSE file.
 
+// Legacy popup receiver; its package:web migration is outside this auth fix.
+// ignore_for_file: avoid_web_libraries_in_flutter, deprecated_member_use
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 
 import 'auth_flow.dart';
 import 'oauth_callback_message.dart';
+
+/// Web OAuth callbacks use popup/postMessage, not a native initial link.
+Future<Uri?> getOAuthInitialLinkImpl() async => null;
 
 /// The browser OAuth receiver: the sandbox cannot bind a loopback HTTP
 /// server, so the sign-in runs in a popup window instead. The popup

@@ -236,7 +236,11 @@ void main() {
       final exitCode = await cli.runHeadless('count the words');
       await io.close();
 
-      expect(exitCode, 0, reason: 'the task continued on the compacted context');
+      expect(
+        exitCode,
+        0,
+        reason: 'the task continued on the compacted context',
+      );
       // Tool turn + the funnel's bounded pass + the continuation.
       expect(fake.calls, 3, reason: 'bounded retry: no third LM compaction');
       final output = io.out.toString();
@@ -543,16 +547,13 @@ void main() {
       final output = io.out.toString();
       expect(output, contains('[resuming]'));
       expect(output, contains('nudged continuation fine'));
-      expect(
-        fake.calls,
-        4,
-        reason: 'tool, funnel pass, empty, nudge',
-      );
+      expect(fake.calls, 4, reason: 'tool, funnel pass, empty, nudge');
       // The fourth request is the NUDGE ('continue'), not the original
       // user text — the M2b contract: auto-continued runs get the nudge
       // like any run; the old exclusion stopped at the empty reply and
       // went silent.
-      final nudgePrompt = fake.contexts[3].messages.whereType<UserMessage>()
+      final nudgePrompt = fake.contexts[3].messages
+          .whereType<UserMessage>()
           .last;
       expect(nudgePrompt.content as String, 'continue');
     },

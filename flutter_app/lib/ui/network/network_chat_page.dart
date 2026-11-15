@@ -14,6 +14,8 @@ import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show isDmChannel;
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
@@ -63,14 +65,16 @@ class NetworkChatPage extends StatefulWidget {
 class _NetworkChatPageState extends State<NetworkChatPage> {
   ChannelChatService? _chat;
 
-  /// The (session, channel) pair [_chat] is bound to.
-  (NetworkSession, String)? _chatFor;
+  /// The (session, channel, DM session) triple [_chat] is bound to.
+  (NetworkSession, String, String?)? _chatFor;
+  NetworkSession? _listenedSession;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onSourcesChanged);
     widget.manager.addListener(_onSourcesChanged);
+    _syncSessionSubscription();
     _syncChat();
   }
 
@@ -78,11 +82,21 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   void dispose() {
     widget.controller.removeListener(_onSourcesChanged);
     widget.manager.removeListener(_onSourcesChanged);
+    _listenedSession?.removeListener(_onSourcesChanged);
     _chat?.dispose();
     super.dispose();
   }
 
+  void _syncSessionSubscription() {
+    final session = _session;
+    if (identical(session, _listenedSession)) return;
+    _listenedSession?.removeListener(_onSourcesChanged);
+    _listenedSession = session;
+    session?.addListener(_onSourcesChanged);
+  }
+
   void _onSourcesChanged() {
+    _syncSessionSubscription();
     if (_syncChat() && mounted) setState(() {});
   }
 
@@ -96,15 +110,26 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   bool _syncChat() {
     final session = _session;
     final channelId = widget.controller.channelId;
+    final dmSessionId =
+        session != null && channelId != null && isDmChannel(channelId)
+        ? session.dmSessionTargets[channelId]
+        : null;
     final wanted = (session != null && channelId != null)
-        ? (session, channelId)
+        ? (session, channelId, dmSessionId)
         : null;
     if (wanted == _chatFor) return false;
     _chat?.dispose();
     _chat = null;
     _chatFor = null;
     if (wanted != null) {
-      _chat = ChannelChatService(session: wanted.$1, channelId: wanted.$2);
+      _chat = ChannelChatService(
+        session: wanted.$1,
+        channelId: wanted.$2,
+        dmSessionId: wanted.$3,
+        dmUndecryptablePlaceholder: () =>
+            context.l10n.networkDmEncryptedOnAnotherDevice,
+        dmEncryptedHistoryDivider: () => context.l10n.networkDmEarlierEncrypted,
+      );
       _chatFor = wanted;
       unawaited(wanted.$1.openChannel(wanted.$2));
     }
@@ -112,7 +137,22 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
-    return channelDisplayLabel(channelId, _channel(session, channelId)?.name);
+    final name = _channel(session, channelId)?.name;
+    if (isDmChannel(channelId)) {
+      final sessionTitle = session.dmSessionTitle(channelId)?.trim();
+      if (sessionTitle != null && sessionTitle.isNotEmpty) {
+        return sessionTitle;
+      }
+      // Server/inbox restores may carry the raw virtual id, or an old label
+      // containing the raw device id, as `name`. The DM parser owns the one
+      // sanitizing path used by both the header and composer.
+      final usableName = name?.trim();
+      return dmChannelPeerLabel(
+        channelId,
+        deviceLabel: usableName == channelId ? null : usableName,
+      );
+    }
+    return channelDisplayLabel(channelId, name);
   }
 
   Channel? _channel(NetworkSession session, String channelId) {
@@ -132,7 +172,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
 
   /// A private channel is writable only when this device's wallet holds its
   /// E2E key. Network ownership/membership cannot substitute for that key.
+  /// DM virtual channels are exempt: their transport is fanet1 sealed to
+  /// the identity key, never the per-channel key ring (issue #2062).
   bool _isMissingPrivateKey(NetworkSession session, String channelId) {
+    if (isDmChannel(channelId)) return false;
     final channel = _lastChannel(session, channelId);
     if (channel == null || channel.isPublic) return false;
     return widget.manager.wallet.channelKeysFor(
@@ -263,6 +306,13 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     _ => 2,
   };
 
+  Widget? _dynamicTile(BuildContext context, FaChatMessage message) {
+    if (message.data != ChannelChatService.encryptedHistoryDividerData) {
+      return null;
+    }
+    return _DmEncryptedHistoryDivider(label: message.content);
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = _chat;
@@ -291,7 +341,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   context.l10n.networkMessageHint(label),
                 ),
                 child: FaChatScreen(
-                  key: ValueKey('channelChat:${chatFor.$2}'),
+                  key: ValueKey(
+                    chatFor.$3 == null
+                        ? 'channelChat:${chatFor.$2}'
+                        : 'channelChat:${chatFor.$2}:${chatFor.$3}',
+                  ),
                   service: chat,
                   features: const FaChatFeatures(
                     attachments: false,
@@ -315,7 +369,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   projectIcon: widget.showAppBar
                       ? (channel?.isPublic == true ? Icons.public : Icons.tag)
                       : null,
-                  projectLabel: widget.projectLabel,
+                  projectLabel: isDmChannel(chatFor.$2)
+                      ? null
+                      : widget.projectLabel,
+                  dynamicWidgetTileBuilder: _dynamicTile,
                   onProjectTap:
                       widget.onProjectTap ??
                       () => unawaited(_showChannelDetails(session)),
@@ -346,6 +403,38 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
           ],
         );
       },
+    );
+  }
+}
+
+/// One quiet divider replaces a run of foreign-encrypted history bubbles.
+class _DmEncryptedHistoryDivider extends StatelessWidget {
+  const _DmEncryptedHistoryDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Padding(
+      key: const ValueKey('dmEncryptedHistoryDivider'),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(child: Divider(height: 1, color: colors.border)),
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.dim, fontSize: 11),
+              ),
+            ),
+          ),
+          Expanded(child: Divider(height: 1, color: colors.border)),
+        ],
+      ),
     );
   }
 }

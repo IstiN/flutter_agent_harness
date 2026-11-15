@@ -46,6 +46,7 @@ import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_config.dart';
 import 'headless_prompt.dart';
+import 'network_presence.dart';
 import 'hep.dart';
 import 'stream_json.dart';
 import 'resumed_context_cache.dart';
@@ -382,6 +383,7 @@ part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
 part 'agent_cli_herdr.dart';
 part 'agent_cli_handoff.dart';
+part 'agent_cli_network.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).
@@ -1347,30 +1349,6 @@ class AgentCli {
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
   /// later commands. Never secret values — ids, paths, kinds, model ids.
-  /// gh-1556: the armed deadline rides along as `FA_DEADLINE_EPOCH_MS`, so
-  /// a mid-session `/timer` adjustment is picked up by the next command —
-  /// the chip, the request line and the shell all see the ONE clock.
-  /// Unarmed, the key still rides as an EMPTY scrub sentinel: `LocalShell`
-  /// merges the overlay OVER `Platform.environment`, so omitting the key
-  /// would leave a stale host-exported `FA_DEADLINE_EPOCH_MS` visible to
-  /// bash children after `/timer clear` — and `resolveSessionDeadline`
-  /// treats an empty value as feature-off, exactly like no export.
-  Future<Map<String, String>> _sessionEnvVars() async {
-    final session = _session;
-    final metadata = session == null ? null : await session.getMetadata();
-    return {
-      if (metadata != null) sessionIdEnvVar: metadata.id,
-      if (metadata != null) sessionFileEnvVar: metadata.path,
-      providerEnvVar: _providerKind,
-      modelEnvVar: _agent.state.model.id,
-      if (_deadline.isArmed)
-        deadlineEpochMsEnvVar: '${_deadline.deadlineEpochMs}'
-      else
-        deadlineEpochMsEnvVar: '',
-      ..._runtimeSecrets,
-    };
-  }
-
   /// Test seam: the session-correlation env vars a bash exec would see
   /// right now (gh-1556 wiring asserts the deadline var's live override).
   @visibleForTesting
@@ -2374,6 +2352,8 @@ class AgentCli {
     await _waiting.captureLostJobs();
     final leaseExit = await _resolveHeadlessLeaseGate();
     if (leaseExit != null) return leaseExit;
+    // Headless has no REPL mailbox sync; project this session explicitly.
+    await _startNetworkPresenceFor(this);
     // gh-1241: the owner opens a usage segment (viewer never appends).
     await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
@@ -2529,6 +2509,7 @@ class AgentCli {
       _renderRunModelError('$error');
       return 1;
     } finally {
+      await _stopNetworkPresenceFor(this);
       _headlessMode = false;
       _autoFoldCount = 0;
       // gh-1589: the fence is up before the flushes — a settle racing the

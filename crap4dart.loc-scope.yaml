@@ -47,6 +47,10 @@ gates:
       - '**.g.dart'
       - '**.freezed.dart'
       - '**.mocks.dart'
+      # gen-l10n OUTPUT carries no .g.dart suffix (see root crap4dart.yaml);
+      # staged-scope loc checks stage flutter_app files too, so this
+      # companion needs the same pattern (fired on issue #2062 chunk 16).
+      - '**/l10n/app_localizations*.dart'
   test_coverage: {enabled: false}
   complexity: {enabled: false}
   method_size: {enabled: false}

@@ -143,6 +143,17 @@ Future<void> _saveOpenRouterRedirectKey(
   debugPrint('[Fa] OpenRouter key saved from redirect');
 }
 
+/// Native deep links are delivered as route names even though authentication
+/// consumes them through AppLinks. Absorb those platform routes transparently
+/// instead of replacing the visible home or throwing an unknown-route error.
+Route<void> _unknownAppRoute(RouteSettings settings) => PageRouteBuilder<void>(
+  settings: settings,
+  opaque: false,
+  transitionDuration: Duration.zero,
+  reverseTransitionDuration: Duration.zero,
+  pageBuilder: (_, _, _) => const SizedBox.shrink(),
+);
+
 class MyApp extends StatelessWidget {
   const MyApp({
     super.key,
@@ -304,6 +315,7 @@ class MyApp extends StatelessWidget {
       // traffic-light clearance. A transparent drag strip overlays
       // the top so the window can still be moved.
       builder: _navigatorBuilder,
+      onUnknownRoute: _unknownAppRoute,
       home: BootstrapScreen(
         env: env,
         registry: registry,

@@ -45,6 +45,84 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     );
   }
 
+  /// The DEVICES section (issue #2062 chunk 16): the master-rail machine
+  /// roster ([DevicesPage] — the networks-strip avatar rail beside the
+  /// selected device's pane) over the app-scope connector — one upstream
+  /// socket for every surface that shows it (AC1). The narrow form embeds the
+  /// same page in the section surface; the wide form takes the sidebar
+  /// column (the Local panel's slot) and keeps the message column. The
+  /// This-device pane enumerates the app's LOCAL chat sessions (the same
+  /// [ChatListController] the Local panel projects — no connector
+  /// involvement) and opens them through the shell's canonical open flow
+  /// (`_openLocalEntry`): live sessions switch in place, persisted ones
+  /// clone/relay. Remote devices' cards stay read-only.
+  Widget _buildDevicesPanel({bool compact = false}) {
+    final sessions = widget.networkSessions;
+    if (sessions == null || !sessions.hasJwt) return const SizedBox.shrink();
+    return DevicesPage(
+      service: _devicesConnector,
+      sessions: _chatController,
+      onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
+      onOpenRemoteConversation:
+          ({
+            required String deviceId,
+            required String deviceLabel,
+            required String agentAddress,
+            String? sessionId,
+            String? sessionTitle,
+          }) => unawaited(
+            _openDeviceConversation(
+              deviceId: deviceId,
+              deviceLabel: deviceLabel,
+              agentAddress: agentAddress,
+              sessionId: sessionId,
+              sessionTitle: sessionTitle,
+            ),
+          ),
+      // The open session's card carries the accent-fill selected state
+      // (the same ONE selected id the Local panel's rows compare
+      // against — pending wins, then live, then persisted).
+      selectedSessionId: _selectedSessionId,
+    );
+  }
+
+  /// Remote roster session/agent tap: the DM opens as a VIRTUAL CHANNEL
+  /// of the account-personal network — the same [NetworkChatPage] the
+  /// regular channels use (§7), fed by the device connector's fanet1
+  /// transport through [NetworkSessionDm]. The sidebar keeps the roster;
+  /// only the message column swaps (the channel-rail contract).
+  Future<void> _openDeviceConversation({
+    required String deviceId,
+    required String deviceLabel,
+    required String agentAddress,
+    String? sessionId,
+    String? sessionTitle,
+  }) async {
+    final entry = await prepareDeviceConversation(
+      manager: widget.networkSessions,
+      mode: widget.networkMode,
+      connector: _devicesConnector,
+      deviceId: deviceId,
+      deviceLabel: deviceLabel,
+      agentAddress: agentAddress,
+      sessionId: sessionId,
+      sessionTitle: sessionTitle,
+      isMounted: () => mounted,
+      onError: _showDeviceConversationError,
+    );
+    if (!mounted || entry == null) return;
+    await _openSidebarChannelEntry(
+      entry.manager,
+      entry.mode,
+      entry.networkId,
+      entry.channel,
+    );
+  }
+
+  void _showDeviceConversationError(String message) {
+    if (mounted) showFahErrorSnack(context, message);
+  }
+
   /// The sidebar channel-row tap: membership first, then the channel
   /// entry (channel-rail contract).
   Future<void> _openSidebarNetworkChannel(
@@ -153,8 +231,7 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     if (!mounted) return;
     _updateShell(() {
       _activeNetworkEntry =
-          entry ??
-          _standInNetworkChannelEntry(manager, networkId, channel);
+          entry ?? _standInNetworkChannelEntry(manager, networkId, channel);
     });
     // The row-open parity: the tap marks the projection row read.
     if (entry != null) await _chatController.markOpened(entry);
