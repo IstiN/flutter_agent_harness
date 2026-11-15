@@ -13,15 +13,6 @@
   "pr-2029": [
     {
       "leg": "review",
-      "at": "2026-11-01T11:45:45Z",
-      "prompt": 93043,
-      "completion": 17629,
-      "total": 110672,
-      "cacheRead": 4096704,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-01T12:22:47Z",
       "prompt": 141110,
       "completion": 10101,
@@ -4050,6 +4041,15 @@
       "completion": 29062,
       "total": 114008,
       "cacheRead": 689600,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-15T11:51:58Z",
+      "prompt": 114593,
+      "completion": 14592,
+      "total": 129185,
+      "cacheRead": 1394176,
       "model": "glm-5.3-flash"
     }
   ]
