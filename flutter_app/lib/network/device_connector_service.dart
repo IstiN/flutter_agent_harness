@@ -489,21 +489,48 @@ class DeviceConnectorService {
     final name = agentAddress.substring(0, separator);
     final deviceId = agentAddress.substring(separator + 1);
     for (final envelope in _lastRosterByNetwork.values) {
-      final devices = envelope.payload['devices'];
-      if (devices is! List) continue;
-      for (final device in devices) {
-        if (device is! Map || device['deviceId'] != deviceId) continue;
-        final agents = device['agents'];
-        if (agents is! List) continue;
-        for (final agent in agents) {
-          if (agent is! Map || agent['exposed'] != true) continue;
-          if (agent['name'] != name) continue;
-          final state = AgentRunState.tryParse('${agent['state'] ?? ''}');
-          if (state != null) return state;
-        }
-      }
+      final state = _rosterAgentState(envelope.payload, deviceId, name);
+      if (state != null) return state;
     }
     return null;
+  }
+
+  /// One roster envelope's device list → the named agent's run state.
+  /// Decomposed from [agentRunState] for the CRAP 12 ratchet (each level
+  /// of the nested payload walk is its own small pure function).
+  static AgentRunState? _rosterAgentState(
+    Map<String, Object?> payload,
+    String deviceId,
+    String name,
+  ) {
+    final devices = payload['devices'];
+    if (devices is! List) return null;
+    for (final device in devices) {
+      final state = _deviceAgentState(device, deviceId, name);
+      if (state != null) return state;
+    }
+    return null;
+  }
+
+  static AgentRunState? _deviceAgentState(
+    Object? device,
+    String deviceId,
+    String name,
+  ) {
+    if (device is! Map || device['deviceId'] != deviceId) return null;
+    final agents = device['agents'];
+    if (agents is! List) return null;
+    for (final agent in agents) {
+      final state = _exposedAgentState(agent, name);
+      if (state != null) return state;
+    }
+    return null;
+  }
+
+  static AgentRunState? _exposedAgentState(Object? agent, String name) {
+    if (agent is! Map || agent['exposed'] != true) return null;
+    if (agent['name'] != name) return null;
+    return AgentRunState.tryParse('${agent['state'] ?? ''}');
   }
 
   /// Presence frames from the server (network-wide presence view).

@@ -1273,6 +1273,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
+  /// The inline search field's visibility (non-compact hosts always show
+  /// it; compact shows it after the header search-icon reveal). Extracted
+  /// from [_buildGridArea] for the CRAP 12 ratchet.
+  bool _showsInlineSearch(BuildContext context) =>
+      !widget.fullScreen &&
+      (_narrowSearchShown ||
+          faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
+              FaWindowClass.small);
+
   Widget _buildGridArea(FahColors colors) {
     final error = _error;
     if (error != null) {
@@ -1286,10 +1295,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
-        if (!widget.fullScreen &&
-            (_narrowSearchShown ||
-                faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
-                    FaWindowClass.small))
+        if (_showsInlineSearch(context))
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: _buildNarrowSearch(),
@@ -1334,36 +1340,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       body: !widget.fullScreen && _tab == _LauncherTab.widgets
           // The reserved Widget-Catalog icon in the apps list itself
           // (owner feedback): floating, so it costs no fixed chrome.
-          ? Stack(
-              children: [
-                content,
-                Positioned(
-                  right: 16,
-                  // Clear the shell's floating dock even when the nested
-                  // Apps navigator zeroes the ambient bottom padding.
-                  bottom:
-                      16 +
-                      math.max(
-                        MediaQuery.paddingOf(context).bottom,
-                        MessengerFloatingDockInsets.minInflatedBottom,
-                      ),
-                  child: FaSurface(
-                    key: const ValueKey('appsCatalogFab'),
-                    circular: true,
-                    borderRadius: BorderRadius.circular(24),
-                    color: colors.panelAlt,
-                    onTap: () => _selectLauncherTab(_LauncherTab.getWidgets),
-                    child: SizedBox.square(
-                      dimension: 44,
-                      child: FaIcon(
-                        FaSemanticIcon.download,
-                        size: 20,
-                        color: colors.teal,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+          ? _NarrowAppsBody(
+              content: content,
+              onOpenCatalog: () => _selectLauncherTab(_LauncherTab.getWidgets),
             )
           : content,
     );
@@ -2460,6 +2439,52 @@ final class _OverviewChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The narrow My Apps body: the grid content plus the reserved floating
+/// Widget-Catalog icon. Its own widget so [_AppLauncherScreenState
+/// ._buildGridArea] keeps its complexity under the CRAP 12 ratchet.
+class _NarrowAppsBody extends StatelessWidget {
+  const _NarrowAppsBody({required this.content, required this.onOpenCatalog});
+
+  final Widget content;
+  final VoidCallback onOpenCatalog;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    return Stack(
+      children: [
+        content,
+        Positioned(
+          right: 16,
+          // Clear the shell's floating dock even when the nested Apps
+          // navigator zeroes the ambient bottom padding.
+          bottom:
+              16 +
+              math.max(
+                MediaQuery.paddingOf(context).bottom,
+                MessengerFloatingDockInsets.minInflatedBottom,
+              ),
+          child: FaSurface(
+            key: const ValueKey('appsCatalogFab'),
+            circular: true,
+            borderRadius: BorderRadius.circular(24),
+            color: colors.panelAlt,
+            onTap: onOpenCatalog,
+            child: SizedBox.square(
+              dimension: 44,
+              child: FaIcon(
+                FaSemanticIcon.download,
+                size: 20,
+                color: colors.teal,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

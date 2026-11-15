@@ -8,6 +8,7 @@ import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
+import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show AgentRunState, NetworkEnvelope, NetworkEnvelopeKind;
 // The fanet1 DM primitives are pure Dart in the messaging core.
@@ -87,6 +88,7 @@ NetworkEnvelope _dmMail({
 );
 
 void main() {
+  dmAgentBannerTransitionTests();
   group('parseDmChannelId', () {
     test('parses the virtual channel id and rejects malformed shapes', () {
       final parts = parseDmChannelId(dmChannel)!;
@@ -532,5 +534,75 @@ void main() {
         expect(s.channelStates[dmChannel]!.messages, hasLength(2));
       },
     );
+  });
+}
+
+void dmAgentBannerTransitionTests() {
+  const address = 'fa@dev-b';
+  FakeDmConnector busyConnector() =>
+      FakeDmConnector()..peerRunState = AgentRunState.busy;
+  group('dmRefreshedAgentRunState (CRAP-decomposed banner transition)', () {
+    test('returns the new state when it changed', () {
+      expect(
+        dmRefreshedAgentRunState(
+          connector: busyConnector(),
+          address: address,
+          current: null,
+          mounted: true,
+        ),
+        AgentRunState.busy,
+      );
+    });
+
+    test('null when unmounted, unbound, or unchanged', () {
+      final c = busyConnector();
+      expect(
+        dmRefreshedAgentRunState(
+          connector: c,
+          address: address,
+          current: AgentRunState.busy,
+          mounted: true,
+        ),
+        isNull,
+        reason: 'unchanged state must not re-setState',
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: c,
+          address: address,
+          current: null,
+          mounted: false,
+        ),
+        isNull,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: null,
+          address: address,
+          current: null,
+          mounted: true,
+        ),
+        isNull,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: c,
+          address: null,
+          current: null,
+          mounted: true,
+        ),
+        isNull,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: FakeDmConnector(),
+          address: address,
+          current: null,
+          mounted: true,
+        ),
+        isNull,
+        reason: 'agent absent from every roster → no state to store',
+      );
+    });
   });
 }

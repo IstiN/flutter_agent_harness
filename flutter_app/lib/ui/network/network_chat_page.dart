@@ -715,6 +715,24 @@ class _ChannelHeader extends StatelessWidget {
   }
 }
 
+/// The banner state's pure transition (its own function so the widget's
+/// `_refresh` stays a two-branch setter under the CRAP 12 ratchet, and the
+/// guard semantics are unit-testable without pumping a widget tree):
+/// returns the next run state to store, or null when nothing should
+/// change (unbound connector/address, unmounted, or an unchanged state).
+@visibleForTesting
+AgentRunState? dmRefreshedAgentRunState({
+  required DeviceConnectorService? connector,
+  required String? address,
+  required AgentRunState? current,
+  required bool mounted,
+}) {
+  if (!mounted || connector == null || address == null) return null;
+  final next = connector.agentRunState(address);
+  if (next == current) return null;
+  return next;
+}
+
 /// The DM peer's live run indicator: 'Fa is working…' while the Devices
 /// roster marks the remote agent busy — the visible acknowledgement that
 /// the agent picked the owner's message up (owner feedback). Hidden when
@@ -777,11 +795,13 @@ class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
   }
 
   void _refresh() {
-    final connector = _connector;
-    final address = _address;
-    if (connector == null || address == null || !mounted) return;
-    final next = connector.agentRunState(address);
-    if (next == _state) return;
+    final next = dmRefreshedAgentRunState(
+      connector: _connector,
+      address: _address,
+      current: _state,
+      mounted: mounted,
+    );
+    if (next == null) return;
     setState(() => _state = next);
   }
 
