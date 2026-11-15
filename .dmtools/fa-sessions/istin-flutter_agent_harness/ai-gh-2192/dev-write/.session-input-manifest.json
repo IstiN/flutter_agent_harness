@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-15T10:16:58.391Z",
+  "ticketKey": "gh-2192",
+  "headSha": "3bf8f18475bff1d740f1db55d44b129a39a97910",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b7d17532e97611ad",
+      "size": 10260
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1252260a05ba3afb",
+      "size": 14118
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:12a4cc6714b2607c",
+      "size": 6851
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ef0509f86ae62f5c",
+      "size": 2113
+    },
+    "request.md": {
+      "hash": "fnv1a64:ccf5e5e31ca2cf35",
+      "size": 1036
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:26dd66d834569f6c",
+      "size": 925
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:a5e0b06ac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:62763066cddda6b5",
+      "size": 1100
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:ccf5e5e31ca2cf35",
+      "size": 1036
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc63objw",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/wrap_ansi_line_perf_test.dart:703",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: The hermeticity guard is tautological — it can never red, so the gh-2192 regression it targets would land green**\n\n`realMeasurements` is declared at `ContendedClock` (`var realMeasurements = 0;`, line 156) and asserted here (line 703), but **no code path ever writes it** — the new `call()` implementation never touches it:\n\n```dart\nint call(void Function() body) {\n  calls++;\n  final doubled = ((calls - 1) % 10).isOdd; // s,d,s,d,… per attempt\n  final base = doubled ? doubledUs : smallUs;\n  return base + (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);\n}\n```\n\n`expect(clock.realMeasurements, 0)` therefore asserts a constant. Worse, the exact regression class this guard exists to catch survives it: reverting `call()` to the pre-PR stopwatch form (execute `body()`, return real elapsed + spike — the gh-2192 shape) leaves `realMeasurements == 0`, `calls == 30`, and every ratio scripted at 2.0, so **all assertions here stay green while the modeling scenario is again CI-weather-dependent**. The ticket's Fix bullet (\"New hermeticity guard reds if a modeling scenario ever consults the real clock again\" — `input/pr-2193/ticket.md:13`) and this file's own guard comment (\"This guard reds the moment any measurement … consults real elapsed time again\", line 694) promise a red this code cannot produce. Note the ticket's RED evidence (\"guard failed against the old harness (30 real-clock measurements)\") is only reproducible against a counter-instrumented variant of the old clock — the shipped code has no such wiring, so a plain revert defeats the guard.\n\nSuggested fix — make the probe structural instead of convention-based. A scripted clock must never *execute* the body (executing it is how real timing was done), so assert that directly in this guard:\n\n```dart\nfinal probe = ContendedClock(spiked: {});\nvar bodyRan = false;\nprobe.call(() => bodyRan = true);\nexpect(bodyRan, isFalse,\n    reason: 'a scripted clock executed its body — that means real work '\n        'is being timed again (the gh-2192 mechanism)');\n```\n\nAny stopwatch-based revert executes the body and reds deterministically. Then either wire `realMeasurements++` into every real-timing path in `call()` (so the field means something) or delete the dead field — today it reads as a working tripwire but is a constant."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc63obkj",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/wrap_ansi_line_perf_test.dart:602",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The pinned arrays are 10× this clock's actual script — \"pinned with this clock's own scripted values\" is not true**\n\nThe comment (lines 597-600) claims these arrays pin the modeled shape \"with this clock's own scripted values: 3 of 5 doubled runs spiked (37ms) … ratio ~10.6x\", but `ContendedClock`'s actual script serves different absolute values by 10×:\n\n- clock defaults: `smallUs = 350` (0.35ms), `doubledUs = 700` (0.7ms), `spikeMs = 30` → a spiked doubled run returns **30.7ms**, and the actual median ratio would be **~87.7x** (30.7/0.35), not ~10.6x.\n- the arrays: `3.5 / 7.0 / 37.0ms` — exactly the *old real-harness* baselines (compare this file's own history comment: \"spikeMs 12 on the ~3.5ms/7ms baselines at 100k cells\").\n\nThe ratio assertions themselves stay valid at either scale (37/3.5 = 10.57 > 3.2; 7/3.5 = 2.0 < 3.2), so there is no behavior bug — but the provenance claim is wrong, and a future maintainer reconciling the arrays against `ContendedClock(smallUs: 350, doubledUs: 700, spikeMs: 30)` will fail the same way the comment's reader does today. Same family, line 143: the `smallUs` doc says \"~the real 100k-cell wrap cost\", but 350µs is ~10× under the ~3.5ms real 100k baseline this file documents elsewhere.\n\nSuggested fix: either align the arrays with the clock defaults (`0.35/0.7/30.7`, ratios unchanged) or reword to \"scale-invariant mirror of the live red's real-harness values (3.5/7/37ms)\" — and drop the \"~the real 100k-cell wrap cost\" clause from the `smallUs` doc, keeping the \"~2x proportion to [doubledUs] matters\" note, which is the part that's actually load-bearing."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc63oblY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/wrap_ansi_line_perf_test.dart:162",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The index-parity small/doubled classification is a second unpinned layout assumption**\n\nScripting the clock moved the small/doubled classification from \"whichever body was executed\" to a hardwired layout rule — `((calls - 1) % 10).isOdd` (odd position = doubled). That is a **second, independent layout assumption** alongside call count, but the four `expect(clock.calls, 30)` guards added across the scenario tests pin only the count. If the measure loop's order ever changes (e.g. a revert to the pre-PR #1783 sequential blocks, or a runs-per-size change that keeps 10 calls per attempt), the clock silently classifies the wrong runs: `calls` still reaches 30, every scenario still computes ratio ≈ 2.0, and all the modeling tests stay green while asserting nothing — exactly the failure mode this file's own layout-guard rationale names (\"silently shifting the spikes onto the wrong measurements … leave the test green while asserting nothing\", ContendedClock doc lines 118-124). A classification parity flip is equally invisible: with `{2, 4, 6}` spiked landing on *small* runs, attempt minima become 0.35/0.7 → ratio 2.0, still green, and the degenerate-flat guard (`> 1.5`) still passes.\n\nThe doc comment does *document* the pinned interleaved layout (lines 105-108), but this file's established convention is to turn layout drift into a **loud failure**, not prose. Suggested fix: pin classification the way count is pinned — e.g. expose `doubledCalls` on the clock and assert `15` in one scenario guard, or probe an unspiked clock at pinned indices and assert the served values alternate small/doubled (0.35/0.7ms):\n\n```dart\nfinal probe = ContendedClock(spiked: {});\nfinal served = [for (var i = 0; i < 10; i++) probe.call(() {})];\nexpect(served, [350, 700, 350, 700, 350, 700, 350, 700, 350, 700],\n    reason: 'the s,d,s,d classification encodes the measure loop layout');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:d7e85438",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: The hermeticity guard is tautological — it can never red, so the gh-2192 regression it targets would land green**\n\n`realMeasurements` is declared at `ContendedClock` (`var realMeasurements = 0;`, line 156) and asserted here (line 703), but **no code path ever writes it** — the new `call()` implementation never touches it:\n\n```dart\nint call(void Function() body) {\n  calls++;\n  final doubled = ((calls - 1) % 10).isOdd; // s,d,s,d,… per attempt\n  final base = doubled ? doubledUs : smallUs;\n  return base + (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);\n}\n```\n\n`expect(clock.realMeasurements, 0)` therefore asserts a constant. Worse, the exact regression class this guard exists to catch survives it: reverting `call()` to the pre-PR stopwatch form (execute `body()`, return real elapsed + spike — the gh-2192 shape) leaves `realMeasurements == 0`, `calls == 30`, and every ratio scripted at 2.0, so **all assertions here stay green while the modeling scenario is again CI-weather-dependent**. The ticket's Fix bullet (\"New hermeticity guard reds if a modeling scenario ever consults the real clock again\" — `input/pr-2193/ticket.md:13`) and this file's own guard comment (\"This guard reds the moment any measurement … consults real elapsed time again\", line 694) promise a red this code cannot produce. Note the ticket's RED evidence (\"guard failed against the old harness (30 real-clock measurements)\") is only reproducible against a counter-instrumented variant of the old clock — the shipped code has no such wiring, so a plain revert defeats the guard.\n\nSuggested fix — make the probe structural instead of convention-based. A scripted clock must never *execute* the body (executing it is how real timing was done), so assert that directly in this guard:\n\n```dart\nfinal probe = ContendedClock(spiked: {});\nvar bodyRan = false;\nprobe.call(() => bodyRan = true);\nexpect(bodyRan, isFalse,\n    reason: 'a scripted clock executed its body — that means real work '\n        'is being timed again (the gh-2192 mechanism)');\n```\n\nAny stopwatch-based revert executes the body and reds deterministically. Then either wire `realMeasurements++` into every real-timing path in `call()` (so the field means something) or delete the dead field — today it reads as a working tripwire but is a constant."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:ff2cc170",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The pinned arrays are 10× this clock's actual script — \"pinned with this clock's own scripted values\" is not true**\n\nThe comment (lines 597-600) claims these arrays pin the modeled shape \"with this clock's own scripted values: 3 of 5 doubled runs spiked (37ms) … ratio ~10.6x\", but `ContendedClock`'s actual script serves different absolute values by 10×:\n\n- clock defaults: `smallUs = 350` (0.35ms), `doubledUs = 700` (0.7ms), `spikeMs = 30` → a spiked doubled run returns **30.7ms**, and the actual median ratio would be **~87.7x** (30.7/0.35), not ~10.6x.\n- the arrays: `3.5 / 7.0 / 37.0ms` — exactly the *old real-harness* baselines (compare this file's own history comment: \"spikeMs 12 on the ~3.5ms/7ms baselines at 100k cells\").\n\nThe ratio assertions themselves stay valid at either scale (37/3.5 = 10.57 > 3.2; 7/3.5 = 2.0 < 3.2), so there is no behavior bug — but the provenance claim is wrong, and a future maintainer reconciling the arrays against `ContendedClock(smallUs: 350, doubledUs: 700, spikeMs: 30)` will fail the same way the comment's reader does today. Same family, line 143: the `smallUs` doc says \"~the real 100k-cell wrap cost\", but 350µs is ~10× under the ~3.5ms real 100k baseline this file documents elsewhere.\n\nSuggested fix: either align the arrays with the clock defaults (`0.35/0.7/30.7`, ratios unchanged) or reword to \"scale-invariant mirror of the live red's real-harness values (3.5/7/37ms)\" — and drop the \"~the real 100k-cell wrap cost\" clause from the `smallUs` doc, keeping the \"~2x proportion to [doubledUs] matters\" note, which is the part that's actually load-bearing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:2ebb8897",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The index-parity small/doubled classification is a second unpinned layout assumption**\n\nScripting the clock moved the small/doubled classification from \"whichever body was executed\" to a hardwired layout rule — `((calls - 1) % 10).isOdd` (odd position = doubled). That is a **second, independent layout assumption** alongside call count, but the four `expect(clock.calls, 30)` guards added across the scenario tests pin only the count. If the measure loop's order ever changes (e.g. a revert to the pre-PR #1783 sequential blocks, or a runs-per-size change that keeps 10 calls per attempt), the clock silently classifies the wrong runs: `calls` still reaches 30, every scenario still computes ratio ≈ 2.0, and all the modeling tests stay green while asserting nothing — exactly the failure mode this file's own layout-guard rationale names (\"silently shifting the spikes onto the wrong measurements … leave the test green while asserting nothing\", ContendedClock doc lines 118-124). A classification parity flip is equally invisible: with `{2, 4, 6}` spiked landing on *small* runs, attempt minima become 0.35/0.7 → ratio 2.0, still green, and the degenerate-flat guard (`> 1.5`) still passes.\n\nThe doc comment does *document* the pinned interleaved layout (lines 105-108), but this file's established convention is to turn layout drift into a **loud failure**, not prose. Suggested fix: pin classification the way count is pinned — e.g. expose `doubledCalls` on the clock and assert `15` in one scenario guard, or probe an unspiked clock at pinned indices and assert the served values alternate small/doubled (0.35/0.7ms):\n\n```dart\nfinal probe = ContendedClock(spiked: {});\nfinal served = [for (var i = 0; i < 10; i++) probe.call(() {})];\nexpect(served, [350, 700, 350, 700, 350, 700, 350, 700, 350, 700],\n    reason: 'the s,d,s,d classification encodes the measure loop layout');\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:70a7fb4f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (⚠️ 1 · 💡 2)\n\n**Summary**: The `ContendedClock` scripting fix is correct and verified green locally (15/15 in `wrap_ansi_line_perf_test.dart`), and it does close the gh-2192 flake mechanism. However, the new hermeticity guard cannot ever fail — `realMeasurements` is never written by any code path — so the ticket-promised tripwire (\"reds if a modeling scenario ever consults the real clock again\") does not actually exist.\n\n**Key Issues**:\n- ⚠️ `test/cli/wrap_ansi_line_perf_test.dart:703` — `expect(clock.realMeasurements, 0)` asserts a constant; a plain revert of `call()` to stopwatch timing re-introduces gh-2192 with the guard green.\n- 💡 `test/cli/wrap_ansi_line_perf_test.dart:602` — pinned arrays are 10× the clock's own script (3.5/7/37ms vs 0.35/0.7/30.7ms) while the comment claims they are \"this clock's own scripted values\".\n- 💡 `test/cli/wrap_ansi_line_perf_test.dart:162` — the odd-index s/d classification is a second unpinned layout assumption; the `calls == 30` guards pin count only.\n\n**Next Steps**:\n1. Make the hermeticity guard structural: assert a scripted clock never executes its body (a stopwatch-timing revert must execute it), or wire `realMeasurements++` into every real-timing path — today the field is dead and the guard is green-always.\n2. Align the pinned arrays/comment with the actual clock script (or state they mirror the old real-harness values).\n3. Pin the s/d classification (e.g. `doubledCalls == 15`, or assert the served value pattern at pinned indices) next to the existing `calls == 30` guards."
+    }
+  ]
+}

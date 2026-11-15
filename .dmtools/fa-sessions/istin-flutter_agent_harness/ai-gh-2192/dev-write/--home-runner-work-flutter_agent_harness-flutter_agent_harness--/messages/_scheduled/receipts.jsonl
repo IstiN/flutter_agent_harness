@@ -1,0 +1,1 @@
+{"ts":"2026-11-15T10:24:19.513667Z","event":"scheduled","id":"1794738259513374_0000_uvndxf","dueMs":1794738739513,"to":"main","text":"Check the full-suite background job sh-13-ho6janfuc21wsa9x (dart test --exclude-tags llm) for the gh-2192 rework lap. If finished: verify green, write outputs/response.md with the actual result, and p"}
