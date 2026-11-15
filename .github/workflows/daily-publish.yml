@@ -25,6 +25,11 @@
 #                                 extension, attached to the next-tag
 #                                 release (version passed explicitly so
 #                                 mobile/desktop never mint diverging tags)
+#   windows     build-windows.yml windows-x64 app zip (fa-app-windows-x64.zip,
+#                                 stable name), attached to the next-tag
+#                                 release — the Windows counterpart of the
+#                                 TestFlight leg: one release-quality GUI
+#                                 app build per day (gh-2140)
 #   website     pages.yml          fa1.dev (landing + web demo +
 #                                 the /outlook add-in slice; gh-1684:
 #                                 the extension zip moved to GitHub
@@ -64,6 +69,7 @@ on:
           - play
           - pubdev
           - cli
+          - windows
           - website
           - addin
       force:
@@ -80,6 +86,7 @@ on:
           - play
           - pubdev
           - cli
+          - windows
           - website
           - addin
 
@@ -405,6 +412,52 @@ jobs:
           bash scripts/dispatch_and_watch.sh build-macos.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
             --title 'build-macos (create_release=true)' \
+            -f create_release=true \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+  windows:
+    name: 'Leg: Windows app'
+    needs: plan
+    runs-on: ubuntu-latest
+    # #351 arithmetic: child wc 85m (version 20 + windows build 45 +
+    # attach 20); 150m leg > worst-case + margin (the addin-leg sizing).
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'windows')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'windows'
+        run: |
+          exit 1
+
+      - name: Dispatch build-windows.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          # The child derives the version itself (same latest-tag+1 math as
+          # build-macos/build-mobile — all release children derive the SAME
+          # next tag). Shared watcher (gh-1903): correlates OUR run by the
+          # child's run-name, waits READ-ONLY within the child's own
+          # timeout bounds, orphan-cancels only this leg's never-started
+          # child on leg timeout.
+          rc=0
+          bash scripts/dispatch_and_watch.sh build-windows.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --title 'build-windows (create_release=true)' \
             -f create_release=true \
             --out-run-id run_id.txt || rc=$?
           if [ -s run_id.txt ]; then
