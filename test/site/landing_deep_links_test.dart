@@ -30,13 +30,19 @@ void main() {
   final requiredFile = File('scripts/release_required_assets.txt');
 
   /// Same extraction contract as scripts/assert_release_assets.sh
-  /// --landing: URL stops at whitespace, quotes, angle/close parens,
-  /// plus, comma.
-  final deepLinks = RegExp(
-    r'https://[^"'
-    ' <>()+,\t]*/releases/latest/download/[^"'
-    ' <>()+,\t]+',
-  ).allMatches(index).map((m) => m.group(0)!).toSet();
+  /// --landing: scheme `https?://` and a URL class that stops at
+  /// whitespace, BOTH quote types (' and "), angle/close parens, plus,
+  /// comma, tab — any divergence from the script's extractor would let a
+  /// roting link pass this offline guard while the tag-train probe still
+  /// reds on it.
+  final deepLinkPattern = RegExp(
+    "https?://[^\"' <>()+,\t]*/releases/latest/download/[^\"' <>()+,\t]+",
+  );
+
+  Set<String> extractDeepLinks(String page) =>
+      deepLinkPattern.allMatches(page).map((m) => m.group(0)!).toSet();
+
+  final deepLinks = extractDeepLinks(index);
 
   final guaranteed = requiredFile
       .readAsLinesSync()
@@ -48,6 +54,43 @@ void main() {
       })
       .where((line) => line.isNotEmpty)
       .toSet();
+
+  test(
+    'extraction contract matches scripts/assert_release_assets.sh --landing',
+    () {
+      // Scheme + quote parity: the script extracts `https?://` URLs
+      // stopped by BOTH quote types (' and "). A single-quoted http://
+      // link is exactly the shape this offline guard must not miss —
+      // a divergence here means the guard passes a page the tag-train
+      // probe still reds on hours later.
+      expect(
+        extractDeepLinks(
+          "<a href='http://github.com/IstiN/flutter_agent_harness"
+          "/releases/latest/download/fa-app-windows-x64.zip'>",
+        ),
+        equals(<String>{
+          'http://github.com/IstiN/flutter_agent_harness'
+              '/releases/latest/download/fa-app-windows-x64.zip',
+        }),
+      );
+      // Stop-class parity: whitespace, either quote, ')' and ',' all end
+      // a URL (the landing page embeds links in hrefs and JSON FAQ text
+      // with trailing punctuation) — no trailing punctuation rides into
+      // the extracted asset name.
+      expect(
+        extractDeepLinks(
+          '"https://e.test/releases/latest/download/a.zip", '
+          '(https://e.test/releases/latest/download/b.zip) '
+          "'https://e.test/releases/latest/download/c.zip'",
+        ),
+        equals(<String>{
+          'https://e.test/releases/latest/download/a.zip',
+          'https://e.test/releases/latest/download/b.zip',
+          'https://e.test/releases/latest/download/c.zip',
+        }),
+      );
+    },
+  );
 
   test(
     'every latest/download deep link names a tag-train-guaranteed asset',
