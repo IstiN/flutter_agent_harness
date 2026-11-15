@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-15T21:35:49.971Z",
+  "ticketKey": "gh-2200",
+  "headSha": "eca62b53537c9593ac0926ee119ae41b6dae0836",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:945bafb7fe82aeaf",
+      "size": 120240
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:3c33475dd67f32c5",
+      "size": 2375999
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:23a014492d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:559d1076bd800288",
+      "size": 4775
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:60195439640962a6",
+      "size": 197
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ca30e08c07895b88",
+      "size": 19
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:704dbdc88d1c8e18",
+      "size": 4199
+    },
+    "request.md": {
+      "hash": "fnv1a64:59d9cfaf6fde52cd",
+      "size": 556
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f73ca41bb4b4bbcd",
+      "size": 376
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c253284cc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:4f3abdc4e39b5ad8",
+      "size": 615
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:59d9cfaf6fde52cd",
+      "size": 556
+    }
+  },
+  "comments": []
+}
