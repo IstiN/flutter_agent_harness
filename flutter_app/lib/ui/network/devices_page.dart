@@ -1463,8 +1463,6 @@ class _DevicePane extends StatelessWidget {
       final byActivity = rightActivity?.compareTo(leftActivity!) ?? 0;
       return byActivity != 0 ? byActivity : left.key.compareTo(right.key);
     });
-    final sessionCount = device.localSessions.length + remote.length;
-    var sessionIndex = 0;
     // Owner feedback: long remote histories (dozens of home-dir sessions)
     // flood the device pane. Mirror the Local panel's folder-first logic:
     // with more than one project folder, remote sessions collapse into
@@ -1475,26 +1473,33 @@ class _DevicePane extends StatelessWidget {
       device.sessionMetadata,
     );
     final groupedRemote = remoteFolders.length > 1;
-    Widget remoteCard(MapEntry<String, ConnectorSessionPresence> entry) =>
-        DeviceSessionCard(
-          key: ValueKey('sessionRow:${entry.key}'),
-          dotKey: ValueKey('sessionDot:${entry.key}'),
-          dotColor: deviceSessionDotColor(colors, entry.value),
-          title: _sessionTitle(
-            entry.key,
-            device.sessionMetadata[entry.key]?.title,
-            path: device.sessionMetadata[entry.key]?.path,
-          ),
-          subtitle: device.sessionMetadata[entry.key]?.path ?? '',
-          timestamp: chatListRelativeTime(
-            context,
-            device.sessionMetadata[entry.key]?.lastActivity,
-          ),
-          showPresenceDot: entry.value == ConnectorSessionPresence.live,
-          hairline: sessionIndex++ < sessionCount - 1,
-          selected: entry.key == selectedRemoteSessionId,
-          onTap: _sessionConversation(entry.key),
-        );
+    // Hairlines are EXPLICIT positions, never a shared counter (review
+    // #2196 round 1): folder sections build their cards in their own
+    // setState passes, so a captured `sessionIndex++` drifted on every
+    // toggle — dangling separators / vanishing hairlines. Each card now
+    // gets `hairline: <more visible rows follow>`.
+    Widget remoteCard(
+      MapEntry<String, ConnectorSessionPresence> entry, {
+      required bool hairline,
+    }) => DeviceSessionCard(
+      key: ValueKey('sessionRow:${entry.key}'),
+      dotKey: ValueKey('sessionDot:${entry.key}'),
+      dotColor: deviceSessionDotColor(colors, entry.value),
+      title: _sessionTitle(
+        entry.key,
+        device.sessionMetadata[entry.key]?.title,
+        path: device.sessionMetadata[entry.key]?.path,
+      ),
+      subtitle: device.sessionMetadata[entry.key]?.path ?? '',
+      timestamp: chatListRelativeTime(
+        context,
+        device.sessionMetadata[entry.key]?.lastActivity,
+      ),
+      showPresenceDot: entry.value == ConnectorSessionPresence.live,
+      hairline: hairline,
+      selected: entry.key == selectedRemoteSessionId,
+      onTap: _sessionConversation(entry.key),
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       children: [
@@ -1524,23 +1529,26 @@ class _DevicePane extends StatelessWidget {
                     },
             ),
           ),
-        for (final entry in device.localSessions)
+        for (final (index, entry) in device.localSessions.indexed)
           _localSessionCard(
             context,
             colors,
             entry,
-            hairline: sessionIndex++ < sessionCount - 1,
+            hairline:
+                index < device.localSessions.length - 1 || remote.isNotEmpty,
           ),
         if (!groupedRemote)
-          for (final entry in remote) remoteCard(entry)
+          for (final (index, entry) in remote.indexed)
+            remoteCard(entry, hairline: index < remote.length - 1)
         else
-          for (final folder in remoteFolders)
+          for (final (index, folder) in remoteFolders.indexed)
             _RemoteSessionFolderSection(
               key: ValueKey('remoteFolder:${folder.path}'),
               folder: folder,
               initiallyExpanded: folder.entries.any(
                 (entry) => entry.key == selectedRemoteSessionId,
               ),
+              hasFollowingRows: index < remoteFolders.length - 1,
               cardBuilder: remoteCard,
             ),
       ],
@@ -1823,12 +1831,21 @@ final class _RemoteSessionFolderSection extends StatefulWidget {
     super.key,
     required this.folder,
     required this.initiallyExpanded,
+    required this.hasFollowingRows,
     required this.cardBuilder,
   });
 
   final _RemoteFolder folder;
   final bool initiallyExpanded;
-  final Widget Function(MapEntry<String, ConnectorSessionPresence> entry)
+
+  /// Whether more session rows follow this folder in the device pane —
+  /// the expanded cards' hairlines continue into them (review #2196 r1:
+  /// explicit positions instead of a shared counter).
+  final bool hasFollowingRows;
+  final Widget Function(
+    MapEntry<String, ConnectorSessionPresence> entry, {
+    required bool hairline,
+  })
   cardBuilder;
 
   @override
@@ -1861,49 +1878,61 @@ final class _RemoteSessionFolderSectionState
           key: ValueKey('remoteFolderHeader:${folder.path}'),
           borderRadius: BorderRadius.circular(8),
           onTap: () => setState(() => _expanded = !_expanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-            child: Row(
-              children: [
-                FaIcon(
-                  _expanded
-                      ? FaSemanticIcon.expandMore
-                      : FaSemanticIcon.chevronRight,
-                  size: 16,
-                  color: colors.dim,
-                ),
-                const SizedBox(width: 4),
-                FaIcon(FaSemanticIcon.folder, size: 15, color: colors.dim),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    folder.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.text,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+          child: Semantics(
+            button: true,
+            expanded: _expanded,
+            label:
+                '${folder.name}, ${folder.entries.length} sessions, '
+                '${_expanded ? 'expanded' : 'collapsed'}',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Row(
+                children: [
+                  FaIcon(
+                    _expanded
+                        ? FaSemanticIcon.expandMore
+                        : FaSemanticIcon.chevronRight,
+                    size: 16,
+                    color: colors.dim,
+                  ),
+                  const SizedBox(width: 4),
+                  FaIcon(FaSemanticIcon.folder, size: 15, color: colors.dim),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      folder.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                ),
-                Text(
-                  '${folder.entries.length}',
-                  style: TextStyle(color: colors.dim, fontSize: 11),
-                ),
-                if (folder.latestActivity != null) ...[
-                  const SizedBox(width: 6),
                   Text(
-                    chatListRelativeTime(context, folder.latestActivity),
+                    '${folder.entries.length}',
                     style: TextStyle(color: colors.dim, fontSize: 11),
                   ),
+                  if (folder.latestActivity != null) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      chatListRelativeTime(context, folder.latestActivity),
+                      style: TextStyle(color: colors.dim, fontSize: 11),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
         if (_expanded)
-          for (final entry in folder.entries) widget.cardBuilder(entry),
+          for (final (index, entry) in folder.entries.indexed)
+            widget.cardBuilder(
+              entry,
+              hairline:
+                  index < folder.entries.length - 1 || widget.hasFollowingRows,
+            ),
       ],
     );
   }

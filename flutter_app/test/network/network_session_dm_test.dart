@@ -542,38 +542,46 @@ void dmAgentBannerTransitionTests() {
   FakeDmConnector busyConnector() =>
       FakeDmConnector()..peerRunState = AgentRunState.busy;
   group('dmRefreshedAgentRunState (CRAP-decomposed banner transition)', () {
-    test('returns the new state when it changed', () {
-      expect(
-        dmRefreshedAgentRunState(
-          connector: busyConnector(),
-          address: address,
-          current: null,
-          mounted: true,
-        ),
-        AgentRunState.busy,
+    test('changed + new state when the state changed', () {
+      final next = dmRefreshedAgentRunState(
+        connector: busyConnector(),
+        address: address,
+        current: null,
+        mounted: true,
       );
+      expect(next.changed, isTrue);
+      expect(next.state, AgentRunState.busy);
     });
 
-    test('null when unmounted, unbound, or unchanged', () {
-      final c = busyConnector();
-      expect(
-        dmRefreshedAgentRunState(
-          connector: c,
-          address: address,
-          current: AgentRunState.busy,
-          mounted: true,
-        ),
-        isNull,
-        reason: 'unchanged state must not re-setState',
+    test('busy -> agent GONE clears the banner (review #2196 r1)', () {
+      final next = dmRefreshedAgentRunState(
+        connector: FakeDmConnector(), // peerRunState null = agent absent
+        address: address,
+        current: AgentRunState.busy,
+        mounted: true,
       );
+      expect(next.changed, isTrue);
+      expect(next.state, isNull);
+    });
+
+    test('unchanged when unmounted, unbound, or same state', () {
+      final c = busyConnector();
+      final unchanged = dmRefreshedAgentRunState(
+        connector: c,
+        address: address,
+        current: AgentRunState.busy,
+        mounted: true,
+      );
+      expect(unchanged.changed, isFalse);
+      expect(unchanged.state, AgentRunState.busy);
       expect(
         dmRefreshedAgentRunState(
           connector: c,
           address: address,
           current: null,
           mounted: false,
-        ),
-        isNull,
+        ).changed,
+        isFalse,
       );
       expect(
         dmRefreshedAgentRunState(
@@ -581,8 +589,8 @@ void dmAgentBannerTransitionTests() {
           address: address,
           current: null,
           mounted: true,
-        ),
-        isNull,
+        ).changed,
+        isFalse,
       );
       expect(
         dmRefreshedAgentRunState(
@@ -590,8 +598,8 @@ void dmAgentBannerTransitionTests() {
           address: null,
           current: null,
           mounted: true,
-        ),
-        isNull,
+        ).changed,
+        isFalse,
       );
       expect(
         dmRefreshedAgentRunState(
@@ -599,9 +607,9 @@ void dmAgentBannerTransitionTests() {
           address: address,
           current: null,
           mounted: true,
-        ),
-        isNull,
-        reason: 'agent absent from every roster → no state to store',
+        ).changed,
+        isFalse,
+        reason: 'agent absent and already hidden → nothing to change',
       );
     });
   });
