@@ -365,6 +365,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get wideNavActivity => 'Активность';
 
   @override
+  String get wideNavDevices => 'Устройства';
+
+  @override
   String get activityRunning => 'В работе';
 
   @override
@@ -2694,6 +2697,14 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get networkDmEncryptedOnAnotherDevice =>
+      'Зашифровано на другом устройстве';
+
+  @override
+  String get networkDmEarlierEncrypted =>
+      'Ранние сообщения зашифрованы на других устройствах';
+
+  @override
   String get networkNewChannel => 'Новый канал';
 
   @override
@@ -2718,6 +2729,60 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get networkPresenceBusy => 'Занят';
+
+  @override
+  String get networkDevicesTitle => 'Мои устройства';
+
+  @override
+  String get networkDeviceThisDevice => 'Это устройство';
+
+  @override
+  String get networkDeviceConnecting => 'Подключение…';
+
+  @override
+  String get networkDeviceConversationEmpty =>
+      'Собщений пока нет — напишите первым. Сессия проснётся при получении.';
+
+  @override
+  String get networkDeviceConversationOlder => 'Загрузить старые';
+
+  @override
+  String get networkDeviceConversationHint => 'Собщение…';
+
+  @override
+  String get networkDeviceReconnecting => 'Переподключение…';
+
+  @override
+  String get networkDeviceNotRunning =>
+      'Коннектор не запущен — нажмите, чтобы повторить';
+
+  @override
+  String get networkDeviceRenameAction => 'Переименовать устройство';
+
+  @override
+  String get networkDeviceRenameTitle => 'Переименовать устройство';
+
+  @override
+  String get networkDeviceNameLabel => 'Понятное имя';
+
+  @override
+  String get networkDeviceNameClearHint =>
+      'Оставьте пустым, чтобы использовать имя устройства по умолчанию.';
+
+  @override
+  String get networkDeviceNameTooLong =>
+      'Имя устройства должно содержать не более 64 символов.';
+
+  @override
+  String networkDeviceRenameError(String error) {
+    return 'Не удалось переименовать устройство: $error';
+  }
+
+  @override
+  String get noSessionsHint => 'Пока нет сессий';
+
+  @override
+  String get networkPresenceWakeOnDm => 'Разбудить в DM';
 
   @override
   String get networkMemberOwner => 'Владелец';

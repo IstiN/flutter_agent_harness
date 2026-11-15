@@ -32,10 +32,7 @@ class _FakeSummarizer {
 
 /// A plain [StreamFunction] closure fake completing with [text] and the
 /// given [usage].
-AssistantMessageEventStream _okStream(
-  String text, {
-  Usage usage = Usage.zero,
-}) {
+AssistantMessageEventStream _okStream(String text, {Usage usage = Usage.zero}) {
   final message = AssistantMessage(
     content: [TextContent(text: text)],
     api: 'a',
@@ -312,8 +309,11 @@ void main() {
       expect(recording.routings, hasLength(2));
       for (final routing in recording.routings) {
         expect(routing, isNotNull);
-        expect(routing!.cacheRetention, 'short',
-            reason: 'the digest rides the deliberate short-retention policy');
+        expect(
+          routing!.cacheRetention,
+          'short',
+          reason: 'the digest rides the deliberate short-retention policy',
+        );
         expect(routing.sessionId, isNotNull);
       }
       // ONE stable routing id per summarizer construction (per compaction
@@ -363,8 +363,10 @@ void main() {
       );
       await digest(const SummarizationRequest(prompt: 'p'));
       expect(digestRouting.single!.sessionId, 'run-7');
-      expect(digestRouting.single!.cacheRetention,
-          CompactionCachePolicy.digestRetention);
+      expect(
+        digestRouting.single!.cacheRetention,
+        CompactionCachePolicy.digestRetention,
+      );
     });
 
     test('onUsage surfaces the provider-reported response usage', () async {
@@ -908,22 +910,25 @@ void main() {
       expect(bodies[0].containsKey('prompt_cache_retention'), isFalse);
     });
 
-    test('isolated digest calls keep the legacy payload: no cache key', () async {
-      bodies.clear();
-      final stream = providerStreamFunction(
-        'openai-completions',
-        'key',
-        httpClient: captureClient(),
-      );
-      final summarize = streamFunctionSummarizer(
-        stream,
-        digestModel,
-        cachePolicy: CompactionCachePolicy.isolated(),
-      );
-      await summarize(const SummarizationRequest(prompt: 'one'));
+    test(
+      'isolated digest calls keep the legacy payload: no cache key',
+      () async {
+        bodies.clear();
+        final stream = providerStreamFunction(
+          'openai-completions',
+          'key',
+          httpClient: captureClient(),
+        );
+        final summarize = streamFunctionSummarizer(
+          stream,
+          digestModel,
+          cachePolicy: CompactionCachePolicy.isolated(),
+        );
+        await summarize(const SummarizationRequest(prompt: 'one'));
 
-      expect(bodies, hasLength(1));
-      expect(bodies.single.containsKey('prompt_cache_key'), isFalse);
-    });
+        expect(bodies, hasLength(1));
+        expect(bodies.single.containsKey('prompt_cache_key'), isFalse);
+      },
+    );
   });
 }

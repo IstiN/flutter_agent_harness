@@ -126,6 +126,10 @@
   "chatExpand": "Развернуть субагентов",
   "chatCollapse": "Свернуть",
   "wideNavActivity": "Активность",
+  "wideNavDevices": "Устройства",
+  "@wideNavDevices": {
+    "description": "Wide-shell nav row — the DEVICES section (machine roster tree)"
+  },
   "activityRunning": "В работе",
   "activityRecent": "Недавние",
   "activityAll": "Вся активность",
@@ -1074,6 +1078,8 @@
   "networkReconnecting": "Переподключение — сообщения будут отправлены после восстановления связи.",
   "networkReconnectNow": "Переподключиться сейчас",
   "networkMessageHint": "Написать в {channel}",
+  "networkDmEncryptedOnAnotherDevice": "Зашифровано на другом устройстве",
+  "networkDmEarlierEncrypted": "Ранние сообщения зашифрованы на других устройствах",
   "networkNewChannel": "Новый канал",
   "networkOnlineCount": "{count} в сети",
   "networkRosterTitle": "Участники",
@@ -1082,6 +1088,75 @@
   "networkPresenceOnline": "В сети",
   "networkPresenceOffline": "Не в сети",
   "networkPresenceBusy": "Занят",
+  "networkDevicesTitle": "Мои устройства",
+  "@networkDevicesTitle": {
+    "description": "Sidebar top section header: the signed-in user's device roster"
+  },
+  "networkDeviceThisDevice": "Это устройство",
+  "@networkDeviceThisDevice": {
+    "description": "The local machine's row in the device roster"
+  },
+  "networkDeviceConnecting": "Подключение…",
+  "@networkDeviceConnecting": {
+    "description": "Device roster skeleton line while the connector dials"
+  },
+  "networkDeviceConversationEmpty": "Собщений пока нет — напишите первым. Сессия проснётся при получении.",
+  "@networkDeviceConversationEmpty": {
+    "description": "Empty-history line in the remote-agent DM conversation pane"
+  },
+  "networkDeviceConversationOlder": "Загрузить старые",
+  "@networkDeviceConversationOlder": {
+    "description": "Button loading an older DM history window"
+  },
+  "networkDeviceConversationHint": "Собщение…",
+  "@networkDeviceConversationHint": {
+    "description": "Composer hint in the remote-agent DM conversation pane"
+  },
+  "networkDeviceReconnecting": "Переподключение…",
+  "@networkDeviceReconnecting": {
+    "description": "Device roster muted line while the upstream link is down"
+  },
+  "networkDeviceNotRunning": "Коннектор не запущен — нажмите, чтобы повторить",
+  "@networkDeviceNotRunning": {
+    "description": "Device roster line when the connector failed or stopped; tapping restarts it"
+  },
+  "networkDeviceRenameAction": "Переименовать устройство",
+  "@networkDeviceRenameAction": {
+    "description": "Own-device edit action and long-press accessibility label"
+  },
+  "networkDeviceRenameTitle": "Переименовать устройство",
+  "@networkDeviceRenameTitle": {
+    "description": "Friendly-name dialog title"
+  },
+  "networkDeviceNameLabel": "Понятное имя",
+  "@networkDeviceNameLabel": {
+    "description": "Friendly-name text field label"
+  },
+  "networkDeviceNameClearHint": "Оставьте пустым, чтобы использовать имя устройства по умолчанию.",
+  "@networkDeviceNameClearHint": {
+    "description": "Hint explaining that an empty friendly name clears it"
+  },
+  "networkDeviceNameTooLong": "Имя устройства должно содержать не более 64 символов.",
+  "@networkDeviceNameTooLong": {
+    "description": "Validation error when the friendly name exceeds 64 Unicode runes"
+  },
+  "networkDeviceRenameError": "Не удалось переименовать устройство: {error}",
+  "@networkDeviceRenameError": {
+    "description": "Friendly-name dialog server or connectivity error",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "noSessionsHint": "Пока нет сессий",
+  "@noSessionsHint": {
+    "description": "Muted hint under an expanded device node that has no agents or sessions"
+  },
+  "networkPresenceWakeOnDm": "Разбудить в DM",
+  "@networkPresenceWakeOnDm": {
+    "description": "Roster presence label for an exposed session with no live lease (a DM wakes it)"
+  },
   "networkMemberOwner": "Владелец",
   "networkMemberAdmin": "Администратор",
   "networkMemberMember": "Участник",

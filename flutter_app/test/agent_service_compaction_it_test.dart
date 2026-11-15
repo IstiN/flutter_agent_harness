@@ -181,10 +181,7 @@ void main() {
       // the kept region — so the local-trim valve has nothing droppable and
       // the failure must surface instead of silently no-oping.
       final service = AgentService(
-        agent: _agent(
-          _failingSummarizer(seen, 'r' * 1200),
-          contextWindow: 512,
-        ),
+        agent: _agent(_failingSummarizer(seen, 'r' * 1200), contextWindow: 512),
         env: env,
         sessionsRoot: '/sessions',
       );
@@ -194,8 +191,11 @@ void main() {
       await service.sendText('a' * 200);
       await service.waitForIdle();
       expect(service.error, isNull);
-      expect(service.overWindowReliefCountForTest, 0,
-          reason: 'the guard never fired — the turn fits the window');
+      expect(
+        service.overWindowReliefCountForTest,
+        0,
+        reason: 'the guard never fired — the turn fits the window',
+      );
       expect(
         service.messages.any((m) => m.role == 'system'),
         isFalse,
@@ -259,10 +259,7 @@ void main() {
         return gate.future;
       });
       final service = AgentService(
-        agent: _agent(
-          _failingSummarizer(seen, 'r' * 1200),
-          contextWindow: 512,
-        ),
+        agent: _agent(_failingSummarizer(seen, 'r' * 1200), contextWindow: 512),
         env: env,
         repo: JsonlSessionRepo(fs: gatedFs, sessionsRoot: '/sessions'),
         sessionsRoot: '/sessions',
@@ -365,11 +362,7 @@ void main() {
       );
       final env = MemoryExecutionEnv();
       final service = AgentService(
-        agent: _agent(
-          hugeToolThenText,
-          contextWindow: 8192,
-          tools: [echoTool],
-        ),
+        agent: _agent(hugeToolThenText, contextWindow: 8192, tools: [echoTool]),
         env: env,
         sessionsRoot: '/sessions',
       );
@@ -423,7 +416,10 @@ void main() {
         ),
       });
       final service = AgentService(
-        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        agent: _agent(
+          _recordingText(<String>[], 'main summary'),
+          contextWindow: 512,
+        ),
         env: env,
         sessionsRoot: '/sessions',
         taskModelsStore: store,
@@ -459,7 +455,9 @@ void main() {
       expect(service.error, isNull);
       expect(
         service.messages.any(
-          (m) => m.role == 'system' && m.content.contains('Context compaction failed'),
+          (m) =>
+              m.role == 'system' &&
+              m.content.contains('Context compaction failed'),
         ),
         isFalse,
         reason: 'the main-stream fallback saved the run — no failure notice',
@@ -470,7 +468,10 @@ void main() {
         '(resolver miss, empty legacy slot)', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
-        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        agent: _agent(
+          _recordingText(<String>[], 'main summary'),
+          contextWindow: 512,
+        ),
         env: env,
         sessionsRoot: '/sessions',
         taskModelsStore: TaskModelsStore.inMemory(const {}),
@@ -508,7 +509,10 @@ void main() {
         ),
       });
       final service = AgentService(
-        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        agent: _agent(
+          _recordingText(<String>[], 'main summary'),
+          contextWindow: 512,
+        ),
         env: env,
         sessionsRoot: '/sessions',
         taskModelsStore: store,
@@ -529,7 +533,9 @@ void main() {
       expect(service.error, isNull);
       expect(
         service.messages.any(
-          (m) => m.role == 'system' && m.content.contains('Context compaction failed'),
+          (m) =>
+              m.role == 'system' &&
+              m.content.contains('Context compaction failed'),
         ),
         isFalse,
       );

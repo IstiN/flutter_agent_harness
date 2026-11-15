@@ -6,6 +6,12 @@ import 'dart:async';
 
 import 'auth_flow.dart';
 
+/// Whether [uri] is the network OAuth callback registered on iOS/Android.
+bool isNetworkOAuthDeepLink(Uri uri) =>
+    uri.scheme == 'fah' &&
+    uri.host == 'oauth' &&
+    (uri.path == '/network' || uri.path.startsWith('/network/'));
+
 /// The mobile OAuth callback receiver (iOS/Android): the browser cannot
 /// reach an on-device loopback reliably, so the flow registers the app's
 /// `fah://oauth/network` deep link as `client_redirect_uri` — the service
@@ -89,10 +95,7 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
   /// links here, iOS registers the bare `fah` scheme (no filtering) —
   /// so `/network` and any sub-path match: every link the OS delivers
   /// into the app must be answered, never silently ignored.
-  bool matches(Uri uri) =>
-      uri.scheme == 'fah' &&
-      uri.host == 'oauth' &&
-      (uri.path == '/network' || uri.path.startsWith('/network/'));
+  bool matches(Uri uri) => isNetworkOAuthDeepLink(uri);
 
   /// Completes the flow with [uri] when it matches — a no-op once the
   /// callback already completed (a link delivered on both the stream and

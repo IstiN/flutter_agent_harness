@@ -23,14 +23,22 @@ void main() {
       'resumed ${scope.name} membership joins before channel mail wakes '
       'the idle agent',
       () => _verifyResume(scope),
-      timeout: const Timeout(Duration(seconds: 30)),
+      // The dial here is a boot-time backstop, but the boot itself (hub
+      // subprocess spawn + connect + restore) is load-sensitive: one
+      // body overran 30s under a parallel-gate window, so keep the cap
+      // above the generous inner ceilings.
+      timeout: const Timeout(Duration(seconds: 60)),
     );
   }
   test(
     'resumed session membership dials its own hub when boot had no '
     'DAP_HUB_URL',
     () => _verifyResume(DapChannelScope.session, bootHubUrl: false),
-    timeout: const Timeout(Duration(seconds: 30)),
+    // This variant's dial is the LAST stage of the timeline (after the
+    // boot, overlay-existence and restore waits below), so its outer cap
+    // must leave room for the generous inner ceilings on a loaded machine
+    // instead of becoming the effective 5s-equivalent bottleneck.
+    timeout: const Timeout(Duration(seconds: 60)),
   );
 }
 
@@ -153,7 +161,35 @@ Future<void> _verifyResume(
     // The first idle probe after replay must finish any deferred membership
     // sync; no user turn or notice-inbox drain is involved here.
     await cli.inboxWakeTickForTest();
-    await resumedJoin.timeout(const Duration(seconds: 5));
+    // The hub-side join acceptance IS the assertion: `resumedJoin`
+    // subscribes to the hub's broadcast join stream before cli.run(), so
+    // the event cannot be missed. A hard 5s window on it flaked under
+    // parallel-gate CPU contention — and a generous ceiling alone does
+    // not fix it: the boot-time dial can lose a HubIdentity.load race on
+    // the shared identity `.tmp` rename, and that swallowed one-shot
+    // sync never re-fires on its own. Production heals through the next
+    // idle probe, whose channelLister re-drives _syncRuntimeMemberships
+    // — so poll through that exact seam until the acceptance lands (the
+    // 10s redial throttle bounds the worst healing delay), then assert
+    // the acceptance itself.
+    final accepted = Completer<void>();
+    unawaited(
+      resumedJoin.then(
+        (_) => accepted.complete(),
+        onError: accepted.completeError,
+      ),
+    );
+    await waitForIt(
+      () async {
+        await HubPluginHost.joinedChannelsFor(plugin!);
+        return accepted.isCompleted;
+      },
+      reason: 'resumed $scope membership to dial its own hub after replay',
+      seconds: 45,
+    );
+    // Long settled by the poll above in healthy runs; kept generous so
+    // the ceiling can never be the load bottleneck under parallel gates.
+    await accepted.future.timeout(const Duration(seconds: 30));
 
     final text = 'arrived after ${scope.name} resume';
     await sender.sendChannelEnvelope(

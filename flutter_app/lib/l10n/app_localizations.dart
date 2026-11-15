@@ -764,6 +764,12 @@ abstract class AppLocalizations {
   /// **'Activity'**
   String get wideNavActivity;
 
+  /// Wide-shell nav row — the DEVICES section (machine roster tree)
+  ///
+  /// In en, this message translates to:
+  /// **'Devices'**
+  String get wideNavDevices;
+
   /// No description provided for @activityRunning.
   ///
   /// In en, this message translates to:
@@ -4772,6 +4778,18 @@ abstract class AppLocalizations {
   /// **'Message {channel}'**
   String networkMessageHint(Object channel);
 
+  /// Non-technical placeholder for a direct message sealed to a different per-device identity
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted on another device'**
+  String get networkDmEncryptedOnAnotherDevice;
+
+  /// Subtle divider replacing a consecutive run of undecryptable direct-message history
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier messages are encrypted on other devices'**
+  String get networkDmEarlierEncrypted;
+
   /// Create-channel button tooltip and dialog title
   ///
   /// In en, this message translates to:
@@ -4819,6 +4837,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Busy'**
   String get networkPresenceBusy;
+
+  /// Sidebar top section header: the signed-in user's device roster
+  ///
+  /// In en, this message translates to:
+  /// **'My devices'**
+  String get networkDevicesTitle;
+
+  /// The local machine's row in the device roster
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get networkDeviceThisDevice;
+
+  /// Device roster skeleton line while the connector dials
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get networkDeviceConnecting;
+
+  /// Empty-history line in the remote-agent DM conversation pane
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet — say hi. The session wakes on your message.'**
+  String get networkDeviceConversationEmpty;
+
+  /// Button loading an older DM history window
+  ///
+  /// In en, this message translates to:
+  /// **'Load older'**
+  String get networkDeviceConversationOlder;
+
+  /// Composer hint in the remote-agent DM conversation pane
+  ///
+  /// In en, this message translates to:
+  /// **'Message…'**
+  String get networkDeviceConversationHint;
+
+  /// Device roster muted line while the upstream link is down
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting…'**
+  String get networkDeviceReconnecting;
+
+  /// Device roster line when the connector failed or stopped; tapping restarts it
+  ///
+  /// In en, this message translates to:
+  /// **'Connector not running — tap to retry'**
+  String get networkDeviceNotRunning;
+
+  /// Own-device edit action and long-press accessibility label
+  ///
+  /// In en, this message translates to:
+  /// **'Rename device'**
+  String get networkDeviceRenameAction;
+
+  /// Friendly-name dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Rename device'**
+  String get networkDeviceRenameTitle;
+
+  /// Friendly-name text field label
+  ///
+  /// In en, this message translates to:
+  /// **'Friendly name'**
+  String get networkDeviceNameLabel;
+
+  /// Hint explaining that an empty friendly name clears it
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to use the default device name.'**
+  String get networkDeviceNameClearHint;
+
+  /// Validation error when the friendly name exceeds 64 Unicode runes
+  ///
+  /// In en, this message translates to:
+  /// **'Device names can be at most 64 characters.'**
+  String get networkDeviceNameTooLong;
+
+  /// Friendly-name dialog server or connectivity error
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t rename the device: {error}'**
+  String networkDeviceRenameError(String error);
+
+  /// Muted hint under an expanded device node that has no agents or sessions
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions yet'**
+  String get noSessionsHint;
+
+  /// Roster presence label for an exposed session with no live lease (a DM wakes it)
+  ///
+  /// In en, this message translates to:
+  /// **'Wake on DM'**
+  String get networkPresenceWakeOnDm;
 
   /// Roster member class: owner
   ///

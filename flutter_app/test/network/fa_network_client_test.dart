@@ -9,6 +9,7 @@ import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 /// A recorded outgoing request.
 class _RecordedRequest {
@@ -137,6 +138,179 @@ void main() {
       expect(await client.health(), isTrue);
       expect(httpClient.requests.single.method, 'GET');
     });
+
+    test(
+      'patchDeviceRoster merges typed agents and sessions with account JWT',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response('{"patched":"dev/1"}', 200);
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        await deviceClient.patchDeviceRoster(
+          'dev/1',
+          agents: const [
+            DeviceRosterAgent(
+              name: 'goal',
+              state: 'live',
+              exposed: true,
+              dmPub: 'pub-1',
+            ),
+          ],
+          sessions: const [
+            DeviceRosterSession(
+              id: 'session-1',
+              state: 'live',
+              networks: ['personal-1'],
+              title: 'Release plan',
+              path: '/work/flutter_agent',
+              lastActivity: '2026-11-12T09:00:00.000Z',
+            ),
+          ],
+        );
+
+        expect(captured.method, 'PATCH');
+        expect(captured.url.path, '/api/devices/dev%2F1/roster');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(captured.headers['content-type'], contains('application/json'));
+        expect(jsonDecode(captured.body), {
+          'agents': [
+            {
+              'name': 'goal',
+              'state': 'live',
+              'exposed': true,
+              'dmPub': 'pub-1',
+            },
+          ],
+          'sessions': [
+            {
+              'id': 'session-1',
+              'state': 'live',
+              'networks': ['personal-1'],
+              'title': 'Release plan',
+              'path': '/work/flutter_agent',
+              'lastActivity': '2026-11-12T09:00:00.000Z',
+            },
+          ],
+        });
+      },
+    );
+
+    test(
+      'renameDevice patches the encoded id with the account JWT only',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"deviceId":"dev/1","friendlyName":"Studio"}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final result = await deviceClient.renameDevice('dev/1', 'Studio');
+
+        expect(result.deviceId, 'dev/1');
+        expect(result.friendlyName, 'Studio');
+        expect(captured.method, 'PATCH');
+        expect(captured.url.path, '/api/devices/dev%2F1/name');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(captured.headers['content-type'], contains('application/json'));
+        expect(jsonDecode(captured.body), {'name': 'Studio'});
+      },
+    );
+
+    test(
+      'listDevices decodes the account envelope and revocation metadata',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"devices":[{"deviceId":"dev-1","name":"MacBook",'
+            '"friendlyName":"Studio","createdAt":"2026-01-02T03:04:05Z"},'
+            '{"deviceId":"dev-2","name":"Pixel",'
+            '"createdAt":"2026-01-03T03:04:05Z",'
+            '"revokedAt":"2026-01-04T03:04:05Z"}]}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final devices = await deviceClient.listDevices();
+
+        expect(captured.method, 'GET');
+        expect(captured.url.path, '/api/devices');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(devices, hasLength(2));
+        expect(devices.first.displayName, 'Studio');
+        expect(devices.first.createdAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
+        expect(devices.last.friendlyName, isNull);
+        expect(devices.last.displayName, 'Pixel');
+        expect(devices.last.revokedAt, DateTime.utc(2026, 1, 4, 3, 4, 5));
+      },
+    );
+
+    test(
+      'listNetworkDevices decodes friendly name, presence, and agent DM keys',
+      () async {
+        late http.Request captured;
+        final mock = MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"devices":[{"deviceId":"dev-remote","name":"thinkpad",'
+            '"friendlyName":"Workstation","presence":"offline",'
+            '"userId":"user-1","agents":['
+            '{"name":"goal","state":"live","exposed":true,'
+            '"dmPub":"cHViLWdvYWw="},'
+            '{"address":"scout@dev-remote","state":"busy","exposed":true,'
+            '"dmPub":"cHViLXNjb3V0"},'
+            '{"name":"missing-key","state":"live","exposed":true}'
+            ']}]}',
+            200,
+          );
+        });
+        final deviceClient = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: mock,
+          jwtToken: 'account-jwt',
+          sessionToken: 'member-session',
+        );
+
+        final devices = await deviceClient.listNetworkDevices('net/personal');
+
+        expect(captured.method, 'GET');
+        expect(captured.url.path, '/api/networks/net%2Fpersonal/devices');
+        expect(captured.headers['authorization'], 'Bearer account-jwt');
+        expect(devices.single.deviceId, 'dev-remote');
+        expect(devices.single.displayName, 'Workstation');
+        expect(devices.single.name, 'thinkpad');
+        expect(devices.single.presence, 'offline');
+        expect(devices.single.userId, 'user-1');
+        expect(devices.single.agentDmPubs, {
+          'goal@dev-remote': 'cHViLWdvYWw=',
+          'scout@dev-remote': 'cHViLXNjb3V0',
+        });
+      },
+    );
 
     test(
       'createNetwork posts name+password and parses joinCredentials',
@@ -398,6 +572,44 @@ void main() {
       expect(req.url.queryParameters.containsKey('kinds'), isFalse);
       expect(req.headers['authorization'], 'Bearer jwt-tok');
     });
+
+    test(
+      'listDmInbox windows a DM view and parses connector-wire rows',
+      () async {
+        client = build(jwtToken: 'jwt-tok', sessionToken: 'sess-tok');
+        httpClient.respond(
+          200,
+          body:
+              '{"items":[{"id":"dm-1","channelId":'
+              '"dm:user:u1:goal@dev-1","senderId":"user:u1",'
+              '"payload":"ZmFuZXQx",'
+              '"createdAt":"2026-11-12T10:00:00.000Z"}],'
+              '"nextCursor":"older-dm"}',
+        );
+
+        final page = await client.listDmInbox(
+          'dm:user:u1:goal@dev-1',
+          limit: 20,
+          cursor: 'current cursor',
+        );
+
+        final row = page.items.single;
+        expect(row.id, 'dm-1');
+        expect(row.channelId, 'dm:user:u1:goal@dev-1');
+        expect(row.senderId, 'user:u1');
+        expect(row.payload, 'ZmFuZXQx');
+        expect(row.createdAt, DateTime.utc(2026, 11, 12, 10));
+        expect(page.nextCursor, 'older-dm');
+        final req = httpClient.requests.single;
+        expect(req.method, 'GET');
+        expect(req.url.path, '/api/channels/dm:user:u1:goal@dev-1/messages');
+        expect(req.url.queryParameters, {
+          'limit': '20',
+          'cursor': 'current cursor',
+        });
+        expect(req.headers['authorization'], 'Bearer jwt-tok');
+      },
+    );
 
     test('deleteNetwork accepts 204', () async {
       httpClient.respond(204);
