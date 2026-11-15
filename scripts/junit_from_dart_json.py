@@ -4,7 +4,7 @@
 `dart test` has no built-in junit reporter, so CI emits the built-in
 `json:` file-reporter per shard and this converts it:
 
-    dart test --file-reporter="json:build/build/test-results/dart-shard-0.json" ...
+    dart test --file-reporter="json:build/test-results/dart-shard-0.json" ...
     python3 scripts/junit_from_dart_json.py \
         build/test-results/dart-shard-0.json build/test-results/junit-shard-0.xml
 

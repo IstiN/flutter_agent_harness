@@ -3,7 +3,7 @@ name: 🖼 golden-regen
 # guard renders them on. Run when the SDK train moves (the baselines are
 # pixel-sensitive to the engine's text stack — see the Golden suite leg in
 # ci.yml): dispatch, download the goldens artifact, copy into
-# flutter_app/test/goldenss/goldens/, commit. TZ=UTC + bundled fonts are the
+# flutter_app/test/goldens/goldens/, commit. TZ=UTC + bundled fonts are the
 # #1856 pinned-render contract; the capture host is the same macos-latest
 # image the enforcement legs use.
 # Runs when the 'golden-regen' label is added to a PR (the workflow file
@@ -41,15 +41,15 @@ jobs:
           EOF
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
       - uses: ./.github/actions/flutter-pub-get
-      - name: flutter test/goldenss --update-goldens (issue #1856 pinned-font env)
+      - name: flutter test/goldens --update-goldens (issue #1856 pinned-font env)
         working-directory: flutter_app
         shell: bash
         env:
           TZ: UTC
-        run: flutter test test/goldenss --update-goldens
+        run: flutter test test/goldens --update-goldens
       - name: Upload re-captured goldens
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: goldens-macos-350
-          path: flutter_app/test/goldenss/goldens/
+          path: flutter_app/test/goldens/goldens/
           retention-days: 7

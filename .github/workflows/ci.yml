@@ -979,7 +979,7 @@ jobs:
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_shards.json ${{ matrix.shard }})
           echo "shard targets: $targets"
-          mkdir -p test-results
+          mkdir -p build/test-results
           dart test --coverage=coverage --exclude-tags integration \
             --file-reporter="json:build/test-results/dart-shard-${{ matrix.shard }}.json" \
             $targets
@@ -1403,7 +1403,7 @@ jobs:
             echo "shard fully quarantined — nothing to run"
             exit 0
           fi
-          mkdir -p test-results
+          mkdir -p build/test-results
           dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
@@ -2745,7 +2745,7 @@ jobs:
           targets=$(python3 ../../scripts/shard_files.py \
             ../../scripts/faui_test_shards.json ${{ matrix.shard }} --exclude golden)
           echo "shard targets: $targets"
-          mkdir -p test-results
+          mkdir -p build/test-results
           flutter test --exclude-tags integration --coverage \
             --file-reporter="json:build/test-results/flutter-shard-${{ matrix.shard }}.json" \
             $targets

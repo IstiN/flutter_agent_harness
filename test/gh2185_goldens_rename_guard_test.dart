@@ -38,11 +38,10 @@ const appGitignore = 'flutter_app/.gitignore';
 
 /// The double-s token the mechanical rename produced (`goldenss`) — no
 /// path in the repo is spelled with it, so any occurrence is a regression.
-const doubleS = 'goldens';
+const doubleS = 'goldenss';
 
-ProcessResult git(List<String> args) => Process.runSync('git', <String>[
-      ...args,
-    ]);
+ProcessResult git(List<String> args) =>
+    Process.runSync('git', <String>[...args]);
 
 void expectOk(ProcessResult r, String what) {
   expect(r.exitCode, 0, reason: '$what failed: ${r.stderr}');
@@ -51,9 +50,13 @@ void expectOk(ProcessResult r, String what) {
 void main() {
   test('golden-regen.yml carries no `goldens` over-replacement token', () {
     final text = read(goldenRegen);
-    expect(text.contains(doubleS), isFalse,
-        reason: 'the rename produced `goldens` (double-s) in $goldenRegen — '
-            'no such directory exists; the macOS regen workflow is dead');
+    expect(
+      text.contains(doubleS),
+      isFalse,
+      reason:
+          'the rename produced `goldens` (double-s) in $goldenRegen — '
+          'no such directory exists; the macOS regen workflow is dead',
+    );
   });
 
   test('golden-regen.yml run/upload targets exist on disk', () {
@@ -61,14 +64,21 @@ void main() {
     // The merged goldens dir and its baselines subdir are the only valid
     // targets for the `flutter test <dir> --update-goldens` run and the
     // artifact upload.
-    expect(Directory('flutter_app/test/goldens').existsSync(), isTrue,
-        reason: 'merged goldens test dir must exist');
-    expect(Directory('flutter_app/test/goldens/goldens').existsSync(), isTrue,
-        reason: 'goldens baselines subdir must exist');
+    expect(
+      Directory('flutter_app/test/goldens').existsSync(),
+      isTrue,
+      reason: 'merged goldens test dir must exist',
+    );
+    expect(
+      Directory('flutter_app/test/goldens/goldens').existsSync(),
+      isTrue,
+      reason: 'goldens baselines subdir must exist',
+    );
     // Every path-like reference the workflow makes to the goldens tree
     // must resolve under the real merged dir.
-    for (final match in RegExp(r'flutter_app/test/goldens[a-z/]*')
-        .allMatches(text)) {
+    for (final match in RegExp(
+      r'flutter_app/test/goldens[a-z/]*',
+    ).allMatches(text)) {
       final ref = match.group(0)!;
       expect(
         File(ref).existsSync() || Directory(ref).existsSync(),
@@ -79,30 +89,38 @@ void main() {
   });
 
   test('no transient golden-failure dumps are tracked in git', () {
-    final r = git(<String>[
-      'ls-files',
-      '*test*/failures/*',
-    ]);
+    final r = git(<String>['ls-files', '*test*/failures/*']);
     expectOk(r, 'git ls-files failures');
     final tracked = r.stdout
         .toString()
         .split('\n')
         .where((l) => l.isNotEmpty)
         .toList();
-    expect(tracked, isEmpty,
-        reason: 'regressable flutter_test failure artifacts leaked into the '
-            'index: $tracked — the failures/ output class must stay untracked');
+    expect(
+      tracked,
+      isEmpty,
+      reason:
+          'regressable flutter_test failure artifacts leaked into the '
+          'index: $tracked — the failures/ output class must stay untracked',
+    );
   });
 
   test('root .gitignore covers the RENAMED fa_ui failures path', () {
     final text = read(rootGitignore);
-    expect(text.contains('packages/fa_ui/test/trajectory/goldens/failures/'),
-        isTrue,
-        reason: 'root .gitignore must ignore the renamed '
-            'packages/fa_ui/test/trajectory/goldens/failures/');
-    expect(text.contains('trajectory/golden/failures/'), isFalse,
-        reason: 'root .gitignore still names the pre-rename singular '
-            'golden/failures path — it can never match again');
+    expect(
+      text.contains('packages/fa_ui/test/trajectory/goldens/failures/'),
+      isTrue,
+      reason:
+          'root .gitignore must ignore the renamed '
+          'packages/fa_ui/test/trajectory/goldens/failures/',
+    );
+    expect(
+      text.contains('trajectory/golden/failures/'),
+      isFalse,
+      reason:
+          'root .gitignore still names the pre-rename singular '
+          'golden/failures path — it can never match again',
+    );
     // The probe must actually be ignored (the rule fires, not just sits).
     final r = git(<String>[
       'check-ignore',
@@ -115,28 +133,44 @@ void main() {
 
   test('flutter_app/.gitignore failures rule stays on the merged dir', () {
     final text = read(appGitignore);
-    expect(text.contains('test/goldens/failures/'), isTrue,
-        reason: 'flutter_app/.gitignore keeps ignoring test/goldens/failures/');
-    expect(text.contains('test/golden/failures/'), isFalse,
-        reason: 'stale singular test/golden/failures rule must not remain');
+    expect(
+      text.contains('test/goldens/failures/'),
+      isTrue,
+      reason: 'flutter_app/.gitignore keeps ignoring test/goldens/failures/',
+    );
+    expect(
+      text.contains('test/golden/failures/'),
+      isFalse,
+      reason: 'stale singular test/golden/failures rule must not remain',
+    );
   });
 
   test('no workflow step mkdirs the old `test-results` dir', () {
     for (final wf in <String>[ci, nightly]) {
       final text = read(wf);
       final stale = RegExp(r'mkdir -p test-results\b(?!/)').allMatches(text);
-      expect(stale, isEmpty,
-          reason: '$wf still runs `mkdir -p test-results` — reporters write '
-              'to `build/test-results/` and a bare shell redirect does not '
-              'create parents, so the exit-code echo can lose the code');
+      expect(
+        stale,
+        isEmpty,
+        reason:
+            '$wf still runs `mkdir -p test-results` — reporters write '
+            'to `build/test-results/` and a bare shell redirect does not '
+            'create parents, so the exit-code echo can lose the code',
+      );
     }
     // Every test-results mkdir targets the real reporters home.
     for (final wf in <String>[ci, nightly]) {
       final text = read(wf);
-      for (final match in RegExp(r'mkdir -p \S*test-results\S*').allMatches(text)) {
-        expect(match.group(0), contains('build/test-results'),
-            reason: '$wf creates `${match.group(0)}` — test-results dirs live '
-                'under build/');
+      for (final match in RegExp(
+        r'mkdir -p \S*test-results\S*',
+      ).allMatches(text)) {
+        expect(
+          match.group(0),
+          contains('build/test-results'),
+          reason:
+              '$wf creates `${match.group(0)}` — test-results dirs live '
+              'under build/',
+        );
       }
     }
   });

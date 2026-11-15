@@ -102,7 +102,7 @@ jobs:
           # (~1 s) instead of the JIT VM+CFE compile (~30 s on ARM).
           FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fa
         run: |
-          mkdir -p test-results
+          mkdir -p build/test-results
           # Issue #1696: capture the raw exit code so the classification
           # step below can tell the runner-process SIGABRT class (134)
           # apart from ordinary test failures.
