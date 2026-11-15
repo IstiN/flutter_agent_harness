@@ -105,6 +105,39 @@ void main() {
     );
   });
 
+  test('the purged root memory store never re-tracks notes (gh-2103 merge '
+      'recurrence)', () {
+    // gh-2185 AC2/AC3: ONE memory home at .fah/memory/ (local-only); the
+    // 921-note root memory/ store was purged from the index and .gitignore
+    // keeps the PATH ignored — but ignore rules cannot untrack files a
+    // merge delivers, and main's gh-2103 landing (#2183) re-delivered two
+    // notes under memory/ TRACKED (the root allow-list gate fails on
+    // exactly `memory` until they leave the index again). Every future
+    // merge from main until this PR lands can re-deliver them, so the
+    // invariant is pinned at the index level: nothing under the old root
+    // store may be tracked, and the preserved copies must live in the
+    // .fah/memory home.
+    final r = git(<String>['ls-files', 'memory/']);
+    expectOk(r, 'git ls-files memory');
+    final tracked = r.stdout
+        .toString()
+        .split('\n')
+        .where((l) => l.isNotEmpty)
+        .toList();
+    expect(
+      tracked,
+      isEmpty,
+      reason:
+          'the purged root memory/ store re-appeared in the index: $tracked '
+          '— preserve the notes into .fah/memory/note/ and git rm them '
+          '(.gitignore alone cannot untrack a merge-delivered file)',
+    );
+    // The .fah home is really ignored, so the preserved copies never
+    // re-enter git from the other side either.
+    final ignored = git(<String>['check-ignore', '.fah/memory/note/probe.md']);
+    expectOk(ignored, 'git check-ignore .fah/memory');
+  });
+
   test('root .gitignore covers the RENAMED fa_ui failures path', () {
     final text = read(rootGitignore);
     expect(
