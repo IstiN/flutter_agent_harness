@@ -8,6 +8,8 @@ import 'package:fa/network/device_dm_session_host.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart'
+    show AgentRunState;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'device_connector_service_test.dart' as fixture;
@@ -284,4 +286,49 @@ void main() {
       expect(host.calls, isEmpty);
     },
   );
+
+  test('agentRunState exposes the roster agent state for the DM banner', () async {
+    final remote = await EnvelopeCodec.newX25519KeyPair();
+    final (service, _, _, transport, _) = await fixture.buildService(
+      httpClient: http(),
+      tokenStore: fixture.enrolledTokens(),
+      userIdProvider: () async => 'user-1',
+      idFactory: () => 'dm-frame-1',
+    );
+    addTearDown(service.dispose);
+    await service.start();
+    await fixture.pumpUntilOnline(service);
+    expect(service.agentRunState('goal@remote-dev'), isNull);
+
+    transport.sockets.first.serverSends(
+      rosterWithDmPub('remote-dev', remote.pub),
+    );
+    await waitFor(() => service.currentRosterFrames.isNotEmpty);
+    expect(service.agentRunState('goal@remote-dev'), AgentRunState.live);
+
+    transport.sockets.first.serverSends(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.roster,
+        msgId: 'roster-busy',
+        network: 'net-personal',
+        ts: '2026-11-12T10:00:02.000Z',
+        payload: {
+          'devices': [
+            {
+              'deviceId': 'remote-dev',
+              'name': 'remote-dev',
+              'agents': [
+                {'name': 'goal', 'state': 'busy', 'exposed': true},
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    await waitFor(
+      () => service.agentRunState('goal@remote-dev') == AgentRunState.busy,
+    );
+    expect(service.agentRunState('nobody@remote-dev'), isNull);
+    expect(service.agentRunState('malformed'), isNull);
+  });
 }

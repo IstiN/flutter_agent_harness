@@ -10,12 +10,13 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/channel_chat_service.dart';
+import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show isDmChannel;
+    show AgentRunState, NetworkEnvelope, isDmChannel;
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
@@ -335,6 +336,8 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                 manager: widget.manager,
               ),
             if (session.networkOffline) _OfflineBanner(session: session),
+            if (isDmChannel(chatFor.$2))
+              _DmAgentStatusBanner(session: session, channelId: chatFor.$2),
             Expanded(
               child: FaChatStringsScope(
                 strings: _ChannelChatStrings(
@@ -706,6 +709,142 @@ class _ChannelHeader extends StatelessWidget {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The banner state's pure transition (its own function so the widget's
+/// `_refresh` stays a two-branch setter under the CRAP 12 ratchet, and the
+/// guard semantics are unit-testable without pumping a widget tree).
+/// Review #2196 round 1: `null` must NOT overload "unchanged" and "agent
+/// gone" — a peer disappearing from the roster while busy has to CLEAR
+/// the banner, so the result is `changed` + the (nullable) next state.
+@visibleForTesting
+({bool changed, AgentRunState? state}) dmRefreshedAgentRunState({
+  required DeviceConnectorService? connector,
+  required String? address,
+  required AgentRunState? current,
+  required bool mounted,
+}) {
+  if (!mounted || connector == null || address == null) {
+    return (changed: false, state: current);
+  }
+  final next = connector.agentRunState(address);
+  return (changed: next != current, state: next);
+}
+
+/// The DM peer's live run indicator: 'Fa is working…' while the Devices
+/// roster marks the remote agent busy — the visible acknowledgement that
+/// the agent picked the owner's message up (owner feedback). Hidden when
+/// the agent is idle/live or no roster state is published.
+class _DmAgentStatusBanner extends StatefulWidget {
+  const _DmAgentStatusBanner({required this.session, required this.channelId});
+
+  final NetworkSession session;
+  final String channelId;
+
+  @override
+  State<_DmAgentStatusBanner> createState() => _DmAgentStatusBannerState();
+}
+
+class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
+  DeviceConnectorService? _connector;
+  String? _address;
+  AgentRunState? _state;
+  final List<StreamSubscription<NetworkEnvelope>> _subs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _bind();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DmAgentStatusBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session ||
+        oldWidget.channelId != widget.channelId) {
+      _unbind();
+      _bind();
+    }
+  }
+
+  void _unbind() {
+    for (final sub in _subs) {
+      unawaited(sub.cancel());
+    }
+    _subs.clear();
+    _connector = null;
+    _address = null;
+    _state = null;
+  }
+
+  void _bind() {
+    final connector = widget.session.dmConnector;
+    final parts = parseDmChannelId(widget.channelId);
+    if (connector == null || parts == null) return;
+    _connector = connector;
+    _address = '${parts.agentName}@${parts.deviceId}';
+    _state = connector.agentRunState(_address!);
+    _subs.add(connector.rosterFrames.listen((_) => _refresh()));
+    _subs.add(connector.presenceFrames.listen((_) => _refresh()));
+  }
+
+  void _refresh() {
+    final next = dmRefreshedAgentRunState(
+      connector: _connector,
+      address: _address,
+      current: _state,
+      mounted: mounted,
+    );
+    if (!next.changed) return;
+    setState(() => _state = next.state);
+  }
+
+  @override
+  void dispose() {
+    _unbind();
+    super.dispose();
+  }
+
+  /// Lazy rebind for a late-attaching connector (kept branch-free at the
+  /// build call site for the CRAP 12 ratchet).
+  void _ensureBound() {
+    if (_connector == null) _bind();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The connector can attach AFTER this DM opened (digest, review
+    // #2196 r1): bind lazily on build too, not only on session/channel
+    // changes — otherwise the banner never appears on an early-opened DM.
+    _ensureBound();
+    if (_state != AgentRunState.busy) return const SizedBox.shrink();
+    final colors = FahColors.of(context);
+    return Container(
+      key: const ValueKey('dmAgentWorkingBanner'),
+      width: double.infinity,
+      color: colors.teal.withValues(alpha: .10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.6,
+              color: colors.teal,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              context.l10n.appsFaStatusWorking,
+              style: TextStyle(color: colors.teal, fontSize: 12),
+            ),
+          ),
         ],
       ),
     );

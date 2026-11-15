@@ -87,9 +87,10 @@ Future<NetworkSessionManager> _networkSessions({required bool jwt}) async =>
 Future<void> pumpShell(
   WidgetTester tester, {
   NetworkSessionManager? networkSessions,
+  Size size = const Size(1280, 800),
 }) async {
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(1280, 800);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
   final env = MemoryExecutionEnv();
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
@@ -179,6 +180,33 @@ void main() {
       containsAll(['persisted-0', 'persisted-54']),
     );
     expect(rows.every((row) => !row.live), isTrue);
+  });
+
+  test('device chat source never exposes subagent transcripts', () async {
+    final env = MemoryExecutionEnv();
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    await repo.create(
+      const JsonlSessionCreateOptions(id: 'main-chat', cwd: '/work'),
+    );
+    await repo.create(
+      const JsonlSessionCreateOptions(
+        id: 'child-agent',
+        cwd: '/work',
+        metadata: {'agent': 'subagent', 'parent': 'main-chat'},
+      ),
+    );
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      repo: repo,
+      includeSharedSessionRoots: false,
+    );
+    final source = createDeviceChatSessionSource(manager);
+    expect(await source.load(), const [(id: 'main-chat', live: false)]);
+
+    // Even a live-loaded subagent id stays unpublished.
+    manager.addSession('child-agent', _fakeService(env));
+    expect(await source.load(), const [(id: 'main-chat', live: false)]);
   });
 
   test('device metadata comes from the canonical Local panel rows', () async {
@@ -274,6 +302,49 @@ void main() {
     expect(
       find.byKey(const ValueKey('messengerPrimaryNav-devices')),
       findsNothing,
+    );
+  });
+
+  testWidgets('signed-in phone dock: Devices takes Activity\'s primary slot', (
+    tester,
+  ) async {
+    final sessions = await _networkSessions(jwt: true);
+    addTearDown(sessions.disconnectAll);
+    await pumpShell(
+      tester,
+      networkSessions: sessions,
+      size: const Size(390, 844),
+    );
+
+    final navigation = find.byKey(const ValueKey('narrowShellNavigation'));
+    expect(navigation, findsOneWidget);
+    expect(
+      find.descendant(
+        of: navigation,
+        matching: find.byKey(const ValueKey('messengerPrimaryNav-devices')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: navigation,
+        matching: find.byKey(const ValueKey('messengerPrimaryNav-activity')),
+      ),
+      findsNothing,
+    );
+    // Activity stays reachable through the More sheet.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-more')));
+    await tester.pumpAndSettle();
+    final sheet = find.byKey(const ValueKey('narrowShellMoreSheet'));
+    expect(sheet, findsOneWidget);
+    expect(
+      find.descendant(
+        of: sheet,
+        matching: find.byKey(
+          const ValueKey('narrowShellMore-messengerPrimaryNav-activity'),
+        ),
+      ),
+      findsOneWidget,
     );
   });
 }

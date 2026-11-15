@@ -151,6 +151,10 @@ final class NetworkSession extends ChangeNotifier {
   /// The app-scope device connector for DM virtual channels (§7), plus
   /// its live-mail subscription and per-channel remote session targets.
   DeviceConnectorService? _dmConnector;
+
+  /// The attached Devices connector (DM channels only), exposed so the
+  /// conversation surface can read the remote agent's roster run state.
+  DeviceConnectorService? get dmConnector => _dmConnector;
   StreamSubscription<NetworkEnvelope>? _dmSubscription;
   final _dmSessionTargets = <String, String?>{};
   final _dmSessionTitles = <String, String?>{};

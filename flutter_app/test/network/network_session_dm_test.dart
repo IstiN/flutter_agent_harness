@@ -8,8 +8,9 @@ import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
+import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show NetworkEnvelope, NetworkEnvelopeKind;
+    show AgentRunState, NetworkEnvelope, NetworkEnvelopeKind;
 // The fanet1 DM primitives are pure Dart in the messaging core.
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
@@ -36,6 +37,18 @@ final class FakeDmConnector implements DeviceConnectorService {
   @override
   String? agentDmPub({required String deviceId, required String agentName}) =>
       peerDmPub;
+
+  /// The DM working-banner state: null (hidden) unless a test seeds it.
+  AgentRunState? peerRunState;
+
+  @override
+  AgentRunState? agentRunState(String agentAddress) => peerRunState;
+
+  @override
+  Stream<NetworkEnvelope> get rosterFrames => const Stream.empty();
+
+  @override
+  Stream<NetworkEnvelope> get presenceFrames => const Stream.empty();
 
   @override
   Future<String> sendDmToAgent({
@@ -75,6 +88,7 @@ NetworkEnvelope _dmMail({
 );
 
 void main() {
+  dmAgentBannerTransitionTests();
   group('parseDmChannelId', () {
     test('parses the virtual channel id and rejects malformed shapes', () {
       final parts = parseDmChannelId(dmChannel)!;
@@ -520,5 +534,83 @@ void main() {
         expect(s.channelStates[dmChannel]!.messages, hasLength(2));
       },
     );
+  });
+}
+
+void dmAgentBannerTransitionTests() {
+  const address = 'fa@dev-b';
+  FakeDmConnector busyConnector() =>
+      FakeDmConnector()..peerRunState = AgentRunState.busy;
+  group('dmRefreshedAgentRunState (CRAP-decomposed banner transition)', () {
+    test('changed + new state when the state changed', () {
+      final next = dmRefreshedAgentRunState(
+        connector: busyConnector(),
+        address: address,
+        current: null,
+        mounted: true,
+      );
+      expect(next.changed, isTrue);
+      expect(next.state, AgentRunState.busy);
+    });
+
+    test('busy -> agent GONE clears the banner (review #2196 r1)', () {
+      final next = dmRefreshedAgentRunState(
+        connector: FakeDmConnector(), // peerRunState null = agent absent
+        address: address,
+        current: AgentRunState.busy,
+        mounted: true,
+      );
+      expect(next.changed, isTrue);
+      expect(next.state, isNull);
+    });
+
+    test('unchanged when unmounted, unbound, or same state', () {
+      final c = busyConnector();
+      final unchanged = dmRefreshedAgentRunState(
+        connector: c,
+        address: address,
+        current: AgentRunState.busy,
+        mounted: true,
+      );
+      expect(unchanged.changed, isFalse);
+      expect(unchanged.state, AgentRunState.busy);
+      expect(
+        dmRefreshedAgentRunState(
+          connector: c,
+          address: address,
+          current: null,
+          mounted: false,
+        ).changed,
+        isFalse,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: null,
+          address: address,
+          current: null,
+          mounted: true,
+        ).changed,
+        isFalse,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: c,
+          address: null,
+          current: null,
+          mounted: true,
+        ).changed,
+        isFalse,
+      );
+      expect(
+        dmRefreshedAgentRunState(
+          connector: FakeDmConnector(),
+          address: address,
+          current: null,
+          mounted: true,
+        ).changed,
+        isFalse,
+        reason: 'agent absent and already hidden → nothing to change',
+      );
+    });
   });
 }

@@ -401,13 +401,13 @@ final class MessengerGlassBodyInsets extends InheritedWidget {
 final class MessengerFloatingDockInsets {
   MessengerFloatingDockInsets._();
 
-  /// 56pt pill ([MessengerBottomNavigation.height]) + 8pt bottom gap
+  /// 56pt pill ([MessengerBottomNavigation.height]) + 6.4pt bottom gap
   /// ([MessengerBottomNavigation.bottomGap]) — the smallest inflated value
   /// the narrow scaffold can report. Raw device safe areas (iOS home
   /// indicator ≈ 34) stay below it, so only the scaffold's inflated inset
   /// qualifies. (Literal: importing the controls file here would create an
   /// import cycle.)
-  static const double minInflatedBottom = 64;
+  static const double minInflatedBottom = 62.4;
 
   /// The dock's occupied bottom height, or 0 when the ambient MediaQuery
   /// was not inflated for the floating dock (desktop, standalone hosts).

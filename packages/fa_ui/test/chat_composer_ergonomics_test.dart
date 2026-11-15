@@ -312,4 +312,33 @@ void main() {
       40,
     );
   });
+
+  testWidgets('no attach icon: the bare field gets real leading air', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            // FakeChatService has no pickers: the attach button is hidden
+            // and no host leadingBuilder is installed.
+            child: ChatComposer(service: FakeChatService()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('faChatComposerAttachButton')),
+      findsNothing,
+    );
+    final row = tester.widget<Padding>(
+      find.byKey(const ValueKey('faChatComposerFieldRow')),
+    );
+    expect((row.padding as EdgeInsets).left, 12);
+  });
 }

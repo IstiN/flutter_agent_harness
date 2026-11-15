@@ -21,6 +21,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 // ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart'
+    show AgentRunState;
+// ignore: implementation_imports
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -321,6 +324,51 @@ void main() {
     await tester.pump();
     expect(find.textContaining('legacy general only'), findsOneWidget);
     expect(find.textContaining('route to second'), findsNothing);
+    await rig.session.close();
+  });
+
+  testWidgets('the DM working banner shows while the peer agent is busy', (
+    tester,
+  ) async {
+    final rig = await _rig();
+    rig.connector.peerRunState = AgentRunState.busy;
+    rig.session.channelStates[dmChannel]!.add(
+      _message('one-user', 'first session only', sessionId: 'one'),
+    );
+    rig.session.selectDmSession(dmChannel, 'one', title: 'Hero One');
+    final manager = NetworkSessionManager(
+      baseUrl: testBase,
+      wallet: await KeyWallet.load(MemoryWalletBackend()),
+      httpClient: FakeHttpClient(),
+      wsConnector: FakeWsConnector(),
+    );
+    manager.sessions['net1'] = rig.session;
+    addTearDown(manager.disconnectAll);
+    final controller = NetworkModeController.inMemory(
+      mode: AppMode.network,
+      networkId: 'net1',
+      channelId: dmChannel,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: NetworkChatPage(
+            controller: controller,
+            manager: manager,
+            showAppBar: true,
+            showChannelHeader: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('dmAgentWorkingBanner')),
+      findsOneWidget,
+    );
     await rig.session.close();
   });
 }

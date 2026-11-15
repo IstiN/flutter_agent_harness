@@ -20,6 +20,9 @@ enum FaSemanticIcon {
   devices,
   chat,
   chevronRight,
+  download,
+  apps,
+  folder,
   laptop,
   send,
 }
@@ -49,6 +52,9 @@ class FaIconThemeData extends ThemeExtension<FaIconThemeData> {
     FaSemanticIcon.devices: Icons.devices_outlined,
     FaSemanticIcon.chat: Icons.chat_bubble_outline_rounded,
     FaSemanticIcon.chevronRight: Icons.chevron_right_rounded,
+    FaSemanticIcon.folder: Icons.folder_outlined,
+    FaSemanticIcon.download: Icons.download_rounded,
+    FaSemanticIcon.apps: Icons.apps_rounded,
     FaSemanticIcon.laptop: Icons.laptop_mac_rounded,
     FaSemanticIcon.send: Icons.send_rounded,
   };
