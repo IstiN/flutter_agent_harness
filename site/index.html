@@ -302,10 +302,19 @@
         <a class="btn" id="macos-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest" target="_blank" rel="noopener">
           Download for macOS (no sandbox)
         </a>
-        <a class="btn" id="windows-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-app-windows-x64.zip" target="_blank" rel="noopener">
+        <!-- gh-2194: the windows APP assets (fa-app-windows-x64.zip/.msix,
+             the daily build-windows leg) are clobber-refresher artifacts —
+             deliberately NOT in scripts/release_required_assets.txt, so a
+             latest/download deep link 404s whenever latest is a train-cut
+             release without them (the v1.0.729 release-asset-smoke red).
+             Same treatment as the macOS button: link the release page,
+             which always lists the windows app zip/msix/cer once the daily
+             leg has attached them, plus the guaranteed fa-windows-x64.zip
+             CLI archive. Deep links may return only after the asset joins
+             the required set (see build-windows.yml header). -->
+        <a class="btn" id="windows-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest" target="_blank" rel="noopener">
           Download for Windows
         </a>
-        <a id="windows-msix-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-app-windows-x64.msix" style="display:block;font-size:12px;opacity:.7;margin-top:2px">or the MSIX sideload package (+ .cer)</a>
         <a class="btn" id="extension-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest/download/fa-extension.zip">
           Chrome extension
         </a>
