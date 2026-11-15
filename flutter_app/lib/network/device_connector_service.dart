@@ -479,6 +479,33 @@ class DeviceConnectorService {
   /// Roster snapshots/patches from the server (§4).
   Stream<NetworkEnvelope> get rosterFrames => _rosterFrames.stream;
 
+  /// The current roster run state for [agentAddress] (`name@deviceId`),
+  /// or null when that agent is not published in any current roster frame.
+  /// Drives the DM conversation's 'agent is working' indicator: the owner
+  /// can see the remote agent pick their message up (owner feedback).
+  AgentRunState? agentRunState(String agentAddress) {
+    final separator = agentAddress.lastIndexOf('@');
+    if (separator < 1) return null;
+    final name = agentAddress.substring(0, separator);
+    final deviceId = agentAddress.substring(separator + 1);
+    for (final envelope in _lastRosterByNetwork.values) {
+      final devices = envelope.payload['devices'];
+      if (devices is! List) continue;
+      for (final device in devices) {
+        if (device is! Map || device['deviceId'] != deviceId) continue;
+        final agents = device['agents'];
+        if (agents is! List) continue;
+        for (final agent in agents) {
+          if (agent is! Map || agent['exposed'] != true) continue;
+          if (agent['name'] != name) continue;
+          final state = AgentRunState.tryParse('${agent['state'] ?? ''}');
+          if (state != null) return state;
+        }
+      }
+    }
+    return null;
+  }
+
   /// Presence frames from the server (network-wide presence view).
   Stream<NetworkEnvelope> get presenceFrames => _presenceFrames.stream;
 

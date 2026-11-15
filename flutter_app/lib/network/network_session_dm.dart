@@ -211,8 +211,17 @@ extension NetworkSessionDm on NetworkSession {
     final connector = _dmConnector;
     final parts = parseDmChannelId(envelope.channelId);
     final myId = connector == null ? null : await connector.accountUserId();
+    final frame = hubTryOpenFanet1(envelope.payload);
+    // The live backend rewrites ANY authenticated sender to the bare
+    // account uid — including an agent's `name@deviceId` — so senderId
+    // alone cannot tell my own DM from the agent's reply (owner feedback:
+    // replies rendered as outgoing rows with the OWNER's display name).
+    // The frame's sender pubkey can: an agent reply is sealed with the
+    // peer agent's roster dmPub, never with my own wallet identity.
+    final isAgentFrame = await _isPeerAgentFrame(connector, parts, frame);
     final isOwn =
-        envelope.senderId == myId || envelope.senderId == 'user:$myId';
+        (envelope.senderId == myId || envelope.senderId == 'user:$myId') &&
+        !isAgentFrame;
     final sentText = isOwn ? _dmOwnText[envelope.id] : null;
     if (sentText != null) {
       return ChannelMessage(
@@ -226,7 +235,6 @@ extension NetworkSessionDm on NetworkSession {
         sessionId: _dmOwnSessionIds[envelope.id],
       );
     }
-    final frame = hubTryOpenFanet1(envelope.payload);
     final senderPub = isOwn
         ? await _dmPeerPubkey(connector, parts)
         : frame?.senderPubkey;
@@ -254,7 +262,9 @@ extension NetworkSessionDm on NetworkSession {
       envelopeId: envelope.id,
       senderId: envelope.senderId,
       senderPub: senderPubB64,
-      senderName: isOwn ? identity.displayName : parts?.agentName,
+      senderName: isOwn
+          ? identity.displayName
+          : _agentSenderLabel(envelope.channelId, parts, sessionId),
       text: text,
       isOwn: isOwn,
       createdAt: envelope.createdAt,
@@ -273,6 +283,40 @@ extension NetworkSessionDm on NetworkSession {
     );
     if (pub == null) return null;
     return SimplePublicKey(base64Decode(pub), type: KeyPairType.x25519);
+  }
+
+  /// True when the frame was sealed by the PEER agent of this DM channel
+  /// (its roster dmPub matches the frame's sender pubkey header).
+  Future<bool> _isPeerAgentFrame(
+    DeviceConnectorService? connector,
+    DmChannelParts? parts,
+    HubFanet1Frame? frame,
+  ) async {
+    final senderPub = frame?.senderPubkey;
+    if (connector == null || parts == null || senderPub == null) return false;
+    final peerPub = connector.agentDmPub(
+      deviceId: parts.deviceId,
+      agentName: parts.agentName,
+    );
+    return peerPub != null && base64Encode(senderPub.bytes) == peerPub;
+  }
+
+  /// Incoming DM sender label: the tapped session's human title when this
+  /// row belongs to it, otherwise 'fa' for the default app agent ('main'
+  /// is an internal address part, not a display name) or the agent name.
+  String? _agentSenderLabel(
+    String channelId,
+    DmChannelParts? parts,
+    String? sessionId,
+  ) {
+    if (sessionId != null &&
+        sessionId == _dmSessionTargets[channelId] &&
+        _dmSessionTitles[channelId] != null) {
+      return _dmSessionTitles[channelId];
+    }
+    final name = parts?.agentName;
+    if (name == null || name.isEmpty) return null;
+    return name == 'main' ? 'fa' : name;
   }
 
   /// Thread-aware DM plaintext is `{"text": …, "sessionId"?}` in both

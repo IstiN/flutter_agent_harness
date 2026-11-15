@@ -9,7 +9,7 @@ import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_session.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show NetworkEnvelope, NetworkEnvelopeKind;
+    show AgentRunState, NetworkEnvelope, NetworkEnvelopeKind;
 // The fanet1 DM primitives are pure Dart in the messaging core.
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
@@ -36,6 +36,18 @@ final class FakeDmConnector implements DeviceConnectorService {
   @override
   String? agentDmPub({required String deviceId, required String agentName}) =>
       peerDmPub;
+
+  /// The DM working-banner state: null (hidden) unless a test seeds it.
+  AgentRunState? peerRunState;
+
+  @override
+  AgentRunState? agentRunState(String agentAddress) => peerRunState;
+
+  @override
+  Stream<NetworkEnvelope> get rosterFrames => const Stream.empty();
+
+  @override
+  Stream<NetworkEnvelope> get presenceFrames => const Stream.empty();
 
   @override
   Future<String> sendDmToAgent({
