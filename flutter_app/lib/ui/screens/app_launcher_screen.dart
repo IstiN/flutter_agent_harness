@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
@@ -1189,10 +1190,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           diameter: 32,
           glyphSize: 20,
           glass: false,
-          child: Icon(
+          child: FaIcon(
             _tab == _LauncherTab.getWidgets
-                ? Icons.apps_rounded
-                : Icons.download_rounded,
+                ? FaSemanticIcon.apps
+                : FaSemanticIcon.download,
             size: 20,
           ),
         ),
@@ -1204,7 +1205,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             diameter: 32,
             glyphSize: 20,
             glass: false,
-            child: const Icon(Icons.folder_open_outlined, size: 20),
+            child: const FaIcon(FaSemanticIcon.folder, size: 20),
           ),
       ],
     );
@@ -1338,7 +1339,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 content,
                 Positioned(
                   right: 16,
-                  bottom: 16 + MediaQuery.paddingOf(context).bottom,
+                  // Clear the shell's floating dock even when the nested
+                  // Apps navigator zeroes the ambient bottom padding.
+                  bottom:
+                      16 +
+                      math.max(
+                        MediaQuery.paddingOf(context).bottom,
+                        MessengerFloatingDockInsets.minInflatedBottom,
+                      ),
                   child: FaSurface(
                     key: const ValueKey('appsCatalogFab'),
                     circular: true,
@@ -1347,8 +1355,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                     onTap: () => _selectLauncherTab(_LauncherTab.getWidgets),
                     child: SizedBox.square(
                       dimension: 44,
-                      child: Icon(
-                        Icons.download_rounded,
+                      child: FaIcon(
+                        FaSemanticIcon.download,
                         size: 20,
                         color: colors.teal,
                       ),

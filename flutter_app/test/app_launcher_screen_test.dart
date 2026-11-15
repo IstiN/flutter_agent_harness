@@ -1203,4 +1203,18 @@ void main() {
       expect(find.text('Remove widget'), findsOneWidget);
     });
   });
+
+  testWidgets('compact apps list reserves the floating catalog icon', (
+    tester,
+  ) async {
+    await _pumpLauncher(tester, surface: const Size(390, 844));
+    expect(find.byKey(const ValueKey('appsCatalogFab')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appsCatalogFab')));
+    await tester.pumpAndSettle();
+    // The catalog tab hides the FAB; the header toggle returns to My Apps.
+    expect(find.byKey(const ValueKey('appsCatalogFab')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('appsHeaderCatalog')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('appsCatalogFab')), findsOneWidget);
+  });
 }
