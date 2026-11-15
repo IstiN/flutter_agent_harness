@@ -47,8 +47,9 @@ dependencies:
   # IO-bound (dart:io WebSocket + files); web gets the honest stub.
   fa_hub_client: ^0.2.10
 
-  # Mobile-friendly filesystem root and image picking.
+  # Mobile-friendly filesystem root, human device names, and image picking.
   path_provider: ^2.1.6
+  device_info_plus: ^13.3.0
   image_picker: ^1.2.3
   # Clipboard images for the composer's smart paste (Pasteboard.image —
   # restored per the owner's native-clipboard decision; no Rust, no

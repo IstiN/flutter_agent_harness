@@ -106,9 +106,7 @@ final class SessionHeader {
     if (metadata != null && metadata is! Map<String, dynamic>) {
       throw invalid('session header metadata must be an object');
     }
-    final decodedTimestamp = parseRecordTimestamp(
-      json['timestamp'] as String,
-    );
+    final decodedTimestamp = parseRecordTimestamp(json['timestamp'] as String);
     return SessionHeader(
       id: json['id'] as String,
       timestamp: decodedTimestamp.value,

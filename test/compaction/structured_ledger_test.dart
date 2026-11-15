@@ -256,83 +256,101 @@ void main() {
         cachePolicy: CompactionCachePolicy.affine(sessionId: 'run-7'),
       );
       await judge('ledger');
-      expect(judgeRouting!.sessionId, 'run-7',
-          reason: 'one cache bucket per compaction run');
-      expect(judgeRouting!.cacheRetention,
-          CompactionCachePolicy.judgeRetention);
+      expect(
+        judgeRouting!.sessionId,
+        'run-7',
+        reason: 'one cache bucket per compaction run',
+      );
+      expect(
+        judgeRouting!.cacheRetention,
+        CompactionCachePolicy.judgeRetention,
+      );
     });
 
-    test('two calls of one adapter share the routing id (pass ladder)', () async {
-      final routings = <({String? sessionId, String? cacheRetention})?>[];
-      AssistantMessageEventStream fn(
-        Model m,
-        Context c, {
-        CancelToken? cancelToken,
-      }) {
-        routings.add(StreamCacheRouting.current);
-        return streamOf([
+    test(
+      'two calls of one adapter share the routing id (pass ladder)',
+      () async {
+        final routings = <({String? sessionId, String? cacheRetention})?>[];
+        AssistantMessageEventStream fn(
+          Model m,
+          Context c, {
+          CancelToken? cancelToken,
+        }) {
+          routings.add(StreamCacheRouting.current);
+          return streamOf([
+            StartEvent(partial: msg('')),
+            DoneEvent(reason: StopReason.stop, message: msg('[]')),
+          ]);
+        }
+
+        final judge = streamFunctionHideJudge(fn, model, system: 'judge sys');
+        await judge('ledger pass 1');
+        await judge('ledger pass 2');
+        expect(routings, hasLength(2));
+        expect(
+          routings[0]!.sessionId,
+          routings[1]!.sessionId,
+          reason: 'one cache bucket for the run',
+        );
+        expect(routings[0]!.cacheRetention, isNot('none'));
+      },
+    );
+
+    test(
+      'onUsage reports the judged call usage; failures report none',
+      () async {
+        final usage = <Usage>[];
+        AssistantMessageEventStream fn(
+          Model m,
+          Context c, {
+          CancelToken? cancelToken,
+        }) => streamOf([
           StartEvent(partial: msg('')),
-          DoneEvent(reason: StopReason.stop, message: msg('[]')),
-        ]);
-      }
-
-      final judge = streamFunctionHideJudge(fn, model, system: 'judge sys');
-      await judge('ledger pass 1');
-      await judge('ledger pass 2');
-      expect(routings, hasLength(2));
-      expect(routings[0]!.sessionId, routings[1]!.sessionId,
-          reason: 'one cache bucket for the run');
-      expect(routings[0]!.cacheRetention, isNot('none'));
-    });
-
-    test('onUsage reports the judged call usage; failures report none',
-        () async {
-      final usage = <Usage>[];
-      AssistantMessageEventStream fn(
-        Model m,
-        Context c, {
-        CancelToken? cancelToken,
-      }) => streamOf([
-        StartEvent(partial: msg('')),
-        DoneEvent(
-          reason: StopReason.stop,
-          message: msg(
-            '[1]',
-            usage: const Usage(
-              input: 42,
-              output: 3,
-              cacheRead: 900,
-              cacheWrite: 0,
-              totalTokens: 945,
-              cost: UsageCost(total: 0.02),
+          DoneEvent(
+            reason: StopReason.stop,
+            message: msg(
+              '[1]',
+              usage: const Usage(
+                input: 42,
+                output: 3,
+                cacheRead: 900,
+                cacheWrite: 0,
+                totalTokens: 945,
+                cost: UsageCost(total: 0.02),
+              ),
             ),
           ),
-        ),
-      ]);
+        ]);
 
-      final judge = streamFunctionHideJudge(
-        fn,
-        model,
-        system: 's',
-        onUsage: usage.add,
-      );
-      expect(await judge('ledger'), '[1]');
-      expect(usage.single.input, 42);
-      expect(usage.single.cacheRead, 900);
+        final judge = streamFunctionHideJudge(
+          fn,
+          model,
+          system: 's',
+          onUsage: usage.add,
+        );
+        expect(await judge('ledger'), '[1]');
+        expect(usage.single.input, 42);
+        expect(usage.single.cacheRead, 900);
 
-      final empty = streamFunctionHideJudge(
-        (m, c, {cancelToken}) => streamOf([
-          StartEvent(partial: msg('')),
-          DoneEvent(reason: StopReason.stop, message: msg('   ')),
-        ]),
-        model,
-        system: 's',
-        onUsage: usage.add,
-      );
-      expect(await empty('l'), isNull, reason: 'F1: empty is a failed call');
-      expect(usage, hasLength(1), reason: 'a failed judge call reports no '
-          'usage — its cost is not attributable to a pass');
-    });
+        final empty = streamFunctionHideJudge(
+          (m, c, {cancelToken}) => streamOf([
+            StartEvent(partial: msg('')),
+            DoneEvent(reason: StopReason.stop, message: msg('   ')),
+          ]),
+          model,
+          system: 's',
+          onUsage: usage.add,
+        );
+        expect(await empty('l'), isNull, reason: 'F1: empty is a failed call');
+        expect(
+          usage,
+          hasLength(1),
+          reason:
+              'a failed judge call reports no '
+              'usage — its cost is not attributable to a pass',
+        );
+      },
+    );
 
     test('onDelta sees text and thinking deltas, skips other events', () async {
       final deltas = <String>[];

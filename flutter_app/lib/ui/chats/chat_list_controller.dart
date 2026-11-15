@@ -67,6 +67,7 @@ final class ChatListController extends ChangeNotifier {
   List<ChatListEntry> _localEntries = const [];
   List<NetworkInboxItem> _networkItems = const [];
   ChatLoadState _localStatus = ChatLoadState.loading;
+  bool _localLoadedOnce = false;
   ChatLoadState _networkStatus;
   Object? _localError;
   Object? _networkError;
@@ -89,6 +90,12 @@ final class ChatListController extends ChangeNotifier {
   ChatNetworkFilter get networkFilter => _networkFilter;
   String get searchQuery => _search;
   ChatLoadState get networkStatus => _networkStatus;
+
+  /// True once the first local listing has completed successfully. Until
+  /// then the visible corpus is UNKNOWN (not empty) — projections that
+  /// filter by [localEntries] must not treat it as authoritative yet
+  /// (PR #2190 review: cold-start mass-retraction race).
+  bool get localLoadedOnce => _localLoadedOnce;
   String? get networkError => _networkError?.toString();
   String? get localError => _localError?.toString();
   Map<String, String> get networkNames => Map.unmodifiable(_networkNames);
@@ -134,6 +141,7 @@ final class ChatListController extends ChangeNotifier {
       final entries = await _localAdapter.load();
       if (request != _localRequest) return;
       _localEntries = entries;
+      _localLoadedOnce = true;
       _localStatus = entries.isEmpty ? ChatLoadState.empty : ChatLoadState.data;
       _logFirstLocalEmission(entries);
     } on Object catch (error) {
@@ -232,6 +240,7 @@ final class ChatListController extends ChangeNotifier {
   Future<void> replaceLocalEntries(List<ChatListEntry> entries) async {
     _localRequest++;
     _localEntries = List.of(entries);
+    _localLoadedOnce = true;
     _localStatus = entries.isEmpty ? ChatLoadState.empty : ChatLoadState.data;
     _localError = null;
     notifyListeners();

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
@@ -9,6 +10,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/session_names_watcher_stub.dart'
+    if (dart.library.io) 'package:fa/services/session_names_watcher_io.dart';
 import 'package:fa_ui/fa_ui.dart';
 
 /// The fallback session title shown when the user gave no custom name: a
@@ -92,12 +95,18 @@ class SessionNamesStore extends ChangeNotifier {
 
   final ExecutionEnv? _env;
   final Map<String, String> _names = {};
+  StreamSubscription<void>? _fileWatch;
+  Timer? _fileRefreshTimer;
+  bool _fileRefreshActive = false;
+  bool _fileRefreshQueued = false;
 
   /// Loads the store persisted in [env]; a missing, unreadable, or corrupt
-  /// file yields an empty store.
+  /// file yields an empty store. Real desktop files are also watched so an
+  /// external CLI/process rename updates the shared store without a restart.
   static Future<SessionNamesStore> load(ExecutionEnv env) async {
     final store = SessionNamesStore._(env);
     await store._load();
+    store._startFileWatch();
     return store;
   }
 
@@ -158,21 +167,75 @@ class SessionNamesStore extends ChangeNotifier {
   }
 
   Future<void> _load() async {
+    final names = await _readNames();
+    if (names != null) _names.addAll(names);
+  }
+
+  /// Reads one complete authoritative snapshot. Invalid/missing files return
+  /// null so a torn atomic write cannot erase an already usable projection.
+  Future<Map<String, String>?> _readNames() async {
+    Map<String, String>? decodedNames;
     await faLoadVersionedStore(
       _env,
       fileName: fileName,
       version: _version,
       payloadKey: 'names',
       decode: (env, names) {
-        _names
-          ..clear()
-          ..addAll({
-            for (final entry in names.entries)
-              if (entry.value is String && (entry.value as String).isNotEmpty)
-                entry.key as String: entry.value as String,
-          });
+        decodedNames = {
+          for (final entry in names.entries)
+            if (entry.key is String &&
+                entry.value is String &&
+                (entry.value as String).isNotEmpty)
+              entry.key as String: entry.value as String,
+        };
       },
     );
+    return decodedNames;
+  }
+
+  void _startFileWatch() {
+    final env = _env;
+    if (env == null) return;
+    final events = watchSessionNamesFile(env);
+    if (events == null) return;
+    _fileWatch = events.listen(
+      (_) => _scheduleFileRefresh(),
+      onError: (_) {
+        // File watching is best-effort. Existing in-memory titles stay valid
+        // when a directory disappears or the platform revokes the watch.
+      },
+    );
+  }
+
+  void _scheduleFileRefresh() {
+    _fileRefreshTimer?.cancel();
+    _fileRefreshTimer = Timer(const Duration(milliseconds: 40), () {
+      unawaited(_refreshFromFile());
+    });
+  }
+
+  Future<void> _refreshFromFile() async {
+    if (_fileRefreshActive) {
+      _fileRefreshQueued = true;
+      return;
+    }
+    _fileRefreshActive = true;
+    try {
+      do {
+        _fileRefreshQueued = false;
+        final names = await _readNames();
+        if (names != null) syncFromSnapshot(names);
+      } while (_fileRefreshQueued);
+    } finally {
+      _fileRefreshActive = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _fileRefreshTimer?.cancel();
+    unawaited(_fileWatch?.cancel());
+    super.dispose();
   }
 
   Future<void> _save() async {
