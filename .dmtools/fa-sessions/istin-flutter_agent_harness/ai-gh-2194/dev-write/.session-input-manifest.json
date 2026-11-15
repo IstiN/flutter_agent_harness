@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-15T14:36:16.400Z",
+  "ticketKey": "gh-2194",
+  "headSha": "d71ddbc9f5045b95c5a91fb6c7a03e4471665a8c",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:4a1b9e968c1f7989",
+      "size": 10972
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:2bf2c9a334ec1aec",
+      "size": 8891
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:10d666e64be2af4f",
+      "size": 4229
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:0c0f6458adfbc9b5",
+      "size": 3743
+    },
+    "request.md": {
+      "hash": "fnv1a64:e1ecb8c00043bcd0",
+      "size": 483
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:0990aae8e4ba0265",
+      "size": 806
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:be77b142c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:876bf543d65677c7",
+      "size": 541
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e1ecb8c00043bcd0",
+      "size": 483
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc63qexR",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "memory/note/n_1030_8dda.md:1",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: PR re-tracks the gitignored project-memory path `memory/` (scope violation)**\n\nThis PR adds two new tracked files, `memory/note/n_1030_8dda.md` and\n`memory/note/n_1030_a0cf.md` — raw `memory_add` agent-session artifacts\n(`accessCount`/`importance` frontmatter, `[[agent]]` wiki-links) — under\nthe `memory/` path the repo deliberately closed to git in gh-2185:\n\n```gitignore\n# .gitignore:229-236\n# gh-2185: memory/ left git too — the project\n# memory store consolidated into .fah/memory (local-only, covered by the\n# .fah/* rules above); the root copy is ignored so the old path can never\n# re-track notes.\n/memory/\n```\n\nVerified on this branch:\n\n- `git ls-tree origin/main -- memory/` → empty (nothing under `memory/` is\n  tracked on main; the merge-base is the gh-2185 hygiene commit itself).\n- Both files are tracked **only** on `ai/gh-2194`, i.e. force-added through\n  an ignore rule whose stated purpose is \"the old path can never re-track\n  notes\".\n- `git check-ignore memory/note/<new>.md` → matches `.gitignore:236:/memory/`.\n- AGENTS.md (Memory footnote): project scope is `.fah/memory/note/` since\n  gh-2185 — **local-only, not committed**.\n- The PR description says \"site markup + one new test only\" — the notes are\n  unacknowledged scope (the WIP-auto-save sweep class the .gitignore\n  comment right above warns about).\n\nThis is exactly the two-homes divergence gh-2185 just eliminated (tracked\nlogs/generated dumps purged, \"memory store consolidated to ONE home\"); the\nticket's fix is landing-page markup + guard test, so these files are scope\ncreep beyond it.\n\n**Fix**: untrack both files without deleting them locally:\n\n```bash\ngit rm --cached memory/note/n_1030_8dda.md memory/note/n_1030_a0cf.md\n```\n\nIf either note has lasting value, it belongs in `.fah/memory` (local, via\n`memory_add`) or, as durable documentation, under `docs/` — not in a\ntracked `memory/` directory."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc63qeyQ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/site/landing_deep_links_test.dart:35",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the guard's regex is not the \"same extraction contract\" as the CI probe it mirrors**\n\nThe doc comment (lines 32-34) claims *\"Same extraction contract as\nscripts/assert_release_assets.sh --landing\"*, but the regex differs from\nthe script's extractor on two axes. The script (assert_release_assets.sh,\n`--landing` mode) uses:\n\n```bash\nurl_class=\"[^\\\"' <>()+,$(printf '\\t')]\"\nurls=$(grep -oE \"https?://${url_class}+\" \"$page\" | grep -E '/releases/(latest/)?download/' ...)\n```\n\ni.e. scheme `https?://` and a class that stops at **both** quote types\n(`\"` and `'`). This test matches `https://` only and stops at `\"` only —\nso a future landing-page edit that introduces an `http://…releases/latest/download/…`\nlink or a single-quoted URL would pass this offline guard and still red\nthe tag-train probe hours later — precisely the rot class (gh-2194) the\nguard exists to catch offline.\n\nVerified against the current page both extractors agree (only\n`…/releases/latest/download/fa-extension.zip`, which is in the required\nset), so this is latent — but the parity claim should be exact, or the\nnarrowing documented. Suggested fix (keeps the parity true):\n\n```dart\nfinal deepLinks = RegExp(\n  \"https?://[^\\\"' <>()+,\\\\t]*/releases/latest/download/[^\\\"' <>()+,\\\\t]+\",\n).allMatches(index).map((m) => m.group(0)!).toSet();\n```\n\n(or keep `https://` and drop the \"same extraction contract\" sentence,\nstating the deliberate narrowing instead — same for the script's\n`tr -d '[:space:]'` vs the test's `.trim()`, equivalent under the\none-name-per-line required-set contract)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:0468b6cc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: PR re-tracks the gitignored project-memory path `memory/` (scope violation)**\n\nThis PR adds two new tracked files, `memory/note/n_1030_8dda.md` and\n`memory/note/n_1030_a0cf.md` — raw `memory_add` agent-session artifacts\n(`accessCount`/`importance` frontmatter, `[[agent]]` wiki-links) — under\nthe `memory/` path the repo deliberately closed to git in gh-2185:\n\n```gitignore\n# .gitignore:229-236\n# gh-2185: memory/ left git too — the project\n# memory store consolidated into .fah/memory (local-only, covered by the\n# .fah/* rules above); the root copy is ignored so the old path can never\n# re-track notes.\n/memory/\n```\n\nVerified on this branch:\n\n- `git ls-tree origin/main -- memory/` → empty (nothing under `memory/` is\n  tracked on main; the merge-base is the gh-2185 hygiene commit itself).\n- Both files are tracked **only** on `ai/gh-2194`, i.e. force-added through\n  an ignore rule whose stated purpose is \"the old path can never re-track\n  notes\".\n- `git check-ignore memory/note/<new>.md` → matches `.gitignore:236:/memory/`.\n- AGENTS.md (Memory footnote): project scope is `.fah/memory/note/` since\n  gh-2185 — **local-only, not committed**.\n- The PR description says \"site markup + one new test only\" — the notes are\n  unacknowledged scope (the WIP-auto-save sweep class the .gitignore\n  comment right above warns about).\n\nThis is exactly the two-homes divergence gh-2185 just eliminated (tracked\nlogs/generated dumps purged, \"memory store consolidated to ONE home\"); the\nticket's fix is landing-page markup + guard test, so these files are scope\ncreep beyond it.\n\n**Fix**: untrack both files without deleting them locally:\n\n```bash\ngit rm --cached memory/note/n_1030_8dda.md memory/note/n_1030_a0cf.md\n```\n\nIf either note has lasting value, it belongs in `.fah/memory` (local, via\n`memory_add`) or, as durable documentation, under `docs/` — not in a\ntracked `memory/` directory."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:fe09a6ec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the guard's regex is not the \"same extraction contract\" as the CI probe it mirrors**\n\nThe doc comment (lines 32-34) claims *\"Same extraction contract as\nscripts/assert_release_assets.sh --landing\"*, but the regex differs from\nthe script's extractor on two axes. The script (assert_release_assets.sh,\n`--landing` mode) uses:\n\n```bash\nurl_class=\"[^\\\"' <>()+,$(printf '\\t')]\"\nurls=$(grep -oE \"https?://${url_class}+\" \"$page\" | grep -E '/releases/(latest/)?download/' ...)\n```\n\ni.e. scheme `https?://` and a class that stops at **both** quote types\n(`\"` and `'`). This test matches `https://` only and stops at `\"` only —\nso a future landing-page edit that introduces an `http://…releases/latest/download/…`\nlink or a single-quoted URL would pass this offline guard and still red\nthe tag-train probe hours later — precisely the rot class (gh-2194) the\nguard exists to catch offline.\n\nVerified against the current page both extractors agree (only\n`…/releases/latest/download/fa-extension.zip`, which is in the required\nset), so this is latent — but the parity claim should be exact, or the\nnarrowing documented. Suggested fix (keeps the parity true):\n\n```dart\nfinal deepLinks = RegExp(\n  \"https?://[^\\\"' <>()+,\\\\t]*/releases/latest/download/[^\\\"' <>()+,\\\\t]+\",\n).allMatches(index).map((m) => m.group(0)!).toSet();\n```\n\n(or keep `https://` and drop the \"same extraction contract\" sentence,\nstating the deliberate narrowing instead — same for the script's\n`tr -d '[:space:]'` vs the test's `.trim()`, equivalent under the\none-name-per-line required-set contract)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:1a87e798",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2194 landing fix itself is correct and the new offline guard provably pins the CI contract (verified RED→GREEN against the pre-fix page; `dart analyze` clean), but the PR also re-tracks two agent-memory note files under the `memory/` path gh-2185 deliberately gitignored (\"the old path can never re-track notes\").\n\n**Key Issues**:\n- 🚨 `memory/note/n_1030_8dda.md` + `memory/note/n_1030_a0cf.md` — tracked on this branch only, matched by `.gitignore:236`; scope violation of the gh-2185 one-home memory invariant (see inline thread).\n- 💡 `test/site/landing_deep_links_test.dart:35` — the regex diverges from the `assert_release_assets.sh --landing` extractor it claims to mirror (`https` only vs `https?`; `\"` only vs `\"`+`'`) — latent offline-guard hole.\n\n**Digest**:\n- `site/index.html:474` — the version-pinned `v1.0.636` APK deep links stay outside the offline guard by design (test docstring: frozen history); only the live tag-train probe covers them — acceptable, noted for awareness.\n\n**Next Steps**:\n1. Untrack the memory notes (`git rm --cached memory/note/n_1030_*.md`); local memory lives in `.fah/memory` per gh-2185.\n2. Align the guard regex with the probe (`https?://`, exclude `'`) or narrow the \"same extraction contract\" comment."
+    }
+  ]
+}
