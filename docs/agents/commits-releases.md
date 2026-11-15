@@ -130,10 +130,10 @@
   (`APP_STORE_AUTOMATIC_RELEASE` repo variable flips it, E5). Grep-guards:
   `test/store_automation_guard_test.dart`.
 - App Store content pipeline (no binary): store screenshots are COMMITTED
-  goldens from `flutter_app/test/golden/store_screenshots_test.dart` (frame +
+  goldens from `flutter_app/test/goldens/store_screenshots_test.dart` (frame +
   inline en/ru copy in `store_marketing_frame.dart`) at
   `flutter_app/test/goldens/store/{en,ru}/{ios,ipad,mac}/` — regenerate with
-  `flutter test test/golden/store_screenshots_test.dart --update-goldens`,
+  `flutter test test/goldens/store_screenshots_test.dart --update-goldens`,
   then open every PNG. Store copy lives in
   `flutter_app/fastlane/metadata/{ios,macos}/{en-US,ru-RU}/` (the lanes strip
   name.txt/subtitle.txt — App Info is not editable post-release); release
@@ -149,11 +149,11 @@
   (`fastlane/metadata/android/{en-US,ru-RU}/images/`): phone 1080×1920
   (exact 9:16, en+ru), 10-inch 1440×2560 (exact 9:16 — 1600×2560 is 10:16
   and Play rejects it; en only, ru falls back to phone shots), regenerated
-  with `flutter test test/golden/store_screenshots_test.dart
+  with `flutter test test/goldens/store_screenshots_test.dart
   --update-goldens` then `git checkout -- test/goldens/store` (the run also
   refreshes the App Store goldens on a non-canonical host — restore them);
   the feature graphic (1024×500) is a widget golden in
-  `test/golden/play_store_assets_test.dart`; the icon is the iOS master
+  `test/goldens/play_store_assets_test.dart`; the icon is the iOS master
   resized by `tool/generate_android_adaptive_icons.dart` (512×512, mirrored
   byte-identical to ru-RU). Sizes/aspects/file caps are enforced by
   `flutter_app/test/play_store_listing_guard_test.dart`. Listing texts

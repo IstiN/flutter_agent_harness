@@ -34,7 +34,7 @@ migrate_working_dir/
 /coverage/
 
 # Ranked CRAP JSON from the CI app-crap-gate job (issue #490) — fetched
-# via tools/crap_top.sh or gh run download; never committed.
+# via tool/crap_top.sh or gh run download; never committed.
 /crap_report.json
 
 # Symbolication related
@@ -63,7 +63,7 @@ macos/Runner/firebase_app_id_file.json
 
 
 # Golden test failure artifacts (diff dumps).
-test/golden/failures/
+test/goldens/failures/
 !android/app/google-services.json
 
 # fastlane run outputs (report.xml is written on every lane run; the

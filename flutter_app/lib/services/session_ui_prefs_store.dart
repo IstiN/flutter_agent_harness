@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'app_state_paths.dart';
 
 /// Persisted per-parent expand/collapse state of the sessions tree (issue
 /// #426), stored as versioned JSON at [fileName] in the root of the
@@ -90,7 +91,7 @@ class SessionUiPrefsStore {
     if (env == null) return;
     try {
       final text =
-          (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+          await readAppStateText(env, fileName);
       if (text == null) return;
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return;
@@ -124,7 +125,7 @@ class SessionUiPrefsStore {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({
           'version': version,
           'expandedParents': _expanded.toList(),

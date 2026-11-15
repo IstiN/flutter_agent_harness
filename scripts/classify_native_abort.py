@@ -14,8 +14,8 @@ This script makes that classification explicit in the step summary on the
 next recurrence. Annotation only: it never changes the leg's result, and
 it always exits 0 (the red comes from the test step itself).
 
-    python3 scripts/classify_native_abort.py test-results/exit-code \
-        test-results/integration.json
+    python3 scripts/classify_native_abort.py build/test-results/exit-code \
+        build/test-results/integration.json
 
 Pure stdlib. The JSONL parse mirrors junit_from_dart_json.py's tolerant
 reader: torn/partial trailing lines (the reporter flushes periodically, so

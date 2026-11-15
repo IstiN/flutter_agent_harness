@@ -6,7 +6,7 @@
 /// every flow the page drives — load/error/unsupported states, the live
 /// probe, the add/edit connection editor, bookmark switch/remove, and the
 /// inbound-mail routing — plus the pure bookmark-merge helper. Fakes mirror
-/// `test/golden/settings_golden_test.dart` (scripted [DapHubService]) and
+/// `test/goldens/settings_golden_test.dart` (scripted [DapHubService]) and
 /// `test/dap_service_web_core_test.dart` (injected extension bridges) —
 /// no network, no `~/.dap`.
 library;

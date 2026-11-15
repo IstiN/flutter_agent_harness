@@ -83,7 +83,7 @@ final class _ScriptedDeviceFlow {
 
 /// Records every url_launcher call (url_launcher_platform_interface is a
 /// dev dependency exactly for this seam — same pattern as
-/// test/golden/github_publish_golden_test.dart).
+/// test/goldens/github_publish_golden_test.dart).
 final class _RecordingUrlLauncher extends UrlLauncherPlatform {
   final launched = <String>[];
 

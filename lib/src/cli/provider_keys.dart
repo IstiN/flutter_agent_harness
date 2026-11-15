@@ -37,7 +37,7 @@ extension on AgentCli {
   }
 
   /// The env-resolved stack for a saved entry's key name —
-  /// `FA_KEY_COPILOT_<NAME>` + its `_2`… ring (goal/copilot_provider.md:
+  /// `FA_KEY_COPILOT_<NAME>` + its `_2`… ring (docs/goals/copilot_provider.md:
   /// env-first, works in CI without a secure store). Empty when the host
   /// exposes no environment values. Rings beyond `_9` need the startup
   /// roles resolution, which enumerates the whole environment.

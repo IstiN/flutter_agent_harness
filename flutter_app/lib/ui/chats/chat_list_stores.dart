@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import '../../services/app_state_paths.dart';
 import 'chat_list_entry.dart';
 
 /// Per-account local pin choices. Network auth is optional: the local account
@@ -33,7 +34,7 @@ final class ChatPinStore extends ChangeNotifier {
   }) async {
     final accounts = <String, Set<String>>{};
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text != null) {
         final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic> &&
@@ -68,7 +69,7 @@ final class ChatPinStore extends ChangeNotifier {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({
           'version': _version,
           'accounts': {
@@ -116,7 +117,7 @@ final class ChatReadCursorStore extends ChangeNotifier {
   }) async {
     final accounts = <String, Map<String, int>>{};
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text != null) {
         final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic> &&
@@ -154,7 +155,7 @@ final class ChatReadCursorStore extends ChangeNotifier {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({'version': _version, 'accounts': _accounts}),
       );
     } on Object {

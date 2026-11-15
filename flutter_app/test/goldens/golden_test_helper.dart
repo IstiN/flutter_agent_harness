@@ -1,0 +1,288 @@
+/// Shared scaffolding for the golden (screenshot) tests in `test/goldens/`.
+///
+/// Every golden test pumps through [pumpGolden] so all snapshots share the
+/// same theme, real bundled fonts, localization delegates, and surface
+/// sizing, then asserts with [expectGolden]. Call [ensureGoldenFonts] from
+/// `setUpAll` — without it flutter_test renders text as placeholder boxes.
+/// Snapshots are meant to double as marketing material: prefer full app
+/// frames filled with realistic content over tiny widgets on a black void.
+library;
+
+import 'package:fa/l10n/app_localizations.dart';
+import 'package:fa/ui/app_theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show KaomojiFacePicker;
+import 'package:flutter_test/flutter_test.dart';
+
+/// Desktop frame for hero/marketing shots.
+const goldenSizeDesktop = Size(1280, 800);
+
+/// Default landscape surface for wide panels (file browser, chat).
+const goldenSizeWide = Size(900, 600);
+
+/// Default portrait surface (dialogs, forms, sidebars, phone frames).
+const goldenSizeTall = Size(500, 800);
+
+/// Phone frame (iPhone-ish) for mobile marketing shots.
+const goldenSizePhone = Size(390, 844);
+
+var _fontsLoaded = false;
+
+/// Loads the app's bundled fonts (Inter + JetBrainsMono) plus MaterialIcons
+/// so snapshots render real glyphs instead of flutter_test placeholder
+/// boxes. Fonts are loaded once per test process; safe to call from every
+/// `setUpAll`.
+///
+/// HOST-INDEPENDENCE CONTRACT (issue #1856, from #177 E5): every family a
+/// golden can touch is registered HERE, from byte-identical TTFs, so the
+/// engine never consults the test host's fonts. flutter_test runs under
+/// `--use-test-fonts`: a glyph missing from every registered family
+/// resolves to the deterministic test-font box — NOT a host font — and
+/// glyphs missing from the PRIMARY family stay trapped the same way
+/// (per-glyph fallback cannot escape a resolved family). The production
+/// mono fallback stack (FahPalette.monoFallback: SF Mono / Menlo /
+/// Consolas / Roboto Mono / Courier — host system fonts) is therefore
+/// aliased to the same JetBrainsMono bytes: without the aliases a
+/// mono-path glyph JetBrainsMono lacks would resolve to the host's
+/// CoreText/fontconfig substitute and drift per host/OS. Emoji and
+/// symbols (✦, 🍅, ⏳ …) stay deterministic-by-trap for the same reason;
+/// shadows are covered by the test runner's `--skia-deterministic-
+/// rendering` flag. Two further drift axes are pinned by CONTRACT:
+/// the SDK VERSION — baselines are only valid for the exact pinned SDK
+/// (3.47.4) the nightly golden leg (build-release macOS row) runs;
+/// after an SDK bump, regenerate (`flutter test test/golden
+/// --update-goldens`) and eyeball every changed PNG — and the WALL
+/// CLOCK ZONE: activity/session rows render fixed test instants in the
+/// OS-local zone (`DateTime.toLocal()` at display time is correct app
+/// behavior), so a capture on UTC+3 and a verify on UTC disagree by
+/// exactly the offset (the 2026-11-10 activity-golden red: hosted
+/// "4:00 PM" vs a baseline captured on a UTC+3 Mac showing "7:00 PM").
+/// [ensureGoldenFonts] therefore pins the run to UTC and fails loudly
+/// when invoked from a non-UTC process — capture AND verify must run
+/// `TZ=UTC flutter test test/goldens`.
+Future<void> ensureGoldenFonts() async {
+  // Wall-clock pin (see the doc above): every baseline embeds UTC
+  // renderings; a non-UTC host would silently re-render the timestamps.
+  final offset = DateTime.now().timeZoneOffset;
+  if (offset != Duration.zero) {
+    fail(
+      'Golden clock contract violation: local timezone offset is '
+      '$offset, goldens render fixed instants in the OS-local zone and '
+      'are pinned to UTC. Re-run with the zone pinned: '
+      '`TZ=UTC flutter test test/goldens`.',
+    );
+  }
+  // The kaomoji indicator (issue #1374) picks its face randomly in
+  // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
+  // mirrors this) so every frame is deterministic: `>_o`, everywhere.
+  KaomojiFacePicker.debugPin = 0;
+  if (_fontsLoaded) return;
+  const familyAssets = <String, List<String>>{
+    'Inter': [
+      'Inter-Regular.ttf',
+      'Inter-Medium.ttf',
+      'Inter-SemiBold.ttf',
+      'Inter-Bold.ttf',
+      'Inter-ExtraBold.ttf',
+    ],
+    'Geist': [
+      'Geist-Regular.ttf',
+      'Geist-Medium.ttf',
+      'Geist-SemiBold.ttf',
+      'Geist-Bold.ttf',
+      'Geist-ExtraBold.ttf',
+    ],
+    'Geist Mono': [
+      'GeistMono-Regular.ttf',
+      'GeistMono-Medium.ttf',
+      'GeistMono-SemiBold.ttf',
+    ],
+    'Plus Jakarta Sans': [
+      'PlusJakartaSans-Regular.ttf',
+      'PlusJakartaSans-Medium.ttf',
+      'PlusJakartaSans-SemiBold.ttf',
+      'PlusJakartaSans-Bold.ttf',
+      'PlusJakartaSans-ExtraBold.ttf',
+    ],
+    'Outfit': [
+      'Outfit-Regular.ttf',
+      'Outfit-Medium.ttf',
+      'Outfit-SemiBold.ttf',
+      'Outfit-Bold.ttf',
+      'Outfit-ExtraBold.ttf',
+    ],
+    'DM Mono': ['DMMono-Regular.ttf', 'DMMono-Medium.ttf'],
+    'Space Grotesk': [
+      'SpaceGrotesk-Regular.ttf',
+      'SpaceGrotesk-Medium.ttf',
+      'SpaceGrotesk-SemiBold.ttf',
+      'SpaceGrotesk-Bold.ttf',
+    ],
+    'IBM Plex Sans': [
+      'IBMPlexSans-Regular.ttf',
+      'IBMPlexSans-Medium.ttf',
+      'IBMPlexSans-SemiBold.ttf',
+      'IBMPlexSans-Bold.ttf',
+    ],
+    'IBM Plex Mono': [
+      'IBMPlexMono-Regular.ttf',
+      'IBMPlexMono-Medium.ttf',
+      'IBMPlexMono-SemiBold.ttf',
+      'IBMPlexMono-Bold.ttf',
+    ],
+    'Manrope': [
+      'Manrope-Regular.ttf',
+      'Manrope-Medium.ttf',
+      'Manrope-SemiBold.ttf',
+      'Manrope-Bold.ttf',
+      'Manrope-ExtraBold.ttf',
+    ],
+  };
+  for (final entry in familyAssets.entries) {
+    final loader = FontLoader(entry.key);
+    for (final asset in entry.value) {
+      loader.addFont(rootBundle.load('assets/fonts/$asset'));
+    }
+    await loader.load();
+  }
+  // System SF is intentionally NOT redistributed. Goldens alias native
+  // family names to the bundled Inter bytes, just as the mono aliases below
+  // use JetBrainsMono; production resolves the real platform faces.
+  for (final family in const [
+    '.AppleSystemUIFont',
+    'SF Pro Text',
+    'SF Pro Display',
+    'Segoe UI',
+    'Roboto',
+    'system-ui',
+  ]) {
+    final loader = FontLoader(family);
+    for (final asset in familyAssets['Inter']!) {
+      loader.addFont(rootBundle.load('assets/fonts/$asset'));
+    }
+    await loader.load();
+  }
+  final jbm = [
+    rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-Medium.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-SemiBold.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf'),
+    rootBundle.load('assets/fonts/JetBrainsMono-ExtraBold.ttf'),
+  ];
+  // The theme's terminal-ish styles resolve `JetBrainsMono` and fall
+  // back through FahPalette.monoFallback — host system fonts (SF Mono
+  // only exists on macOS, Menlo/Consolas are platform-bound…). Register
+  // the whole stack against the same JetBrainsMono bytes so a mono-path
+  // glyph resolves identically on every host (see the contract above).
+  for (final family in const [
+    'JetBrainsMono',
+    'SF Mono',
+    'Menlo',
+    'Consolas',
+    'monospace',
+    'ui-monospace',
+    'Roboto Mono',
+    'Courier',
+  ]) {
+    final loader = FontLoader(family);
+    for (final font in jbm) {
+      loader.addFont(font);
+    }
+    await loader.load();
+  }
+  // Icon fonts are not registered from the test asset bundle either, but
+  // `uses-material-design: true` places MaterialIcons under fonts/.
+  final icons = FontLoader('MaterialIcons')
+    ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+  await icons.load();
+  _fontsLoaded = true;
+}
+
+/// Pumps [child] inside the app's real theme + localization at [size].
+///
+/// Use [wrap] to customize the host (e.g. wrap in a `Scaffold` with an
+/// `AppBar`); the default centers the child on a scaffold body — for
+/// full-screen shots pass `wrap: (child) => child` with a child that is
+/// itself a `Scaffold`. Pass [theme] (e.g. `buildFahThemeLight()`) for
+/// non-default theme variants.
+///
+/// After settling, [expectRealFontText] runs on the pumped frame: any
+/// family-less paragraph (test-fallback Ahem bars in goldens) fails the
+/// test.
+Future<void> pumpGolden(
+  WidgetTester tester,
+  Widget child, {
+  Size size = goldenSizeTall,
+  Locale locale = const Locale('en'),
+  ThemeData? theme,
+  Widget Function(Widget child)? wrap,
+
+  /// App-level scopes that must remain above pushed routes as well as home.
+  Widget Function(BuildContext context, Widget? navigator)? builder,
+
+  /// False for frames with infinite animations (spinners): settles by
+  /// pumping one frame instead of pumpAndSettle, which would time out.
+  bool settle = true,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: theme ?? buildFahTheme(),
+      locale: locale,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      builder: builder,
+      home: wrap != null ? wrap(child) : Scaffold(body: Center(child: child)),
+    ),
+  );
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
+  expectRealFontText(tester);
+}
+
+/// Asserts the current frame matches `test/goldens/goldens/<name>.png`.
+Future<void> expectGolden(WidgetTester tester, String name) {
+  return expectLater(
+    find.byType(MaterialApp),
+    matchesGoldenFile('goldens/$name.png'),
+  );
+}
+
+/// Fails when any visible text is painted with the test fallback font.
+///
+/// A [TextStyle] that REPLACES a themed label style (ButtonStyle.textStyle,
+/// `styleFrom(textStyle: …)`, snackbar/tooltip content styles) drops the
+/// themed fontFamily, and the engine then paints the glyphs with its default
+/// font — solid Ahem placeholder blocks in goldens, a foreign system font on
+/// devices (issue #947). Every themed style carries an explicit family (the
+/// textTheme is built with `.apply(fontFamily: …)`), so a null family on a
+/// rendered paragraph is always this bug.
+void expectRealFontText(WidgetTester tester) {
+  final offenders = <String>{};
+  for (final renderObject
+      in tester.allRenderObjects.whereType<RenderParagraph>()) {
+    final plain = renderObject.text.toPlainText().trim();
+    final family = renderObject.text.style?.fontFamily;
+    if (plain.isNotEmpty && (family == null || family.isEmpty)) {
+      offenders.add(
+        '"${plain.length > 40 ? '${plain.substring(0, 40)}…' : plain}"',
+      );
+    }
+  }
+  if (offenders.isNotEmpty) {
+    fail(
+      'Text painted with the test fallback font (family-less resolved '
+      'TextStyle — add fontFamily to the overriding style, mirroring the '
+      'button themes in app_theme.dart): ${offenders.take(10).join(', ')}',
+    );
+  }
+}

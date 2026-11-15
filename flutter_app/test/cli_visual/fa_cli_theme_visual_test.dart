@@ -14,7 +14,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../golden/golden_test_helper.dart';
+import '../goldens/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
 import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 

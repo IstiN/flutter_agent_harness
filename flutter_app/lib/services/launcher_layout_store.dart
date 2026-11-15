@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'app_state_paths.dart';
 
 /// A live-tile size in icon-slot cells (width × height).
 typedef TileSize = ({int w, int h});
@@ -367,7 +368,7 @@ class LauncherLayoutStore extends ChangeNotifier {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({
           'version': _version,
           'order': _order,
@@ -391,7 +392,7 @@ class LauncherLayoutStore extends ChangeNotifier {
   /// (wrong version, broken shape, or broken folder references).
   static Future<_ParsedLayout?> _read(ExecutionEnv env) async {
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text == null) return null;
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return null;

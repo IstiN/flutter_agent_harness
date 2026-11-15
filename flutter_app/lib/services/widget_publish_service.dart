@@ -80,7 +80,7 @@ final class GithubNotConnectedException implements Exception {
       'GithubNotConnectedException: connect a GitHub account to publish';
 }
 
-/// Publish orchestration (card `goal/widget-publishing-github.md`, issue
+/// Publish orchestration (card `docs/goals/widget-publishing-github.md`, issue
 /// #35; #232 pin-only PRs): pre-flight validation → user repo
 /// create-or-update → commit widget sources → fork `IstiN/fa_widgets` →
 /// branch + `widgets/<id>/overlay.json` carrying the `source: {repo,

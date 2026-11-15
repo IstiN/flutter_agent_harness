@@ -8,6 +8,7 @@ import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -922,11 +923,11 @@ void main() {
       );
       // Seed the v2 layout: 4 columns, alpha at its manifest size (2x2).
       await harness.env.writeFile(
-        '${harness.env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(harness.env, LauncherLayoutStore.fileName),
         '{"version":2,'
-            '"order":["app:alpha","app:beta","app:gamma",'
-            '"system:settings","system:files"],'
-            '"folders":[],"grid":{"columns":4},"tileSizes":{}}',
+        '"order":["app:alpha","app:beta","app:gamma",'
+        '"system:settings","system:files"],'
+        '"folders":[],"grid":{"columns":4},"tileSizes":{}}',
       );
       // The env-backed store loads on boot — pump a fresh screen state.
       harness.manager.active!.service.fsRevision.value++;
@@ -940,12 +941,12 @@ void main() {
 
       // The agent reconfigures: 3 columns + a 4x2 override (clamped to 3).
       await harness.env.writeFile(
-        '${harness.env.cwd}/${LauncherLayoutStore.fileName}',
+        appStateFilePath(harness.env, LauncherLayoutStore.fileName),
         '{"version":2,'
-            '"order":["app:alpha","app:beta","app:gamma",'
-            '"system:settings","system:files"],'
-            '"folders":[],"grid":{"columns":3},'
-            '"tileSizes":{"alpha":"4x2"}}',
+        '"order":["app:alpha","app:beta","app:gamma",'
+        '"system:settings","system:files"],'
+        '"folders":[],"grid":{"columns":3},'
+        '"tileSizes":{"alpha":"4x2"}}',
       );
       harness.manager.active!.service.fsRevision.value++;
       await tester.pump(const Duration(milliseconds: 700));
