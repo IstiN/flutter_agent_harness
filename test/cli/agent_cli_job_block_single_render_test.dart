@@ -199,10 +199,13 @@ void main() {
         );
         // …and the headless-pinned settle line stays TUI-visible (AC4: the
         // line is byte-identical on the headless stderr and still the live
-        // notice carrier in the TUI).
-        expect(
-          _normalize(frames.text).contains('[bash] sh-1-'),
-          isTrue,
+        // notice carrier in the TUI). The line rides `io.writeln` AFTER the
+        // card's synchronous board-drain paint, so it can flush on a later
+        // render tick — poll for the line itself, never assert it right
+        // after the card poll (the #2169-class poll-then-assert race; 3rd
+        // hit: main run 43676729012).
+        await waitForIt(
+          () => _normalize(frames.text).contains('[bash] sh-1-'),
           reason: 'the [bash] exited line is the settle notice carrier',
         );
 
