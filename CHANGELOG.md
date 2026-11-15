@@ -13,6 +13,21 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2194): the fa1.dev landing page no longer exposes two broken
+  Windows download links. The windows-release landing (#2158) deep-linked
+  `releases/latest/download/fa-app-windows-x64.zip` / `.msix`, but those
+  assets belong to the daily `build-windows` leg — deliberately outside
+  `scripts/release_required_assets.txt` — and the leg has not attached
+  them yet, so every train-cut `latest` 404'd both links; the v1.0.729
+  release run's gh-1832 asset smoke caught it and red'd the tag. The
+  Windows button now follows the macOS button's pattern (release page,
+  which always lists the windows app zip/msix/cer once shipped plus the
+  guaranteed `fa-windows-x64.zip` CLI archive), the msix deep link is
+  gone, and a new offline guard
+  (`test/site/landing_deep_links_test.dart`) pins the contract: every
+  `latest/download` deep link on the landing page must name a
+  required-set asset — PRs can no longer land links only the tag train
+  can falsify (`#2194`)
 - feat(gh-2103): compaction digest provenance — summaries can no longer
   launder tool-controlled text into trusted memory. The audit verdict: the
   typed pipeline is sound (the judge sees typed ledger lines, the fold input
