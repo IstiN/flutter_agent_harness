@@ -42,7 +42,10 @@ final class FakeDmConnector implements DeviceConnectorService {
   AgentRunState? peerRunState;
 
   @override
-  AgentRunState? agentRunState(String agentAddress) => peerRunState;
+  AgentRunState? agentRunState(
+    String agentAddress, {
+    required String networkId,
+  }) => peerRunState;
 
   @override
   Stream<NetworkEnvelope> get rosterFrames => const Stream.empty();
@@ -258,6 +261,54 @@ void main() {
       expect(messages[1].senderName, 'fa');
     });
 
+    test('roster eviction mid-chat keeps agent replies classified', () async {
+      // No peerDmPub seeded: the roster evicted the peer entry, so
+      // agentDmPub resolves null — the reported degradation trigger.
+      final s = await session();
+      final userPub = await identityPub();
+      final agentKeys = await X25519().newKeyPair();
+      final agentPub = await agentKeys.extractPublicKey();
+      // The live backend rewrites ANY authenticated sender to the bare
+      // account uid — including the agent's — so both rows arrive with
+      // MY sender id; only the frame's seal pubkey tells them apart.
+      final reply = await hubSealFanet1(
+        senderDhKeyPair: agentKeys,
+        recipientDhPubkey: userPub,
+        frameId: 'dm-a1',
+        aadTarget: dmChannel,
+        plaintext: 'pong after eviction',
+      );
+      final own = await hubSealFanet1(
+        senderDhKeyPair: await wallet.identityKeyPair(),
+        recipientDhPubkey: agentPub,
+        frameId: 'dm-u1',
+        aadTarget: dmChannel,
+        plaintext: jsonEncode({'text': 'ping'}),
+      );
+
+      final decodedReply = await s.decodeDmEnvelope(
+        Envelope(
+          id: 'dm-a1',
+          channelId: dmChannel,
+          senderId: 'u-1',
+          payload: reply,
+        ),
+      );
+      expect(decodedReply.isOwn, isFalse);
+      expect(decodedReply.text, 'pong after eviction');
+      expect(decodedReply.senderName, 'fa');
+      // Same rewritten sender id, but sealed with MY identity: stays own.
+      final decodedOwn = await s.decodeDmEnvelope(
+        Envelope(
+          id: 'dm-u1',
+          channelId: dmChannel,
+          senderId: 'u-1',
+          payload: own,
+        ),
+      );
+      expect(decodedOwn.isOwn, isTrue);
+    });
+
     test(
       'another device gets an honest placeholder in both directions',
       () async {
@@ -307,6 +358,12 @@ void main() {
         final stored = foreign.channelStates[dmChannel]!.messages;
         expect(stored, hasLength(2));
         expect(stored.map((message) => message.text), [isNull, isNull]);
+        // Multi-device contract (PR review r1): the cross-device echo is
+        // the same ACCOUNT user on another wallet — an own-shaped
+        // placeholder, never projected as an assistant row — while the
+        // undecryptable agent reply stays agent-shaped.
+        expect(stored.map((message) => message.isOwn), [isTrue, isFalse]);
+        expect(stored[1].senderName, 'fa');
 
         final chat = ChannelChatService(
           session: foreign,
@@ -539,6 +596,7 @@ void main() {
 
 void dmAgentBannerTransitionTests() {
   const address = 'fa@dev-b';
+  const networkId = 'net-personal';
   FakeDmConnector busyConnector() =>
       FakeDmConnector()..peerRunState = AgentRunState.busy;
   group('dmRefreshedAgentRunState (CRAP-decomposed banner transition)', () {
@@ -546,6 +604,7 @@ void dmAgentBannerTransitionTests() {
       final next = dmRefreshedAgentRunState(
         connector: busyConnector(),
         address: address,
+        networkId: networkId,
         current: null,
         mounted: true,
       );
@@ -557,6 +616,7 @@ void dmAgentBannerTransitionTests() {
       final next = dmRefreshedAgentRunState(
         connector: FakeDmConnector(), // peerRunState null = agent absent
         address: address,
+        networkId: networkId,
         current: AgentRunState.busy,
         mounted: true,
       );
@@ -569,6 +629,7 @@ void dmAgentBannerTransitionTests() {
       final unchanged = dmRefreshedAgentRunState(
         connector: c,
         address: address,
+        networkId: networkId,
         current: AgentRunState.busy,
         mounted: true,
       );
@@ -578,6 +639,7 @@ void dmAgentBannerTransitionTests() {
         dmRefreshedAgentRunState(
           connector: c,
           address: address,
+          networkId: networkId,
           current: null,
           mounted: false,
         ).changed,
@@ -587,6 +649,7 @@ void dmAgentBannerTransitionTests() {
         dmRefreshedAgentRunState(
           connector: null,
           address: address,
+          networkId: networkId,
           current: null,
           mounted: true,
         ).changed,
@@ -596,6 +659,7 @@ void dmAgentBannerTransitionTests() {
         dmRefreshedAgentRunState(
           connector: c,
           address: null,
+          networkId: networkId,
           current: null,
           mounted: true,
         ).changed,
@@ -605,6 +669,7 @@ void dmAgentBannerTransitionTests() {
         dmRefreshedAgentRunState(
           connector: FakeDmConnector(),
           address: address,
+          networkId: networkId,
           current: null,
           mounted: true,
         ).changed,
