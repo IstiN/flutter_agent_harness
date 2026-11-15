@@ -540,4 +540,69 @@ void main() {
       reason: 'the winner releases in the finally',
     );
   });
+
+  test(
+    'boot re-adoption: a live manifest entry becomes a registry job '
+    'while lostJobs keeps counting only the gone (issue #2201 AC5)',
+    () async {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Fabricated pidStart data (AC5's UT shape): one verifiably live pid,
+      // one dead pid, one entry past the staleHours age belt.
+      cli.waitingProcessTableForTest = () async =>
+          (pids: {424242}, starts: {424242: 'Mon Nov 16 10:00:00 2026'});
+      final dir = env.cwd;
+      await env.createDir('$dir/.fah/bash_jobs');
+      await env.writeFile(
+        '$dir/.fah/bash_jobs/running.json',
+        jsonEncode([
+          {
+            'id': 'sh-live',
+            'command': 'watch.sh',
+            'pid': '424242',
+            'pidStart': 'Mon Nov 16 10:00:00 2026',
+            'startedAtMs': now,
+          },
+          {
+            'id': 'sh-dead',
+            'command': 'gone.sh',
+            'pid': '999999',
+            'pidStart': 'Mon Nov 16 10:00:00 2026',
+            'startedAtMs': now,
+          },
+          {
+            'id': 'sh-aged',
+            'command': 'ancient.sh',
+            'pid': '424243',
+            'pidStart': 'Mon Nov 16 10:00:00 2026',
+            'startedAtMs': now - const Duration(hours: 48).inMilliseconds,
+          },
+        ]),
+      );
+
+      await cli.waitingCaptureLostJobsForTest();
+      // The dead + aged entries count as lost; the live one does not.
+      expect(cli.waitingLostJobsForTest, 2);
+      // The live entry was adopted as a real registry job.
+      final adopted = cli.shellJobsRegistryForTest.job('sh-live');
+      expect(adopted, isNotNull);
+      expect(adopted!.isAdopted, isTrue);
+      expect(adopted.isRunning, isTrue);
+      expect(adopted.pid, 424242);
+      expect(adopted.exitCode, isNull);
+      // The waiting row shows it as an adopted waiter.
+      final snap = await cli.waitersSnapshotForTest();
+      expect(
+        snap.jobs.where(
+          (j) => j.startsWith('adopted: ') && j.contains('sh-live'),
+        ),
+        hasLength(1),
+      );
+      // The manifest was not duplicated by the adoption's bookkeeping.
+      final manifest = (await env.readTextFile(
+        '$dir/.fah/bash_jobs/running.json',
+      )).valueOrNull!;
+      expect('sh-live'.allMatches(manifest), hasLength(1));
+    },
+  );
 }

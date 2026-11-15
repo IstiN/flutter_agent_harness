@@ -196,6 +196,63 @@ const defaultJobsLogRetentionDays = 3;
 /// of truth for the config default and the writer default.
 const defaultJobsMaxLogBytes = defaultJobLogMaxBytes;
 
+/// Default `jobs.adopted.livenessNoticeMinutes` (issue #2201 AC4): `0` —
+/// completion-only notification; still-running reminders stay off.
+const defaultAdoptedLivenessNoticeMinutes = 0;
+
+/// The `jobs.adopted:` section (issue #2201): knobs for ADOPTED background
+/// processes — the detached survivors (`cmd &`, nohup) and previous-run
+/// entries the harness tracks liveness-only.
+final class AdoptedJobsConfig {
+  const AdoptedJobsConfig({
+    this.livenessNoticeMinutes = defaultAdoptedLivenessNoticeMinutes,
+  });
+
+  /// Minutes between model-facing reminders for a still-running adopted
+  /// process; `0` (the default) fires none — completion notify only. The
+  /// waiting row reflects the job continuously either way.
+  final int livenessNoticeMinutes;
+
+  factory AdoptedJobsConfig.fromYaml(Object? node) {
+    if (node == null) return const AdoptedJobsConfig();
+    if (node is! Map) {
+      throw ConfigException('jobs.adopted must be a map, got: $node');
+    }
+    int parse(String key, int fallback) {
+      final value = node[key];
+      if (value == null) return fallback;
+      if (value is! int) {
+        throw ConfigException('"jobs.adopted.$key" must be an integer');
+      }
+      if (value < 0) {
+        throw ConfigException('"jobs.adopted.$key" must be >= 0 (0 disables)');
+      }
+      return value;
+    }
+
+    for (final key in node.keys) {
+      if (!{'livenessNoticeMinutes'}.contains('$key')) {
+        throw ConfigException('unknown "jobs.adopted" key: $key');
+      }
+    }
+    return AdoptedJobsConfig(
+      livenessNoticeMinutes: parse(
+        'livenessNoticeMinutes',
+        defaultAdoptedLivenessNoticeMinutes,
+      ),
+    );
+  }
+
+  /// Whether nothing was explicitly configured (the minimal-file rule:
+  /// defaults are never written).
+  bool get isDefault =>
+      livenessNoticeMinutes == defaultAdoptedLivenessNoticeMinutes;
+
+  String toYaml() =>
+      'adopted:\n'
+      '  livenessNoticeMinutes: $livenessNoticeMinutes\n';
+}
+
 /// The `jobs:` yaml section (issue #478): boot-maintenance knobs for the
 /// cross-run shell-job state under `.fah/bash_jobs/`. Parsed strictly
 /// like `waiting:` — a bad schema throws at boot; negative values are
@@ -205,6 +262,7 @@ final class JobsConfig {
     this.staleHours = defaultJobsStaleHours,
     this.logRetentionDays = defaultJobsLogRetentionDays,
     this.maxLogBytes = defaultJobsMaxLogBytes,
+    this.adopted = const AdoptedJobsConfig(),
   });
 
   /// Manifest entries older than this many hours are dropped at boot
@@ -220,6 +278,10 @@ final class JobsConfig {
   /// tail while the job keeps running. Unlike the other `jobs:` knobs, `0`
   /// is invalid — an unbounded log is exactly the bug being fixed.
   final int maxLogBytes;
+
+  /// Adopted-process knobs (issue #2201): the detached survivors tracked
+  /// liveness-only.
+  final AdoptedJobsConfig adopted;
 
   factory JobsConfig.fromYaml(Object? node) {
     if (node == null) return const JobsConfig();
@@ -251,7 +313,12 @@ final class JobsConfig {
       }
     }
     for (final key in node.keys) {
-      if (!{'staleHours', 'logRetentionDays', 'maxLogBytes'}.contains('$key')) {
+      if (!{
+        'staleHours',
+        'logRetentionDays',
+        'maxLogBytes',
+        'adopted',
+      }.contains('$key')) {
         throw ConfigException('unknown "jobs" key: $key');
       }
     }
@@ -259,6 +326,7 @@ final class JobsConfig {
       staleHours: parse('staleHours', defaultJobsStaleHours),
       logRetentionDays: parse('logRetentionDays', defaultJobsLogRetentionDays),
       maxLogBytes: maxLogBytesValue as int? ?? defaultJobsMaxLogBytes,
+      adopted: AdoptedJobsConfig.fromYaml(node['adopted']),
     );
   }
 
@@ -266,7 +334,8 @@ final class JobsConfig {
       'jobs:\n'
       '  staleHours: $staleHours\n'
       '  logRetentionDays: $logRetentionDays\n'
-      '  maxLogBytes: $maxLogBytes\n';
+      '  maxLogBytes: $maxLogBytes\n'
+      '${adopted.isDefault ? '' : adopted.toYaml()}';
 }
 
 /// Periodic waiting-heartbeat pings while waiters exist (issue #450).
