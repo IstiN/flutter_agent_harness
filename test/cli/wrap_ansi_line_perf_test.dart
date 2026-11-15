@@ -37,7 +37,8 @@ import 'package:test/test.dart';
 /// the tag train's pub.dev publish while every REAL gate on the same run
 /// stayed green. A modeling verdict is now a function of its script only
 /// (gh-1460 fixed-arrays style); the hermeticity guard in main() reds if
-/// a modeling clock ever consults real elapsed time again.
+/// a modeling clock ever executes the timed body again — the only way
+/// real elapsed time could re-enter a scripted verdict.
 final _rng = Random(1496);
 
 const _words = [
@@ -114,8 +115,9 @@ int _stopwatchUs(void Function() body) {
 /// inflated every clean doubled run of every attempt (best ratio 4.51x) —
 /// red-blocking the tag train's publish while every REAL gate on the same
 /// run stayed green. A modeling verdict must be a function of its script
-/// only; the hermeticity guard in main() reds if this clock ever consults
-/// real elapsed time again.
+/// only; the hermeticity guard in main() reds if this clock ever executes
+/// the timed body again (the only way real elapsed time could re-enter a
+/// verdict).
 ///
 /// [calls] exposes how many measurements the fake has timed. The
 /// scenario tests assert the expected total (attempts × sizes ×
@@ -123,10 +125,12 @@ int _stopwatchUs(void Function() body) {
 /// the index-based [spiked] addressing into a LOUD failure instead of
 /// silently shifting the spikes onto the wrong measurements (where
 /// they could depress the ratio and leave the test green while
-/// asserting nothing). [realMeasurements] is the hermeticity probe and
-/// must stay 0. The body is not executed — values are scripted, the
-/// same contract as [ScriptedClock] (the real warm-up wraps inside
-/// expectLinearGrowth still exercise the wrap path untimed).
+/// asserting nothing). The body is never executed — values are scripted,
+/// the same contract as [ScriptedClock]; the hermeticity guard in main()
+/// asserts that contract STRUCTURALLY (a scripted clock must never run
+/// its body — running it is how real timing was done, the gh-2192
+/// mechanism). The real warm-up wraps inside expectLinearGrowth still
+/// exercise the wrap path untimed.
 final class ContendedClock {
   ContendedClock({
     required this._spiked,
@@ -140,8 +144,10 @@ final class ContendedClock {
   /// Fake preemption time added to each spiked measurement.
   final double spikeMs;
 
-  /// Scripted clean value for a small-size run (~the real 100k-cell wrap
-  /// cost; only the ~2x proportion to [doubledUs] matters).
+  /// Scripted clean value for a small-size run; only the ~2x proportion
+  /// to [doubledUs] matters. The old real-harness 100k-cell baselines
+  /// (~3.5ms small / ~7ms doubled, see the preemption test history) are
+  /// mirrored scale-invariantly by the scenarios, not by this default.
   final int smallUs;
 
   /// Scripted clean value for a doubled-size run (~2x [smallUs] — the
@@ -151,12 +157,11 @@ final class ContendedClock {
   /// Number of measurements timed so far (1-based [spiked] addressing).
   var calls = 0;
 
-  /// Measurements served from the REAL stopwatch (gh-2192 hermeticity
-  /// probe): a modeling clock must script every value, so this stays 0.
-  var realMeasurements = 0;
-
   /// Serves the scripted value: clean small/doubled per the pinned
-  /// interleaved layout, [spikeMs] added on spiked calls.
+  /// interleaved layout, [spikeMs] added on spiked calls. Never executes
+  /// [body] — the hermeticity guard in main() reds if a scripted clock
+  /// ever runs its body again (that is how real stopwatch timing, the
+  /// gh-2192 flake mechanism, would re-enter a modeling verdict).
   int call(void Function() body) {
     calls++;
     final doubled = ((calls - 1) % 10).isOdd; // s,d,s,d,… per attempt
@@ -594,13 +599,18 @@ void main() {
       reason: 'the spiked indices encode the call layout',
     );
     // The modeled shape must stay a RED under the pre-gh-1532 median
-    // harness, pinned with this clock's own scripted values: 3 of 5
-    // doubled runs spiked (37ms) put the median-of-5 on a spiked value in
-    // every attempt (ratio ~10.6x — the live-red class), while the
-    // per-size min finds the two clean doubled runs (7ms ≈ 2x the clean
-    // small) and rides it.
-    const scriptedSmall = [3.5, 3.5, 3.5, 3.5, 3.5];
-    const scriptedDoubled = [37.0, 37.0, 37.0, 7.0, 7.0];
+    // harness, pinned with this clock's own scripted values (smallUs
+    // 350µs / doubledUs 700µs, spikeMs 30 → a spiked doubled run serves
+    // 0.7ms + 30ms = 30.7ms): 3 of 5 doubled runs spiked put the
+    // median-of-5 on a spiked value in every attempt (ratio ~87.7x — the
+    // live-red class), while the per-size min finds the two clean doubled
+    // runs (0.7ms ≈ 2x the clean small 0.35ms) and rides it. Only the
+    // RATIOS are load-bearing: the same shape the live reds measured on
+    // the old real-harness baselines (3.5/7/37ms — see the preemption
+    // test history below), mirrored here at the clock's own 10x-smaller
+    // scale so the arrays reconcile against the ContendedClock defaults.
+    const scriptedSmall = [0.35, 0.35, 0.35, 0.35, 0.35];
+    const scriptedDoubled = [30.7, 30.7, 30.7, 0.7, 0.7];
     final oldMedianRatio = scriptedDoubled[2] / scriptedSmall[2];
     expect(
       oldMedianRatio,
@@ -690,22 +700,52 @@ void main() {
     // runner inflated every one of them (the exact gh-1732 mechanism,
     // past the two-clean-samples hardening). A modeling scenario's verdict
     // must be a function of its script only: the clock may time NOTHING
-    // on the real stopwatch. This guard reds the moment any measurement
-    // in a modeling scenario consults real elapsed time again.
+    // on the real stopwatch.
+    //
+    // The probe below is STRUCTURAL, not convention-based: a scripted
+    // clock serves fixed values and therefore never EXECUTES the timed
+    // body — executing it is exactly how real stopwatch timing was done
+    // (the gh-2192 mechanism), so any stopwatch-based revert of call()
+    // runs the body and reds here deterministically. (A counter-style
+    // probe cannot do this: the reverter's fresh stopwatch code would
+    // never write it, so the field stays a constant and the guard stays
+    // green through a plain revert.)
+    final probe = ContendedClock(spiked: {});
+    var bodyRan = false;
+    probe.call(() => bodyRan = true);
+    expect(
+      bodyRan,
+      isFalse,
+      reason:
+          'a scripted clock executed its body — that means real work is '
+          'being timed again and CI weather can red a modeling verdict '
+          'without any product regression (gh-2192, fa run 43680913877)',
+    );
+    // The small/doubled classification is a second layout assumption
+    // ((call − 1) % 10 odd = doubled) alongside the call count, and the
+    // scenario tests' calls == 30 guards pin only the count. Pin the
+    // served values the same way, so a classification parity flip or a
+    // call-order change reds loudly instead of silently reclassifying
+    // which runs carry smallUs vs doubledUs (the served pattern encodes
+    // the measure loop's s,d,s,d interleaved layout AND the
+    // smallUs/doubledUs defaults in µs).
+    final layout = ContendedClock(spiked: {});
+    final served = [for (var i = 0; i < 10; i++) layout.call(() {})];
+    expect(
+      served,
+      [350, 700, 350, 700, 350, 700, 350, 700, 350, 700],
+      reason:
+          'the s,d,s,d classification encodes the measure loop layout '
+          '(one attempt of 10 calls: smallUs=350µs, doubledUs=700µs)',
+    );
+    // The modeling scenario itself must keep passing end-to-end on the
+    // scripted values, with its call count still pinned.
     final clock = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
     expectLinearGrowth(
       asciiProse,
       100000,
       'ASCII prose',
       elapsedUs: clock.call,
-    );
-    expect(
-      clock.realMeasurements,
-      0,
-      reason:
-          'the modeling clock timed ${clock.realMeasurements} measurements '
-          'on the real clock — CI weather can red the scenario without any '
-          'product regression (gh-2192, fa run 43680913877)',
     );
     expect(
       clock.calls,
