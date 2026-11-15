@@ -287,8 +287,95 @@ void main() {
     },
   );
 
-  test('agentRunState exposes the roster agent state for the DM banner', () async {
-    final remote = await EnvelopeCodec.newX25519KeyPair();
+  test(
+    'agentRunState exposes the roster agent state for the DM banner',
+    () async {
+      final remote = await EnvelopeCodec.newX25519KeyPair();
+      final (service, _, _, transport, _) = await fixture.buildService(
+        httpClient: http(),
+        tokenStore: fixture.enrolledTokens(),
+        userIdProvider: () async => 'user-1',
+        idFactory: () => 'dm-frame-1',
+      );
+      addTearDown(service.dispose);
+      await service.start();
+      await fixture.pumpUntilOnline(service);
+      expect(
+        service.agentRunState('goal@remote-dev', networkId: 'net-personal'),
+        isNull,
+      );
+
+      transport.sockets.first.serverSends(
+        rosterWithDmPub('remote-dev', remote.pub),
+      );
+      await waitFor(() => service.currentRosterFrames.isNotEmpty);
+      expect(
+        service.agentRunState('goal@remote-dev', networkId: 'net-personal'),
+        AgentRunState.live,
+      );
+
+      transport.sockets.first.serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.roster,
+          msgId: 'roster-busy',
+          network: 'net-personal',
+          ts: '2026-11-12T10:00:02.000Z',
+          payload: {
+            'devices': [
+              {
+                'deviceId': 'remote-dev',
+                'name': 'remote-dev',
+                'agents': [
+                  {'name': 'goal', 'state': 'busy', 'exposed': true},
+                ],
+              },
+            ],
+          },
+        ),
+      );
+      await waitFor(
+        () =>
+            service.agentRunState(
+              'goal@remote-dev',
+              networkId: 'net-personal',
+            ) ==
+            AgentRunState.busy,
+      );
+      expect(
+        service.agentRunState('nobody@remote-dev', networkId: 'net-personal'),
+        isNull,
+      );
+      expect(
+        service.agentRunState('malformed', networkId: 'net-personal'),
+        isNull,
+      );
+    },
+  );
+
+  test('agentRunState scopes the lookup to the requested network', () async {
+    // The SAME name@deviceId published in two networks: a first-match
+    // scan over every cached roster reported whichever network's frame
+    // arrived first (review #2197), so the wrong network's roster is
+    // cached first here on purpose.
+    NetworkEnvelope roster(String msgId, String network, String state) =>
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.roster,
+          msgId: msgId,
+          network: network,
+          ts: '2026-11-14T10:00:00.000Z',
+          payload: {
+            'devices': [
+              {
+                'deviceId': 'remote-dev',
+                'name': 'remote-dev',
+                'agents': [
+                  {'name': 'goal', 'state': state, 'exposed': true},
+                ],
+              },
+            ],
+          },
+        );
+
     final (service, _, _, transport, _) = await fixture.buildService(
       httpClient: http(),
       tokenStore: fixture.enrolledTokens(),
@@ -298,37 +385,29 @@ void main() {
     addTearDown(service.dispose);
     await service.start();
     await fixture.pumpUntilOnline(service);
-    expect(service.agentRunState('goal@remote-dev'), isNull);
 
     transport.sockets.first.serverSends(
-      rosterWithDmPub('remote-dev', remote.pub),
+      roster('roster-other', 'net-other', 'busy'),
     );
-    await waitFor(() => service.currentRosterFrames.isNotEmpty);
-    expect(service.agentRunState('goal@remote-dev'), AgentRunState.live);
-
     transport.sockets.first.serverSends(
-      NetworkEnvelope(
-        kind: NetworkEnvelopeKind.roster,
-        msgId: 'roster-busy',
-        network: 'net-personal',
-        ts: '2026-11-12T10:00:02.000Z',
-        payload: {
-          'devices': [
-            {
-              'deviceId': 'remote-dev',
-              'name': 'remote-dev',
-              'agents': [
-                {'name': 'goal', 'state': 'busy', 'exposed': true},
-              ],
-            },
-          ],
-        },
-      ),
+      roster('roster-personal', 'net-personal', 'live'),
     );
     await waitFor(
-      () => service.agentRunState('goal@remote-dev') == AgentRunState.busy,
+      () =>
+          service.agentRunState('goal@remote-dev', networkId: 'net-personal') ==
+          AgentRunState.live,
     );
-    expect(service.agentRunState('nobody@remote-dev'), isNull);
-    expect(service.agentRunState('malformed'), isNull);
+    expect(
+      service.agentRunState('goal@remote-dev', networkId: 'net-personal'),
+      AgentRunState.live,
+    );
+    expect(
+      service.agentRunState('goal@remote-dev', networkId: 'net-other'),
+      AgentRunState.busy,
+    );
+    expect(
+      service.agentRunState('goal@remote-dev', networkId: 'net-unknown'),
+      isNull,
+    );
   });
 }
