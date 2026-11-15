@@ -31,6 +31,19 @@
 //       legs the evidence is for), and never `continue-on-error` (a dead
 //       blob endpoint must still fail the shard, not drop the evidence
 //       the gate below asserts on).
+//  AC4  every primary upload itself carries `overwrite: true` — the
+//       gh-2200 rerun lesson: on a `rerun --failed` the retry steps never
+//       fire (the first attempt's upload SUCCEEDED), so the rerun attempt
+//       uploads a SECOND same-named artifact (observed on run
+//       43752856871: integration-json-shard-2 existed as IDs 14179115340
+//       + 14179068577), and download-artifact pattern-mode resolved the
+//       STALE one — the pty-coverage-gate merged the truncated
+//       hung-run report (missing the suites the cancelled attempt never
+//       started) and phantom-failed with "budgeted suite did not run:
+//       trajectory/cli_integration_test.dart" although the rerun shard
+//       passed every test. The primary upload must replace its previous
+//       attempt's artifact so reruns are idempotent and the merged gate
+//       always reads the freshest complete evidence.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -196,5 +209,24 @@ void main() {
         }
       },
     );
+
+    test('AC4: every primary upload carries overwrite:true (rerun idempotency, '
+        'gh-2200)', () {
+      for (final step in primaries) {
+        expect(
+          (step['with'] as YamlMap)['overwrite'],
+          true,
+          reason:
+              'primary upload "${step['id']}" must overwrite: on a '
+              'rerun --failed the gh-1412 retry never fires (the first '
+              'attempt succeeded), so overwrite:false uploads a second '
+              'same-named artifact and download-artifact pattern-mode '
+              'can resolve the STALE previous-attempt report — the '
+              'pty-coverage-gate then merges a truncated shard json and '
+              'phantom-fails "budgeted suite did not run" (run '
+              '43752856871 attempt 2)',
+        );
+      }
+    });
   });
 }

@@ -1499,19 +1499,19 @@
       "gate": "similarity",
       "file": "test/ci_core_shard_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_pty_artifact_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_pty_artifact_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.76, containment 0.87); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/ci_pty_artifact_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.81, containment 0.93); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_shard_evidence_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.76, containment 0.87); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
       "file": "test/ci_shard_evidence_upload_retry_guard_test.dart",
       "line": null,
-      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_pty_artifact_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.58, containment 0.80); reuse the shared source, generate one of them, or delete the stale copy"
+      "message": "similar to test/ci_core_shard_upload_retry_guard_test.dart, test/ci_pty_artifact_upload_retry_guard_test.dart \u2014 near-duplicate content (jaccard 0.57, containment 0.77); reuse the shared source, generate one of them, or delete the stale copy"
     },
     {
       "gate": "similarity",
