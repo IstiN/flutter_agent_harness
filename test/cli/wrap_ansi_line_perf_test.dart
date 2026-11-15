@@ -185,7 +185,16 @@ const _growthRuns = 5;
 /// contention can only ADD wall time, so the min approaches the
 /// uncontended ratio. A genuine regression measures ~4x+ in every
 /// attempt and still fails.
-const _growthAttempts = 3;
+///
+/// 6 attempts (gh-2185 triage, 2026-11-15): the hygiene-PR head reded
+/// twice on CI with this same assertion AFTER the PR #1526 noise-floor
+/// move — run 43693364790 (3.99x, still at the 100k scale) and the
+/// merge-head quality-gate/hostile-env runs (3.47x at 500k). Both were
+/// sustained steal windows spanning ALL THREE attempt windows of a
+/// whole sim, so the cross-attempt min had no clean window to rescue.
+/// Doubling the window a storm must cover keeps the 3.2 bound intact
+/// (linear ~2x, quadratic ~4x+) at ~10s extra per CI leg.
+const _growthAttempts = 6;
 
 /// Upper bound of the doubling ratio for a linear wrap: linear wraps
 /// measure ~2x here; the old quadratic candidates (re-scan per emitted
@@ -502,12 +511,12 @@ void main() {
         elapsedUs: spike.call,
       );
       // Layout guard: the spiked indices above encode the measure loop's
-      // exact call layout (3 attempts × 2 sizes × 5 timed runs). If that
+      // exact call layout (6 attempts × 2 sizes × 5 timed runs). If that
       // layout ever changes the spikes silently land on the wrong
       // measurements — this assertion turns that into a loud failure.
       expect(
         spike.calls,
-        30,
+        60,
         reason: 'the spiked indices encode the call layout',
       );
     },
@@ -521,7 +530,7 @@ void main() {
     // enough to span ≥3 of the 5 timed runs of the doubled size in EVERY
     // attempt inflates every attempt MEDIAN, so the cross-attempt min
     // cannot rescue it. Model that shape deterministically: 3 of the 5
-    // doubled runs spiked in each of the 3 attempts (the live-red
+    // doubled runs spiked in each of the 6 attempts (the live-red
     // minimum: median-of-5 [c,c,s] is still a spiked value), small runs
     // untouched (the small samples were stable in both live reds —
     // exposure scales with run duration). Median-of-5 takes a spiked
@@ -538,13 +547,24 @@ void main() {
     // contaminated clean run; the cross-attempt min covers the rest.
     // Measurement call order (interleaved, PR #1783 red): per attempt,
     // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
-    // 2,4,6,8,10 within each attempt (3 spiked per attempt below).
+    // 2,4,6,8,10 within each attempt (3 spiked per attempt below, all
+    // 6 attempts — the shape must stay poisoned in every attempt for
+    // the per-size min rescue to be the thing under test).
     // Scale: 500k, not 100k — at 100k the sim's own clean doubled slots
     // flaked on a loaded shard (CI run 43693364790, best ratio 3.99x):
     // real jitter on ~6.5ms clean wraps inflated them ~2x while the small
     // minima stayed. 500k is the PR #1526 noise-floor operating point the
     // real growth gates use; the same pause is proportionally ~5x smaller.
-    final sustained = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
+    final sustained = ContendedClock(
+      spiked: {
+        2, 4, 6, //
+        12, 14, 16, //
+        22, 24, 26, //
+        32, 34, 36, //
+        42, 44, 46, //
+        52, 54, 56, //
+      },
+    );
     expectLinearGrowth(
       asciiProse,
       500000,
@@ -552,11 +572,11 @@ void main() {
       elapsedUs: sustained.call,
     );
     // Same layout guard as the preemption test above: the spiked indices
-    // encode the measure loop's exact call layout (3 attempts × 2 sizes
+    // encode the measure loop's exact call layout (6 attempts × 2 sizes
     // × 5 timed runs).
     expect(
       sustained.calls,
-      30,
+      60,
       reason: 'the spiked indices encode the call layout',
     );
   });
@@ -587,7 +607,14 @@ void main() {
     // doubled min ≈ 29ms → ratio ≈ 3.4x in every attempt, still a loud
     // stand-in for the live 3.24x); post-fix both minima are clean ≈2x.
     final blocks = ContendedClock(
-      spiked: {6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 26, 27, 28, 29, 30},
+      spiked: {
+        6, 7, 8, 9, 10, //
+        16, 17, 18, 19, 20, //
+        26, 27, 28, 29, 30, //
+        36, 37, 38, 39, 40, //
+        46, 47, 48, 49, 50, //
+        56, 57, 58, 59, 60, //
+      },
       spikeMs: 12,
     );
     expectLinearGrowth(
@@ -597,16 +624,59 @@ void main() {
       elapsedUs: blocks.call,
     );
     // Same layout guard as the contention tests above: the spiked
-    // indices encode the measure loop's exact call layout (3 attempts ×
+    // indices encode the measure loop's exact call layout (6 attempts ×
     // 2 sizes × 5 timed runs). If that layout ever changes the spikes
     // silently land on the wrong measurements — this assertion turns
     // that into a loud failure.
     expect(
       blocks.calls,
-      30,
+      60,
       reason: 'the spiked indices encode the call layout',
     );
   });
+
+  test(
+    'growth assertion survives a steal storm spanning whole attempt '
+    'windows (gh-2185 triage: CI reds 43693364790 + the merge-head legs)',
+    () {
+      // The live failure class the 6-attempt window targets: a sustained
+      // steal cell covered EVERY attempt window of a whole sim, so the
+      // cross-attempt min had no clean window to rescue. The hygiene-PR
+      // head measured best ratios 3.99x (run 43693364790, 100k scale) and
+      // 3.47x (merge head, 500k — quality-gate AND hostile-env legs on the
+      // same day) with every doubled minimum inflated while the sibling
+      // absolute-budget gates stayed green: the storm was sim-local, not
+      // whole-VM. Model that shape deterministically: every doubled timed
+      // run of the FIRST THREE attempt windows spiked hard (+30ms on the
+      // ~17ms clean doubled slots → every one of those attempt ratios far
+      // over the 3.2 bound), attempts 4-6 ride clean. A 3-attempt window
+      // red on this shape (no clean window anywhere); the 6-attempt window
+      // contains clean attempts, the cross-attempt min rescues, and the
+      // gate stays green at the SAME bound — wider weather tolerance, no
+      // loosened threshold.
+      final storm = ContendedClock(
+        spiked: {
+          2, 4, 6, 8, 10, //
+          12, 14, 16, 18, 20, //
+          22, 24, 26, 28, 30, //
+        },
+      );
+      expectLinearGrowth(
+        asciiProse,
+        500000,
+        'ASCII prose',
+        elapsedUs: storm.call,
+      );
+      // Layout guard (interleaved order, PR #1783 red): every doubled run
+      // of attempts 1-3 spiked, attempts 4-6 untouched — 6 attempts × 2
+      // sizes × 5 timed runs.
+      expect(
+        storm.calls,
+        60,
+        reason: 'the spiked indices encode the call layout',
+      );
+    },
+  );
 
   test('growth assertion rejects a degenerate flat measurement (gh-1532)', () {
     // AC2: the guard must stay meaningful. A constant clock makes every
