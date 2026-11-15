@@ -1018,7 +1018,13 @@ jobs:
           key: ios-pods-v2-${{ hashFiles('flutter_app/ios/Podfile.lock') }}
 
       - name: Restore vendored WasmRun iOS framework
-        timeout-minutes: 15
+        # gh-2197-class flake (runs 43752370063 ×2): the fa-m5 runner is a
+        # DIFFERENT machine than the dev box, so $LOCAL_SRC is absent there
+        # and the 92.7 MB upstream asset crawled at 22-45 KB/s — the 15-min
+        # step ceiling killed it mid-body twice. Resume-capable loop below:
+        # each attempt keeps the partial zip (curl -C -), so even a
+        # throttled link converges instead of restarting from zero.
+        timeout-minutes: 60
         run: |
           set -euo pipefail
           # The prebuilt XCFramework is excluded from git. Prefer the local
@@ -1035,10 +1041,31 @@ jobs:
             echo "Local framework not found, downloading from upstream release..."
             # --retry alone skips transient mid-transfer resets (curl 56) —
             # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
-            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-              -o /tmp/WasmRun.xcframework.zip \
-              https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+            # -C - resumes the partial file between attempts (a bare --retry
+            # restarts the body from zero on a fresh invocation).
+            URL="https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip"
+            ZIP=/tmp/WasmRun.xcframework.zip
+            ok=0
+            for attempt in $(seq 1 10); do
+              echo "download attempt ${attempt}/10 (have $(stat -f%z "$ZIP" 2>/dev/null || echo 0) bytes)"
+              if curl -L -C - --retry 3 --retry-all-errors --retry-delay 5 --max-time 300 \
+                -o "$ZIP" "$URL" && unzip -tq "$ZIP" >/dev/null 2>&1; then
+                ok=1
+                break
+              fi
+              # A corrupt-but-complete zip (HTML error page, truncated
+              # central directory) can never be resumed into validity —
+              # drop it so the next attempt starts clean.
+              if ! unzip -tq "$ZIP" >/dev/null 2>&1 && [ "$(stat -f%z "$ZIP" 2>/dev/null || echo 0)" -lt 1000000 ]; then
+                rm -f "$ZIP"
+              fi
+              sleep 5
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::WasmRun.xcframework.zip could not be downloaded+verified after 10 resumable attempts"
+              exit 1
+            fi
+            unzip -q "$ZIP" -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
 
