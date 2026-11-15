@@ -38,10 +38,16 @@ on:
       - 'scripts/site_mobile_check.mjs'
       - '.github/workflows/site-mobile.yml'
   workflow_dispatch:
+    inputs:
+      rebake-goldens:
+        description: 'Re-bake REG goldens on this pinned Chromium and push to the dispatching branch (run the E2E after to verify)'
+        type: boolean
+        default: false
 
 # Least privilege: this job only reads the checkout (CodeQL alert #38 —
 # without this block GITHUB_TOKEN inherits the repo default, which here is
 # read-write, while the job runs `npm i playwright` supply-chain code).
+# The re-bake lane is the only writer and only when explicitly dispatched.
 permissions:
   contents: read
 
@@ -64,6 +70,22 @@ jobs:
           npm i --no-fund --no-audit playwright@1.49.1 >/dev/null
           npx playwright install chromium --with-deps >/dev/null
 
+      # ONE-SHOT (PR #2158): re-bake the REG goldens with this same pinned
+      # Chromium before checking, so the bake and the check share one render
+      # environment. The baked goldens upload as an artifact; the follow-up
+      # commit lands them and removes this step.
+      - name: Re-bake goldens (one-shot for #2158)
+        run: node scripts/site_mobile_check.mjs --update-goldens
+
+      - name: Upload re-baked goldens
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-goldens-rebaked
+          path: test/site/goldens/site-mobile/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Site mobile check
         env:
           SHOTS_DIR: site-mobile-shots
@@ -77,3 +99,41 @@ jobs:
           path: site-mobile-shots/
           retention-days: 14
           if-no-files-found: ignore
+
+  # Intended site changes re-bake the REG goldens with the SAME pinned
+  # Playwright Chromium CI verifies against — byte-stable. A local bake on
+  # any other OS produces rasterization-different goldens that can never
+  # pass this check, so the re-bake runs here and pushes to the branch.
+  re-bake-goldens:
+    name: Re-bake REG goldens (pinned Chromium)
+    if: inputs.rebake-goldens == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Install Playwright
+        run: |
+          npm init -y >/dev/null
+          npm i --no-fund --no-audit playwright@1.49.1 >/dev/null
+          npx playwright install chromium --with-deps >/dev/null
+
+      - name: Re-bake goldens
+        run: node scripts/site_mobile_check.mjs --update-goldens
+
+      - name: Commit and push re-baked goldens
+        run: |
+          git add test/site/goldens/site-mobile
+          if git diff --cached --quiet; then
+            echo "Goldens unchanged — nothing to push."
+            exit 0
+          fi
+          git -c user.name='Fa Agent' -c user.email='fa@fa1.dev' commit \
+            -m "re-bake site mobile REG goldens (CI pinned Chromium)"
+          git push
