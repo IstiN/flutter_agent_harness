@@ -29,6 +29,16 @@ import 'package:test/test.dart';
 /// [expectWrapUnderBudget] gates on the min of 3 independent attempt
 /// medians, so a contention phase covering one attempt no longer reds the
 /// leg while a genuine constant-factor regression still trips it.
+///
+/// The contention-MODELING scenarios are fully scripted since gh-2192
+/// (fa run 43680913877, tag v1.0.728): ContendedClock used to time its
+/// clean runs on the real stopwatch, and a loaded shard inflated every
+/// clean doubled run of every attempt (best ratio 4.51x) — red-blocking
+/// the tag train's pub.dev publish while every REAL gate on the same run
+/// stayed green. A modeling verdict is now a function of its script only
+/// (gh-1460 fixed-arrays style); the hermeticity guard in main() reds if
+/// a modeling clock ever executes the timed body again — the only way
+/// real elapsed time could re-enter a scripted verdict.
 final _rng = Random(1496);
 
 const _words = [
@@ -92,46 +102,81 @@ int _stopwatchUs(void Function() body) {
   return sw.elapsedMicroseconds;
 }
 
-/// Deterministic stand-in for a contended runner: delegates to a real
-/// stopwatch but adds [spikeMs] of fake preemption time to the timed
-/// measurements whose 1-based index is in [spiked] — a runner steal
-/// spanning several timed runs, the shape that flaked gh-1532 live.
+/// Scripted stand-in for a contended runner: returns a fixed clean value
+/// per measurement — [smallUs] for the SMALL-size runs and [doubledUs]
+/// for the doubled-size runs of the pinned interleaved layout (s,d,s,d,…
+/// per attempt; 10 calls per attempt, position p = (call − 1) % 10, odd
+/// p = doubled) — plus [spikeMs] of fake preemption on the 1-based call
+/// indices in [spiked] (a runner steal spanning several timed runs, the
+/// shape that flaked gh-1532 live).
+///
+/// gh-2192 (fa run 43680913877) made the clock FULLY scripted: it used to
+/// delegate its clean runs to a real stopwatch, and a loaded CI shard
+/// inflated every clean doubled run of every attempt (best ratio 4.51x) —
+/// red-blocking the tag train's publish while every REAL gate on the same
+/// run stayed green. A modeling verdict must be a function of its script
+/// only; the hermeticity guard in main() reds if this clock ever executes
+/// the timed body again (the only way real elapsed time could re-enter a
+/// verdict).
 ///
 /// [calls] exposes how many measurements the fake has timed. The
-/// preemption test asserts the expected total (attempts × sizes ×
+/// scenario tests assert the expected total (attempts × sizes ×
 /// runs) so a future change to the measure loop's call layout turns
 /// the index-based [spiked] addressing into a LOUD failure instead of
 /// silently shifting the spikes onto the wrong measurements (where
 /// they could depress the ratio and leave the test green while
-/// asserting nothing).
+/// asserting nothing). The body is never executed — values are scripted,
+/// the same contract as [ScriptedClock]; the hermeticity guard in main()
+/// asserts that contract STRUCTURALLY (a scripted clock must never run
+/// its body — running it is how real timing was done, the gh-2192
+/// mechanism). The real warm-up wraps inside expectLinearGrowth still
+/// exercise the wrap path untimed.
 final class ContendedClock {
-  ContendedClock({required this._spiked, this.spikeMs = 30});
+  ContendedClock({
+    required this._spiked,
+    this.spikeMs = 30,
+    this.smallUs = 350,
+    this.doubledUs = 700,
+  });
 
   final Set<int> _spiked;
 
   /// Fake preemption time added to each spiked measurement.
   final double spikeMs;
 
+  /// Scripted clean value for a small-size run; only the ~2x proportion
+  /// to [doubledUs] matters. The old real-harness 100k-cell baselines
+  /// (~3.5ms small / ~7ms doubled, see the preemption test history) are
+  /// mirrored scale-invariantly by the scenarios, not by this default.
+  final int smallUs;
+
+  /// Scripted clean value for a doubled-size run (~2x [smallUs] — the
+  /// true linear doubling).
+  final int doubledUs;
+
   /// Number of measurements timed so far (1-based [spiked] addressing).
   var calls = 0;
 
-  /// Times [body] like [ElapsedUs], adding the spike when spiked.
+  /// Serves the scripted value: clean small/doubled per the pinned
+  /// interleaved layout, [spikeMs] added on spiked calls. Never executes
+  /// [body] — the hermeticity guard in main() reds if a scripted clock
+  /// ever runs its body again (that is how real stopwatch timing, the
+  /// gh-2192 flake mechanism, would re-enter a modeling verdict).
   int call(void Function() body) {
-    final sw = Stopwatch()..start();
-    body();
-    sw.stop();
     calls++;
-    return sw.elapsedMicroseconds +
-        (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);
+    final doubled = ((calls - 1) % 10).isOdd; // s,d,s,d,… per attempt
+    final base = doubled ? doubledUs : smallUs;
+    return base + (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);
   }
 }
 
 /// Scripted elapsed clock: returns a FIXED [slowUs] for the 1-based
 /// measurement-call indices in [slowed] and a fixed [cleanUs] otherwise
 /// (one call per timed run; the JIT warm-up inside [medianWrapMs] is
-/// untimed and never reaches the clock). Unlike [ContendedClock] nothing
-/// is stopwatch-measured, so a contention shape asserted against it is
-/// deterministic on any machine — the gh-1460 fixed-arrays style.
+/// untimed and never reaches the clock). Nothing is stopwatch-measured,
+/// so a contention shape asserted against it is deterministic on any
+/// machine — the gh-1460 fixed-arrays style (the same contract the
+/// growth-modeling [ContendedClock] has followed since gh-2192).
 final class ScriptedClock {
   ScriptedClock({
     required this.slowed,
@@ -520,13 +565,21 @@ void main() {
     // clean doubled runs per attempt (~2x) and passes.
     //
     // Exactly one clean doubled run per attempt (4-of-5 spiked) was not
-    // enough — that sample is timed in real wall clock, and real jitter
-    // on it is the very shape being modeled: gh-1732 (fa run 39546301132,
-    // shard 2) red at a 3.30x best ratio because the single clean
-    // doubled sample of every attempt was inflated (~+60%) while the
-    // real 500k growth tests on the same runner stayed green. Two clean
-    // samples per attempt make the per-attempt min tolerate one
-    // contaminated clean run; the cross-attempt min covers the rest.
+    // enough — gh-1732 (fa run 39546301132, shard 2) red at a 3.30x best
+    // ratio because that single clean doubled sample of every attempt was
+    // inflated (~+60%) while the real 500k growth tests on the same
+    // runner stayed green. Two clean samples per attempt make the
+    // per-attempt min tolerate one contaminated clean run; the
+    // cross-attempt min covers the rest.
+    //
+    // gh-2192 (fa run 43680913877, tag v1.0.728): THIS test red'd the
+    // release train at 4.51x under the pre-gh-2192 harness — its two
+    // clean doubled runs per attempt were still timed on the REAL clock,
+    // and a loaded shard inflated every one of them (the gh-1732
+    // mechanism, past the two-clean-samples hardening) while the real
+    // 500k gates on the same run stayed green. The scenario is now fully
+    // scripted (ContendedClock serves fixed values), so the verdict below
+    // can no longer depend on the runner's weather.
     // Measurement call order (interleaved, PR #1783 red): per attempt,
     // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
     // 2,4,6,8,10 within each attempt (3 spiked per attempt below).
@@ -544,6 +597,36 @@ void main() {
       sustained.calls,
       30,
       reason: 'the spiked indices encode the call layout',
+    );
+    // The modeled shape must stay a RED under the pre-gh-1532 median
+    // harness, pinned with this clock's own scripted values (smallUs
+    // 350µs / doubledUs 700µs, spikeMs 30 → a spiked doubled run serves
+    // 0.7ms + 30ms = 30.7ms): 3 of 5 doubled runs spiked put the
+    // median-of-5 on a spiked value in every attempt (ratio ~87.7x — the
+    // live-red class), while the per-size min finds the two clean doubled
+    // runs (0.7ms ≈ 2x the clean small 0.35ms) and rides it. Only the
+    // RATIOS are load-bearing: the same shape the live reds measured on
+    // the old real-harness baselines (3.5/7/37ms — see the preemption
+    // test history below), mirrored here at the clock's own 10x-smaller
+    // scale so the arrays reconcile against the ContendedClock defaults.
+    const scriptedSmall = [0.35, 0.35, 0.35, 0.35, 0.35];
+    const scriptedDoubled = [30.7, 30.7, 30.7, 0.7, 0.7];
+    final oldMedianRatio = scriptedDoubled[2] / scriptedSmall[2];
+    expect(
+      oldMedianRatio,
+      greaterThan(3.2),
+      reason:
+          'the modeled shape must trip the old median statistic '
+          '(measured $oldMedianRatio) — otherwise it models nothing',
+    );
+    final scriptedMinRatio =
+        scriptedDoubled.reduce(min) / scriptedSmall.reduce(min);
+    expect(
+      scriptedMinRatio,
+      lessThan(3.2),
+      reason:
+          'the hardened min statistic must ride the modeled shape '
+          '(measured $scriptedMinRatio)',
     );
   });
 
@@ -605,6 +688,71 @@ void main() {
         elapsedUs: (_) => 5000,
       ),
       throwsA(isA<TestFailure>()),
+    );
+  });
+
+  test('contention-modeling scenarios are hermetic: no real-clock measurement '
+      'may enter a scripted verdict (gh-2192)', () {
+    // gh-2192 (fa run 43680913877, tag v1.0.728): the PR #1635 modeling
+    // test red'd at a 4.51x best doubling ratio on the release train while
+    // every REAL 500k growth gate on the same shard stayed green — its
+    // clean doubled runs were timed on the real clock, and the loaded
+    // runner inflated every one of them (the exact gh-1732 mechanism,
+    // past the two-clean-samples hardening). A modeling scenario's verdict
+    // must be a function of its script only: the clock may time NOTHING
+    // on the real stopwatch.
+    //
+    // The probe below is STRUCTURAL, not convention-based: a scripted
+    // clock serves fixed values and therefore never EXECUTES the timed
+    // body — executing it is exactly how real stopwatch timing was done
+    // (the gh-2192 mechanism), so any stopwatch-based revert of call()
+    // runs the body and reds here deterministically. (A counter-style
+    // probe cannot do this: the reverter's fresh stopwatch code would
+    // never write it, so the field stays a constant and the guard stays
+    // green through a plain revert.)
+    final probe = ContendedClock(spiked: {});
+    var bodyRan = false;
+    probe.call(() => bodyRan = true);
+    expect(
+      bodyRan,
+      isFalse,
+      reason:
+          'a scripted clock executed its body — that means real work is '
+          'being timed again and CI weather can red a modeling verdict '
+          'without any product regression (gh-2192, fa run 43680913877)',
+    );
+    // The small/doubled classification is a second layout assumption
+    // ((call − 1) % 10 odd = doubled) alongside the call count, and the
+    // scenario tests' calls == 30 guards pin only the count. Pin the
+    // served values the same way, so a classification parity flip or a
+    // call-order change reds loudly instead of silently reclassifying
+    // which runs carry smallUs vs doubledUs (the served pattern encodes
+    // the measure loop's s,d,s,d interleaved layout AND the
+    // smallUs/doubledUs defaults in µs).
+    final layout = ContendedClock(spiked: {});
+    final served = [for (var i = 0; i < 10; i++) layout.call(() {})];
+    expect(
+      served,
+      [350, 700, 350, 700, 350, 700, 350, 700, 350, 700],
+      reason:
+          'the s,d,s,d classification encodes the measure loop layout '
+          '(one attempt of 10 calls: smallUs=350µs, doubledUs=700µs)',
+    );
+    // The modeling scenario itself must keep passing end-to-end on the
+    // scripted values, with its call count still pinned.
+    final clock = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
+    expectLinearGrowth(
+      asciiProse,
+      100000,
+      'ASCII prose',
+      elapsedUs: clock.call,
+    );
+    expect(
+      clock.calls,
+      30,
+      reason:
+          'the scenario layout guard must stay pinned (3 attempts × '
+          '2 sizes × 5 timed runs)',
     );
   });
 }
