@@ -51,7 +51,7 @@ Full subsystem reference: `docs/agents/sdk-subsystems.md` (SDK) +
 - `lib/src/tools/` — `ask`/`request_secret`/media tools, `read` selectors + archives + sqlite, background shell jobs, availability + load modes.
 - `lib/src/env/` — `ExecutionEnv` impls: `LocalShell` (setsid, killTree, drain caps, self-signal immunity), session-correlation vars, in-memory default.
 - `lib/src/agent/` — FinalizeGate, tool pairing, session image registry.
-- `lib/src/trajectory/` — trajectory ledger core; goldens under `test/trajectory/golden/`.
+- `lib/src/trajectory/` — trajectory ledger core; goldens under `test/trajectory/goldens/`.
 - `lib/src/redact/` — layered secret redaction (prompt, tool args, output, logs).
 - `lib/src/hashline/` — `[path#TAG]` patch language (SWAP/DEL/INS, stale-tag rejection).
 - `lib/src/compaction/` — branch summarization + AutoCompactor → policy: `docs/compaction.md`.
@@ -63,7 +63,7 @@ Full subsystem reference: `docs/agents/sdk-subsystems.md` (SDK) +
 - `lib/src/a2a/` — Agent2Agent client/server/manager (`fa serve --a2a`).
 - `bin/fah.dart` + `lib/src/cli/` — the `fa` CLI: REPL, slash commands, headless/serve modes → `docs/agents/cli.md`.
 - `lib/src/cube/` — fa_cube sandbox profiles → `docs/cubes.md`; `lib/src/cli/hep.dart` — HEP event protocol → `docs/hep.md`.
-- `lib/src/web_search/` — `web_search` (DDG keyless → keyed providers); `tools/fa-clip/` — native macOS pasteboard helper.
+- `lib/src/web_search/` — `web_search` (DDG keyless → keyed providers); `tool/fa-clip/` — native macOS pasteboard helper.
 
 **packages/ + app shells:**
 
@@ -100,8 +100,8 @@ Full policy: `docs/agents/parallel-worktrees.md`.
 
 Before any non-trivial task, **search memory first** (`memory_search`,
 then `memory_list` for fuzzy topics). Scopes: **project** = this repo
-(committed, `memory/note/` — the user's files: read freely, write only via
-`memory_add`), **user** = global/private. `memory_add` stores durable facts
+(`.fah/memory/note/` since gh-2185 — local-only, not committed; the
+user's files: read freely, write only via `memory_add`), **user** = global/private. `memory_add` stores durable facts
 only; supersede by delete + add — never leave solved problems to rot. The
 host recomposes the `<memory>` prompt section after every add; tool wiring
 is `memoryTools` + `lib/src/memory/`. Churn pitfalls: `docs/memory-churn.md`;
@@ -110,10 +110,10 @@ usage details: `docs/agents/memory-usage.md`.
 ## Golden tests are MANDATORY for UI work
 
 Any change to `flutter_app/lib/` UI code is INCOMPLETE until its golden
-tests are done: coverage first (`test/golden/` + `golden_guard_test.dart`
+tests are done: coverage first (`test/goldens/` + `golden_guard_test.dart`
 map), real fonts (`ensureGoldenFonts`), full frames (1280x800 / 390x844),
 determinism, eyes on pixels after `--update-goldens`, green
-`flutter test test/golden` + `scripts/check_goldens.py` (orphan snapshots
+`flutter test test/goldens` + `scripts/check_goldens.py` (orphan snapshots
 hard-fail). Full rules: `docs/agents/golden-tests.md`.
 
 ## Prompts live outside Dart code

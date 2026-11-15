@@ -2,7 +2,7 @@
 /// copilot`): the device-code request, the prompt-free polling loop, and
 /// the typed errors the CLI surfaces.
 ///
-/// Protocol per goal/copilot_provider.md (migrated from copilot-proxy-go
+/// Protocol per docs/goals/copilot_provider.md (migrated from copilot-proxy-go
 /// internal/auth/device_flow.go). Phase-0 live finding: GitHub routed the
 /// device endpoints but rejected this app's device flow with
 /// 404 {"error":"Not Found"} (identical for a garbage client id) — that
@@ -26,7 +26,7 @@ import 'package:http/http.dart' as http;
 import 'provider_common.dart';
 
 /// The public client id of the VS Code Copilot Chat plugin
-/// (goal/copilot_provider.md, internal/api/config.go).
+/// (docs/goals/copilot_provider.md, internal/api/config.go).
 const copilotDeviceClientId = 'Iv1.b507a08c87ecfe98';
 
 /// The device-code request endpoint.

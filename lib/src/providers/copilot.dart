@@ -2,7 +2,7 @@
 /// openai-completions adapter with Copilot auth (GitHub token → short-lived
 /// Copilot API token via [CopilotTokenManager]) and the mandatory Copilot
 /// headers. The Copilot API serves plain OpenAI chat completions at
-/// `POST {baseUrl}/chat/completions` (goal/copilot_provider.md, wire
+/// `POST {baseUrl}/chat/completions` (docs/goals/copilot_provider.md, wire
 /// endpoint table), so the wire protocol is entirely the existing adapter's.
 ///
 /// Errors-as-events invariant (non-negotiable): never throws. A 401/403

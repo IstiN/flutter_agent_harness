@@ -15,8 +15,8 @@
 //                                  1080–7680 px, ≤8 MB per file
 //
 // The screenshots and the feature graphic are COMMITTED GOLDENS generated
-// by test/golden/store_screenshots_test.dart (phone + tenInch story
-// frames) and test/golden/play_store_assets_test.dart (feature graphic);
+// by test/goldens/store_screenshots_test.dart (phone + tenInch story
+// frames) and test/goldens/play_store_assets_test.dart (feature graphic);
 // the icon is derived from the iOS 1024 master by
 // tool/generate_android_adaptive_icons.dart (SSIM-checked in
 // test/android_icon_test.dart).

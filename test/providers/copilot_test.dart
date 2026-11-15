@@ -6,7 +6,7 @@
 // the mandatory Copilot headers, the token manager, and the
 // openai-completions wrapper (`streamCopilot`).
 //
-// Protocol facts per goal/copilot_provider.md (migrated from
+// Protocol facts per docs/goals/copilot_provider.md (migrated from
 // copilot-proxy-go). No real network: `http.testing` mocks only.
 //
 // Stream tests pass DISTINCT `githubToken`s so each gets its own

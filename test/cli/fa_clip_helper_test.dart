@@ -248,7 +248,7 @@ void main() {
     });
 
     test('AC7 — the fa-clip helper source carries no AppleScript surface', () {
-      final source = File('tools/fa-clip/fa-clip.swift').readAsStringSync();
+      final source = File('tool/fa-clip/fa-clip.swift').readAsStringSync();
       for (final banned in [
         'osascript',
         'AppleScript',
@@ -262,7 +262,7 @@ void main() {
           isNot(contains(banned)),
           reason:
               'fa-clip must stay a plain NSPasteboard reader (AC7): '
-              'found "$banned" in tools/fa-clip/fa-clip.swift',
+              'found "$banned" in tool/fa-clip/fa-clip.swift',
         );
       }
     });

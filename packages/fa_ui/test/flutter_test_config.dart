@@ -10,14 +10,14 @@
 /// body runs. Font loading uses real file I/O, which can never complete
 /// inside a `testWidgets` FakeAsync zone — done here, goldens render
 /// real glyphs instead of placeholder boxes. See
-/// `trajectory/golden/golden_test_setup.dart`.
+/// `trajectory/goldens/golden_test_setup.dart`.
 library;
 
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'trajectory/golden/golden_test_setup.dart';
+import 'trajectory/goldens/golden_test_setup.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testBody) async {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -5,7 +5,7 @@
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (rules: docs/agents/prompts.md).
-- `tools/fa-clip/` — the native macOS pasteboard helper (gh-2040): a plain
+- `tool/fa-clip/` — the native macOS pasteboard helper (gh-2040): a plain
   `NSPasteboard` reader (`fa-clip <png|jpeg|tiff>` → bytes on stdout, exit
   2 = flavor absent), built by `scripts/build_fa_clip.sh` into the macOS
   CLI bundles (`bundle/bin/fa-clip`, per-arch) and shipped beside the `fa`

@@ -26,13 +26,31 @@ graph TD
   R --> Bin[bin/ — fah/fa CLI + serve_a2a + self_manage]
   R --> Pkg[packages/<br/>fa_ui, fa_llm]
   R --> App[flutter_app/ — Flutter chat example]
-  R --> Docs[docs/]
+  R --> Docs[docs/ incl. goals/, knowledgebase/, vendor.md]
   R --> Site[site/ — GitHub Pages]
   R --> Scr[scripts/]
-  R --> V[vendor/ — flutter_js, wasm_run, xterm]
-  R --> Yo[yoclip/ — standalone video workspace]
-  R --> Misc[coverage, profile-reports, store_artefacts,<br/>generated, .fah, .repro, build]
+  R --> Tool[tool/ — crap_top.sh, fa-clip]
+  R --> SDKd[sdk/web — wire-protocol reference client]
+  R --> V[vendor/ — patched forks, see docs/vendor.md]
+  R --> Yo[yoclip/ — fa promo video workspace]
+  R --> Misc[store_artefacts/, .fah, .repro, build<br/>+ local-only: logs/, test-results/,<br/>profile-reports/, generated/]
 ```
+
+### Repo-root hygiene contract (gh-2185)
+
+- **Runtime state** lives in `<cwd>/.fah/state/` (app stores, via
+  `flutter_app/lib/services/app_state_paths.dart`) and `.fah/memory/`
+  (project memory) — never in the repo root, never in git.
+- **Logs / generated dumps / profile reports** (`logs/`, `test-results/`,
+  `profile-reports/`, `generated/`) are local-only, gitignored.
+- **Docs live under `docs/`**: `docs/goals/`, `docs/knowledgebase/`; the
+  vendor rationale is `docs/vendor.md`.
+- **One tool dir**: `tool/` (Dart convention) — `tools/` is gone.
+- **Goldens are `goldens/` everywhere** (`flutter_app/test/goldens/`,
+  `test/cli/goldens/`, `test/site/goldens/`).
+- The root allow-list is enforced by `scripts/check_root_allowlist.py`
+  (pre-commit via `ci_fast_gate.sh` + the CI `static` job); allow-list
+  additions need a card-visibility review.
 
 - `lib/` is **pure Dart** (compiles for web; no `dart:io` — only `bin/` and `lib/io.dart` are IO entry points). `lib/src/` subsystems:
 

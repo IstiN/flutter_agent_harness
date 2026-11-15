@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:fa/services/session_keys_store.dart';
 
 /// The connected GitHub account used for widget publishing (card
-/// `goal/widget-publishing-github.md`, issue #35).
+/// `docs/goals/widget-publishing-github.md`, issue #35).
 ///
 /// Thin lifecycle wrapper over [SessionKeysStore]: the token
 /// ([tokenKey]) and the non-secret profile fields ([loginKey],

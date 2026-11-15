@@ -613,7 +613,7 @@ final class _CopilotDialect extends ModelListDialect {
 
   /// The exchange path: the GitHub key is worthless to the Copilot API
   /// itself — exchange it for the short-lived Copilot token first
-  /// (goal/copilot_provider.md, /models section), then follow the token's
+  /// (docs/goals/copilot_provider.md, /models section), then follow the token's
   /// proxy-ep host with the configured tier host as the fallback.
   Future<ModelsFetchReport> _fetchModelsViaExchange(
     String configuredBase,

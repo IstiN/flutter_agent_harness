@@ -4,6 +4,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/session_ui_prefs_store.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,7 +53,7 @@ void main() {
   test('a corrupt or foreign-version file yields an empty store (boot '
       'never breaks)', () async {
     await env.writeFile(
-      '${env.cwd}/${SessionUiPrefsStore.fileName}',
+      appStateFilePath(env, SessionUiPrefsStore.fileName),
       '{"version": 99, "expandedParents": ["x"]}',
     );
     final store = await SessionUiPrefsStore.load(env);
@@ -60,7 +61,7 @@ void main() {
     expect(store.collapsedParents, isEmpty);
 
     await env.writeFile(
-      '${env.cwd}/${SessionUiPrefsStore.fileName}',
+      appStateFilePath(env, SessionUiPrefsStore.fileName),
       'not json at all',
     );
     final store2 = await SessionUiPrefsStore.load(env);
@@ -71,9 +72,14 @@ void main() {
     final store = SessionUiPrefsStore.inMemory();
     await store.setExpanded('p', false);
     expect(store.collapsedParents, {'p'});
-    // No file was written next to the (real) cwd.
-    final file = File('${tmp.path}/${SessionUiPrefsStore.fileName}');
-    expect(file.existsSync(), isFalse);
+    // No file was written anywhere: neither the state root nor the
+    // pre-gh-2185 legacy cwd location.
+    expect(File('${tmp.path}/${SessionUiPrefsStore.fileName}').existsSync(),
+        isFalse);
+    expect(
+        File('${tmp.path}/.fah/state/${SessionUiPrefsStore.fileName}')
+            .existsSync(),
+        isFalse);
   });
 
   test('sidebar width persists and a fresh store reads it back (issue '
@@ -100,7 +106,7 @@ void main() {
     await store.setExpanded('p1', true);
     await store.setExpanded('p2', false);
     final text =
-        (await env.readTextFile('${env.cwd}/${SessionUiPrefsStore.fileName}'))
+        (await env.readTextFile(appStateFilePath(env, SessionUiPrefsStore.fileName)))
             .valueOrNull!;
     final decoded = jsonDecode(text) as Map<String, dynamic>;
     expect(decoded['version'], SessionUiPrefsStore.version);

@@ -8,7 +8,7 @@ Any change to `flutter_app/lib/` UI code is INCOMPLETE until its golden
 tests are done right:
 
 1. **Coverage first.** New widget file → tests in
-   `test/golden/<area>_golden_test.dart` + map entry in
+   `test/goldens/<area>_golden_test.dart` + map entry in
    `golden_guard_test.dart` (hard-fails otherwise). Changed visuals →
    regenerate affected snapshots.
 2. **Real fonts.** `setUpAll(ensureGoldenFonts)` in every golden file;
@@ -20,7 +20,7 @@ tests are done right:
    network/engines/infinite animations.
 5. **Eyes on pixels.** After `--update-goldens`, OPEN every changed PNG
    (no tofu, no overflow, legible buttons/icons) before committing.
-6. **Green gate.** `flutter test test/golden` passes; pre-commit runs it +
+6. **Green gate.** `flutter test test/goldens` passes; pre-commit runs it +
    `scripts/check_goldens.py` (which also hard-fails on ORPHAN snapshots —
    committed PNGs no test references; delete stale files, never let them
    rot in git history).

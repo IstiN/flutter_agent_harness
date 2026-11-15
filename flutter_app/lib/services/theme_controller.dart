@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'app_state_paths.dart';
 
 /// The app's appearance choices, shown in the settings theme dropdown.
 enum FahThemeMode {
@@ -142,7 +143,7 @@ class ThemeController extends ChangeNotifier {
     if (env == null) return;
     try {
       await env.writeFile(
-        '${env.cwd}/$fileName',
+        appStateFilePath(env, fileName),
         jsonEncode({
           'version': _version,
           'mode': _mode.name,
@@ -161,7 +162,7 @@ class ThemeController extends ChangeNotifier {
     final env = _env;
     if (env == null) return;
     try {
-      final text = (await env.readTextFile('${env.cwd}/$fileName')).valueOrNull;
+      final text = await readAppStateText(env, fileName);
       if (text == null) return;
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return;

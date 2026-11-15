@@ -16,7 +16,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// A minimal [AgentService] (never connected: no network/file/JS backends)
-/// — the pattern of `test/golden/settings_golden_test.dart`.
+/// — the pattern of `test/goldens/settings_golden_test.dart`.
 AgentService _fakeService({
   String baseUrl = 'https://openrouter.ai/api/v1',
   String provider = 'openai-completions',
