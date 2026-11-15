@@ -48,15 +48,6 @@
   ],
   "issue-2030": [
     {
-      "leg": "review",
-      "at": "2026-11-01T09:36:05Z",
-      "prompt": 91071,
-      "completion": 30935,
-      "total": 122006,
-      "cacheRead": 2198144,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-11-01T10:13:52Z",
       "prompt": 352482,
@@ -87,15 +78,6 @@
   "pr-2029": [
     {
       "leg": "review",
-      "at": "2026-11-01T09:31:54Z",
-      "prompt": 93878,
-      "completion": 35118,
-      "total": 128996,
-      "cacheRead": 2576832,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-01T11:06:59Z",
       "prompt": 169154,
       "completion": 23371,
@@ -123,15 +105,6 @@
     }
   ],
   "pr-2031": [
-    {
-      "leg": "review",
-      "at": "2026-11-01T09:34:25Z",
-      "prompt": 75277,
-      "completion": 23802,
-      "total": 99079,
-      "cacheRead": 2557504,
-      "model": "glm-5.3-flash"
-    },
     {
       "leg": "rework",
       "at": "2026-11-01T10:02:48Z",
@@ -4048,6 +4021,15 @@
       "completion": 25679,
       "total": 340734,
       "cacheRead": 3719104,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-15T10:00:02Z",
+      "prompt": 175626,
+      "completion": 7633,
+      "total": 183259,
+      "cacheRead": 2575424,
       "model": "glm-5.3-flash"
     }
   ],
