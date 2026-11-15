@@ -825,8 +825,21 @@ void main() {
           '(one attempt of 10 calls: smallUs=350µs, doubledUs=700µs)',
     );
     // The modeling scenario itself must keep passing end-to-end on the
-    // scripted values, with its call count still pinned.
-    final clock = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
+    // scripted values, with its call count still pinned. The spike set
+    // covers the doubled runs of all SIX attempts (gh-2185 triage
+    // widened _growthAttempts 3 -> 6 so a steal storm must span twice
+    // the window to poison the cross-attempt min) — the same full-window
+    // shape the PR #1635 modeling test pins below.
+    final clock = ContendedClock(
+      spiked: {
+        2, 4, 6, //
+        12, 14, 16, //
+        22, 24, 26, //
+        32, 34, 36, //
+        42, 44, 46, //
+        52, 54, 56, //
+      },
+    );
     expectLinearGrowth(
       asciiProse,
       100000,
@@ -835,9 +848,9 @@ void main() {
     );
     expect(
       clock.calls,
-      30,
+      60,
       reason:
-          'the scenario layout guard must stay pinned (3 attempts × '
+          'the scenario layout guard must stay pinned (6 attempts × '
           '2 sizes × 5 timed runs)',
     );
   });
