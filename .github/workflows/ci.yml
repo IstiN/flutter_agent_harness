@@ -1443,6 +1443,14 @@ jobs:
           name: integration-json-shard-${{ matrix.shard }}
           path: build/test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
+          # gh-2200: rerun --failed never fires the gh-1412 retry (the
+          # first attempt's upload succeeded), so without this the rerun
+          # uploads a SECOND same-named artifact and download-artifact
+          # pattern-mode resolves the STALE previous-attempt report — the
+          # pty-coverage-gate then merges a truncated shard json and
+          # phantom-fails "budgeted suite did not run" (run 43752856871
+          # attempt 2). The latest attempt's evidence must win.
+          overwrite: true
       - name: Retry integration-json upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_json.outcome == 'failure'
@@ -1458,6 +1466,10 @@ jobs:
           name: junit-integration-shard-${{ matrix.shard }}
           path: build/test-results/junit-integration-shard-${{ matrix.shard }}.xml
           retention-days: 7
+          # gh-2200: same rerun-idempotency as upload_integration_json —
+          # a rerun attempt must REPLACE its previous attempt's artifact,
+          # never stack a stale duplicate beside it.
+          overwrite: true
       - name: Retry junit upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_integration_junit.outcome == 'failure'
@@ -1478,6 +1490,10 @@ jobs:
           name: pty-coverage-shard-${{ matrix.shard }}
           path: coverage/lcov.info
           retention-days: 2
+          # gh-2200: same rerun-idempotency as upload_integration_json —
+          # the coverage merge below must never read a previous attempt's
+          # lcov through a stale same-named duplicate.
+          overwrite: true
       - name: Retry coverage upload (transient blob-storage reset, gh-1412)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && steps.upload_pty_coverage.outcome == 'failure'
