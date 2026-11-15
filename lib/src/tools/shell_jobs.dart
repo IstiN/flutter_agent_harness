@@ -607,15 +607,25 @@ final class ShellJobRegistry {
     required int pid,
     String? pidStart,
     int? startedAtMs,
-  }) => _adopt(
-    id: id,
-    command: command,
-    pid: pid,
-    pidStart: pidStart,
-    startedAt: startedAtMs == null
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
-  );
+  }) {
+    // Idempotent (issue #2201 r3): captureLostJobs runs at every boot —
+    // a wake/continuation loop re-boots the same CLI instance — and
+    // adoption never rewrites the manifest, so a second boot re-hands
+    // every still-live entry here. The existing entry stays
+    // authoritative: one registry row, one onStart, one settle notice.
+    for (final entry in _jobs) {
+      if (entry.id == id) return entry;
+    }
+    return _adopt(
+      id: id,
+      command: command,
+      pid: pid,
+      pidStart: pidStart,
+      startedAt: startedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
+    );
+  }
 
   ShellJobEntry _adopt({
     required String id,
@@ -631,6 +641,7 @@ final class ShellJobRegistry {
         pid: pid,
         startTag: pidStart ?? '',
         stopProcess: stopAdoptedOverride ?? stopDetachedProcess,
+        livenessSample: livenessTableOverride ?? _probeLivenessTable,
       ),
       adopted: true,
       startedAt: startedAt,
@@ -673,8 +684,9 @@ final class ShellJobRegistry {
   Future<void> _pollAdopted() async {
     try {
       final now = DateTime.now();
-      final table =
-          await (livenessTableOverride?.call() ?? _probeLivenessTable());
+      final table = livenessTableOverride != null
+          ? await livenessTableOverride!()
+          : await _probeLivenessTable();
       for (final entry in [
         for (final e in _jobs)
           if (e.isAdopted && e.isRunning) e,
@@ -973,6 +985,7 @@ final class _AdoptedShellJob implements ShellJob {
     required this.pid,
     required this._startTag,
     required this._stopProcess,
+    this._livenessSample,
   });
 
   @override
@@ -988,6 +1001,7 @@ final class _AdoptedShellJob implements ShellJob {
   /// not report one (presence-only liveness, same degrade as reconcile).
   final String _startTag;
   final Future<bool> Function(int pid) _stopProcess;
+  final Future<ShellLivenessTable?> Function()? _livenessSample;
 
   bool _running = true;
   String? _stopReason;
@@ -1032,6 +1046,19 @@ final class _AdoptedShellJob implements ShellJob {
   @override
   Future<void> stop() async {
     if (!_running) return;
+    // Issue #2201 r3: re-verify the pid identity before signaling — the
+    // same #478 start-tag rule the boot reconcile (agent_cli_waiting) and
+    // the liveness poll apply. One fresh table sample: a pid missing from
+    // it is already gone (no kill), a pid wearing a DIFFERENT start
+    // string is a stranger (no kill). A null sample (probe unavailable)
+    // changes nothing — the stop then runs on the evidence it has, as
+    // before; a presence-only row (no start string) keeps its kill.
+    final table = _livenessSample == null ? null : await _livenessSample();
+    if (table != null) {
+      if (!table.pids.contains(pid)) return _markGone();
+      final actual = table.starts[pid];
+      if (actual != null && actual != _startTag) return _markGone();
+    }
     _stopReason ??= 'stopped';
     try {
       await _stopProcess(pid);

@@ -1191,6 +1191,14 @@ Future<ToolExecutionResult> _bashJobStopResult(
       );
     }
     await entry.stop();
+    if (!entry.isRunning && entry.isAdopted && entry.stopReason == null) {
+      // Issue #2201 r3: the identity guard found the process already gone
+      // (or its pid recycled) — nothing was signaled, so "Stopped" would
+      // be a lie.
+      return ToolExecutionResult.text(
+        '$id already exited (adopted — liveness-only, no exit code)',
+      );
+    }
     return ToolExecutionResult.text('Stopped $id');
   }
   // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —

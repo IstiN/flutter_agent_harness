@@ -272,6 +272,7 @@ void main() async {
       final settled = <ShellJobEntry>[];
       final registry = _registry(
         onSettled: settled.add,
+        livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
           return true;
@@ -432,6 +433,7 @@ void main() async {
     test('stop kills a live adopted job (AC2)', () async {
       final killed = <int>[];
       final registry = _registry(
+        livenessTableOverride: () async => (pids: {99}, starts: {99: 'S'}),
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
           return true;
@@ -446,6 +448,78 @@ void main() async {
       });
       expect(killed, [99]);
       expect(text, contains('Stopped'));
+    });
+
+    test('stop refuses a recycled pid and marks the entry gone (r3)', () async {
+      final killed = <int>[];
+      ({Set<int> pids, Map<int, String> starts})? table = (
+        pids: {99},
+        starts: {99: 'S'},
+      );
+      final registry = _registry(
+        livenessTableOverride: () async => table,
+        stopAdoptedOverride: (pid) async {
+          killed.add(pid);
+          return true;
+        },
+      );
+      final entry = (await registry.adoptSurvivors('nohup x &', const [
+        ShellSurvivor(pid: 99, startTag: 'S', command: 'sleep 300'),
+      ])).single;
+      // The pid was recycled onto a stranger: different start string.
+      table = (pids: {99}, starts: {99: 'OTHER'});
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(killed, isEmpty, reason: 'never signal an unverified pid');
+      expect(entry.isRunning, isFalse);
+      expect(text, contains('no exit code'));
+    });
+
+    test('stop refuses a pid missing from the fresh table (r3)', () async {
+      final killed = <int>[];
+      ({Set<int> pids, Map<int, String> starts})? table = (
+        pids: {99},
+        starts: {99: 'S'},
+      );
+      final registry = _registry(
+        livenessTableOverride: () async => table,
+        stopAdoptedOverride: (pid) async {
+          killed.add(pid);
+          return true;
+        },
+      );
+      final entry = (await registry.adoptSurvivors('nohup x &', const [
+        ShellSurvivor(pid: 99, startTag: 'S', command: 'sleep 300'),
+      ])).single;
+      table = (pids: <int>{}, starts: <int, String>{});
+      await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(killed, isEmpty, reason: 'the process is already gone');
+      expect(entry.isRunning, isFalse);
+    });
+
+    test('adoptRunningEntry is idempotent across boots (r3)', () {
+      var starts = 0;
+      final registry = _registry(onStart: (_) => starts++);
+      final first = registry.adoptRunningEntry(
+        id: 'sh-9-prev',
+        command: 'watch.sh',
+        pid: 4242,
+        pidStart: 'PS',
+      );
+      final second = registry.adoptRunningEntry(
+        id: 'sh-9-prev',
+        command: 'watch.sh',
+        pid: 4242,
+        pidStart: 'PS',
+      );
+      expect(identical(first, second), isTrue);
+      expect(registry.jobs.where((e) => e.id == 'sh-9-prev'), hasLength(1));
+      expect(starts, 1, reason: 'no double onStart, no double settle path');
     });
   });
 
@@ -524,8 +598,7 @@ void main() async {
       skip: posix && psAvailable ? null : 'needs POSIX with ps access',
       () async {
         final shell = LocalShell();
-        final marker =
-            '2201a.${DateTime.now().microsecondsSinceEpoch % 100000}';
+        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
         final result = await shell.exec(
           'nohup sleep $marker >/dev/null 2>&1 & echo hi',
           options: ShellExecOptions(cwd: Directory.systemTemp.path),
@@ -569,13 +642,13 @@ void main() async {
       () async {
         final shell = LocalShell();
         final result = await shell.exec(
-          'nohup sleep 2201kill >/dev/null 2>&1 & echo bg; sleep 30',
+          'nohup sleep 2201999 >/dev/null 2>&1 & echo bg; sleep 30',
           options: ShellExecOptions(
             cwd: Directory.systemTemp.path,
             timeout: const Duration(milliseconds: 400),
           ),
         );
-        addTearDown(() => Process.run('pkill', ['-f', 'sleep 2201kill']));
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 2201999']));
         // The exec errors with the timeout verdict; survivors are never
         // reported on a killed call (gh-1053 reaped what it could reach).
         expect(result.isErr, isTrue);
@@ -589,8 +662,7 @@ void main() async {
       () async {
         final workspace = await Directory.systemTemp.createTemp('fah2201-');
         addTearDown(() => workspace.delete(recursive: true));
-        final marker =
-            '2201j.${DateTime.now().microsecondsSinceEpoch % 100000}';
+        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
         addTearDown(() => Process.run('pkill', ['-f', 'sleep $marker']));
         final adoptedBatches = <List<ShellJobEntry>>[];
         final registry = ShellJobRegistry(
@@ -623,8 +695,7 @@ void main() async {
       () async {
         final workspace = await Directory.systemTemp.createTemp('fah2201t-');
         addTearDown(() => workspace.delete(recursive: true));
-        final marker =
-            '2201t.${DateTime.now().microsecondsSinceEpoch % 100000}';
+        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
         addTearDown(() => Process.run('pkill', ['-f', 'sleep $marker']));
         final registry = ShellJobRegistry(
           env: LocalExecutionEnv(cwd: workspace.path),
@@ -632,6 +703,10 @@ void main() async {
         final tool = shellTool(
           LocalExecutionEnv(cwd: workspace.path),
           jobs: registry,
+          // The classic foreground route: the default 60s auto-background
+          // would make this call a registry job from the start, and the
+          // adoption notice would ride onAdopt instead of the result.
+          autoBackgroundAfter: Duration.zero,
         );
         final text = await _toolText(tool, {
           'command': 'nohup sleep $marker >/dev/null 2>&1 & echo launched',

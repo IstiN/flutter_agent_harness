@@ -59,7 +59,10 @@ Future<List<ProcessDetailRow>?> processDetailTableSnapshot() async {
   final rows = <ProcessDetailRow>[];
   for (final line in raw.split('\n')) {
     final cols = line.trim().split(RegExp(r'\s+'));
-    if (cols.length < 9) continue; // pid ppid pgid + 5 lstart words
+    // Identity columns: pid ppid pgid + 5 lstart words = 8. Rows whose
+    // command ps cannot print stay identified (command: null -> the
+    // <unknown cmd> surface downstream).
+    if (cols.length < 8) continue;
     final pid = int.tryParse(cols[0]);
     final ppid = int.tryParse(cols[1]);
     final pgid = int.tryParse(cols[2]);
