@@ -12,6 +12,11 @@ part of 'network_session.dart';
 /// The parsed `dm:user:<uid>:<agent>@<device>` virtual channel id.
 typedef DmChannelParts = ({String userId, String agentName, String deviceId});
 
+/// One successfully decrypted DM plaintext: the unwrapped text, its
+/// routed session, and the base64 key that opened it (what the row's
+/// `senderPub` carries — the KEY USED, not a sender identity).
+typedef _DmDecoded = ({String? text, String? sessionId, String senderPubB64});
+
 /// Parses a DM channel id; null on any shape violation.
 DmChannelParts? parseDmChannelId(String channelId) {
   if (!channelId.startsWith('dm:user:')) return null;
@@ -26,6 +31,11 @@ DmChannelParts? parseDmChannelId(String channelId) {
     deviceId: rest.substring(at + 1),
   );
 }
+
+/// Whether the rewritten sender id still points at THIS account — the
+/// only direction signal left for an undecryptable DM frame.
+bool _senderIdIsMine(String? myId, String senderId) =>
+    myId != null && (senderId == myId || senderId == 'user:$myId');
 
 /// Human-facing peer label for a DM virtual channel. The wire id belongs
 /// in routing logs, not in the page title or composer hint. A roster tap
@@ -222,37 +232,10 @@ extension NetworkSessionDm on NetworkSession {
     final parts = parseDmChannelId(envelope.channelId);
     final myId = connector == null ? null : await connector.accountUserId();
     final frame = hubTryOpenFanet1(envelope.payload);
-    final myPub = _wallet.identityPub;
-    final senderIsMyWallet =
-        frame != null &&
-        myPub != null &&
-        base64Encode(frame.senderPubkey.bytes) == myPub;
-    String? text;
-    String? sessionId;
-    var senderPubB64 = '';
-    var agentReply = false;
-    if (frame != null && !senderIsMyWallet) {
-      try {
-        final plaintext = await hubDecryptPayloadWithKeyPair(
-          recipientDhKeyPair: await _wallet.identityKeyPair(),
-          senderDhPubkey: frame.senderPubkey,
-          frameId: envelope.id,
-          aadTarget: envelope.channelId,
-          ciphertextB64: frame.ciphertextB64,
-        );
-        final decoded = _unwrapDmText(plaintext);
-        text = decoded.text;
-        sessionId = decoded.sessionId;
-        senderPubB64 = base64Encode(frame.senderPubkey.bytes);
-        agentReply = true; // sealed TO me ⇒ the peer agent's reply
-      } on Object {
-        text = null; // other device / wrong key epoch / legacy — placeholder
-      }
-    }
-    final isOwn =
-        !agentReply &&
-        myId != null &&
-        (envelope.senderId == myId || envelope.senderId == 'user:$myId');
+    final decoded = frame == null || _sealedByMyWallet(frame)
+        ? null
+        : await _tryDecodeForeignFrame(envelope, frame);
+    final isOwn = decoded == null && _senderIdIsMine(myId, envelope.senderId);
     final sentText = isOwn ? _dmOwnText[envelope.id] : null;
     if (sentText != null) {
       return ChannelMessage(
@@ -266,39 +249,24 @@ extension NetworkSessionDm on NetworkSession {
         sessionId: _dmOwnSessionIds[envelope.id],
       );
     }
-    if (isOwn && frame != null) {
-      // Own history row: the peer's roster dmPub recomputes the shared
-      // key DH(myPriv, agentPub) the frame was sealed with.
-      final peerPub = await _dmPeerPubkey(connector, parts);
-      if (peerPub != null) {
-        try {
-          final plaintext = await hubDecryptPayloadWithKeyPair(
-            recipientDhKeyPair: await _wallet.identityKeyPair(),
-            senderDhPubkey: peerPub,
-            frameId: envelope.id,
-            aadTarget: envelope.channelId,
-            ciphertextB64: frame.ciphertextB64,
-          );
-          final decoded = _unwrapDmText(plaintext);
-          text = decoded.text;
-          sessionId = decoded.sessionId;
-          senderPubB64 = base64Encode(peerPub.bytes);
-        } on Object {
-          text = null; // peer entry rotated / evicted — placeholder row
-        }
-      }
-    }
+    final ownDecoded = decoded == null && frame != null
+        ? await _tryDecodeOwnFrame(envelope, frame, connector, parts)
+        : null;
     return ChannelMessage(
       envelopeId: envelope.id,
       senderId: envelope.senderId,
-      senderPub: senderPubB64,
+      senderPub: ownDecoded?.senderPubB64 ?? decoded?.senderPubB64 ?? '',
       senderName: isOwn
           ? identity.displayName
-          : _agentSenderLabel(envelope.channelId, parts, sessionId),
-      text: text,
+          : _agentSenderLabel(
+              envelope.channelId,
+              parts,
+              ownDecoded?.sessionId ?? decoded?.sessionId,
+            ),
+      text: ownDecoded?.text ?? decoded?.text,
       isOwn: isOwn,
       createdAt: envelope.createdAt,
-      sessionId: sessionId,
+      sessionId: ownDecoded?.sessionId ?? decoded?.sessionId,
     );
   }
 
@@ -313,6 +281,72 @@ extension NetworkSessionDm on NetworkSession {
     );
     if (pub == null) return null;
     return SimplePublicKey(base64Decode(pub), type: KeyPairType.x25519);
+  }
+
+  /// True when the fanet1 header names THIS wallet's key — a
+  /// definitive own-frame signal for rows this device sealed itself.
+  bool _sealedByMyWallet(HubFanet1Frame frame) {
+    final myPub = _wallet.identityPub;
+    return myPub != null && base64Encode(frame.senderPubkey.bytes) == myPub;
+  }
+
+  /// Foreign-frame trial decrypt: a frame sealed TO my pubkey decrypts
+  /// under DH(myPriv, senderPub) — only the peer agent seals that way,
+  /// so success classifies the row as the agent's reply with no roster
+  /// lookup (review #2197). Null on failure (another device of the
+  /// account / rotated key / legacy shape); the caller falls back to
+  /// the rewritten sender id.
+  Future<_DmDecoded?> _tryDecodeForeignFrame(
+    Envelope envelope,
+    HubFanet1Frame frame,
+  ) async {
+    try {
+      final plaintext = await hubDecryptPayloadWithKeyPair(
+        recipientDhKeyPair: await _wallet.identityKeyPair(),
+        senderDhPubkey: frame.senderPubkey,
+        frameId: envelope.id,
+        aadTarget: envelope.channelId,
+        ciphertextB64: frame.ciphertextB64,
+      );
+      final decoded = _unwrapDmText(plaintext);
+      return (
+        text: decoded.text,
+        sessionId: decoded.sessionId,
+        senderPubB64: base64Encode(frame.senderPubkey.bytes),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Own history row: the peer's roster dmPub recomputes the shared
+  /// key DH(myPriv, agentPub) the frame was sealed with. Null when the
+  /// entry is evicted/rotated — the row stays an honest placeholder.
+  Future<_DmDecoded?> _tryDecodeOwnFrame(
+    Envelope envelope,
+    HubFanet1Frame frame,
+    DeviceConnectorService? connector,
+    DmChannelParts? parts,
+  ) async {
+    final peerPub = await _dmPeerPubkey(connector, parts);
+    if (peerPub == null) return null;
+    try {
+      final plaintext = await hubDecryptPayloadWithKeyPair(
+        recipientDhKeyPair: await _wallet.identityKeyPair(),
+        senderDhPubkey: peerPub,
+        frameId: envelope.id,
+        aadTarget: envelope.channelId,
+        ciphertextB64: frame.ciphertextB64,
+      );
+      final decoded = _unwrapDmText(plaintext);
+      return (
+        text: decoded.text,
+        sessionId: decoded.sessionId,
+        senderPubB64: base64Encode(peerPub.bytes),
+      );
+    } on Object {
+      return null;
+    }
   }
 
   /// Incoming DM sender label: the tapped session's human title when this
