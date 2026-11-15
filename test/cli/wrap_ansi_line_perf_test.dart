@@ -485,10 +485,19 @@ void main() {
       // Measurement call order (interleaved, PR #1783 red): per attempt,
       // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
       // 2,4,6,8,10 within each attempt.
+      // Scale (CI red 2026-11-15, run 43693364790): this sim ran at base
+      // 100k cells (~3ms/6.5ms real wraps) and itself flaked on a loaded
+      // shard — real jitter inflated the CLEAN doubled slots' wall time
+      // ~2x while the small minima stayed (best scripted-shape ratio
+      // 3.99x > 3.2). That is the PR #1526 noise-floor mechanism the REAL
+      // growth gates already moved off (500k below, "at ~3ms per wrap the
+      // sample sits on the scheduler-noise floor"); the sims now run at
+      // the same 500k operating point so their clean slots carry the same
+      // ~5x smaller jitter exposure.
       final spike = ContendedClock(spiked: {2, 4, 6});
       expectLinearGrowth(
         asciiProse,
-        100000,
+        500000,
         'ASCII prose',
         elapsedUs: spike.call,
       );
@@ -530,10 +539,15 @@ void main() {
     // Measurement call order (interleaved, PR #1783 red): per attempt,
     // s,d,s,d,s,d,s,d,s,d — the doubled timed runs sit at calls
     // 2,4,6,8,10 within each attempt (3 spiked per attempt below).
+    // Scale: 500k, not 100k — at 100k the sim's own clean doubled slots
+    // flaked on a loaded shard (CI run 43693364790, best ratio 3.99x):
+    // real jitter on ~6.5ms clean wraps inflated them ~2x while the small
+    // minima stayed. 500k is the PR #1526 noise-floor operating point the
+    // real growth gates use; the same pause is proportionally ~5x smaller.
     final sustained = ContendedClock(spiked: {2, 4, 6, 12, 14, 16, 22, 24, 26});
     expectLinearGrowth(
       asciiProse,
-      100000,
+      500000,
       'ASCII prose',
       elapsedUs: sustained.call,
     );
@@ -566,17 +580,19 @@ void main() {
     // contention phase now lands on 3-of-5 doubled AND 2-of-5 small runs
     // per attempt, both per-size minima keep 2 clean samples, and the
     // doubling ratio — which symmetric weather inflates far less than a
-    // one-sided block — stays linear. spikeMs 12 on the ~3.5ms/7ms
-    // baselines at 100k cells: pre-fix doubled min ≈ 19ms → ratio ≈ 5x
-    // in every attempt (a louder stand-in for the live 3.24x); post-fix
-    // both minima are clean ≈2x.
+    // one-sided block — stays linear. spikeMs 12 on the ~8.5ms/17ms
+    // baselines at 500k cells (rebased from 100k: at the old ~3.5ms/7ms
+    // scale the sim's clean slots flaked on a loaded shard — CI run
+    // 43693364790, best ratio 3.99x — the PR #1526 noise floor; pre-fix
+    // doubled min ≈ 29ms → ratio ≈ 3.4x in every attempt, still a loud
+    // stand-in for the live 3.24x); post-fix both minima are clean ≈2x.
     final blocks = ContendedClock(
       spiked: {6, 7, 8, 9, 10, 16, 17, 18, 19, 20, 26, 27, 28, 29, 30},
       spikeMs: 12,
     );
     expectLinearGrowth(
       asciiProse,
-      100000,
+      500000,
       'ASCII prose',
       elapsedUs: blocks.call,
     );
