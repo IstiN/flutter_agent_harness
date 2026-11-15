@@ -31,36 +31,92 @@ String enrollmentDeviceName({
   String? manufacturer,
 }) {
   final os = operatingSystem.trim().toLowerCase();
-  if (os == 'android' || os == 'ios') {
-    final assigned = _usable(deviceName);
-    if (assigned != null) return _cap(assigned);
-    final humanModel = _usable(model);
-    if (humanModel != null) {
-      final maker = _usable(manufacturer);
-      final combined =
-          os == 'android' &&
-              maker != null &&
-              !humanModel.toLowerCase().contains(maker.toLowerCase())
-          ? '$maker $humanModel'
-          : humanModel;
-      return _cap(combined);
-    }
-    return os == 'ios' ? 'iPhone' : 'Android device';
+  if (_isMobile(os)) {
+    return _mobileDeviceName(
+      os: os,
+      deviceName: deviceName,
+      model: model,
+      manufacturer: manufacturer,
+    );
   }
+  return _desktopDeviceName(
+    os: os,
+    operatingSystem: operatingSystem,
+    hostname: hostname,
+    user: user,
+  );
+}
+
+bool _isMobile(String os) => os == 'android' || os == 'ios';
+
+String _mobileDeviceName({
+  required String os,
+  String? deviceName,
+  String? model,
+  String? manufacturer,
+}) {
+  final assigned = _usable(deviceName);
+  if (assigned != null) return _cap(assigned);
+  return _mobileModelDeviceName(
+    os: os,
+    model: model,
+    manufacturer: manufacturer,
+  );
+}
+
+String _mobileModelDeviceName({
+  required String os,
+  String? model,
+  String? manufacturer,
+}) {
+  final humanModel = _usable(model);
+  if (humanModel == null) return os == 'ios' ? 'iPhone' : 'Android device';
+  return _cap(_mobileModelName(os, humanModel, manufacturer));
+}
+
+String _mobileModelName(String os, String humanModel, String? manufacturer) {
+  if (os != 'android') return humanModel;
+  return _androidModelName(humanModel, manufacturer);
+}
+
+String _androidModelName(String humanModel, String? manufacturer) {
+  final maker = _usable(manufacturer);
+  if (maker == null) return humanModel;
+  return _withManufacturer(humanModel, maker);
+}
+
+String _withManufacturer(String humanModel, String maker) =>
+    humanModel.toLowerCase().contains(maker.toLowerCase())
+    ? humanModel
+    : '$maker $humanModel';
+
+String _desktopDeviceName({
+  required String os,
+  required String operatingSystem,
+  String? hostname,
+  String? user,
+}) {
   final host = _usable(hostname);
   if (host != null) return _cap(host);
-  final platform = switch (os) {
-    'macos' => 'macOS',
-    'windows' => 'Windows',
-    'linux' => 'Linux',
-    _ => operatingSystem.trim().isEmpty ? 'Device' : operatingSystem.trim(),
-  };
+  final platform = _desktopPlatformName(os, operatingSystem);
+  return _cap(_desktopNameWithUser(platform, user));
+}
+
+const _desktopPlatformLabels = <String, String>{
+  'macos': 'macOS',
+  'windows': 'Windows',
+  'linux': 'Linux',
+};
+
+String _desktopPlatformName(String os, String operatingSystem) =>
+    _desktopPlatformLabels[os] ??
+    (operatingSystem.trim().isEmpty ? 'Device' : operatingSystem.trim());
+
+String _desktopNameWithUser(String platform, String? user) {
   final shortUser = user?.trim().replaceAll(RegExp(r'\s+'), '-').trim();
-  return _cap(
-    shortUser == null || shortUser.isEmpty
-        ? platform
-        : '$platform ($shortUser)',
-  );
+  return shortUser == null || shortUser.isEmpty
+      ? platform
+      : '$platform ($shortUser)';
 }
 
 /// Reads the native platform's human device identity with safe fallbacks.

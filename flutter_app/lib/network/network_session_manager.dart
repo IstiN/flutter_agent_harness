@@ -165,28 +165,13 @@ final class NetworkSessionManager extends ChangeNotifier {
   Future<bool> resumeOAuthSignInFromInitialLink() async {
     final store = _pendingStore;
     if (store == null) return false;
-    final Uri? initialLink;
-    try {
-      initialLink = await _getInitialLink();
-    } on Object {
-      return false;
-    }
+    final initialLink = await _initialOAuthLink();
     if (initialLink == null || !isNetworkOAuthDeepLink(initialLink)) {
       return false;
     }
 
-    final PendingOAuthFlow? pending;
-    try {
-      pending = await store.read();
-    } on Object catch (e) {
-      AppLog.i('fa_network', 'pending OAuth read skipped: $e');
-      return false;
-    }
+    final pending = await _readFreshPendingOAuth(store);
     if (pending == null) return false;
-    if (!pending.isFreshAt(_clock())) {
-      await _clearPendingOAuth(store);
-      return false;
-    }
 
     final state = initialLink.queryParameters['state'];
     final code = initialLink.queryParameters['code'];
@@ -201,6 +186,42 @@ final class NetworkSessionManager extends ChangeNotifier {
       return false;
     }
 
+    return _completePendingOAuthSignIn(
+      store: store,
+      pending: pending,
+      code: code,
+    );
+  }
+
+  Future<Uri?> _initialOAuthLink() async {
+    try {
+      return await _getInitialLink();
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<PendingOAuthFlow?> _readFreshPendingOAuth(
+    PendingOAuthStore store,
+  ) async {
+    final PendingOAuthFlow? pending;
+    try {
+      pending = await store.read();
+    } on Object catch (e) {
+      AppLog.i('fa_network', 'pending OAuth read skipped: $e');
+      return null;
+    }
+    if (pending == null) return null;
+    if (pending.isFreshAt(_clock())) return pending;
+    await _clearPendingOAuth(store);
+    return null;
+  }
+
+  Future<bool> _completePendingOAuthSignIn({
+    required PendingOAuthStore store,
+    required PendingOAuthFlow pending,
+    required String code,
+  }) async {
     final client = _newClient();
     try {
       final tokens = await client.oauthExchange(

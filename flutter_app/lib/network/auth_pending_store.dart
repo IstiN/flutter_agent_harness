@@ -46,28 +46,17 @@ final class PendingOAuthFlow {
 
   static PendingOAuthFlow? tryFromJson(Object? value) {
     if (value is! Map) return null;
-    final provider = value['provider'];
-    final clientType = value['clientType'];
-    final environment = value['environment'];
-    final rawRedirectUri = value['redirectUri'];
-    final redirectUri = rawRedirectUri is String
-        ? Uri.tryParse(rawRedirectUri)
-        : null;
-    final state = value['state'];
-    final rawCreatedAt = value['createdAt'];
-    final createdAt = rawCreatedAt is String
-        ? DateTime.tryParse(rawCreatedAt)
-        : null;
-    if (provider is! String ||
-        provider.isEmpty ||
-        clientType is! String ||
-        clientType.isEmpty ||
-        environment is! String ||
-        environment.isEmpty ||
+    final provider = _nonEmptyString(value['provider']);
+    final clientType = _nonEmptyString(value['clientType']);
+    final environment = _nonEmptyString(value['environment']);
+    final redirectUri = _parseRedirectUri(value['redirectUri']);
+    final state = _nonEmptyString(value['state']);
+    final createdAt = _parseCreatedAt(value['createdAt']);
+    if (provider == null ||
+        clientType == null ||
+        environment == null ||
         redirectUri == null ||
-        !redirectUri.hasScheme ||
-        state is! String ||
-        state.isEmpty ||
+        state == null ||
         createdAt == null) {
       return null;
     }
@@ -80,6 +69,21 @@ final class PendingOAuthFlow {
       createdAt: createdAt.toUtc(),
     );
   }
+
+  static String? _nonEmptyString(Object? value) {
+    if (value is! String || value.isEmpty) return null;
+    return value;
+  }
+
+  static Uri? _parseRedirectUri(Object? value) {
+    if (value is! String) return null;
+    final uri = Uri.tryParse(value);
+    if (uri == null || !uri.hasScheme) return null;
+    return uri;
+  }
+
+  static DateTime? _parseCreatedAt(Object? value) =>
+      value is String ? DateTime.tryParse(value) : null;
 }
 
 /// One pending OAuth document in, one out. Implementations are injectable so

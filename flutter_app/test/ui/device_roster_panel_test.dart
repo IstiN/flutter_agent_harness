@@ -12,6 +12,7 @@ import 'dart:async';
 
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,6 +92,27 @@ FahColors paletteOf(WidgetTester tester) => FahColors.of(
 );
 
 void main() {
+  testWidgets('local session labels cover live, busy, offline, and null', (
+    tester,
+  ) async {
+    late BuildContext context;
+    await tester.pumpWidget(
+      _wrap(
+        Builder(
+          builder: (builderContext) {
+            context = builderContext;
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+
+    expect(deviceLocalSessionLabel(context, ChatPresence.live), 'Online');
+    expect(deviceLocalSessionLabel(context, ChatPresence.busy), 'Busy');
+    expect(deviceLocalSessionLabel(context, ChatPresence.offline), 'Offline');
+    expect(deviceLocalSessionLabel(context, null), 'Offline');
+  });
+
   testWidgets('not signed in → nothing renders', (tester) async {
     final service = FakeRosterService(
       initialPhase: DeviceConnectorPhase.signedOut,

@@ -24,12 +24,14 @@ final class FakeDmConnector implements DeviceConnectorService {
   final sent =
       <({String deviceId, String agentName, String? sessionId, String text})>[];
   String? peerDmPub;
+  Future<String> Function()? accountUserIdHandler;
 
   @override
   Stream<NetworkEnvelope> get dmMail => dmMailController.stream;
 
   @override
-  Future<String> accountUserId() async => 'u-1';
+  Future<String> accountUserId() =>
+      accountUserIdHandler?.call() ?? Future<String>.value('u-1');
 
   @override
   String? agentDmPub({required String deviceId, required String agentName}) =>
@@ -54,6 +56,23 @@ final class FakeDmConnector implements DeviceConnectorService {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+NetworkEnvelope _dmMail({
+  String msgId = 'dm-device-1',
+  String? channel = dmChannel,
+  String? ciphertext = 'not-a-fanet1-frame',
+  String? from = 'fa@dev-1',
+  String ts = '2026-11-14T10:00:00.000Z',
+}) => NetworkEnvelope(
+  kind: NetworkEnvelopeKind.mail,
+  msgId: msgId,
+  network: 'personal',
+  channel: channel,
+  from: from,
+  to: 'user:u-1',
+  ts: ts,
+  ciphertext: ciphertext,
+);
 
 void main() {
   group('parseDmChannelId', () {
@@ -290,6 +309,114 @@ void main() {
           everyElement(isNot(contains('unable to decrypt'))),
         );
         expect(chat.transcriptMarkdown(), isNot(contains('undecryptable')));
+      },
+    );
+
+    test(
+      'live device mail ignores incomplete and unopened envelopes',
+      () async {
+        final s = await session();
+        var accountLookups = 0;
+        dmConnector.accountUserIdHandler = () async {
+          accountLookups++;
+          return 'u-1';
+        };
+
+        // No open ChannelState means there is nowhere to append the decode.
+        dmConnector.dmMailController.add(_dmMail());
+        await pumpEventQueue();
+        expect(accountLookups, 0);
+
+        final state = s.channelStates.putIfAbsent(dmChannel, ChannelState.new);
+        var notifications = 0;
+        s.addListener(() => notifications++);
+        dmConnector.dmMailController.add(
+          _dmMail(msgId: 'missing-channel', channel: null),
+        );
+        dmConnector.dmMailController.add(
+          _dmMail(msgId: 'missing-ciphertext', ciphertext: null),
+        );
+        await pumpEventQueue();
+
+        expect(accountLookups, 0);
+        expect(state.messages, isEmpty);
+        expect(state.seen, isEmpty);
+        expect(notifications, 0);
+      },
+    );
+
+    test('live device mail decrypts, appends, and notifies', () async {
+      final s = await session();
+      final state = s.channelStates.putIfAbsent(dmChannel, ChannelState.new);
+      final sealed = await hubSealFanet1(
+        senderDhKeyPair: await X25519().newKeyPair(),
+        recipientDhPubkey: await identityPub(),
+        frameId: 'dm-device-live',
+        aadTarget: dmChannel,
+        plaintext: jsonEncode({'text': 'device reply', 'sessionId': 'two'}),
+      );
+      var notifications = 0;
+      s.addListener(() => notifications++);
+
+      dmConnector.dmMailController.add(
+        _dmMail(msgId: 'dm-device-live', ciphertext: sealed),
+      );
+      await pumpEventQueue();
+
+      final message = state.messages.single;
+      expect(message.text, 'device reply');
+      expect(message.sessionId, 'two');
+      expect(message.isOwn, isFalse);
+      expect(message.createdAt, DateTime.utc(2026, 11, 14, 10));
+      expect(state.seen, contains('dm-device-live'));
+      expect(notifications, 1);
+    });
+
+    test('live device decode does not append into a replaced state', () async {
+      final s = await session();
+      final original = s.channelStates.putIfAbsent(dmChannel, ChannelState.new);
+      final accountId = Completer<String>();
+      var accountLookups = 0;
+      dmConnector.accountUserIdHandler = () {
+        accountLookups++;
+        return accountId.future;
+      };
+      var notifications = 0;
+      s.addListener(() => notifications++);
+
+      dmConnector.dmMailController.add(_dmMail(msgId: 'dm-stale-state'));
+      for (var i = 0; i < 20 && accountLookups == 0; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(accountLookups, 1);
+      final replacement = ChannelState();
+      s.channelStates[dmChannel] = replacement;
+      accountId.complete('u-1');
+      await pumpEventQueue();
+
+      expect(original.messages, isEmpty);
+      expect(replacement.messages, isEmpty);
+      expect(replacement.seen, isEmpty);
+      expect(notifications, 0);
+    });
+
+    test(
+      'live device decode errors are contained without a placeholder',
+      () async {
+        final s = await session();
+        final state = s.channelStates.putIfAbsent(dmChannel, ChannelState.new);
+        dmConnector.accountUserIdHandler = () async {
+          throw StateError('connector disconnected');
+        };
+        var notifications = 0;
+        s.addListener(() => notifications++);
+
+        dmConnector.dmMailController.add(_dmMail(msgId: 'dm-decode-error'));
+        await pumpEventQueue();
+
+        expect(state.messages, isEmpty);
+        expect(state.seen, isEmpty);
+        expect(notifications, 0);
       },
     );
 

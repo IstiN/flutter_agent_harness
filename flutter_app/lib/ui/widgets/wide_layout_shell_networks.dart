@@ -98,55 +98,29 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     String? sessionId,
     String? sessionTitle,
   }) async {
-    final manager = widget.networkSessions;
-    final mode = widget.networkMode;
-    if (manager == null || mode == null) return;
-    final connector = _devicesConnector;
-    final personal = connector.personalNetworkId;
-    if (personal == null) {
-      showFahErrorSnack(context, 'device not enrolled yet');
-      return;
-    }
-    final agentName = agentAddress.substring(0, agentAddress.indexOf('@'));
-    final channelId = await connector.dmChannelForAgent(
+    final entry = await prepareDeviceConversation(
+      manager: widget.networkSessions,
+      mode: widget.networkMode,
+      connector: _devicesConnector,
       deviceId: deviceId,
-      agentName: agentName,
+      deviceLabel: deviceLabel,
+      agentAddress: agentAddress,
+      sessionId: sessionId,
+      sessionTitle: sessionTitle,
+      isMounted: () => mounted,
+      onError: _showDeviceConversationError,
     );
-    if (!mounted) return;
-    // The owner is already a member of the auto-provisioned personal
-    // network: the server's auth-first re-entry admits the JWT with no
-    // password prompt (never the join sheet here).
-    if (!manager.sessions.containsKey(personal)) {
-      try {
-        await manager.join(networkId: personal, password: '');
-      } on Object catch (error) {
-        if (mounted) showFahErrorSnack(context, error.toString());
-        return;
-      }
-    }
-    if (!mounted) return;
-    final session = manager.sessions[personal];
-    if (session == null) return;
-    // A Devices tap is a ROOT entry into the personal network: a fresh shell
-    // has no current network id, and selectChannel alone would retain null
-    // (or a previously viewed network), leaving NetworkChatPage unbound.
-    await mode.enterNetwork(personal);
-    if (!mounted) return;
-    session.attachDmConnector(connector);
-    // Preserve the roster's human device label on the synthetic channel;
-    // openChannel would otherwise have to restore a label from the wire id.
-    session.prepareDmChannel(channelId, deviceLabel: deviceLabel);
-    session.selectDmSession(channelId, sessionId, title: sessionTitle);
+    if (!mounted || entry == null) return;
     await _openSidebarChannelEntry(
-      manager,
-      mode,
-      personal,
-      Channel(
-        id: channelId,
-        networkId: personal,
-        name: '$deviceLabel · $agentName',
-      ),
+      entry.manager,
+      entry.mode,
+      entry.networkId,
+      entry.channel,
     );
+  }
+
+  void _showDeviceConversationError(String message) {
+    if (mounted) showFahErrorSnack(context, message);
   }
 
   /// The sidebar channel-row tap: membership first, then the channel

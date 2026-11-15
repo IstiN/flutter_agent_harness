@@ -6,7 +6,6 @@
 /// tripped framework.dart:6281 '_dependents.isEmpty'.
 library;
 
-import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';

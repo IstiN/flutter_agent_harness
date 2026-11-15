@@ -45,6 +45,7 @@ import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/fa_route_header.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/network/device_conversation_entry.dart';
 import 'package:fa/ui/network/devices_page.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';

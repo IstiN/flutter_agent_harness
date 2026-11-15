@@ -902,9 +902,38 @@ class DeviceConnectorService {
     // `user:<uid>` to bare `<uid>` on inbound mail. Device-WS routing needs
     // the explicit user prefix on the reply; a bare uid is echoed to the
     // sending agent instead of delivered to the user's devices.
-    final replyRecipient = sender.startsWith('user:') || sender.contains('@')
-        ? sender
-        : 'user:$sender';
+    final replyRecipient = _dmReplyRecipient(sender);
+    await _sendDmReply(
+      network: network,
+      channel: channel,
+      replyRecipient: replyRecipient,
+      userPub: userPub,
+      reply: reply,
+      sessionId: sessionId,
+      threaded: threaded,
+    );
+  }
+
+  String _dmReplyRecipient(String sender) =>
+      sender.startsWith('user:') || sender.contains('@')
+      ? sender
+      : 'user:$sender';
+
+  String _dmReplyPlaintext(
+    String reply, {
+    required String? sessionId,
+    required bool threaded,
+  }) => threaded ? jsonEncode({'text': reply, 'sessionId': ?sessionId}) : reply;
+
+  Future<void> _sendDmReply({
+    required String network,
+    required String channel,
+    required String replyRecipient,
+    required SimplePublicKey userPub,
+    required String reply,
+    required String? sessionId,
+    required bool threaded,
+  }) async {
     final agent = await _dmKeys.loadOrCreate(_localAgentAddress());
     try {
       await sendMail(
@@ -917,9 +946,11 @@ class DeviceConnectorService {
           recipientDhPubkey: userPub,
           frameId: frameId,
           aadTarget: channel,
-          plaintext: threaded
-              ? jsonEncode({'text': reply, 'sessionId': ?sessionId})
-              : reply,
+          plaintext: _dmReplyPlaintext(
+            reply,
+            sessionId: sessionId,
+            threaded: threaded,
+          ),
         ),
       );
       if (kDebugMode) {
@@ -962,9 +993,7 @@ class DeviceConnectorService {
     }
     _observedSessionMetadata = snapshot.metadata;
     _observedSessionActivity = snapshot.activity;
-    for (final session in snapshot.sessions.values) {
-      if (session.live) registry.registerSession(_registrationFor(session));
-    }
+    _registerLiveSessions(registry, snapshot.sessions);
     _observedSessions = snapshot.sessions;
 
     final upstream = ConnectorUpstreamClient(
@@ -1024,6 +1053,15 @@ class DeviceConnectorService {
     _running = true;
   }
 
+  void _registerLiveSessions(
+    DeviceRegistry registry,
+    Map<String, DeviceChatSession> sessions,
+  ) {
+    for (final session in sessions.values) {
+      if (session.live) registry.registerSession(_registrationFor(session));
+    }
+  }
+
   /// Loads the persisted device credentials, enrolling (and persisting)
   /// only when none are stored.
   Future<DeviceCredentials> _resolveCredentials() async {
@@ -1078,17 +1116,10 @@ class DeviceConnectorService {
       if (client == null) return;
       final devices = await client.listDevices();
       if (generation != _generation) return;
-      DeviceInfo? own;
-      for (final device in devices) {
-        if (device.deviceId == credentials.deviceId) {
-          own = device;
-          break;
-        }
-      }
+      final own = _findOwnDevice(devices, credentials.deviceId);
       if (own == null) return;
       _setOwnDevice(own);
-      final hasOwnerLabel = own.friendlyName?.trim().isNotEmpty == true;
-      if (hasOwnerLabel || !isGenericDeviceName(own.name)) {
+      if (_hasUsableDeviceName(own)) {
         await _markDeviceNameRepaired();
         return;
       }
@@ -1096,20 +1127,7 @@ class DeviceConnectorService {
       if (generation != _generation || isGenericDeviceName(computed)) return;
       final renamed = await client.renameDevice(own.deviceId, computed);
       if (generation != _generation) return;
-      _setOwnDevice(
-        DeviceInfo(
-          deviceId: own.deviceId,
-          name: own.name,
-          friendlyName: renamed.friendlyName.isEmpty
-              ? null
-              : renamed.friendlyName,
-          createdAt: own.createdAt,
-          revokedAt: own.revokedAt,
-          presence: own.presence,
-          userId: own.userId,
-          agentDmPubs: own.agentDmPubs,
-        ),
-      );
+      _setOwnDevice(_renamedOwnDevice(own, renamed));
       await _markDeviceNameRepaired();
       onLog?.call('legacy device name repaired (${own.deviceId})');
     } on Object catch (error) {
@@ -1118,6 +1136,32 @@ class DeviceConnectorService {
       onLog?.call('legacy device name repair skipped: $error');
     }
   }
+
+  DeviceInfo? _findOwnDevice(List<DeviceInfo> devices, String deviceId) {
+    for (final device in devices) {
+      if (device.deviceId == deviceId) return device;
+    }
+    return null;
+  }
+
+  bool _hasUsableDeviceName(DeviceInfo device) {
+    final hasOwnerLabel = device.friendlyName?.trim().isNotEmpty == true;
+    return hasOwnerLabel || !isGenericDeviceName(device.name);
+  }
+
+  DeviceInfo _renamedOwnDevice(DeviceInfo device, DeviceRenameResult renamed) =>
+      DeviceInfo(
+        deviceId: device.deviceId,
+        name: device.name,
+        friendlyName: renamed.friendlyName.isEmpty
+            ? null
+            : renamed.friendlyName,
+        createdAt: device.createdAt,
+        revokedAt: device.revokedAt,
+        presence: device.presence,
+        userId: device.userId,
+        agentDmPubs: device.agentDmPubs,
+      );
 
   Future<void> _markDeviceNameRepaired() async {
     final credentials = _credentials;

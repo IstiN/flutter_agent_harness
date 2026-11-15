@@ -357,10 +357,12 @@ class _DevicesPageState extends State<DevicesPage> {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
-      final legacyKnownRow =
-          kind == NetworkEnvelopeKind.presence &&
-          node['networks'] is! List &&
-          (previous?.containsKey(id) ?? false);
+      final legacyKnownRow = _legacyKnownServerSession(
+        node,
+        previous,
+        kind,
+        id,
+      );
       if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
         if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
           sessions.remove(id);
@@ -386,10 +388,12 @@ class _DevicesPageState extends State<DevicesPage> {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
-      final legacyKnownRow =
-          kind == NetworkEnvelopeKind.presence &&
-          node['networks'] is! List &&
-          (previous?.containsKey(id) ?? false);
+      final legacyKnownRow = _legacyKnownServerSession(
+        node,
+        previous,
+        kind,
+        id,
+      );
       if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
         if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
           metadata.remove(id);
@@ -623,95 +627,18 @@ class _DevicesPageState extends State<DevicesPage> {
       ...?controller?.localEntries.map((entry) => entry.id.value),
     };
 
-    // One PHYSICAL machine = one card. Union enrollments by a meaningful
-    // hostname (or owner-friendly identity for legacy `device` rows) AND by
-    // shared persisted session ids. The latter recovers duplicate generic
-    // enrollments of the same machine without merging unrelated online
-    // devices that merely share the placeholder name `device`.
-    final entries = [
-      for (final entry in _remote.entries)
-        if (!_hiddenRemoteEnrollment(entry.value)) entry,
-    ];
-    final parents = List<int>.generate(entries.length, (index) => index);
-    int rootOf(int index) {
-      var root = index;
-      while (parents[root] != root) {
-        root = parents[root];
-      }
-      while (parents[index] != index) {
-        final next = parents[index];
-        parents[index] = root;
-        index = next;
-      }
-      return root;
-    }
-
-    void union(int left, int right) {
-      final leftRoot = rootOf(left);
-      final rightRoot = rootOf(right);
-      if (leftRoot != rightRoot) parents[rightRoot] = leftRoot;
-    }
-
-    final identityOwners = <String, int>{};
-    final sessionOwners = <String, int>{};
-    final ownMembers = List<bool>.filled(entries.length, false);
-    for (var i = 0; i < entries.length; i++) {
-      final node = entries[i].value;
-      final identity = _enrollmentMachineGroupKey(node.roster);
-      if (identity != null) {
-        if (identity == ownMachineKey) ownMembers[i] = true;
-        final previous = identityOwners[identity];
-        if (previous == null) {
-          identityOwners[identity] = i;
-        } else {
-          union(previous, i);
-        }
-      }
-      for (final id in node.presence?.sessions.keys ?? const <String>{}) {
-        if (ownSessionIds.contains(id)) ownMembers[i] = true;
-        final previous = sessionOwners[id];
-        if (previous == null) {
-          sessionOwners[id] = i;
-        } else {
-          union(previous, i);
-        }
-      }
-    }
-    final ownRoots = <int>{
-      for (var i = 0; i < entries.length; i++)
-        if (ownMembers[i]) rootOf(i),
-    };
-    final ownMerged = <_RemoteDeviceNode>[];
-    final groupedIndexes = <int, List<int>>{};
-    final order = <int>[];
-    for (var i = 0; i < entries.length; i++) {
-      if (ownRoots.contains(rootOf(i))) {
-        ownMerged.add(entries[i].value);
-        continue;
-      }
-      final root = rootOf(i);
-      if (!groupedIndexes.containsKey(root)) order.add(root);
-      (groupedIndexes[root] ??= []).add(i);
-    }
-    final remoteGroups = <String, List<_RemoteDeviceNode>>{};
-    final groupDevices = <String, List<String>>{};
-    final groupKeys = <String>[];
-    for (final root in order) {
-      final indexes = groupedIndexes[root]!;
-      final ids = [for (final index in indexes) entries[index].key];
-      final identity = indexes
-          .map(
-            (index) => _enrollmentMachineGroupKey(entries[index].value.roster),
-          )
-          .whereType<String>()
-          .firstOrNull;
-      final key =
-          identity ??
-          (ids.length == 1 ? 'device:${ids.first}' : 'shared:${ids.first}');
-      groupKeys.add(key);
-      remoteGroups[key] = [for (final index in indexes) entries[index].value];
-      groupDevices[key] = ids;
-    }
+    final grouping = _RemoteDeviceGrouping.build(
+      entries: [
+        for (final entry in _remote.entries)
+          if (!_hiddenRemoteEnrollment(entry.value)) entry,
+      ],
+      ownMachineKey: ownMachineKey,
+      ownSessionIds: ownSessionIds,
+    );
+    final ownMerged = grouping.ownMerged;
+    final remoteGroups = grouping.remoteGroups;
+    final groupDevices = grouping.groupDevices;
+    final groupKeys = grouping.groupKeys;
 
     Map<String, AgentRunState> mergedAgents(Iterable<_RemoteDeviceNode> nodes) {
       final result = <String, AgentRunState>{};
@@ -860,6 +787,173 @@ class _DevicesPageState extends State<DevicesPage> {
     child: DeviceRosterStatusLine(label: label, color: color),
   );
 }
+
+/// Groups remote enrollments into physical-machine cards.
+///
+/// One PHYSICAL machine = one card. Union enrollments by a meaningful hostname
+/// (or owner-friendly identity for legacy `device` rows) AND by shared
+/// persisted session ids. The latter recovers duplicate generic enrollments
+/// of the same machine without merging unrelated online devices that merely
+/// share the placeholder name `device`.
+class _RemoteDeviceGrouping {
+  _RemoteDeviceGrouping._({
+    required this.entries,
+    required this.ownMachineKey,
+    required this.ownSessionIds,
+  });
+
+  factory _RemoteDeviceGrouping.build({
+    required List<MapEntry<String, _RemoteDeviceNode>> entries,
+    required String? ownMachineKey,
+    required Set<String> ownSessionIds,
+  }) {
+    final grouping = _RemoteDeviceGrouping._(
+      entries: entries,
+      ownMachineKey: ownMachineKey,
+      ownSessionIds: ownSessionIds,
+    );
+    grouping
+      .._indexEntries()
+      .._findOwnRoots()
+      .._partitionEntries()
+      .._buildRemoteGroups();
+    return grouping;
+  }
+
+  final List<MapEntry<String, _RemoteDeviceNode>> entries;
+  final String? ownMachineKey;
+  final Set<String> ownSessionIds;
+
+  late final _parents = List<int>.generate(entries.length, (index) => index);
+  late final _ownMembers = List<bool>.filled(entries.length, false);
+  final _identityOwners = <String, int>{};
+  final _sessionOwners = <String, int>{};
+  final _ownRoots = <int>{};
+  final _groupedIndexes = <int, List<int>>{};
+  final _order = <int>[];
+
+  final ownMerged = <_RemoteDeviceNode>[];
+  final remoteGroups = <String, List<_RemoteDeviceNode>>{};
+  final groupDevices = <String, List<String>>{};
+  final groupKeys = <String>[];
+
+  void _indexEntries() {
+    for (var i = 0; i < entries.length; i++) {
+      _indexIdentity(i);
+      _indexSessions(i);
+    }
+  }
+
+  void _indexIdentity(int index) {
+    final node = entries[index].value;
+    final identity = _enrollmentMachineGroupKey(node.roster);
+    if (identity == null) return;
+    if (identity == ownMachineKey) _ownMembers[index] = true;
+    _linkOwner(_identityOwners, identity, index);
+  }
+
+  void _indexSessions(int index) {
+    final node = entries[index].value;
+    for (final id in node.presence?.sessions.keys ?? const <String>{}) {
+      if (ownSessionIds.contains(id)) _ownMembers[index] = true;
+      _linkOwner(_sessionOwners, id, index);
+    }
+  }
+
+  void _linkOwner(Map<String, int> owners, String key, int index) {
+    final previous = owners[key];
+    if (previous == null) {
+      owners[key] = index;
+      return;
+    }
+    _union(previous, index);
+  }
+
+  int _rootOf(int index) {
+    var root = index;
+    while (_parents[root] != root) {
+      root = _parents[root];
+    }
+    while (_parents[index] != index) {
+      final next = _parents[index];
+      _parents[index] = root;
+      index = next;
+    }
+    return root;
+  }
+
+  void _union(int left, int right) {
+    final leftRoot = _rootOf(left);
+    final rightRoot = _rootOf(right);
+    if (leftRoot != rightRoot) _parents[rightRoot] = leftRoot;
+  }
+
+  void _findOwnRoots() {
+    for (var i = 0; i < entries.length; i++) {
+      if (_ownMembers[i]) _ownRoots.add(_rootOf(i));
+    }
+  }
+
+  void _partitionEntries() {
+    for (var i = 0; i < entries.length; i++) {
+      _partitionEntry(i);
+    }
+  }
+
+  void _partitionEntry(int index) {
+    if (_ownRoots.contains(_rootOf(index))) {
+      ownMerged.add(entries[index].value);
+      return;
+    }
+    _addRemoteIndex(index, _rootOf(index));
+  }
+
+  void _addRemoteIndex(int index, int root) {
+    if (!_groupedIndexes.containsKey(root)) _order.add(root);
+    (_groupedIndexes[root] ??= []).add(index);
+  }
+
+  void _buildRemoteGroups() {
+    for (final root in _order) {
+      _buildRemoteGroup(root);
+    }
+  }
+
+  void _buildRemoteGroup(int root) {
+    final indexes = _groupedIndexes[root]!;
+    final ids = [for (final index in indexes) entries[index].key];
+    final key = _remoteGroupKey(indexes, ids);
+    groupKeys.add(key);
+    remoteGroups[key] = [for (final index in indexes) entries[index].value];
+    groupDevices[key] = ids;
+  }
+
+  String _remoteGroupKey(List<int> indexes, List<String> ids) {
+    final identity = indexes
+        .map((index) => _enrollmentMachineGroupKey(entries[index].value.roster))
+        .whereType<String>()
+        .firstOrNull;
+    return identity ??
+        (ids.length == 1 ? 'device:${ids.first}' : 'shared:${ids.first}');
+  }
+}
+
+/// Presence rows without an exposure list are legacy patches: retain a known
+/// persisted row even though the patch itself carries no visibility fields.
+bool _legacyKnownServerSession<T>(
+  Map<Object?, Object?> node,
+  Map<String, T>? previous,
+  NetworkEnvelopeKind kind,
+  String id,
+) => _legacyServerSessionPatch(node, kind) && _knownServerSession(previous, id);
+
+bool _legacyServerSessionPatch(
+  Map<Object?, Object?> node,
+  NetworkEnvelopeKind kind,
+) => kind == NetworkEnvelopeKind.presence && node['networks'] is! List;
+
+bool _knownServerSession<T>(Map<String, T>? previous, String id) =>
+    previous?.containsKey(id) ?? false;
 
 /// The machine-group key for an enrollment hostname: normalized lowercase,
 /// null for generic/empty names. A generic placeholder alone is NOT proof
