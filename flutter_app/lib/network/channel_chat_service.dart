@@ -18,7 +18,13 @@ import 'network_session.dart';
 /// Pair it with `FaChatFeatures.minimal()`: no sandbox, no attachments,
 /// no approvals — a channel is plain text-in/text-out.
 final class ChannelChatService implements FaChatService {
-  ChannelChatService({required this.session, required this.channelId}) {
+  ChannelChatService({
+    required this.session,
+    required this.channelId,
+    this.dmSessionId,
+    this.dmUndecryptablePlaceholder,
+    this.dmEncryptedHistoryDivider,
+  }) {
     session.addListener(_onSessionChanged);
   }
 
@@ -27,6 +33,28 @@ final class ChannelChatService implements FaChatService {
 
   /// The channel inside [session].
   final String channelId;
+
+  /// Selected DM session thread. Null is the device-general bucket; ignored
+  /// for ordinary channels. Filtering is synchronous over the shared store,
+  /// so switching sessions never shows the previous thread while history
+  /// for the same transport channel is already loaded.
+  final String? dmSessionId;
+
+  /// Localized, non-technical DM fallback. Read lazily because the service
+  /// is created in initState, before inherited localizations are available.
+  final String Function()? dmUndecryptablePlaceholder;
+
+  /// Localized divider label for a run of foreign-encrypted DM history.
+  /// Null preserves the legacy per-row placeholders for embedders/tests.
+  final String Function()? dmEncryptedHistoryDivider;
+
+  /// Host payload identifying the DM history divider's custom tile.
+  static const encryptedHistoryDividerData = 'dmEncryptedHistoryDivider';
+
+  String get _undecryptablePlaceholder => isDmChannel(channelId)
+      ? (dmUndecryptablePlaceholder?.call() ??
+            'Encrypted on another device') // l10n:ignore
+      : '(unable to decrypt this message)'; // l10n:ignore
 
   final ApprovalManager _approval = ApprovalManager();
 
@@ -56,22 +84,60 @@ final class ChannelChatService implements FaChatService {
 
   // ------------------------------------------------------------- transcript
 
+  List<ChannelMessage> get _visibleMessages {
+    final stored = _state.messages;
+    if (!isDmChannel(channelId)) return stored;
+    return [
+      for (final message in stored)
+        if (message.sessionId == dmSessionId) message,
+    ];
+  }
+
   @override
-  List<FaChatMessage> get messages => [
-    for (final message in _state.messages)
-      if (message.isOwn)
-        FaChatMessage(
-          role: 'user',
-          content: message.text ?? '_(unable to decrypt this message)_',
-        )
-      else
-        FaChatMessage(
-          role: 'assistant',
-          content: message.text == null
-              ? '_(unable to decrypt this message)_'
-              : '**${_senderName(message)}**\n\n${message.text}',
-        ),
-  ];
+  List<FaChatMessage> get messages {
+    final stored = _visibleMessages;
+    final projected = <FaChatMessage>[];
+    var index = 0;
+    while (index < stored.length) {
+      final message = stored[index];
+      final divider = dmEncryptedHistoryDivider;
+      if (message.text == null && divider != null && isDmChannel(channelId)) {
+        var end = index + 1;
+        while (end < stored.length && stored[end].text == null) {
+          end++;
+        }
+        if (end - index > 1) {
+          projected.add(
+            FaChatMessage(
+              role: 'widget',
+              content: divider(),
+              data: encryptedHistoryDividerData,
+            ),
+          );
+          index = end;
+          continue;
+        }
+      }
+      projected.add(_chatMessage(message));
+      index++;
+    }
+    return projected;
+  }
+
+  FaChatMessage _chatMessage(ChannelMessage message) {
+    if (message.isOwn) {
+      return FaChatMessage(
+        role: 'user',
+        content: message.text ?? '_($_undecryptablePlaceholder)_',
+      );
+    }
+    return FaChatMessage(
+      role: 'assistant',
+      content: message.text == null
+          ? '_($_undecryptablePlaceholder)_'
+          : '**${_senderName(message)}**\n\n${message.text}',
+    );
+  }
 
   String _senderName(ChannelMessage message) {
     // The envelope-carried name wins (hub-originated DAP agents are not in
@@ -83,12 +149,16 @@ final class ChannelChatService implements FaChatService {
     return (name == null || name.isEmpty) ? message.senderId : name;
   }
 
+  String _transcriptPlaceholder(bool isOwn) => !isDmChannel(channelId) && !isOwn
+      ? '(undecryptable)' // l10n:ignore — legacy non-DM export
+      : _undecryptablePlaceholder;
+
   @override
-  String transcriptMarkdown() => _state.messages
+  String transcriptMarkdown() => _visibleMessages
       .map(
         (m) => m.isOwn
-            ? '**You**: ${m.text ?? '(unable to decrypt this message)'}'
-            : '**${_senderName(m)}**: ${m.text ?? '(undecryptable)'}',
+            ? '**You**: ${m.text ?? _transcriptPlaceholder(m.isOwn)}'
+            : '**${_senderName(m)}**: ${m.text ?? _transcriptPlaceholder(m.isOwn)}',
       )
       .join('\n\n');
 

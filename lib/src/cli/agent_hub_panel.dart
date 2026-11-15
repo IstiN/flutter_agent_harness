@@ -249,6 +249,16 @@ const String shellJobLostReason = 'process gone, no exit reported';
 /// the card flood evicted the resumed transcript tail from the first
 /// glass. Ids stay visible (a zombie is never hidden); full details
 /// remain on the /tasks board and `bash_job` output.
+///
+/// ONE row means one PAINTED row: clipping the raw string to [width] is
+/// not enough, because the TUI word-wraps a full-width line when its
+/// trailing token starts near the edge (observed at an 80-col glass: the
+/// 80-char summary folded its `sh-…` id tail onto a second row; the
+/// extra row overflowed the resumed boot's anchor park — issue #446
+/// wave-14 — and the whole summary scrolled off the first glass, so the
+/// restart-lost proof never saw `lost on restart`). The id zone is
+/// therefore fitted INSIDE the wrap budget: `head` + separator + ids
+/// stay two cells under the glass so the line can never fold.
 String shellJobResumeLostSummaryLine({
   required List<String> ids,
   required int width,
@@ -257,8 +267,14 @@ String shellJobResumeLostSummaryLine({
   final head =
       '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
       ' ($shellJobLostReason)';
-  final line = ids.isEmpty ? head : '$head: ${ids.join(' · ')}';
-  return line.length <= width ? line : '${line.substring(0, width - 1)}…';
+  final joined = ids.join(' · ');
+  final idBudget = width - head.length - 3;
+  final zone = idBudget <= 1 ? '' : tuiFitWidth(joined, idBudget);
+  final line = zone.isEmpty ? head : '$head: $zone';
+  if (line.length <= width) return line;
+  // Degenerate narrow glass (head alone cannot fit): hard-clip — the
+  // pre-wrap-safe shape.
+  return '${line.substring(0, width - 1)}…';
 }
 
 /// kimi `MAX_DETAIL_LENGTH`: one dim detail line, capped so it fits any

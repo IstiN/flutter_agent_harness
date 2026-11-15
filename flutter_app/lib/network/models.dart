@@ -52,6 +52,11 @@ String _str(Object? v) => v is String ? v : '';
 
 String? _strOrNull(Object? v) => v is String ? v : null;
 
+String _firstString(Map<String, Object?> json, String a, String b) {
+  final first = _str(json[a]);
+  return first.isNotEmpty ? first : _str(json[b]);
+}
+
 int? _intOrNull(Object? v) => switch (v) {
   int i => i,
   num n => n.toInt(),
@@ -329,14 +334,14 @@ class Envelope {
   final DateTime? createdAt;
 
   factory Envelope.fromJson(Map<String, Object?> json) => Envelope(
-    id: _str(json['id']),
-    channelId: _str(json['channelId']),
-    senderId: _str(json['senderId']),
-    payload: _str(json['payload']),
+    id: _firstString(json, 'id', 'msgId'),
+    channelId: _firstString(json, 'channelId', 'channel'),
+    senderId: _firstString(json, 'senderId', 'from'),
+    payload: _firstString(json, 'payload', 'ciphertext'),
     mentions: _strList(json['mentions']),
     senderKey: _strOrNull(json['senderKey']),
     senderName: _strOrNull(json['senderName']),
-    createdAt: _date(json['createdAt']),
+    createdAt: _date(json['createdAt'] ?? json['ts']),
   );
 
   Map<String, Object?> toJson() => {

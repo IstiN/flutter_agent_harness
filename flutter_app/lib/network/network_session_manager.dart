@@ -10,8 +10,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'auth_deep_link.dart';
 import 'auth_flow.dart';
 import 'auth_loopback.dart';
+import 'auth_pending_store.dart';
 import 'fa_network_client.dart';
 import 'fa_network_ws.dart';
 import '../services/app_log.dart';
@@ -33,6 +35,8 @@ final class NetworkSessionManager extends ChangeNotifier {
     String? jwtToken,
     Future<OAuthCallbackReceiver> Function()? startReceiver,
     Future<void> Function(Uri authUrl)? openUrl,
+    Future<Uri?> Function()? getInitialLink,
+    PendingOAuthStore? pendingStore,
     DateTime Function()? clock,
   }) : _baseUrl = baseUrl,
        _authBaseUrl = authBaseUrl,
@@ -41,10 +45,16 @@ final class NetworkSessionManager extends ChangeNotifier {
        _connector = wsConnector ?? const WebSocketChannelConnector(),
        _startReceiver = startReceiver ?? startOAuthCallbackReceiver,
        _openUrl = openUrl ?? openAuthUrl,
+       _getInitialLink = getInitialLink ?? getOAuthInitialLink,
+       _pendingStore = pendingStore,
        _clock = clock ?? DateTime.now,
        _jwt = jwtToken;
 
   final Uri _baseUrl;
+
+  /// The fa_network REST base the manager was built with — the device
+  /// connector service derives the device WS URL from it (issue #2062).
+  Uri get baseUrl => _baseUrl;
 
   /// The ai-native auth service base (null = the client's default
   /// https://ai-native.cloud).
@@ -57,6 +67,10 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// production, fakes in tests (never bind a real port there).
   final Future<OAuthCallbackReceiver> Function() _startReceiver;
   final Future<void> Function(Uri authUrl) _openUrl;
+
+  /// Cold-start seams: native AppLinks in production, fakes in tests.
+  final Future<Uri?> Function() _getInitialLink;
+  final PendingOAuthStore? _pendingStore;
 
   /// The clock seam for the token-expiry checks (test-friendly).
   final DateTime Function() _clock;
@@ -129,13 +143,120 @@ final class NetworkSessionManager extends ChangeNotifier {
     String environment = 'prod',
   }) async {
     final client = _newClient();
-    final tokens = await NetworkAuthFlow(client: client).signIn(
-      provider: provider,
-      clientType: clientType,
-      environment: environment,
-      startReceiver: _startReceiver,
-      openUrl: _openUrl,
+    final tokens =
+        await NetworkAuthFlow(
+          client: client,
+          pendingStore: _pendingStore,
+          clock: _clock,
+        ).signIn(
+          provider: provider,
+          clientType: clientType,
+          environment: environment,
+          startReceiver: _startReceiver,
+          openUrl: _openUrl,
+        );
+    await _completeSignIn(client: client, provider: provider, tokens: tokens);
+  }
+
+  /// Completes a process-killed mobile sign-in from the native launch link.
+  /// Returns true only after the same account persistence + membership sync
+  /// used by [signInWithProvider] has finished. Invalid/mismatched callbacks
+  /// never reach the exchange endpoint.
+  Future<bool> resumeOAuthSignInFromInitialLink() async {
+    final store = _pendingStore;
+    if (store == null) return false;
+    final initialLink = await _initialOAuthLink();
+    if (initialLink == null || !isNetworkOAuthDeepLink(initialLink)) {
+      return false;
+    }
+
+    final pending = await _readFreshPendingOAuth(store);
+    if (pending == null) return false;
+
+    final state = initialLink.queryParameters['state'];
+    final code = initialLink.queryParameters['code'];
+    if (state == null ||
+        state.isEmpty ||
+        state != pending.state ||
+        code == null ||
+        code.isEmpty) {
+      // A callback for this fresh flow that cannot be exchanged is terminal,
+      // exactly like the equivalent warm-flow failure.
+      await _clearPendingOAuth(store);
+      return false;
+    }
+
+    return _completePendingOAuthSignIn(
+      store: store,
+      pending: pending,
+      code: code,
     );
+  }
+
+  Future<Uri?> _initialOAuthLink() async {
+    try {
+      return await _getInitialLink();
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<PendingOAuthFlow?> _readFreshPendingOAuth(
+    PendingOAuthStore store,
+  ) async {
+    final PendingOAuthFlow? pending;
+    try {
+      pending = await store.read();
+    } on Object catch (e) {
+      AppLog.i('fa_network', 'pending OAuth read skipped: $e');
+      return null;
+    }
+    if (pending == null) return null;
+    if (pending.isFreshAt(_clock())) return pending;
+    await _clearPendingOAuth(store);
+    return null;
+  }
+
+  Future<bool> _completePendingOAuthSignIn({
+    required PendingOAuthStore store,
+    required PendingOAuthFlow pending,
+    required String code,
+  }) async {
+    final client = _newClient();
+    try {
+      final tokens = await client.oauthExchange(
+        code: code,
+        state: pending.state,
+        now: _clock(),
+      );
+      await _completeSignIn(
+        client: client,
+        provider: pending.provider,
+        tokens: tokens,
+      );
+      return true;
+    } on Object catch (e) {
+      AppLog.i('fa_network', 'cold-start OAuth resume failed: $e');
+      return false;
+    } finally {
+      await _clearPendingOAuth(store);
+    }
+  }
+
+  Future<void> _clearPendingOAuth(PendingOAuthStore store) async {
+    try {
+      await store.clear();
+    } on Object catch (e) {
+      AppLog.i('fa_network', 'pending OAuth clear skipped: $e');
+    }
+  }
+
+  /// The ONE token continuation shared by warm and cold-start sign-in.
+  Future<void> _completeSignIn({
+    required FaNetworkClient client,
+    required String provider,
+    required TokenBundle tokens,
+  }) async {
     // The profile call is best-effort: the tokens alone are a working
     // sign-in; the sidebar just falls back to the provider name.
     AuthProfile? profile;

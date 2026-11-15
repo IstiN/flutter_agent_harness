@@ -80,6 +80,7 @@ extension AgentCliLifecycle on AgentCli {
     _abortRunOrCompaction();
     _cancelPendingAnswers();
     _hubTeardown();
+    await _stopNetworkPresenceFor(this);
     unawaited(_subagentBoardSub?.cancel());
     _subagentBoardSub = null;
     _subagentBoard.dispose();

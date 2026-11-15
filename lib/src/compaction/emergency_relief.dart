@@ -239,7 +239,8 @@ final class EmergencyRelief {
     if (after > target) {
       final trimmed = localTrimValve(
         messages: state.messages,
-        reason: 'the emergency relief could not free enough context '
+        reason:
+            'the emergency relief could not free enough context '
             '(no model call is attempted here)',
         window: window,
         settings: settings,
@@ -387,8 +388,7 @@ final class EmergencyRelief {
     final pinned = view.state.pinnedRecordIds;
     for (final group in groups) {
       if (group.recordIds.any(dedupedIds.contains)) continue;
-      final buster =
-          busterFloor > 0 && group.heaviestResult >= busterFloor;
+      final buster = busterFloor > 0 && group.heaviestResult >= busterFloor;
       if (buster) {
         if (group.vetoed(const {}, pinned)) continue;
       } else if (group.vetoed(protectedTail, pinned)) {
@@ -491,8 +491,7 @@ List<_ToolGroup> _toolGroups(_LedgerView view) {
     // An unanswered carrier is not relief food (#85 pair integrity).
     if (!hasResult) continue;
     final classes = <String>{
-      for (final call in calls)
-        emergencyToolClass(call.name),
+      for (final call in calls) emergencyToolClass(call.name),
     };
     final dedupKeys = <String>{
       for (final call in calls)
@@ -571,12 +570,7 @@ extension _SetOverlap<X> on Set<X> {
 /// The ledger view the emergency tier walks (mirrors the structured
 /// engine's internal view — same projection basis, no judge).
 final class _LedgerView {
-  const _LedgerView._(
-    this.ledger,
-    this.state,
-    this.seqs,
-    this.path,
-  );
+  const _LedgerView._(this.ledger, this.state, this.seqs, this.path);
 
   final ContextLedger ledger;
   final StructuredViewState state;

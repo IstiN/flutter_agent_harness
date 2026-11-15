@@ -113,7 +113,8 @@ class ProviderQuota {
       unit: QuotaUnit.fromJson(json['unit']),
       resetsAt: resets?.value,
       isUnmetered: json['isUnmetered'] == true,
-      updatedAt: updated?.value ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      updatedAt:
+          updated?.value ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       timestampsDegraded:
           (resets?.degraded ?? false) || (updated?.degraded ?? false),
     );

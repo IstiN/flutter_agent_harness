@@ -157,6 +157,10 @@ const _exempt = <String, String>{
   'lib/ui/network/channel_rail.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/create_network_dialog.dart':
       'fa_network #955: no goldens yet',
+  // Machine connector roster surfaces (issue #2062): presence-tree pages
+  // driven by live streams — goldens belong to the #2062 UI pass.
+  'lib/ui/network/devices_page.dart': 'fa_network #2062: no goldens yet',
+  'lib/ui/network/device_roster_panel.dart': 'fa_network #2062: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_center.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_home.dart': 'fa_network #955: no goldens yet',

@@ -84,11 +84,14 @@ Set<String> selfHostedPins() {
         // cast here trips unnecessary_cast under --fatal-infos.
         final withBlock = step['with'] as Map? ?? const {};
         final pin = withBlock['flutter-version']?.toString();
-        expect(pin, isNotNull,
-            reason:
-                'the self-hosted lane must pin flutter-version explicitly '
-                '(gh-1826) — an unpinned bootstrap floats stable and '
-                're-opens the gh-2126 skew class');
+        expect(
+          pin,
+          isNotNull,
+          reason:
+              'the self-hosted lane must pin flutter-version explicitly '
+              '(gh-1826) — an unpinned bootstrap floats stable and '
+              're-opens the gh-2126 skew class',
+        );
         pins.add(pin!);
       }
     }
@@ -97,74 +100,88 @@ Set<String> selfHostedPins() {
 }
 
 void main() {
-  test(
-    'AC1: every hosted flutter-action setup pins an exact 3.50.x patch '
-    '(gh-2126: the absent pin floated stable to 3.50.0, whose '
-    'flutter_test test_api 0.7.14 deterministically skew-failed the '
-    'committed lockfile under --enforce-lockfile)',
-    () {
-      final setups = hostedFlutterSetups();
-      expect(setups, isNotEmpty,
-          reason:
-              'build-mobile.yml must still install Flutter on the hosted '
-              'Android legs — the guard scanned nothing');
-      for (final setup in setups) {
-        final withBlock = setup.value['with'] as Map? ?? const {};
-        final pin = withBlock['flutter-version']?.toString();
-        expect(pin, isNotNull,
-            reason: 'job `${setup.key}` installs Flutter with no '
-                'flutter-version pin — it floats on `channel: stable`, '
-                'and the next stable release deterministically skew-fails '
-                'flutter_app/pubspec.lock under --enforce-lockfile '
-                '(gh-2126; gh-2120 pinned office-addin-suite for the '
-                'identical float)');
-        expect(pin, matches(RegExp(r'^3\.50\.\d+$')),
-            reason: 'job `${setup.key}` pins `$pin` — the pin must be an '
-                'EXACT 3.50.x patch (#1431 discipline, gh-1826; keep in '
-                'sync with expectedSdkLine): a wildcard or a foreign '
-                'line resolves a flutter_test whose exact test_api pin '
-                'the committed lockfile does not carry');
-      }
-    },
-  );
+  test('AC1: every hosted flutter-action setup pins an exact 3.50.x patch '
+      '(gh-2126: the absent pin floated stable to 3.50.0, whose '
+      'flutter_test test_api 0.7.14 deterministically skew-failed the '
+      'committed lockfile under --enforce-lockfile)', () {
+    final setups = hostedFlutterSetups();
+    expect(
+      setups,
+      isNotEmpty,
+      reason:
+          'build-mobile.yml must still install Flutter on the hosted '
+          'Android legs — the guard scanned nothing',
+    );
+    for (final setup in setups) {
+      final withBlock = setup.value['with'] as Map? ?? const {};
+      final pin = withBlock['flutter-version']?.toString();
+      expect(
+        pin,
+        isNotNull,
+        reason:
+            'job `${setup.key}` installs Flutter with no '
+            'flutter-version pin — it floats on `channel: stable`, '
+            'and the next stable release deterministically skew-fails '
+            'flutter_app/pubspec.lock under --enforce-lockfile '
+            '(gh-2126; gh-2120 pinned office-addin-suite for the '
+            'identical float)',
+      );
+      expect(
+        pin,
+        matches(RegExp(r'^3\.50\.\d+$')),
+        reason:
+            'job `${setup.key}` pins `$pin` — the pin must be an '
+            'EXACT 3.50.x patch (#1431 discipline, gh-1826; keep in '
+            'sync with expectedSdkLine): a wildcard or a foreign '
+            'line resolves a flutter_test whose exact test_api pin '
+            'the committed lockfile does not carry',
+      );
+    }
+  });
 
-  test(
-    'AC2: the hosted pins match the self-hosted lane pin — one workflow '
-    'resolving one committed lockfile must run one SDK',
-    () {
-      final pins = selfHostedPins();
-      expect(pins, {expectedSdkLine},
-          reason: 'the self-hosted iOS lane pin drifted from '
-              '$expectedSdkLine — bump it ONLY with the regenerated '
-              'flutter_app/pubspec.lock and this guard in the same PR '
-              '(gh-1826: "Bump the pin consciously, matching the desktop '
-              'lane")');
-      for (final setup in hostedFlutterSetups()) {
-        final withBlock = setup.value['with'] as Map? ?? const {};
-        final pin = withBlock['flutter-version']?.toString();
-        expect(pin, expectedSdkLine,
-            reason: 'hosted job `${setup.key}` pins `$pin` while the '
-                'self-hosted lane pins $expectedSdkLine — the two lanes '
-                'resolve the same flutter_app/pubspec.lock and must ride '
-                'the same SDK (gh-2126)');
-      }
-    },
-  );
+  test('AC2: the hosted pins match the self-hosted lane pin — one workflow '
+      'resolving one committed lockfile must run one SDK', () {
+    final pins = selfHostedPins();
+    expect(
+      pins,
+      {expectedSdkLine},
+      reason:
+          'the self-hosted iOS lane pin drifted from '
+          '$expectedSdkLine — bump it ONLY with the regenerated '
+          'flutter_app/pubspec.lock and this guard in the same PR '
+          '(gh-1826: "Bump the pin consciously, matching the desktop '
+          'lane")',
+    );
+    for (final setup in hostedFlutterSetups()) {
+      final withBlock = setup.value['with'] as Map? ?? const {};
+      final pin = withBlock['flutter-version']?.toString();
+      expect(
+        pin,
+        expectedSdkLine,
+        reason:
+            'hosted job `${setup.key}` pins `$pin` while the '
+            'self-hosted lane pins $expectedSdkLine — the two lanes '
+            'resolve the same flutter_app/pubspec.lock and must ride '
+            'the same SDK (gh-2126)',
+      );
+    }
+  });
 
-  test(
-    'AC3: the four known hosted flutter-action setups are all still '
-    'accounted for',
-    () {
-      final jobs = hostedFlutterSetups().map((e) => e.key).toSet();
-      expect(jobs, {
+  test('AC3: the four known hosted flutter-action setups are all still '
+      'accounted for', () {
+    final jobs = hostedFlutterSetups().map((e) => e.key).toSet();
+    expect(
+      jobs,
+      {
         'build-android', // Build Android AAB
         'submit-android', // Play upload (fastlane/bundletool host)
         'build-android-apks', // Build Android APK store/god matrix
         'test-android-emulator', // Android emulator ITs
-      }, reason:
+      },
+      reason:
           'the hosted flutter-action site set changed — a dropped setup '
           'silently lost its SDK pin, an added one would float; update '
-          'this guard in the same PR (gh-2126)');
-    },
-  );
+          'this guard in the same PR (gh-2126)',
+    );
+  });
 }

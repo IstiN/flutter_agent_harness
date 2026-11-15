@@ -73,8 +73,7 @@ final class CompactionCachePolicy {
 
   const CompactionCachePolicy._(this._routingFor);
 
-  final CompactionCacheRouting Function(CompactionCallClass klass)
-      _routingFor;
+  final CompactionCacheRouting Function(CompactionCallClass klass) _routingFor;
 
   /// The cache-affine policy (the default): one stable run-scoped routing
   /// session id shared by every call, retention per call class. [sessionId]
@@ -199,13 +198,13 @@ final class CompactionUsageAccumulator {
 
   /// The totals accumulated so far.
   CompactionUsageTotals snapshot() => CompactionUsageTotals(
-        calls: _calls,
-        inputTokens: _inputTokens,
-        outputTokens: _outputTokens,
-        cacheReadTokens: _cacheReadTokens,
-        cacheWriteTokens: _cacheWriteTokens,
-        costUsd: _costUsd,
-      );
+    calls: _calls,
+    inputTokens: _inputTokens,
+    outputTokens: _outputTokens,
+    cacheReadTokens: _cacheReadTokens,
+    cacheWriteTokens: _cacheWriteTokens,
+    costUsd: _costUsd,
+  );
 }
 
 /// Renders a pass duration for the compaction reports (gh-2101): `0.9s`

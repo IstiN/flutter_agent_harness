@@ -9,12 +9,14 @@ import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/models.dart' show PublicNetworkInfo;
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/network/wallet_export.dart' show WalletKdfParams;
 import 'package:fa/ui/network/create_network_dialog.dart';
+import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
 import 'package:fa/ui/network/wallet_menu.dart';
@@ -35,6 +37,7 @@ class NetworksSidebar extends StatefulWidget {
     required this.controller,
     required this.manager,
     this.walletExportKdf,
+    this.deviceConnector,
   });
 
   /// The mode controller — tapping a membership enters the network.
@@ -46,6 +49,11 @@ class NetworksSidebar extends StatefulWidget {
 
   /// Test seam forwarded to [WalletMenuButton] (fast Argon2id).
   final WalletKdfParams? walletExportKdf;
+
+  /// The device connector service (issue #2062): when present, the 'My
+  /// devices' roster panel renders at the very top of the sidebar; null
+  /// (guest-only embeds, tests) → no panel.
+  final DeviceConnectorService? deviceConnector;
 
   @override
   State<NetworksSidebar> createState() => _NetworksSidebarState();
@@ -150,9 +158,14 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final deviceConnector = widget.deviceConnector;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // The 'My devices' roster panel — the user's machines live at the
+        // very top (issue #2062; absent until the host wires a service).
+        if (deviceConnector != null)
+          DeviceRosterPanel(service: deviceConnector),
         // Header — mirrors the sessions list's: small-caps dim section
         // label + the circle-outline `+` IconButton (opens the join
         // sheet). The wallet ⋮ keeps export/import reachable (the
@@ -565,7 +578,7 @@ class _MembershipTile extends StatelessWidget {
                       ),
                     ],
                     onSelected: (value) {
-                      if (value == 'delete') onDelete!();
+                      if (value == 'delete') onDelete?.call();
                     },
                   ),
               ],

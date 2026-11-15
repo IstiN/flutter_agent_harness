@@ -59,6 +59,216 @@ FaNetworkException _independentEnrollmentError(FaNetworkException error) {
   );
 }
 
+/// The device enrollment result of `POST /api/devices/enroll` (issue
+/// #2062 §9): the stable device identity pair plus the personal network
+/// the server auto-provisioned (null on older backends / re-enroll).
+class DeviceEnrollmentResult {
+  const DeviceEnrollmentResult({
+    required this.deviceId,
+    required this.deviceToken,
+    this.personalNetworkId,
+  });
+
+  /// Stable device id minted at enroll (contract §1).
+  final String deviceId;
+
+  /// Opaque bearer bound to (userId, deviceId) — persist securely,
+  /// never log.
+  final String deviceToken;
+
+  /// The personal network id the server provisioned for the owner, when
+  /// the response carries one.
+  final String? personalNetworkId;
+}
+
+/// One machine returned by the account or network device-list routes.
+///
+/// The account route supplies [createdAt]/[revokedAt], while the network
+/// route additionally supplies [presence]/[userId]. Keeping one tolerant
+/// model lets the UI merge either source with live connector presence.
+final class DeviceInfo {
+  const DeviceInfo({
+    required this.deviceId,
+    required this.name,
+    this.friendlyName,
+    this.createdAt,
+    this.revokedAt,
+    this.presence,
+    this.userId,
+    this.agentDmPubs = const {},
+  });
+
+  /// Stable server-minted device id.
+  final String deviceId;
+
+  /// Host name captured during enrollment.
+  final String name;
+
+  /// Owner-set display name; null when unset or cleared.
+  final String? friendlyName;
+
+  /// Enrollment time, supplied by `GET /api/devices`.
+  final DateTime? createdAt;
+
+  /// Revocation time, supplied by `GET /api/devices` when revoked.
+  final DateTime? revokedAt;
+
+  /// Last server-side machine state, supplied by the network roster.
+  final String? presence;
+
+  /// Owner account id, supplied by the network roster.
+  final String? userId;
+
+  /// Agent X25519 DM public keys keyed by full `<agent>@<device>` address.
+  /// Parsed from the roster's `agents[].dmPub`; empty on older backends.
+  final Map<String, String> agentDmPubs;
+
+  /// Friendly name first, then enrollment name, then the stable id.
+  String get displayName {
+    final friendly = friendlyName;
+    if (friendly != null && friendly.isNotEmpty) return friendly;
+    return name.isEmpty ? deviceId : name;
+  }
+
+  /// Parses one wire row. Empty friendly names mean "cleared".
+  factory DeviceInfo.fromJson(Map<String, Object?> json) {
+    final id = json['deviceId'];
+    if (id is! String || id.isEmpty) {
+      throw const FormatException('device row lacks a string "deviceId"');
+    }
+    final name = json['name'];
+    final friendly = json['friendlyName'];
+    final createdAt = json['createdAt'];
+    final revokedAt = json['revokedAt'];
+    final presence = json['presence'];
+    final userId = json['userId'];
+    return DeviceInfo(
+      deviceId: id,
+      name: name is String ? name : '',
+      friendlyName: friendly is String && friendly.isNotEmpty ? friendly : null,
+      createdAt: createdAt is String ? DateTime.tryParse(createdAt) : null,
+      revokedAt: revokedAt is String ? DateTime.tryParse(revokedAt) : null,
+      presence: presence is String && presence.isNotEmpty ? presence : null,
+      userId: userId is String && userId.isNotEmpty ? userId : null,
+      agentDmPubs: _agentDmPubs(json['agents'], id),
+    );
+  }
+}
+
+Map<String, String> _agentDmPubs(Object? value, String deviceId) {
+  if (value is! List) return const {};
+  final keys = <String, String>{};
+  for (final agent in value) {
+    final parsed = _agentDmPub(agent, deviceId);
+    if (parsed != null) keys[parsed.address] = parsed.dmPub;
+  }
+  return Map.unmodifiable(keys);
+}
+
+({String address, String dmPub})? _agentDmPub(Object? value, String deviceId) {
+  if (value is! Map || value['exposed'] != true) return null;
+  final dmPub = value['dmPub'];
+  if (dmPub is! String || dmPub.isEmpty) return null;
+  final address = _rosterAgentAddress(value, deviceId);
+  return address == null ? null : (address: address, dmPub: dmPub);
+}
+
+String? _rosterAgentAddress(Map<Object?, Object?> agent, String deviceId) {
+  final address = agent['address'];
+  if (address is String && address.isNotEmpty) return address;
+  final name = agent['name'];
+  if (name is String && name.isNotEmpty) return '$name@$deviceId';
+  return null;
+}
+
+/// One agent entry in a device-roster merge patch.
+///
+/// Entries are keyed by [name] on the server. An omitted entry is left
+/// untouched; use `state: offline` or `exposed: false` to retract one.
+final class DeviceRosterAgent {
+  const DeviceRosterAgent({
+    required this.name,
+    required this.state,
+    required this.exposed,
+    this.dmPub,
+  });
+
+  /// The local agent name (without the `@deviceId` suffix).
+  final String name;
+
+  /// Roster presence: `live`, `busy`, or `offline`.
+  final String state;
+
+  /// Whether this agent is exposed to other devices.
+  final bool exposed;
+
+  /// Base64 X25519 DM public key for this agent's full address (§7).
+  final String? dmPub;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'state': state,
+    'exposed': exposed,
+    if (dmPub != null) 'dmPub': dmPub,
+  };
+}
+
+/// One session entry in a device-roster merge patch.
+///
+/// [networks] is the complete exposure list for this session. An offline
+/// entry retracts the session without affecting any other roster entries.
+final class DeviceRosterSession {
+  const DeviceRosterSession({
+    required this.id,
+    required this.state,
+    this.networks = const [],
+    this.title,
+    this.path,
+    this.lastActivity,
+  });
+
+  /// Stable local session id.
+  final String id;
+
+  /// Session presence: `live`, `wake-on-DM`, or `offline`.
+  final String state;
+
+  /// Networks on which this session is exposed.
+  final List<String> networks;
+
+  /// Optional human-readable title; omitted by legacy peers.
+  final String? title;
+
+  /// Optional project/working-directory path for the session row subtitle.
+  final String? path;
+
+  /// Optional RFC3339 last-activity timestamp.
+  final String? lastActivity;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'state': state,
+    'networks': networks,
+    if (title != null) 'title': title,
+    if (path != null) 'path': path,
+    if (lastActivity != null) 'lastActivity': lastActivity,
+  };
+}
+
+/// The result of `PATCH /api/devices/{deviceId}/name`.
+final class DeviceRenameResult {
+  const DeviceRenameResult({
+    required this.deviceId,
+    required this.friendlyName,
+  });
+
+  /// The renamed device.
+  final String deviceId;
+
+  /// The new friendly name; the empty string means it was cleared.
+  final String friendlyName;
+}
+
 /// REST client for the fa_network edge (fa_network/docs/openapi.yaml).
 ///
 /// Pure `package:http` — web-safe, no dart:io. Inject [httpClient] for
@@ -272,6 +482,28 @@ class FaNetworkClient {
     return InboxPage.fromJson(_decodeMap(res));
   }
 
+  /// `GET /api/inbox?channel=<dm-id>&limit&cursor` — one window of the
+  /// signed-in user's virtual DM channel. Rows retain opaque fanet1 payloads;
+  /// decryption stays with the user/agent key holders.
+  ///
+  /// DM history rides the same windowed envelope view as channel
+  /// history (`GET /api/channels/{dm:id}/messages`, owner-only server
+  /// branch — §7), NOT `/api/inbox` (which lists conversations).
+  Future<MessagePage> listDmInbox(
+    String channelId, {
+    int? limit,
+    String? cursor,
+  }) async {
+    final res = await _request(
+      'GET',
+      '/api/channels/$channelId/messages',
+      query: {'limit': ?limit?.toString(), 'cursor': ?cursor},
+      management: true,
+      expected: {200},
+    );
+    return MessagePage.fromJson(_decodeMap(res));
+  }
+
   // ---------------------------------------------------------------- admins
 
   /// `POST /api/networks/{id}/admins` — appoint an admin (owner only).
@@ -390,6 +622,11 @@ class FaNetworkClient {
     String? cursor,
     int? limit,
 
+    /// Owner-only DM history requires the ai-native account JWT rather than
+    /// the personal network's member session token. Ordinary channels keep
+    /// the default member-token-first behavior.
+    bool useAccountToken = false,
+
     /// Anonymous showcase read: NO bearer at all (a public channel of a
     /// public network is served tokenless; a present-but-invalid token
     /// would earn a 401 instead of the oracle-free 404).
@@ -400,6 +637,7 @@ class FaNetworkClient {
       '/api/channels/$channelId/messages',
       query: {'cursor': ?cursor, 'limit': ?limit?.toString()},
       auth: !anonymous,
+      management: useAccountToken,
       expected: {200},
     );
     return MessagePage.fromJson(_decodeMap(res));
@@ -474,6 +712,149 @@ class FaNetworkClient {
       expected: {202},
     );
     return Envelope.fromJson(_decodeMap(res));
+  }
+
+  // ---------------------------------------------------------------- devices
+
+  /// `POST /api/devices/enroll` (issue #2062 §9) — enrolls THIS device
+  /// into the machine-connector fabric (ai-native JWT management route).
+  /// The server auto-provisions the owner's personal network on first
+  /// enroll (§2) and returns the stable {deviceId, deviceToken} pair the
+  /// host persists (deviceToken never logged). Tolerates 200 and 201.
+  Future<DeviceEnrollmentResult> enrollDevice({
+    String? name,
+    String? platform,
+  }) async {
+    final res = await _request(
+      'POST',
+      '/api/devices/enroll',
+      body: <String, Object?>{
+        if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+        if (platform != null && platform.trim().isNotEmpty)
+          'platform': platform.trim(),
+      },
+      management: true,
+      expected: {200, 201},
+    );
+    final json = _decodeMap(res);
+    final deviceId = json['deviceId'];
+    final deviceToken = json['deviceToken'];
+    if (deviceId is! String || deviceId.isEmpty) {
+      throw const FormatException('enrollDevice: no string "deviceId"');
+    }
+    if (deviceToken is! String || deviceToken.isEmpty) {
+      throw const FormatException('enrollDevice: no string "deviceToken"');
+    }
+    final personal = json['personalNetwork'];
+    final personalId = personal is Map ? personal['id'] : null;
+    return DeviceEnrollmentResult(
+      deviceId: deviceId,
+      deviceToken: deviceToken,
+      personalNetworkId: personalId is String && personalId.isNotEmpty
+          ? personalId
+          : null,
+    );
+  }
+
+  /// `PATCH /api/devices/{deviceId}/roster` — merges this device's agent
+  /// and session exposure projection. Entries absent from the patch remain
+  /// unchanged on the server. This account-JWT route never sends a member
+  /// session token.
+  Future<void> patchDeviceRoster(
+    String deviceId, {
+    List<DeviceRosterAgent> agents = const [],
+    List<DeviceRosterSession> sessions = const [],
+  }) async {
+    await _request(
+      'PATCH',
+      '/api/devices/${Uri.encodeComponent(deviceId)}/roster',
+      body: {
+        'agents': [for (final agent in agents) agent.toJson()],
+        'sessions': [for (final session in sessions) session.toJson()],
+      },
+      management: true,
+      expected: {200},
+    );
+  }
+
+  /// `PATCH /api/devices/{deviceId}/name` — sets this account device's
+  /// friendly name. An empty [name] clears it. This is a management route:
+  /// only the ai-native account JWT is sent, never a member/device token.
+  Future<DeviceRenameResult> renameDevice(String deviceId, String name) async {
+    final res = await _request(
+      'PATCH',
+      '/api/devices/${Uri.encodeComponent(deviceId)}/name',
+      body: {'name': name},
+      management: true,
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final responseId = json['deviceId'];
+    final friendlyName = json['friendlyName'];
+    if (responseId is! String || responseId.isEmpty) {
+      throw const FormatException('renameDevice: no string "deviceId"');
+    }
+    if (friendlyName is! String) {
+      throw const FormatException('renameDevice: no string "friendlyName"');
+    }
+    return DeviceRenameResult(deviceId: responseId, friendlyName: friendlyName);
+  }
+
+  /// `GET /api/devices` — this account's enrolled machines, oldest first.
+  Future<List<DeviceInfo>> listDevices() async {
+    final res = await _request(
+      'GET',
+      '/api/devices',
+      management: true,
+      expected: {200},
+    );
+    return _decodeDevices(res);
+  }
+
+  /// `GET /api/networks/{networkId}/devices` — the network's authoritative
+  /// machine roster. The app calls this through its account client, so the
+  /// request deliberately uses the account JWT rather than a session token.
+  Future<List<DeviceInfo>> listNetworkDevices(String networkId) async {
+    final res = await _request(
+      'GET',
+      '/api/networks/${Uri.encodeComponent(networkId)}/devices',
+      management: true,
+      expected: {200},
+    );
+    return _decodeDevices(res);
+  }
+
+  List<DeviceInfo> _decodeDevices(http.Response response) {
+    final devices = _decodeMap(response)['devices'];
+    if (devices is! List) {
+      throw const FormatException('device list: no "devices" array');
+    }
+    return List.unmodifiable([
+      for (final device in devices)
+        if (device is Map) DeviceInfo.fromJson(device.cast<String, Object?>()),
+    ]);
+  }
+
+  /// `POST /api/ws-ticket` (issue #2062 §4/§9) — mints the single-use
+  /// device WS ticket (TTL 60 s) with the [deviceToken] bearer. The
+  /// deviceToken rides as an explicit header (auth: false — the client's
+  /// JWT/session tokens must never leak onto a device-scoped call, the
+  /// same pattern as [authUser]). Returns the ticket string.
+  Future<String> wsTicket({required String deviceToken}) async {
+    final res = await _request(
+      'POST',
+      '/api/ws-ticket',
+      body: const <String, Object?>{},
+      auth: false,
+      headers: {'authorization': 'Bearer $deviceToken'},
+      expected: {200},
+    );
+    final json = _decodeMap(res);
+    final ticket = json['ticket'];
+    if (ticket is! String || ticket.isEmpty) {
+      throw const FormatException('wsTicket: no string "ticket"');
+    }
+    return ticket;
   }
 
   // ---------------------------------------------------------------- agents

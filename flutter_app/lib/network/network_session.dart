@@ -8,9 +8,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
+import 'device_connector_service.dart';
 import 'envelope_codec.dart';
 import 'fa_network_client.dart';
 import 'fa_network_ws.dart';
@@ -18,6 +20,14 @@ import 'key_wallet.dart';
 import 'models.dart';
 import 'showcase_viewer.dart';
 import '../services/app_log.dart';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show NetworkEnvelope, isDmChannel;
+// The fanet1 DM primitives are pure Dart in the messaging core.
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
+
+part 'network_session_dm.dart';
 
 /// One decrypted channel message, ready for the chat UI.
 final class ChannelMessage {
@@ -29,6 +39,7 @@ final class ChannelMessage {
     required this.isOwn,
     this.senderName,
     this.createdAt,
+    this.sessionId,
   });
 
   /// The envelope id — the at-least-once dedupe key.
@@ -53,6 +64,10 @@ final class ChannelMessage {
   /// Whether the local wallet identity sent this message.
   final bool isOwn;
   final DateTime? createdAt;
+
+  /// DM thread target decrypted from the plaintext wrapper. Null identifies
+  /// the device-general bucket used by legacy/session-less rows.
+  final String? sessionId;
 }
 
 /// The live message store of one channel: deduped, decrypted, paged.
@@ -132,6 +147,21 @@ final class NetworkSession extends ChangeNotifier {
 
   StreamSubscription<WsEvent>? _events;
   Future<void>? _startup;
+
+  /// The app-scope device connector for DM virtual channels (§7), plus
+  /// its live-mail subscription and per-channel remote session targets.
+  DeviceConnectorService? _dmConnector;
+  StreamSubscription<NetworkEnvelope>? _dmSubscription;
+  final _dmSessionTargets = <String, String?>{};
+  final _dmSessionTitles = <String, String?>{};
+
+  /// Plaintext/thread target for messages sent by this session. A live
+  /// echo/history refresh must never replace a just-sent bubble with a
+  /// decrypt placeholder or move it into the device-general bucket.
+  final _dmOwnText = <String, String>{};
+  final _dmOwnSessionIds = <String, String?>{};
+  Timer? _dmPollTimer;
+  var _dmPollInFlight = false;
 
   /// The member roster by id, presence included (roster.snapshot +
   /// presence.changed folded in).
@@ -249,6 +279,18 @@ final class NetworkSession extends ChangeNotifier {
   /// `notifyListeners` there trips Flutter's build-phase invariant.
   Future<void> openChannel(String channelId) async {
     final state = channelStates.putIfAbsent(channelId, ChannelState.new);
+    if (isDmChannel(channelId)) {
+      // History decode needs the same lazy identity as send: an enrolled
+      // account on a fresh install can open an existing DM before its first
+      // outgoing message, so there is no earlier send path to create it.
+      if (!_wallet.hasIdentity) {
+        await _wallet.createIfMissing(displayName: identity.displayName);
+      }
+      prepareDmChannel(channelId);
+    }
+    // User-addressed DM replies arrive on the account network WS; agent-
+    // addressed turns arrive on the device connector. Keep both live paths
+    // attached — ChannelState.seen dedups their overlap by envelope id.
     _ws.subscribe(channelId);
     if (state.historyResolved || state.loading) return;
     await Future<void>.microtask(() {});
@@ -296,6 +338,7 @@ final class NetworkSession extends ChangeNotifier {
       final page = await _client.listMessages(
         channelId,
         cursor: state.nextCursor,
+        useAccountToken: isDmChannel(channelId),
       );
       if (!_isCurrentChannelState(channelId, state, revision)) return;
       // Chat-order pagination (fa_network contract): pages arrive
@@ -333,6 +376,7 @@ final class NetworkSession extends ChangeNotifier {
     String text, {
     List<String>? mentions,
   }) async {
+    if (isDmChannel(channelId)) return sendDmText(channelId, text);
     final channel = _channelById(channelId);
     // Identity is lazy (no onboarding gate): a send on a wallet without
     // an identity creates it silently with the member's display name —
@@ -444,6 +488,7 @@ final class NetworkSession extends ChangeNotifier {
     await _startup;
     final envelopeDecoder = _envelopeDecoder;
     if (envelopeDecoder != null) return envelopeDecoder(envelope);
+    if (isDmChannel(envelope.channelId)) return decodeDmEnvelope(envelope);
     final isOwn = envelope.senderId == identity.id;
     final known = channels.where((c) => c.id == envelope.channelId);
     // Public showcase channels have no chankey at all: the payload is
@@ -672,14 +717,20 @@ final class NetworkSession extends ChangeNotifier {
   /// event queue, which wedges `testWidgets`'s implicit end-of-test pump —
   /// teardown is best-effort and needs no completion guarantee.
   Future<void> close() async {
+    _dmPollTimer?.cancel();
+    _dmPollTimer = null;
     final events = _events;
     _events = null;
     if (events != null) unawaited(events.cancel());
     unawaited(_ws.disconnect());
   }
 
+  /// Public extension seam for the DM part file (protected member).
+  void notifyDmChanged() => notifyListeners();
+
   @override
   void dispose() {
+    unawaited(_dmSubscription?.cancel());
     unawaited(close());
     super.dispose();
   }

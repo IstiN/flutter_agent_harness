@@ -12,8 +12,12 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/network/device_display.dart';
 import 'package:fa/network/network_mode.dart';
+import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_dm_session_host.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
@@ -41,6 +45,8 @@ import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/fa_route_header.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/network/device_conversation_entry.dart';
+import 'package:fa/ui/network/devices_page.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
@@ -156,7 +162,142 @@ class WideLayoutShell extends StatefulWidget {
 /// The sessions sidebar's resize handle (tests find it by this key).
 const Key kSidebarDragHandleKey = ValueKey('sidebar-drag-handle');
 
-enum _WideShellSection { chats, local, activity, apps, settings }
+/// Projects the same persisted sessions as the Local panel, marking sessions
+/// loaded in [manager] live and every persisted-but-closed session offline.
+/// Manager notifications cover create/open/close/delete and drive the device
+/// roster's merge/retract PATCHes.
+@visibleForTesting
+DeviceChatSessionSource createDeviceChatSessionSource(
+  FlutterSessionManager manager, {
+  ChatListController? chatList,
+}) => CallbackDeviceChatSessionSource(
+  changes: _DeviceChatSessionChanges(manager, chatList),
+  loader: () async {
+    final sessions = await _loadDeviceChatSessions(manager);
+    if (chatList == null) return sessions;
+    // Cold start (PR #2190 review): until the controller's FIRST listing
+    // completes the visible corpus is UNKNOWN, not empty — publishing the
+    // filtered (empty) projection here would retract EVERY previously
+    // published session on every sibling device and re-publish them when
+    // the load lands. Unknown corpus → unfiltered projection, never
+    // retract on unknown.
+    if (!chatList.localLoadedOnce) return sessions;
+    // The publisher must not resurrect the Local panel's hidden, unpersisted
+    // live placeholders. The controller is the canonical visible corpus.
+    final visibleIds = chatList.localEntries
+        .map((entry) => entry.id.value)
+        .toSet();
+    return [
+      for (final session in sessions)
+        if (visibleIds.contains(session.id)) session,
+    ];
+  },
+  metadataLoader: chatList == null
+      ? null
+      : () async => [
+          for (final entry in chatList.localEntries)
+            (
+              id: entry.id.value,
+              title: entry.title == entry.id.value || entry.title.trim().isEmpty
+                  ? deviceSessionPreviewTitle(entry.preview)
+                  : entry.title,
+              path: entry.folderPath,
+              lastActivity: entry.lastActivity ?? entry.createdAt,
+            ),
+        ],
+  activityLoader: () async => [
+    for (final session in manager.sessions)
+      (id: session.id, busy: session.service.isStreaming),
+  ],
+);
+
+/// Manager/list changes plus every managed service's run notifications.
+/// Listeners are attached only while the connector observes this source, so
+/// disposing the connector also detaches the per-session subscriptions.
+final class _DeviceChatSessionChanges extends ChangeNotifier {
+  _DeviceChatSessionChanges(this._manager, this._chatList);
+
+  final FlutterSessionManager _manager;
+  final ChatListController? _chatList;
+  final _busyByService = <AgentService, bool>{};
+  var _attached = false;
+
+  @override
+  void addListener(VoidCallback listener) {
+    final start = !hasListeners;
+    super.addListener(listener);
+    if (start && !_attached) {
+      _attached = true;
+      _manager.addListener(_onManagerChanged);
+      _chatList?.addListener(notifyListeners);
+      _syncServices();
+    }
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    if (!_attached || hasListeners) return;
+    _attached = false;
+    _manager.removeListener(_onManagerChanged);
+    _chatList?.removeListener(notifyListeners);
+    for (final service in _busyByService.keys) {
+      service.removeListener(_onServiceChanged);
+    }
+    _busyByService.clear();
+  }
+
+  void _onManagerChanged() {
+    _syncServices();
+    notifyListeners();
+  }
+
+  void _onServiceChanged() {
+    var activityChanged = false;
+    for (final entry in _busyByService.entries) {
+      final busy = entry.key.isStreaming;
+      if (busy == entry.value) continue;
+      _busyByService[entry.key] = busy;
+      activityChanged = true;
+    }
+    // Token/message notifications are not roster changes. Only the run
+    // boundary should trigger a fresh persisted-session probe + PATCH.
+    if (activityChanged) notifyListeners();
+  }
+
+  void _syncServices() {
+    final current = _manager.sessions.map((session) => session.service).toSet();
+    final previous = _busyByService.keys.toSet();
+    for (final service in previous.difference(current)) {
+      service.removeListener(_onServiceChanged);
+      _busyByService.remove(service);
+    }
+    for (final service in current.difference(previous)) {
+      _busyByService[service] = service.isStreaming;
+      service.addListener(_onServiceChanged);
+    }
+  }
+}
+
+Future<List<DeviceChatSession>> _loadDeviceChatSessions(
+  FlutterSessionManager manager,
+) async {
+  final persisted = await manager.listPersistedSessions();
+  // Persisted-but-closed chats are first-class roster rows. The service
+  // chunks large patches, so there is no live-only/recent-50 truncation here.
+  final sessions = <String, DeviceChatSession>{
+    for (final metadata in persisted)
+      metadata.id: (id: metadata.id, live: false),
+  };
+  // Include a just-created live row even if its first disk listing has not
+  // landed yet; loaded sessions always override their persisted offline row.
+  for (final session in manager.sessions) {
+    sessions[session.id] = (id: session.id, live: true);
+  }
+  return sessions.values.toList(growable: false);
+}
+
+enum _WideShellSection { chats, local, devices, activity, apps, settings }
 
 class _WideLayoutShellState extends State<WideLayoutShell>
     with TickerProviderStateMixin {
@@ -268,6 +409,29 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// Section switches close it, like a route pop.
   bool _networksSurfaceOpen = false;
 
+  /// The app-scope device connector (issue #2062 chunk 16): ONE upstream
+  /// socket shared by every device surface (AC1). Created eagerly at boot
+  /// for a signed-in shell (and on later sign-in), never for shells without
+  /// network wiring; the service self-starts/stops on the manager's JWT flips.
+  DeviceConnectorService? _deviceConnector;
+
+  /// The [NetworkSessionManager]-bound connector, created on first use.
+  DeviceConnectorService get _devicesConnector {
+    final sessions = widget.networkSessions;
+    assert(sessions != null, 'the DEVICES surface requires networkSessions');
+    return _deviceConnector ??= DeviceConnectorService(
+      sessionManager: sessions!,
+      chatSessionSource: createDeviceChatSessionSource(
+        widget.manager,
+        chatList: _chatController,
+      ),
+      dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
+      // Enrollment/keychain/WS failures surface in the app log — the
+      // connector has no other voice on this surface.
+      onLog: (line) => AppLog.i('devices', line),
+    )..start();
+  }
+
   /// Lazily built resolver for folders' well-known icon files (cached
   /// per folder in memory).
   FolderIconResolver? _folderIconResolver;
@@ -354,6 +518,12 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     _chatController.updateNetworkNames(_networkNames());
     final manager = widget.networkSessions;
     final enabled = manager?.hasJwt == true;
+    if (enabled && !_networkInboxEnabled) {
+      // Sign-in after boot: bring the device online without waiting for
+      // the Devices page to be opened.
+      // ignore: unused_local_variable — eager creation starts the service.
+      final connector = _devicesConnector;
+    }
     if (widget.networkInboxAdapter == null && enabled != _networkInboxEnabled) {
       _networkInboxEnabled = enabled;
       unawaited(
@@ -587,6 +757,15 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       networkNames: _networkNames(),
     );
     unawaited(_chatController.load());
+    // The device connector is a NETWORK-MODE lifecycle service, not a
+    // Devices-page one: other machines see this device's sessions (and can
+    // DM it later) only while its socket lives, so start it at shell boot
+    // whenever signed in — the Devices surface shares this instance. Create
+    // it AFTER the canonical chat controller so its metadata source is ready.
+    if (_networkInboxEnabled) {
+      // ignore: unused_local_variable — eager creation starts the service.
+      final connector = _devicesConnector;
+    }
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
     unawaited(_ensureChatStores());
@@ -638,6 +817,8 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     widget.networkSessions?.removeListener(_onNetworkSessionsChanged);
+    unawaited(_deviceConnector?.dispose());
+    _deviceConnector = null;
     _listenedService?.removeListener(_onServiceChanged);
     _listenedNamesStore?.removeListener(_onNamesChanged);
     _activityController.dispose();
@@ -804,6 +985,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         _networksSurfaceOpen
             ? _buildNetworksSidebar()
             : _buildChatPanel(compact: true),
+      _WideShellSection.devices => _buildDevicesPanel(compact: true),
       _WideShellSection.local => _buildLocalPanel(compact: true),
       _WideShellSection.activity =>
         _narrowActivityDetailVisible
@@ -1348,6 +1530,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                             : _buildChatPanel(collapsed: collapsed),
                       _WideShellSection.activity || _WideShellSection.apps =>
                         _buildChatPanel(collapsed: collapsed),
+                      _WideShellSection.devices => _buildDevicesPanel(),
                       _WideShellSection.local => _buildLocalPanel(),
                       _WideShellSection.settings => _buildSettingsPanel(),
                     },
@@ -1470,6 +1653,17 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           setState(() => _networksSurfaceOpen = true);
         },
       ),
+      // The DEVICES section (issue #2062 chunk 16): signed-in accounts
+      // only — guests have no machines to show. Same rail semantics as
+      // Local/Activity (a root section destination).
+      if (widget.networkSessions?.hasJwt ?? false)
+        MessengerRailDestination(
+          rowKey: const ValueKey('messengerPrimaryNav-devices'),
+          icon: FaIconThemeData.of(context).resolve(FaSemanticIcon.devices),
+          label: context.l10n.wideNavDevices,
+          selected: _section == _WideShellSection.devices,
+          onTap: (_) => _selectSection(_WideShellSection.devices),
+        ),
       filterRow(
         ChatListFilter.channels,
         Icons.tag_rounded,
@@ -1998,20 +2192,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     if (service == null) return;
     final sessionId = service.currentSessionId;
     final names = widget.sessionNamesStore ?? _namesStore;
-    final nameController = TextEditingController(
-      text: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
-    );
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => _sessionInfoDialog(
-        dialogContext,
-        service,
-        sessionId,
-        names,
-        nameController,
+      builder: (_) => _SessionInfoDialogControllerScope(
+        initialText: sessionId == null ? '' : names?.titleFor(sessionId) ?? '',
+        builder: (dialogContext, nameController) => _sessionInfoDialog(
+          dialogContext,
+          service,
+          sessionId,
+          names,
+          nameController,
+        ),
       ),
     );
-    nameController.dispose();
   }
 
   /// The session info dialog: the active session's name (renameable —
@@ -2307,4 +2500,36 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   Future<ExecutionEnv> _createPlatformEnv() async {
     return createPlatformEnv();
   }
+}
+
+/// Owns the session-info text controller for the whole dialog route life.
+/// `showDialog`'s future completes when the route starts popping, before
+/// its exit animation unmounts the field; disposing at that await leaves
+/// live TextField/inherited dependents using a disposed controller.
+final class _SessionInfoDialogControllerScope extends StatefulWidget {
+  const _SessionInfoDialogControllerScope({
+    required this.initialText,
+    required this.builder,
+  });
+
+  final String initialText;
+  final Widget Function(BuildContext, TextEditingController) builder;
+
+  @override
+  State<_SessionInfoDialogControllerScope> createState() =>
+      _SessionInfoDialogControllerScopeState();
+}
+
+final class _SessionInfoDialogControllerScopeState
+    extends State<_SessionInfoDialogControllerScope> {
+  late final _controller = TextEditingController(text: widget.initialText);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _controller);
 }
