@@ -295,10 +295,13 @@ void main() {
         );
         // The resumed service's external-session watcher owns a periodic
         // timer — dispose the services so the test binding sees no pending
-        // timers at teardown.
+        // timers at teardown. The manager's lease heartbeat is too (#2138:
+        // the resumed session was drive-acquired) — disposing the manager
+        // releases the lease and cancels the 5s heartbeat.
         for (final s in manager.sessions) {
           s.service.dispose();
         }
+        manager.dispose();
       }, getCurrentDirectory: emptyCwd);
     });
   });

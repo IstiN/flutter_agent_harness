@@ -134,7 +134,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       // hint. Printing the success-looking "auto-compacted" line here
       // claimed context was summarized when nothing was.
       cli._logDiagnostic(
-        'auto-compact pass ${pass.pass} FAILED '
+        'auto-compact pass ${pass.pass} FAILED sid=${cli._logSid} '
         'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
         '$escalationCounts'
         'error=${pass.error ?? '-'}',
@@ -150,7 +150,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
         'locally; the session file keeps the full history)',
       );
       cli._logDiagnostic(
-        'auto-compact pass ${pass.pass} local-trim '
+        'auto-compact pass ${pass.pass} local-trim sid=${cli._logSid} '
         'tokens ${pass.tokensBefore}→${pass.tokensAfter}',
       );
       return;
@@ -163,7 +163,9 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       // Honest zeros print only when nothing happened; a pass that hid
       // or summarized records prints even on a flat token estimate
       // (issue #438 E3).
-      cli._logDiagnostic('auto-compact pass ${pass.pass} no-op');
+      cli._logDiagnostic(
+        'auto-compact pass ${pass.pass} no-op sid=${cli._logSid}',
+      );
       return;
     }
     cli._printCompactionReport(pass, auto: auto);
@@ -179,6 +181,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
+      'sid=${cli._logSid} '
       'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
       '$escalationCounts'
       'ok=${pass.ok} error=${pass.error ?? '-'}',
@@ -193,7 +196,8 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       'retrying in ${backoff.inSeconds}s — $error',
     );
     cli._logDiagnostic(
-      'compact retry attempt=$attempt backoff=${backoff.inSeconds}s '
+      'compact retry sid=${cli._logSid} '
+      'attempt=$attempt/$maxAttempts backoff=${backoff.inSeconds}s '
       'error=$error',
     );
   }
@@ -205,7 +209,9 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   @override
   void onDone(int passes, int tokens) {
     if (passes > 0) {
-      cli._logDiagnostic('auto-compact done passes=$passes tokens=$tokens');
+      cli._logDiagnostic(
+        'auto-compact done sid=${cli._logSid} passes=$passes tokens=$tokens',
+      );
     }
     // Backend agent mode (issue #155): close the compaction bracket once
     // per run with the net freed delta (clamped — a restamped estimator
@@ -301,21 +307,36 @@ List<String> formatCompactionReport(
   final pct = pass.tokensBefore == 0
       ? 0
       : (freed * 100 / pass.tokensBefore).round();
+  // gh-2097: an upward basis jump renders EXPLICITLY — the pass appended
+  // only shrinkers, so an after-count above the before-count is the
+  // session projection holding more than the in-memory view did at
+  // measurement time (a second writer), not a compaction regression.
+  // «0 freed · 0%» used to read the first honest measurement as one.
+  final outcome = pass.basisReadTokens != null
+      ? 'basis re-read: +${formatTokens(pass.basisReadTokens)}'
+      : '$freed freed · $pct%';
   final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
   final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
   final header = '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix';
+  // gh-2101: the pass's wall-clock duration rides the one-line report —
+  // slow-path regressions visible at a glance, absent on unmeasured
+  // passes (byte-identical legacy lines).
+  final duration = formatPassDuration(pass.durationMs);
+  final durationSuffix = duration == null ? '' : ' · $duration';
   // gh-1636: the default report — one line, no checkpoint text.
   if (!details) {
     return [
       '$header: ${pass.tokensBefore} → ${pass.tokensAfter} tokens '
-          '($freed freed · $pct%)',
+          '($outcome)$durationSuffix',
     ];
   }
   final summary = pass.summary?.trim();
   return [
     header,
-    'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
-        '($freed freed · $pct%)',
+    'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} ($outcome)',
+    // gh-2101: the metered LLM work — call count, duration, cost and the
+    // cache-hit share (cache 0% stays visible: the regression signal).
+    ?_llmMetricsLine(pass),
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
     // session records or folding a summary — a bare "0 hidden · 0
     // summarized" next to a big freed count cannot describe a real
@@ -335,6 +356,25 @@ List<String> formatCompactionReport(
       '```',
     ],
   ];
+}
+
+/// gh-2101: the details report's `llm:` line — the pass's metered work:
+/// call count, duration, cost (when the provider prices it) and the
+/// cache-hit share (`cacheRead / (input + cacheRead + cacheWrite)`, zero
+/// stays visible). `null` when the pass made no metered call.
+String? _llmMetricsLine(AutoCompactorPass pass) {
+  final usage = pass.usage;
+  if (usage == null || usage.calls == 0) return null;
+  final parts = <String>[
+    usage.calls == 1 ? '1 call' : '${usage.calls} calls',
+    ?formatPassDuration(pass.durationMs),
+    if (usage.costUsd > 0) '\$${usage.costUsd.toStringAsFixed(4)}',
+    if (usage.cacheHitRatio case final ratio?)
+      'cache ${(ratio * 100).round()}% '
+          '(${formatTokens(usage.cacheReadTokens)}/'
+          '${formatTokens(usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens)} tok)',
+  ];
+  return 'llm: ${parts.join(' · ')}';
 }
 
 /// gh-1755: balances unclosed code fences in compaction summaries so the
@@ -914,12 +954,15 @@ extension OverWindowGuardRelief on AgentCli {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    // Issue #1085 M3: the relief path never showed the busy label — a
-    // 15-30 min compaction read as a dead, silent stall. Same label as
-    // the auto-compact path.
+    // gh-209: the relief path runs ONLY the emergency tier —
+    // deterministic, seconds, no LM call on any path. The quality tier
+    // (judge/checkpoints) owns the turn boundaries (the post-run fold
+    // and the pre-flight); a slow or unusable judge class can no longer
+    // turn an in-turn overflow into a ≤15 min silent stall.
     _pushBusyPhase('Compacting context…');
+    final EmergencyReliefOutcome reliefOutcome;
     try {
-      await _runAutoCompact('[auto-compacted]');
+      reliefOutcome = await _runEmergencyRelief();
     } finally {
       _pushBusyPhase('');
     }
@@ -931,7 +974,9 @@ extension OverWindowGuardRelief on AgentCli {
     }
     _logDiagnostic(
       'over-window relief done sid=$_logSid tokens=$afterTokens '
-      '(was $beforeTokens, ${after.length} messages)',
+      '(was $beforeTokens, ${after.length} messages, '
+      'hidden=${reliefOutcome.hiddenRecords}, '
+      'trim=${reliefOutcome.usedTrimValve})',
     );
     // Issue #1085 M3: the relieved turn CONTINUES — say so visibly, the
     // post-compaction silence is exactly what this run must never do. A
@@ -944,6 +989,26 @@ extension OverWindowGuardRelief on AgentCli {
       );
     }
     return after;
+  }
+
+  /// The emergency tier over the live session (gh-209): deterministic
+  /// hide (dedup reads, keep-N-recent per tool class) + the local trim
+  /// valve. No LM call is attempted on ANY path. Every CLI compaction
+  /// entry point awaits inline (there is no fire-and-forget compactor),
+  /// so this cannot overlap the quality tier's post-run pass.
+  Future<EmergencyReliefOutcome> _runEmergencyRelief() async {
+    final relief = EmergencyRelief(
+      session: _session!,
+      state: _agent.state,
+      window: _effectiveContextWindow,
+      settings: _effectiveCompactionSettings,
+    );
+    final outcome = await relief.run();
+    // The relief re-anchored the live transcript from the session
+    // projection (refreshAgentState) — keep the persist cursor in step,
+    // exactly like the quality tier's post-run bookkeeping.
+    _persistedCount = _agent.state.messages.length;
+    return outcome;
   }
 }
 
@@ -963,9 +1028,13 @@ extension AgentCliMessageCapRelief on AgentCli {
       'message-cap relief start sid=$_logSid messages=${overCap.length}',
     );
     final beforeCount = overCap.length;
+    // gh-209: the emergency tier ONLY — the trim valve owns the
+    // message-count dimension (the hide passes fold groups into
+    // markers, which keeps the count; the valve bounds it mechanically).
     _pushBusyPhase('Compacting context…');
+    final EmergencyReliefOutcome reliefOutcome;
     try {
-      await _runAutoCompact('[auto-compacted]');
+      reliefOutcome = await _runEmergencyRelief();
     } finally {
       _pushBusyPhase('');
     }
@@ -976,7 +1045,8 @@ extension AgentCliMessageCapRelief on AgentCli {
     }
     _logDiagnostic(
       'message-cap relief done sid=$_logSid messages=${after.length} '
-      '(was $beforeCount)',
+      '(was $beforeCount, hidden=${reliefOutcome.hiddenRecords}, '
+      'trim=${reliefOutcome.usedTrimValve})',
     );
     io.writeln(
       _style.dim(

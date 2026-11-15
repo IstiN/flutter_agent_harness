@@ -35,6 +35,7 @@ import '../agent/foreground_call_budget.dart';
 import '../cli/custom_providers.dart';
 import '../cli/tui_status_line.dart' show parseTuiSection;
 import '../compaction/compaction_engine.dart';
+import '../compaction/tuning.dart';
 import '../cube/config/cube_settings.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
@@ -1341,8 +1342,13 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // The links section (issue #691): strict on shape (a bad value throws,
   // nothing persists), tolerant on unknown keys (notes, never errors).
   'links': (value, _) => LinksConfig.fromYaml(value),
-  'compaction': (value, label) =>
-      CompactionEngine.fromSection(value, label: label),
+  'compaction': (value, label) {
+    CompactionEngine.fromSection(value, label: label);
+    // gh-2098: the trigger tuning keys validate with the SAME strict
+    // parser the boot uses — a bad ratio/reserve must throw at `set`,
+    // never persist what the next boot rejects.
+    CompactionTuning.fromSection(value, label: label);
+  },
   'models': (value, _) => ModelsConfig.fromYaml(value),
   'customProviders': (value, _) => _validateCustomProviders(value),
   'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),

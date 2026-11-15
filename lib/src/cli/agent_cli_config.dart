@@ -125,6 +125,7 @@ final class AgentCliConfig {
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
+    this.compactionTuning,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
@@ -179,6 +180,7 @@ final class AgentCliConfig {
     this.trajectoryRequestBlobTtlDays = 30,
     this.updateCommand,
     this.autoUpdate = AutoUpdateMode.notify,
+    this.logging = const ResolvedLogSettings(),
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -234,6 +236,14 @@ final class AgentCliConfig {
   /// live-override pattern as [liveCompactionEngine].
   AutoUpdateMode autoUpdate = AutoUpdateMode.notify;
 
+  /// The RESOLVED log settings (issue #2117): console/file levels, the
+  /// line pattern and time format, the `keys=debug` alias floor. The
+  /// host resolves the five sources (flag > env > project config > user
+  /// config > default) at boot via `resolveLogSettings`; the default is
+  /// the pinned interactive contract — console `warn`, file `debug`, no
+  /// pattern, nothing explicit (so headless stdout stays byte-identical).
+  final ResolvedLogSettings logging;
+
   /// The `/update` slash-command seam (issue #1377): the self-update
   /// engine lives in the host executable (`bin/self_manage.dart`) and
   /// lib/src stays dart:io-free, so the host injects a closure that
@@ -245,11 +255,28 @@ final class AgentCliConfig {
   /// embedded hosts): the command reports the surface as unavailable.
   final Future<void> Function(String? sessionId)? updateCommand;
 
-  /// Override for the compaction thresholds (ratio-based trigger, reserve
-  /// and recent-token budgets). When `null`, `defaultCompactionSettings`
-  /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
-  /// `compaction:` yaml section through this field.
+  /// Full override for the compaction thresholds (the reserve and
+  /// recent-token budgets). When `null`, the shared host wiring scales
+  /// `CompactionSettings.forWindow` to the conversation window — the
+  /// gh-1742 curve (6.25% headroom, clamped 64Ki, floored by the legacy
+  /// flat curve). NO ratio-based default exists. The user-facing
+  /// `compaction:` yaml keys (`triggerRatio`/`reserveTokens`/
+  /// `keepRecentTokens`, gh-2098) ride [compactionTuning], applied over
+  /// the scaled curve by the same wiring.
   final CompactionSettings? compactionSettings;
+
+  /// The `compaction:` yaml trigger tuning (gh-2098): `triggerRatio`
+  /// pins the trigger line at r × the conversation window (the reserve
+  /// becomes `window − floor(r × window)`, so every window-derived
+  /// consumer moves together); `reserveTokens`/`keepRecentTokens`
+  /// override the forWindow curve outputs directly. `null` or an empty
+  /// tuning keeps the gh-1742 behavior byte-identically. A non-empty
+  /// tuning is a user pin: the bench env knob
+  /// (`FAH_COMPACT_TRIGGER_TOKENS`) never rewrites it, mirroring
+  /// [compactionSettings]. Parsed strict at boot
+  /// (`CompactionTuning.fromSection`); hosts merge the scopes with
+  /// [mergeCompactionTuning] (global < project, deepest key wins).
+  final CompactionTuning? compactionTuning;
 
   /// The effective compaction engine (issue #148), resolved by the host
   /// (global < project < `--compaction-engine` runtime flag). `null` keeps

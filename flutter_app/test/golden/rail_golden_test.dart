@@ -289,4 +289,32 @@ void main() {
     await expectGolden(tester, 'chats_networks_panel');
     await session.close();
   });
+
+  testWidgets('chats networks panel: the empty wallet offers join + '
+      'sign-in instead of a dead-end title (gh-2131)', (tester) async {
+    final wallet = await KeyWallet.load(MemoryWalletBackend());
+    await wallet.createIfMissing(displayName: 'Me');
+    final manager = NetworkSessionManager(
+      baseUrl: testBase,
+      wallet: wallet,
+      httpClient: FakeHttpClient(),
+      wsConnector: FakeWsConnector(),
+    );
+    addTearDown(manager.disconnectAll);
+
+    await pumpGolden(
+      tester,
+      ChatNetworksPanel(
+        manager: manager,
+        onManageNetworks: () {},
+        onOpenChannel: (_, _) {},
+      ),
+      size: const Size(360, 560),
+      theme: buildFaTheme(
+        direction: FaVisualDirection.glass,
+        brightness: Brightness.dark,
+      ),
+    );
+    await expectGolden(tester, 'chats_networks_empty');
+  });
 }

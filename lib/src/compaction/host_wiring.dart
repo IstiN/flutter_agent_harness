@@ -28,6 +28,7 @@ import '../model_roles/roles_config.dart';
 import '../providers/models_endpoint.dart' show fallbackContextWindow;
 import '../model_roles/provider_catalog.dart' show catalogProvider;
 import 'compaction.dart' show CompactionSettings;
+import 'tuning.dart';
 
 /// Compaction is ON by default on every host — the single documented
 /// source of truth (gh-1077 fix contract 4). The CLI has no toggle; the
@@ -127,7 +128,10 @@ final class CompactionHostWiring {
 ///   request overhead (CLI: 0; app: the measured system-prompt / tool
 ///   instruction tokens);
 /// - `settings` = the explicit override when the host plumbed one, else
-///   [CompactionSettings.forWindow] of the conversation window;
+///   [CompactionSettings.forWindow] of the conversation window — then
+///   the gh-2098 `compaction:` tuning keys ([tuning]) apply over either
+///   (the yaml section is the deepest explicit user scope; absent keys
+///   leave the base instance untouched);
 /// - `smolModel` = the resolved `smol` role, kept only when distinct from
 ///   the main model;
 /// - retry/enabled = the shared defaults ([compactionEnabledByDefault],
@@ -137,6 +141,7 @@ CompactionHostWiring resolveCompactionHostWiring({
   Model? smolModel,
   int? contextWindowCap,
   CompactionSettings? settingsOverride,
+  CompactionTuning? tuning,
   int systemOverheadTokens = 0,
   bool enabled = compactionEnabledByDefault,
 }) {
@@ -145,16 +150,19 @@ CompactionHostWiring resolveCompactionHostWiring({
     contextWindowCap,
   );
   final conversation = window - systemOverheadTokens;
+  final conversationWindow = conversation > 0 ? conversation : 0;
   final distinct =
       smolModel != null &&
       (smolModel.provider != mainModel.provider ||
           smolModel.id != mainModel.id);
   return CompactionHostWiring(
     window: window,
-    conversationWindow: conversation > 0 ? conversation : 0,
-    settings:
-        settingsOverride ??
-        CompactionSettings.forWindow(conversation > 0 ? conversation : 0),
+    conversationWindow: conversationWindow,
+    settings: applyCompactionTuning(
+      settingsOverride ?? CompactionSettings.forWindow(conversationWindow),
+      window: conversationWindow,
+      tuning: tuning,
+    ),
     smolModel: distinct ? smolModel : null,
     enabled: enabled,
   );
@@ -172,12 +180,14 @@ CompactionHostWiring resolveCliCompactionWiring({
   required ModelRolesResolver? rolesResolver,
   required int? contextWindowCap,
   CompactionSettings? settingsOverride,
+  CompactionTuning? tuning,
 }) {
   return resolveCompactionHostWiring(
     mainModel: mainModel,
     smolModel: rolesResolver?.resolveRole(smolModelRole)?.model,
     contextWindowCap: contextWindowCap,
     settingsOverride: settingsOverride,
+    tuning: tuning,
   );
 }
 

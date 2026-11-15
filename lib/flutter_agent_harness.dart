@@ -59,12 +59,25 @@ export 'src/cli/cli_config.dart'
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
+        loadProjectCompactionTuning,
         loadProjectContextWindowCap,
+        loadProjectLoggingSection,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         loadProjectTrajectorySection,
+        parseLoggingSection,
         parseProviderTimeouts,
         resolveStartupCubeSource;
+export 'src/logging/log_level.dart' show LogCategory, LogLevel;
+export 'src/logging/log_pattern.dart'
+    show
+        LogEvent,
+        LogPattern,
+        defaultLogTimeFormat,
+        formatLogElapsed,
+        formatLogTime;
+export 'src/logging/log_settings.dart'
+    show LoggingConfig, ResolvedLogSettings, logLinePasses, resolveLogSettings;
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
@@ -131,15 +144,21 @@ export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';
+export 'src/cli/console_line_decoder.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/cli/resumed_context_cache.dart';
 export 'src/compaction/branch_summarization.dart';
+export 'src/compaction/cache_policy.dart';
 export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
+export 'src/compaction/handoff_digest.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/compaction/bench_trigger.dart';
+export 'src/compaction/emergency_relief.dart';
+export 'src/compaction/tuning.dart';
+export 'src/compaction/working_set.dart';
 // gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
 // until a caller exists (gh-1232: the barrel is append-only — a
 // speculative export is the wrong order). The E1 discrimination it
@@ -238,6 +257,7 @@ export 'src/session/attach/session_attachment.dart';
 export 'src/session/attach/session_presence.dart';
 export 'src/session/attach/session_lease.dart';
 export 'src/session/obligations_ledger.dart';
+export 'src/session/record_quarantine.dart';
 export 'src/session_deadline.dart';
 export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';
@@ -280,6 +300,7 @@ export 'src/task/subagent_tools.dart';
 export 'src/task/subagent_scope.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/obligation_tool.dart';
+export 'src/tools/recite_goal_tool.dart';
 export 'src/tools/session_search_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';

@@ -51,10 +51,15 @@ void main() {
 
     final io = _BombingIO('BOOM', 2);
     final fake = FakeStreamFunction([
-      // The guard's over-window shape (same as the 'over-window guard
-      // auto-compacts and continues the turn' test): three tool calls
-      // whose outputs (~8200 tokens each) balloon the next request past
-      // the window, all droppable so the summarizer frees it.
+      // The guard's over-window shape: three tool calls whose outputs
+      // (~8200 tokens each) balloon the next request past the window.
+      // gh-209: the mid-turn relief is the deterministic emergency tier
+      // — no buster candidate (no single result near the window), no
+      // dedup (three different paths), and the trim valve keeps its
+      // budget AT keepRecentTokens when the newest message alone is
+      // larger, so with the tiny keep region below the relief declines
+      // and the guard stop lands. The settle funnel's summarizer (the
+      // quality tier at the turn boundary) frees the window.
       toolTurn([
         ToolCall(
           id: 'c1',
@@ -72,9 +77,8 @@ void main() {
           arguments: const {'command': 'cat c.log'},
         ),
       ]),
-      // Consumed by the mid-run relief's no-op compaction attempt.
-      textTurn('S'),
-      // Consumed as the post-run compaction summary.
+      // Consumed as the settle funnel's compaction summary (the relief
+      // never calls the summarizer — it is deterministic).
       textTurn('S'),
       // The continuation turn itself fails: a provider error carrying
       // the CodeMie auth-expired marker. Its handler writes to the io —
@@ -97,12 +101,24 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: window32k,
-        apiKey: 'test-key',
+        apiKey: '[REDACTED:Sensitive-Value]',
         env: env,
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         skillsAccess: SkillsAccess.granted,
         compactionEngine: CompactionEngine.classic,
+        // Tiny keep region: the newest ~8.2k-token result must stay
+        // OUTSIDE the relief's valve budget (keep 100) so the
+        // deterministic relief declines, and OUTSIDE the settle
+        // summarizer's keep region so the classic pass frees the
+        // window (the forWindow(32k) default keep of ~16k would let the
+        // valve recover the turn mid-run — no guard stop, no AC4
+        // continuation).
+        compactionSettings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 100,
+        ),
       ),
       io: io,
       streamFunction: fake.call,
@@ -111,7 +127,7 @@ void main() {
 
     io.sendLine('go');
     await waitForIt(
-      () => fake.calls >= 4 && !cli.isBusy,
+      () => fake.calls >= 3 && !cli.isBusy,
       reason: 'the failed continuation settles back to idle',
     );
 
@@ -124,7 +140,7 @@ void main() {
     // The session is resumable: the next prompt runs to its answer.
     io.sendLine('again');
     await waitForIt(
-      () => fake.calls >= 5 && !cli.isBusy,
+      () => fake.calls >= 4 && !cli.isBusy,
       reason: 'the next prompt runs after the failed continuation',
     );
     expect(io.out.toString(), contains('resumed fine'));

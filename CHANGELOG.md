@@ -13,6 +13,399 @@ block a release again.
 
 ## Unreleased
 
+- feat(gh-2102): `/handoff` — start a fresh session from an editable digest
+  of the current one: the branch-digest machinery
+  (`prepareBranchEntries` + the shared `SummarizeFn` seam, handoff preamble
+  in `lib/src/compaction/handoff_digest.dart`) generates a structured
+  checkpoint of the whole current branch, the scratch file
+  (`<cwd>/.fah/handoff-digest-<ts>.md`) opens in the user's editor
+  (`FA_EDITOR` > `VISUAL` > `EDITOR`; non-interactive runs and missing
+  editors use the digest as generated — the LM call is never wasted), and
+  the fresh session is seeded with the edited digest + the relevant-file
+  list (a `handoff_digest` custom-message record whose `details` carry
+  `readFiles`/`modifiedFiles`; the digest also rides the live context as
+  the opening user message, counted as persisted so the next run never
+  re-persists it). The old session is never written to — byte-identical,
+  reachable via the printed `fa --session` link; an emptied digest is the
+  cancel gesture (no switch), a failed digest keeps the session with a
+  visible error (#2102)
+- feat(gh-2101): cache-aware compaction calls + pass metrics — one
+  compaction run is now ONE provider-cache family: the judge and digest
+  adapters share a run-scoped routing session id (`prompt_cache_key` /
+  `x-session-id`) with a deliberate per-call-class `short` retention
+  (`CompactionCachePolicy`, `lib/src/compaction/cache_policy.dart`), so
+  each pass's request prefix is served from the cache the previous pass
+  wrote instead of the legacy blanket `cacheRetention: 'none'` +
+  fresh-per-call ids; the id is never the session's id (the session's
+  cache bucket stays untouched) and providers without cache knobs degrade
+  to uncached behavior. Hides stay batched per pass (one `hidden_range`
+  append per pass). Pass reports gain metrics: the one-liner carries the
+  pass duration (`… tokens (N freed · P%) · 12.4s`); the details view
+  renders the metered LLM line (`llm: 2 calls · 18.2s · $0.0412 · cache
+  87% (45k/51.7k tok)`) folded from the providers' `Usage` — absent
+  (never fake zero) when no usage is reported, with cache 0% kept visible
+  as the regression signal. Legacy runs render byte-identically
+  (#2101)
+
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+
+- fix(gh-2115): Russian (non-ASCII) typing works in the Windows line REPL.
+  A legacy RU-locale console delivers keystrokes in two broken shapes —
+  CP-6501 translation mojibake ('п' arrives as the UTF-8 of 'ï') and raw
+  OEM single bytes (0xEF), the latter killing the whole input line with a
+  `FormatException` out of the strict UTF-8 decoder. `ConsoleLineDecoder`
+  (pure Dart, `lib/src/cli/`) repairs both via kernel32-built code-page
+  tables (GetACP + GetConsoleCP through MultiByteToWideChar, built once in
+  `bin/fah_console_cp.dart`); true UTF-8 passes through untouched and
+  non-Windows behavior is byte-identical. The vendored dart_tui parser
+  repairs its Latin-1 fallback path the same way (`consoleTextRepair`
+  hook, set by `enableWindowsVtInput`, cleared on restore — gh-1973
+  completion), pinned by the windows_terminal contract test.
+
+- ci(windows-release): daily Windows desktop app pipeline — new
+  `build-windows.yml` builds the flutter_app Windows RELEASE bundle,
+  runs the MSIX pack/sign step (`scripts/msix/make_msix.ps1`), attaches
+  `fa-app-windows-x64.zip` + `fa-app-windows-x64.msix` + the self-signed
+  cert `.cer` to the latest auto-release, and fa1.dev's download section
+  gains a Windows button whose "latest" link resolves through a static
+  `download/windows/latest` pointer file updated by the same workflow
+  (site tests extended to pin the new markup). The daily-publish
+  orchestrator gets a `windows` leg (`daily-publish.yml`) so the nightly
+  quality gate builds and attaches the Windows app exactly like the
+  TestFlight/macOS track, and the windows runner's product identity no
+  longer leaks the Flutter scaffold name (CMake `BINARY_NAME`/target
+  renamed to `Fa`).
+
+- ci(windows-msix): beside the zip ships `fa-app-windows-x64.msix` — a
+  sideload MSIX (AppxManifest assembled in `scripts/msix/make_msix.ps1`,
+  packed with the Windows SDK makeappx, signed with a per-run
+  self-signed cert whose public `.cer` ships beside it) so dev/corporate
+  machines can install via Add-AppxPackage; a Microsoft Store submission
+  stays a separate Partner Center track.
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+- feat(gh-210): post-compaction continuity — a bounded working set
+  re-injects at the context tail after any compaction (structured hide,
+  checkpoint, or classic fold): the recited goal first, then recently
+  touched files as path references (content re-reads on demand). Budgets
+  are enforced with explicit markers (`… and N more touched files`,
+  `[clipped at N chars]`) — never silent cuts. The goal rides the new
+  `recite_goal` tool (latest-wins append-only `goal_recitation`
+  snapshots, write-side bounding) and the slot is protected from every
+  hide path by construction: the block is additive projection output,
+  never a session record, so judge / deterministic / LRU / agent hide /
+  checkpoint fold cannot see it. A fixture proves session survival: an
+  old (large) session loads unchanged and every new write is an
+  append-only tail extension — byte-identical prefix. Sessions without a
+  recitation or a compaction boundary project exactly as before
+  (#2100)
+
+
+- fix(#1947): `schedule_message` from the orchestrator no longer misroutes
+  into a finished subagent's mailbox. A background shell job started by a
+  CHILD registered its settle continuation inside the child's subagent
+  zone; when the job settled after the child's run ended, the CLI's
+  settle-wake (`_onShellJobSettled` → `_startRun`) started MAIN's reaction
+  run still carrying the finished child's `activeSubagentId()`, and every
+  identity consumer of that run misattributed it — the reported shape was
+  a self-reminder scheduled "in <session>/<child>" that auto-resumed the
+  completed child (duplicate-release risk). Three layers: the
+  `ShellJobRegistry` now binds its settle continuation to the
+  construction-time (boot) zone (`_bootZone.run`), both hosts'
+  `scheduleSenderMailbox` wiring trusts the zone scope only while the
+  child is genuinely in flight on the session executor
+  (`TaskExecutor.isInFlight`), and the tool response names the RECIPIENT
+  the record carries — an explicit `to:` used to be shadowed in the reply
+  by the sender's mailbox, which read as "the override was ignored" even
+  when it was honored. E2E repro drives the real AgentCli
+  (test/cli/agent_cli_schedule_recipient_test.dart) plus a registry-level
+  zone pin (test/tools/shell_job_settle_zone_test.dart).
+
+- fix(gh-1948): `task_observe` works on a RUNNING background subagent
+  instead of crashing with an uncaught `SessionException` on the
+  `<parentSessionId>/<agentName>` placeholder. Three legs: the executor
+  flushes each child's transcript incrementally at every turn boundary
+  (the JSONL exists and grows mid-run — also crash-resilience for
+  aborted children), `task_observe` resolves a placeholder handle's real
+  session file from the sessions tree (the same `agent: subagent` /
+  `parent:` / `id:` header scan the boot adoption uses) and heals the
+  handle onto the found path, and every read failure degrades to a
+  structured "transcript unavailable" / "no transcript available yet"
+  message instead of an uncaught tool error. The child-transcript reader
+  rides the transient-ENOENT retry (issue #427) — it reads while the
+  executor appends.
+
+- feat(gh-1825): `/network` + scoped DAP channel membership — join by
+  paste (invite url / url+keys / bare channel id / whole `fa dap import`
+  command) with session/project/global scopes, live join without
+  restart, per-scope leave + copy invite, and the composer-paste
+  shortcut into the same wizard. Session scope rides a
+  `dap_channel_membership` custom record (leave tombstones, branch
+  resume); project scope is `.fah/dap.json` (committable, `dapkey1`
+  PBKDF2+ChaCha20-Poly1305 encrypted keys); global keeps the legacy
+  `~/.dap` files. Headless CI: `DAP_CHANNELS_JSON` (+`DAP_HUB_URL`,
+  `DAP_CLIENT_SECRET`, `DAP_KEY_PASSPHRASE`) joins at boot with zero
+  prompts, plaintext or encrypted privs mixed. Passphrase chain:
+  env → per-channel macOS Keychain item → one prompt with save default.
+
+- feat(2117): console logging dial — `lib/src/logging/` levels
+  (`off < error < warn < info < debug < trace`), categories
+  (`keys/lifecycle/tool/provider/compaction/messaging`), and the
+  `{time} {elapsed} {sid} {level} {cat} {msg}` line pattern with
+  `logging.timeFormat`, rendered only when `logging.format` is set (the
+  current shapes stay otherwise). The INTERACTIVE console filters at the
+  resolved level (default `warn`); `fa.log` filters at its own level
+  (default `debug` — every existing diagnostic line still lands, now
+  with a level tag) and every rendered line on every sink passes the
+  redaction pipeline. Sources: `--log-level` flag > `FA_LOG_LEVEL` env >
+  project `.fah/config.yaml` `logging:` > user `~/.fah/config.yaml`
+  `logging:` > default; invalid levels fail loudly at boot;
+  `--debug-secrets`/`FA_DEBUG_KEYS` stay as the `keys=debug` alias
+  (a keys-category floor, never resurrecting an explicit `off`).
+  `/log <level>` switches the console sink live in the REPL. The
+  headless stdout contract is PINNED byte-identical: HEP/stream-json/
+  wire-serve/plain-run output never routes through the filter unless the
+  flag or the env makes the level explicit. The passive `info: agent
+  stalled` banner is the first reassigned noise class (it obeys the
+  dial — hidden at the interactive default, shown from `info` up); tool
+  start/finish diagnostics reassign to `debug`/`tool` (fa.log keeps
+  passing them at its `debug` default). Background-chatter and echo
+  reassignment follow in #2118's follow-up.
+
+- fix: `fileInfo().name` returns the bare entry name on Windows — the
+  abspath resolution previously glued the drive-letter absolute path onto
+  the returned name (`C:\dirC:\dir\file.txt`), breaking the file browser
+  listings and any consumer that joins `dir` + `name` back into a path.
+- fix(flutter_app): the Windows desktop app can pick a project folder —
+  a file-selector-backed `ProjectFolderOps` (the folder dialog through
+  `file_selector_windows`) for Windows/Linux instead of the macOS-only
+  method channel, the desktop env layers the project-mount wrapper on
+  every desktop platform (the mount previously existed on macOS only, so
+  a picked folder never reached the agent env), and the Windows runner
+  identity is real (window title "Fa", `CompanyName` "Fa" — the support
+  dir moves from `%APPDATA%\com.example\...` to `%APPDATA%\Fa\...`).
+- fix(gh-2140): the Flutter app boots on Windows desktop. The unguarded
+  `DefaultFirebaseOptions.currentPlatform` read in `_initFirebaseApp`
+  threw `Unsupported operation` on platforms with no Firebase
+  registration (the template options register only android/ios/web/macos
+  — Windows/Linux throw before the `YOUR_` placeholder check could run),
+  killing boot before the first frame: the boot-watchdog fired and no
+  window ever opened. The read is now guarded — Firebase is
+  telemetry-only, so the services stage degrades with a debug print and
+  the app boots without it. Test: `bootServices degrades on platforms
+  with no Firebase registration` (windows-target override; previously
+  threw, now completes).
+- feat(gh-209): two-tier compaction engine — the mid-turn relief paths
+  (the loop's over-window guard and the gh-1680 message-cap self-heal,
+  CLI and Flutter app) now run ONLY the deterministic emergency tier
+  (`EmergencyRelief`): re-anchor from the session projection, dedup
+  repeated reads of the same path (the newest successful copy stays
+  live), keep-N-recent per tool class stalest-first (read 2 / exec 4 /
+  other 8 — `defaultEmergencyKeepRecent`), then the local trim valve —
+  plus the buster rule: a tool result that ALONE overflows the window
+  folds regardless of the class budgets (marker-reopenable; pinned
+  expansions still veto).
+  Seconds, bounded, ZERO language-model calls on any path — a dead or
+  slow judge can no longer turn an in-turn overflow into the declared
+  ≤15 min silent stall. All quality-tier invariants hold: whole pair
+  groups hide atomically (#85/D6), real user turns / protected tail /
+  pinned expansions never hide (F8/#1379), hides are lossless appends
+  (every id stays expandable behind its marker), and the relieved turn
+  continues visibly (`[resuming] …`). The quality tier (judge,
+  checkpoints, escalation) stays at the turn boundaries — post-run and
+  pre-flight — and the over-window funnel (issue #1085) survives as the
+  backstop when the deterministic tier cannot free the window.
+- fix(gh-2138): session-ownership lease fail-open holes closed — a second
+  writer is no longer possible through an error path. On an enforceable
+  backend (atomic rename available) a lease publish failure or a
+  persistently failing ownership verify now REFUSES the drive-open
+  (`LeaseRefused` → the app throws `LeaseRefusedException` and the wide
+  shell refuses loudly; the CLI prints a loud refusal — boot aborts, an
+  in-process switch restores the previous session, headless/serve exit
+  4/blocked-serve — instead of silently driving unleased); the verify
+  re-read re-runs up to 3× with no backoff — fail-closed is the
+  guarantee, not fast recovery. The
+  only remaining fail-open is a backend with no atomic rename (E5, web),
+  and a store-less manager (now impossible on desktop: every app
+  bootstrap wires `defaultLeaseStore`) proceeds with a loud warning.
+  Every drive-open logs the resolved lease branch (acquired / blocked
+  owner / unenforced / refused / no-store). The wide shell gained the
+  attach surface: a live-lease open opens the attached view (transcript
+  follow + composer → owner mailbox via `AttachedSessionController`)
+  with a banner naming the owner (host + pid) instead of a dead-end
+  snack, and the transport's transcript poller is disposed on detach.
+- feat(gh-2098): the auto-compact trigger is user-configurable —
+  `compaction.triggerRatio` / `compaction.reserveTokens` /
+  `compaction.keepRecentTokens` in `~/.fah/config.yaml` or project
+  `.fah/config.yaml` (per-key deepest scope wins) override the gh-1742
+  `forWindow` curves; absent keys stay byte-identical (golden-pinned).
+  `triggerRatio` (0 < r < 1) pins the trigger line at r × window
+  (reserve = window − floor(r·window)) so every window-derived consumer
+  moves together — both trigger channels (estimate + the gh-1742
+  observed anchor), the structured engine's gate and fragile-band
+  escalation, the ctx meter, the spill budget, and task children (the
+  CLI threads the merged section through the executor). `reserveTokens`
+  sets the headroom directly (mutually exclusive with `triggerRatio` —
+  strict named `ConfigException`s, also enforced at `fa config set` —
+  nothing persists that the next boot would reject); `keepRecentTokens`
+  overrides the post-pass kept region. Degenerate guards mirror
+  forWindow (reserve > window/2 clamps to window/4, keep > window
+  clamps to window/2) so a pass always frees tokens. A non-empty tuning
+  is a user pin: the bench env knob (`FAH_COMPACT_TRIGGER_TOKENS`)
+  never rewrites it (gh-1604's rule). Default decision documented in
+  `docs/compaction.md` with the benchmark note
+  (`bench/compaction_trigger_sim.dart`, fire points + frequency at
+  0.9375 vs 0.80 vs 0.75 on a recorded 218-request session): the legacy
+  curve stays the default (byte-identical contract + pass-frequency
+  cost), 0.80 is the informed opt-in. Stale doc comment fixed: the CLI
+  settings field described a ratio-based default
+  ("ratio 0.7, reserve 50000, keep 80000") that never shipped — the
+  field now says what it does and points at [compactionTuning].
+- fix(gh-2097): auto-compact measures honestly — no more stale pre-run
+  estimates or «0 freed» basis flips. (1) `StructuredCompactor.run()`
+  re-anchors the agent state from the session projection BEFORE any
+  trigger/before/over math: the in-memory transcript can lag the session
+  file (an in-memory tail cut, a second writer appending to the same
+  session between runs), and the stale basis computed `over` ≈ 1.4k
+  where ~177k was needed — the deterministic hide under-sized every
+  pass and the run paid extra passes/minutes; one projection build
+  bounded by the ledger cache (O(changed records)) now starts every
+  run. (2) Pass reports render an upward basis jump explicitly:
+  `StructuredCompactionPass`/`AutoCompactorPass` gain `basisReadTokens`
+  (a pass appends only shrinkers, so an after-count above its
+  before-count is a second writer's records entering the projection,
+  never a regression) and `formatCompactionReport` prints
+  `basis re-read: +Nk` instead of a clamped `0 freed · 0%`; the small
+  restamp jitter (no flip metadata) keeps its `0 freed` clamp. (3) The
+  compaction hooks' diagnostic lines (`auto-compact pass/retry/done`)
+  now carry `sid=` like every other compaction lifecycle line, and the
+  diagnostic appends run through one serialized in-order chain
+  (`flushDiagnosticLog()`, awaited by the REPL teardown and the
+  headless finally) — bursts land complete instead of being dropped by
+  unawaited fire-and-forget appends racing the process exit. AC: a
+  two-writer fixture asserts correct first-pass sizing; golden tests
+  pin the basis-flip rendering; log tests pin sid presence and
+  no-dropped-lines. (4) The app's over-window relief
+  (`AgentService._relieveOverWindow`) now drains the pending persist
+  BEFORE compacting — the same ordering the run-end funnel and the CLI
+  already enforce: the structured engine's run-start re-anchor rewrites
+  the live transcript from the session projection, so a relief that
+  compacted while the crash-safe persister still had the just-sent
+  message in flight re-anchored onto a projection without it (the live
+  context silently lost the newest message and the trim valve found
+  nothing droppable — the turn died on the guard error instead of
+  being relieved). AC: a gated-persist IT-2 fixture holds the newest
+  record's append in flight across the relief and asserts the turn
+  still completes.
+- fix(gh-2132): the shipped non-sandboxed macOS app is real now — the
+  orphaned `ReleaseNoSandbox.entitlements`/`DebugNoSandbox.entitlements`
+  are pruned to EXACTLY {cs.allow-jit, network.client, network.server}
+  (the stale personal-information/healthkit/homekit claims are
+  sandbox-scoped or iOS-only and poison profile-free Developer ID
+  notarization) and wired as a real `ReleaseNoSandbox` Xcode build
+  configuration (project + Runner + Flutter Assemble, byte-cloned from
+  Release); `build_macos_nosandbox.sh` prunes BEFORE the re-sign (the old
+  prune-after-sign order shipped a broken seal) and fails the leg loud
+  when the SIGNED app's entitlements deviate from the pinned trio;
+  build-macos.yml gains a "Notarize no-sandbox DMG" step (notarytool
+  --wait + stapler staple, same signed-path gating and no-secrets graceful
+  skip as the sandboxed "Notarize DMG" step). Pinned by
+  `test/ci_macos_nosandbox_entitlements_guard_test.dart`.
 - fix(gh-2096): auto-compact no longer re-pays the judge budget on every
   run when the configured smol class cannot answer within it, and a judge
   timeout no longer kills the retry. Three engine changes: (1) the

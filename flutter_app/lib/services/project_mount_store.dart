@@ -36,7 +36,12 @@ final class ProjectMountStore {
       final path = json['path'];
       final bookmark = json['bookmark'];
       if (path is! String || path.isEmpty) return null;
-      if (bookmark is! String || bookmark.isEmpty) return null;
+      // An EMPTY bookmark is valid: the Windows/Linux file selectors hand
+      // out no security-scoped bookmark at all, so the persisted record
+      // carries `bookmark: ""` — rejecting it here made the mount restore
+      // and the scoped-folder toggle silently dead on those platforms.
+      // Only macOS persists real bookmarks.
+      if (bookmark is! String) return null;
       final scoped = json['scoped'] == true;
       return ProjectMountStore._(path, bookmark, scoped: scoped);
     } on Object {

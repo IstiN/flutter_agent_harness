@@ -415,6 +415,19 @@ const fileOnlyConfigKeys = <String, String>{
       'renders thinking in its own UI and has no console output to '
       'configure.',
 
+  // Console noise dial (issue #2117): console/file log levels + the line
+  // pattern — CLI console/fa.log presentation, provisioned in the file
+  // per environment. /log is a LIVE-only switch (never persisted), and
+  // the app has no fa.log/console log sink to dial, so no interactive
+  // surface edits the section on any platform; headless stdout is pinned
+  // byte-identical at defaults, keeping it out of the machine-facing
+  // settings surface.
+  'logging':
+      'The console log dial (issue #2117 — console/file levels, line '
+      'pattern) is CLI console/fa.log presentation tuned in the file; '
+      '/log switches it live and never persists, and the app has no '
+      'console log sink of its own.',
+
   // Session disk retention (gh-1746): boot-time hygiene over the CLI's
   // own sessions root — the app never opens that root, so there is no
   // app surface to edit it; file-only by design.

@@ -116,7 +116,10 @@ void main() {
     'AC2 — build_macos_nosandbox.sh pre-flights the pinned identity before spending the build',
     () {
       final script = File(scriptPath).readAsStringSync();
-      final flutterBuild = script.indexOf('flutter build macos --release');
+      // The first flutter spend is the configuration pass (SPM migration +
+      // pod install) feeding the ReleaseNoSandbox xcodebuild — #2132
+      // review 5876405113 consumption order.
+      final flutterBuild = script.indexOf('flutter build macos --config-only');
       expect(flutterBuild, greaterThan(-1));
 
       // The pre-flight lives in the gh-2039 block, between its marker

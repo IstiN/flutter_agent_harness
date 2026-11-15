@@ -93,6 +93,7 @@ import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
 import 'reasoning_liveness.dart';
 import 'log_fidelity.dart';
+import '../logging/log_settings.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -121,8 +122,12 @@ import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/bench_trigger.dart';
+import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
+import '../compaction/handoff_digest.dart';
+import '../compaction/emergency_relief.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
@@ -138,6 +143,7 @@ import '../hosts/host_wiring_builder.dart';
 import '../exceptions.dart';
 import '../js_ext/ext_bootstrap_js.dart';
 import '../js_ext/ext_catalog.dart';
+import '../trajectory/formatters.dart' show formatTokens;
 import '../js_ext/ext_install.dart';
 import '../js_ext/ext_manifest.dart';
 import '../js_ext/extension_host.dart';
@@ -181,6 +187,7 @@ import '../providers/provider_common.dart'
         authExpiredProvider,
         effectiveProviderConnectTimeout,
         effectiveProviderStreamIdleTimeout,
+        messagesContainImages,
         providerConnectTimeout,
         providerStreamIdleTimeout,
         providerTimeoutsOverride,
@@ -286,6 +293,7 @@ import '../env/process_probe_stub.dart'
     if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
+import 'host_shell_stub.dart' if (dart.library.io) 'host_shell_io.dart';
 import 'jsr_cli.dart';
 import 'prompt_templates.dart';
 // The one-provider transfer container codec (issue #2090) and its `.fahx`
@@ -366,6 +374,7 @@ part 'agent_cli_prompt.dart';
 part 'agent_cli_repl_boot.dart';
 part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
+part 'agent_cli_logging.dart';
 part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_plugin_records.dart';
@@ -373,6 +382,7 @@ part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
 part 'agent_cli_herdr.dart';
+part 'agent_cli_handoff.dart';
 part 'agent_cli_network.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
@@ -432,6 +442,7 @@ class AgentCli {
     // pre-construction window. `this.io` — the param still shadows here,
     // and the field may be the _TuiCliIO wrapper.
     JsonlSessionStorage.onRotationWarning = this.io.writeln;
+    wireQuarantineNotice(this.io.writeln);
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -632,6 +643,8 @@ class AgentCli {
           ),
         ],
         obligationsClose: (id, status) => closeObligation(id, status),
+        goalRecite: (goal) => reciteGoal(goal),
+        goalReciteCurrent: currentGoalRecitation,
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
         // (constructed inside the builder) may not exist yet.
@@ -742,6 +755,9 @@ class AgentCli {
           // (live settings override, else config, else default).
           compactionEngine:
               config.liveCompactionEngine ?? config.compactionEngine,
+          // gh-2098: children ride the same `compaction:` trigger tuning
+          // the main agent's gate applies.
+          compactionTuning: config.compactionTuning,
           // Issue #862: the `agent.misuseBreaker` switch covers children.
           misuseBreaker: config.misuseBreaker,
           // Real JSONL child sessions, created at child completion (fast
@@ -2024,6 +2040,9 @@ class AgentCli {
   /// episode instead of one per watchdog tick.
   bool _runStalledPushed = false;
 
+  /// The last rendered provider-error dedup key (issue #2119 AC1).
+  String? _lastProviderErrorKey;
+
   /// The `(providerIdentity, modelId)` rows of the most recent `/model`
   /// listing, so `/model N` can select by number — each row carries its
   /// provider identity (gh-178 G1: a numbered pick of a cross-provider row
@@ -2119,7 +2138,7 @@ class AgentCli {
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
     await _cubeBootRestore();
-    await _claimSessionLease();
+    await _requireLeaseClaim();
     // Restart honesty (issue #450): jobs in the manifest were left
     // running by the previous run — count them, then take the file over.
     await _waiting.captureLostJobs();
@@ -2132,7 +2151,7 @@ class AgentCli {
     _notifyPluginSessionReady();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
-    await _claimSessionLease();
+    await _requireLeaseClaim();
     // gh-1241: NO segment marker here — an idle owner boot must add zero
     // session bytes (issue #428 invariant); the marker lands lazily at the
     // first drive ([_runPrompt]) instead.
@@ -2355,11 +2374,8 @@ class AgentCli {
     // wake loops reopen interactively instead of fighting the owner.
     // Restart honesty (issue #450): detached jobs from the previous run.
     await _waiting.captureLostJobs();
-    final leaseBlocked = await _claimSessionLeaseHeadless();
-    if (leaseBlocked != null) {
-      io.writeln(viewerBannerText(leaseBlocked, stale: false));
-      return 3;
-    }
+    final leaseExit = await _resolveHeadlessLeaseGate();
+    if (leaseExit != null) return leaseExit;
     // Headless has no REPL mailbox sync; project this session explicitly.
     await _startNetworkPresenceFor(this);
     // gh-1241: the owner opens a usage segment (viewer never appends).
@@ -2514,9 +2530,7 @@ class AgentCli {
       // gh-1589: the run is over — settles from here do bookkeeping only
       // (the finally below still seals the file).
       _sealReactionRuns();
-      io.writeln(
-        _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
-      );
+      _renderRunModelError('$error');
       return 1;
     } finally {
       await _stopNetworkPresenceFor(this);
@@ -2549,6 +2563,9 @@ class AgentCli {
       await _flushJobBoardPersist();
       await _flushObligationsLedger();
       await _subagentManager.flushPersist();
+      // gh-2097: drain the diagnostic-append chain — a headless exit
+      // must not leave compaction pass lines in flight.
+      await flushDiagnosticLog();
       // gh-1589: the seal is the LAST session action of the run — every
       // deliberate flush has landed, and any straggler write from here
       // (a late settle's registry snapshot, a lost usage record) is
@@ -2625,6 +2642,14 @@ class AgentCli {
   /// (issue #413) stays shared with the REPL.
   bool _headlessMode = false;
 
+  /// The live console log level set by `/log <level>` (issue #2117 AC4):
+  /// overrides the resolved [AgentCliConfig.logging] console level for
+  /// SUBSEQUENT lines, no restart. Null = the resolved level governs.
+  LogLevel? _liveConsoleLevel;
+
+  /// Process boot time — the `{elapsed}` pattern placeholder's origin.
+  final DateTime _loggingBoot = DateTime.now();
+
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
@@ -2695,18 +2720,24 @@ class AgentCli {
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
   /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
-    // An explicit `compactionSettings` config pin beats the bench env
-    // (gh-1604): `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a
-    // bench run — it must never silently rewrite a user-pinned section,
-    // including `enabled: false` (the knob cannot re-enable compaction
-    // the user switched off). Unset env = byte-identical base.
-    final override = config.compactionSettings;
-    if (override != null) return override;
+    final wiring = resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+      settingsOverride: config.compactionSettings,
+      tuning: config.compactionTuning,
+    );
+    // An explicit settings pin — or the gh-2098 `compaction:` tuning
+    // keys, a user pin too — beats the bench env (gh-1604):
+    // `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a bench run
+    // — it must never silently rewrite a user-pinned section, including
+    // `enabled: false` (the knob cannot re-enable compaction the user
+    // switched off). Unset env = byte-identical base.
+    final pinned =
+        config.compactionSettings != null ||
+        (config.compactionTuning?.isNotEmpty ?? false);
+    if (pinned) return wiring.settings;
     return resolveBenchCompactionSettings(
-      resolveCompactionHostWiring(
-        mainModel: _agent.state.model,
-        contextWindowCap: config.contextWindowCap,
-      ).settings,
+      wiring.settings,
       window: _effectiveContextWindow,
       env: environment,
     );
@@ -2729,6 +2760,13 @@ class AgentCli {
   final Map<String, String> _runtimeSecrets = {};
 
   var _diagnosticLogDirEnsured = false;
+
+  /// gh-2097: the serialized diagnostic-append chain — every
+  /// `_logDiagnostic` call links its append onto this future, so bursts
+  /// land in order and never race each other on the same file. Exit
+  /// paths await [flushDiagnosticLog] so the process cannot die with
+  /// pending lines in the chain.
+  Future<void> _diagLogChain = Future<void>.value();
 
   /// Size cap of the shared diagnostics log (`~/.fah/logs/fa.log`): on the
   /// first write of a process, an oversized log rotates to `fa.log.1`.
@@ -2764,18 +2802,4 @@ final class _CliMessageCapPolicy implements MessageCapPolicy {
     _cli._modelCaps.learnFromRefusal(model, refusal);
     _cli._persistModelCaps();
   }
-}
-
-/// One AC3 post-tool narration segment (gh-1433): the text deltas that
-/// streamed after ONE tool-call block of the current message. [toolCallId]
-/// is stamped by the block's `ToolCallEndEvent` — the same id the
-/// execution events carry — so the segment flushes after that call's
-/// result row (positional even for parallel/multi-call messages).
-final class _PostToolNarrationHold {
-  /// The held narration deltas, in stream order.
-  final StringBuffer text = StringBuffer();
-
-  /// The tool call this segment follows; null until the call's
-  /// `ToolCallEndEvent` stamps it (or never, on a degenerate stream).
-  String? toolCallId;
 }

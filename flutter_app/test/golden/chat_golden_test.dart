@@ -96,7 +96,6 @@ final Uint8List _tinyPngBytes = base64Decode(
   '92ATXq/Gi3ONqSAAAAAElFTkSuQmCC',
 );
 
-
 /// Pumps the full [ChatScreen] as the app home (it is a Scaffold itself) at
 /// [size] — no left sessions panel exists anymore (legacy); the snapshot is
 /// the chat surface itself.
@@ -118,20 +117,42 @@ Future<void> _pumpChatScreen(
 }
 
 void main() {
-  /// Kills the composer caret for the capture. The composer autofocuses
-  /// via post-frame callbacks, and on the slower hosted runner a late
-  /// requestFocus can land between the last pump and the capture — the
-  /// 2×20px caret then enters the frame and drifts the golden by 0.01%
-  /// (the hosted chat_image/chat_bubble_1_image failures). Making the
-  /// field's focus node un-focusable turns every pending/late
-  /// requestFocus into a no-op, so the caret can never paint.
+  /// Kills the composer caret for the capture (issue #2160).
+  ///
+  /// The composer autofocuses via post-frame callbacks, and on the slower
+  /// hosted runner a late requestFocus can land between the last pump and
+  /// the capture — the 2×20px caret then enters the frame and drifts the
+  /// golden by 0.01% / 40px. Making the field's focus node un-focusable
+  /// turns every pending/late requestFocus into a no-op, so the caret can
+  /// never paint again.
+  ///
+  /// The caret itself is an infinite blink animation (EditableText's iOS
+  /// caret simulation re-arms itself through zero-duration timers). Whether
+  /// it is mid-ON-phase at unfocus time depends on how many timer hops
+  /// elapsed before this runs — wall-clock dependent when the tree was
+  /// pumped inside `tester.runAsync` (real-zone timers). Unfocusing stops
+  /// the blink instantly (`_stopCursorBlink` zeroes the opacity), but the
+  /// capture must be of a frame rendered AFTER that: a zero-duration pump
+  /// left the previous CI reds (issue #2160). Pump past the 500ms blink
+  /// half-period — the same hop the generated-image shot below uses — and
+  /// assert the caret is gone so a framework change fails loudly instead of
+  /// drifting the snapshot.
   Future<void> disableComposerCaret(WidgetTester tester) async {
     for (final element in find.byType(EditableText).evaluate()) {
       (element.widget as EditableText).focusNode
         ..canRequestFocus = false
         ..unfocus();
     }
+    await tester.pump(const Duration(milliseconds: 600));
     await tester.pump();
+    for (final element in find.byType(EditableText).evaluate()) {
+      expect(
+        ((element as StatefulElement).state as EditableTextState)
+            .cursorCurrentlyVisible,
+        isFalse,
+        reason: 'composer caret must not paint into goldens',
+      );
+    }
   }
 
   setUpAll(() async {
@@ -480,6 +501,10 @@ void main() {
       expect(find.byType(SandboxAudioPlayer), findsOneWidget);
       expect(find.byType(SandboxVideoPlayer), findsOneWidget);
       expect(find.text('0:00 / 0:07'), findsOneWidget);
+      // The players are deterministic fakes (paused at 0:00) — the only
+      // capture hazard on this tile was the composer caret's blink phase
+      // (issue #2160); kill it before the snapshot.
+      await disableComposerCaret(tester);
       await expectGolden(tester, 'chat_generated_media');
     });
   });

@@ -578,6 +578,28 @@ platform :ios do
        "/Library/Keychains/System.keychain",
        File.expand_path("~/Library/Keychains/ci-signing.keychain-db"))
 
+    # gh-2125: the archive must never touch the SHARED per-user Xcode
+    # state on the persistent self-hosted Mac. gym ran with no
+    # -derivedDataPath, so xcodebuild fell back to
+    # ~/Library/Developer/Xcode/DerivedData/Runner-<path-hash> — a
+    # directory NOTHING on this box ever cleans (flutter clean touches
+    # only flutter_app/build/; gym's clean:true cleans THROUGH the very
+    # build database that corrupted), shared by up to three concurrent
+    # runner registrations (gh-2026). Run 43160591145 died 12 minutes
+    # into the archive on "unable to read PCH file ... No such file or
+    # directory" + "cannot open constant extraction protocol list input
+    # file Runner_const_extract_protocols.json" + "accessing build
+    # database ... XCBuildData/build.db: disk I/O error" — the SAME tree
+    # archived green the two days before, so it was runner state, not
+    # code. Pin BOTH the derived data and the xcarchive INSIDE the
+    # workspace build dir: the gh-160 checkout wipes and re-clones the
+    # workspace every run, so the paths start clean by construction (the
+    # rm_rf below covers hand-run lanes that skip flutter clean). Never
+    # blanket-purge the shared per-user root instead — a sibling
+    # registration's archive may be live inside it.
+    derived_data = File.expand_path("../build/ios/archive-dd", __dir__)
+    FileUtils.rm_rf(derived_data)
+
     # gh-1692: xcbeautify, never xcpretty (xcpretty swallowed the archive
     # error — silent `** ARCHIVE FAILED **`), and on failure the newest
     # gym log tail lands in the job log via print_gym_log_tail.
@@ -588,6 +610,9 @@ platform :ios do
         export_method: "app-store",
         output_directory: "build/ios/ipa",
         output_name: "fa.ipa",
+        # gh-2125: workspace-local per-run build state (see the block above).
+        derived_data_path: derived_data,
+        archive_path: File.join(derived_data, "fa.xcarchive"),
         skip_build_archive: false,
         clean: true,
         sdk: "iphoneos",

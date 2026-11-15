@@ -203,6 +203,12 @@ FLUTTER_ANALYZED=0
 
 # ── Stage implementations ───────────────────────────────────────────────────
 stage_analyze() {
+  # gh-2181: the AGENTS.md size ceiling runs in THIS stage — AGENTS.md
+  # edits classify as docs (docs/*.md → analyze is the docs scope's only
+  # stage), so a docs-only commit that regrows the entry file must fail
+  # here. Same script the ci.yml static job runs (wiring pinned by
+  # test/agents_md_size_guard_test.dart).
+  bash scripts/check_agents_md_size.sh
   echo "🔍 Running dart analyze..."
   dart analyze
   if [ "$APP_IN_SCOPE" -eq 1 ] && command -v flutter >/dev/null 2>&1; then

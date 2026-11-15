@@ -213,17 +213,35 @@ final class KeyStatusRenderer {
   /// diagnostic: which env var is in play, whether an environment value is
   /// shadowing a DIFFERENT stored key (env wins over the secure store — the
   /// classic stale-export footgun), or that no key resolved at all.
-  String errorLine(String message, String baseUrl) {
+  ///
+  /// Issue #2119: a classified failure (content filter / rate limit /
+  /// network / stall — [classifyProviderFailure], the ladders' own
+  /// taxonomy) renders category + provider/model + one matching recovery
+  /// instead of the raw dump; the raw text lands in fa.log at the render
+  /// site. Auth and connection-refused keep their exact hints, unknown
+  /// failures keep today's raw text — never a wrong category.
+  String errorLine(
+    String message,
+    String baseUrl, {
+    String? provider,
+    String? model,
+  }) {
     final compact = compactProviderError(message);
     if (isAuthError(compact)) {
       return red('error: $compact${authHintForAttempt(message, baseUrl)}');
     }
-    if (!compact.toLowerCase().contains('connection refused')) {
-      return red('error: $compact');
+    if (compact.toLowerCase().contains('connection refused')) {
+      return red(
+        'error: $compact — check the endpoint in ~/.fah/config.yaml '
+        '(baseUrl: $baseUrl) or pass --base-url',
+      );
     }
     return red(
-      'error: $compact — check the endpoint in ~/.fah/config.yaml '
-      '(baseUrl: $baseUrl) or pass --base-url',
+      classifyProviderFailure(
+        message,
+        provider: provider,
+        model: model,
+      ).consoleLine,
     );
   }
 

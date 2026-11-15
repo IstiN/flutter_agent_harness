@@ -153,6 +153,13 @@ final _rateLimitGuardPatterns = [
 bool matchesRateLimitWording(String text) =>
     _rateLimitGuardPatterns.any((pattern) => pattern.hasMatch(text));
 
+/// Whether [text] carries a transient transport wording (the set above).
+/// Public for the same consumer as [matchesRateLimitWording]: the console
+/// failure classifier (issue #2119) names the network category from the
+/// same wordings the ladder replays on — one vocabulary, two faces.
+bool matchesTransientNetworkWording(String text) =>
+    _transientNetworkPatterns.any((pattern) => pattern.hasMatch(text));
+
 /// Whether [message] is a rate-limit/quota failure the ladder retries in
 /// place with backoff (gh-1602): a single transient quota blip must not
 /// kill a run that has no roles chain above this ladder to rotate or fail

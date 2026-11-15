@@ -140,6 +140,11 @@ void main() {
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         steeringStaleAfter: steeringStaleAfter,
+        // Issue #2117: the passive `info:` stall banner obeys the console
+        // dial — this file pins its content, so it boots at `info` (the
+        // default `warn` hides it; console_log_dial_test.dart covers the
+        // suppressed side).
+        logging: const ResolvedLogSettings(consoleLevel: LogLevel.info),
       ),
       io: io,
       streamFunction: stream.call,
@@ -163,9 +168,12 @@ void main() {
       io.sendLine('start');
       await waitForIt(() => stream.calls >= 1 && cli.isBusy);
 
-      io.sendLine('/exit');
       // Outlast the stale threshold with no events flowing (the gated
       // stream is silent): the run is stalled — not "working", not dead.
+      // NO quit in flight (gh-2168): an in-flight /exit now aborts the
+      // wedged run, which would settle it before the classifier's window
+      // — the stall surfaces are pinned for a wedged run the user has
+      // not left.
       await Future<void>.delayed(const Duration(milliseconds: 250));
       cli.checkPendingSteeringHealthForTest();
 

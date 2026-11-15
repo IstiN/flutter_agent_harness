@@ -47,10 +47,7 @@ StreamFunction _neverStream(String kind, String apiKey) {
 ModelRolesResolver _resolverFor(Map<String, List<ModelRef>> roles) {
   return ModelRolesResolver(
     config: ModelRolesConfig(roles: roles),
-    secrets: const {
-      'ANTHROPIC_API_KEY': 'a-key',
-      'OPENAI_API_KEY': 'o-key',
-    },
+    secrets: const {'ANTHROPIC_API_KEY': 'a-key', 'OPENAI_API_KEY': 'o-key'},
     streamFactory: _neverStream,
   );
 }
@@ -103,8 +100,7 @@ void main() {
       }
     });
 
-    test('system overhead shrinks the conversation window, not the window',
-        () {
+    test('system overhead shrinks the conversation window, not the window', () {
       final wiring = resolveCompactionHostWiring(
         mainModel: _main,
         systemOverheadTokens: 4000,
@@ -114,8 +110,7 @@ void main() {
       _expectSettingsForWindow(wiring.settings, 196000);
     });
 
-    test('overhead larger than the window clamps the conversation to 0',
-        () {
+    test('overhead larger than the window clamps the conversation to 0', () {
       final wiring = resolveCompactionHostWiring(
         mainModel: _main,
         systemOverheadTokens: 300000,
@@ -162,8 +157,7 @@ void main() {
       expect(wiring.smolModel, isNull);
     });
 
-    test('enabled defaults to the shared ON constant and can be disabled',
-        () {
+    test('enabled defaults to the shared ON constant and can be disabled', () {
       expect(
         resolveCompactionHostWiring(mainModel: _main).enabled,
         compactionEnabledByDefault,
@@ -172,6 +166,62 @@ void main() {
         resolveCompactionHostWiring(mainModel: _main, enabled: false).enabled,
         isFalse,
       );
+    });
+
+    test('gh-2098: absent tuning keeps the forWindow curve instance '
+        'identical', () {
+      final wiring = resolveCompactionHostWiring(mainModel: _main);
+      _expectSettingsForWindow(wiring.settings, 200000);
+      final tuned = resolveCompactionHostWiring(
+        mainModel: _main,
+        tuning: const CompactionTuning(),
+      );
+      _expectSettingsForWindow(tuned.settings, 200000);
+    });
+
+    test('gh-2098: tuning overrides ride the shared wiring (ratio keys '
+        'off the conversation window)', () {
+      final wiring = resolveCompactionHostWiring(
+        mainModel: _main,
+        systemOverheadTokens: 4000,
+        tuning: const CompactionTuning(triggerRatio: 0.75),
+      );
+      // The ratio keys off the CONVERSATION window (196000) — the same
+      // basis every compaction threshold scales to.
+      expect(wiring.conversationWindow, 196000);
+      expect(wiring.settings.reserveTokens, 196000 - 147000);
+      expect(
+        wiring.settings.keepRecentTokens,
+        CompactionSettings.forWindow(196000).keepRecentTokens,
+      );
+    });
+
+    test('gh-2098: token-budget overrides compose with the wiring', () {
+      final wiring = resolveCompactionHostWiring(
+        mainModel: _main,
+        tuning: const CompactionTuning(
+          reserveTokens: 50000,
+          keepRecentTokens: 80000,
+        ),
+      );
+      expect(wiring.settings.reserveTokens, 50000);
+      expect(wiring.settings.keepRecentTokens, 80000);
+    });
+
+    test('gh-2098: tuning composes over an explicit settings pin (the '
+        'yaml section wins — the deepest explicit user scope)', () {
+      const override = CompactionSettings(
+        enabled: true,
+        reserveTokens: 4096,
+        keepRecentTokens: 8192,
+      );
+      final wiring = resolveCompactionHostWiring(
+        mainModel: _main,
+        settingsOverride: override,
+        tuning: const CompactionTuning(keepRecentTokens: 12000),
+      );
+      expect(wiring.settings.reserveTokens, 4096);
+      expect(wiring.settings.keepRecentTokens, 12000);
     });
   });
 
@@ -186,8 +236,7 @@ void main() {
       expect(wiring.window, 200000);
     });
 
-    test('a resolver without a smol role keeps the main-model fallback',
-        () {
+    test('a resolver without a smol role keeps the main-model fallback', () {
       final wiring = resolveCliCompactionWiring(
         mainModel: _main,
         rolesResolver: _resolverFor(const {}),
@@ -209,8 +258,7 @@ void main() {
       expect(wiring.window, 128000);
     });
 
-    test('a smol chain resolving to the main model normalizes to null',
-        () {
+    test('a smol chain resolving to the main model normalizes to null', () {
       final wiring = resolveCliCompactionWiring(
         mainModel: _main,
         rolesResolver: _resolverFor(const {
@@ -243,13 +291,15 @@ void main() {
   });
 
   group('resolveAppContextWindow', () {
-    test('a stored window different from the fallback wins (picker/endpoint)',
-        () {
-      expect(
-        resolveAppContextWindow(providerKind: 'google', storedWindow: 264000),
-        264000,
-      );
-    });
+    test(
+      'a stored window different from the fallback wins (picker/endpoint)',
+      () {
+        expect(
+          resolveAppContextWindow(providerKind: 'google', storedWindow: 264000),
+          264000,
+        );
+      },
+    );
 
     test('a stored value equal to the fallback means "unknown" — catalog '
         'wins', () {
@@ -380,8 +430,7 @@ void main() {
       );
     });
 
-    test('smol null-vs-set asymmetry fails the parity; both-null passes',
-        () {
+    test('smol null-vs-set asymmetry fails the parity; both-null passes', () {
       final base = wiring();
       expect(base.sameResolutionAs(wiring(smol: _smol)), isFalse);
       expect(wiring(smol: _smol).sameResolutionAs(base), isFalse);
@@ -409,8 +458,10 @@ void main() {
         contextWindow: 200000,
         maxTokens: 4096,
       );
-      expect(wiring(smol: _smol).sameResolutionAs(wiring(smol: otherId)),
-          isFalse);
+      expect(
+        wiring(smol: _smol).sameResolutionAs(wiring(smol: otherId)),
+        isFalse,
+      );
       expect(
         wiring(smol: _smol).sameResolutionAs(wiring(smol: _smolOtherProvider)),
         isFalse,

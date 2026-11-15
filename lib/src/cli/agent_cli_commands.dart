@@ -42,6 +42,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/power': (cli, rest) async => cli._powerSlash(),
   '/quota': (cli, rest) async => cli._quotaSlash(rest),
   '/timer': (cli, rest) async => cli._handleTimerCommand(rest),
+  '/log': (cli, rest) async => cli._handleLogCommand(rest),
   // Hidden (issue #735): not in the slash menu — a diagnostics dump of
   // the live tty's termios state for steering-freeze triage.
   '/termios': (cli, rest) async => cli._printTermiosDump(),
@@ -362,7 +363,15 @@ extension SlashCommandDispatch on AgentCli {
     switch (command) {
       case '/exit':
         io.writeln('bye');
+        // gh-2168 bounded-exit: quitting never waits out an in-flight run.
+        // Mark the exit first (the settle edge skips the idle prompt), then
+        // fire the run's — or a bare compaction's — cancel token so the
+        // settle lands before the teardown's bounded drain; `bye` stays the
+        // observable farewell and the abort marker drops queued messages
+        // (kimi semantics: an abort discards the queue).
         _exited = true;
+        _abortRequested = true;
+        _abortRunOrCompaction();
       case '/help':
         _printHelp(filter: rest);
       case '/stats':
@@ -548,6 +557,7 @@ extension SlashCommandDispatch on AgentCli {
         // The image-drop latch is run-lifetime state (issue #1889 R4): a
         // brand-new session re-latches from its first request.
         imageDropUx.reset();
+        final previousSession = _session;
         _session = await _createSession();
         _notifyPluginSessionReady();
         // /reset is an in-process switch to a brand-new session — herdr
@@ -555,9 +565,9 @@ extension SlashCommandDispatch on AgentCli {
         // carries the stale pre-reset id (#1483 review).
         _herdrSessionSwitched();
         _syncMailboxPrefix();
-        // Re-claim ownership for the new session (#428).
-        await _releaseSessionLease();
-        await _claimSessionLease();
+        // Re-claim ownership for the new session (#428); a refused claim
+        // (#2138) restores the previous session — no unleased drive.
+        await _reclaimAfterSwitch(previousSession);
         await _printViewerBannerIfAny();
         _persistedCount = 0;
         io.writeln('new session started');
@@ -617,6 +627,8 @@ extension SlashCommandDispatch on AgentCli {
         await _namedSessionSlash(rest, 'rename-session', _renameSession);
       case '/resume':
         await _resumeLastSession();
+      case '/handoff':
+        await _handoffSlash(rest);
       default:
         return false;
     }

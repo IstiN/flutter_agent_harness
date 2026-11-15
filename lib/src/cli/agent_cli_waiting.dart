@@ -1045,11 +1045,14 @@ extension AgentCliShellJobSettle on AgentCli {
     // The shared composer (gh-1604): the command rides the bounded
     // first/last ~120-char label, never the full body.
     final message = shellJobSettleNoticeText(job);
-    // The notice is a persisted user message: echo it into the live
-    // transcript through the same system-notice renderer the replay path
-    // uses (#446), so resume matches live 1:1. Steered messages skip the
-    // composer echo — without this the rows exist only after resume.
-    _tuiController?.sendOutput('$message\n');
+    // Issue #2118: NO transcript echo. The settle card the board drain
+    // painted a moment ago already carries id, exit code, command and log
+    // path — echoing the notice painted the same command a SECOND time
+    // one row below the card (the issue's "same command line printed
+    // repeatedly" across the two emitters). The notice stays model-facing
+    // (steered below / fresh idle run) and headless-visible through the
+    // [bash] line above, both byte-identical; on resume the persisted
+    // notice still replays through the #446 renderer.
     if (isBusy) {
       // Mid-run: the steering queue delivers it at the next step boundary.
       _agent.steer(UserMessage.text(message));

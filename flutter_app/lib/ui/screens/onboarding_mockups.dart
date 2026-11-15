@@ -24,7 +24,10 @@ class _UserBubble extends StatelessWidget {
             Container(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
               decoration: BoxDecoration(
-                color: _kBubble,
+                // Theme-following surface, not the hardcoded lavender:
+                // with the ink token the label reads white-on-white in
+                // dark mode (gh-2131 dark-theme pass).
+                color: _onbCard(context),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Column(
@@ -77,7 +80,7 @@ class _TypingBubble extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F6FA),
+        color: _onbCard(context),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -142,7 +145,7 @@ class _ChatInput extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF4F5FA),
+        color: _onbCard(context),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
@@ -793,7 +796,9 @@ class _PermCard extends StatelessWidget {
       width: 62,
       height: 32,
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F4F8),
+        // Recessed theme surface: the hardcoded near-white washed the
+        // ink2 label out in dark mode (gh-2131 dark-theme pass).
+        color: faui.FaDesignTokens.of(context).surface2,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Center(
@@ -1151,7 +1156,10 @@ class _TimelineCard extends StatelessWidget {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: i == 1 ? Color(0xFFF3F4F8) : _onbSelBg(context),
+                    // Recessed theme surface (gh-2131 dark-theme pass).
+                    color: i == 1
+                        ? faui.FaDesignTokens.of(context).surface2
+                        : _onbSelBg(context),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
@@ -1262,7 +1270,10 @@ class _CreatedCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF2F4FE),
+              // Recessed theme surface, not the hardcoded near-white:
+              // the ink token's white label was invisible in dark mode
+              // (gh-2131 dark-theme pass).
+              color: faui.FaDesignTokens.of(context).surface2,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
@@ -1565,7 +1576,7 @@ class _UpcomingWidget extends StatelessWidget {
       height: 120,
       padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _onbCard(context),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: _onbBorder(context)),
       ),
@@ -1644,7 +1655,10 @@ class _Suggestions extends StatelessWidget {
           width: wide ? 180 : null,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.white,
+            // Theme-following surface: the hardcoded white pill rendered
+            // the ink token's white label invisible in dark mode (gh-2131
+            // dark-theme pass).
+            color: _onbCard(context),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: _onbBorder(context)),
           ),

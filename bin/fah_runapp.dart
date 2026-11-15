@@ -676,6 +676,15 @@ Future<void> _runApp(List<String> args) async {
   // judgeBudgetSeconds`; `null` keeps the 90s default.
   final compactionJudgeBudgetSeconds = saved.compactionJudgeBudgetSeconds;
 
+  // Compaction trigger tuning (gh-2098): the `compaction:` section's
+  // `triggerRatio`/`reserveTokens`/`keepRecentTokens`, merged per key
+  // (project `.fah/config.yaml` wins over user `~/.fah/config.yaml`).
+  // Null/empty keeps the gh-1742 curves byte-identically.
+  final compactionTuning = mergeCompactionTuning(
+    global: saved.compactionTuning,
+    project: loadProjectCompactionTuning(cwd),
+  );
+
   // Raw wire dumps (issue #385 F5): opt-in only — the project
   // `.fah/config.yaml` `trajectory:` section wins over the user one.
   // gh-1745: the same section carries the request-blob spill policy
@@ -1027,6 +1036,26 @@ Future<void> _runApp(List<String> args) async {
   // one (same merge as the other project sections). Null = absent —
   // no spill hooks, byte-identical legacy boot.
   final spillsConfig = loadProjectSpillsConfig(cwd) ?? saved.spills;
+  // The console log dial (issue #2117): flag > env > project
+  // .fah/config.yaml `logging:` > user ~/.fah/config.yaml `logging:` >
+  // the `warn` interactive default. An invalid level is a LOUD boot
+  // failure, never a silent fallthrough. Headless stdout stays pinned:
+  // the resolved level filters the interactive console only (headless
+  // opts in solely via the flag/env — `consoleExplicit`).
+  final ResolvedLogSettings loggingSettings;
+  try {
+    loggingSettings = resolveLogSettings(
+      flagLevel: parsed.logLevel,
+      envLevel: Platform.environment['FA_LOG_LEVEL'],
+      project: loadProjectLoggingSection(cwd),
+      user: saved.logging,
+      debugKeys:
+          parsed.debugSecrets ||
+          isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   // The projectContext budget (issue #1761): user-level `projectContext:`
   // section only — a global resource knob, not a repo-traveling one.
   final projectContextConfig = saved.projectContext;
@@ -1626,6 +1655,10 @@ Future<void> _runApp(List<String> args) async {
         // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
         jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
+        // The resolved console/file log dial (issue #2117): flag > env >
+        // project config > user config > defaults; headless stdout is
+        // only filtered when the flag/env made the level explicit.
+        logging: loggingSettings,
         // gh-1746: the opt-in sessions retention policy (user config);
         // null = the section is absent — no sweep, no note (AC1).
         sessionsRetention: saved.sessions,
@@ -1793,6 +1826,7 @@ Future<void> _runApp(List<String> args) async {
         misuseBreaker: saved.misuseBreaker,
         compactionEngine: compactionEngine,
         compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
+        compactionTuning: compactionTuning,
         wireDump: wireDump,
         trajectoryRequestBlobs: trajectoryRequestBlobs,
         trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,

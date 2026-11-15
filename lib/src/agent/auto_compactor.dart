@@ -23,6 +23,7 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 import '../cancel_token.dart';
+import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
@@ -62,6 +63,9 @@ final class AutoCompactorPass {
     this.judgeInputTokens,
     this.judgeElapsedMs,
     this.judgeLatched = false,
+    this.basisReadTokens,
+    this.durationMs,
+    this.usage,
   });
 
   /// 1-based pass number.
@@ -127,6 +131,22 @@ final class AutoCompactorPass {
   /// gh-2096: whether this pass was decided by the cross-run judge-health
   /// latch (a latched skip or a probe receipt).
   final bool judgeLatched;
+
+  /// gh-2097: the upward basis jump this pass's post-append re-read
+  /// revealed (the session projection held more than the in-memory view
+  /// did at measurement time — a second writer). The report renders it
+  /// as `basis re-read: +N` instead of a clamped `0 freed`. Null when
+  /// the re-read landed on the same basis. A count only, never content.
+  final int? basisReadTokens;
+
+  /// gh-2101: the pass's wall-clock duration in milliseconds — the
+  /// one-line report's latency metric. Null on unmeasured passes.
+  final int? durationMs;
+
+  /// gh-2101: the metered usage of the LM calls this pass consumed —
+  /// the details report's cost/cache-hit metrics. Null when the pass
+  /// made no metered call (or no usage was reported).
+  final CompactionUsageTotals? usage;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -174,6 +194,7 @@ final class AutoCompactor {
     required this.mainSummary,
     required this.smolModel,
     required this.hooks,
+    this.usage,
     this.memoryExtractionHook,
     this.prompts = defaultCompactionPrompts,
     this.operativeSkills = const [],
@@ -215,6 +236,11 @@ final class AutoCompactor {
 
   /// Progress / error sink.
   final AutoCompactorHooks hooks;
+
+  /// gh-2101: the run's LM usage ledger — the factory wires ONE ledger the
+  /// summarizer adapters fold into; `_runPass` snapshots per-pass deltas
+  /// for the pass receipts. `null` keeps the legacy shape (no metrics).
+  final CompactionUsageAccumulator? usage;
 
   /// Optional Phase 2 hook: forwarded to every [CompactionManager] so
   /// durable-fact extraction (CLI long-term memory, future Flutter
@@ -447,6 +473,10 @@ final class AutoCompactor {
     required bool runFallback,
     required Stopwatch clock,
   }) async {
+    // gh-2101: the pass's measured window — the attempt(s), the local trim
+    // and the transcript re-stamp all belong to the pass's duration/usage.
+    final watch = Stopwatch()..start();
+    final usageBefore = usage?.snapshot();
     final tokensBefore = _requestTokens();
     final mainModel = state.model;
     final smolModel = this.smolModel;
@@ -476,6 +506,8 @@ final class AutoCompactor {
             fallback: 'local-trim',
             ok: true,
             droppedMessages: trimmed.dropped,
+            durationMs: watch.elapsedMilliseconds,
+            usage: _passUsage(usageBefore),
           ),
         );
         hooks.onDone(pass, tokensAfter);
@@ -541,6 +573,8 @@ final class AutoCompactor {
         summary: attempt.summary,
         hiddenRecords: attempt.hiddenRecords,
         summarizedMessages: attempt.summarizedMessages,
+        durationMs: watch.elapsedMilliseconds,
+        usage: _passUsage(usageBefore),
       ),
     );
     if (!shouldCompact(tokensAfter, window, settings) && !_overMessageCap()) {
@@ -548,6 +582,17 @@ final class AutoCompactor {
       return (done: true, success: true);
     }
     return (done: false, success: false);
+  }
+
+  /// gh-2101: the usage this pass consumed over an earlier snapshot — null
+  /// when no run ledger is wired or no metered call landed in the window.
+  CompactionUsageTotals? _passUsage(CompactionUsageTotals? earlier) {
+    final ledger = usage;
+    if (ledger == null) return null;
+    final delta = ledger.snapshot().deltaFrom(
+      earlier ?? CompactionUsageTotals.zero,
+    );
+    return delta.calls == 0 ? null : delta;
   }
 
   /// Emergency valve when both summarizers are down and the transcript is
@@ -991,11 +1036,16 @@ PinnedOperativePayload? pinnedOperativePayloadOf(List<Skill> skills) {
 /// wires the smol/main summarizers with the configured
 /// [CompactionPrompts] and optional memory hook, then runs the loop.
 ///
+/// Not const-constructible since gh-2101: the factory memoizes its
+/// per-run cache policy + usage ledger (mutable fields), so a factory
+/// instance IS one compaction run's identity — never share one across
+/// concurrent runs.
+///
 /// When [force] is `true` the compactor skips [shouldCompact] — used by
 /// manual `/compact` so the user can force a compaction regardless of
 /// the auto-trigger threshold.
 class AutoCompactorFactory {
-  const AutoCompactorFactory({
+  AutoCompactorFactory({
     required this.session,
     required this.state,
     required this.window,
@@ -1062,6 +1112,20 @@ class AutoCompactorFactory {
   /// when the skills declare no operative lines).
   PinnedOperativePayload? get pinnedOperative =>
       pinnedOperativePayloadOf(operativeSkills);
+
+  /// gh-2101: ONE cache policy per run — every digest/judge call the run
+  /// makes shares its routing id (one provider cache bucket). Memoized:
+  /// the id must be stable across the adapters built during the run.
+  CompactionCachePolicy? _cachePolicyInst;
+  CompactionCachePolicy get _cachePolicy =>
+      _cachePolicyInst ??= CompactionCachePolicy.affine();
+
+  /// gh-2101: ONE usage ledger per run — the judge and digest adapters
+  /// fold every metered call into it; the engines snapshot per-pass
+  /// deltas from it for the pass receipts.
+  CompactionUsageAccumulator? _usageLedgerInst;
+  CompactionUsageAccumulator? get _usageLedger =>
+      _usageLedgerInst ??= CompactionUsageAccumulator();
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
@@ -1183,6 +1247,11 @@ class AutoCompactorFactory {
       state: state,
       window: window,
       settings: settings,
+      // gh-2101: ONE cache-affine policy + ONE usage ledger per run,
+      // shared by the judge and the digest — every call of the run lands
+      // in the same provider cache bucket and every metered call folds
+      // into the pass receipts.
+      usage: _usageLedger,
       // gh-2044 rework (review thread 3): the factory's run token is the
       // AUTHORITATIVE user-abort signal for the engine's `_runCancelled`.
       // Before this wiring the engine inferred "user abort" from a
@@ -1209,8 +1278,15 @@ class AutoCompactorFactory {
         smolModel,
         system: prompts.hideJudgeSystem,
         onDelta: hooks.onDelta,
+        cachePolicy: _cachePolicy,
+        onUsage: _usageLedger?.add,
       ),
-      summarize: streamFunctionSummarizer(smolStream, smolModel),
+      summarize: streamFunctionSummarizer(
+        smolStream,
+        smolModel,
+        cachePolicy: _cachePolicy,
+        onUsage: _usageLedger?.add,
+      ),
       // Issue #729: the checkpoint payloads are bounded by the
       // SUMMARIZER's window (the smol role when configured), not the main
       // model's.
@@ -1270,17 +1346,23 @@ class AutoCompactorFactory {
     // (text + thinking) to the host hooks — on the classic engine the
     // summarizer IS the whole compaction, and its stream used to vanish
     // behind a busy row that does not exist in a captured log.
+    // gh-2101: the classic summarizers share the run's cache policy and
+    // usage ledger with the structured path — one bucket, one accounting.
     final smolSummarizer = streamFunctionSummarizer(
       smolStream,
       smolModel,
       prompts: prompts,
       onDelta: hooks.onDelta,
+      cachePolicy: _cachePolicy,
+      onUsage: _usageLedger?.add,
     );
     final mainSummarizer = streamFunctionSummarizer(
       sources.mainStream,
       sources.mainModel,
       prompts: prompts,
       onDelta: hooks.onDelta,
+      cachePolicy: _cachePolicy,
+      onUsage: _usageLedger?.add,
     );
     return AutoCompactor(
       session: session,
@@ -1291,6 +1373,7 @@ class AutoCompactorFactory {
       mainSummary: mainSummarizer,
       smolModel: sources.smolModel,
       hooks: hooks,
+      usage: _usageLedger,
       memoryExtractionHook: memoryExtractionHook,
       prompts: prompts,
       maxPasses: maxPasses,
@@ -1356,6 +1439,13 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         judgeInputTokens: pass.judgeInputTokens,
         judgeElapsedMs: pass.judgeElapsedMs,
         judgeLatched: pass.judgeLatched,
+        // gh-2097: the upward re-read basis jump rides to the host
+        // reporting — a count only, never content.
+        basisReadTokens: pass.basisReadTokens,
+        // gh-2101: the pass metrics ride to the host reporting — a
+        // duration and metered usage (cost/cache-hit), never content.
+        durationMs: pass.durationMs,
+        usage: pass.usage,
       ),
     );
   }

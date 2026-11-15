@@ -3,18 +3,17 @@
 <plist version="1.0">
 <dict>
 	<!-- Hardened runtime: keep the JIT entitlement so the Flutter engine is
-	     happy even without the App Sandbox. -->
+	     happy even without the App Sandbox (#2132: the shipped set is
+	     EXACTLY these three keys — the personal-information/healthkit
+	     claims were stale junk no desktop build should declare; they are
+	     sandbox-scoped or iOS-only and block profile-free Developer ID
+	     distribution). Pinned by
+	     test/ci_macos_nosandbox_entitlements_guard_test.dart. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>
-	<true/>
-	<key>com.apple.security.personal-information.calendars</key>
-	<true/>
-	<key>com.apple.security.personal-information.addressbook</key>
-	<true/>
-	<key>com.apple.developer.healthkit</key>
 	<true/>
 </dict>
 </plist>

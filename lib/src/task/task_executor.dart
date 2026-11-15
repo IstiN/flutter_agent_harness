@@ -33,6 +33,7 @@ import '../compaction/compaction.dart';
 import '../compaction/context_pressure.dart';
 import '../compaction/context_window_registry.dart';
 import '../compaction/token_estimation.dart';
+import '../compaction/tuning.dart';
 import '../context.dart';
 import '../json_parse.dart';
 import '../model.dart';
@@ -89,6 +90,7 @@ final class TaskExecutor {
     this.childSessionFactory,
     this.childSessionOpener,
     this.compactionEngine,
+    this.compactionTuning,
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
@@ -212,6 +214,12 @@ final class TaskExecutor {
   /// Compaction engine for proactive child compaction (issue #439); null
   /// resolves to the AutoCompactor default (structured).
   final CompactionEngine? compactionEngine;
+
+  /// The `compaction:` yaml trigger tuning (gh-2098) applied over the
+  /// children's `CompactionSettings.forWindow` curve — the same policy
+  /// the host's main agent rides (the CLI passes its parsed section;
+  /// null keeps the children byte-identically on the gh-1742 curve).
+  final CompactionTuning? compactionTuning;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -728,7 +736,14 @@ final class TaskExecutor {
     if (manager == null || childSessionFactory == null) return false;
     final window = _childContextWindow(wiring.model);
     if (window <= 0) return false;
-    final settings = CompactionSettings.forWindow(window);
+    // gh-2098: the host's `compaction:` tuning applies over the
+    // forWindow curve for children too — the same policy the main
+    // agent's gate rides; null keeps the curve byte-identically.
+    final settings = applyCompactionTuning(
+      CompactionSettings.forWindow(window),
+      window: window,
+      tuning: compactionTuning,
+    );
     final transcriptEst = estimateRequestTokens(
       child.state.messages,
       systemPrompt: child.state.systemPrompt,

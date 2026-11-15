@@ -77,11 +77,14 @@ void main() {
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
       // Request 1 delegates to `read big.txt` → the executed result carries
-      // ~11.5k tokens → the loop's guard refuses request 2. On main since
-      // #417 the loop retries with its own intra-loop compaction first
-      // (call 2, frees nothing here), then lands the error stop; the
-      // settle path's compaction (call 3) hides the tool result and frees
-      // the window → the continuation turn (call 4) finishes the task.
+      // ~11.5k tokens → the loop's guard refuses request 2. Since gh-209
+      // the mid-turn relief is the deterministic emergency tier — it
+      // attempts NO language-model call (the single read group stays
+      // inside its keep budget and the valve floor pins below the newest
+      // message, so it frees nothing here) → the guard stop lands. The
+      // settle path (a turn boundary) owns the quality tier: its
+      // compaction (call 2) hides the tool result and frees the window →
+      // the continuation turn (call 3) finishes the task.
       final stream = FakeStreamFunction([
         bigReadTurn(),
         textTurn('summary of the compacted history'),
@@ -104,20 +107,21 @@ void main() {
 
       final exitCode = await cli.runHeadless('count the words');
 
-      // Guard stop → intra-loop compaction attempt (call 2, frees
-      // nothing) → settle-path compaction (call 3, frees the window) →
-      // continuation turn (call 4): the task DROVE TO COMPLETION.
+      // Guard stop → the deterministic relief (zero LM calls mid-turn) →
+      // settle-path compaction (call 2, frees the window) → continuation
+      // turn (call 3): the task DROVE TO COMPLETION.
       expect(exitCode, 0, reason: 'the continued turn finished normally');
       expect(
         stream.calls,
-        4,
+        3,
         reason:
-            'guard refused request 2; two compaction attempts + '
-            'continuation follow',
+            'guard refused request 2; the mid-turn relief is '
+            'deterministic (no LM), so only the settle-path compaction '
+            'and the continuation follow',
       );
       // The continuation is the notice prompt, not a bare retry of the
       // original user text.
-      final lastPrompt = stream.contexts[3].messages
+      final lastPrompt = stream.contexts[2].messages
           .whereType<UserMessage>()
           .last;
       expect(

@@ -68,7 +68,10 @@ extension ComposerChipsSubmit on AgentCli {
         // Runs are fire-and-forget (_startRun only records the future):
         // wait for the run to actually settle so the busy spinner lives
         // for the whole stream instead of flashing for one frame.
-        await _settled;
+        // gh-2168: an exit submit aborted the run — settle BOUNDED, so a
+        // token-ignoring wedged provider cannot park the quit before
+        // sendQuit is even scheduled.
+        await (_exited ? waitForIdle() : _settled);
         await _drainTuiQueue(controller);
       }, (error) => io.writeln(tuiError(submitErrorPanelLine(error))));
     } finally {

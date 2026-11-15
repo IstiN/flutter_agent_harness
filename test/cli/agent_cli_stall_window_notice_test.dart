@@ -81,14 +81,21 @@ void main() {
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         steeringStaleAfter: const Duration(milliseconds: 80),
+        // Issue #2117: the passive `info:` stall banner obeys the console
+        // dial — these tests pin its CONTENT, so they boot at `info`
+        // (the default `warn` hides it; covered by
+        // console_log_dial_test.dart).
+        logging: const ResolvedLogSettings(consoleLevel: LogLevel.info),
       ),
       io: io,
       streamFunction: wedgedCall,
     );
     final run = cli.run();
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await waitForIt(() async => (await repo.list(cwd: '/work')).isNotEmpty,
-        reason: 'session persisted');
+    await waitForIt(
+      () async => (await repo.list(cwd: '/work')).isNotEmpty,
+      reason: 'session persisted',
+    );
     io.sendLine('start');
     await waitForIt(() => cli.isBusy, reason: 'run started');
     // Cleanup even when an assertion fails mid-test: a dangling wedged
@@ -116,7 +123,7 @@ void main() {
     expect(out, contains('idle window 1980s'));
     expect(out, contains('model override'));
     expect(out, contains('the run keeps waiting'));
-  }, timeout: const Timeout(Duration(seconds: 90)));
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('AC3: unset config keeps the banner byte-for-byte — no window '
       'naming', () async {
@@ -128,7 +135,7 @@ void main() {
     expect(out, contains('agent stalled'));
     expect(out, isNot(contains('idle window')));
     expect(out, isNot(contains('the run keeps waiting')));
-  }, timeout: const Timeout(Duration(seconds: 90)));
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   test('AC2: a registry entry governs the banner source for its URL', () async {
     providerTuningRegistry.register(
@@ -143,5 +150,5 @@ void main() {
     final out = io.out.toString();
     expect(out, contains('idle window 1200s'));
     expect(out, contains('provider:llama-local'));
-  }, timeout: const Timeout(Duration(seconds: 90)));
+  }, timeout: const Timeout(Duration(seconds: 30)));
 }

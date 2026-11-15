@@ -1627,6 +1627,110 @@ compaction:
       expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, 300);
     });
 
+    test('compaction tuning keys round-trip (gh-2098)', () async {
+      final original = CliConfig(
+        compactionTuning: const CompactionTuning(
+          triggerRatio: 0.8,
+          keepRecentTokens: 80000,
+        ),
+      );
+      await saveCliConfig(tmp.path, original);
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.compactionTuning?.triggerRatio, 0.8);
+      expect(loaded.compactionTuning?.keepRecentTokens, 80000);
+      expect(loaded.compactionTuning?.reserveTokens, isNull);
+    });
+
+    test('compaction tuning defaults to null when absent (gh-2098)', () {
+      expect(loadCliConfig(tmp.path).compactionTuning, isNull);
+    });
+
+    test('a junk compaction.triggerRatio is a strict config error '
+        '(gh-2098)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  triggerRatio: most\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('triggerRatio'),
+          ),
+        ),
+      );
+    });
+
+    test('an out-of-range compaction.triggerRatio is a strict config '
+        'error (gh-2098)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  triggerRatio: 1\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('strictly between 0 and 1'),
+          ),
+        ),
+      );
+    });
+
+    test('a junk compaction.reserveTokens is a strict config error '
+        '(gh-2098)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('compaction:\n  reserveTokens: soon\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('reserveTokens'),
+          ),
+        ),
+      );
+    });
+
+    test('triggerRatio + reserveTokens together is a strict config error '
+        '(gh-2098)', () async {
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(
+          'compaction:\n  triggerRatio: 0.75\n  reserveTokens: 50000\n',
+        );
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('mutually exclusive'),
+          ),
+        ),
+      );
+    });
+
+    test('a caller that carries no tuning keeps the on-disk keys '
+        '(gh-2098)', () async {
+      final seed = '''
+compaction:
+  triggerRatio: 0.75
+  keepRecentTokens: 12000
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+      await saveCliConfig(tmp.path, CliConfig());
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.compactionTuning?.triggerRatio, 0.75);
+      expect(loaded.compactionTuning?.keepRecentTokens, 12000);
+    });
+
     test('compaction.judgeBudgetSeconds defaults to null when absent '
         '(issue #541)', () {
       expect(loadCliConfig(tmp.path).compactionJudgeBudgetSeconds, isNull);

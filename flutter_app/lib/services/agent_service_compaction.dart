@@ -348,12 +348,13 @@ extension CompactionWindowSizing on AgentService {
     return afterTokens < transcriptTokens;
   }
 
-  /// ONE synchronous compaction for the loop's over-window guard (the
-  /// issue #387 analogue, gh-1077 AC4): the guard calls this when a
-  /// request is about to be refused as over-window. Returns the relieved
-  /// transcript to retry with, or `null` when compaction freed nothing —
-  /// the loop then surfaces its verbatim guard error. The guard bounds
-  /// this to ONE attempt per response; there is no loop here either.
+  /// ONE synchronous DETERMINISTIC pass for the loop's over-window guard
+  /// (the issue #387 analogue, gh-1077 AC4; gh-209 moved it to the
+  /// emergency tier): the guard calls this when a request is about to be
+  /// refused as over-window. Returns the relieved transcript to retry
+  /// with, or `null` when compaction freed nothing — the loop then
+  /// surfaces its verbatim guard error. The guard bounds this to ONE
+  /// attempt per response; there is no loop here either.
   Future<List<Message>?> _relieveOverWindow(List<Message> overWindow) async {
     if (_session == null) return null;
     overWindowReliefCountForTest++;
@@ -365,7 +366,36 @@ extension CompactionWindowSizing on AgentService {
       tools: tools,
     );
     AppLog.i('compaction', 'over-window relief start tokens=$beforeTokens');
-    await _maybeAutoCompact();
+    // gh-2097: drain the pending persist BEFORE compacting. The
+    // structured engine re-anchors the agent state on the session
+    // projection at run start, so a transcript with messages still in
+    // flight (the crash-safe persister appends unawaited — the just-sent
+    // user message rides in memory only) would re-anchor onto a
+    // projection that lacks them: the live context silently loses the
+    // newest message and the trim valve finds nothing droppable. Same
+    // ordering as [_onAgentEnd] and the CLI's over-window funnel
+    // (`_persistMessages` before compaction); best effort like every
+    // persist pass — a failed flush keeps the pre-gh-2097 behavior.
+    try {
+      await _persist();
+    } on Object {
+      // The transcript stays in memory; the next trigger retries the
+      // missed appends (see _persistedCount).
+    }
+    // gh-209: the relief path runs ONLY the deterministic emergency tier
+    // (hide stale tool groups + the local trim valve — seconds, no LM).
+    // The quality tier owns the turn boundaries ([_maybeAutoCompact]
+    // after each run); a slow judge can no longer stall an in-turn
+    // overflow.
+    final wiring = _compactionWiring;
+    if (wiring.conversationWindow > 0) {
+      await EmergencyRelief(
+        session: _session!,
+        state: _agent.state,
+        window: wiring.conversationWindow,
+        settings: wiring.settings,
+      ).run();
+    }
     final after = _agent.state.messages.toList();
     final afterTokens = estimateRequestTokens(
       after,
@@ -376,6 +406,14 @@ extension CompactionWindowSizing on AgentService {
       AppLog.i('compaction', 'over-window relief no-op');
       return null;
     }
+    // The relief replaced `state.messages`; mirror it into the chat list
+    // so the UI reflects the relieved transcript (same contract as the
+    // post-run compaction path above).
+    _persistedCount = after.length;
+    messages
+      ..clear()
+      ..addAll(after.map(_toChatMessage));
+    _notify();
     AppLog.i(
       'compaction',
       'over-window relief done tokens=$afterTokens (was $beforeTokens)',

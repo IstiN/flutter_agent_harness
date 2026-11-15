@@ -20,11 +20,9 @@ import 'package:fa/services/upload_picker_stub.dart'
     if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa_ui/fa_ui.dart' hide formatFileSize;
 
-/// The default [ProjectFolderOps] on supported platforms (macOS), else null.
-ProjectFolderOps? _defaultProjectFolderOps() =>
-    ProjectFolderChannelOps.isSupported
-    ? const ProjectFolderChannelOps()
-    : null;
+/// The default [ProjectFolderOps] per platform: security-scoped bookmarks
+/// on macOS/iOS, the plain file selector on Windows/Linux, else null.
+ProjectFolderOps? _defaultProjectFolderOps() => defaultProjectFolderOps();
 
 /// Width of the file browser panel (right side panel on wide layouts, end
 /// drawer on narrow ones).
@@ -368,12 +366,36 @@ class _FileBrowserState extends State<FileBrowser> {
   /// an unmounted host has no '/project' to open, and asking for the
   /// segment anyway reported 'Could not open folder' in place of the
   /// personal (container/sandbox) root listing.
-  String get _envPath => _segments.isEmpty
-      ? (_mountEnv?.mountedRoot != null ? projectMountSegment : '.')
-      : _segments.join('/');
+  ///
+  /// The segment prefix covers SUBDIRECTORY navigation and file opens
+  /// too (gh-2131): segments are relative to [ExecutionEnv.cwd], which
+  /// at a live mount is '/project' — forwarding them bare made the
+  /// delegate resolve every entered folder and every opened file
+  /// against the container cwd ("Could not open folder" /
+  /// "Could not load file · No such file or directory"). A cwd override
+  /// (a per-chat sandbox folder session with a mount below) keeps plain
+  /// cwd-relative paths — its cwd is the override folder, not the mount.
+  bool get _navigatesMountNamespace =>
+      _mountEnv?.mountedRoot != null &&
+      envCwdResolvesToMountSegment(widget.env);
 
-  String _childPath(String name) =>
-      _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+  String get _envPath {
+    if (_segments.isEmpty) {
+      return _navigatesMountNamespace ? projectMountSegment : '.';
+    }
+    final joined = _segments.join('/');
+    return _navigatesMountNamespace ? '$projectMountSegment/$joined' : joined;
+  }
+
+  String _childPath(String name) {
+    final joined = _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+    // The mount namespace prefix covers EVERY depth (gh-2131 round 3):
+    // a subfolder's child path ('src/nested.txt') resolved against the
+    // container cwd exactly like the root-level open did — subfolder
+    // file opens failed and subfolder uploads silently landed in the
+    // container instead of the mount.
+    return _navigatesMountNamespace ? '$projectMountSegment/$joined' : joined;
+  }
 
   List<String> _segmentsOf(String path) => [
     for (final segment in path.split('/'))
@@ -819,7 +841,7 @@ class _FileBrowserState extends State<FileBrowser> {
       );
     }
     final canPick =
-        widget.projectFolderOps != null || ProjectFolderChannelOps.isSupported;
+        widget.projectFolderOps != null || defaultProjectFolderOps() != null;
     if (!canPick) return null;
     return FaHeaderAction(
       key: const ValueKey('fileBrowserMount'),

@@ -62,8 +62,7 @@ enum ProviderPreset {
   /// Whether this preset is an on-device provider, which replaces the
   /// key/model/URL fields with a model picker and a download bar.
   bool get isOnDevice =>
-      this == ProviderPreset.webllm ||
-      this == ProviderPreset.transformersJs;
+      this == ProviderPreset.webllm || this == ProviderPreset.transformersJs;
 
   /// Short label shown in the provider picker.
   String labelFor(BuildContext context) => label(FaUiStrings.of(context));
@@ -179,6 +178,20 @@ String? modelsDispatchHintFor(String baseUrl) {
 /// is the only signal there.
 String? modelsDispatchHintForEntry(String? kind, String baseUrl) =>
     kind ?? modelsDispatchHintFor(baseUrl);
+
+/// The chat provider kind for a registry-entry selection (issue #2156): a
+/// persisted identity ([CustomProvider.kind]) wins, then the URL-shape
+/// dialects ([modelsDispatchHintFor]), then Google's endpoint (the Gemini
+/// adapter handles inlineData images); everything else speaks plain
+/// openai-completions. The ONE mapping every picker and the agent-side
+/// provider→live-model linkage apply, so a chat switched onto an entry
+/// rides the same wire the model pickers dispatched it on.
+String providerKindForEntry(String? kind, String baseUrl) {
+  final hint = kind ?? modelsDispatchHintFor(baseUrl);
+  if (hint != null) return hint;
+  if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
+  return 'openai-completions';
+}
 
 /// The hosted endpoint presets listed by the Providers section, the
 /// default-chat-model picker, and the media slot editor (the ad-hoc

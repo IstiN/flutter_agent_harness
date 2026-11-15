@@ -15,9 +15,16 @@
 /// from `package:flutter_agent_harness/io.dart`).
 library;
 
+import '../session/record_quarantine.dart'
+    show QuarantinedRecord, SessionQuarantine, topLevelTimestampValue;
 import '../session/session_storage.dart'
     show parseSessionEntryLine, parseShallowCustomRecord;
 import '../session/session_record.dart';
+
+// Re-export so the CLI boot wiring (agent_cli.dart — held at the 2800-line
+// loc ceiling by its part-file splits) can reach SessionQuarantine through
+// an import it already carries instead of adding one.
+export '../session/record_quarantine.dart' show SessionQuarantine;
 
 /// Max lines per parse transfer.
 const int sessionParseBatchMaxLines = 500;
@@ -63,13 +70,21 @@ final class SessionParseBatch {
 
 /// Per-line parse outcomes, parallel to [SessionParseBatch.lines].
 final class SessionParseResult {
-  const SessionParseResult(this.records);
+  const SessionParseResult(this.records, [this.quarantined = const []]);
 
   /// The parsed record for each submitted line, or `null` for a
   /// torn/foreign line — parse failures are DATA here, so the caller's
   /// quarantine/skip flow stays byte-identical to the inline path (issue
   /// #199 E2/AC4).
   final List<SessionRecord?> records;
+
+  /// gh-2178: the quarantined-record findings of this batch (records
+  /// whose timestamp degraded). The inline path already fired the
+  /// process sink; the isolate path CANNOT (statics are per-isolate), so
+  /// the caller replays these on the main isolate — the reporter's
+  /// per-record dedupe makes a replay of an already-fired finding a
+  /// no-op.
+  final List<QuarantinedRecord> quarantined;
 }
 
 /// Where CPU-bound session JSONL parsing runs (issue #199).
@@ -191,18 +206,32 @@ Future<List<SessionRecord?>> parseSessionLines(
     )
       worker(),
   ]);
+  // gh-2178: replay the isolate workers' quarantine findings on THIS
+  // isolate — the workers cannot reach the process sink (statics are
+  // per-isolate). Dedupe makes a replay of an already-fired finding a
+  // no-op.
+  for (final result in results) {
+    for (final finding in result!.quarantined) {
+      SessionQuarantine.reportRecord(finding);
+    }
+  }
   return [for (final result in results) ...result!.records];
 }
 
 /// Parses one batch right here — the inline executor's body and the
 /// isolate worker's entry point share it, so both paths run the exact same
 /// parse code (issue #199 AC4 parity).
+///
+/// gh-2178: the batch's quarantined-record findings ride the RESULT (not
+/// just the process sink) — the isolate worker cannot fire the main
+/// isolate's sink, so [parseSessionLines] replays them there.
 SessionParseResult parseSessionEntryLinesSync(SessionParseBatch batch) {
   final records = List<SessionRecord?>.filled(
     batch.lines.length,
     null,
     growable: false,
   );
+  final quarantined = <QuarantinedRecord>[];
   for (var i = 0; i < batch.lines.length; i++) {
     try {
       // Issue #503 round 3b: the resume boundary walk parses giant
@@ -219,9 +248,24 @@ SessionParseResult parseSessionEntryLinesSync(SessionParseBatch batch) {
             batch.filePath,
             batch.firstLineNumber + i,
           );
+      // gh-2178 site 3: a shallow-parsed record whose timestamp degraded
+      // quarantines with the batch's coordinates (the inline
+      // `parseSessionEntryLine` path reports for itself; the dedupe key
+      // file+record-id keeps a replay a no-op).
+      final record = records[i];
+      if (record != null && record.timestampDegraded) {
+        final finding = QuarantinedRecord(
+          filePath: batch.filePath,
+          lineNumber: batch.firstLineNumber + i,
+          recordId: record.id,
+          rawTimestamp: topLevelTimestampValue(batch.lines[i]) ?? '',
+        );
+        quarantined.add(finding);
+        SessionQuarantine.reportRecord(finding);
+      }
     } on Object {
       records[i] = null; // torn/foreign line: data, not an error
     }
   }
-  return SessionParseResult(records);
+  return SessionParseResult(records, quarantined);
 }

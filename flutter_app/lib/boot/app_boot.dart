@@ -423,7 +423,19 @@ void _teeDebugPrintIntoAppLog() {
 /// before the first frame (black screen on macOS/iOS). Reuse the natively
 /// configured app in that case.
 Future<void> _initFirebaseApp() async {
-  final options = DefaultFirebaseOptions.currentPlatform;
+  final FirebaseOptions options;
+  try {
+    options = DefaultFirebaseOptions.currentPlatform;
+  } on Object catch (error) {
+    // Platforms with no Firebase registration (Windows/Linux desktop with
+    // the template options — issue: Windows boot died before the first
+    // frame) throw from the generated switch before the placeholder check
+    // below can run. Firebase is telemetry-only: degrade and boot without.
+    debugPrint(
+      '[fah] firebase options unavailable, continuing without: $error',
+    );
+    return;
+  }
   final inExtension = Uri.base.scheme == 'chrome-extension';
   if (inExtension || options.apiKey.startsWith('YOUR_')) return;
   try {
@@ -578,6 +590,9 @@ Future<void> bootExtensionRelay({
   final manager = FlutterSessionManager(
     env: resolvedEnv,
     sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+    // #2138 HOLE-1: desktop builds ALWAYS enforce ownership (null = web,
+    // where no atomic publish exists — E5).
+    leaseStore: defaultLeaseStore(resolvedEnv),
   );
   try {
     final relay = await (createRelay ?? RelayAgentService.create)();

@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -202,5 +203,120 @@ void main() {
     );
     expect(managed.id, meta.id);
     expect(mgr.activeId, meta.id);
+  });
+
+  test(
+    'AC3 (#2138 HOLE-2): a publish failure on an enforceable backend '
+    'refuses the drive loudly (LeaseRefusedException, factory never runs)',
+    () async {
+      final meta = await persisted('unprovable');
+      var factoryCalls = 0;
+      final mgr = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        leaseStore: store,
+      );
+
+      // The sidecar path is a DIRECTORY: the atomic publish (temp write
+      // is fine, the rename lands on a directory) fails on every leg —
+      // the enforceable MemoryFileSystem cannot prove the session free.
+      await env.createDir(store.sidecarPath(meta.path));
+
+      await expectLater(
+        mgr.openSession(
+          meta,
+          config: _config,
+          serviceFactory: () async {
+            factoryCalls++;
+            return _fakeService(env);
+          },
+        ),
+        throwsA(isA<LeaseRefusedException>()),
+      );
+      expect(factoryCalls, 0, reason: 'no AgentService, no second writer');
+      expect(mgr.activeId, isNot(meta.id));
+    },
+  );
+
+  test('AC4 (#2138 HOLE-1): the bootstrap-shaped construction carries a WIRED '
+      'lease store on desktop — the app can never again drive unleased '
+      'because nobody built the store', () async {
+    // The exact shape every production bootstrap uses (main.dart,
+    // app_boot.dart): no explicit store — the policy helper decides.
+    final bootstrapped = FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      leaseStore: defaultLeaseStore(env),
+    );
+    expect(bootstrapped.leaseStore, isNotNull);
+
+    // And the wiring is live enforcement, not a decoration: a drive-open
+    // through the default store acquires the sidecar.
+    final meta = await persisted('wired');
+    await bootstrapped.openSession(
+      meta,
+      config: _config,
+      serviceFactory: () async => _fakeService(env),
+    );
+    expect(
+      (await bootstrapped.leaseStore!.inspect(meta.path)).state,
+      LeaseState.live,
+    );
+    await bootstrapped.closeSession(meta.id);
+  });
+
+  test(
+    'AC4 (#2138 HOLE-1): a null store proceeds BUT says so loudly',
+    () async {
+      final meta = await persisted('nostore');
+      await seedLease(meta.path);
+      final warnings = <String>[];
+      final previous = debugPrint;
+      debugPrint = (message, {wrapWidth}) {
+        if (message != null) warnings.add(message);
+      };
+      try {
+        final mgr = manager(); // leaseStore: null — web / test-only path.
+        final managed = await mgr.openSession(
+          meta,
+          config: _config,
+          serviceFactory: () async => _fakeService(env),
+        );
+        expect(managed.id, meta.id);
+      } finally {
+        debugPrint = previous;
+      }
+      expect(
+        warnings.join('\n'),
+        contains('no lease store'),
+        reason: 'store-null must never degrade silently again',
+      );
+    },
+  );
+
+  testWidgets('AC4 (#2138): disposing the manager releases the drive lease and '
+      'cancels the heartbeat — no pending timer survives teardown', (
+    tester,
+  ) async {
+    final meta = await persisted('lifecycle');
+    final mgr = manager(lease: store);
+    await mgr.openSession(
+      meta,
+      config: _config,
+      serviceFactory: () async => _fakeService(env),
+    );
+    expect((await store.inspect(meta.path)).state, LeaseState.live);
+
+    // Walk away WITHOUT closeSession (the boot/test teardown shape).
+    // The service's own external-session watcher timer is disposed
+    // first (pre-existing shape — boot_flows_test does the same), so
+    // the binding's !timersPending invariant at test end isolates the
+    // MANAGER's lease heartbeat: dispose must release the lease AND
+    // kill the 5s heartbeat timer.
+    mgr.dispose();
+    expect((await store.inspect(meta.path)).state, LeaseState.free);
+    for (final s in mgr.sessions) {
+      s.service.dispose();
+    }
   });
 }

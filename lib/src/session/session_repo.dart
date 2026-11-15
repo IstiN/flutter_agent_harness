@@ -21,6 +21,7 @@ import '../session_io_retry.dart';
 import '../session_retention.dart' show sessionIdFromSessionPath;
 import 'session_chunk_reader.dart';
 import '../session_listing_index.dart';
+import 'record_quarantine.dart' show parseRecordTimestamp;
 import 'session_record.dart';
 import 'session_search.dart';
 import 'session_storage.dart';
@@ -1519,9 +1520,11 @@ final class JsonlSessionRepo implements SessionRepo {
         // the way the cold scan parses the header line — a served row is
         // indistinguishable from a re-read one (AC2's byte-comparable
         // metadata). lastUpdatedAt comes from the file stat, which the
-        // cold scan serves local — match that too.
+        // cold scan serves local — match that too. gh-2178 second tier:
+        // a poisoned index row degrades to the placeholder instead of
+        // failing the whole listing.
         id: entry.id,
-        createdAt: DateTime.parse(entry.createdAtIso),
+        createdAt: parseRecordTimestamp(entry.createdAtIso).value,
         cwd: entry.cwd,
         path: entry.path,
         lastUpdatedAt: entry.lastUpdatedAtMs == null

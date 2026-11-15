@@ -17,6 +17,8 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -122,6 +124,15 @@ void main() {
       await bootServices();
       // No .env loaded under the test runner: the override stays unset.
       expect(providerFilterEnvOverride, isNull);
+    });
+    test('degrades on platforms with no Firebase registration', () async {
+      // The template firebase_options throw `Unsupported operation` for
+      // platforms without a registration (Windows/Linux desktop) — the
+      // services stage must degrade to no-Firebase, not kill the boot
+      // before the first frame (Windows desktop black screen).
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await bootServices();
     });
   });
 

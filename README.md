@@ -123,7 +123,9 @@ fa's results on [facebookresearch/ProgramBench](https://github.com/facebookresea
   the REPL. One OpenAI-compatible adapter is reused via `baseUrl` swap.
 - **Sessions**: append-only JSONL trees (branching, labels, tree
   navigation with branch summaries), token-based auto-compaction with a
-  structured summary prompt, and attached-session support (watch a live
+  structured summary prompt and a configurable trigger
+  (`compaction.triggerRatio`, [docs/compaction.md](docs/compaction.md)),
+  and attached-session support (watch a live
   CLI session and hand it input from the Flutter app).
 - **Tools**: `read` (trailing selectors, archives, SQLite), `write`, `ls`,
   `bash` (background jobs, timeout-retry for transient stalls, per-turn
@@ -369,7 +371,8 @@ stub.
 
 `/provider`, `/models`, `/model`, `/approval`, `/allow`, `/tools`,
 `/skills`, `/agents`, `/tasks`, `/trajectory [view|cost|tail|inspect]`,
-`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
+`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/handoff`,
+`/checkpoint`/`/rewind`,
 `/mcp`, `/a2a`, `/dap`, `/stats`, `/mouse`, `/settings`, `/help` — plus
 every discovered skill as `/skill:<name>` (a bare `/<name>` alias works
 too). While a run streams, typed input steers the agent; Ctrl-C aborts

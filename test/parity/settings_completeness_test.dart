@@ -81,6 +81,18 @@ void main() {
       );
     });
 
+    test('the logging dial key is explicitly file-only (issue #2117)', () {
+      // The console noise dial (console/file levels, line pattern) is a
+      // CLI console/fa.log presentation choice: /log is live-only and
+      // never persists, the app has no console log sink — so the section
+      // is file-tuned, not a SharedSetting. Pinned explicitly so a later
+      // surface cannot silently inherit the classification.
+      expect(parserReadKeys, contains('logging'));
+      expect(settingForYamlKey('logging'), isNull);
+      expect(fileOnlyConfigKeys['logging'], isNotNull);
+      expect(fileOnlyConfigKeys['logging'], contains('2117'));
+    });
+
     test('classification is not accidental: an unknown key is rejected', () {
       // AC6 negative half: the predicate the gate rides must return false
       // for a key nobody classified (a new key landing in the parser

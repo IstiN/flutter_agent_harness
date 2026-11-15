@@ -68,7 +68,6 @@ class OnboardingScreen extends StatefulWidget {
 
 // Decorative colors inside the conversational mockups. App chrome and
 // semantic state colors come from the active Fa 2.0 direction below.
-const _kBubble = Color(0xFFE9EBFC);
 const _kNavy = Color(0xFF191B2E);
 const _kGreen = Color(0xFF10B981);
 const _kCardShadow = [

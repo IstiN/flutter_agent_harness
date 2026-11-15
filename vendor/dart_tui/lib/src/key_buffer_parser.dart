@@ -1,6 +1,19 @@
 import 'dart:convert';
 import 'msg.dart';
 
+/// Repairs Windows-console code-page mojibake in decoded rune text, set by
+/// `enableWindowsVtInput` when the console's ANSI code page is not UTF-8
+/// (a legacy RU-locale console hands the ANSI BYTE of the character over as
+/// if it were a code point: 'п' arrives as 'ï'). Null everywhere else —
+/// text passes through untouched. The hook keeps this file free of
+/// `dart:ffi` imports (the tables live in `windows_terminal.dart`).
+String Function(String text)? consoleTextRepair;
+
+String _repair(String text) {
+  final repair = consoleTextRepair;
+  return repair == null ? text : repair(text);
+}
+
 /// Parses [TeaKey]s from a byte buffer, covering the control-character and
 /// simple-escape-sequence subset of terminal input that isn't claimed by the
 /// CSI/OSC/DCS decoder in [TerminalInputDecoder].
@@ -161,7 +174,7 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
     try {
       final decoded = utf8.decode(buffer.sublist(0, len));
       buffer.removeRange(0, len);
-      return TeaKey(code: KeyCode.rune, text: decoded);
+      return TeaKey(code: KeyCode.rune, text: _repair(decoded));
     } catch (_) {
       // Continue trying shorter lengths or wait for more bytes
     }
@@ -193,10 +206,11 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
     return null; // genuinely partial: the rest of the character is in flight
   }
   // The head can never complete here: consume ONE byte so typing recovers
-  // instead of stalling. The byte surfaces as a Latin-1 rune rather than
+  // instead of stalling. The byte surfaces as a Latin-1 rune (repaired to
+  // the real character on a legacy-code-page Windows console) rather than
   // vanishing silently.
   buffer.removeAt(0);
-  return TeaKey(code: KeyCode.rune, text: String.fromCharCode(b0));
+  return TeaKey(code: KeyCode.rune, text: _repair(String.fromCharCode(b0)));
 }
 
 /// How many bytes a UTF-8 sequence starting with [b] occupies (1 for ASCII),

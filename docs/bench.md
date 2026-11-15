@@ -599,3 +599,47 @@ patches `DockerComposeManager._run_docker_compose_command` to re-log the
 captured output at ERROR (tail-capped to 32 KiB per stream) before the
 exception propagates — no invocation changes, no eager tb import.
 Opt-out: `FA_TB_LOG_COMPOSE_FAILURES=0`.
+
+## Bench round 3 knobs (issue #1392)
+
+The bench agent-timeout is no longer a wall-clock class: with
+`FA_PROGRESS_EXTENSION=1` a trial only dies by verdict — stall (a
+≥240s inter-record gap, `FA_STALL_GAP_SEC`), or the absolute ceiling
+(`FA_AGENT_TIMEOUT_ABS_CEILING_SEC`, default 3600s; bench.yml pins the
+tb harness cap above it, not 4x base). The watch, not the ladder, is
+what decides: `FA_PROGRESS_EXTENSION=1` alone still runs the legacy ×4
+ladder — the extension-on branch ALWAYS exports the abs-ceiling knob
+(`FA_AGENT_TIMEOUT_ABS_CEILING_SEC`, default 3600), because
+`TimeoutKnobs.watch_active` keys on a watch knob, not on the extension
+flag (round-3 review: a dispatched run that sets only the extension is
+a dispatched run that never watches). The harness cap around the
+adapter (tb `--global-agent-timeout-sec`, harbor's per-task
+`[agent] timeout_sec`) is an EXTERNAL cap, not a knob (gh-1576): both
+workflows export it as `FA_EXTERNAL_CAP_SEC` (a harbor shard gets the
+min of its tasks' declared timeouts via `bench/harbor_fa/split_tasks.py`)
+and the shared `bench/fa_agent_timeout.py` folds it into the deadline
+via min() — fa's clock can never outlive the harness kill. When the cap
+binds, the audit's `cap_resolution` block records the winning source and
+both inputs; the adapter's own kill at the cap is outcome `external_cap`,
+and an unsupervised external kill (harbor's wait_for / SIGTERM) flushes
+outcome `external_kill` (an absent export = unknown: the knobs rule
+alone).
+
+Every trial dir carries
+`bench_metrics.json` (per-request wall/first-byte, ConnTrace socket
+events, watchdog fires) and, on a stall, `hang-*.json` — replay one
+from any machine with `scripts/replay_hang.sh <file> [url]`.
+`FA_CONN_DEBUG=1` (also under `FA_PROVIDER_DEBUG`) turns on the
+connection lifecycle trace in `sharedProviderHttpClient()`; live
+`[fa-bench]` lines stream per-request progress to stderr while the run
+is still going. URLs in trace lines have their query string stripped
+and snapshot URLs mask credential-looking params (key-in-query
+providers must not leak into logs); the payload snapshot is strictly
+opt-in — set `FA_CONN_PAYLOAD_SNAPSHOT=<path>` to capture (the bench
+workflow does, deliberately; nothing else should by default). A
+stale-socket event fires only for a failure on a REUSED same-origin
+pooled socket — a fresh-connect refusal is `connect_failed` and never
+evicts the pool. The run report (`summary.py`) is green-with-note on
+cancelled shards (`coverage: X/N`), splits latency p50/p95 by
+concurrency level, and names any `agent_timeout` trial whose session
+gaps never reached the stall threshold (score honesty).

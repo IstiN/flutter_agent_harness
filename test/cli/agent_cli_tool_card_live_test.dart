@@ -49,6 +49,19 @@ String _normalize(String s) => s
     .replaceAll(RegExp('\x1b\\[[0-9;?]*[a-zA-Z]'), '')
     .replaceAll(RegExp(' +'), ' ');
 
+/// The oracle matcher for one settled-card row: byte-exact for
+/// elapsed-free rows (the dim command preview), `<prefix> <digits>s` for
+/// the elapsed-bearing header — the live edge renders REAL wall-clock
+/// seconds there (`now − started`, issue #366/#807), which no test can
+/// pin to '0s' under a loaded runner (gh-2169).
+Matcher _settledCardRow(String row) {
+  final normalized = _normalize(row);
+  final elapsed = RegExp(r'\d+s$').firstMatch(normalized);
+  if (elapsed == null) return contains(normalized);
+  final prefix = normalized.substring(0, elapsed.start);
+  return matches(RegExp('${RegExp.escape(prefix)}\\d+s'));
+}
+
 void main() {
   test(
     'live tool end paints the settled card fed exactly like the shared '
@@ -109,8 +122,12 @@ void main() {
         // The oracle: the builder fed with EXACTLY the live edge's call —
         // the gh-1933 v2 derivation (`settledCallCardRows`: bash intent
         // label, output-lines count, right-aligned elapsed zone, dim
-        // command preview) at `_rowWidth` (the pinned TUI width). An
-        // in-process bash call always lands inside its first second.
+        // command preview) at `_rowWidth` (the pinned TUI width). The
+        // header's trailing cell is the LIVE wall-clock seconds — an
+        // in-process bash call usually lands inside its first second, but
+        // a loaded coverage runner can push it past the 1s boundary (the
+        // v1.0.721 tag run went red on the sibling suite exactly there,
+        // gh-2169), so the cell generalizes while its shape stays pinned.
         final oracle = settledCallCardRows(
           toolName: 'bash',
           args: const {'command': 'echo hi'},
@@ -125,7 +142,7 @@ void main() {
         final oraclePreview = oracle.last;
         expect(
           _normalize(frames.text),
-          contains(_normalize(oracleHeader)),
+          _settledCardRow(oracleHeader),
           reason:
               'the live edge must feed the shared derivation its exact '
               'material (name, args, result, phase, width, elapsed) — '

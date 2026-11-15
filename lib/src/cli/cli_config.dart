@@ -13,6 +13,7 @@ import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
 import '../compaction/compaction_engine.dart';
+import '../compaction/tuning.dart';
 import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
@@ -30,6 +31,7 @@ import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
+import '../logging/log_settings.dart';
 import '../agent/image_registry.dart';
 import '../agent/stuck_tool.dart';
 import '../agent/foreground_call_budget.dart';
@@ -42,6 +44,54 @@ import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
 import 'output_config.dart';
 import 'tui_status_line.dart';
+
+/// Parses the `logging:` section (issue #2117): console/file levels plus
+/// the optional line pattern and time format. Strict — a bad schema
+/// throws [ConfigException] naming the key, like every other section.
+/// Public so the settings flows reload the saved section with the SAME
+/// parser boot uses.
+LoggingConfig? parseLoggingSection(Object? node, {required String label}) {
+  if (node == null) return null;
+  if (node is! YamlMap) {
+    throw ConfigException('logging must be a map, got: $node');
+  }
+  LogLevel? readLevel(String key) {
+    final value = node[key];
+    if (value == null) return null;
+    if (value is! String) {
+      throw ConfigException('"logging.$key" must be a level string ($label)');
+    }
+    return LogLevel.parse(value, label: 'logging.$key ($label)');
+  }
+
+  String? readText(String key) {
+    final value = node[key];
+    if (value == null) return null;
+    if (value is! String) {
+      throw ConfigException('"logging.$key" must be a string ($label)');
+    }
+    // A blank string is UNSET (issue #2117 review) — an empty format
+    // would render blank lines, never a useful line.
+    if (value.trim().isEmpty) return null;
+    return value;
+  }
+
+  final console = readLevel('console');
+  final file = readLevel('file');
+  final format = readText('format');
+  final timeFormat = readText('timeFormat');
+  for (final key in node.keys) {
+    if (!const {'console', 'file', 'format', 'timeFormat'}.contains('$key')) {
+      throw ConfigException('unknown "logging" key: $key');
+    }
+  }
+  return LoggingConfig(
+    console: console,
+    file: file,
+    format: format,
+    timeFormat: timeFormat,
+  );
+}
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
 /// (see [ProviderTimeoutsOverride]). Strict — a bad schema throws
@@ -621,6 +671,7 @@ final class CliConfig {
     this.projectContext,
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
+    this.compactionTuning,
     this.wireDump = false,
     this.trajectoryRequestBlobs = true,
     this.trajectoryRequestBlobMaxMb = 50,
@@ -644,6 +695,7 @@ final class CliConfig {
     this.streamThinking = false,
     this.autoUpdate = AutoUpdateMode.notify,
     this.providerNetworks = const {},
+    this.logging,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -761,9 +813,10 @@ final class CliConfig {
       // too.
       providerTimeouts: parseProviderTimeouts(map['providerTimeouts']),
       // The compaction section (engine selector, issue #148; judge
-      // budget knob, issue #541) is strict: a typo throws instead of
-      // silently running the classic engine or restoring the default
-      // 300s budget.
+      // budget knob, issue #541; trigger tuning keys, gh-2098) is
+      // strict: a typo throws instead of silently running the classic
+      // engine, restoring the default 300s budget or keeping the
+      // hard-coded trigger curve.
       compactionEngine: CompactionEngine.fromSection(
         map['compaction'],
         label: '~/.fah/config.yaml',
@@ -772,6 +825,10 @@ final class CliConfig {
         map['compaction'] is Map
             ? (map['compaction'] as Map)['judgeBudgetSeconds']
             : null,
+        label: '~/.fah/config.yaml',
+      ),
+      compactionTuning: CompactionTuning.fromSection(
+        map['compaction'],
         label: '~/.fah/config.yaml',
       ),
       // The trajectory section (issue #385 + gh-1745): `wireDump` opts the
@@ -829,6 +886,9 @@ final class CliConfig {
       // The self-update policy (issue #1377) is one strict scalar:
       // `true`/`false`/`"notify"` — anything else throws.
       autoUpdate: autoUpdateModeFromYaml(map['auto_update']),
+      // The logging section (issue #2117) is strict: console/file levels,
+      // the optional line pattern and time format; a bad schema throws.
+      logging: parseLoggingSection(map['logging'], label: '~/.fah/config.yaml'),
     );
   }
 
@@ -1015,6 +1075,16 @@ final class CliConfig {
   /// attempts).
   final int? compactionJudgeBudgetSeconds;
 
+  /// Optional `compaction:` trigger tuning (gh-2098) — `triggerRatio`
+  /// (the trigger fires when the anchored context reaches this fraction
+  /// of the effective window), `reserveTokens` (a direct reserve
+  /// override) and `keepRecentTokens` (a direct kept-recent override).
+  /// `null` (section absent) or an empty tuning keeps the gh-1742
+  /// curves byte-identically; `triggerRatio` and `reserveTokens` are
+  /// mutually exclusive (strict parse). Applied by the shared host
+  /// wiring over the [CompactionSettings.forWindow] curve.
+  final CompactionTuning? compactionTuning;
+
   /// Optional `trajectory:` section (issue #385) — `wireDump: true` opts
   /// the raw outbound request payloads into the session ledger as
   /// redacted, capped `trajectory_wire_dump` records. Default false:
@@ -1192,6 +1262,12 @@ final class CliConfig {
   /// `off` touches no update host at all.
   final AutoUpdateMode autoUpdate;
 
+  /// The parsed `logging:` section (issue #2117) — console/file levels,
+  /// the optional line pattern and time format. Null = the section is
+  /// absent; the project scope reads via [loadProjectLoggingSection] and
+  /// wins over this one, and the flag/env win over both.
+  final LoggingConfig? logging;
+
   /// Returns a copy with the given fields replaced; every omitted field
   /// carries over (null = keep). The base for the boot's `persistConfig`
   /// save (gh-1572): the loaded config is the base, only the session-live
@@ -1232,6 +1308,7 @@ final class CliConfig {
     ProjectContextConfig? projectContext,
     CompactionEngine? compactionEngine,
     int? compactionJudgeBudgetSeconds,
+    CompactionTuning? compactionTuning,
     bool? wireDump,
     bool? trajectoryRequestBlobs,
     int? trajectoryRequestBlobMaxMb,
@@ -1254,6 +1331,7 @@ final class CliConfig {
     LinksConfig? links,
     bool? streamThinking,
     AutoUpdateMode? autoUpdate,
+    LoggingConfig? logging,
   }) {
     return CliConfig(
       providerKind: providerKind ?? this.providerKind,
@@ -1292,6 +1370,7 @@ final class CliConfig {
       compactionEngine: compactionEngine ?? this.compactionEngine,
       compactionJudgeBudgetSeconds:
           compactionJudgeBudgetSeconds ?? this.compactionJudgeBudgetSeconds,
+      compactionTuning: compactionTuning ?? this.compactionTuning,
       wireDump: wireDump ?? this.wireDump,
       trajectoryRequestBlobs:
           trajectoryRequestBlobs ?? this.trajectoryRequestBlobs,
@@ -1319,6 +1398,7 @@ final class CliConfig {
       links: links ?? this.links,
       streamThinking: streamThinking ?? this.streamThinking,
       autoUpdate: autoUpdate ?? this.autoUpdate,
+      logging: logging ?? this.logging,
     );
   }
 
@@ -1432,8 +1512,13 @@ final class CliConfig {
     buffer.write(_powerYaml());
     buffer.write(_quotaYaml());
     buffer.write(_outputYaml());
+    buffer.write(_loggingYaml());
     return buffer.toString();
   }
+
+  /// The `logging:` section (issue #2117), only when explicitly
+  /// configured; defaults are never written so the file stays minimal.
+  String _loggingYaml() => logging?.toYaml() ?? '';
 
   /// The `output:` section (gh-1198), only when explicitly opted in;
   /// defaults are never written so the file stays minimal.
@@ -1544,11 +1629,21 @@ final class CliConfig {
   String _compactionYaml() {
     final engine = compactionEngine;
     final judgeBudgetSeconds = compactionJudgeBudgetSeconds;
-    if (engine == null && judgeBudgetSeconds == null) return '';
+    final tuning = compactionTuning;
+    final emptyTuning = tuning == null || tuning.isEmpty;
+    if (engine == null && judgeBudgetSeconds == null && emptyTuning) {
+      return '';
+    }
     final section = <String>[
       if (engine != null) '  engine: ${engine.value}',
       if (judgeBudgetSeconds != null)
         '  judgeBudgetSeconds: $judgeBudgetSeconds',
+      if (tuning?.triggerRatio != null)
+        '  triggerRatio: ${tuning!.triggerRatio}',
+      if (tuning?.reserveTokens != null)
+        '  reserveTokens: ${tuning!.reserveTokens}',
+      if (tuning?.keepRecentTokens != null)
+        '  keepRecentTokens: ${tuning!.keepRecentTokens}',
     ];
     return 'compaction:\n${section.join('\n')}\n';
   }
@@ -1965,6 +2060,51 @@ CompactionEngine? loadProjectCompactionEngine(String projectDir) {
     final doc = loadYaml(file.readAsStringSync());
     if (doc is! YamlMap) return null;
     return CompactionEngine.fromSection(
+      doc['compaction'],
+      label: '$projectDir/.fah/config.yaml',
+    );
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `logging:` section from
+/// `<projectDir>/.fah/config.yaml` (issue #2117) — the dial travels with
+/// the repo the same way the engine choice does. Project wins over the
+/// user-level `logging:` section; the flag/env win over both. Null when
+/// the file or the section is absent/unreadable; a present-but-invalid
+/// section throws [ConfigException] (strict, like the user config).
+LoggingConfig? loadProjectLoggingSection(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    return parseLoggingSection(
+      doc['logging'],
+      label: '$projectDir/.fah/config.yaml',
+    );
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `compaction:` trigger tuning keys from
+/// `<projectDir>/.fah/config.yaml` (gh-2098) — the trigger policy
+/// travels with the repo the same way the engine choice does. Null when
+/// the file or the section is absent/unreadable; a present-but-invalid
+/// section throws [ConfigException] (strict, like the user config).
+CompactionTuning? loadProjectCompactionTuning(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    return CompactionTuning.fromSection(
       doc['compaction'],
       label: '$projectDir/.fah/config.yaml',
     );

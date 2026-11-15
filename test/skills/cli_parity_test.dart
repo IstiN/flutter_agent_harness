@@ -86,6 +86,9 @@ const _nonSettingsCommands = <String, String>{
       'state only, no config.yaml setting; expansion answers only on '
       'the TUI chrome face',
   '/reset': 'starts a new session (no persisted setting)',
+  '/handoff':
+      'starts a fresh session from an editable digest (gh-2102) — the '
+      'old session stays, no config.yaml setting',
   '/restart': 'aborts a run and re-runs its steering, nothing persisted',
   '/compact': 'manual compaction (no persisted setting)',
   '/trajectory': 'read-only ledger views',
@@ -123,6 +126,9 @@ const _nonSettingsCommands = <String, String>{
   '/timer':
       'session deadline countdown (gh-1556), in-memory clock only — never '
       'persisted anywhere',
+  '/log':
+      'console log dial (issue #2117), live in-memory level only — never '
+      'persisted to config.yaml',
   '/images':
       'read-only image registry/cap/drop projection (issue #1889), '
       'changes no persisted setting',

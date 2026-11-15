@@ -49,6 +49,7 @@ import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
 import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
 import '../compaction/compaction_engine.dart' show CompactionEngine;
+import '../compaction/tuning.dart' show CompactionTuning;
 import '../compaction/context_window_registry.dart' show ContextWindowRegistry;
 import '../config/config_service.dart';
 import '../cube/config/cube_spec.dart';
@@ -97,6 +98,7 @@ import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
 import '../tools/obligation_tool.dart';
+import '../tools/recite_goal_tool.dart';
 import '../tools/password_prompt.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/shell_jobs.dart';
@@ -203,6 +205,12 @@ final class SubagentServices {
   final ModelRolesResolver? rolesResolver;
   final CompactionEngine? compactionEngine;
 
+  /// The `compaction:` yaml trigger tuning (gh-2098), applied over the
+  /// children's forWindow curve — the same trigger policy the host's
+  /// main agent rides. Null keeps the children byte-identically on the
+  /// gh-1742 curve.
+  final CompactionTuning? compactionTuning;
+
   /// The shared per-model context-window registry (gh-1742 invariant 2):
   /// the host publishes detections/pins here, children resolve from it.
   final ContextWindowRegistry? contextWindowRegistry;
@@ -264,6 +272,7 @@ final class SubagentServices {
     this.stallMinutes,
     this.rolesResolver,
     this.compactionEngine,
+    this.compactionTuning,
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
@@ -337,6 +346,16 @@ final class AgentCoreServices {
   /// ledger: the tool still registers and answers gracefully in-tool —
   /// the same always-registered contract as [onAsk].
   final ObligationClose? obligationsClose;
+
+  /// The goal-recitation write path (`recite_goal`, gh-210). Null = the
+  /// host does not maintain the slot: the tool still registers and
+  /// answers gracefully in-tool — the same always-registered contract as
+  /// [obligationsClose].
+  final GoalRecite? goalRecite;
+
+  /// The goal-recitation discovery read (current slot content). Null =
+  /// discovery reports an empty slot.
+  final GoalReciteCurrent? goalReciteCurrent;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
 
@@ -498,6 +517,8 @@ final class AgentCoreServices {
     this.onRequestSecret,
     this.isUnattended,
     this.obligationsClose,
+    this.goalRecite,
+    this.goalReciteCurrent,
     this.vision,
     this.transcribe,
     this.visionResolver,
@@ -855,6 +876,11 @@ List<AgentTool> _buildCoreTools({
     // The obligations close path (issue #1380 lifecycle): same
     // always-registered graceful-null contract as ask/request_secret.
     obligationMarkDoneTool(close: services.obligationsClose),
+    // The goal-recitation write path (gh-210): same contract.
+    reciteGoalTool(
+      write: services.goalRecite,
+      current: services.goalReciteCurrent,
+    ),
     // Deliberate env-chain change vs the pre-conversion CLI (review,
     // #1230): vision/transcribe/media used to ride the RAW base env and
     // bypassed the sandbox; they now take the decorated chain
@@ -1082,6 +1108,9 @@ _WiredTaskSurface? _wireTaskSurface({
     subagentManager: manager,
     a2aManager: a2a,
     compactionEngine: bundle.compactionEngine,
+    // gh-2098: children ride the same `compaction:` trigger tuning the
+    // main agent's gate applies.
+    compactionTuning: bundle.compactionTuning,
     // gh-1742: children resolve the same registered windows the main
     // agent publishes (invariant 2), under the same owner cap.
     contextWindowRegistry: bundle.contextWindowRegistry,

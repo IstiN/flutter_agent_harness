@@ -53,7 +53,7 @@ extension FirstWhereOrNull<E> on Iterable<E> {
 int indexOfName(List<YamlMap> steps, String name) =>
     steps.indexWhere((s) => (s['name'] ?? '').toString() == name);
 
-const bundleBin = 'fa-local/bundle/bin/fah';
+const bundleBin = 'fa-local/bundle/bin/fa';
 
 void main() {
   final ci = jobsOf('.github/workflows/ci.yml');
@@ -139,7 +139,7 @@ void main() {
           final job = nightly['pty-integration'] as YamlMap;
           final steps = stepsOf(job);
           final buildIdx = steps.indexWhere(
-            (s) => runOf(s).contains('dart build cli --target=bin/fah.dart'),
+            (s) => runOf(s).contains('dart build cli --target=bin/fa.dart'),
           );
           expect(buildIdx, greaterThanOrEqualTo(0));
           expect(

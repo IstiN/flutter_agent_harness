@@ -271,6 +271,140 @@ void main() {
     expect((await store.inspect(meta.path)).state, LeaseState.live);
   });
 
+  test('#2138: a refused /reset claim restores the previous session — '
+      'no unleased drive follows the error panel', () async {
+    // Rename #0 = the boot claim on 'first' (publishes), rename #1 =
+    // the /reset claim on the fresh session (REFUSED), rename #2 = the
+    // restore re-claim on 'first' (publishes).
+    final meta = await namedSession('first');
+    final gate = RenameGateEnv(env, failFrom: 1, failTo: 1);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'first',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    await waitForIt(() => out().isNotEmpty, reason: 'boot (claim settled)');
+
+    io.sendLine('/reset');
+    await waitForIt(
+      () => out().contains('cannot prove this session is free'),
+      reason: 'the loud refusal',
+    );
+    await waitForIt(
+      () => out().contains('staying on the previous session'),
+      reason: 'the restore — the CLI never sits on the unclaimed session',
+    );
+
+    io.sendLine('/exit');
+    await run;
+    // The restored session was the DRIVEN one: its lease was held on
+    // exit (graceful release) and the refused session never published a
+    // sidecar.
+    expect(
+      (await store.inspect(meta.path)).state,
+      LeaseState.free,
+      reason: 'exit released the RESTORED session, not a stray',
+    );
+    final sidecars = (await env.listDir(
+      '/sessions',
+    )).valueOrNull!.where((f) => f.path.endsWith('.owner.json'));
+    expect(sidecars, isEmpty, reason: 'the refused session stays unleased');
+  });
+
+  test('#2138: a double-refused /reset claim STOPS the CLI cleanly — the '
+      'contained boundary cannot resume an unleased drive', () async {
+    // Rename #0 = the boot claim on 'first' (publishes); EVERY later
+    // owner rename refuses: the /reset claim AND the restore re-claim.
+    final gate = RenameGateEnv(env, failFrom: 1, failTo: 1 << 30);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'first',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    await waitForIt(() => out().isNotEmpty, reason: 'boot (claim settled)');
+
+    io.sendLine('/reset');
+    // No /exit: the CLI must stop BY ITSELF — the refusal is not allowed
+    // to be swallowed back into an unleased REPL loop.
+    await run;
+    expect(
+      out().contains('cannot enforce session ownership'),
+      isTrue,
+      reason: 'the loud refusal names the store failure',
+    );
+    expect(
+      (await env.listDir(
+        '/sessions',
+      )).valueOrNull!.where((f) => f.path.endsWith('.owner.json')),
+      isEmpty,
+      reason: 'nothing holds a lease; nothing drives unleased after stop',
+    );
+    expect(await presence.list(), isEmpty);
+  });
+
+  test(
+    '#2138: a headless run over an unprovable session refuses loudly '
+    'with exit 4 — never the crash handler, never an unleased drive',
+    () async {
+      final meta = await namedSession('unprovable');
+      final bytesBefore = (await env.readTextFile(meta.path)).valueOrNull;
+      final gate = RenameGateEnv(env, failFrom: 0, failTo: 1 << 30);
+      final gatedStore = FileSessionLeaseStore(env: gate);
+      final fake = FakeStreamFunction([textTurn('never')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          sessionName: 'unprovable',
+          leaseStore: gatedStore,
+          processId: 4242,
+          presenceStore: presence,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      // The refusal MUST come back as a dedicated exit code — a throw here
+      // would escape runHeadless into the crash handler (review I-2).
+      final exit = await cli.runHeadless('do the thing');
+      expect(exit, 4);
+      expect(
+        out().contains('cannot prove this session is free'),
+        isTrue,
+        reason: 'the loud refusal names the reason',
+      );
+      expect(fake.calls, 0, reason: 'no second writer ever runs');
+      expect((await env.readTextFile(meta.path)).valueOrNull, bytesBefore);
+    },
+  );
+
   test('AC2: viewer composer lands in the LIVE owner transcript with '
       'attribution (two real CLIs, one writer)', () async {
     await namedSession('shared');
