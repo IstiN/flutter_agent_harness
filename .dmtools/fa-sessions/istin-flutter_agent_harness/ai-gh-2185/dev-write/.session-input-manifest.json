@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-15T12:02:52.314Z",
+  "ticketKey": "gh-2185",
+  "headSha": "113334485069a124afb0d376d49999d96385bcb3",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:752d34a05dab0d45",
+      "size": 49402
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:9223001613e7b1d4",
+      "size": 64313
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:304664b188f379ef",
+      "size": 541
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b2ab809574991174",
+      "size": 12306
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:13df710bc420be10",
+      "size": 23579
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:edfb8a87be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:0cea37590e7b9dac",
+      "size": 8221
+    },
+    "request.md": {
+      "hash": "fnv1a64:62fe11893f2dad24",
+      "size": 12620
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:6d0d1bb0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ab99563c64877cfa",
+      "size": 12792
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:62fe11893f2dad24",
+      "size": 12620
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:2c6ec37d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: 24 generated golden-failure dumps are now tracked in git — the fa_ui twin of this ignore rule was not re-pointed**\n\nThis PR re-pointed the flutter_app failure-artifact rule correctly (`test/golden/failures/` → `test/goldens/failures/`, this line), but the root `.gitignore` twin for fa_ui was missed: **`.gitignore:197` still ignores `packages/fa_ui/test/trajectory/golden/failures/`** — the old singular path, which no longer exists after the `golden/` → `goldens/` rename.\n\nConsequence, visible in this very diff: 24 transient flutter_test failure artifacts were swept into the commit under `packages/fa_ui/test/trajectory/goldens/failures/` (`*_testImage.png`, `*_maskedDiff.png`, `*_isolatedDiff.png`, `*_masterImage.png` for narrow_page/narrow_page_320/narrow_page_400/wide_fullscreen_*). At the merge base **none** of these were tracked (`git ls-tree <base> -- packages/fa_ui/test/trajectory/golden/failures/` is empty) — the old rule kept them out; the renamed path escapes it.\n\nThat is exactly the artifact class this PR exists to purge (\"every runtime-state file, log, and regenerable dump is out of git\" — PR AC3/AC6), and it creates ongoing churn: the next local fa_ui golden failure regenerates these files and dirties the worktree. It also slipped past the new root allow-list gate, which only inspects depth-0 entries.\n\nFix:\n\n```bash\ngit rm -r --cached packages/fa_ui/test/trajectory/goldens/failures\n# and in root .gitignore:197:\n-packages/fa_ui/test/trajectory/golden/failures/\n+packages/fa_ui/test/trajectory/goldens/failures/\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:388225a3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: 12 regenerated renderer captures were swept into a zero-behavior-change hygiene PR**\n\nThis suite writes its screenshots to `test/integration/screenshots/` (`110_renderer_auto_*`, `120_renderer_sync_*`, `130_renderer_legacy_*` — boot/midstream/done/recall). The PR carries binary content changes to all 12 committed captures (~9–10 % smaller each — the rendered content visibly differs), produced when the suite was re-run locally during verification. Nothing in the PR description mentions them, and nothing consumes them as baselines (only the `omp_ref/` twins are diffed; these files are write-only outputs that CI uploads as artifacts).\n\nTwo problems:\n\n1. **Unexplained scope creep** — a reviewer can't tell whether the renderer output actually changed on purpose. For a pure-hygiene PR the right move is to restore the base versions (`git checkout <merge-base> -- test/integration/screenshots/`) unless the drift is intentional and stated.\n2. **They are nondeterministic tracked state** — precisely the \"runtime dump in git\" class gh-2185 purges everywhere else. Every future local run of this suite re-captures them and dirties the tree. Consider gitignoring the `1{1,2,3}0_renderer_*` prefixes like the other screenshot outputs (the committed-twin exemption in `.gitignore` is documented for `omp_ref/` only), or note why these stay tracked.\n\nEither way, please don't merge silent re-captures of render output inside a hygiene PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:ad12620d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: reporters moved to `build/test-results/` but the four `mkdir -p test-results` lines still create the old dir**\n\nThe reporter/upload paths were all moved to `build/test-results/` (this line and its siblings in ci.yml:1407–1466, ci.yml:2750–2754, nightly.yml:108–149, and `ci_fast_gate.sh:285`), but the prep lines still create the OLD directory:\n\n- `ci.yml:982` — `mkdir -p test-results` (this step)\n- `ci.yml:1406` — same, integration shards\n- `ci.yml:2748` — same, fa_ui flutter shards\n- `nightly.yml:105` — same, nightly integration\n\nThey're vestigial: I verified locally that both `dart test` and the wrapped `flutter test --file-reporter` create missing parent directories, so the writes succeed without any mkdir. But the nightly step then does `echo \"$code\" > build/test-results/exit-code` under `set -e` — that shell redirect does NOT create parents, so the classification step only works because the file-reporter happened to create the dir first; if the runner dies before any report is written, the echo fails and the exit code is lost.\n\nChange all four to `mkdir -p build/test-results` (matching what `ci_fast_gate.sh:286` already does) and drop the now-dead `test-results/` dir from the runners."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:42852ce9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: usage docstring says `json:build/build/test-results/...` (double `build/`)**\n\nThe `test-results/` → `build/test-results/` replacement doubled the prefix in the copy-pasteable example at `scripts/junit_from_dart_json.py:7`:\n\n```\ndart test --file-reporter=\"json:build/build/test-results/dart-shard-0.json\" ...\n```\n\nShould be `json:build/test-results/...` (the next line of the same example is correct). A contributor pasting the snippet gets an unexpected `build/build/` path."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:b373c632",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: generated-file churn — `GeneratedPluginRegistrant.swift` import reorder is unrelated to the hygiene scope**\n\nThe only content change in `flutter_app/macos/Flutter/GeneratedPluginRegistrant.swift` is an alphabetical import-order shuffle (`firebase_analytics` after `firebase_core`) — the output of regenerating with a different local Flutter tool version, not a hygiene edit (it came in with the rework commit). It adds diff surface an iOS reviewer must eyeball for nothing. Revert it, or let it ride only if the branch intentionally re-syncs the generated file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:b9ed1111",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — 🚨 golden-regen.yml `goldenss` over-replacement (workflow dead)\n\n**Fixed** in commit `a36bef264a` — all four sites in `.github/workflows/golden-regen.yml` re-pointed to the real merged dir `flutter_app/test/goldens/` (which this PR created, including its `goldens/` baselines subdir):\n\n- L6 (comment): `flutter_app/test/goldenss/goldens/` → `flutter_app/test/goldens/goldens/`\n- L44 (step name): `flutter test/goldenss --update-goldens` → `flutter test/goldens --update-goldens`\n- L49 (run): `flutter test test/goldenss --update-goldens` → `flutter test test/goldens --update-goldens`\n- L54 (upload path): `flutter_app/test/goldenss/goldens/` → `flutter_app/test/goldens/goldens/`\n\nVerified against the tree: `flutter_app/test/goldens/` and `flutter_app/test/goldens/goldens/` both exist, and a repo-wide grep (workflows + scripts + Dart) shows `goldenss` has zero remaining occurrences. Per the eyeball-pass request, `ci.yml` and `nightly.yml` were re-grepped too — no `goldenss` and no stale singular `test/golden/` path remains (the `f9dce062^:flutter_app/test/golden/goldens` ref in `scripts/check_golden_detector.py` is a frozen-history regression fixture pin, left untouched as agreed in the digest).\n\nRegression pin: new `test/gh2185_goldens_rename_guard_test.dart` asserts (a) no `goldenss` token in the workflow, (b) every `flutter_app/test/goldens*` reference in it resolves on disk. The token assert was proven to go red when a `goldenss` path is reintroduced."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:e54a69e1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — 🚨 24 fa_ui golden-failure dumps tracked; root .gitignore twin not re-pointed\n\n**Fixed** in commit `a36bef264a`, exactly as proposed:\n\n1. `git rm -r --cached packages/fa_ui/test/trajectory/goldens/failures` — all 24 tracked artifacts (`*_testImage/maskedDiff/isolatedDiff/masterImage.png` for narrow_page, narrow_page_320, narrow_page_400, wide_fullscreen_{dark,light,macos_dark,light}) are out of the index; working-tree copies stay on disk and are now ignored, so the next local fa_ui golden failure no longer dirties the tree.\n2. Root `.gitignore:197` re-pointed: `packages/fa_ui/test/trajectory/golden/failures/` → `packages/fa_ui/test/trajectory/goldens/failures/`.\n\n`flutter_app/.gitignore:66` (`test/goldens/failures/`) was already correct on this branch and is now pinned by a test.\n\nRegression pin: `test/gh2185_goldens_rename_guard_test.dart` asserts (a) `git ls-files '*test*/failures/*'` is empty — covers the fa_ui and flutter_app failure classes anywhere in the tree, (b) the root rule names the renamed path and the singular `trajectory/golden/failures/` string is gone, (c) `git check-ignore -v packages/fa_ui/test/trajectory/goldens/failures/probe.png` actually fires. All green on the pushed head (`dart test test/gh2185_goldens_rename_guard_test.dart` → 6/6, `check_root_allowlist.py --self-test` + run ok)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:c4d9bcea",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — ⚠️ 12 regenerated renderer captures swept into the hygiene PR\n\n**Fixed** in commit `a36bef264a` via the restore option: `git checkout <merge-base e2547163b7> -- test/integration/screenshots/110_renderer_auto_{boot,midstream,done,recall}.png test/integration/screenshots/120_renderer_sync_{boot,midstream,done,recall}.png test/integration/screenshots/130_renderer_legacy_{boot,midstream,done,recall}.png` — all 12 `1{1,2,3}0_renderer_*` captures are back to their exact base bytes. Verified: `git diff <merge-base> --stat -- test/integration/screenshots` is now empty, so the PR no longer carries any renderer-output change. They were accidental re-captures from a local suite run during verification, not intentional drift.\n\nOn the ignore-class option (gitignoring the `1{1,2,3}0_renderer_*` prefixes): deferred rather than bundled here. Those 12 files are tracked at the merge base too (not newly introduced by this PR), and untracking them changes what `ci.yml` uploads at `test/integration/screenshots/` (lines 1707/2909) for every suite run — a consumer-visible change beyond this hygiene rework's surgical scope. Given `opportunisticSameFilesOnly` bounds, the restore resolves the reported scope-creep finding; the tracked-vs-ignored question for the write-only renderer outputs is a good standalone follow-up card for triage (same class as the fa_ui `failures/` purge this commit lands)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:e090e414",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 4 — 💡 four `mkdir -p test-results` lines still create the old dir\n\n**Fixed** in commit `a36bef264a` — all four prep lines now create the reporters' real home:\n\n- `ci.yml:982` (core dart shards) → `mkdir -p build/test-results`\n- `ci.yml:1406` (integration shards) → `mkdir -p build/test-results`\n- `ci.yml:2748` (fa_ui flutter shards; step cwd is `packages/fa_ui`, so this creates `packages/fa_ui/build/test-results` — matching that step's reporter paths and its upload globs) → `mkdir -p build/test-results`\n- `nightly.yml:105` (nightly integration) → `mkdir -p build/test-results` — this closes the failure mode you called out: the `echo \"$code\" > build/test-results/exit-code` redirect no longer depends on the file-reporter having created the dir first.\n\nVerified: a grep over all workflows shows zero remaining `test-results` references outside `build/test-results` / `packages/fa_ui/build/test-results` (so nothing recreates the old dir), and all three touched YAMLs still parse. Regression pin: `test/gh2185_goldens_rename_guard_test.dart` asserts no `mkdir -p test-results` remains in ci.yml/nightly.yml and that every `mkdir -p *test-results*` targets `build/test-results`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:4d55eb0c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 5 — 🪶 usage docstring says `json:build/build/test-results/...`\n\n**Fixed** in commit `a36bef264a` — `scripts/junit_from_dart_json.py:7` now reads:\n\n```bash\ndart test --file-reporter=\"json:build/test-results/dart-shard-0.json\" ...\n```\n\nmatching the `python3 scripts/junit_from_dart_json.py build/test-results/...` continuation line right below it and the actual CI reporter invocations (`ci.yml:984`, `ci.yml:1410`). Comment-only change; no behavior touched."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:467ffbf8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 6 — 🪶 GeneratedPluginRegistrant.swift import-order churn\n\n**Fixed** in commit `a36bef264a` — `flutter_app/macos/Flutter/GeneratedPluginRegistrant.swift` is reverted to the merge-base version (`git checkout <merge-base e2547163b7> -- ...`), restoring the original `firebase_analytics` before `firebase_core` import/registration order. The reorder was accidental local-tool regeneration, not an intentional re-sync: this PR changes no Flutter plugins (`pubspec.yaml` untouched), so the committed registrant regenerates identically to base. `git diff <merge-base> -- <file>` is now empty."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:5a969fe8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the main merge re-introduced root `memory/` as TRACKED — this line's invariant (\"the root copy is ignored so the old path can never re-track notes\") is defeated, and the root allow-list gate is red on this head**\n\nMerging `main` (gh-2103 landed there as #2183) brought back two memory notes under the purged root store — **tracked**, because `.gitignore` cannot untrack files a merge delivers:\n\n```\n$ git ls-files memory/\nmemory/note/n_1028_d34b.md\nmemory/note/n_1029_a7de.md\n$ python3 scripts/check_root_allowlist.py\nroot allow-list guard: FAILED\n  tracked root entries outside the allow-list:\n    - memory        (exit 1)\n```\n\nConsequences, all verified on the current head (`0b5e3a03c3`):\n\n1. **Red CI** — this gate is wired whole-tree into the `static` job (`ci.yml:635-636`) and pre-commit (`ci_fast_gate.sh:216`); the PR head fails both until this is fixed.\n2. **AC2/AC3 violated at merge time** — the PR's contract is ONE memory home at `.fah/memory/` (local-only); these two notes are exactly the \"old path re-tracks notes\" recurrence the AC set out to make impossible. The 921-note purge is undone by two files.\n3. **Silent recurrence class** — until this PR lands, every `memory_add` on `main` re-tracks a note under `memory/`, so every future merge from `main` re-delivers them. Fix the merge resolution, not just these two files.\n\nFix (zero-loss — the notes are the gh-2103 lap's diagnostics and must survive):\n\n```bash\nmkdir -p .fah/memory/note\ncp memory/note/n_1028_d34b.md memory/note/n_1029_a7de.md .fah/memory/note/\ngit rm memory/note/n_1028_d34b.md memory/note/n_1029_a7de.md\npython3 scripts/check_root_allowlist.py   # back to ok\n```\n\nDo NOT add `memory` to the gate allow-list — that would formalize the recurrence the AC forbids."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:a278890e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 7 — 🚨 main merge re-introduced root `memory/` as TRACKED (gate red)\n\n**Fixed** in commit `1133344850`, exactly the zero-loss resolution proposed:\n\n1. `mkdir -p .fah/memory/note` and preserved both merge-delivered notes byte-identical into the `.fah/memory/` home (verified with `cmp` against the pre-`git rm` blobs — zero loss; they are the gh-2103 lap's diagnostics and stay available locally).\n2. `git rm memory/note/n_1028_d34b.md memory/note/n_1029_a7de.md` — the purged root store is out of the index again; `python3 scripts/check_root_allowlist.py` is back to **ok (45 allow-listed entries)**, self-test PASS, so the `static` job and pre-commit wiring go green.\n3. `memory` was **not** added to the gate allow-list, per the thread's explicit instruction.\n\nRegression pin (TDD, written RED-first): `test/gh2185_goldens_rename_guard_test.dart` gains \"the purged root memory store never re-tracks notes (gh-2103 merge recurrence)\" — it asserts `git ls-files memory/` stays empty and `.fah/memory/` stays git-ignored (`git check-ignore` probe). It failed on the merged head with exactly the two delivered notes, then went green after the untrack; the guard file is 7/7 on the pushed head.\n\nOn the recurrence class: acknowledged — `.gitignore` cannot untrack merge-delivered files, so every merge from `main` until this PR lands can re-deliver `memory/note/*` tracked. The resolution recipe (preserve into `.fah/memory/note/` + `git rm`) is the standing merge-resolution step; the new index-level guard test now makes any such re-delivery fail loudly in the deterministic suite instead of only at the gate."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:05127421",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: golden-regen.yml — the `golden` → `goldens` rename over-replaced to `goldens` (double-s); the workflow is dead**\n\nThe mechanical rename hit this file twice. Four sites now reference a directory that does not exist:\n\n- L44 (step name): `flutter test/goldens --update-goldens`\n- **L49 (run): `flutter test test/goldens --update-goldens`**\n- L54 (artifact upload): `path: flutter_app/test/goldens/goldens/`\n- L6 (comment): `flutter_app/test/goldens/goldens/`\n\n`flutter_app/test/goldens` is the real merged dir (this PR created it); `test/goldens` does not exist. When the `golden-regen` label is added (the documented macOS baseline-regen path, and a consumer AC4 explicitly claims to have re-pointed), the step fails with \"no test files found / directory does not exist\", and even if it passed, the upload path matches nothing — the regen loop for macOS-owned pixel baselines is broken.\n\nFix (four sites, same file): `goldens` → `goldens`, i.e.\n\n```yaml\n- name: flutter test/goldens --update-goldens (issue #1856 pinned-font env)\n  run: flutter test test/goldens --update-goldens\n  path: flutter_app/test/goldens/goldens/\n```\n\nNote the local fast gate can never catch this — Actions workflows don't execute in the PR run — so it needs an eyeball pass over every renamed path in `ci.yml`/`nightly.yml`/`golden-regen.yml` (the other two are correct; I grepped them)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:5a2143e1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The hygiene work is solid — the `.fah/state` seam is well-tested (19 UTs green locally), the root allow-list gate self-tests green, and the memory/goals/knowledgebase/tooling moves are complete with consumers re-pointed. But the mechanical `golden → goldens` rename botched `golden-regen.yml` (`test/goldens`, double-s, ×4 — the macOS regen workflow is dead) and outpaced a `.gitignore` rule, so 24 generated golden-failure dumps are now tracked — the exact artifact class this PR exists to purge.\n\n**Key Issues**:\n- 🚨 [golden-regen.yml:49] `flutter test/goldens` (double-s) — run cmd + upload path + step name point at a nonexistent dir; the label-triggered workflow hard-fails\n- 🚨 [flutter_app/.gitignore:66] fa_ui twin rule not re-pointed (root `.gitignore:197` still `golden/failures/`) → 24 `*_testImage/maskedDiff/isolatedDiff/masterImage.png` committed under `packages/fa_ui/test/trajectory/goldens/failures/`\n- ⚠️ [renderer_equivalence_test.dart:26] 12 regenerated `110/120/130_renderer_*` captures (content visibly changed) swept in — unexplained churn of nondeterministic tracked state\n\n**Digest**: `goldens/goldens` double-nesting in fa_ui (follow-up flatten) · knowledgebase note `issue-168…md:36,41` still cites the singular path (frozen history, no action).\n\n**Next Steps**:\n1. Fix `goldenss` → `goldens` in `.github/workflows/golden-regen.yml` (lines 6, 44, 49, 54)\n2. `git rm -r --cached packages/fa_ui/test/trajectory/goldens/failures` + re-point `.gitignore:197` to `goldens/failures/`\n3. Restore the 12 base renderer captures (or state why they changed and ignore the class)\n4. Minor: `mkdir -p build/test-results` in 4 workflow steps; fix `build/build/` docstring in `junit_from_dart_json.py:7`; revert `GeneratedPluginRegistrant.swift` churn\n\nVerified on head: `check_root_allowlist.py --self-test` + run ✅ · `check_goldens.py --quick` ✅ · guard+docs-link dart tests 19/19 ✅ · app store-path flutter tests 19/19 ✅ · zero tracked `.log` ✅ · root fully allow-listed ✅"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:4dd7837f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Rework verified: all six prior findings (F1–F6) are demonstrably fixed on head `a36bef26` — `golden-regen.yml` re-pointed (4 sites), the 24 fa_ui golden-failure dumps untracked + `.gitignore:197` re-pointed, the 12 renderer captures and `GeneratedPluginRegistrant.swift` restored byte-identical to merge-base, the four `mkdir -p build/test-results` lines and the `junit_from_dart_json.py` docstring fixed — all pinned by the new `test/gh2185_goldens_rename_guard_test.dart` (6/6 green). Ticket ACs re-verified against the tree: no runtime-state JSONs, no tracked `memory/`/`goal/`/`knowledgebase/`/`logs`, root allow-list gate green, single `goldens/` dirs. The delta also carries `build-windows.yml`, `scripts/msix/`, `daily-publish.yml`, `site-mobile.yml`, `CHANGELOG.md` — all confirmed byte-identical to `origin/main` (main-merge artifacts, not PR scope).\n\n**Key Issues**:\n- 🚨 **BLOCKING — red CI on head** (`ci_failures.md`, full log in `ci_failures_full.log`): `Quality gate FAILED: a leg is failure (test-core)` — shard 3/4: `test/cli/wrap_ansi_line_perf_test.dart` \"growth assertion survives contention that poisons every attempt median\" failed (`Expected: < 3.2`, `Actual: 3.994…`), 3874 passed / 1 failed. The PR touches neither that test nor the wrap code (last modified in #1784/#1785); this is the suite's known contention-sensitive timing assertion. Merge stays blocked while the gate is red.\n\n**Next Steps**:\n1. Re-run the failing test-core leg (likely green on retry). If the 3.99x ratio reproduces, triage the wrap_ansi growth gate separately (threshold/quarantine) — do not let the flake block an otherwise clean hygiene PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-15:aed88832",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-15",
+      "updatedAt": "2026-11-15",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review, head `0b5e3a03c3`)\n\n**Summary**: All six prior findings (F1–F6) are verified fixed and survived the `main` merge — `goldens` gone (×4 sites), the 24 fa_ui failure dumps untracked with `.gitignore:197` re-pointed, the 12 renderer captures and `GeneratedPluginRegistrant.swift` byte-identical to base, the four `mkdir -p build/test-results` lines and the `junit_from_dart_json.py` docstring fixed, all pinned by `test/gh2185_goldens_rename_guard_test.dart` (25/25 guard tests green on this head). One new 🚨: the merge re-delivered two `memory/note/*.md` files from main's tracked store, so root `memory/` is tracked again and `check_root_allowlist.py` FAILS on this head (red `static` job + pre-commit) — AC2/AC3 violated.\n\n**Key Issues**:\n- 🚨 [.gitignore:236] `git rm` the merge-delivered `memory/note/n_1028_d34b.md` + `n_1029_a7de.md` (preserve into `.fah/memory/note/` first) — root `memory/` must leave the index again; the gate's failure names exactly `memory`\n\n**Digest** (carried from the previous round — follow-up cards, no action required to merge):\n- `packages/fa_ui/test/trajectory/goldens/goldens/` — double-nested path from the mechanical rename; consider flattening in a follow-up (works as-is, wired consistently)\n- `docs/knowledgebase/2026-09-12/implementation/issue-168-mobile-trajectory-view.md:36,41` — frozen historical note citing the singular path\n\n**Next Steps**:\n1. Preserve + `git rm` the two merge-delivered memory notes; re-run `python3 scripts/check_root_allowlist.py` (must print `ok`)\n2. Note for every future merge from `main` until this lands: root `memory/` notes keep arriving tracked — same 2-line cleanup in the merge resolution\n3. Nothing else: the wrap_ansi triage (`_growthAttempts` 3→6 + 500k noise-floor operating point, threshold 3.2 untouched) is sound test-only work; gh-2103 content is identical to `origin/main` (not PR delta)\n\nVerified on this head: gate self-test ✅ / gate run ❌ (the finding) · `check_goldens.py --quick` ✅ · guard+rename+docs-link dart tests 25/25 ✅ · zero `goldens` / zero tracked `test*/failures/` / zero `mkdir -p test-results` / zero `build/build` ✅ · renderer captures + registrant byte-identical to merge-base ✅"
+    }
+  ]
+}
