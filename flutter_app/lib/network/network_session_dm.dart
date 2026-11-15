@@ -216,9 +216,12 @@ extension NetworkSessionDm on NetworkSession {
     // account uid — including an agent's `name@deviceId` — so senderId
     // alone cannot tell my own DM from the agent's reply (owner feedback:
     // replies rendered as outgoing rows with the OWNER's display name).
-    // The frame's sender pubkey can: an agent reply is sealed with the
-    // peer agent's roster dmPub, never with my own wallet identity.
-    final isAgentFrame = await _isPeerAgentFrame(connector, parts, frame);
+    // The frame's sender pubkey can: a DM channel has exactly two
+    // possible sealers, the local wallet and the peer agent. Comparing
+    // against the LOCAL identity pubkey is roster-independent (review
+    // #2197) — a roster eviction mid-chat previously nullified the
+    // roster dmPub comparison and degraded replies to outgoing rows.
+    final isAgentFrame = _isPeerAgentFrame(frame);
     final isOwn =
         (envelope.senderId == myId || envelope.senderId == 'user:$myId') &&
         !isAgentFrame;
@@ -285,20 +288,17 @@ extension NetworkSessionDm on NetworkSession {
     return SimplePublicKey(base64Decode(pub), type: KeyPairType.x25519);
   }
 
-  /// True when the frame was sealed by the PEER agent of this DM channel
-  /// (its roster dmPub matches the frame's sender pubkey header).
-  Future<bool> _isPeerAgentFrame(
-    DeviceConnectorService? connector,
-    DmChannelParts? parts,
-    HubFanet1Frame? frame,
-  ) async {
+  /// True when the frame was NOT sealed by this device's wallet
+  /// identity — i.e. the peer agent's reply. A DM channel has exactly
+  /// two possible sealers (the local wallet and the peer agent), so
+  /// comparing the frame's sender pubkey header against the local
+  /// identity pubkey needs no roster lookup and cannot degrade when
+  /// the roster evicts the peer entry mid-chat (review #2197).
+  bool _isPeerAgentFrame(HubFanet1Frame? frame) {
     final senderPub = frame?.senderPubkey;
-    if (connector == null || parts == null || senderPub == null) return false;
-    final peerPub = connector.agentDmPub(
-      deviceId: parts.deviceId,
-      agentName: parts.agentName,
-    );
-    return peerPub != null && base64Encode(senderPub.bytes) == peerPub;
+    final myPub = _wallet.identityPub;
+    if (senderPub == null || myPub == null) return false;
+    return base64Encode(senderPub.bytes) != myPub;
   }
 
   /// Incoming DM sender label: the tapped session's human title when this

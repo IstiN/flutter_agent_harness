@@ -725,13 +725,14 @@ class _ChannelHeader extends StatelessWidget {
 ({bool changed, AgentRunState? state}) dmRefreshedAgentRunState({
   required DeviceConnectorService? connector,
   required String? address,
+  required String? networkId,
   required AgentRunState? current,
   required bool mounted,
 }) {
-  if (!mounted || connector == null || address == null) {
+  if (!mounted || connector == null || address == null || networkId == null) {
     return (changed: false, state: current);
   }
-  final next = connector.agentRunState(address);
+  final next = connector.agentRunState(address, networkId: networkId);
   return (changed: next != current, state: next);
 }
 
@@ -787,7 +788,10 @@ class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
     if (connector == null || parts == null) return;
     _connector = connector;
     _address = '${parts.agentName}@${parts.deviceId}';
-    _state = connector.agentRunState(_address!);
+    _state = connector.agentRunState(
+      _address!,
+      networkId: widget.session.networkId,
+    );
     _subs.add(connector.rosterFrames.listen((_) => _refresh()));
     _subs.add(connector.presenceFrames.listen((_) => _refresh()));
   }
@@ -796,6 +800,7 @@ class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
     final next = dmRefreshedAgentRunState(
       connector: _connector,
       address: _address,
+      networkId: widget.session.networkId,
       current: _state,
       mounted: mounted,
     );
