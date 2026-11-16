@@ -39,6 +39,10 @@ typedef NetworkOpenAuthUrl = Future<void> Function(Uri authUrl);
 /// Reads device rows from the device-socket roster for `--roster` debugging.
 typedef NetworkRosterReader = Future<List<NetworkDeviceRow>> Function();
 
+/// Interactive host prompt (the TUI's masked/free-form prompt in production).
+typedef NetworkCommandPrompt =
+    Future<String?> Function(String question, {bool secret});
+
 /// Pure OAuth sequencing, shared by production and fake-receiver tests.
 final class NetworkOAuthFlow {
   /// Builds the flow.
@@ -103,6 +107,7 @@ final class NetworkCommandRunner {
     this.startReceiver,
     this.openUrl,
     this.rosterReader,
+    this.prompt,
     DateTime Function()? clock,
     void Function(String line)? out,
     void Function(String line)? error,
@@ -127,6 +132,9 @@ final class NetworkCommandRunner {
 
   /// Socket-roster debug reader, absent on non-IO hosts.
   final NetworkRosterReader? rosterReader;
+
+  /// Interactive prompt, null for headless `fa network` commands.
+  final NetworkCommandPrompt? prompt;
   final DateTime Function() _clock;
   final void Function(String line) _out;
   final void Function(String line) _error;
@@ -179,7 +187,14 @@ fa network rename <name>                Rename THIS device (1–64 characters)
 fa network rename --clear               Clear THIS device's friendly name''';
 
   Future<int> _login(List<String> args) async {
-    final options = _parseLoginArgs(args);
+    var options = _parseLoginArgs(args);
+    if (options.error == '--jwt requires a token' &&
+        args.length == 1 &&
+        args.single == '--jwt' &&
+        prompt != null) {
+      final pasted = await prompt!('JWT token: ', secret: true);
+      options = (jwt: pasted, provider: options.provider, error: null);
+    }
     if (options.error case final error?) return _usageError(error);
     final jwt = options.jwt;
     final provider = options.provider;
@@ -202,12 +217,18 @@ fa network rename --clear               Clear THIS device's friendly name''';
         openUrl: open,
       ).signIn(provider: provider);
     }
-    // A device token belongs to the previous account; never carry it across
-    // a login boundary.
-    await store.clearDevice();
+    final previousAccount = await store.readAccount();
+    final previousDevice = await store.readDevice();
+    // Re-login/token refresh on the same account must not orphan the stored
+    // device token and manufacture a duplicate enrollment on the next enroll.
+    // An actual account switch still clears the old account's device pairing.
+    if (previousDevice == null ||
+        !_sameNetworkAccount(previousAccount, account)) {
+      await store.clearDevice();
+    }
     await store.writeAccount(account);
     _out('signed in: ${account.label}');
-    _out('next: fa network enroll');
+    _out(prompt == null ? 'next: fa network enroll' : 'next: /network enroll');
     return 0;
   }
 
@@ -258,17 +279,20 @@ fa network rename --clear               Clear THIS device's friendly name''';
 
   Future<int> _enroll(List<String> args) async {
     var name = deviceName;
+    var explicitName = false;
     for (var i = 0; i < args.length; i++) {
       if (args[i] == '--name') {
         if (++i >= args.length) return _usageError('--name requires a value');
         name = args[i];
+        explicitName = true;
       } else if (args[i].startsWith('--name=')) {
         name = args[i].substring('--name='.length);
+        explicitName = true;
       } else {
         return _usageError('unknown enroll option: ${args[i]}');
       }
     }
-    if (name.trim().isEmpty || name.runes.length > 128) {
+    if (explicitName && (name.trim().isEmpty || name.runes.length > 128)) {
       return _usageError('device name must contain 1–128 characters');
     }
     final account = await store.readAccount();
@@ -277,7 +301,19 @@ fa network rename --clear               Clear THIS device's friendly name''';
     if (existing != null) {
       _out('already enrolled: ${existing.deviceId}');
       _out('personal network: ${existing.personalNetworkId ?? 'unknown'}');
+      _printEnrollmentNextSteps();
       return 0;
+    }
+    if (!explicitName && prompt != null) {
+      final answer = await prompt!('Device name (empty = $deviceName): ');
+      if (answer == null) {
+        _out('enrollment cancelled');
+        return 1;
+      }
+      if (answer.trim().isNotEmpty) name = answer;
+    }
+    if (name.trim().isEmpty || name.runes.length > 128) {
+      return _usageError('device name must contain 1–128 characters');
     }
     final fresh = await _freshAccount(account);
     final enrollment = await deviceClient.enrollDevice(
@@ -296,7 +332,13 @@ fa network rename --clear               Clear THIS device's friendly name''';
     await store.writeDevice(device);
     _out('enrolled: ${device.deviceId}');
     _out('personal network: ${device.personalNetworkId ?? 'unknown'}');
+    _printEnrollmentNextSteps();
     return 0;
+  }
+
+  void _printEnrollmentNextSteps() {
+    _out('sessions appear in the app Devices surface (Devices → session row)');
+    _out('only live sessions are steerable; wake sleepers from Devices');
   }
 
   Future<int> _status(List<String> args) async {
@@ -410,6 +452,24 @@ fa network rename --clear               Clear THIS device's friendly name''';
       return (name: '', error: 'friendly name must be at most 64 characters');
     }
     return (name: name, error: null);
+  }
+
+  bool _sameNetworkAccount(NetworkAccount? previous, NetworkAccount next) {
+    if (previous == null) return false;
+    final previousSubject = previous.subject?.trim();
+    final nextSubject = next.subject?.trim();
+    if (previousSubject?.isNotEmpty == true ||
+        nextSubject?.isNotEmpty == true) {
+      return previousSubject?.isNotEmpty == true &&
+          nextSubject?.isNotEmpty == true &&
+          previousSubject == nextSubject;
+    }
+    final previousEmail = previous.email?.trim().toLowerCase();
+    final nextEmail = next.email?.trim().toLowerCase();
+    return previousEmail != null &&
+        previousEmail.isNotEmpty &&
+        nextEmail != null &&
+        previousEmail == nextEmail;
   }
 
   Future<NetworkAccount> _requireAccount() async {

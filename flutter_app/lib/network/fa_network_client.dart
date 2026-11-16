@@ -166,7 +166,7 @@ Map<String, String> _agentDmPubs(Object? value, String deviceId) {
 }
 
 ({String address, String dmPub})? _agentDmPub(Object? value, String deviceId) {
-  if (value is! Map || value['exposed'] != true) return null;
+  if (value is! Map || value['exposed'] == false) return null;
   final dmPub = value['dmPub'];
   if (dmPub is! String || dmPub.isEmpty) return null;
   final address = _rosterAgentAddress(value, deviceId);
@@ -175,7 +175,9 @@ Map<String, String> _agentDmPubs(Object? value, String deviceId) {
 
 String? _rosterAgentAddress(Map<Object?, Object?> agent, String deviceId) {
   final address = agent['address'];
-  if (address is String && address.isNotEmpty) return address;
+  if (address is String && address.isNotEmpty) {
+    return address.contains('@') ? address : '$address@$deviceId';
+  }
   final name = agent['name'];
   if (name is String && name.isNotEmpty) return '$name@$deviceId';
   return null;

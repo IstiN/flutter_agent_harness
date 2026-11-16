@@ -265,6 +265,58 @@ current/live session never spawns a second agent and steers through its
 existing mailbox. Mobile and extension devices stay queue-only and send the
 honest encrypted queued/not-listening receipt rather than claiming a wake.
 
+### 8.2 Interactive enrollment and roster hygiene (#2212)
+
+The interactive TUI shares the headless `NetworkCommandRunner` contract:
+`/network login` performs OAuth loopback (with `/network login --jwt [token]`
+as the masked-paste fallback), `/network enroll [--name <name>]` prompts for a
+friendly name with the local hostname as its blank-input default, and
+`/network rename <name>` / `/network rename --clear` updates the enrolled
+label. `/network status` and `/network devices [--roster]` inspect account,
+device and live roster state. Bare `/network` and `/network join <invite>`
+remain the DAP wizard; `/network dap …` is its explicit alias and
+`/network help` disambiguates the two surfaces. Enrollment output points to
+the app **Devices** surface: only live sessions are steerable directly, while
+catalog sleepers are woken from their Devices row. The app asks the same
+friendly-name question only when it has no stored device credentials; the
+existing device-row rename dialog remains available on desktop and mobile.
+
+Re-login/token refresh for the same account subject (or non-empty email
+fallback) preserves the stored `deviceId`/`deviceToken`; only an actual
+account switch clears the pairing. Enrolling with an existing stored device
+identity is therefore a no-op and cannot manufacture same-host duplicate
+rows. Revocation/account switching still requires a fresh enrollment.
+
+Sub-agent transcripts are internal child state, never roster or DM targets.
+CLI/app catalog projections exclude both children with a live parent and
+orphaned/legacy children. Because roster PATCH is additive, they also publish
+`{id, state: "offline", networks: []}` for known legacy child ids on a full
+sync (and when a new child appears). Devices filters any legacy remote rows
+marked `agent: "subagent"`, `subagent: true`, `parent`, or `parentId` before
+folder grouping. A device with active sub-agents consequently renders exactly
+one parent session row. Folder fallback must never turn an orphan into a DM
+target.
+
+The Devices UI applies a **30-day client display TTL** to offline session rows
+whose `lastActivity`/`lastActiveAt` timestamp is older than the TTL. The same
+rule applies to own persisted rows and remote rows; live/busy rows never age
+out. Rows without a usable timestamp remain visible for legacy compatibility.
+This is not server deletion.
+
+**Required fa_network behavior (documentation-only here; no Go change in this
+branch):**
+
+1. Treat an offline + empty-`networks` session patch as an authoritative
+   retraction/tombstone for that `(deviceId, sessionId)`, omit it from later
+   roster snapshots, and do not let an older cached snapshot resurrect it.
+2. Reap retracted rows promptly and persisted offline rows after the same
+   30-day TTL (using server receive/update time, not an untrusted client
+   timestamp). Device revocation must remove the device from account rosters.
+3. Preserve additive roster agent shapes: `address` + `state` is sufficient
+   when `exposed` is omitted; explicit `exposed: false` remains hidden. Do not
+   report `agents=0` merely because no socket-local agent is present—the
+   roster is the exposed catalog, not only the live registry.
+
 ## 9. Backend OpenAPI delta (fa_network)
 
 New:

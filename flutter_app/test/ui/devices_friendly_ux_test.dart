@@ -10,6 +10,8 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
+import 'package:fa/ui/network/devices_page.dart'
+    show showDeviceEnrollmentNameDialog;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -153,6 +155,49 @@ void main() {
       );
     },
   );
+
+  testWidgets('first-connect name dialog returns a friendly name or hostname', (
+    tester,
+  ) async {
+    String? result;
+    await tester.pumpWidget(
+      _wrap(
+        Builder(
+          builder: (context) => TextButton(
+            key: const ValueKey('openEnrollmentPrompt'),
+            onPressed: () async =>
+                result = await showDeviceEnrollmentNameDialog(
+                  context,
+                  defaultName: 'workstation',
+                ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('openEnrollmentPrompt')));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('enrollDeviceName')),
+    );
+    expect(field.controller?.text, 'workstation');
+
+    await tester.enterText(
+      find.byKey(const ValueKey('enrollDeviceName')),
+      'Studio Mac',
+    );
+    await tester.tap(find.byKey(const ValueKey('enrollDeviceNameConfirm')));
+    await tester.pumpAndSettle();
+    expect(result, 'Studio Mac');
+
+    await tester.tap(find.byKey(const ValueKey('openEnrollmentPrompt')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('enrollDeviceName')), '');
+    await tester.tap(find.byKey(const ValueKey('enrollDeviceNameConfirm')));
+    await tester.pumpAndSettle();
+    expect(result, 'workstation');
+  });
 
   testWidgets('own session rows use preview/path instead of a hash', (
     tester,

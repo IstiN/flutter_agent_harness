@@ -34,9 +34,11 @@ SessionCatalogEntry _entry(
   String? sessionName,
   String? cwd,
   bool live = false,
+  bool isSubagent = false,
 }) => SessionCatalogEntry(
   id: id,
   live: live,
+  isSubagent: isSubagent,
   title: title,
   snippet: snippet,
   sessionName: sessionName,
@@ -46,6 +48,17 @@ SessionCatalogEntry _entry(
 
 void main() {
   group('session catalog projection', () {
+    test('subagent marker participates in equality and hashing', () {
+      final parent = _entry('session', title: 'Parent');
+      final same = _entry('session', title: 'Parent');
+      final child = _entry('session', title: 'Parent', isSubagent: true);
+
+      expect(parent, same);
+      expect(parent.hashCode, same.hashCode);
+      expect(parent, isNot(child));
+      expect(parent.hashCode, isNot(child.hashCode));
+    });
+
     test('fake store to fake roster publishes every named session, newest '
         'first, and never uses a bare UUID as the display label', () async {
       final store = _FakeCatalogStore([
@@ -90,6 +103,22 @@ void main() {
       );
       expect(projection.entries[1].cwdSlug, 'flutter_agent');
       expect(roster.patches.single, hasLength(3));
+    });
+
+    test('subagent and orphaned child rows retract instead of publishing', () {
+      final projection = projectSessionCatalog(
+        previous: const [],
+        current: [
+          _entry('parent', title: 'Parent session', live: true),
+          _entry('child', title: 'Active child', isSubagent: true),
+          _entry('orphan', title: 'Legacy orphan', isSubagent: true),
+        ],
+        fullSnapshot: true,
+      );
+
+      expect(projection.entries.map((row) => row.id), ['parent']);
+      expect(projection.upserts.map((row) => row.id), ['parent']);
+      expect(projection.retractedIds, ['child', 'orphan']);
     });
 
     test('incremental projection is minimal and retracts deleted ids', () {
@@ -156,7 +185,7 @@ void main() {
       );
       expect(rich.title!.runes.length, sessionCatalogTitleMaxRunes);
       expect(rich.snippet!.runes.length, sessionCatalogSnippetMaxRunes);
-      expect(rich.cwd!.runes.length, sessionCatalogPathMaxRunes);
+      expect(rich.cwd.runes.length, sessionCatalogPathMaxRunes);
       expect(rich.displayName, isNot(rich.id));
       expect(
         projection.entries.singleWhere((row) => row.id == 'plain').displayName,

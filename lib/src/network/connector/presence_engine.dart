@@ -184,6 +184,7 @@ final class ConnectorSessionMetadata {
     this.path,
     this.cwd,
     this.lastActivity,
+    this.isSubagent = false,
   });
 
   /// Human-readable session title (custom, CLI, or the host's derived title).
@@ -201,13 +202,18 @@ final class ConnectorSessionMetadata {
   /// Last transcript activity, used for recency ordering and relative time.
   final DateTime? lastActivity;
 
+  /// Legacy explicit child marker, consumed as a UI filter (never published
+  /// by the current catalog projection).
+  final bool isSubagent;
+
   /// Whether no display field is present.
   bool get isEmpty =>
       (title == null || title!.isEmpty) &&
       (snippet == null || snippet!.isEmpty) &&
       (path == null || path!.isEmpty) &&
       (cwd == null || cwd!.isEmpty) &&
-      lastActivity == null;
+      lastActivity == null &&
+      !isSubagent;
 
   /// Decodes the additive session fields without rejecting legacy rows.
   static ConnectorSessionMetadata? fromJson(Object? value) {
@@ -232,6 +238,11 @@ final class ConnectorSessionMetadata {
       path: path,
       cwd: cwd,
       lastActivity: activity,
+      isSubagent:
+          value['agent'] == 'subagent' ||
+          value['subagent'] == true ||
+          value['parent'] is String ||
+          value['parentId'] is String,
     );
     return metadata.isEmpty ? null : metadata;
   }
@@ -244,6 +255,7 @@ final class ConnectorSessionMetadata {
     if (cwd != null && cwd!.isNotEmpty) 'cwd': cwd,
     if (lastActivity != null)
       'lastActivity': lastActivity!.toUtc().toIso8601String(),
+    if (isSubagent) 'subagent': true,
   };
 
   @override
@@ -253,10 +265,12 @@ final class ConnectorSessionMetadata {
       other.snippet == snippet &&
       other.path == path &&
       other.cwd == cwd &&
-      other.lastActivity == lastActivity;
+      other.lastActivity == lastActivity &&
+      other.isSubagent == isSubagent;
 
   @override
-  int get hashCode => Object.hash(title, snippet, path, cwd, lastActivity);
+  int get hashCode =>
+      Object.hash(title, snippet, path, cwd, lastActivity, isSubagent);
 }
 
 /// One machine presence frame's payload, built and parsed both ways: the

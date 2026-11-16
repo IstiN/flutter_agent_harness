@@ -32,6 +32,7 @@ final class _FakeCatalogStore implements SessionCatalogStore {
         SessionCatalogEntry(
           id: row.id,
           live: liveSessionIds.contains(row.id),
+          isSubagent: row.isSubagent,
           title: row.title,
           snippet: row.snippet,
           sessionName: row.sessionName,
@@ -47,9 +48,11 @@ SessionCatalogEntry _row(
   String? title,
   String? snippet,
   DateTime? lastActiveAt,
+  bool isSubagent = false,
 }) => SessionCatalogEntry(
   id: id,
   live: false,
+  isSubagent: isSubagent,
   title: title ?? 'Session $id',
   snippet: snippet,
   cwd: '/work/$id',
@@ -167,6 +170,51 @@ void main() {
     expect(deleted['state'], 'offline');
     expect(deleted['networks'], isEmpty);
     expect(store.loads, greaterThanOrEqualTo(2));
+  });
+
+  test('full connect retracts active and orphaned subagent sessions', () async {
+    final server = FakeDeviceServer()
+      ..seedDevice(device.deviceId, networks: const ['personal-1']);
+    final store = _FakeCatalogStore([
+      _row('parent', title: 'Parent session'),
+      _row('child', title: 'Active child', isSubagent: true),
+      _row('orphan', title: 'Legacy orphan', isSubagent: true),
+    ]);
+    final requests = <http.Request>[];
+    final controller = NetworkPresenceController(
+      device: device,
+      baseUrl: 'https://relay.test',
+      ticketProvider: () async => 'ticket',
+      transport: server.transport,
+      rosterClient: DeviceEnrollmentClient(
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+        }),
+      ),
+      rosterDebounce: Duration.zero,
+      catalogStore: store,
+      catalogPollInterval: Duration.zero,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startSession(
+      const CliNetworkSession(sessionId: 'parent', mailboxPrefix: 'mailbox-1'),
+    );
+    await _waitUntil(
+      () => requests.expand(_sessions).any((row) => row['id'] == 'orphan'),
+    );
+
+    final rows = {
+      for (final row in requests.expand(_sessions)) row['id'] as String: row,
+    };
+    expect(rows['parent']?['state'], 'live');
+    expect(rows['parent']?['networks'], ['personal-1']);
+    for (final id in const ['child', 'orphan']) {
+      expect(rows[id]?['state'], 'offline');
+      expect(rows[id]?['networks'], isEmpty);
+      expect(rows[id]?['title'], isNull);
+    }
   });
 }
 

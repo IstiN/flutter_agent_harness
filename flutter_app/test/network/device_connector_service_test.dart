@@ -144,6 +144,8 @@ buildService({
   DeviceChatSessionSource? chatSessionSource,
   DeviceDmSessionHost? dmSessionHost,
   Future<String> Function()? userIdProvider,
+  Future<String> Function()? deviceNameProvider,
+  Future<String?> Function(String defaultName)? deviceNamePrompt,
   IdFactory idFactory = defaultIdFactory,
   Duration rosterDebounce = const Duration(milliseconds: 500),
   bool? mobileQueueOnly,
@@ -159,6 +161,8 @@ buildService({
     chatSessionSource: chatSessionSource,
     dmSessionHost: dmSessionHost,
     userIdProvider: userIdProvider,
+    deviceNameProvider: deviceNameProvider,
+    deviceNamePrompt: deviceNamePrompt,
     idFactory: idFactory,
     rosterDebounce: rosterDebounce,
     mobileQueueOnly: mobileQueueOnly,
@@ -193,12 +197,16 @@ void putSession(
 }
 
 final class FakeChatSessionSource extends ChangeNotifier
-    implements DeviceChatSessionSource, DeviceChatSessionMetadataSource {
+    implements
+        DeviceChatSessionSource,
+        DeviceChatSessionMetadataSource,
+        DeviceChatSessionRetractionSource {
   FakeChatSessionSource([Iterable<DeviceChatSession> initial = const []])
     : snapshot = List.of(initial);
 
   List<DeviceChatSession> snapshot;
   List<DeviceChatSessionMetadata> metadata = const [];
+  Set<String> retractedSessionIds = const {};
   var loads = 0;
 
   @override
@@ -213,6 +221,9 @@ final class FakeChatSessionSource extends ChangeNotifier
   @override
   Future<List<DeviceChatSessionMetadata>> loadMetadata() async =>
       List.of(metadata);
+
+  @override
+  Future<Set<String>> loadRetractedSessionIds() async => retractedSessionIds;
 
   void replaceMetadata(Iterable<DeviceChatSessionMetadata> rows) {
     metadata = List.of(rows);
@@ -321,6 +332,75 @@ void main() {
     );
     // The manager is untouched as the integration point.
     expect(manager.hasJwt, isTrue);
+  });
+
+  test(
+    'first enrollment prompts for a friendly name with hostname default',
+    () async {
+      final prompted = <String>[];
+      final (service, _, http, _, _) = await buildService(
+        httpClient: httpClient,
+        deviceNameProvider: () async => 'workstation',
+        deviceNamePrompt: (defaultName) async {
+          prompted.add(defaultName);
+          return 'Studio Mac';
+        },
+      );
+      addTearDown(service.dispose);
+
+      await service.start();
+      await pumpUntilOnline(service);
+
+      expect(prompted, ['workstation']);
+      final enroll = http.requests.singleWhere(
+        (request) => request.url.path == '/api/devices/enroll',
+      );
+      expect((jsonDecode(enroll.body) as Map)['name'], 'Studio Mac');
+    },
+  );
+
+  test('blank enrollment name keeps the hostname default', () async {
+    final (service, _, http, _, _) = await buildService(
+      httpClient: httpClient,
+      deviceNameProvider: () async => 'workstation',
+      deviceNamePrompt: (_) async => '',
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+    await pumpUntilOnline(service);
+
+    final enroll = http.requests.singleWhere(
+      (request) => request.url.path == '/api/devices/enroll',
+    );
+    expect((jsonDecode(enroll.body) as Map)['name'], 'workstation');
+  });
+
+  test('restored device identity skips the enrollment prompt', () async {
+    final tokens = enrolledTokens();
+    var prompts = 0;
+    final (service, _, http, _, _) = await buildService(
+      httpClient: httpClient,
+      tokenStore: tokens,
+      deviceNameProvider: () async => 'workstation',
+      deviceNamePrompt: (_) async {
+        prompts++;
+        return '';
+      },
+    );
+    addTearDown(service.dispose);
+
+    await service.start();
+    await pumpUntilOnline(service);
+
+    expect(prompts, 0);
+    expect(tokens.stored?.deviceId, 'dev-1');
+    expect(
+      http.requests.where(
+        (request) => request.url.path == '/api/devices/enroll',
+      ),
+      isEmpty,
+    );
   });
 
   test('roster/presence/wake_hint frames pass through to the service '
@@ -776,6 +856,38 @@ void main() {
         reason: 'only loaded chat sessions are live in the connector registry',
       );
     });
+
+    test(
+      'full roster retracts legacy subagent rows and publishes one parent',
+      () async {
+        final http = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-subagent-retraction"}')
+          ..respond(200, body: '{"patched":"dev-1"}');
+        final source = FakeChatSessionSource(const [(id: 'parent', live: true)])
+          ..retractedSessionIds = {'child', 'orphan'};
+        final (service, _, _, _, _) = await buildService(
+          httpClient: http,
+          tokenStore: enrolledTokens(),
+          chatSessionSource: source,
+          rosterDebounce: debounce,
+        );
+        addTearDown(service.dispose);
+
+        await service.start();
+        await pumpUntilOnline(service);
+        await Future<void>.delayed(settle);
+
+        expect(rosterPatches(http).single['sessions'], [
+          {'id': 'child', 'state': 'offline', 'networks': <Object?>[]},
+          {'id': 'orphan', 'state': 'offline', 'networks': <Object?>[]},
+          {
+            'id': 'parent',
+            'state': 'live',
+            'networks': ['net-personal'],
+          },
+        ]);
+      },
+    );
 
     test(
       'metadata rides persisted rows and rename-only changes publish',

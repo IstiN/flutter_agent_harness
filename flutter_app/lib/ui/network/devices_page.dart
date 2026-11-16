@@ -54,11 +54,100 @@ import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart
 /// supported). Signed out → the not-running retry line above the rail;
 /// connecting → skeleton line; link lost → a muted reconnecting line above
 /// the last-known rail.
+/// Shared desktop/mobile first-connect friendly-name question. Empty input
+/// resolves to [defaultName]; dismissing returns null (the connector retains
+/// the same default rather than creating an unnamed device).
+Future<String?> showDeviceEnrollmentNameDialog(
+  BuildContext context, {
+  required String defaultName,
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _DeviceEnrollmentNameDialog(defaultName: defaultName),
+);
+
+final class _DeviceEnrollmentNameDialog extends StatefulWidget {
+  const _DeviceEnrollmentNameDialog({required this.defaultName});
+
+  final String defaultName;
+
+  @override
+  State<_DeviceEnrollmentNameDialog> createState() =>
+      _DeviceEnrollmentNameDialogState();
+}
+
+final class _DeviceEnrollmentNameDialogState
+    extends State<_DeviceEnrollmentNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.defaultName)
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: widget.defaultName.length,
+      );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final entered = _controller.text.trim();
+    Navigator.of(context).pop(entered.isEmpty ? widget.defaultName : entered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      key: const ValueKey('enrollDeviceNameDialog'),
+      title: Text(l10n.networkDeviceEnrollNameTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(l10n.networkDeviceEnrollNamePrompt),
+          const SizedBox(height: 16),
+          TextField(
+            key: const ValueKey('enrollDeviceName'),
+            controller: _controller,
+            autofocus: true,
+            maxLength: 64,
+            decoration: InputDecoration(labelText: l10n.networkDeviceNameLabel),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('enrollDeviceNameCancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.commonCancel),
+        ),
+        FilledButton(
+          key: const ValueKey('enrollDeviceNameConfirm'),
+          onPressed: _submit,
+          child: Text(l10n.networkDeviceEnrollNameAction),
+        ),
+      ],
+    );
+  }
+}
+
+/// Stale, timestamped offline rows disappear from Devices after 30 days.
+/// This is only a client display TTL; fa_network must reap its stored rows.
+const deviceOfflineSessionRetention = Duration(days: 30);
+
 class DevicesPage extends StatefulWidget {
   const DevicesPage({
     super.key,
     required this.service,
     this.compact = false,
+    this.now,
     this.sessions,
     this.onOpenSession,
     this.selectedSessionId,
@@ -81,6 +170,9 @@ class DevicesPage extends StatefulWidget {
 
   /// Narrow shell chrome uses the same 54pt glass band as Networks.
   final bool compact;
+
+  /// Clock for the 30-day offline-row TTL (injectable in tests).
+  final DateTime Function()? now;
 
   /// The app's local chat list — the same controller the chat screen's
   /// Local sessions panel projects. The This-device pane ALWAYS lists its
@@ -312,7 +404,11 @@ class _DevicesPageState extends State<DevicesPage> {
         msgId: envelope.msgId,
         ts: envelope.ts,
         machine: machine,
-        agents: _serverAgents(device['agents'], oldPresence?.agents),
+        agents: _serverAgents(
+          device['agents'],
+          oldPresence?.agents,
+          deviceId: roster.deviceId,
+        ),
         sessions: _serverSessions(
           device['sessions'],
           oldPresence?.sessions,
@@ -331,16 +427,27 @@ class _DevicesPageState extends State<DevicesPage> {
   /// list is its new snapshot, so an empty list deliberately clears it.
   Map<String, AgentRunState> _serverAgents(
     Object? value,
-    Map<String, AgentRunState>? previous,
-  ) {
+    Map<String, AgentRunState>? previous, {
+    required String deviceId,
+  }) {
     if (value is! List) return previous ?? const {};
     final agents = <String, AgentRunState>{};
     for (final node in value) {
-      if (node is! Map || node['exposed'] != true) continue;
-      final name = node['name'];
+      if (node is! Map || node['exposed'] == false) continue;
+      final rawAddress = node['address'];
+      final rawName = node['name'];
       final state = AgentRunState.tryParse('${node['state'] ?? ''}');
-      if (name is! String || name.isEmpty || state == null) continue;
-      agents[name] = state;
+      if (rawAddress is String && rawAddress.trim().isNotEmpty) {
+        if (state == null) continue;
+        final address = rawAddress.trim();
+        agents[address.contains('@') ? address : '$address@$deviceId'] = state;
+      } else if (rawName is String &&
+          rawName.trim().isNotEmpty &&
+          state != null) {
+        // Legacy `name` is already the roster key (sometimes the bare agent,
+        // sometimes a full address); retain it verbatim for DM compatibility.
+        agents[rawName.trim()] = state;
+      }
     }
     return agents;
   }
@@ -362,6 +469,14 @@ class _DevicesPageState extends State<DevicesPage> {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
+      if (ConnectorSessionMetadata.fromJson(node)?.isSubagent ?? false) {
+        sessions.remove(id);
+        continue;
+      }
+      if (_serverSessionExpired(node)) {
+        sessions.remove(id);
+        continue;
+      }
       final legacyKnownRow = _legacyKnownServerSession(
         node,
         previous,
@@ -393,6 +508,11 @@ class _DevicesPageState extends State<DevicesPage> {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
+      final parsed = ConnectorSessionMetadata.fromJson(node);
+      if ((parsed?.isSubagent ?? false) || _serverSessionExpired(node)) {
+        metadata.remove(id);
+        continue;
+      }
       final legacyKnownRow = _legacyKnownServerSession(
         node,
         previous,
@@ -405,10 +525,34 @@ class _DevicesPageState extends State<DevicesPage> {
         }
         continue;
       }
-      final parsed = ConnectorSessionMetadata.fromJson(node);
       if (parsed != null) metadata[id] = parsed;
     }
     return metadata;
+  }
+
+  bool _localSessionExpired(ChatListEntry session) {
+    if (session.presence == ChatPresence.live ||
+        session.presence == ChatPresence.busy ||
+        session.isStreaming) {
+      return false;
+    }
+    final activity = session.lastActivity ?? session.createdAt;
+    final now = widget.now?.call() ?? DateTime.now();
+    return now.toUtc().difference(activity.toUtc()) >
+        deviceOfflineSessionRetention;
+  }
+
+  bool _serverSessionExpired(Map<Object?, Object?> session) {
+    if (ConnectorSessionPresence.tryParse('${session['state'] ?? ''}') !=
+        ConnectorSessionPresence.offline) {
+      return false;
+    }
+    final raw = session['lastActivity'] ?? session['lastActiveAt'];
+    final lastActivity = raw is String ? DateTime.tryParse(raw) : null;
+    if (lastActivity == null) return false;
+    final now = widget.now?.call() ?? DateTime.now();
+    return now.toUtc().difference(lastActivity.toUtc()) >
+        deviceOfflineSessionRetention;
   }
 
   bool _serverSessionVisible(
@@ -634,9 +778,14 @@ class _DevicesPageState extends State<DevicesPage> {
     final defaultOwnLabel = context.l10n.networkDeviceThisDevice;
     final ownFriendlyName = ownDevice?.friendlyName;
     final ownMachineKey = _enrollmentMachineGroupKey(ownDevice);
+    final visibleLocalSessions = controller == null
+        ? const <ChatListEntry>[]
+        : deviceVisibleLocalSessions(controller)
+              .where((entry) => !_localSessionExpired(entry))
+              .toList(growable: false);
     final ownSessionIds = <String>{
       ...?ownFrame?.sessions.keys,
-      ...?controller?.localEntries.map((entry) => entry.id.value),
+      for (final entry in visibleLocalSessions) entry.id.value,
     };
 
     final grouping = _RemoteDeviceGrouping.build(
@@ -704,9 +853,7 @@ class _DevicesPageState extends State<DevicesPage> {
                   in entry.value.presence?.agents.keys ?? const <String>{})
                 name: entry.key,
         },
-        localSessions: controller == null
-            ? const <ChatListEntry>[]
-            : deviceVisibleLocalSessions(controller),
+        localSessions: visibleLocalSessions,
       ),
       for (final groupKey in groupKeys)
         _remoteGroupEntry(

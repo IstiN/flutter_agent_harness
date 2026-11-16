@@ -320,6 +320,16 @@ final class NetworkPresenceController
     _catalogEntries = projection.entries;
     if (fullSnapshot) {
       _queueLiveRoster(fullSnapshot: true);
+      // Full roster PATCHes are additive on fa_network. Explicitly retract
+      // child rows left by pre-filter clients instead of merely omitting them.
+      if (projection.retractedIds.isNotEmpty) {
+        _queueRosterEntries(
+          sessions: [
+            for (final id in projection.retractedIds)
+              DeviceRosterSession(id: id, state: 'offline', networks: const []),
+          ],
+        );
+      }
     } else {
       _queueRosterEntries(
         sessions: [

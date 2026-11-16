@@ -14,7 +14,7 @@ library;
 
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/device_connector_service.dart'
-    show DeviceChatSessionMetadataSource;
+    show DeviceChatSessionMetadataSource, DeviceChatSessionRetractionSource;
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/services/agent_service.dart';
@@ -203,6 +203,11 @@ void main() {
     );
     final source = createDeviceChatSessionSource(manager);
     expect(await source.load(), const [(id: 'main-chat', live: false)]);
+    expect(
+      await (source as DeviceChatSessionRetractionSource)
+          .loadRetractedSessionIds(),
+      {'child-agent'},
+    );
 
     // Even a live-loaded subagent id stays unpublished.
     manager.addSession('child-agent', _fakeService(env));

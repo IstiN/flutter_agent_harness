@@ -216,6 +216,14 @@ DeviceChatSessionSource createDeviceChatSessionSource(
     for (final session in manager.sessions)
       (id: session.id, busy: session.service.isStreaming),
   ],
+  retractedSessionIdsLoader: () async => {
+    ...await _loadDeviceSubagentSessionIds(manager),
+    // Cold/in-memory children may not have a persisted header yet; the
+    // canonical Local projection still carries their explicit marker.
+    ...?chatList?.localEntries
+        .where((entry) => entry.isSubagent)
+        .map((entry) => entry.id.value),
+  },
 );
 
 /// Manager/list changes plus every managed service's run notifications.
@@ -284,6 +292,16 @@ final class _DeviceChatSessionChanges extends ChangeNotifier {
       service.addListener(_onServiceChanged);
     }
   }
+}
+
+Future<Set<String>> _loadDeviceSubagentSessionIds(
+  FlutterSessionManager manager,
+) async {
+  final persisted = await manager.listPersistedSessions();
+  return {
+    for (final metadata in persisted)
+      if (isSubagentSession(metadata)) metadata.id,
+  };
 }
 
 Future<List<DeviceChatSession>> _loadDeviceChatSessions(
@@ -443,6 +461,16 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         chatList: _chatController,
       ),
       dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
+      deviceNamePrompt: (defaultName) async {
+        if (!mounted) return null;
+        // The connector starts before the Devices route is opened. Anchor
+        // first enrollment at the root overlay on both desktop and mobile.
+        final rootContext = Navigator.of(context, rootNavigator: true).context;
+        return showDeviceEnrollmentNameDialog(
+          rootContext,
+          defaultName: defaultName,
+        );
+      },
       // Enrollment/keychain/WS failures surface in the app log — the
       // connector has no other voice on this surface.
       onLog: (line) => AppLog.i('devices', line),

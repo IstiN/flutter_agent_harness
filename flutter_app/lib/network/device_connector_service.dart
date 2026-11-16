@@ -75,6 +75,7 @@ typedef _ChatSessionSnapshot = ({
   Map<String, DeviceChatSession> sessions,
   Map<String, DeviceChatSessionMetadata> metadata,
   Map<String, DeviceChatSessionActivity> activity,
+  Set<String> retractedSessionIds,
 });
 
 /// One chat session in the device roster: [live] means its agent is loaded
@@ -110,6 +111,13 @@ abstract interface class DeviceChatSessionActivitySource {
   Future<List<DeviceChatSessionActivity>> loadActivity();
 }
 
+/// Optional legacy-row cleanup source. Ids are sent as offline/no-network
+/// retractions and are never exposed as sessions or DM targets themselves.
+abstract interface class DeviceChatSessionRetractionSource {
+  /// Loads hidden sub-agent ids that older clients may have published.
+  Future<Set<String>> loadRetractedSessionIds();
+}
+
 ConnectorSessionMetadata _presenceMetadata(DeviceChatSessionMetadata row) =>
     ConnectorSessionMetadata(
       title: row.title ?? row.snippet,
@@ -138,7 +146,8 @@ final class CallbackDeviceChatSessionSource
     implements
         DeviceChatSessionSource,
         DeviceChatSessionMetadataSource,
-        DeviceChatSessionActivitySource {
+        DeviceChatSessionActivitySource,
+        DeviceChatSessionRetractionSource {
   /// Creates a source from a change listenable and a complete-snapshot loader.
   /// Optional metadata/activity loaders preserve legacy id-only projections.
   const CallbackDeviceChatSessionSource({
@@ -146,6 +155,7 @@ final class CallbackDeviceChatSessionSource
     required this.loader,
     this.metadataLoader,
     this.activityLoader,
+    this.retractedSessionIdsLoader,
   });
 
   /// Loads the source's complete current snapshot.
@@ -156,6 +166,9 @@ final class CallbackDeviceChatSessionSource
 
   /// Loads the real per-session agent run state.
   final Future<List<DeviceChatSessionActivity>> Function()? activityLoader;
+
+  /// Loads hidden legacy child ids for explicit server-side retraction.
+  final Future<Set<String>> Function()? retractedSessionIdsLoader;
 
   @override
   final Listenable changes;
@@ -170,6 +183,10 @@ final class CallbackDeviceChatSessionSource
   @override
   Future<List<DeviceChatSessionActivity>> loadActivity() async =>
       await activityLoader?.call() ?? const [];
+
+  @override
+  Future<Set<String>> loadRetractedSessionIds() async =>
+      await retractedSessionIdsLoader?.call() ?? const {};
 }
 
 /// Back-compat projection used when no chat-session source is injected.
@@ -379,6 +396,7 @@ class DeviceConnectorService {
     ConnectorTransport? transport,
     Future<String> Function()? supportDirProvider,
     Future<String> Function()? deviceNameProvider,
+    this.deviceNamePrompt,
     this.idFactory = defaultIdFactory,
     this.onLog,
     this.rosterDebounce = const Duration(milliseconds: 500),
@@ -424,6 +442,10 @@ class DeviceConnectorService {
   final Future<String> Function() _supportDirProvider;
   final Future<String> Function() _deviceNameProvider;
 
+  /// First-enrollment-only friendly-name question. Null keeps non-UI hosts
+  /// automatic; a null/blank answer retains the computed hostname default.
+  final Future<String?> Function(String defaultName)? deviceNamePrompt;
+
   /// Delay used to coalesce rapid REST roster changes (test-adjustable).
   final Duration rosterDebounce;
 
@@ -455,6 +477,7 @@ class DeviceConnectorService {
   var _observedSessions = <String, DeviceChatSession>{};
   var _observedSessionMetadata = <String, DeviceChatSessionMetadata>{};
   var _observedSessionActivity = <String, DeviceChatSessionActivity>{};
+  var _observedRetractedSessionIds = <String>{};
   final _knownAgentNames = <String>{};
   var _rosterActive = false;
   var _sessionProjectionRevision = 0;
@@ -973,6 +996,7 @@ class DeviceConnectorService {
     }
     _observedSessionMetadata = snapshot.metadata;
     _observedSessionActivity = snapshot.activity;
+    _observedRetractedSessionIds = snapshot.retractedSessionIds;
     _registerLiveSessions(registry, snapshot.sessions);
     _observedSessions = snapshot.sessions;
 
@@ -1067,8 +1091,17 @@ class DeviceConnectorService {
     if (client == null) {
       throw StateError('not signed in — cannot enroll the device');
     }
+    final computedName = await _computedDeviceName();
+    var enrollmentName = computedName;
+    final prompted = await deviceNamePrompt?.call(computedName);
+    if (prompted != null && prompted.trim().isNotEmpty) {
+      enrollmentName = prompted.trim();
+    }
+    if (enrollmentName.runes.length > 64) {
+      throw StateError('device name must contain at most 64 characters');
+    }
     final enrollment = await client.enrollDevice(
-      name: await _computedDeviceName(),
+      name: enrollmentName,
       platform: Platform.operatingSystem,
     );
     final credentials = DeviceCredentials(
@@ -1236,7 +1269,18 @@ class DeviceConnectorService {
       final sessions = await _chatSessionSource.load();
       var metadata = _observedSessionMetadata;
       var activity = _observedSessionActivity;
+      var retractedSessionIds = _observedRetractedSessionIds;
       final source = _chatSessionSource;
+      if (source is DeviceChatSessionRetractionSource) {
+        try {
+          retractedSessionIds =
+              await (source as DeviceChatSessionRetractionSource)
+                  .loadRetractedSessionIds();
+        } on Object catch (error) {
+          // Cleanup is additive; a failed legacy scan cannot hide parent rows.
+          onLog?.call('device chat-session retraction scan failed: $error');
+        }
+      }
       if (source is DeviceChatSessionMetadataSource) {
         try {
           final rows = await (source as DeviceChatSessionMetadataSource)
@@ -1262,6 +1306,9 @@ class DeviceConnectorService {
         sessions: {for (final session in sessions) session.id: session},
         metadata: metadata,
         activity: activity,
+        retractedSessionIds: retractedSessionIds.difference(
+          sessions.map((session) => session.id).toSet(),
+        ),
       );
     } on Object catch (error) {
       onLog?.call('device chat-session projection failed: $error');
@@ -1269,6 +1316,7 @@ class DeviceConnectorService {
         sessions: _observedSessions,
         metadata: _observedSessionMetadata,
         activity: _observedSessionActivity,
+        retractedSessionIds: _observedRetractedSessionIds,
       );
     }
   }
@@ -1287,6 +1335,7 @@ class DeviceConnectorService {
     }
     _observedSessionMetadata = current.metadata;
     _observedSessionActivity = current.activity;
+    _observedRetractedSessionIds = current.retractedSessionIds;
     _syncRegistrySessions(_observedSessions, current.sessions);
     _observedSessions = current.sessions;
     _connector?.presence.setAgentState(
@@ -1299,6 +1348,7 @@ class DeviceConnectorService {
       _buildRosterProjection(
         sessions: current.sessions.values,
         metadata: current.metadata,
+        retractedSessionIds: current.retractedSessionIds,
         agentState: _agentRosterState(current.sessions, current.activity),
       ),
     );
@@ -1313,15 +1363,18 @@ class DeviceConnectorService {
     final previous = _observedSessions;
     final previousMetadata = _observedSessionMetadata;
     final previousActivity = _observedSessionActivity;
+    final previousRetractedIds = _observedRetractedSessionIds;
     final current = await _currentChatSessions();
     if (!_rosterActive || revision != _sessionProjectionRevision) return;
     if (_sameChatSessions(previous, current.sessions) &&
         _sameSessionMetadata(previousMetadata, current.metadata) &&
-        _sameSessionActivity(previousActivity, current.activity)) {
+        _sameSessionActivity(previousActivity, current.activity) &&
+        _sameStringSets(previousRetractedIds, current.retractedSessionIds)) {
       return;
     }
     _observedSessionMetadata = current.metadata;
     _observedSessionActivity = current.activity;
+    _observedRetractedSessionIds = current.retractedSessionIds;
     _syncRegistrySessions(previous, current.sessions);
     _observedSessions = current.sessions;
     _connector?.presence.setAgentState(
@@ -1344,6 +1397,18 @@ class DeviceConnectorService {
       current.sessions,
       current.activity,
     );
+    final newRetractions = current.retractedSessionIds.difference(
+      previousRetractedIds,
+    );
+    if (newRetractions.isNotEmpty) {
+      _queueRoster((
+        agents: const [],
+        sessions: [
+          for (final id in newRetractions)
+            DeviceRosterSession(id: id, state: 'offline', networks: const []),
+        ],
+      ));
+    }
   }
 
   void _queueChangedRosterSessions(
@@ -1409,6 +1474,9 @@ class DeviceConnectorService {
       ),
     );
   }
+
+  bool _sameStringSets(Set<String> left, Set<String> right) =>
+      left.length == right.length && left.containsAll(right);
 
   bool _sameChatSessions(
     Map<String, DeviceChatSession> left,
@@ -1499,6 +1567,7 @@ class DeviceConnectorService {
   _RosterProjection _buildRosterProjection({
     required Iterable<DeviceChatSession> sessions,
     Map<String, DeviceChatSessionMetadata> metadata = const {},
+    Set<String> retractedSessionIds = const {},
     String? sessionState,
     required String agentState,
     bool includeAgents = true,
@@ -1519,6 +1588,12 @@ class DeviceConnectorService {
               DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         ),
     ]);
+    final projectedIds = projected.map((session) => session.id).toSet();
+    final retracted =
+        retractedSessionIds
+            .where((id) => id.trim().isNotEmpty && !projectedIds.contains(id))
+            .toList()
+          ..sort();
     final agentNames = includeAgents
         ? <String>{...extraAgentNames, ..._registeredAgentNames(projected)}
         : <String>{};
@@ -1556,6 +1631,8 @@ class DeviceConnectorService {
                 ?.toUtc()
                 .toIso8601String(),
           ),
+        for (final id in retracted)
+          DeviceRosterSession(id: id, state: 'offline', networks: const []),
       ],
     );
   }
@@ -1670,6 +1747,7 @@ class DeviceConnectorService {
     _observedSessions = {};
     _observedSessionMetadata = {};
     _observedSessionActivity = {};
+    _observedRetractedSessionIds = {};
     _knownAgentNames.clear();
     _rosterActive = false;
     final subscriptions = List.of(_subscriptions);

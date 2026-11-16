@@ -273,7 +273,11 @@ void main() {
     ]);
     await pumpGolden(
       tester,
-      DevicesPage(service: service, sessions: sessions),
+      DevicesPage(
+        service: service,
+        sessions: sessions,
+        now: () => DateTime.utc(2025, 12, 2),
+      ),
       size: const Size(430, 760),
       theme: buildFaTheme(
         direction: FaVisualDirection.glass,
@@ -294,6 +298,38 @@ void main() {
     expect(underHeaderRow.bottom, greaterThan(0));
     await expectGolden(tester, 'rail_devices_glass_scrolled');
   });
+
+  for (final size in const [Size(390, 844), Size(1280, 800)]) {
+    testWidgets('first-connect device name dialog ${size.width.toInt()}', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        Builder(
+          builder: (context) => Center(
+            child: FilledButton(
+              onPressed: () => showDeviceEnrollmentNameDialog(
+                context,
+                defaultName: 'workstation',
+              ),
+              child: const Text('Connect'),
+            ),
+          ),
+        ),
+        size: size,
+        theme: buildFaTheme(
+          direction: FaVisualDirection.glass,
+          brightness: Brightness.dark,
+        ),
+        wrap: (child) => Scaffold(body: child),
+      );
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('enrollDeviceName')), findsOneWidget);
+      await expectGolden(tester, 'device_enroll_name_${size.width.toInt()}');
+    });
+  }
 
   testWidgets('chats networks panel: membership rows with live status', (
     tester,

@@ -86,27 +86,14 @@ String deviceLocalSessionLabel(BuildContext context, ChatPresence? presence) =>
       ChatPresence.offline || null => context.l10n.networkPresenceOffline,
     };
 
-/// The This-device tree's local-session projection: the app's canonical
-/// enumeration ([ChatListController.localEntries]) with the messenger
-/// list's visibility rule — a subagent session whose parent chat is still
-/// projected rides that parent's badge instead of a roster row; orphaned
-/// subagents stay visible. Mirrors chat_list_panel's
-/// `_isSubagentWithLiveParent` (kept in step by its test).
+/// The This-device tree's local-session projection. Every sub-agent rides
+/// its parent chat's badge: neither active children nor orphaned children
+/// are independent remote DM targets (issue #2212 regression).
 List<ChatListEntry> deviceVisibleLocalSessions(ChatListController controller) {
-  final entries = controller.localEntries;
-  final parentIds = {for (final entry in entries) entry.id.value};
   return [
-    for (final entry in entries)
-      if (!_ridesParentBadge(parentIds, entry)) entry,
+    for (final entry in controller.localEntries)
+      if (!entry.isSubagent) entry,
   ];
-}
-
-/// True when [entry] is a subagent session whose parent chat is still in
-/// the projection.
-bool _ridesParentBadge(Set<String> parentIds, ChatListEntry entry) {
-  if (!entry.isSubagent) return false;
-  final parent = entry.parentId;
-  return parent != null && parentIds.contains(parent);
 }
 
 /// The agent NAME part of a §1 address (`goal_builder@macbook` →

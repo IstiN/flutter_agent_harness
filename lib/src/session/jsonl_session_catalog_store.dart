@@ -12,6 +12,7 @@ import '../context.dart';
 import '../env/execution_env.dart';
 import '../user_text.dart';
 import 'session_catalog.dart';
+import 'session_grouping.dart';
 import 'session_record.dart';
 import 'session_repo.dart';
 import 'session_storage.dart';
@@ -63,6 +64,7 @@ final class JsonlSessionCatalogStore implements SessionCatalogStore {
         SessionCatalogEntry(
           id: sessions[i].id,
           live: liveSessionIds.contains(sessions[i].id),
+          isSubagent: isSubagentSession(sessions[i]),
           title: names[sessions[i].id],
           sessionName: names[sessions[i].id],
           snippet: snippets[i],

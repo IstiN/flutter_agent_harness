@@ -44,10 +44,15 @@ final class SessionCatalogEntry {
     this.title,
     this.snippet,
     this.sessionName,
+    this.isSubagent = false,
   });
 
   final String id;
   final bool live;
+
+  /// Internal child transcript. Subagents are never roster/DM targets; the
+  /// projection retracts these ids so rows published by older peers disappear.
+  final bool isSubagent;
   final String? title;
   final String? snippet;
   final String? sessionName;
@@ -78,6 +83,7 @@ final class SessionCatalogEntry {
     return SessionCatalogEntry(
       id: normalizedId,
       live: live,
+      isSubagent: isSubagent,
       title: _displayText(title, sessionCatalogTitleMaxRunes),
       snippet: _displayText(snippet, sessionCatalogSnippetMaxRunes),
       sessionName: _displayText(sessionName, sessionCatalogTitleMaxRunes),
@@ -91,6 +97,7 @@ final class SessionCatalogEntry {
       other is SessionCatalogEntry &&
       other.id == id &&
       other.live == live &&
+      other.isSubagent == isSubagent &&
       other.title == title &&
       other.snippet == snippet &&
       other.sessionName == sessionName &&
@@ -98,8 +105,16 @@ final class SessionCatalogEntry {
       other.lastActiveAt == lastActiveAt;
 
   @override
-  int get hashCode =>
-      Object.hash(id, live, title, snippet, sessionName, cwd, lastActiveAt);
+  int get hashCode => Object.hash(
+    id,
+    live,
+    isSubagent,
+    title,
+    snippet,
+    sessionName,
+    cwd,
+    lastActiveAt,
+  );
 }
 
 /// Result of projecting one complete store snapshot against the last one.
@@ -162,10 +177,16 @@ SessionCatalogProjection projectSessionCatalog({
   final before = {
     for (final row in normalizeSessionCatalog(previous)) row.id: row,
   };
-  final entries = normalizeSessionCatalog(current);
+  final currentRows = normalizeSessionCatalog(current);
+  final entries = normalizeSessionCatalog(
+    currentRows.where((row) => !row.isSubagent),
+  );
   final now = {for (final row in entries) row.id: row};
-  final retracted = before.keys.where((id) => !now.containsKey(id)).toList()
-    ..sort();
+  final retracted = <String>{
+    ...before.keys.where((id) => !now.containsKey(id)),
+    for (final row in currentRows)
+      if (row.isSubagent && row.id.isNotEmpty) row.id,
+  }.toList()..sort();
   if (fullSnapshot) {
     if (entries.length > sessionCatalogRosterPageSize) {
       final pages = <List<SessionCatalogEntry>>[

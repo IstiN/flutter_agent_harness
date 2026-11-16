@@ -6,7 +6,6 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -50,6 +49,36 @@ void main() {
     expect(snippetRow.displayName, 'Snippet title');
     expect(snippetRow.live, isFalse);
   });
+
+  test(
+    'JSONL catalog marks child and orphaned subagent headers for retraction',
+    () async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      await repo.create(
+        const JsonlSessionCreateOptions(id: 'parent', cwd: '/work'),
+      );
+      await repo.create(
+        const JsonlSessionCreateOptions(
+          id: 'child',
+          cwd: '/work',
+          metadata: {'agent': 'subagent', 'parent': 'parent'},
+        ),
+      );
+      await repo.create(
+        const JsonlSessionCreateOptions(
+          id: 'orphan',
+          cwd: '/work',
+          metadata: {'agent': 'subagent'},
+        ),
+      );
+
+      final rows = await JsonlSessionCatalogStore(repo: repo).loadSessions();
+      expect(rows.singleWhere((row) => row.id == 'parent').isSubagent, isFalse);
+      expect(rows.singleWhere((row) => row.id == 'child').isSubagent, isTrue);
+      expect(rows.singleWhere((row) => row.id == 'orphan').isSubagent, isTrue);
+    },
+  );
 
   test('catalog cache does not rescan an unchanged transcript and refreshes '
       'after append', () async {
