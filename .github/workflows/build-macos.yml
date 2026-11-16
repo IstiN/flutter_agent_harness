@@ -1547,6 +1547,24 @@ jobs:
             fi
           done
 
+          # gh-2209 AC1: stable-named copies of the no-sandbox DMGs — the
+          # permanent URLs the fa1.dev resolver (site/dl.js) and
+          # fa1.dev/dl/macos/ prefer over the versioned twins, byte-identical
+          # by construction (cp of the same file). Lowercase `fa-` prefix on
+          # purpose: ci.yml release-provenance aggregates `sha256sum fa-*`,
+          # so both names land in the SIGNED SHA256SUMS (second line, same
+          # digest) and the drift-watch manifest-coverage check stays exact.
+          for dmg in $DMGS; do
+            base=$(basename "$dmg")
+            if [[ "$base" == fa-macos-nosandbox-arm64-*.dmg ]]; then
+              cp "$dmg" "dmgs/fa-nosandbox-macos-arm64.dmg"
+              STABLE_COPIES+=("dmgs/fa-nosandbox-macos-arm64.dmg")
+            elif [[ "$base" == fa-macos-nosandbox-x86_64-*.dmg ]]; then
+              cp "$dmg" "dmgs/fa-nosandbox-macos-x86_64.dmg"
+              STABLE_COPIES+=("dmgs/fa-nosandbox-macos-x86_64.dmg")
+            fi
+          done
+
           # Extract the raw binary from the .app bundle and upload it as the
           # plain asset name (fa-macos-arm64 / fa-macos-x64) so `fa update`
           # and direct downloads work without knowing the version suffix.

@@ -292,6 +292,12 @@ section {
   box-shadow: 0 8px 30px rgba(129, 140, 248, 0.18);
 }
 .btn-beta .beta-mark { flex: none; }
+/* gh-2209: resolved-version subtitle inside the macOS download button.
+   Hidden until dl.js resolves — the no-API render (offline, rate-limited,
+   E2E/REG goldens) stays pixel-identical to the pre-resolver page. */
+.btn .btn-sub { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; opacity: .72; }
+.btn .btn-sub[hidden] { display: none; }
+.btn .btn-sub a { color: inherit; }
 .pills {
   display: flex;
   flex-wrap: wrap;
