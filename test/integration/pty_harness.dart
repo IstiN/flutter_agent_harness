@@ -253,7 +253,8 @@ Future<void> shutdownPty(
   Duration? grace,
   double? budgetScale,
 }) async {
-  final scale = budgetScale ??
+  final scale =
+      budgetScale ??
       resolvePtyWaitBudgetScale(
         envValue: Platform.environment[kPtyWaitBudgetScaleEnv],
       );
@@ -525,10 +526,17 @@ final class FaCliHarness {
   /// exit, no boundary work). Use when the test needs the exact
   /// process-death residue (issue #437 phase 2).
   Future<void> hardKill() async {
-    await shutdownPty(pty, hard: true, budgetScale: waitBudgetScale);
-    await _outputSub?.cancel();
-    _releaseOwnedCwd();
-    _releaseTranscript();
+    // try/finally (gh-2208 review): the loud StateError from shutdownPty
+    // must still release the harness resources — an open output stream
+    // keeps the runner's event loop alive and the owned temp CWD would
+    // linger on dev machines after the failure.
+    try {
+      await shutdownPty(pty, hard: true, budgetScale: waitBudgetScale);
+    } finally {
+      await _outputSub?.cancel();
+      _releaseOwnedCwd();
+      _releaseTranscript();
+    }
   }
 
   /// gh-1789: the group declarer keeps every addTearDown closure — and thus
@@ -740,12 +748,18 @@ final class FaCliHarness {
   /// open stream keeps the test runner's event loop alive), and waits for
   /// the process to exit. Deletes the harness-owned temp CWD only AFTER
   /// the process is dead — never under a live CLI (issue #936 vector 1).
+  /// The releases run in `finally` (gh-2208 review): shutdownPty's loud
+  /// StateError (child survived even SIGKILL) still propagates, but must
+  /// not skip the resource release.
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await shutdownPty(pty, budgetScale: waitBudgetScale);
-    await _outputSub?.cancel();
-    _releaseOwnedCwd();
-    _releaseTranscript();
+    try {
+      await shutdownPty(pty, budgetScale: waitBudgetScale);
+    } finally {
+      await _outputSub?.cancel();
+      _releaseOwnedCwd();
+      _releaseTranscript();
+    }
   }
 }

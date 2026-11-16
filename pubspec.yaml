@@ -85,7 +85,13 @@ dev_dependencies:
   # scripts/ (verify_builtin_skills, gen_prompts) and test/ resolve skill
   # dir names via p.basename — declare the transitive dep directly.
   path: ^1.9.0
-  pty2: ^0.5.3
+  # gh-2208: patched vendored fork exposing `pid` (vendor/pty2/VENDORED.md)
+  # so the PTY harness can SIGKILL-escalate children that survive the
+  # cooperative kill(). Path dev-dep (like vendor/xterm) so the staged
+  # publish tree resolves the SAME fork — pubspec_overrides.yaml does not
+  # ship to the stage, and hosted pty2 has no `pid` (CI run 43851264755).
+  pty2:
+    path: vendor/pty2
   test: ^1.31.2
   xterm:
     path: vendor/xterm

@@ -139,4 +139,65 @@ void main() {
           'paying the full grace would inflate every suite teardown.',
     );
   });
+
+  test('close()/hardKill() release resources on the loud path too', () {
+    // gh-2208 review thread: shutdownPty's terminal StateError (child
+    // survived even SIGKILL — D-state) must not skip close()'s doc
+    // contract (cancel the output subscription — an open stream keeps
+    // the runner's event loop alive — and release the owned temp CWD +
+    // transcript buffers). The loud path is not reproducible on POSIX
+    // (SIGKILL cannot be trapped), so this pin guards the STRUCTURE:
+    // shutdownPty inside try, all three releases inside finally.
+    final src = File('test/integration/pty_harness.dart').readAsStringSync();
+    const releases = [
+      '_outputSub?.cancel()',
+      '_releaseOwnedCwd()',
+      '_releaseTranscript()',
+    ];
+    for (final signature in [
+      'Future<void> close() async',
+      'Future<void> hardKill() async',
+    ]) {
+      final body = _methodBody(src, signature);
+      expect(body, contains('try {'), reason: '$signature wraps in try');
+      expect(body, contains('} finally {'), reason: '$signature has finally');
+      final tryPart = body.substring(0, body.indexOf('} finally {'));
+      final finallyPart = body.substring(body.indexOf('} finally {'));
+      expect(
+        tryPart,
+        contains('shutdownPty'),
+        reason: '$signature: the kill must run inside try',
+      );
+      for (final release in releases) {
+        expect(
+          finallyPart,
+          contains(release),
+          reason:
+              '$signature: `$release` must run in finally — a thrown '
+              'StateError must not leak the harness resources',
+        );
+        expect(
+          tryPart,
+          isNot(contains(release)),
+          reason: '$signature: `$release` belongs in finally only',
+        );
+      }
+    }
+  });
+}
+
+/// The balanced-brace body of the method whose signature is [signature].
+String _methodBody(String src, String signature) {
+  final start = src.indexOf(signature);
+  if (start < 0) fail('signature not found in pty_harness.dart: $signature');
+  final open = src.indexOf('{', start);
+  var depth = 0;
+  for (var i = open; i < src.length; i++) {
+    if (src[i] == '{') depth++;
+    if (src[i] == '}') {
+      depth--;
+      if (depth == 0) return src.substring(start, i + 1);
+    }
+  }
+  fail('unbalanced braces after $signature');
 }

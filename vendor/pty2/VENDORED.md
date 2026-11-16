@@ -21,8 +21,9 @@
   (upstream's commented-out shape returned the process HANDLE, not the
   pid). `pubspec.yaml`: dropped the upstream `resolution: workspace`
   marker (this repo is not a pub workspace). Everything else is verbatim.
-- **Consumers**: the root package only (`pubspec_overrides.yaml`);
-  `flutter_app` keeps the hosted 0.5.7 — behavior identical, the patch
-  adds getters only.
+- **Consumers**: the root package's dev_dependencies (`pubspec.yaml`,
+  `pty2: {path: vendor/pty2}` — staged like `vendor/xterm`, CI run
+  43851264755); `flutter_app` keeps the hosted 0.5.7 — behavior identical,
+  the patch adds getters only.
 - **Un-vendor when**: upstream exposes `pid` in a release; bump the
-  override back to the hosted constraint and delete this directory.
+  dev-dep back to the hosted constraint and delete this directory.
