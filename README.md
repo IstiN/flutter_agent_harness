@@ -17,8 +17,8 @@ VM, Flutter desktop/mobile, and web.
 demo of the full agent (sandboxed shell, git, interpreters — your key
 stays in page memory), the [iOS public
 beta](https://testflight.apple.com/join/En1eC9UK) on TestFlight, the
-[macOS app](https://github.com/IstiN/flutter_agent_harness/releases/latest),
-and the CLI installer below.
+[macOS app](https://fa1.dev/dl/macos/) (direct download of the newest
+no-sandbox DMG), and the CLI installer below.
 
 ## Design contract
 

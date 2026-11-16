@@ -71,7 +71,12 @@
   asserts the signed entitlement set; the DMG is notarized + stapled by the
   same signed-path-gated step shape as the sandboxed DMG and rides the
   release attach path with the other DMGs (excluded from the auto-update
-  stable names — the sandboxed build stays the default update feed).
+  stable names — the sandboxed build stays the default update feed). The
+  release leg also attaches stable-named copies of the no-sandbox DMGs
+  (`fa-nosandbox-macos-<arch>.dmg`, byte-identical to the versioned twins;
+  #2209) — the lowercase `fa-` prefix keeps them inside the signed
+  SHA256SUMS aggregation (`sha256sum fa-*`), and fa1.dev's resolver
+  (`site/dl.js`, `/dl/macos/`) prefers them for permanent direct links.
   Optional
   secrets: `APP_STORE_CONNECT_KEY_ID/_ISSUER_ID/_KEY_CONTENT`,
   `MACOS_INSTALLER_P12_BASE64/_PASSWORD/MACOS_INSTALLER_CERT_ID`,

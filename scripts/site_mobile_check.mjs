@@ -224,6 +224,16 @@ async function main() {
 
   const browser = await launch();
 
+  // gh-2209: the landing page resolves the macOS DMG against the live
+  // GitHub API on load. Layout/golden legs must stay deterministic and
+  // offline: abort api.github.com in EVERY context (renderer-level catch
+  // keeps the fallback render — subtitle hidden — exactly the pre-resolver
+  // pixels). Fixture legs below re-route the same URLs with recorded
+  // responses; later-registered Playwright routes win over this one.
+  browser.on('context', (ctx) => {
+    ctx.route('https://api.github.com/**', (r) => r.abort());
+  });
+
   // ── AC1/AC4: zero horizontal page scroll, every page, every viewport ────
   console.log('AC1/AC4 — horizontal page scroll guard');
   {
@@ -646,6 +656,200 @@ async function main() {
     ok('#benchmarks heading lands below the header',
       bench.headTop >= bench.headerH, JSON.stringify(bench));
     await ctxB.close();
+  }
+
+  // ── gh-2209: macOS direct-download resolver + /dl/macos/ redirect ───────
+  // Recorded-API fixtures (the issue's "mocked/recorded" contract):
+  //   AC2  mixed history       → button hrefs the newest app release,
+  //                              subtitle renders its version + alt arch;
+  //   AC2  app-less stream     → fallback href + explicit "builds: see
+  //                              releases" subtitle;
+  //   AC4  newest lacks app   → the walk reaches the older app release;
+  //   AC4  draft with app      → skipped, walk continues (published-only);
+  //   AC1  stable name wins    → fa-nosandbox-macos-<arch>.dmg preferred;
+  //   border 1h cache          → a reload within the TTL makes ZERO calls;
+  //   AC3/AC5 /dl/macos/       → location.replace to the resolved asset
+  //                              (success), the releases page (rate-limit),
+  //                              and the static fallback link without JS.
+  console.log('gh-2209 — macOS direct-download resolver');
+  {
+    const ASSET_BASE = 'https://github.com/IstiN/flutter_agent_harness/releases/download';
+    const rel = (tag, names, draft = false) => ({
+      tag_name: tag,
+      draft,
+      prerelease: false,
+      assets: names.map((name) => ({
+        name,
+        browser_download_url: `${ASSET_BASE}/${tag}/${name}`,
+      })),
+    });
+    const cliOnly = (tag) =>
+      rel(tag, ['fa-linux-x64.tar.gz', 'fa-macos-arm64.tar.gz']);
+    const appRelease = (tag, v, extra = []) =>
+      rel(tag, [
+        'fa-linux-x64.tar.gz',
+        `fa-macos-nosandbox-arm64-${v}.dmg`,
+        `fa-macos-nosandbox-x86_64-${v}.dmg`,
+        ...extra,
+      ]);
+    // AC1 headline, the ONLY case where preference is observable: the
+    // release carries BOTH name classes, versioned twins uploaded FIRST
+    // (the release leg's ASSETS order: $DMGS before $STABLE_COPIES) — the
+    // stable URL must win anyway, and the subtitle version falls back to
+    // the release tag (stable names carry no digits).
+    const MIXED_ORDER = rel('v1.0.740', [
+      'fa-linux-x64.tar.gz',
+      'fa-macos-nosandbox-arm64-1.0.740.dmg',
+      'fa-macos-nosandbox-x86_64-1.0.740.dmg',
+      'fa-macos-nosandbox-arm64-1.0.740-mac.zip',
+      'fa-nosandbox-macos-arm64.dmg',
+      'fa-nosandbox-macos-x86_64.dmg',
+    ]);
+
+    const ARM_URL =
+      `${ASSET_BASE}/v1.0.731/fa-macos-nosandbox-arm64-1.0.731.dmg`;
+    const X86_URL =
+      `${ASSET_BASE}/v1.0.731/fa-macos-nosandbox-x86_64-1.0.731.dmg`;
+
+    async function withApi(fixture, fn) {
+      const ctx = await browser.newContext();
+      let apiCalls = 0;
+      await ctx.route(/^https:\/\/api\.github\.com\/repos\/.*\/releases\?/,
+        (route) => {
+          apiCalls++;
+          route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(fixture),
+          });
+        });
+      const page = await ctx.newPage();
+      await fn(page, () => apiCalls);
+      await ctx.close();
+    }
+
+    const waitResolved = (page) => page.waitForFunction(
+      () => document.getElementById('macos-dl-sub')?.hidden === false,
+      { timeout: 5000 },
+    );
+
+    // AC2/AC4: newest release is CLI-only; the walk reaches the older app
+    // release; subtitle renders version + the other arch's link.
+    await withApi([cliOnly('v1.0.734'), appRelease('v1.0.731', '1.0.731')], async (page) => {
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await waitResolved(page);
+      const btn = page.locator('#macos-download');
+      ok('AC2/AC4 button resolves to newest app release (arm64 default)',
+        (await btn.getAttribute('href')) === ARM_URL,
+        (await btn.getAttribute('href')) || 'null');
+      const subText = await page.locator('#macos-dl-sub').innerText();
+      ok('AC2 subtitle renders resolved version', subText.includes('v1.0.731'), subText);
+      const altHref = await page.getAttribute('#macos-dl-sub a', 'href');
+      ok('AC2 alt-arch link visible beside the default',
+        altHref === X86_URL, altHref || 'missing');
+    });
+
+    // AC2: a stream with NO app assets keeps the fallback href + the
+    // explicit "builds: see releases" subtitle.
+    await withApi([cliOnly('v1.0.734'), cliOnly('v1.0.733'), cliOnly('v1.0.732')],
+      async (page) => {
+        await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+        await waitResolved(page);
+        const btn = page.locator('#macos-download');
+        ok('AC2 app-less stream keeps the releases-page fallback',
+          (await btn.getAttribute('href')) ===
+          'https://github.com/IstiN/flutter_agent_harness/releases/latest',
+          (await btn.getAttribute('href')) || 'null');
+        const subText = await page.locator('#macos-dl-sub').innerText();
+        ok('AC2 app-less stream shows the builds subtitle',
+          subText.includes('builds:') && subText.includes('see releases'), subText);
+      });
+
+    // AC1: the stable-named copy wins over the versioned twin even when
+    // the twin was uploaded first (upload-order independence).
+    await withApi([MIXED_ORDER], async (page) => {
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await waitResolved(page);
+      ok('AC1 stable-named copy preferred over the first-uploaded twin',
+        (await page.getAttribute('#macos-download', 'href')) ===
+        `${ASSET_BASE}/v1.0.740/fa-nosandbox-macos-arm64.dmg`,
+        (await page.getAttribute('#macos-download', 'href')) || 'null');
+      const subText = await page.locator('#macos-dl-sub').innerText();
+      ok('AC1 subtitle version falls back to the release tag',
+        subText.includes('v1.0.740'), subText);
+    });
+
+    // AC4: a DRAFT release carrying the app is skipped (published-only);
+    // the walk lands on the published app release below it.
+    await withApi([
+      rel('v1.0.735', [
+        'fa-macos-nosandbox-arm64-1.0.735.dmg',
+        'fa-macos-nosandbox-x86_64-1.0.735.dmg',
+      ], true),
+      appRelease('v1.0.731', '1.0.731'),
+    ], async (page) => {
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await waitResolved(page);
+      ok('AC4 draft carrying the app is skipped',
+        (await page.getAttribute('#macos-download', 'href')) === ARM_URL,
+        (await page.getAttribute('#macos-download', 'href')) || 'null');
+    });
+
+    // Border: the 1h localStorage TTL — a same-context reload makes ZERO
+    // extra API calls (the 60/h unauth budget).
+    await withApi([appRelease('v1.0.731', '1.0.731')], async (page, calls) => {
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await waitResolved(page);
+      const before = calls();
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await page.waitForTimeout(300);
+      ok('border: 1h TTL cache serves the reload without API calls',
+        before > 0 && calls() === before,
+        `calls before=${before} after=${calls()}`);
+    });
+
+    // AC3/AC5: /dl/macos/ redirects to the resolved asset (the README
+    // surface). The asset navigation is intercepted so the assert stays
+    // local.
+    await withApi([cliOnly('v1.0.734'), appRelease('v1.0.731', '1.0.731')],
+      async (page) => {
+        await page.route(`${ASSET_BASE}/**`, (r) =>
+          r.fulfill({ status: 200, body: 'dmg' }));
+        await page.goto(`${BASE}/dl/macos/`, { waitUntil: 'load' });
+        await page.waitForURL(`${ARM_URL}`, { timeout: 5000 });
+        ok('AC3/AC5 /dl/macos/ redirects to the resolved DMG', true);
+      });
+
+    // AC4: rate-limited API on the redirect page → the releases page, never
+    // a dead end.
+    {
+      const ctxL = await browser.newContext();
+      await ctxL.route(/^https:\/\/api\.github\.com\/repos\/.*\/releases\?/,
+        (r) => r.fulfill({ status: 403, body: '{"message":"rate limited"}' }));
+      await ctxL.route(
+        'https://github.com/IstiN/flutter_agent_harness/releases/latest',
+        (r) => r.fulfill({ status: 200, body: 'releases' }));
+      const page = await ctxL.newPage();
+      await page.goto(`${BASE}/dl/macos/`, { waitUntil: 'load' });
+      await page.waitForURL(
+        'https://github.com/IstiN/flutter_agent_harness/releases/latest',
+        { timeout: 5000 });
+      ok('AC4 rate-limited redirect falls back to the releases page', true);
+      await ctxL.close();
+    }
+
+    // no-JS: the redirect page still offers the manual releases link.
+    {
+      const ctxN = await browser.newContext({ javaScriptEnabled: false });
+      const pageN = await ctxN.newPage();
+      await pageN.goto(`${BASE}/dl/macos/`, { waitUntil: 'load' });
+      ok('no-JS /dl/macos/ keeps the releases-page link',
+        await pageN
+          .locator('a[href*="flutter_agent_harness/releases"]')
+          .first()
+          .isVisible());
+      await ctxN.close();
+    }
   }
 
   await browser.close();
