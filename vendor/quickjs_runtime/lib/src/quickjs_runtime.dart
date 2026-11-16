@@ -33,9 +33,9 @@ class QuickjsRuntime {
   /// Creates a new runtime with a fresh context and an empty host callback
   /// registry.
   QuickjsRuntime({this.autoDrainMicrotasks = true})
-      : _ffi = QuickjsFfi(),
-        _runtime = nullptr,
-        _context = nullptr {
+    : _ffi = QuickjsFfi(),
+      _runtime = nullptr,
+      _context = nullptr {
     _ffi.resetCallbacks();
     _runtime = _ffi.createRuntime();
     _context = _ffi.createContext(_runtime);
@@ -76,20 +76,20 @@ class QuickjsRuntime {
   ) {
     final callable =
         NativeCallable<Pointer<Utf8> Function(Pointer<Utf8>)>.isolateLocal((
-      Pointer<Utf8> argsPtr,
-    ) {
-      try {
-        final argsJson = argsPtr.toDartString();
-        final result = callback(argsJson);
-        if (result == null) return nullptr;
-        return result.toNativeUtf8();
-      } catch (_) {
-        // Pointer-returning NativeCallables cannot declare an
-        // exceptionalReturn; a stray exception would otherwise terminate
-        // the isolate. Surface it to JS as `undefined`.
-        return nullptr;
-      }
-    });
+          Pointer<Utf8> argsPtr,
+        ) {
+          try {
+            final argsJson = argsPtr.toDartString();
+            final result = callback(argsJson);
+            if (result == null) return nullptr;
+            return result.toNativeUtf8();
+          } catch (_) {
+            // Pointer-returning NativeCallables cannot declare an
+            // exceptionalReturn; a stray exception would otherwise terminate
+            // the isolate. Surface it to JS as `undefined`.
+            return nullptr;
+          }
+        });
     _callables.add(callable); // keep alive so it isn't GC'd
     _ffi.registerHostFn(_context, name, callable.nativeFunction);
   }
@@ -108,18 +108,20 @@ class QuickjsRuntime {
   ) {
     if (!_ffi.hasBytesFn) return false;
     final callable =
-        NativeCallable<Void Function(Pointer<Utf8>, Pointer<Uint8>, Size)>.isolateLocal((
-      Pointer<Utf8> namePtr,
-      Pointer<Uint8> dataPtr,
-      int length,
-    ) {
-      try {
-        callback(namePtr.toDartString(), dataPtr.asTypedList(length));
-      } catch (_) {
-        // isolateLocal callables cannot throw across the FFI boundary;
-        // degrade to a dropped message like the rest of the lane.
-      }
-    });
+        NativeCallable<
+          Void Function(Pointer<Utf8>, Pointer<Uint8>, Size)
+        >.isolateLocal((
+          Pointer<Utf8> namePtr,
+          Pointer<Uint8> dataPtr,
+          int length,
+        ) {
+          try {
+            callback(namePtr.toDartString(), dataPtr.asTypedList(length));
+          } catch (_) {
+            // isolateLocal callables cannot throw across the FFI boundary;
+            // degrade to a dropped message like the rest of the lane.
+          }
+        });
     _callables.add(callable); // keep alive so it isn't GC'd
     return _ffi.registerBytesFn(_context, name, callable.nativeFunction) == 0;
   }
@@ -162,6 +164,21 @@ class QuickjsRuntime {
     }
     return executed;
   }
+
+  /// Arms the process-global cooperative drain stop (see
+  /// [QuickjsFfi.requestDrainStop]). The next [drainMicrotasks] /
+  /// [executePendingJobs] call — from THIS isolate or the isolate that
+  /// owns this runtime class's native library instance — returns early,
+  /// leaving pending jobs queued. MUST be balanced with [clearDrainStop]:
+  /// the flag is process-global and would freeze every other QuickJS
+  /// engine in the process while armed.
+  void requestDrainStop() => _ffi.requestDrainStop();
+
+  /// Releases the drain stop armed by [requestDrainStop].
+  void clearDrainStop() => _ffi.clearDrainStop();
+
+  /// Whether the cooperative drain stop is armed (process-global).
+  bool get drainStopRequested => _ffi.drainStopRequested;
 
   /// Releases all resources: the registered callbacks, then the QuickJS
   /// context and runtime. Safe to call once; a no-op thereafter.

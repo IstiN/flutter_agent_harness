@@ -25,11 +25,8 @@ typedef _HostCallbackNative = Pointer<Utf8> Function(Pointer<Utf8> argsJson);
 
 /// Bytes-lane host callback: `(name, data, length)`. `data` points into
 /// the JS typed array's backing store and is valid only during the call.
-typedef _BytesCallbackNative = Void Function(
-  Pointer<Utf8> name,
-  Pointer<Uint8> data,
-  Size length,
-);
+typedef _BytesCallbackNative =
+    Void Function(Pointer<Utf8> name, Pointer<Uint8> data, Size length);
 
 /// Resolves the absolute path to `libquickjs_bridge.so`.
 ///
@@ -103,11 +100,12 @@ external void _nativeDestroy(Pointer<Void> runtime, Pointer<Void> context);
 external void _nativeResetCallbacks();
 
 @Native<
-    Int32 Function(
-      Pointer<Void>,
-      Pointer<Utf8>,
-      Pointer<NativeFunction<_HostCallbackNative>>,
-    )>(symbol: 'qjs_register_host_fn')
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Utf8>,
+    Pointer<NativeFunction<_HostCallbackNative>>,
+  )
+>(symbol: 'qjs_register_host_fn')
 external int _nativeRegisterHostFn(
   Pointer<Void> context,
   Pointer<Utf8> name,
@@ -115,12 +113,13 @@ external int _nativeRegisterHostFn(
 );
 
 @Native<
-    Pointer<Utf8> Function(
-      Pointer<Void>,
-      Pointer<Utf8>,
-      Pointer<Utf8>,
-      Pointer<Pointer<Utf8>>,
-    )>(symbol: 'qjs_eval')
+  Pointer<Utf8> Function(
+    Pointer<Void>,
+    Pointer<Utf8>,
+    Pointer<Utf8>,
+    Pointer<Pointer<Utf8>>,
+  )
+>(symbol: 'qjs_eval')
 external Pointer<Utf8> _nativeEval(
   Pointer<Void> context,
   Pointer<Utf8> code,
@@ -138,11 +137,12 @@ external int _nativeSetGlobalJson(
 );
 
 @Native<
-    Int32 Function(
-      Pointer<Void>,
-      Pointer<Utf8>,
-      Pointer<NativeFunction<_BytesCallbackNative>>,
-    )>(symbol: _symRegisterBytesFn)
+  Int32 Function(
+    Pointer<Void>,
+    Pointer<Utf8>,
+    Pointer<NativeFunction<_BytesCallbackNative>>,
+  )
+>(symbol: _symRegisterBytesFn)
 external int _nativeRegisterBytesFn(
   Pointer<Void> context,
   Pointer<Utf8> name,
@@ -162,6 +162,15 @@ external int _nativeExecutePendingJobsCapped(
 
 @Native<Int32 Function(Int32)>(symbol: _symSleepMs)
 external int _nativeSleepMs(int ms);
+
+@Native<Void Function()>(symbol: 'qjs_request_drain_stop')
+external void _nativeRequestDrainStop();
+
+@Native<Void Function()>(symbol: 'qjs_clear_drain_stop')
+external void _nativeClearDrainStop();
+
+@Native<Int32 Function()>(symbol: 'qjs_drain_stop_requested')
+external int _nativeDrainStopRequested();
 
 /// Low-level QuickJS FFI bindings.
 ///
@@ -188,28 +197,39 @@ class QuickjsFfi {
   late final Pointer<Void> Function() _createRuntime;
   late final Pointer<Void> Function(Pointer<Void> runtime) _createContext;
   late final void Function(Pointer<Void> runtime, Pointer<Void> context)
-      _destroy;
+  _destroy;
   late final void Function() _resetCallbacks;
   late final int Function(
     Pointer<Void> context,
     Pointer<Utf8> name,
     Pointer<NativeFunction<_HostCallbackNative>> callback,
-  ) _registerHostFn;
+  )
+  _registerHostFn;
   late final Pointer<Utf8> Function(
     Pointer<Void> context,
     Pointer<Utf8> code,
     Pointer<Utf8> filename,
     Pointer<Pointer<Utf8>> errMsg,
-  ) _eval;
+  )
+  _eval;
   late final int Function(
     Pointer<Void> context,
     Pointer<Utf8> name,
     Pointer<Utf8> json,
-  ) _setGlobalJson;
+  )
+  _setGlobalJson;
   late final int Function(Pointer<Void> context) _executePendingJobs;
   late final int Function(Pointer<Void> context, int maxJobs)
-      _executePendingJobsCapped;
+  _executePendingJobsCapped;
   late final int Function(int ms) _sleepMs;
+
+  /// Cooperative drain stop (see [requestDrainStop]); always available on
+  /// native-assets builds, optional on older dynamically loaded libraries.
+  bool get hasDrainStop => _hasDrainStop;
+  bool _hasDrainStop = false;
+  late final void Function() _requestDrainStop;
+  late final void Function() _clearDrainStop;
+  late final bool Function() _drainStopRequested;
 
   /// Bytes-lane host functions (`qjs_register_bytes_fn`, added in 0.3.4).
   /// Older shared libraries do not export it — [hasBytesFn] is false and
@@ -220,15 +240,15 @@ class QuickjsFfi {
     Pointer<Void> context,
     Pointer<Utf8> name,
     Pointer<NativeFunction<_BytesCallbackNative>> callback,
-  ) _registerBytesFn;
+  )
+  _registerBytesFn;
 
   /// Resolves QuickJS C bridge symbols via the native-assets `CodeAsset`
   /// (`hook/build.dart`) when available, or falls back to opening
   /// [libraryPath] (`JSR_QUICKJS_LIB` / `tool/build_quickjs.sh`).
   QuickjsFfi({bool preferDynamicLibrary = false}) {
     final envOverride = Platform.environment['JSR_QUICKJS_LIB'];
-    if (!preferDynamicLibrary &&
-        (envOverride == null || envOverride.isEmpty)) {
+    if (!preferDynamicLibrary && (envOverride == null || envOverride.isEmpty)) {
       try {
         _nativeResetCallbacks();
         _bindNativeAsset();
@@ -253,6 +273,10 @@ class QuickjsFfi {
     _executePendingJobs = _nativeExecutePendingJobs;
     _executePendingJobsCapped = _nativeExecutePendingJobsCapped;
     _sleepMs = _nativeSleepMs;
+    _requestDrainStop = _nativeRequestDrainStop;
+    _clearDrainStop = _nativeClearDrainStop;
+    _drainStopRequested = () => _nativeDrainStopRequested() != 0;
+    _hasDrainStop = true;
   }
 
   void _bindDynamicLibrary(DynamicLibrary lib) {
@@ -274,30 +298,33 @@ class QuickjsFfi {
         .asFunction();
     _registerHostFn = lib
         .lookup<
-            NativeFunction<
-                Int32 Function(
-                  Pointer<Void>,
-                  Pointer<Utf8>,
-                  Pointer<NativeFunction<_HostCallbackNative>>,
-                )>>('qjs_register_host_fn')
+          NativeFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<Utf8>,
+              Pointer<NativeFunction<_HostCallbackNative>>,
+            )
+          >
+        >('qjs_register_host_fn')
         .asFunction();
     _eval = lib
         .lookup<
-            NativeFunction<
-                Pointer<Utf8> Function(
-                  Pointer<Void>,
-                  Pointer<Utf8>,
-                  Pointer<Utf8>,
-                  Pointer<Pointer<Utf8>>,
-                )>>('qjs_eval')
+          NativeFunction<
+            Pointer<Utf8> Function(
+              Pointer<Void>,
+              Pointer<Utf8>,
+              Pointer<Utf8>,
+              Pointer<Pointer<Utf8>>,
+            )
+          >
+        >('qjs_eval')
         .asFunction();
     _setGlobalJson = lib
         .lookup<
-            NativeFunction<
-                Int32 Function(
-                    Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>)>>(
-          'qjs_set_global_json',
-        )
+          NativeFunction<
+            Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>)
+          >
+        >('qjs_set_global_json')
         .asFunction();
     _bindOptionalSymbols(lib);
   }
@@ -343,6 +370,23 @@ class QuickjsFfi {
           .asFunction();
     } else {
       _sleepMs = (_) => -1;
+    }
+    if (lib.providesSymbol('qjs_request_drain_stop')) {
+      _requestDrainStop = lib
+          .lookup<NativeFunction<Void Function()>>('qjs_request_drain_stop')
+          .asFunction();
+      _clearDrainStop = lib
+          .lookup<NativeFunction<Void Function()>>('qjs_clear_drain_stop')
+          .asFunction();
+      final int Function() asked = lib
+          .lookup<NativeFunction<Int32 Function()>>('qjs_drain_stop_requested')
+          .asFunction();
+      _drainStopRequested = () => asked() != 0;
+      _hasDrainStop = true;
+    } else {
+      _requestDrainStop = () {};
+      _clearDrainStop = () {};
+      _drainStopRequested = () => false;
     }
   }
 
@@ -462,6 +506,21 @@ class QuickjsFfi {
   /// uncapped drain when the loaded library predates the capped symbol.
   int executePendingJobsCapped(Pointer<Void> context, int maxJobs) =>
       _executePendingJobsCapped(context, maxJobs);
+
+  /// Arms the process-global cooperative drain stop: both
+  /// `qjs_execute_pending_jobs` loops in the bridge return early, leaving
+  /// remaining jobs pending, so a draining worker stops entering host
+  /// callbacks within one job of this call. Hosts arm it when shutting an
+  /// engine down (the worker cannot observe a queued shutdown command
+  /// mid-drain) and MUST clear it once the shutdown handshake resolves —
+  /// see [clearDrainStop]. No-op on libraries without the export.
+  void requestDrainStop() => _requestDrainStop();
+
+  /// Releases the cooperative drain stop armed by [requestDrainStop].
+  void clearDrainStop() => _clearDrainStop();
+
+  /// Whether the cooperative drain stop is currently armed (process-global).
+  bool get drainStopRequested => _drainStopRequested();
 
   /// Blocks the calling thread for [ms] milliseconds.
   ///

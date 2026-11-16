@@ -215,12 +215,50 @@ typedef struct JSValue {
 #define JS_VALUE_GET_FLOAT64(v) ((v).u.float64)
 #define JS_VALUE_GET_PTR(v) ((v).u.ptr)
 
+#if defined(_MSC_VER)
+/* MSVC has no C99 compound literals; use constructor helpers instead. */
+static inline JSValue js_mkval(int64_t tag, int32_t val)
+{
+    JSValue v;
+    v.tag = tag;
+    v.u.int32 = val;
+    return v;
+}
+static inline JSValue js_mknan(void)
+{
+    /* Quiet NaN bit pattern; spelled out because <math.h>'s NAN is not
+       necessarily visible at this point in every translation unit. */
+    union {
+        uint64_t u64;
+        double d;
+    } u;
+    JSValue v;
+    u.u64 = 0x7ff8000000000000ULL;
+    v.tag = JS_TAG_FLOAT64;
+    v.u.float64 = u.d;
+    return v;
+}
+static inline JSValue js_mkptr(int64_t tag, void *p)
+{
+    JSValue v;
+    v.tag = tag;
+    v.u.ptr = p;
+    return v;
+}
+#define JS_MKVAL(tag, val) js_mkval((tag), (val))
+#define JS_MKPTR(tag, p) js_mkptr((tag), (void *)(p))
+#else
 #define JS_MKVAL(tag, val) (JSValue){ (JSValueUnion){ .int32 = val }, tag }
 #define JS_MKPTR(tag, p) (JSValue){ (JSValueUnion){ .ptr = p }, tag }
+#endif
 
 #define JS_TAG_IS_FLOAT64(tag) ((unsigned)(tag) == JS_TAG_FLOAT64)
 
+#if defined(_MSC_VER)
+#define JS_NAN js_mknan()
+#else
 #define JS_NAN (JSValue){ .u.float64 = JS_FLOAT64_NAN, JS_TAG_FLOAT64 }
+#endif
 
 static inline JSValue __JS_NewFloat64(JSContext *ctx, double d)
 {
@@ -669,7 +707,13 @@ static inline JSValue JS_DupValue(JSContext *ctx, JSValueConst v)
         JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
         p->ref_count++;
     }
+#if defined(_MSC_VER)
+    /* MSVC rejects struct-to-struct casts (a GNU C extension); dropping
+       the const qualifier via plain conversion is equivalent here. */
+    return v;
+#else
     return (JSValue)v;
+#endif
 }
 
 static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
@@ -678,7 +722,13 @@ static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
         JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
         p->ref_count++;
     }
+#if defined(_MSC_VER)
+    /* MSVC rejects struct-to-struct casts (a GNU C extension); dropping
+       the const qualifier via plain conversion is equivalent here. */
+    return v;
+#else
     return (JSValue)v;
+#endif
 }
 
 int JS_ToBool(JSContext *ctx, JSValueConst val); /* return -1 for JS_EXCEPTION */

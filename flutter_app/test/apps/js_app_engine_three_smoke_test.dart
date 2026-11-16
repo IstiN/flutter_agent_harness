@@ -9,7 +9,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The minimal upstream-THREE smoke widget, derived from the runtime's
-/// v0.4.191 `example/lib/three_example.dart` contract. The same source is
+/// v0.4.204 `example/lib/three_example.dart` contract. The same source is
 /// syntax-checked and stub-run with Node as required by the fa-widgets skill.
 const threeCubeWidgetJs = r'''
 (() => {

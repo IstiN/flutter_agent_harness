@@ -49,12 +49,16 @@ Object? evalJson(QuickjsRuntime rt, String code) {
 /// worker wiring and the Java worker-bridge wiring, which both build a
 /// fresh engine per dispatched job).
 ///
-/// A runtime created at worker START and then used while the MAIN
-/// isolate sits inside its own `rt.eval` intermittently evaluates even
-/// `1+1` to `undefined` (silent, no errMsg) — QuickJS-level race between
-/// the two isolates' C frames. Creating the engine per job, while the
-/// main isolate is parked in the native `wait()`, is clean (0/30) and
-/// matches the production adapter's fresh-engine-per-job contract.
+/// Engine lifetime note: the engines here are built per job purely to
+/// mirror the production adapter's fresh-engine-per-job contract. The
+/// historical "runtime created at worker start intermittently evaluates
+/// to undefined" flake was NOT an engine-shape problem: the Dart VM
+/// migrates an isolate between OS threads, and QuickJS anchors its
+/// stack-overflow limit to the thread that created the runtime — an eval
+/// on a migrated thread spuriously failed with SyntaxError("stack
+/// overflow"), whose message then failed to render, surfacing as a
+/// silent undefined. The bridge now re-anchors the stack top at every
+/// JS entry point (qjs_refresh_stack_top in quickjs_bridge.c).
 Future<void> compatWorkerMain(AsyncWorkerLink link) async {
   try {
     while (true) {
@@ -194,37 +198,39 @@ const Map<String, dynamic> expectedTimers = {
 };
 
 void main() {
-  test('conformance script produces the identical cross-runtime result',
-      () async {
-    final rt = QuickjsRuntime();
-    final pool = AsyncEnginePool(workers: 2, workerMain: compatWorkerMain);
-    try {
-      installNodeCompat(
-        rt,
-        NodeCompatConfig(
-          utf8Encode: utf8.encode,
-          utf8Decode: utf8.decode,
-          httpFetch: cannedFetch,
-        ),
-      );
-      await pool.boot();
-      pool.attachMainRuntime(rt);
-      rt.setGlobal('params', {
-        'jobParams': {'nodeCompat': true, 'parallelWorkers': 2},
-      });
-      final errors = <String?>[];
-      rt.eval(
-        File('test/fixtures/cross_runtime_conformance.js').readAsStringSync(),
-        filename: 'cross_runtime_conformance.js',
-        errMsg: errors,
-      );
-      if (errors.isNotEmpty) throw StateError(errors.first!);
-      expect(evalJson(rt, 'action(params)'), equals(expected));
-    } finally {
-      pool.dispose();
-      rt.close();
-    }
-  });
+  test(
+    'conformance script produces the identical cross-runtime result',
+    () async {
+      final rt = QuickjsRuntime();
+      final pool = AsyncEnginePool(workers: 2, workerMain: compatWorkerMain);
+      try {
+        installNodeCompat(
+          rt,
+          NodeCompatConfig(
+            utf8Encode: utf8.encode,
+            utf8Decode: utf8.decode,
+            httpFetch: cannedFetch,
+          ),
+        );
+        await pool.boot();
+        pool.attachMainRuntime(rt);
+        rt.setGlobal('params', {
+          'jobParams': {'nodeCompat': true, 'parallelWorkers': 2},
+        });
+        final errors = <String?>[];
+        rt.eval(
+          File('test/fixtures/cross_runtime_conformance.js').readAsStringSync(),
+          filename: 'cross_runtime_conformance.js',
+          errMsg: errors,
+        );
+        if (errors.isNotEmpty) throw StateError(errors.first!);
+        expect(evalJson(rt, 'action(params)'), equals(expected));
+      } finally {
+        pool.dispose();
+        rt.close();
+      }
+    },
+  );
 
   test('timers protocol: microtask at eval end, one drain pass ordering', () {
     final rt = QuickjsRuntime();
@@ -244,10 +250,7 @@ void main() {
         errMsg: errors,
       );
       if (errors.isNotEmpty) throw StateError(errors.first!);
-      expect(
-        evalJson(rt, 'actionTimers({})'),
-        'registered',
-      );
+      expect(evalJson(rt, 'actionTimers({})'), 'registered');
       final stats = handle.drainTimers();
       expect(stats.ran, 3); // imm + t0 + iv
       expect(evalJson(rt, 'globalThis.__timersOut'), equals(expectedTimers));

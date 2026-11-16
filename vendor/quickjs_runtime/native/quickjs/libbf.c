@@ -1978,12 +1978,6 @@ static limb_t mp_sqrtrem2(limb_t *tabs, limb_t *taba)
     if (unlikely((q >> l) != 0))
         r -= (dlimb_t)1 << LIMB_BITS; /* special case when q=2^l */
     else
-        /* fork delta (vs upstream 2024-01-13): explicit widen — the else arm
-           of the (q >> l) != 0 guard above bounds q < 2^l, so the product
-           never wraps in limb_t and this is value-identical to upstream's
-           `r -= q * q;`; silences CodeQL cpp/integer-multiplication-cast-
-           to-long (inline // codeql comments are NOT honored by GitHub code
-           scanning — github/codeql#11427). */
         r -= (dlimb_t)q * q;
     if ((slimb_t)(r >> LIMB_BITS) < 0) {
         s--;
@@ -3111,7 +3105,14 @@ static int bf_atof_internal(bf_t *r, slimb_t *pexponent,
     if (is_dec) {
         a->expn = expn + int_len;
         a->sign = is_neg;
+#ifdef USE_BF_DEC
+        /* Decimal support (CONFIG_BIGNUM builds) only; is_dec is never
+           TRUE otherwise (bfdec_atof, the sole TRUE caller, is guarded
+           by USE_BF_DEC). Without the guard MSVC links fail with an
+           unresolved bfdec_normalize_and_round (macOS ld silently
+           tolerates the same dangling reference in a dylib). */
         ret = bfdec_normalize_and_round((bfdec_t *)a, prec, flags);
+#endif
     } else if (radix_bits) {
         /* XXX: may overflow */
         if (!is_bin_exp)
@@ -3661,11 +3662,6 @@ static void output_digits(DynBuf *s, const bf_t *a1, int radix, limb_t n_digits,
         a = (bf_t *)a1;
         radix_bits = ceil_log2(radix);
         digits_per_limb = LIMB_BITS / radix_bits;
-        /* fork delta (vs upstream 2024-01-13): explicit widen — the product
-           is exactly LIMB_BITS (≤ 64) by construction, value-identical to
-           upstream; silences CodeQL cpp/integer-multiplication-cast-to-long
-           (inline // codeql comments are NOT honored by GitHub code
-           scanning — github/codeql#11427). */
         pos_incr = (slimb_t)digits_per_limb * radix_bits;
         /* digits are aligned relative to the radix point */
         pos = a->len * LIMB_BITS + smod(-a->expn, radix_bits);

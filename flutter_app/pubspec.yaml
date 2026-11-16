@@ -92,11 +92,11 @@ dependencies:
   # gh-1842 (lock bump to 0.4.189): the test-compilation floor is now
   # 0.4.189 — flutter_app/test/apps/fa_craft_bsp_smoke_test.dart
   # references VoxelDiagnostics, which does not exist below 0.4.189.
-  # gh-2215: 0.4.191 adds upstream THREE r186, native/web runtime bundles,
-  # R1 and Flutter GPU presentation. Pin exactly: 0.4.192+ requires
-  # quickjs_runtime 0.4.9 APIs absent from the repo's Android-compatible
-  # vendored 0.4.2 fork (the hosted 0.4.9 Android hook links pthread).
-  js_widget_runtime: 0.4.191
+  # gh-2215: 0.4.204 carries upstream THREE r186, native/web runtime bundles,
+  # R1 and Flutter GPU presentation, and the current QuickJS isolate fixes.
+  # It requires quickjs_runtime ^0.4.9; the vendored 0.4.9 below supplies
+  # that API with the Android libpthread linker fix applied.
+  js_widget_runtime: 0.4.204
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that
@@ -257,12 +257,11 @@ dependency_overrides:
   # (composer fa_tui needs LineEditor, which the hosted 2.x predates.)
   dart_tui:
     path: ../vendor/dart_tui
-  # PR #1785 rework: hosted quickjs_runtime 0.4.2 (pulled in by the
-  # js_widget_runtime 0.4.180 bump) fails its Native Assets build on the
-  # Build Android APK leg (`-lpthread` — the NDK has no libpthread since
-  # r18) and the Lockfile smoke windows leg (the QuickJS 2024-01-13
-  # sources are not MSVC-clean). Consume the patched vendored fork until
-  # upstream publishes the fix; pinned by
+  # js_widget_runtime 0.4.204 requires quickjs_runtime ^0.4.9. Upstream
+  # 0.4.9 fixes the old Windows/MSVC and isolate drain/stack issues, but
+  # still links `-lpthread` on Android (the NDK has no libpthread since
+  # r18). Consume vendored 0.4.9 with that one linker delta plus the
+  # existing CodeQL casts; pinned by
   # ../test/quickjs_runtime_vendor_pin_test.dart (root).
   quickjs_runtime:
     path: ../vendor/quickjs_runtime

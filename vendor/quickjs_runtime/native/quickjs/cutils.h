@@ -31,11 +31,21 @@
 /* set if CPU is big endian */
 #undef WORDS_BIGENDIAN
 
+#if defined(_MSC_VER)
+/* MSVC has no __builtin_expect/__attribute__; the force-included
+   msvc_compat.h provides <intrin.h> for the clz/ctz shims below. */
+#define likely(x)      (x)
+#define unlikely(x)    (x)
+#define force_inline __forceinline
+#define no_inline __declspec(noinline)
+#define __maybe_unused
+#else
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define force_inline inline __attribute__((always_inline))
 #define no_inline __attribute__((noinline))
 #define __maybe_unused __attribute__((unused))
+#endif
 
 #define xglue(x, y) x ## y
 #define glue(x, y) xglue(x, y)
@@ -115,6 +125,74 @@ static inline int64_t min_int64(int64_t a, int64_t b)
 }
 
 /* WARNING: undefined if a = 0 */
+#if defined(_MSC_VER)
+static force_inline int clz32(unsigned int a)
+{
+    unsigned long r;
+    if (_BitScanReverse(&r, a))
+        return 31 - (int)r;
+    return 32;
+}
+
+/* WARNING: undefined if a = 0 */
+static force_inline int clz64(uint64_t a)
+{
+    unsigned long r;
+#if defined(_M_X64) || defined(_M_ARM64)
+    if (_BitScanReverse64(&r, a))
+        return 63 - (int)r;
+#else
+    if (a >> 32) {
+        _BitScanReverse(&r, (unsigned long)(a >> 32));
+        return 31 - (int)r;
+    }
+    if (_BitScanReverse(&r, (unsigned long)a))
+        return 63 - (int)r;
+#endif
+    return 64;
+}
+
+/* WARNING: undefined if a = 0 */
+static force_inline int ctz32(unsigned int a)
+{
+    unsigned long r;
+    if (_BitScanForward(&r, a))
+        return (int)r;
+    return 32;
+}
+
+/* WARNING: undefined if a = 0 */
+static force_inline int ctz64(uint64_t a)
+{
+    unsigned long r;
+#if defined(_M_X64) || defined(_M_ARM64)
+    if (_BitScanForward64(&r, a))
+        return (int)r;
+#else
+    if ((uint32_t)a) {
+        _BitScanForward(&r, (uint32_t)a);
+        return (int)r;
+    }
+    if (_BitScanForward(&r, (unsigned long)(a >> 32)))
+        return 32 + (int)r;
+#endif
+    return 64;
+}
+
+#pragma pack(push, 1)
+struct packed_u64 {
+    uint64_t v;
+};
+
+struct packed_u32 {
+    uint32_t v;
+};
+
+struct packed_u16 {
+    uint16_t v;
+};
+#pragma pack(pop)
+#else
 static inline int clz32(unsigned int a)
 {
     return __builtin_clz(a);
@@ -149,6 +227,7 @@ struct __attribute__((packed)) packed_u32 {
 struct __attribute__((packed)) packed_u16 {
     uint16_t v;
 };
+#endif
 
 static inline uint64_t get_u64(const uint8_t *tab)
 {
