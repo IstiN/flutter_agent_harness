@@ -1282,6 +1282,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
               FaWindowClass.small);
 
+  /// Header clearance that lives inside the scroll view on the compact
+  /// icon-only chrome. Revealed search and desktop tabs keep their own fixed
+  /// clearance below the glass header.
+  double get _contentHeaderInset =>
+      !widget.fullScreen && !_showsInlineSearch(context)
+      ? MessengerFloatingPageScaffold.bodyTop
+      : 0;
+
   Widget _buildGridArea(FahColors colors) {
     final error = _error;
     if (error != null) {
@@ -1291,10 +1299,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (_apps == null || layout == null) {
       return const Center(child: CircularProgressIndicator());
     }
+    final contentHeaderInset = _contentHeaderInset;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
+        if (contentHeaderInset == 0)
+          const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
         if (_showsInlineSearch(context))
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
@@ -1323,17 +1333,24 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               // update, preview and open widgets without leaving home.
               // Shares the launcher's AppsStore so installs are visible to
               // the tile menu (Remove) immediately.
-              ? WidgetsCatalogSheet(
-                  env: widget.manager.env,
-                  manager: widget.manager,
-                  appsStore: _appsStore,
-                  embedded: true,
+              ? Padding(
+                  // Catalog filter chrome stays below the floating header;
+                  // the default Apps grid instead carries this clearance in
+                  // its scroll padding and travels under the glass.
+                  padding: EdgeInsets.only(top: contentHeaderInset),
+                  child: WidgetsCatalogSheet(
+                    env: widget.manager.env,
+                    manager: widget.manager,
+                    appsStore: _appsStore,
+                    embedded: true,
+                  ),
                 )
               : _buildLauncherBody(colors),
         ),
       ],
     );
     return MessengerFloatingPageScaffold(
+      underlayKey: const ValueKey('appsChromeUnderlay'),
       header: widget.fullScreen
           ? _buildOverviewHeader(colors)
           : _buildNarrowHeader(colors),
@@ -1578,7 +1595,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 ),
                 padding: EdgeInsets.fromLTRB(
                   16,
-                  8,
+                  8 + _contentHeaderInset,
                   16,
                   MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
@@ -1685,7 +1702,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 key: const ValueKey('appsGridScrollView'),
                 padding: EdgeInsets.fromLTRB(
                   16,
-                  8,
+                  8 + _contentHeaderInset,
                   16,
                   // Clear the floating bottom navigation just like the
                   // search-results grid; 16 hid the last row behind it.

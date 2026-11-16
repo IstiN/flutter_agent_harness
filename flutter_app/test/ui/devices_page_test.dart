@@ -336,7 +336,7 @@ void main() {
     // The network_center Row anatomy: fixed rail column, hairline
     // divider, expanded pane.
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.text('My devices'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const ValueKey('deviceRail'))).width,
@@ -357,6 +357,27 @@ void main() {
     expect(find.text('Offline'), findsNothing);
   });
 
+  testWidgets('glass header lets the rail scroll underneath its blur', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('devicesChromeUnderlay')), findsOneWidget);
+    final railFinder = find.byKey(const ValueKey('deviceRail'));
+    final rail = tester.widget<ListView>(railFinder);
+    expect(tester.getRect(railFinder).top, 0);
+    expect(rail.padding, const EdgeInsets.only(top: 58, bottom: 6));
+    expect(
+      tester.getRect(find.byKey(const ValueKey('devicePaneTitle'))).top,
+      greaterThanOrEqualTo(52),
+    );
+  });
+
   testWidgets(
     'signed-out phase → not-running line + This device rail cell (own dot '
     'teal locally), tap retries',
@@ -371,7 +392,7 @@ void main() {
       // Never blank (issue #2062 field feedback): the header, the
       // not-running line and the own-device rail cell + pane all render.
       expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-      expect(find.text('MY DEVICES'), findsOneWidget);
+      expect(find.text('My devices'), findsOneWidget);
       expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
       expect(find.text('Connector not running — tap to retry'), findsOneWidget);
       expect(find.text('This device'), findsOneWidget);
@@ -418,7 +439,7 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.text('My devices'), findsOneWidget);
     expect(find.byKey(const ValueKey('devicesSkeleton')), findsOneWidget);
     expect(find.text('Connecting…'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRail')), findsNothing);

@@ -14,6 +14,7 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
@@ -263,6 +264,33 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Files'), findsOneWidget);
+    });
+
+    testWidgets('glass header keeps actions while grid scrolls beneath it', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844));
+
+      expect(find.byKey(const ValueKey('appsChromeUnderlay')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('appsNarrowSearchReveal')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('appsHeaderCatalog')), findsOneWidget);
+
+      final scroll = tester.widget<SingleChildScrollView>(
+        find.byKey(const ValueKey('appsGridScrollView')),
+      );
+      expect(tester.getRect(find.byWidget(scroll)).top, 0);
+      expect(
+        scroll.padding,
+        const EdgeInsets.fromLTRB(
+          16,
+          MessengerFloatingPageScaffold.bodyTop + 8,
+          16,
+          128,
+        ),
+      );
     });
 
     testWidgets('main grid reserves bottom navigation clearance', (

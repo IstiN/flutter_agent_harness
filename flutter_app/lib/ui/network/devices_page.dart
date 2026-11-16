@@ -17,6 +17,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_session_folders.dart'
     show folderAvatarGradient;
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 
 import 'package:fa_ui/fa_ui.dart';
 // The presence payload model is pure Dart in the connector core.
@@ -57,6 +58,7 @@ class DevicesPage extends StatefulWidget {
   const DevicesPage({
     super.key,
     required this.service,
+    this.compact = false,
     this.sessions,
     this.onOpenSession,
     this.selectedSessionId,
@@ -76,6 +78,9 @@ class DevicesPage extends StatefulWidget {
 
   /// The app-scope device connector service (one upstream socket, AC1).
   final DeviceConnectorService service;
+
+  /// Narrow shell chrome uses the same 54pt glass band as Networks.
+  final bool compact;
 
   /// The app's local chat list — the same controller the chat screen's
   /// Local sessions panel projects. The This-device pane ALWAYS lists its
@@ -435,6 +440,15 @@ class _DevicesPageState extends State<DevicesPage> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final header = MessengerSectionHeader(
+      title: context.l10n.networkDevicesTitle,
+      compact: widget.compact,
+      searchController: null,
+      searchCollapsed: true,
+      searchHint: context.l10n.launcherSearchHint,
+      onProfile: null,
+      onNew: null,
+    );
     return StreamBuilder<DeviceConnectorPhase>(
       stream: widget.service.phaseStream,
       initialData: widget.service.phase,
@@ -444,41 +458,30 @@ class _DevicesPageState extends State<DevicesPage> {
             phase == DeviceConnectorPhase.preparing ||
             phase == DeviceConnectorPhase.connecting;
         if (!waitingForConnection) _hasPresentedBody = true;
-        return Column(
+        return MessengerGlassPanel(
           key: const ValueKey('devicesPage'),
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _sectionHeader(context, colors),
-            Expanded(
-              child: waitingForConnection && !_hasPresentedBody
-                  ? _phaseLine(
+          compact: widget.compact,
+          underlayKey: const ValueKey('devicesChromeUnderlay'),
+          header: header,
+          body: Builder(
+            builder: (context) => waitingForConnection && !_hasPresentedBody
+                ? Padding(
+                    padding: EdgeInsets.only(
+                      top: MessengerGlassBodyInsets.topOf(context),
+                    ),
+                    child: _phaseLine(
                       context,
                       key: const ValueKey('devicesSkeleton'),
                       label: context.l10n.networkDeviceConnecting,
                       color: colors.dim.withValues(alpha: 0.5),
-                    )
-                  : _connectedBody(context, colors, phase),
-            ),
-          ],
+                    ),
+                  )
+                : _connectedBody(context, colors, phase),
+          ),
         );
       },
     );
   }
-
-  /// The small-caps section header (the page's one label line — the
-  /// selected device's name lives in the pane header).
-  Widget _sectionHeader(BuildContext context, FahColors colors) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-    child: Text(
-      context.l10n.networkDevicesTitle.toUpperCase(),
-      style: TextStyle(
-        color: colors.dim,
-        fontSize: 12,
-        fontWeight: FontWeight.bold,
-        letterSpacing: 0.5,
-      ),
-    ),
-  );
 
   /// The connected body: the phase banners above the last-known rail +
   /// pane (a failed start keeps the rail mounted — the own device stays
@@ -490,6 +493,8 @@ class _DevicesPageState extends State<DevicesPage> {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (phase != DeviceConnectorPhase.online)
+        SizedBox(height: MessengerGlassBodyInsets.topOf(context)),
       if (phase == DeviceConnectorPhase.preparing ||
           phase == DeviceConnectorPhase.connecting)
         _phaseLine(
@@ -575,23 +580,30 @@ class _DevicesPageState extends State<DevicesPage> {
                 ),
                 VerticalDivider(width: 1, color: FahColors.of(context).border),
                 Expanded(
-                  child: _DevicePane(
-                    device: selected,
-                    onOpenSession: widget.onOpenSession,
-                    selectedSessionId: widget.selectedSessionId,
-                    selectedRemoteSessionId: _selectedRemoteSessionId,
-                    onRenameOwn: () => unawaited(_renameOwnDevice()),
-                    onOpenConversation:
-                        (deviceId, agentAddress, sessionId, sessionTitle) {
-                          setState(() => _selectedRemoteSessionId = sessionId);
-                          widget.onOpenRemoteConversation?.call(
-                            deviceId: deviceId,
-                            deviceLabel: selected.label,
-                            agentAddress: agentAddress,
-                            sessionId: sessionId,
-                            sessionTitle: sessionTitle,
-                          );
-                        },
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: MessengerGlassBodyInsets.topOf(context),
+                    ),
+                    child: _DevicePane(
+                      device: selected,
+                      onOpenSession: widget.onOpenSession,
+                      selectedSessionId: widget.selectedSessionId,
+                      selectedRemoteSessionId: _selectedRemoteSessionId,
+                      onRenameOwn: () => unawaited(_renameOwnDevice()),
+                      onOpenConversation:
+                          (deviceId, agentAddress, sessionId, sessionTitle) {
+                            setState(
+                              () => _selectedRemoteSessionId = sessionId,
+                            );
+                            widget.onOpenRemoteConversation?.call(
+                              deviceId: deviceId,
+                              deviceLabel: selected.label,
+                              agentAddress: agentAddress,
+                              sessionId: sessionId,
+                              sessionTitle: sessionTitle,
+                            );
+                          },
+                    ),
                   ),
                 ),
               ],
@@ -1117,7 +1129,10 @@ class _DeviceRail extends StatelessWidget {
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: ListView(
         key: const ValueKey('deviceRail'),
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: EdgeInsets.only(
+          top: MessengerGlassBodyInsets.topOf(context) + 6,
+          bottom: 6,
+        ),
         children: [
           for (final device in devices)
             _DeviceRailCell(
