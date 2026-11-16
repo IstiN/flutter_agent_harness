@@ -18,6 +18,8 @@ import 'execution_env.dart';
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
 import 'job_log_redaction.dart';
+// Same dart:io subgraph — the survivor-scan `ps` probes (issue #2201).
+import 'process_probe_io.dart';
 
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
@@ -436,6 +438,24 @@ final class LocalShell implements Shell, BackgroundShell {
   static bool get ownProcessGroupAvailable =>
       ownProcessGroupOverride ?? (_ownGroupCached ??= _probeOwnProcessGroup());
 
+  /// Our own process group id (issue #2201): the orphan-window scan on
+  /// non-ownGroup hosts (macOS) matches survivors against it. The harness
+  /// process never changes groups, so this is read once; null when the
+  /// platform cannot report it (the scan then finds nothing — honest).
+  static int? get ourPgid => _ourPgidCached ??= _probeOurPgid();
+  static int? _ourPgidCached;
+
+  static int? _probeOurPgid() {
+    if (Platform.isWindows) return null;
+    try {
+      final out = Process.runSync('ps', ['-o', 'pgid=', '-p', '$pid']);
+      if (out.exitCode != 0) return null;
+      return int.tryParse(out.stdout.toString().trim());
+    } on Object {
+      return null;
+    }
+  }
+
   static bool _probeOwnProcessGroup() {
     if (Platform.isWindows) return false;
     try {
@@ -789,6 +809,7 @@ final class LocalShell implements Shell, BackgroundShell {
     required StringBuffer stdout,
     required StringBuffer stderr,
     required int exitCode,
+    List<ShellSurvivor> survivors = const [],
   }) {
     if (callbackError != null) return Err(callbackError);
     // gh-1053 (review rework): a killed call returns the captured partial
@@ -822,6 +843,7 @@ final class LocalShell implements Shell, BackgroundShell {
         stdout: stdout.toString(),
         stderr: stderr.toString(),
         exitCode: exitCode,
+        survivors: survivors,
       ),
     );
   }
@@ -840,6 +862,11 @@ final class LocalShell implements Shell, BackgroundShell {
     // cancel paths below then reap the WHOLE tree with one group signal
     // instead of stranding a surviving grandchild on the output pipe.
     final ownGroup = LocalShell.ownProcessGroupAvailable;
+    // Issue #2201: the spawn second bounds the orphan-window scan on
+    // non-ownGroup hosts (macOS) — processes in our group orphaned to
+    // init (ppid 1) whose start falls inside this call's window are this
+    // call's survivors.
+    final execStart = DateTime.now();
     final (started, _) = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
@@ -948,6 +975,24 @@ final class LocalShell implements Shell, BackgroundShell {
     // the result (the flag used to be captured pre-drain and lost).
     final cancelled = token?.isCancelled ?? false;
 
+    // Issue #2201: survivors of a NORMAL exit only — timeout/cancel ran
+    // the gh-1053 tree kill, and adoption never resurrects what it
+    // reaped. Pure observation: one table read, no pipe is kept open,
+    // no timer armed — the exec contract (≤ timeout + grace) stands.
+    var survivors = const <ShellSurvivor>[];
+    if (!Platform.isWindows &&
+        !timedOut &&
+        !cancelled &&
+        callbackError == null) {
+      survivors = classifyShellSurvivors(
+        childPid: process.pid,
+        ownGroup: ownGroup,
+        ourPgid: LocalShell.ourPgid,
+        execStart: execStart,
+        table: await processDetailTableSnapshot(),
+      );
+    }
+
     return _result(
       callbackError: callbackError,
       timedOut: timedOut,
@@ -956,6 +1001,7 @@ final class LocalShell implements Shell, BackgroundShell {
       stdout: stdout,
       stderr: stderr,
       exitCode: exitCode,
+      survivors: survivors,
     );
   }
 
@@ -1072,9 +1118,9 @@ final class LocalShell implements Shell, BackgroundShell {
         process: process,
         logSink: logSink,
         ceiling: ceiling,
+        ownGroup: ownGroup,
         timeout: options?.timeout,
         token: token,
-        ownGroup: ownGroup,
         redactor: options?.jobLogRedactor,
       ),
     );
@@ -1083,7 +1129,7 @@ final class LocalShell implements Shell, BackgroundShell {
 
 /// A [ShellJob] over a local [Process]: stdout/stderr stream into the log
 /// file; timeout and the cancel token both stop the process.
-final class _LocalShellJob implements ShellJob {
+final class _LocalShellJob implements ShellJob, SurvivorReporting {
   _LocalShellJob({
     required this.id,
     required this.command,
@@ -1095,7 +1141,7 @@ final class _LocalShellJob implements ShellJob {
     Duration? timeout,
     CancelToken? token,
     this._redactor,
-  }) {
+  }) : _execStart = DateTime.now() {
     // Collect stdout/stderr into the log file. A naturally exiting process
     // closes the streams and we flush every byte; a killed/timed-out process
     // may leave the streams dangling on some platforms, so we cap the drain
@@ -1222,6 +1268,19 @@ final class _LocalShellJob implements ShellJob {
         } on Object {
           _logBroken = true;
         }
+        // Issue #2201: survivors of a NORMAL exit only — the stop paths
+        // (timeout/cancel/user stop) reaped the whole tree, and adoption
+        // never resurrects what a kill reaped. Buffered for the registry's
+        // settle listener; one `ps` round on POSIX, nothing on Windows.
+        if (_stopReason == null && !Platform.isWindows) {
+          _survivors = classifyShellSurvivors(
+            childPid: _process.pid,
+            ownGroup: _ownGroup,
+            ourPgid: LocalShell.ourPgid,
+            execStart: _execStart,
+            table: await processDetailTableSnapshot(),
+          );
+        }
         _settled.complete();
       }),
     );
@@ -1230,6 +1289,14 @@ final class _LocalShellJob implements ShellJob {
   final Process _process;
   final RandomAccessFile _logSink;
   final JobLogCeiling _ceiling;
+
+  /// This job's spawn moment (issue #2201): the lower bound of the
+  /// orphan-window survivor scan on non-ownGroup hosts.
+  final DateTime _execStart;
+
+  /// Survivors observed at this job's normal exit, consumed once by the
+  /// registry's settle listener ([SurvivorReporting.takeSurvivors]).
+  List<ShellSurvivor> _survivors = const [];
 
   /// At-rest log redaction (issue #1408 AC2); null keeps raw bytes.
   final JobLogRedactor? _redactor;
@@ -1304,6 +1371,13 @@ final class _LocalShellJob implements ShellJob {
 
   @override
   Stream<String> get output => _output.stream;
+
+  @override
+  List<ShellSurvivor> takeSurvivors() {
+    final out = _survivors;
+    _survivors = const [];
+    return out;
+  }
 
   @override
   bool writeStdin(String data) {

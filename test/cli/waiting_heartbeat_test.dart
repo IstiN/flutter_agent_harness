@@ -95,6 +95,37 @@ void main() {
       const config = JobsConfig(maxLogBytes: 1024);
       expect(config.toYaml(), contains('maxLogBytes: 1024'));
     });
+
+    test('adopted (issue #2201): default is liveness notices OFF', () {
+      const config = JobsConfig();
+      expect(config.adopted.livenessNoticeMinutes, 0);
+      expect(config.adopted.isDefault, isTrue);
+    });
+
+    test('fromYaml parses the adopted liveness cadence (issue #2201)', () {
+      final config = JobsConfig.fromYaml({
+        'adopted': {'livenessNoticeMinutes': 10},
+      });
+      expect(config.adopted.livenessNoticeMinutes, 10);
+      expect(config.adopted.isDefault, isFalse);
+      expect(config.toYaml(), contains('livenessNoticeMinutes: 10'));
+    });
+
+    test('fromYaml rejects a bad adopted section', () {
+      expect(
+        () => JobsConfig.fromYaml({
+          'adopted': {'livenessNoticeMinutes': -1},
+        }),
+        throwsA(anything),
+      );
+      expect(
+        () => JobsConfig.fromYaml({
+          'adopted': {'bogus': 1},
+        }),
+        throwsA(anything),
+      );
+      expect(() => JobsConfig.fromYaml({'adopted': 'nope'}), throwsA(anything));
+    });
   });
 
   group('WaitingHeartbeat', () {
