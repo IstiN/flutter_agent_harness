@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-16T11:22:41.281Z",
+  "ticketKey": "pr-2210",
+  "headSha": "ba64f35a49cc093d0485aa450c5536f6932e5c61",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:3e02f07ba15a686d",
+      "size": 58071
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:3e79041cc2987402",
+      "size": 365591
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:bd4dd02dfcc9576f",
+      "size": 3653
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1fff243d7dd66a3f",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b745132fd3f37370",
+      "size": 10880
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:bf6229f625769696",
+      "size": 4792
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:a645e1ad8c3e9639",
+      "size": 3434
+    },
+    "request.md": {
+      "hash": "fnv1a64:71264d6d2263a3e7",
+      "size": 3096
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:c1900c31a5fdf939",
+      "size": 811
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:e0364d4ec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:17111b6294f4f90d",
+      "size": 3169
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:71264d6d2263a3e7",
+      "size": 3096
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc635IJV",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/integration/pty_harness.dart:271",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the publish-staging gate cannot compile this change — static gates red (CI run 43851264755)**\n\nThe vendored fork is invisible to the staged publish tree. `pubspec_overrides.yaml` pins `pty2 → vendor/pty2` (the fork that exposes `pid`), but `scripts/stage_publish_package.sh` excludes both `vendor/*` (line 57) and `/pubspec_overrides.yaml` (line 59), so the staged tree re-resolves **hosted pty2 0.5.7 — which has no `pid` getter**. The gate's `dart analyze` of the staged tree then fails on exactly the `pty.pid` references this PR adds.\n\n**Reproduced locally** with the repo's own gate flow (`bash scripts/stage_publish_package.sh /tmp/stage && cd /tmp/stage && dart pub get && dart analyze --fatal-infos --fatal-warnings`) — byte-identical to the CI log, exit 3:\n\n```\nerror - test/integration/pty_harness.dart:271:11 - The getter 'pid' isn't defined for the type 'PseudoTerminal' - undefined_getter\nerror - test/integration/pty_harness.dart:271:40 - ... (same)\nerror - test/integration/pty_harness.dart:274:35 - ... (same)\nerror - test/integration/pty_harness_kill_escalation_test.dart:90:29 - ... (same)\nerror - test/integration/pty_harness_kill_escalation_test.dart:119:27 - ... (same)\n5 issues found.\n```\n\nNote the PR's \"Pre-commit gate scope unaffected\" note is true for the *test* legs (integration-tagged files are excluded there), but the **publish dry-run's staged analyze does stage and compile the test tree** — that is the leg that's red. The ticket contract is a green ref (`ticket.md`: \"Closes manually when the ref goes green\"), so this blocks merge as-is; it also means the *published* payload would carry test files that don't compile against the published dependency set.\n\n**Fix — follow the repo's own vendored-dev-dep precedent (`vendor/xterm`)**, which is already staged as a path dev-dependency (`pubspec.yaml:90-91`, stage includes at `scripts/stage_publish_package.sh:52`, `.pubignore:31` negation, allowlist guard in `test/publish_staging_test.dart`):\n\n1. `pubspec.yaml` dev_deps: replace `pty2: ^0.5.3` with `pty2: {path: vendor/pty2}`; drop the now-redundant `pubspec_overrides.yaml` pty2 entry.\n2. `stage_publish_package.sh`: add `--include 'vendor/pty2/' --include 'vendor/pty2/**'` next to the xterm includes (~200 KB, no size-guard impact).\n3. `.pubignore`: add `!/vendor/pty2/`; extend the negation allowlist in `test/publish_staging_test.dart` (`vendor/pty2` joins `vendor/xterm`, `packages/fa_llm*`) — that test exists precisely to catch this mirror drift.\n4. Update `vendor/pty2/VENDORED.md` (Consumers/Un-vendor notes now say \"path dev-dep in pubspec.yaml\").\n\nAlternative: exclude the `pid`-referencing test files from the stage — but that amputates the published test suite; the xterm pattern keeps everything consistent. (Local resolution is fine: root `pub get` + the new escalation suite pass 3/3 here — only the staged resolution is broken.)"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc635IMj",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/integration/pty_harness.dart:746",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: release harness resources on the loud-failure path too (try/finally)**\n\n`close()`'s doc contract: cancel the output subscription (\"otherwise an open stream keeps the test runner's event loop alive\") and delete the harness-owned temp CWD *after* the process is dead. The new body runs `shutdownPty` **before** those calls — so when escalation fails and `shutdownPty` throws its loud `StateError`, the rest of `close()` is skipped: `_outputSub?.cancel()`, `_releaseOwnedCwd()` and `_releaseTranscript()` never run. The old semantics always released (silent give-up); the new semantics trade resource release for loudness, but you can have both:\n\n```dart\nFuture<void> close() async {\n  if (_closed) return;\n  _closed = true;\n  try {\n    await shutdownPty(pty, budgetScale: waitBudgetScale);\n  } finally {\n    await _outputSub?.cancel();\n    _releaseOwnedCwd();\n    _releaseTranscript();\n  }\n}\n```\n\nThe `StateError` still propagates and fails the test loudly; the subscription is detached and the temp CWD is cleaned up on dev machines where the process does *not* exit immediately after. Same shape applies to `hardKill()` (line 528), whose body likewise puts `shutdownPty` first."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-16:555c30fc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-16",
+      "updatedAt": "2026-11-16",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the publish-staging gate cannot compile this change — static gates red (CI run 43851264755)**\n\nThe vendored fork is invisible to the staged publish tree. `pubspec_overrides.yaml` pins `pty2 → vendor/pty2` (the fork that exposes `pid`), but `scripts/stage_publish_package.sh` excludes both `vendor/*` (line 57) and `/pubspec_overrides.yaml` (line 59), so the staged tree re-resolves **hosted pty2 0.5.7 — which has no `pid` getter**. The gate's `dart analyze` of the staged tree then fails on exactly the `pty.pid` references this PR adds.\n\n**Reproduced locally** with the repo's own gate flow (`bash scripts/stage_publish_package.sh /tmp/stage && cd /tmp/stage && dart pub get && dart analyze --fatal-infos --fatal-warnings`) — byte-identical to the CI log, exit 3:\n\n```\nerror - test/integration/pty_harness.dart:271:11 - The getter 'pid' isn't defined for the type 'PseudoTerminal' - undefined_getter\nerror - test/integration/pty_harness.dart:271:40 - ... (same)\nerror - test/integration/pty_harness.dart:274:35 - ... (same)\nerror - test/integration/pty_harness_kill_escalation_test.dart:90:29 - ... (same)\nerror - test/integration/pty_harness_kill_escalation_test.dart:119:27 - ... (same)\n5 issues found.\n```\n\nNote the PR's \"Pre-commit gate scope unaffected\" note is true for the *test* legs (integration-tagged files are excluded there), but the **publish dry-run's staged analyze does stage and compile the test tree** — that is the leg that's red. The ticket contract is a green ref (`ticket.md`: \"Closes manually when the ref goes green\"), so this blocks merge as-is; it also means the *published* payload would carry test files that don't compile against the published dependency set.\n\n**Fix — follow the repo's own vendored-dev-dep precedent (`vendor/xterm`)**, which is already staged as a path dev-dependency (`pubspec.yaml:90-91`, stage includes at `scripts/stage_publish_package.sh:52`, `.pubignore:31` negation, allowlist guard in `test/publish_staging_test.dart`):\n\n1. `pubspec.yaml` dev_deps: replace `pty2: ^0.5.3` with `pty2: {path: vendor/pty2}`; drop the now-redundant `pubspec_overrides.yaml` pty2 entry.\n2. `stage_publish_package.sh`: add `--include 'vendor/pty2/' --include 'vendor/pty2/**'` next to the xterm includes (~200 KB, no size-guard impact).\n3. `.pubignore`: add `!/vendor/pty2/`; extend the negation allowlist in `test/publish_staging_test.dart` (`vendor/pty2` joins `vendor/xterm`, `packages/fa_llm*`) — that test exists precisely to catch this mirror drift.\n4. Update `vendor/pty2/VENDORED.md` (Consumers/Un-vendor notes now say \"path dev-dep in pubspec.yaml\").\n\nAlternative: exclude the `pid`-referencing test files from the stage — but that amputates the published test suite; the xterm pattern keeps everything consistent. (Local resolution is fine: root `pub get` + the new escalation suite pass 3/3 here — only the staged resolution is broken.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-16:512a9f37",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-16",
+      "updatedAt": "2026-11-16",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: release harness resources on the loud-failure path too (try/finally)**\n\n`close()`'s doc contract: cancel the output subscription (\"otherwise an open stream keeps the test runner's event loop alive\") and delete the harness-owned temp CWD *after* the process is dead. The new body runs `shutdownPty` **before** those calls — so when escalation fails and `shutdownPty` throws its loud `StateError`, the rest of `close()` is skipped: `_outputSub?.cancel()`, `_releaseOwnedCwd()` and `_releaseTranscript()` never run. The old semantics always released (silent give-up); the new semantics trade resource release for loudness, but you can have both:\n\n```dart\nFuture<void> close() async {\n  if (_closed) return;\n  _closed = true;\n  try {\n    await shutdownPty(pty, budgetScale: waitBudgetScale);\n  } finally {\n    await _outputSub?.cancel();\n    _releaseOwnedCwd();\n    _releaseTranscript();\n  }\n}\n```\n\nThe `StateError` still propagates and fails the test loudly; the subscription is detached and the temp CWD is cleaned up on dev machines where the process does *not* exit immediately after. Same shape applies to `hardKill()` (line 528), whose body likewise puts `shutdownPty` first."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-16:0f2f88c1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-16",
+      "updatedAt": "2026-11-16",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2208 wedge fix itself is solid — the vendored `pty2` fork's diff vs upstream 0.5.7 is exactly the documented `pid` getter (verified against the hosted tarball), every CI-wired PTY teardown path is covered, and the new escalation suite passes 3/3 locally. But the static gate is red because the publish-staging tree strips `pubspec_overrides.yaml` + `vendor/*` and re-resolves hosted pty2 0.5.7 (no `pid`) — reproduced locally: 5 `undefined_getter` errors in the staged analyze, exit 3, byte-identical to CI run 43851264755.\n\n**Key Issues**:\n- 🚨 **BLOCKING** — `test/integration/pty_harness.dart:271` — staged publish tree cannot compile: vendored-fork `pid` invisible to the stage; ticket contract (`ticket.md`: \"Closes manually when the ref goes green\") unmet until green. Fix via the existing `vendor/xterm` path-dev-dep staging precedent.\n- 💡 **SUGGESTION** — `test/integration/pty_harness.dart:746` — `close()`/`hardKill()` skip `_outputSub.cancel()`/`_releaseOwnedCwd()`/`_releaseTranscript()` when `shutdownPty` throws; wrap in try/finally.\n\n**Ranked digest** (below thread threshold):\n- `test/integration/pty_harness.dart:214` — `shutdownPty`'s `grace` parameter has no caller today (dead knob) — NIT.\n- `vendor/pty2/test/**` — the fork's own suite is verbatim upstream and is run by no CI leg; future fork patches ride only the root integration suites — NIT.\n- `test/integration/zz_exit_check.dart:32` — unchanged manual probe still uses the old `exitCode.timeout(..., onTimeout: -99)` give-up; can leak a child on a dev machine (not CI-wired) — NIT.\n\n**Next Steps**:\n1. Stage `vendor/pty2` like `vendor/xterm`: path dev-dep in `pubspec.yaml`, stage `--include`s, `.pubignore` negation + `test/publish_staging_test.dart` allowlist, drop the override entry, update `VENDORED.md`.\n2. Re-run the publish dry-run locally (`scripts/stage_publish_package.sh` + staged `dart analyze`) before pushing — it's the leg that's red.\n3. Optional: try/finally resource release in `close()`/`hardKill()`."
+    }
+  ]
+}
