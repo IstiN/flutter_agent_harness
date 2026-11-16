@@ -1175,6 +1175,35 @@ Future<ToolExecutionResult> _unknownOutputResult(
   return ToolExecutionResult.text(_unknownIdText(jobs, id, closestIds));
 }
 
+/// Issue #2201: the pre-stop honest wording for a job that is already
+/// done — an adopted job has no exit code to report (liveness-only), a
+/// registry-native job reports its real one. Null when [entry] still
+/// runs (the caller proceeds to stop it).
+ToolExecutionResult? _alreadyFinishedStopResult(
+  ShellJobEntry entry,
+  String id,
+) {
+  if (entry.isRunning) return null;
+  return ToolExecutionResult.text(
+    entry.isAdopted
+        ? '$id already exited (adopted — liveness-only, no exit code)'
+        : '$id already finished (exit code ${entry.exitCode})',
+  );
+}
+
+/// Issue #2201 r3: `ShellJobEntry.stop` re-verifies the #478 start tag
+/// before signaling. When the guard refused — the process was already
+/// gone, or its pid was recycled onto a stranger — nothing was signaled,
+/// so "Stopped" would be a lie. Null when the stop ran normally.
+ToolExecutionResult? _refusedAdoptedStopResult(ShellJobEntry entry, String id) {
+  if (entry.isRunning || !entry.isAdopted || entry.stopReason != null) {
+    return null;
+  }
+  return ToolExecutionResult.text(
+    '$id already exited (adopted — liveness-only, no exit code)',
+  );
+}
+
 Future<ToolExecutionResult> _bashJobStopResult(
   ShellJobRegistry jobs,
   String? id,
@@ -1182,24 +1211,11 @@ Future<ToolExecutionResult> _bashJobStopResult(
   if (id == null) throw StateError('bash_job stop requires an id');
   final entry = jobs.job(id);
   if (entry != null) {
-    if (!entry.isRunning) {
-      // Issue #2201: an adopted job has no exit code to report.
-      return ToolExecutionResult.text(
-        entry.isAdopted
-            ? '$id already exited (adopted — liveness-only, no exit code)'
-            : '$id already finished (exit code ${entry.exitCode})',
-      );
-    }
+    final already = _alreadyFinishedStopResult(entry, id);
+    if (already != null) return already;
     await entry.stop();
-    if (!entry.isRunning && entry.isAdopted && entry.stopReason == null) {
-      // Issue #2201 r3: the identity guard found the process already gone
-      // (or its pid recycled) — nothing was signaled, so "Stopped" would
-      // be a lie.
-      return ToolExecutionResult.text(
-        '$id already exited (adopted — liveness-only, no exit code)',
-      );
-    }
-    return ToolExecutionResult.text('Stopped $id');
+    return _refusedAdoptedStopResult(entry, id) ??
+        ToolExecutionResult.text('Stopped $id');
   }
   // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —
   // malformed ids keep the shortest error, GC'd ids are honestly done, and
