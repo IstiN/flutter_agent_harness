@@ -110,7 +110,9 @@ final class _RunningAppsDockState extends State<RunningAppsDock> {
               ? Duration.zero
               : const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
-          width: expanded ? 56 : 12,
+          // The collapsed glass stays 12pt wide, but its invisible touch
+          // target extends 32pt inward so a finger never has to aim at it.
+          width: expanded ? 56 : 44,
           child: expanded ? _buildList(colors) : _buildHandle(colors, active),
         ),
       ),
@@ -124,25 +126,32 @@ final class _RunningAppsDockState extends State<RunningAppsDock> {
         key: const ValueKey('runningAppsDockHandle'),
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _touchOpen = !_touchOpen),
-        child: FaSurface(
-          glass: true,
-          color: colors.panel.withValues(alpha: .72),
-          borderRadius: const BorderRadius.horizontal(
-            left: Radius.circular(10),
-          ),
-          padding: EdgeInsets.zero,
+        child: Align(
+          alignment: Alignment.centerRight,
           child: SizedBox(
-            height: 74,
-            child: Center(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                width: 4,
-                height: active == null ? 28 : 44,
-                decoration: BoxDecoration(
-                  color: active == null
-                      ? colors.dim.withValues(alpha: .55)
-                      : colors.indigo,
-                  borderRadius: BorderRadius.circular(4),
+            key: const ValueKey('runningAppsDockHandleVisual'),
+            width: 12,
+            child: FaSurface(
+              glass: true,
+              color: colors.panel.withValues(alpha: .72),
+              borderRadius: const BorderRadius.horizontal(
+                left: Radius.circular(10),
+              ),
+              padding: EdgeInsets.zero,
+              child: SizedBox(
+                height: 74,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    width: 4,
+                    height: active == null ? 28 : 44,
+                    decoration: BoxDecoration(
+                      color: active == null
+                          ? colors.dim.withValues(alpha: .55)
+                          : colors.indigo,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
                 ),
               ),
             ),
