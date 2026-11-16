@@ -4,3 +4,9 @@
 dependency_overrides:
   dart_tui:
     path: vendor/dart_tui
+  # gh-2208: patched fork exposing `pid` so the PTY test harness can
+  # SIGKILL-escalate children that survive the cooperative kill() — a
+  # leaked child wedges the Dart VM's exit handshake and zombies the CI
+  # leg (vendor/pty2/VENDORED.md, tracker #2122).
+  pty2:
+    path: vendor/pty2

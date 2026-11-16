@@ -31,6 +31,8 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:pty2/pty2.dart';
 
+import 'pty_harness.dart';
+
 /// The fixture API key. Byte-scanned against every captured transcript
 /// (AC3) — must never leak into the pty output (read -s has echo off by
 /// the time the key is fed).
@@ -122,6 +124,14 @@ class _PtyRun {
   final StringBuffer buffer;
   final String exitFile;
   var done = false;
+
+  /// Awaited reap-or-escalate teardown (gh-2208): a wizard/shell that
+  /// hung (or a `fail()` before [awaitExit]) used to leak the live PTY
+  /// child — its pty2 `_waitForExitCode` isolate stays blocked in native
+  /// waitpid and wedges the test process's VM exit handshake
+  /// (`Attempt:N waiting for isolate _waitForExitCode to check in`,
+  /// tracker #2122). Register via `addTearDown(run.dispose)`.
+  Future<void> dispose() => shutdownPty(pty);
 
   /// Waits until [text] (ANSI-stripped) appears in the captured output.
   Future<void> waitPrompt(String text) async {
@@ -334,6 +344,7 @@ void main() {
             fixture: fixture,
             shellEnv: persistKey ? '/bin/bash' : '',
           );
+    addTearDown(run.dispose);
     await run.feed(_Answers.custom(persistKey: persistKey));
 
     final exitCode = await run.awaitExit();
@@ -420,6 +431,7 @@ void main() {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
       final run = await _startDirect(fixture: fixture);
+      addTearDown(run.dispose);
       await run.feed(_Answers.custom(persistKey: false));
       final exitCode = await run.awaitExit();
       expect(exitCode, 0);
@@ -470,6 +482,7 @@ void main() {
       addTearDown(fixture.dispose);
       fixture.seedConfig('provider: keep-me\n');
       final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
+      addTearDown(run.dispose);
       await run.feed(_Answers([('Reconfigure?', 'n')]));
       final exitCode = await run.awaitExit();
       expect(exitCode, 0);
@@ -485,6 +498,7 @@ void main() {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
       final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
+      addTearDown(run.dispose);
       await run.waitPrompt('Pick a provider');
       run.send('\x03');
       // The SIGINT takes down the whole pipeline — including the wrapper
@@ -517,6 +531,7 @@ void main() {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
       final run = await _startPiped('dash', fixture: fixture, shellEnv: '');
+      addTearDown(run.dispose);
       // One real answer, then ^D on an empty line at the NEXT prompt: the
       // read inside `ask` fails, the `var=$(ask …)` assignment fails, and
       // `set -eu` must take the whole wizard down — never silently proceed
