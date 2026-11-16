@@ -559,6 +559,13 @@ class AgentCli {
           onStaleJobLog: _onStaleJobLog,
           jobLogMaxBytes: config.jobs.maxLogBytes,
           onJobLogWarning: _onJobLogWarning,
+          // Issue #2201: adopted detached processes ride the same settle
+          // path; the cadence knob (default 0) gates still-running
+          // reminders only.
+          adoptedLivenessNoticeMinutes:
+              config.jobs.adopted.livenessNoticeMinutes,
+          onAdopt: AgentCliShellJobSettle(this)._onSurvivorsAdopted,
+          onAdoptedLiveness: AgentCliShellJobSettle(this)._onAdoptedLiveness,
           // Issue #1408 AC1: the bench boot relocates the job-log dir via
           // FAH_JOB_LOG_DIR so nothing harness-owned lands in the graded
           // task workspace.

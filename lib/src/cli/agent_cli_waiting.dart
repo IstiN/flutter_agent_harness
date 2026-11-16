@@ -400,6 +400,27 @@ final class _WaitingCoordinator {
     lostJobs = 0;
     final reconcile = await _reconcileRegistry();
     lostJobs = reconcile.dropped;
+    // Issue #2201 AC5: manifest entries whose pid is ALIVE at boot are
+    // RE-ADOPTED as real registry jobs — the waiting row shows them,
+    // `bash_job` manages them, and their death notifies through the
+    // settle path — instead of sitting invisible in the manifest. Only
+    // verifiable pids adopt: a platform that could not produce a process
+    // table (probed=false), or an entry without one, keeps today's
+    // honest counting (dead/recycled/aged entries already dropped above
+    // and counted in [lostJobs]).
+    if (reconcile.probed) {
+      for (final entry in reconcile.kept) {
+        final pid = entry.pid;
+        if (pid == null) continue;
+        _jobs.adoptRunningEntry(
+          id: entry.id,
+          command: entry.command ?? '<unknown cmd>',
+          pid: pid,
+          pidStart: entry.pidStart,
+          startedAtMs: entry.startedAtMs,
+        );
+      }
+    }
     final pids = reconcile.pids;
     final quarantined = reconcile.quarantined;
     final dropped = reconcile.dropped;
@@ -429,12 +450,26 @@ final class _WaitingCoordinator {
   /// each recorded entry against the live process table, drops the dead
   /// and the past-the-age-belt ones, and rewrites the registry when
   /// anything changed. Behavior is identical to the inlined loop.
-  Future<({List<int> pids, bool quarantined, int dropped, int aged})>
+  /// [kept] carries the verified-live entries for boot re-adoption
+  /// (issue #2201 AC5); [probed] says whether the platform could actually
+  /// verify (a null table = unverifiable — nothing may adopt on it).
+  Future<
+    ({
+      List<int> pids,
+      bool quarantined,
+      int dropped,
+      int aged,
+      List<_ManifestEntry> kept,
+      bool probed,
+    })
+  >
   _reconcileRegistry() async {
     var pids = const <int>[];
     var quarantined = false;
     var dropped = 0;
     var aged = 0;
+    var kept = const <_ManifestEntry>[];
+    var probed = false;
     await _withRegistryLock(() async {
       final entries = await _readRegistryEntries(
         onQuarantined: () => quarantined = true,
@@ -446,10 +481,11 @@ final class _WaitingCoordinator {
       // An empty registry has nothing to verify — skip the process probe
       // entirely (the #517 sweep has no pids to work with either).
       final table = entries.isEmpty ? null : await _bootProcessTable();
+      probed = table != null;
       final staleBefore = _clock().subtract(
         Duration(hours: _cli.config.jobs.staleHours),
       );
-      final kept = <_ManifestEntry>[];
+      final live = <_ManifestEntry>[];
       for (final entry in entries) {
         final started = entry.startedAtMs;
         final tooOld =
@@ -460,13 +496,21 @@ final class _WaitingCoordinator {
           if (tooOld) aged++;
           continue;
         }
-        kept.add(entry);
+        live.add(entry);
       }
-      if (quarantined || kept.length != entries.length) {
-        await _writeRegistryEntries(kept);
+      if (quarantined || live.length != entries.length) {
+        await _writeRegistryEntries(live);
       }
+      kept = live;
     });
-    return (pids: pids, quarantined: quarantined, dropped: dropped, aged: aged);
+    return (
+      pids: pids,
+      quarantined: quarantined,
+      dropped: dropped,
+      aged: aged,
+      kept: kept,
+      probed: probed,
+    );
   }
 
   Future<void> _manifestAdd(
@@ -476,16 +520,18 @@ final class _WaitingCoordinator {
     String? pidStart,
   }) async {
     await _mutateRegistry(
-      (entries) => [
-        ...entries,
-        _ManifestEntry(
-          id: id,
-          command: command,
-          pid: pid,
-          pidStart: pidStart,
-          startedAtMs: _clock().millisecondsSinceEpoch,
-        ),
-      ],
+      (entries) => entries.any((entry) => entry.id == id)
+          ? entries
+          : [
+              ...entries,
+              _ManifestEntry(
+                id: id,
+                command: command,
+                pid: pid,
+                pidStart: pidStart,
+                startedAtMs: _clock().millisecondsSinceEpoch,
+              ),
+            ],
     );
   }
 
@@ -750,7 +796,9 @@ final class _WaitingCoordinator {
     final clipped = preview.length > 48
         ? '${preview.substring(0, 48)}…'
         : preview;
-    return '$clipped (${job.id})';
+    // Issue #2201: adopted processes announce what they are.
+    final marker = job.isAdopted ? 'adopted: ' : '';
+    return '$marker$clipped (${job.id})';
   }
 
   /// One awaited child's purpose: `<id> (<task preview>) · <status>` —
@@ -1036,15 +1084,27 @@ extension AgentCliShellJobSettle on AgentCli {
     // model-facing notice. The board/waiting bookkeeping above always
     // runs, or the Running count never drains (issue #562).
     if (!job.notifyOnSettle) return;
+    // Issue #2201: adopted jobs are liveness-only — no exit code, no log
+    // path; the honest line replaces the exited() shape.
     io.writeln(
-      _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
+      job.isAdopted
+          ? _style.dim(
+              '[bash] ${job.id} is no longer running '
+              '(adopted pid ${job.pid}, liveness-only)',
+            )
+          : _style.dim(
+              '[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}',
+            ),
     );
     // gh-1589: after the run's exit wrap-up (or the REPL quit), the settle
     // was bookkeeping-only — no model-facing notice, no reaction run.
     if (_exited || _reactionRunsSealed) return;
     // The shared composer (gh-1604): the command rides the bounded
-    // first/last ~120-char label, never the full body.
-    final message = shellJobSettleNoticeText(job);
+    // first/last ~120-char label, never the full body. Adopted deaths
+    // (issue #2201 AC3) get their own honest notice text.
+    final message = job.isAdopted
+        ? adoptedJobSettleNoticeText(job)
+        : shellJobSettleNoticeText(job);
     // Issue #2118: NO transcript echo. The settle card the board drain
     // painted a moment ago already carries id, exit code, command and log
     // path — echoing the notice painted the same command a SECOND time
@@ -1053,12 +1113,65 @@ extension AgentCliShellJobSettle on AgentCli {
     // (steered below / fresh idle run) and headless-visible through the
     // [bash] line above, both byte-identical; on resume the persisted
     // notice still replays through the #446 renderer.
+    // Mid-run: the steering queue delivers it at the next step boundary.
+    _deliverJobNotice(message);
+  }
+
+  /// The shared delivery for every model-facing job notice (settle,
+  /// adoption, liveness): after the run's exit wrap-up (gh-1589) or the
+  /// REPL quit the notice is bookkeeping-only; mid-run it rides the
+  /// steering queue to the next step boundary; idle it starts a fresh
+  /// reaction run.
+  void _deliverJobNotice(String message) {
+    if (_exited || _reactionRunsSealed) return;
     if (isBusy) {
-      // Mid-run: the steering queue delivers it at the next step boundary.
       _agent.steer(UserMessage.text(message));
     } else {
       _startRun(message);
     }
+  }
+
+  /// Survivors adopted (issue #2201): ONE model-facing notice per batch —
+  /// steered into the live run, a fresh run while idle — so the agent
+  /// learns detached work is now tracked (the evidence gap: "nohup … & —
+  /// сам я о завершении не узнаю"). Adoptions a tool reported inline
+  /// (the bash result text) skip this via `notify: false`. The user-facing
+  /// dim line prints regardless.
+  void _onSurvivorsAdopted(
+    List<ShellJobEntry> adopted, {
+    required String source,
+  }) {
+    io.writeln(
+      _style.dim(
+        '[bash] adopted ${adopted.length} background process'
+        '${adopted.length == 1 ? '' : 'es'} — completion will be reported',
+      ),
+    );
+    _deliverJobNotice(
+      '<system-notice>\n'
+      '${adoptedSurvivorsNoticeText(adopted, source: source)}\n'
+      '</system-notice>',
+    );
+  }
+
+  /// Still-running reminder for an adopted process (issue #2201 AC4,
+  /// default cadence 0 = never fires): the dim console line prints always;
+  /// the model is reminded only mid-run — an idle reminder would start a
+  /// run for nothing, and the waiting row already shows the job
+  /// continuously.
+  void _onAdoptedLiveness(ShellJobEntry job, Duration elapsed) {
+    if (_exited) return;
+    final text = adoptedLivenessNoticeText(job, elapsed);
+    io.writeln(_style.dim('[bash] $text'));
+    _steerAdoptedLiveness(text);
+  }
+
+  /// Still-running reminders never START a run — an idle reminder would
+  /// burn a reaction run for nothing, and the waiting row already shows
+  /// the job continuously. Only a live run gets the steer.
+  void _steerAdoptedLiveness(String text) {
+    if (!isBusy || _reactionRunsSealed) return;
+    _agent.steer(UserMessage.text('<system-notice>\n$text\n</system-notice>'));
   }
 }
 

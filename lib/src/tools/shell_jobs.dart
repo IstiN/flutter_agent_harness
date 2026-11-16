@@ -187,11 +187,23 @@ String newShellJobId(int n) {
 
 /// One registered background shell job.
 final class ShellJobEntry {
-  ShellJobEntry._(this.job, {this.cwd, this.timeout})
-    : startedAt = DateTime.now();
+  ShellJobEntry._(
+    this.job, {
+    this.cwd,
+    this.timeout,
+    bool adopted = false,
+    DateTime? startedAt,
+  }) : startedAt = startedAt ?? DateTime.now(),
+       isAdopted = adopted;
 
   /// The backend handle.
   final ShellJob job;
+
+  /// Whether this entry was ADOPTED (issue #2201) instead of spawned by
+  /// the registry: a detached survivor of a foreground call, or a
+  /// previous-run manifest entry re-adopted at boot. Liveness-only —
+  /// surfaces show no exit code and no captured log for it.
+  final bool isAdopted;
 
   /// When the job registered (drives the terminal card's elapsed).
   final DateTime startedAt;
@@ -313,6 +325,11 @@ final class ShellJobRegistry {
     this.jobLogDir,
     this.jobLogRedactor,
     this.maxRetainedExitedJobs = defaultMaxRetainedExitedJobs,
+    this.adoptedLivenessNoticeMinutes = 0,
+    this.onAdopt,
+    this.onAdoptedLiveness,
+    @visibleForTesting this.livenessTableOverride,
+    @visibleForTesting this.stopAdoptedOverride,
     DateTime? bootTime,
   }) : _bootTime = bootTime ?? DateTime.now(),
        _bootZone = Zone.current;
@@ -375,6 +392,34 @@ final class ShellJobRegistry {
   /// The zone the host constructed this registry in (host boot). Settle
   /// continuations run there — see the constructor doc (gh-1947).
   final Zone _bootZone;
+
+  /// Minutes between model-facing liveness reminders for still-running
+  /// ADOPTED jobs (`jobs.adopted.livenessNoticeMinutes`, issue #2201
+  /// AC4); `0` — the default — fires none (completion-only notify).
+  final int adoptedLivenessNoticeMinutes;
+
+  /// Fires ONCE per adoption batch (issue #2201): the host turns it into
+  /// the model-facing adoption notice. Adoptions a tool reports inline
+  /// (the bash result text) pass `notify: false` and skip this.
+  final void Function(List<ShellJobEntry> adopted, {required String source})?
+  onAdopt;
+
+  /// Cadence reminder for a still-running adopted job (issue #2201 AC4);
+  /// default cadence 0 = never fires.
+  final void Function(ShellJobEntry job, Duration elapsed)? onAdoptedLiveness;
+
+  /// Test seam: the adoption poll's process table. Null restores the
+  /// real `ps` probe. A null RETURN from the function models "probe
+  /// unavailable" — unverifiable evidence never destroys an entry
+  /// (#478 rule) — it does NOT fall through to the real probe.
+  @visibleForTesting
+  Future<ShellLivenessTable?> Function()? livenessTableOverride;
+
+  /// Test seam: the adopted-job kill round. Null restores the real
+  /// TERM/KILL pair.
+  @visibleForTesting
+  final Future<bool> Function(int pid)? stopAdoptedOverride;
+
   var _staleJobLogWarned = false;
   final _jobs = <ShellJobEntry>[];
   var _nextId = 1;
@@ -482,6 +527,15 @@ final class ShellJobRegistry {
     // (gh-1947: a child-started job used to drag its settle, and the
     // MAIN reaction run it could start, into the finished child's
     // subagent zone).
+    _listenSettle(entry);
+    onStart?.call(entry);
+    return entry;
+  }
+
+  /// The settle continuation shared by started and adopted jobs: stamp
+  /// the settle, GC, fire the host callback, then adopt any survivors
+  /// the environment observed at this job's normal exit (issue #2201).
+  void _listenSettle(ShellJobEntry entry) {
     unawaited(
       _bootZone.run(
         () => entry.settled.then((_) async {
@@ -495,12 +549,197 @@ final class ShellJobRegistry {
           entry._settledAt ??= DateTime.now();
           _gcExitedJobs();
           onSettled?.call(entry);
+          // Issue #2201: a local job's NORMAL exit may leave live children
+          // (`nohup x &` inside a background:true script settles the job,
+          // not the work). The env buffered them at exit
+          // ([SurvivorReporting]); stopped/timed-out jobs report none —
+          // gh-1053 reaped those trees. Adoption is best-effort
+          // observation and must never break the settle path.
+          if (entry.job case SurvivorReporting reporting) {
+            final survivors = reporting.takeSurvivors();
+            if (survivors.isNotEmpty) {
+              try {
+                await adoptSurvivors(entry.command, survivors);
+              } on Object {
+                // Observation only — the job's own settle stands.
+              }
+            }
+          }
         }),
       ),
     );
+  }
+
+  /// Adopts [survivors] — live processes a completed foreground call left
+  /// behind (issue #2201) — as liveness-only registry entries. Returns the
+  /// new entries; [notify] false skips [onAdopt] (the detecting tool
+  /// reports the adoption inline in its result instead).
+  Future<List<ShellJobEntry>> adoptSurvivors(
+    String sourceCommand,
+    List<ShellSurvivor> survivors, {
+    bool notify = true,
+  }) async {
+    final adopted = <ShellJobEntry>[];
+    for (final survivor in survivors) {
+      // Never double-track: a pid one of this session's running jobs
+      // already holds is accounted for.
+      if (_jobs.any((e) => e.isRunning && e.pid == survivor.pid)) continue;
+      adopted.add(
+        _adopt(
+          id: newShellJobId(_nextId++),
+          command: survivor.command ?? '<unknown cmd>',
+          pid: survivor.pid,
+          pidStart: survivor.startTag,
+        ),
+      );
+    }
+    if (adopted.isNotEmpty && notify) {
+      onAdopt?.call(adopted, source: sourceCommand);
+    }
+    return adopted;
+  }
+
+  /// Boot re-adoption (issue #2201 AC5): a manifest entry whose pid is
+  /// alive at boot becomes a real registry job instead of an invisible
+  /// ghost. The manifest id is KEPT — board resume matching and
+  /// `bash_job` id resolution keep working.
+  ShellJobEntry adoptRunningEntry({
+    required String id,
+    required String command,
+    required int pid,
+    String? pidStart,
+    int? startedAtMs,
+  }) {
+    // Idempotent (issue #2201 r3): captureLostJobs runs at every boot —
+    // a wake/continuation loop re-boots the same CLI instance — and
+    // adoption never rewrites the manifest, so a second boot re-hands
+    // every still-live entry here. The existing entry stays
+    // authoritative: one registry row, one onStart, one settle notice.
+    for (final entry in _jobs) {
+      if (entry.id == id) return entry;
+    }
+    return _adopt(
+      id: id,
+      command: command,
+      pid: pid,
+      pidStart: pidStart,
+      startedAt: startedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
+    );
+  }
+
+  ShellJobEntry _adopt({
+    required String id,
+    required String command,
+    required int pid,
+    String? pidStart,
+    DateTime? startedAt,
+  }) {
+    final entry = ShellJobEntry._(
+      _AdoptedShellJob(
+        id: id,
+        command: command,
+        pid: pid,
+        startTag: pidStart ?? '',
+        stopProcess: stopAdoptedOverride ?? stopDetachedProcess,
+        livenessSample: livenessTableOverride ?? _probeLivenessTable,
+      ),
+      adopted: true,
+      startedAt: startedAt,
+    );
+    _jobs.add(entry);
+    _listenSettle(entry);
     onStart?.call(entry);
+    _ensureAdoptedPoll();
     return entry;
   }
+
+  /// Cadence between adoption liveness samples: cheap (one `ps` per tick
+  /// only while an adopted job runs) and fast enough that a completion
+  /// notice lands well inside any human-relevant window.
+  static const adoptedLivenessPollInterval = Duration(seconds: 5);
+
+  Timer? _adoptedPoll;
+  final _adoptedLastNotice = <String, DateTime>{};
+
+  bool get _hasRunningAdopted => _jobs.any((e) => e.isAdopted && e.isRunning);
+
+  void _ensureAdoptedPoll() {
+    if (_adoptedPoll != null || !_hasRunningAdopted) return;
+    _scheduleAdoptedPoll();
+  }
+
+  void _scheduleAdoptedPoll() {
+    _adoptedPoll?.cancel();
+    _adoptedPoll = Timer(adoptedLivenessPollInterval, () {
+      _adoptedPoll = null;
+      unawaited(_pollAdopted());
+    });
+  }
+
+  /// One adoption liveness round (issue #2201 AC3/AC4): refresh every
+  /// running adopted job against the process table (a death completes its
+  /// [ShellJob.settled] → the normal settle path notifies the model),
+  /// fire cadence reminders when configured, and re-arm only while an
+  /// adopted job still runs. The whole round is best-effort observation.
+  Future<void> _pollAdopted() async {
+    try {
+      final now = DateTime.now();
+      final table = livenessTableOverride != null
+          ? await livenessTableOverride!()
+          : await _probeLivenessTable();
+      for (final entry in [
+        for (final e in _jobs)
+          if (e.isAdopted && e.isRunning) e,
+      ]) {
+        (entry.job as _AdoptedShellJob).refresh(table);
+      }
+      if (adoptedLivenessNoticeMinutes > 0 && onAdoptedLiveness != null) {
+        for (final entry in [
+          for (final e in _jobs)
+            if (e.isAdopted && e.isRunning) e,
+        ]) {
+          final last = _adoptedLastNotice[entry.id];
+          if (!adoptedLivenessDue(
+            now: now,
+            startedAt: entry.startedAt,
+            lastNoticeAt: last,
+            noticeMinutes: adoptedLivenessNoticeMinutes,
+          )) {
+            continue;
+          }
+          _adoptedLastNotice[entry.id] = now;
+          onAdoptedLiveness!(entry, now.difference(entry.startedAt));
+        }
+      }
+    } on Object {
+      // The poll is observation, never a crash source.
+    }
+    if (_hasRunningAdopted) {
+      _scheduleAdoptedPoll();
+    } else {
+      _adoptedLastNotice.clear();
+    }
+  }
+
+  /// The poll's process table from the real `ps` probe; null when the
+  /// platform cannot report one (adopted jobs then simply stay running —
+  /// unverifiable evidence never destroys an entry, the #478 rule).
+  Future<ShellLivenessTable?> _probeLivenessTable() async {
+    final rows = await processDetailTableSnapshot();
+    if (rows == null) return null;
+    return (
+      pids: {for (final r in rows) r.pid},
+      starts: {for (final r in rows) r.pid: r.lstart},
+    );
+  }
+
+  /// Test seam: fires one adoption liveness round now (the analog of
+  /// [adoptedLivenessDue]-driven ticks) instead of waiting out the
+  /// [adoptedLivenessPollInterval] timer.
+  @visibleForTesting
+  Future<void> adoptedPollTickForTest() => _pollAdopted();
 
   /// Prunes exited entries beyond [maxRetainedExitedJobs], oldest settle
   /// first, tombstoning each prune's log path (gh-1438 second tier). Runs
@@ -715,3 +954,184 @@ Future<({int groups, int processes})> reapOrphanJobGroups({
   }
   return (livePids: livePids, groupOf: groupOf);
 }
+
+/// One adoption-poll liveness sample (issue #2201): the live pid set plus
+/// each pid's OS start string — the pid-reuse guard (#478) for foreign
+/// processes we hold no handle on.
+typedef ShellLivenessTable = ({Set<int> pids, Map<int, String> starts});
+
+/// Whether an adopted job's cadence reminder is due (issue #2201 AC4):
+/// [noticeMinutes] must be armed and [startedAt] — or the last fired
+/// notice — this many minutes in the past. Pure — unit-tested directly.
+bool adoptedLivenessDue({
+  required DateTime now,
+  required DateTime startedAt,
+  DateTime? lastNoticeAt,
+  required int noticeMinutes,
+}) {
+  if (noticeMinutes <= 0) return false;
+  final base = lastNoticeAt ?? startedAt;
+  return !now.isBefore(base.add(Duration(minutes: noticeMinutes)));
+}
+
+/// A liveness-only registry job over a process the harness did NOT spawn
+/// (issue #2201 adoption): no pipe, no waitpid — no exit code, no output
+/// capture. Death is observed by the registry's poll (pid presence plus
+/// the #478 start-tag match) and completes [settled] exactly like a
+/// natural job exit, so the whole downstream notify machinery applies
+/// unchanged.
+final class _AdoptedShellJob implements ShellJob {
+  _AdoptedShellJob({
+    required this.id,
+    required this.command,
+    required this.pid,
+    required this._startTag,
+    required this._stopProcess,
+    this._livenessSample,
+  });
+
+  @override
+  final String id;
+
+  @override
+  final String command;
+
+  @override
+  final int pid;
+
+  /// The #478 start string at adoption time; '' when the platform could
+  /// not report one (presence-only liveness, same degrade as reconcile).
+  final String _startTag;
+  final Future<bool> Function(int pid) _stopProcess;
+  final Future<ShellLivenessTable?> Function()? _livenessSample;
+
+  bool _running = true;
+  String? _stopReason;
+  final _settled = Completer<void>();
+  final _output = StreamController<String>.broadcast();
+
+  @override
+  String get logPath => '';
+
+  @override
+  bool get isRunning => _running;
+
+  @override
+  int? get exitCode => null;
+
+  @override
+  String? get stopReason => _stopReason;
+
+  @override
+  Future<void> get settled => _settled.future;
+
+  @override
+  Stream<String> get output => _output.stream;
+
+  @override
+  bool writeStdin(String data) => false;
+
+  /// One liveness sample. A null [table] (probe unavailable) changes
+  /// nothing — unverifiable evidence never destroys an entry (#478 rule).
+  /// A pid MISSING from a delivered table is dead; a pid present with a
+  /// DIFFERENT start string was recycled onto another process — equally
+  /// gone. Liveness-only, so there is no exit code to record.
+  void refresh(ShellLivenessTable? table) {
+    if (!_running || table == null) return;
+    if (!table.pids.contains(pid)) return _markGone();
+    final actual = table.starts[pid];
+    if (actual == null) return; // presence-only platform: stays running
+    if (actual == _startTag || _startTag.isEmpty) return; // same process
+    _markGone();
+  }
+
+  @override
+  Future<void> stop() async {
+    if (!_running) return;
+    // Issue #2201 r3: re-verify the pid identity before signaling — the
+    // same #478 start-tag rule the boot reconcile (agent_cli_waiting) and
+    // the liveness poll apply. One fresh table sample: a pid missing from
+    // it is already gone (no kill), a pid wearing a DIFFERENT start
+    // string is a stranger (no kill). A null sample (probe unavailable)
+    // changes nothing — the stop then runs on the evidence it has, as
+    // before; a presence-only row (no start string) keeps its kill.
+    final table = _livenessSample == null ? null : await _livenessSample();
+    if (table != null) {
+      if (!table.pids.contains(pid)) return _markGone();
+      final actual = table.starts[pid];
+      if (actual != null && actual != _startTag) return _markGone();
+    }
+    _stopReason ??= 'stopped';
+    try {
+      await _stopProcess(pid);
+    } on Object {
+      // Best-effort — the settle below reflects the stop intent either way.
+    }
+    if (_running) _markGone();
+  }
+
+  void _markGone() {
+    _running = false;
+    _output.close();
+    _settled.complete();
+  }
+}
+
+/// The tag-free adoption notice body (issue #2201): ONE per detecting
+/// call (the many-survivors border case), naming every survivor with its
+/// pid and the honest liveness-only caveat. The bash tool appends it to
+/// the inline result; the host wraps it in a system-notice for the
+/// job-path steer.
+String adoptedSurvivorsNoticeText(
+  List<ShellJobEntry> adopted, {
+  required String source,
+}) {
+  final lines = StringBuffer(
+    'Detected ${adopted.length} surviving background process'
+    '${adopted.length == 1 ? '' : 'es'} left by '
+    '`${shellJobCommandLabel(source)}` — adopted as tracked jobs; their '
+    'completion will be reported:\n',
+  );
+  for (final job in adopted) {
+    lines.write(
+      '- ${job.id} (pid ${job.pid}, '
+      '`${shellJobCommandLabel(job.command)}`)\n',
+    );
+  }
+  lines.write(
+    'Liveness-only: no captured output and no exit code (not our child); '
+    'their output stays in their own redirects (e.g. nohup.out). Stop one '
+    'with bash_job (action: stop) if unwanted.',
+  );
+  return lines.toString();
+}
+
+/// The model-facing settle notice for an ADOPTED job (issue #2201 AC3):
+/// liveness-only honesty — no exit code, no harness log — plus the
+/// pointer at the launcher's own redirect.
+String adoptedJobSettleNoticeText(ShellJobEntry job) =>
+    '<system-notice>\n'
+    'Adopted background process ${job.id} (pid ${job.pid}, '
+    '`${shellJobCommandLabel(job.command)}`) is no longer running '
+    '(liveness poll; no exit code — it was not our child).\n'
+    'Its output went to whatever redirect its launcher used (e.g. '
+    'nohup.out), not a harness log. If you still need its result, check '
+    'that redirect, or re-run the work with background: true to capture '
+    'it.\n'
+    '</system-notice>';
+
+/// The AC4 cadence reminder for a still-running adopted job (default
+/// cadence 0 = never). Tag-free — the host wraps it as a system-notice.
+String adoptedLivenessNoticeText(ShellJobEntry job, Duration elapsed) =>
+    'Adopted background process ${job.id} (pid ${job.pid}, '
+    '`${shellJobCommandLabel(job.command)}`) still running after '
+    '${elapsed.inMinutes} min. No action needed — you will be notified '
+    'when it exits.';
+
+/// The `bash_job output` answer for an adopted job (issue #2201 AC3):
+/// the adopted-explanation, never an empty-log reading.
+String adoptedJobOutputText(ShellJobEntry entry) =>
+    '${entry.id} is an ADOPTED background process — the harness did not '
+    'spawn it, so there is no captured output or log. Its output goes to '
+    'whatever redirect its launcher used (e.g. nohup.out). '
+    '${entry.isRunning ? 'Still running (pid ${entry.pid}).' : 'No longer running — no exit code is available (not our child).'}';
