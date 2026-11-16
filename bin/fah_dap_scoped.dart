@@ -246,6 +246,15 @@ final class DapScopedMemberships {
   // ---- loading ----
 
   /// Loads (or returns the cached) union of every scope + the env layer.
+  ///
+  /// Every plaintext `priv` this load materializes into memory is
+  /// registered with the masking systems (via [onSecret]) BEFORE the
+  /// future resolves (AC8/AC14): the awaited query paths
+  /// (`publicChannelFor`, `acceptsChannel`, `preferredBootHub`) must
+  /// never return with a key in memory that the redactor does not yet
+  /// mask. The boot seed also registers, but it rides a fire-and-forget
+  /// connect — registration there is an interleaving accident, not a
+  /// guarantee, which is exactly the #2218/#2219 plaintext-in-logs race.
   Future<DapMembershipUnion> union() async {
     final cached = _union;
     if (cached != null) return cached;
@@ -256,6 +265,14 @@ final class DapScopedMemberships {
       ...await _loadSession(),
       ..._loadEnv(),
     ];
+    for (final m in all) {
+      final priv = m.priv;
+      // Envelope ciphertext is not secret; the decrypted clear is
+      // registered in [_runtimeSecret] the moment it exists.
+      if (priv != null && !isEncryptedChannelPriv(priv)) {
+        onSecret?.call(priv);
+      }
+    }
     return _union = DapMembershipUnion(all);
   }
 

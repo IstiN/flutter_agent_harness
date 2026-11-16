@@ -617,6 +617,57 @@ void main() {
   );
 
   test(
+    'AC8/AC14 regression (#2219): a union load that materializes a '
+    'plaintext session key registers it before the awaited query returns',
+    () async {
+      const runtimePriv = 'race-plaintext-priv-0123456789abcdef';
+      final environment = <String, String>{'DAP_HUB_URL': _hubUrl};
+      final client = hub.HubClient(
+        config: const hub.HubConfig(url: _hubUrl),
+        identity: await hub.HubIdentity.generate(),
+      )..agentId = _selfId;
+      final plugin = _StubHubPlugin(
+        environment: environment,
+        home: home.path,
+        currentStatus: _connectedStatus,
+        memoryRepository: _MemoryHubRepository(client),
+      );
+      final redactor = SecretRedactor();
+      final pipeline = buildRedactionPipeline(null);
+      final host = HubPluginHost(
+        plugin,
+        environment: environment,
+        home: home.path,
+        localHubUrl: _hubUrl,
+        hubHealthProbe: (port) async => false,
+        hubSpawner: (port) async {},
+        secretRedactor: redactor,
+        redactionPipeline: pipeline,
+      );
+      // Force the #2218/#2219 interleaving deterministically: the boot
+      // seed (the fire-and-forget _connect) is the only path that used to
+      // register runtime-resolved keys. An early dispose pins it at the
+      // no-op guard (gh-1895), so registration can ONLY happen on the
+      // query path itself — exactly the interleaving where the ambient
+      // chaos env saw the plaintext key reach a log line.
+      await host.dispose();
+      host.register(
+        PluginContext(
+          env: MemoryExecutionEnv(cwd: home.path),
+          io: _IO(),
+          readSessionRecords: (type) async => [
+            _membership('runtime', pub: 'pub', priv: runtimePriv).toJson(),
+          ],
+        ),
+      );
+
+      expect(await HubPluginHost.publicChannelFor(plugin, 'runtime'), isFalse);
+      final transcript = redactor.redact('the key is $runtimePriv ok?');
+      expect(transcript, isNot(contains(runtimePriv)));
+    },
+  );
+
+  test(
     'status and menu connect preserve output and default prompt semantics',
     () async {
       final questions = <String>[];
