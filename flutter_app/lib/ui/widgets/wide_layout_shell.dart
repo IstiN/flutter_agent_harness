@@ -207,6 +207,7 @@ DeviceChatSessionSource createDeviceChatSessionSource(
                     entry.title == entry.id.value || entry.title.trim().isEmpty
                     ? deviceSessionPreviewTitle(entry.preview)
                     : entry.title,
+                snippet: deviceSessionPreviewTitle(entry.preview),
                 path: entry.folderPath,
                 lastActivity: entry.lastActivity ?? entry.createdAt,
               ),

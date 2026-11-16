@@ -22,6 +22,7 @@ import '../network/connector/presence_engine.dart';
 import '../network/connector/upstream_client.dart';
 import '../network/network_account.dart';
 import '../network/network_roster.dart';
+import '../session/session_catalog.dart';
 
 /// One authenticated network DM ready for the current CLI mailbox.
 final class CliNetworkDm {
@@ -60,6 +61,22 @@ String networkDmMailboxMessageId(NetworkEnvelope envelope) {
 /// Ack-owning current-session delivery callback. A throw leaves the original
 /// network mail unacked and suppresses its accepted receipt.
 typedef CliNetworkDmSink = Future<void> Function(CliNetworkDm dm);
+
+/// Sender-driven launch of the existing detached headless inbox wake.
+/// A null return means launched; an error string means the cwd/process guard
+/// refused it. The original network DM remains unacked in both cases.
+typedef CliNetworkSessionWakeLauncher =
+    Future<String?> Function({
+      required String cwd,
+      required String sessionId,
+      String? sessionName,
+    });
+
+/// Optional wake capability without breaking simple [CliNetworkPresence]
+/// fakes. The interactive CLI installs its gh-1744-guarded launcher here.
+abstract interface class CliNetworkSessionWakeTarget {
+  set wakeLauncher(CliNetworkSessionWakeLauncher? launcher);
+}
 
 /// Safe, credential-free diagnostic notice (decode rejection/receipt failure).
 typedef CliNetworkNotice = void Function(String message);
@@ -119,7 +136,10 @@ abstract interface class CliNetworkDmReplySender {
 
 /// The production [CliNetworkPresence], built over [MachineConnector].
 final class NetworkPresenceController
-    implements CliNetworkPresence, CliNetworkDmReplySender {
+    implements
+        CliNetworkPresence,
+        CliNetworkDmReplySender,
+        CliNetworkSessionWakeTarget {
   /// Builds a controller. [ticketProvider] must mint a fresh single-use
   /// device ticket for every dial; [transport] is fakeable in unit tests.
   /// Production passes its credential store as [dmKeyStore] so agent DM keys
@@ -131,6 +151,8 @@ final class NetworkPresenceController
     this.transport,
     this.rosterClient,
     this.rosterDebounce = const Duration(milliseconds: 500),
+    this.catalogStore,
+    this.catalogPollInterval = const Duration(seconds: 10),
     this.idFactory = defaultIdFactory,
     this.onLog,
     DeviceDmKeyStore? dmKeyStore,
@@ -155,8 +177,20 @@ final class NetworkPresenceController
   /// that only want the legacy socket can retain the original behaviour.
   final DeviceEnrollmentClient? rosterClient;
 
-  /// Coalescing window for REST roster changes.
+  /// Coalescing window for REST roster and catalog changes.
   final Duration rosterDebounce;
+
+  /// Complete persisted-session store. Null preserves the legacy live-only
+  /// projection for embedders that have no local session store.
+  final SessionCatalogStore? catalogStore;
+
+  /// Best-effort filesystem rediscovery interval; zero disables polling
+  /// (explicit [notifySessionCatalogChanged] remains available).
+  final Duration catalogPollInterval;
+
+  /// Installed by the interactive desktop CLI; null keeps queue-only DMs.
+  @override
+  CliNetworkSessionWakeLauncher? wakeLauncher;
 
   /// Optional diagnostics. Callers must not pass secret-bearing log lines.
   final void Function(String message)? onLog;
@@ -177,6 +211,11 @@ final class NetworkPresenceController
   final _pendingRosterAgents = <String, DeviceRosterAgent>{};
   final _pendingRosterSessions = <String, DeviceRosterSession>{};
   Timer? _rosterTimer;
+  Timer? _catalogTimer;
+  Timer? _catalogPollTimer;
+  List<SessionCatalogEntry> _catalogEntries = const [];
+  var _catalogRevision = 0;
+  final _wakingSessions = <String>{};
   Future<void> _rosterWrites = Future<void>.value();
   bool _rosterActive = false;
   bool _busy = false;
@@ -198,7 +237,15 @@ final class NetworkPresenceController
     _ensureBuilt();
     _rosterActive = _session != null;
     await _connector!.start();
-    _queueLiveRoster();
+    _queueLiveRoster(fullSnapshot: true);
+    final interval = catalogPollInterval;
+    if (catalogStore != null && interval > Duration.zero) {
+      _catalogPollTimer?.cancel();
+      _catalogPollTimer = Timer.periodic(
+        interval,
+        (_) => notifySessionCatalogChanged(),
+      );
+    }
   }
 
   @override
@@ -232,7 +279,57 @@ final class NetworkPresenceController
         SessionRegistration(id: session.sessionId, agentAddressOf: address),
       );
     _connector!.presence.setAgentState(address, AgentRunState.live);
+    await refreshSessionCatalog(fullSnapshot: true);
     await start();
+  }
+
+  /// Schedules one debounced incremental catalog refresh. Repeated session
+  /// writes/notifications in the window coalesce into a single store read and
+  /// minimal roster PATCH; the next WS connect always sends a full snapshot.
+  void notifySessionCatalogChanged() {
+    if (catalogStore == null) return;
+    _catalogTimer?.cancel();
+    _catalogTimer = Timer(
+      rosterDebounce,
+      () => unawaited(refreshSessionCatalog()),
+    );
+  }
+
+  /// Reloads the complete store and publishes either a full connect snapshot
+  /// or a minimal delta. Store/probe failures leave the last good catalog in
+  /// place and never interrupt the local CLI.
+  Future<void> refreshSessionCatalog({bool fullSnapshot = false}) async {
+    final store = catalogStore;
+    if (store == null) return;
+    final revision = ++_catalogRevision;
+    final List<SessionCatalogEntry> loaded;
+    try {
+      loaded = await store.loadSessions(
+        liveSessionIds: {if (_session case final session?) session.sessionId},
+      );
+    } on Object {
+      onLog?.call('session catalog refresh failed');
+      return;
+    }
+    if (revision != _catalogRevision) return;
+    final projection = projectSessionCatalog(
+      previous: _catalogEntries,
+      current: loaded,
+      fullSnapshot: fullSnapshot,
+    );
+    _catalogEntries = projection.entries;
+    if (fullSnapshot) {
+      _queueLiveRoster(fullSnapshot: true);
+    } else {
+      _queueRosterEntries(
+        sessions: [
+          for (final row in projection.upserts) _catalogRosterRow(row),
+          for (final id in projection.retractedIds)
+            DeviceRosterSession(id: id, state: 'offline', networks: const []),
+        ],
+      );
+    }
+    _connector?.presence.publishNow();
   }
 
   @override
@@ -246,6 +343,7 @@ final class NetworkPresenceController
       busy ? AgentRunState.busy : AgentRunState.live,
     );
     _queueLiveRoster();
+    if (!busy) notifySessionCatalogChanged();
   }
 
   @override
@@ -300,6 +398,9 @@ final class NetworkPresenceController
   /// Stops and closes all long-lived streams. The controller is not
   /// restartable afterwards.
   Future<void> dispose() async {
+    _catalogRevision++;
+    _catalogTimer?.cancel();
+    _catalogPollTimer?.cancel();
     await stop();
     for (final subscription in _subscriptions) {
       await subscription.cancel();
@@ -326,17 +427,40 @@ final class NetworkPresenceController
     }
     _rosterActive = false;
     final session = _session;
-    if (session != null) _queueRosterRetraction(session);
+    if (session != null) {
+      if (catalogStore == null) {
+        _queueRosterRetraction(session);
+      } else {
+        _queueRosterEntries(
+          agents: [
+            DeviceRosterAgent(
+              name: session.agentName,
+              state: 'offline',
+              exposed: false,
+              dmPub: _dmPubs[_agentAddress],
+            ),
+          ],
+          sessions: [
+            for (final row in normalizeSessionCatalog(_catalogEntries))
+              _catalogRosterRow(row, state: 'offline'),
+          ],
+        );
+      }
+    }
     await _flushRoster();
   }
 
-  void _queueLiveRoster() {
+  void _queueLiveRoster({bool fullSnapshot = false}) {
     final session = _session;
     if (!_rosterActive ||
         _phase != ConnectorLinkState.connected ||
         session == null) {
       return;
     }
+    final catalog = normalizeSessionCatalog(_catalogEntries);
+    final current = catalog
+        .where((row) => row.id == session.sessionId)
+        .firstOrNull;
     _queueRosterEntries(
       agents: [
         DeviceRosterAgent(
@@ -346,17 +470,65 @@ final class NetworkPresenceController
           dmPub: _dmPubs[_agentAddress],
         ),
       ],
-      sessions: [
-        DeviceRosterSession(
-          id: session.sessionId,
-          state: 'live',
-          networks: _sessionNetworks,
-        ),
-      ],
+      sessions: catalogStore == null
+          ? [
+              DeviceRosterSession(
+                id: session.sessionId,
+                state: 'live',
+                networks: _sessionNetworks,
+              ),
+            ]
+          : fullSnapshot
+          ? [
+              for (final row in catalog) _catalogRosterRow(row),
+              if (current == null)
+                DeviceRosterSession(
+                  id: session.sessionId,
+                  state: 'live',
+                  networks: _sessionNetworks,
+                ),
+            ]
+          : [
+              if (current != null)
+                _catalogRosterRow(current)
+              else
+                DeviceRosterSession(
+                  id: session.sessionId,
+                  state: 'live',
+                  networks: _sessionNetworks,
+                ),
+            ],
+    );
+  }
+
+  DeviceRosterSession _catalogRosterRow(
+    SessionCatalogEntry row, {
+    String? state,
+    bool expose = true,
+  }) {
+    final normalized = normalizeSessionCatalog([row]).single;
+    final metadata = normalized.toRosterMetadata();
+    return DeviceRosterSession(
+      id: normalized.id,
+      state:
+          state ??
+          (normalized.id == _session?.sessionId ? 'live' : 'wake_on_dm'),
+      networks: expose ? _sessionNetworks : const [],
+      // fa_network already persists title/path/lastActivity. Fold the
+      // snippet/cwd fallback into title so current servers render the row;
+      // additive snippet/cwd keys preserve the structured form for peers.
+      title: normalized.displayName,
+      snippet: metadata['snippet'] as String?,
+      path: metadata['path'] as String?,
+      cwd: metadata['cwd'] as String?,
+      lastActivity: metadata['lastActivity'] as String?,
     );
   }
 
   void _queueRosterRetraction(CliNetworkSession session) {
+    final catalogRow = normalizeSessionCatalog(
+      _catalogEntries,
+    ).where((row) => row.id == session.sessionId).firstOrNull;
     _queueRosterEntries(
       agents: [
         DeviceRosterAgent(
@@ -367,11 +539,14 @@ final class NetworkPresenceController
         ),
       ],
       sessions: [
-        DeviceRosterSession(
-          id: session.sessionId,
-          state: 'offline',
-          networks: _sessionNetworks,
-        ),
+        if (catalogStore != null && catalogRow != null)
+          _catalogRosterRow(catalogRow, state: 'wake_on_dm')
+        else
+          DeviceRosterSession(
+            id: session.sessionId,
+            state: 'offline',
+            networks: _sessionNetworks,
+          ),
       ],
     );
   }
@@ -412,13 +587,33 @@ final class NetworkPresenceController
     _pendingRosterAgents.clear();
     _pendingRosterSessions.clear();
     try {
-      await client.patchRoster(
-        baseUrl: baseUrl,
-        deviceId: device.deviceId,
-        deviceToken: device.deviceToken,
-        agents: agents,
-        sessions: sessions,
-      );
+      if (sessions.isEmpty) {
+        await client.patchRoster(
+          baseUrl: baseUrl,
+          deviceId: device.deviceId,
+          deviceToken: device.deviceToken,
+          agents: agents,
+          sessions: const [],
+        );
+        return;
+      }
+      for (
+        var start = 0;
+        start < sessions.length;
+        start += sessionCatalogRosterPageSize
+      ) {
+        final end = (start + sessionCatalogRosterPageSize).clamp(
+          0,
+          sessions.length,
+        );
+        await client.patchRoster(
+          baseUrl: baseUrl,
+          deviceId: device.deviceId,
+          deviceToken: device.deviceToken,
+          agents: start == 0 ? agents : const [],
+          sessions: sessions.sublist(start, end),
+        );
+      }
     } on Object {
       // Presence is strictly best-effort and must never break the local CLI.
       onLog?.call('device roster patch failed');
@@ -427,7 +622,9 @@ final class NetworkPresenceController
 
   void _handleUpstreamState(ConnectorLinkState state) {
     _setPhase(state);
-    if (state == ConnectorLinkState.connected) _queueLiveRoster();
+    if (state == ConnectorLinkState.connected) {
+      _queueLiveRoster(fullSnapshot: true);
+    }
   }
 
   void _ensureBuilt() {
@@ -462,6 +659,28 @@ final class NetworkPresenceController
       idFactory: idFactory,
       onLog: onLog,
     );
+    if (catalogStore != null) {
+      // REST patches and heartbeat presence share the SAME complete catalog;
+      // a heartbeat can therefore never clobber sleepers back to live-only.
+      connector.presence.exposedSessions = () => <String>{
+        for (final row in _catalogEntries) row.id,
+        if (_session case final session?) session.sessionId,
+      };
+      connector.presence.liveLeases = () => <String>{
+        if (_session case final session?) session.sessionId,
+      };
+      connector.presence.sessionMetadata = () =>
+          <String, ConnectorSessionMetadata>{
+            for (final row in normalizeSessionCatalog(_catalogEntries))
+              row.id: ConnectorSessionMetadata(
+                title: row.displayName,
+                snippet: row.snippet,
+                path: row.cwd,
+                cwd: row.cwdSlug,
+                lastActivity: row.lastActiveAt,
+              ),
+          };
+    }
     _registry = registry;
     _connector = connector;
     _dmCodec = dmCodec;
@@ -517,6 +736,9 @@ final class NetworkPresenceController
         envelope.to == _agentAddress &&
         (mail.sessionId == null || mail.sessionId == session.sessionId);
     if (!isCurrent) {
+      if (await _wakeCatalogSession(mail, route)) {
+        throw StateError('network DM wake requested; original left unacked');
+      }
       await sendDeviceDmReply(
         connector: connector,
         keys: _dmKeys,
@@ -544,6 +766,54 @@ final class NetworkPresenceController
       route: route,
       reply: deviceDmAcceptedReceipt,
     );
+  }
+
+  Future<bool> _wakeCatalogSession(
+    InboundMail mail,
+    DeviceDmReplyRoute route,
+  ) async {
+    final targetId = mail.sessionId;
+    final launcher = wakeLauncher;
+    if (targetId == null ||
+        targetId == _session?.sessionId ||
+        launcher == null) {
+      return false;
+    }
+    final target = normalizeSessionCatalog(
+      _catalogEntries,
+    ).where((row) => row.id == targetId).firstOrNull;
+    if (target == null) return false;
+    String? error;
+    if (_wakingSessions.add(targetId)) {
+      try {
+        // The production launcher is AgentCli._launchMailboxWake, which
+        // delegates to launchMailboxWake: exact catalog cwd + gh-1744 guard +
+        // mailboxWakeCommand targeting the explicit session name/id.
+        error = await launcher(
+          cwd: target.cwd,
+          sessionId: target.id,
+          sessionName: target.sessionName,
+        );
+      } on Object {
+        error = 'wake launcher failed';
+      } finally {
+        _wakingSessions.remove(targetId);
+      }
+    }
+    if (error != null) {
+      _session?.onNotice?.call(
+        'network DM wake failed for ${target.displayName}: $error',
+      );
+    }
+    await sendDeviceDmReply(
+      connector: _connector!,
+      keys: _dmKeys,
+      route: route,
+      reply: deviceDmQueuedReceipt,
+    );
+    // gh-1180: queued/wake-start is NOT accepted. Only the woken target's
+    // completed mailbox write produces the accepted receipt and fabric ack.
+    return true;
   }
 
   void _handleRosterFrame(NetworkEnvelope frame) {

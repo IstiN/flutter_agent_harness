@@ -139,7 +139,9 @@ final class DeviceRosterSession {
     required this.state,
     this.networks = const [],
     this.title,
+    this.snippet,
     this.path,
+    this.cwd,
     this.lastActivity,
   });
 
@@ -155,8 +157,14 @@ final class DeviceRosterSession {
   /// Optional human-readable title; omitted by legacy peers.
   final String? title;
 
+  /// Optional first-prompt snippet used when no explicit title exists.
+  final String? snippet;
+
   /// Optional project/working-directory path for the session row subtitle.
   final String? path;
+
+  /// Optional compact cwd basename (the additive roster `cwd` field).
+  final String? cwd;
 
   /// Optional RFC3339 last-activity timestamp.
   final String? lastActivity;
@@ -167,7 +175,9 @@ final class DeviceRosterSession {
     'state': state,
     'networks': networks,
     if (title != null) 'title': title,
+    if (snippet != null) 'snippet': snippet,
     if (path != null) 'path': path,
+    if (cwd != null) 'cwd': cwd,
     if (lastActivity != null) 'lastActivity': lastActivity,
   };
 }

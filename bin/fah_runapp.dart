@@ -1598,7 +1598,9 @@ Future<void> _runApp(List<String> args) async {
   // _fail channel like every other boot-path ConfigException — never the
   // zone crash handler (review #1390: duplicate plugin tool ids were
   // landing as "fa crashed" + a crash.log append).
-  final networkPresence = await _restoreNetworkPresence();
+  final networkPresence = await _restoreNetworkPresence(
+    sessionRoot: effective.sessionRoot ?? _defaultSessionRoot(),
+  );
   try {
     cli = AgentCli(
       // Same source of truth as the palette (issue #778 round 2): chrome

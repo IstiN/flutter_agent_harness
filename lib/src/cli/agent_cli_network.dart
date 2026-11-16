@@ -9,6 +9,9 @@ Future<void> _startNetworkPresenceFor(AgentCli cli) async {
   final sessionId = session?.cachedId;
   if (presence == null || sessionId == null || sessionId.isEmpty) return;
   final manager = cli._subagentManager;
+  if (presence case final CliNetworkSessionWakeTarget wakeTarget) {
+    wakeTarget.wakeLauncher = cli._launchMailboxWake;
+  }
   final mailbox = manager.mailboxOf(manager.selfId);
   manager.networkDmGateway = (address, message) =>
       _sendNetworkDmReply(cli, address: address, text: message.text);

@@ -1736,7 +1736,7 @@ void main() {
         ),
       );
       expect(titled.title, 'Release plan');
-      expect(titled.subtitle, '/work/flutter_agent');
+      expect(titled.subtitle, '/work/flutter_agent · Wake on DM');
       expect(titled.timestamp, isNotEmpty);
       expect(find.text('123e4567-e89b-12d3-a456-426614174000'), findsNothing);
       expect(find.text('Offline'), findsNothing);

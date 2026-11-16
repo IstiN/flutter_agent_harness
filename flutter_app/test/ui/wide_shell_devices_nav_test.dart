@@ -239,12 +239,14 @@ void main() {
       (
         id: 'rich-chat',
         title: 'Release plan',
+        snippet: null,
         path: '/work/flutter_agent',
         lastActivity: activity,
       ),
       (
         id: '123e4567-e89b-12d3-a456-426614174000',
         title: null,
+        snippet: null,
         path: null,
         lastActivity: DateTime.utc(2026, 11, 10),
       ),

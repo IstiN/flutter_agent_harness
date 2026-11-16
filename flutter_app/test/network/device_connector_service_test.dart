@@ -146,6 +146,7 @@ buildService({
   Future<String> Function()? userIdProvider,
   IdFactory idFactory = defaultIdFactory,
   Duration rosterDebounce = const Duration(milliseconds: 500),
+  bool? mobileQueueOnly,
 }) async {
   final manager = await _manager(httpClient: httpClient, jwt: jwt);
   final usedTransport = transport ?? FakeTransport();
@@ -160,6 +161,7 @@ buildService({
     userIdProvider: userIdProvider,
     idFactory: idFactory,
     rosterDebounce: rosterDebounce,
+    mobileQueueOnly: mobileQueueOnly,
   );
   return (service, manager, httpClient, usedTransport, usedTokens);
 }
@@ -788,6 +790,7 @@ void main() {
                 (
                   id: 'chat-rich',
                   title: 'Release plan',
+                  snippet: 'First prompt',
                   path: '/work/flutter_agent',
                   lastActivity: DateTime.utc(2026, 11, 12, 9),
                 ),
@@ -809,7 +812,9 @@ void main() {
             'state': 'wake_on_dm',
             'networks': ['net-personal'],
             'title': 'Release plan',
+            'snippet': 'First prompt',
             'path': '/work/flutter_agent',
+            'cwd': 'flutter_agent',
             'lastActivity': '2026-11-12T09:00:00.000Z',
           },
         ]);
@@ -818,6 +823,7 @@ void main() {
           (
             id: 'chat-rich',
             title: 'Renamed release plan',
+            snippet: 'First prompt',
             path: '/work/flutter_agent',
             lastActivity: DateTime.utc(2026, 11, 12, 9),
           ),
@@ -830,7 +836,9 @@ void main() {
             'state': 'wake_on_dm',
             'networks': ['net-personal'],
             'title': 'Renamed release plan',
+            'snippet': 'First prompt',
             'path': '/work/flutter_agent',
+            'cwd': 'flutter_agent',
             'lastActivity': '2026-11-12T09:00:00.000Z',
           },
         ]);

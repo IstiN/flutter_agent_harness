@@ -335,6 +335,9 @@ fa network rename --clear               Clear THIS device's friendly name''';
       _out('roster devices: ${rows.length}');
       for (final row in rows) {
         _out(row.format());
+        for (final session in row.formatSessions()) {
+          _out(session);
+        }
       }
       return 0;
     }

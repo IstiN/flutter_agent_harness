@@ -749,6 +749,7 @@ class _DevicesPageState extends State<DevicesPage> {
           ? (first.roster?.friendlyName == null ? null : first.roster!.name)
           : first.roster?.name,
       dotColor: deviceMachineDotColor(colors, best),
+      isOffline: best == MachinePresence.offline,
       icon: devicePlatformIcon(
         name: first.roster?.name,
         friendlyName: first.roster?.friendlyName,
@@ -1057,6 +1058,7 @@ class _DeviceEntry {
     this.subtitle,
     required this.dotColor,
     this.isOwn = false,
+    this.isOffline = false,
     this.agents = const {},
     this.agentDmPubs = const {},
     this.exposedSessions = const {},
@@ -1079,6 +1081,10 @@ class _DeviceEntry {
   /// True for This device (the `deviceRow`/`deviceAvatar`/`deviceDot`
   /// unsuffixed keys).
   final bool isOwn;
+
+  /// Last-known machine presence forces every child row offline, even when
+  /// its last session heartbeat was wake-on-DM before an unclean disconnect.
+  final bool isOffline;
   final Color dotColor;
   final Map<String, AgentRunState> agents;
 
@@ -1496,25 +1502,34 @@ class _DevicePane extends StatelessWidget {
     Widget remoteCard(
       MapEntry<String, ConnectorSessionPresence> entry, {
       required bool hairline,
-    }) => DeviceSessionCard(
-      key: ValueKey('sessionRow:${entry.key}'),
-      dotKey: ValueKey('sessionDot:${entry.key}'),
-      dotColor: deviceSessionDotColor(colors, entry.value),
-      title: _sessionTitle(
-        entry.key,
-        device.sessionMetadata[entry.key]?.title,
-        path: device.sessionMetadata[entry.key]?.path,
-      ),
-      subtitle: device.sessionMetadata[entry.key]?.path ?? '',
-      timestamp: chatListRelativeTime(
-        context,
-        device.sessionMetadata[entry.key]?.lastActivity,
-      ),
-      showPresenceDot: entry.value == ConnectorSessionPresence.live,
-      hairline: hairline,
-      selected: entry.key == selectedRemoteSessionId,
-      onTap: _sessionConversation(entry.key),
-    );
+    }) {
+      final metadata = device.sessionMetadata[entry.key];
+      final state = device.isOffline
+          ? ConnectorSessionPresence.offline
+          : entry.value;
+      final cwd = metadata?.path ?? metadata?.cwd ?? '';
+      return DeviceSessionCard(
+        key: ValueKey('sessionRow:${entry.key}'),
+        dotKey: ValueKey('sessionDot:${entry.key}'),
+        dotColor: deviceSessionDotColor(colors, state),
+        title: _sessionTitle(
+          entry.key,
+          metadata?.title,
+          preview: metadata?.snippet,
+          path: metadata?.path ?? metadata?.cwd,
+        ),
+        subtitle: [
+          if (cwd.isNotEmpty) cwd,
+          deviceSessionLabel(context, state),
+        ].join(' · '),
+        timestamp: chatListRelativeTime(context, metadata?.lastActivity),
+        showPresenceDot: true,
+        hairline: hairline,
+        selected: entry.key == selectedRemoteSessionId,
+        onTap: _sessionConversation(entry.key),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       children: [
@@ -1581,7 +1596,8 @@ class _DevicePane extends StatelessWidget {
     final title = _sessionTitle(
       sessionId,
       metadata?.title,
-      path: metadata?.path,
+      preview: metadata?.snippet,
+      path: metadata?.path ?? metadata?.cwd,
     );
     for (final name in device.agents.keys) {
       if ((device.agentDeviceIds[name] ?? device.id) == deviceId) {
@@ -1799,7 +1815,12 @@ List<_RemoteFolder> _groupRemoteFolders(
   final byPath = <String, List<MapEntry<String, ConnectorSessionPresence>>>{};
   DateTime? activityOf(String id) => metadata[id]?.lastActivity;
   for (final entry in remote) {
-    byPath.putIfAbsent(metadata[entry.key]?.path ?? '', () => []).add(entry);
+    byPath
+        .putIfAbsent(
+          metadata[entry.key]?.path ?? metadata[entry.key]?.cwd ?? '',
+          () => [],
+        )
+        .add(entry);
   }
   String basename(String path) {
     final normalized = path.replaceAll('\\', '/');

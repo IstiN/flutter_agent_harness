@@ -231,6 +231,40 @@ Rules:
   revive while the browser runs; browser closed = device offline,
   queue on server. Extensions never spawn processes.
 
+### 8.1 Full session catalog and desktop wake-on-DM (#2213)
+
+A device publishes its complete exposed local session listing, not only the
+session with a live lease. Connect/enroll sends a full snapshot; store change
+notifications trigger a debounced incremental patch (changed/new rows plus
+retractions for removed rows). One roster patch contains at most 40 session
+rows and larger stores are sent as ordered pages, so 1000+ session stores do
+not create one unbounded frame. The listing itself remains backed by the
+existing persisted listing index and bounded reads; no transcript records are
+sent.
+
+The roster session's existing `id`, `title`, `path`, and `lastActivity` fields
+remain the interoperability baseline. `title` is the persisted session name,
+or the bounded first-prompt snippet, or a cwd label as a final human fallback;
+`path` is the existing connector cwd field and clients render its basename as
+the cwd slug. `lastActivity` is RFC3339 UTC. Clients sort by `lastActivity`
+descending (id tie-break). The connector also emits additive optional
+`snippet` and `cwd` keys; roster servers MUST preserve unknown/additive
+session metadata keys when merging patches so structured snippet/cwd survive
+a round trip. Until then the baseline `title`/`path` mapping above is lossless
+for display and requires no new endpoint. A missing/unknown id is never
+invented into the catalog.
+
+Rows render three states: `live` (current lease), `wake-on-DM` (catalog row
+without a live lease on an online desktop), and `offline` (device offline).
+A DM addressed to a wake-on-DM row launches the existing sender-driven
+`mailboxWakeCommand` with explicit `--session <id>` and
+`--inbox <target-mailbox>` arguments. The existing gh-1744 same-cwd guard and
+gh-1180 wake receipts apply unchanged; the just-arrived DM stays unacked until
+the woken target session consumes it through the #2214 mailbox path. The
+current/live session never spawns a second agent and steers through its
+existing mailbox. Mobile and extension devices stay queue-only and send the
+honest encrypted queued/not-listening receipt rather than claiming a wake.
+
 ## 9. Backend OpenAPI delta (fa_network)
 
 New:

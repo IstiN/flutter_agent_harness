@@ -270,6 +270,8 @@ export 'src/session/session_tree.dart';
 export 'src/session/session_search.dart';
 export 'src/session/session_chunk_reader.dart';
 export 'src/session/windowed_session_storage.dart';
+export 'src/session/session_catalog.dart';
+export 'src/session/jsonl_session_catalog_store.dart';
 export 'src/trajectory/formatters.dart';
 export 'src/trajectory/timeline_range.dart';
 export 'src/trajectory/timeline_projection.dart';

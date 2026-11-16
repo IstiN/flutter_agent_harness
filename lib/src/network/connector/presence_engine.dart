@@ -178,13 +178,25 @@ enum ConnectorSessionPresence {
 /// and the UI falls back to a short session id when no title is available.
 final class ConnectorSessionMetadata {
   /// Builds session display metadata.
-  const ConnectorSessionMetadata({this.title, this.path, this.lastActivity});
+  const ConnectorSessionMetadata({
+    this.title,
+    this.snippet,
+    this.path,
+    this.cwd,
+    this.lastActivity,
+  });
 
   /// Human-readable session title (custom, CLI, or the host's derived title).
   final String? title;
 
+  /// First-prompt snippet fallback when [title] is absent.
+  final String? snippet;
+
   /// Project/working-directory path shown as the session row subtitle.
   final String? path;
+
+  /// Compact working-directory basename.
+  final String? cwd;
 
   /// Last transcript activity, used for recency ordering and relative time.
   final DateTime? lastActivity;
@@ -192,27 +204,33 @@ final class ConnectorSessionMetadata {
   /// Whether no display field is present.
   bool get isEmpty =>
       (title == null || title!.isEmpty) &&
+      (snippet == null || snippet!.isEmpty) &&
       (path == null || path!.isEmpty) &&
+      (cwd == null || cwd!.isEmpty) &&
       lastActivity == null;
 
   /// Decodes the additive session fields without rejecting legacy rows.
   static ConnectorSessionMetadata? fromJson(Object? value) {
     if (value is! Map) return null;
     final rawTitle = value['title'];
+    final rawSnippet = value['snippet'];
     final rawPath = value['path'];
-    final rawActivity = value['lastActivity'];
-    final title = rawTitle is String && rawTitle.trim().isNotEmpty
-        ? rawTitle.trim()
-        : null;
-    final path = rawPath is String && rawPath.trim().isNotEmpty
-        ? rawPath.trim()
-        : null;
+    final rawCwd = value['cwd'];
+    final rawActivity = value['lastActivity'] ?? value['lastActiveAt'];
+    String? text(Object? raw) =>
+        raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+    final title = text(rawTitle);
+    final snippet = text(rawSnippet);
+    final path = text(rawPath);
+    final cwd = text(rawCwd);
     final activity = rawActivity is String
         ? DateTime.tryParse(rawActivity)
         : null;
     final metadata = ConnectorSessionMetadata(
       title: title,
+      snippet: snippet,
       path: path,
+      cwd: cwd,
       lastActivity: activity,
     );
     return metadata.isEmpty ? null : metadata;
@@ -221,7 +239,9 @@ final class ConnectorSessionMetadata {
   /// Wire fields merged into a roster/presence session row.
   Map<String, Object?> toJson() => {
     if (title != null && title!.isNotEmpty) 'title': title,
+    if (snippet != null && snippet!.isNotEmpty) 'snippet': snippet,
     if (path != null && path!.isNotEmpty) 'path': path,
+    if (cwd != null && cwd!.isNotEmpty) 'cwd': cwd,
     if (lastActivity != null)
       'lastActivity': lastActivity!.toUtc().toIso8601String(),
   };
@@ -230,11 +250,13 @@ final class ConnectorSessionMetadata {
   bool operator ==(Object other) =>
       other is ConnectorSessionMetadata &&
       other.title == title &&
+      other.snippet == snippet &&
       other.path == path &&
+      other.cwd == cwd &&
       other.lastActivity == lastActivity;
 
   @override
-  int get hashCode => Object.hash(title, path, lastActivity);
+  int get hashCode => Object.hash(title, snippet, path, cwd, lastActivity);
 }
 
 /// One machine presence frame's payload, built and parsed both ways: the

@@ -13,6 +13,7 @@ block a release again.
 
 ## Unreleased
 
+- **Full per-device session catalog + wake-on-DM (#2213):** CLI and app connectors now publish every exposed stored session with its persisted name (or first-prompt/cwd fallback), cwd and last activity, using a full connect snapshot and debounced incremental roster pages. Devices rows and CLI roster output use human labels, relative activity, project context and live/wake-on-DM/offline states instead of bare UUIDs. On desktop, a DM to a catalog sleeper launches the existing cwd-guarded headless wake with explicit session/inbox targeting, leaves the DM unacked for the woken mailbox, and preserves live-session steering; mobile/extension remain honestly queue-only.
 - **CLI inbound network DM delivery (#2214):** the app's fanet1 DM codec/reply routing now lives in the pure-Dart connector core, and the CLI writes current-session app DMs into its real mailbox for existing idle-wake/mid-run steering. Delivery preserves per-sender order, dedups redelivery with stable sortable mailbox ids plus inbox/read idempotency, acks only after the mailbox write, and distinguishes encrypted accepted vs. queued/not-listening receipts. Permanent malformed/wrong-key/tamper failures ack once with safe notices; transient failures stay unacked. Agents reply through the existing `agent_message` tool using a durable opaque `network-dm:v1:` address.
 - fix(gh-2194): the fa1.dev landing page no longer exposes two broken
   Windows download links. The windows-release landing (#2158) deep-linked
