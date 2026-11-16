@@ -1032,6 +1032,15 @@ jobs:
           # release asset if the local copy is unavailable.
           LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/ios/Frameworks"
+          ZIP=/tmp/WasmRun.xcframework.zip
+          # The release asset is immutable per tag — pin its digest so a
+          # wrong-content-but-valid-zip cannot slip past unzip CRC32 into the
+          # signed app. The pinned byte size tells a truncated download (KEEP
+          # the partial — resume it) apart from a complete-but-wrong one
+          # (PURGE and restart). Same constants as the gh-1759 loop in
+          # build-macos.yml.
+          ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
+          ASSET_BYTES=97238501
           rm -rf "$DEST/WasmRun.xcframework"
           mkdir -p "$DEST"
           if [ -d "$LOCAL_SRC" ]; then
@@ -1039,31 +1048,42 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
-            # --retry alone skips transient mid-transfer resets (curl 56) —
-            # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
-            # -C - resumes the partial file between attempts (a bare --retry
-            # restarts the body from zero on a fresh invocation).
-            URL="https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip"
-            ZIP=/tmp/WasmRun.xcframework.zip
-            ok=0
-            for attempt in $(seq 1 10); do
-              echo "download attempt ${attempt}/10 (have $(stat -f%z "$ZIP" 2>/dev/null || echo 0) bytes)"
-              if curl -L -C - --retry 3 --retry-all-errors --retry-delay 5 --max-time 300 \
-                -o "$ZIP" "$URL" && unzip -tq "$ZIP" >/dev/null 2>&1; then
-                ok=1
-                break
-              fi
-              # A corrupt-but-complete zip (HTML error page, truncated
-              # central directory) can never be resumed into validity —
-              # drop it so the next attempt starts clean.
-              if ! unzip -tq "$ZIP" >/dev/null 2>&1 && [ "$(stat -f%z "$ZIP" 2>/dev/null || echo 0)" -lt 1000000 ]; then
+            # The partial is deliberately NOT deleted between runs/attempts:
+            # it is exactly what -C - is for. If the persisted zip is already
+            # complete AND digest-valid, skip the download — a -C - attempt
+            # against a complete file gets HTTP 416 and reads success as
+            # failure (gh-1759).
+            if [ -f "$ZIP" ] && echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null 2>&1; then
+              echo "Complete, digest-valid $ZIP persisted from an earlier run — skipping download"
+            else
+              for attempt in $(seq 1 10); do
+                echo "download attempt ${attempt}/10 (have $(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0) bytes)"
+                # --fail: without it curl exits 0 on HTTP 404/429/5xx and
+                # OVERWRITES the accumulated partial with the error page —
+                # destroying exactly the progress this loop exists to keep.
+                # -C - RESUMES the partial zip (Range requests), so slow
+                # links make forward progress within this step AND across
+                # runs. 10 attempts x 300s fit the 60-min step budget on the
+                # throttled (22-45 KB/s) fa-m5 link (run 43752370063).
+                if curl --fail -L -C - --connect-timeout 30 --max-time 300 \
+                  --retry 3 --retry-all-errors --retry-delay 5 \
+                  -o "$ZIP" \
+                  https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                  break
+                fi
+                sleep 5
+              done
+              got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+              if [ "$got" -eq "$ASSET_BYTES" ] && echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c -; then
+                : # complete and authentic — fall through to unzip
+              elif [ "$got" -lt "$ASSET_BYTES" ]; then
+                echo "::error::WasmRun.xcframework.zip incomplete: $got / $ASSET_BYTES bytes after 10 attempts — keeping the partial; the next run resumes from byte $got"
+                exit 1
+              else
+                echo "::error::WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) or failed its pinned sha256 — purging $ZIP so the next run restarts clean"
                 rm -f "$ZIP"
+                exit 1
               fi
-              sleep 5
-            done
-            if [ "$ok" -ne 1 ]; then
-              echo "::error::WasmRun.xcframework.zip could not be downloaded+verified after 10 resumable attempts"
-              exit 1
             fi
             unzip -q "$ZIP" -d "$DEST"
           fi
