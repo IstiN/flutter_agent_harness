@@ -93,6 +93,9 @@ final class DeviceDmCodec {
   const DeviceDmCodec({
     required DeviceDmKeyProvider keys,
     required this.deviceId,
+    // Public named `keys` parameter is required by cross-library callers
+    // (network_presence, app connector); this._keys would be library-private.
+    // ignore: prefer_initializing_formals
   }) : _keys = keys;
 
   final DeviceDmKeyProvider _keys;
