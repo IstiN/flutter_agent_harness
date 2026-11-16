@@ -25,10 +25,7 @@ void main() {
 
     test('falls through for non-sandbox sources', () async {
       final env = MemoryExecutionEnv();
-      await env.writeBinaryFile(
-        'apps/x/a.glb',
-        Uint8List.fromList(const [1]),
-      );
+      await env.writeBinaryFile('apps/x/a.glb', Uint8List.fromList(const [1]));
       final loader = sandboxGlbBytes(env);
       expect(await loader('https://example.com/a.glb'), isNull);
       expect(await loader('assets/bundled.glb'), isNull);
@@ -46,6 +43,22 @@ void main() {
       final host = createFaJs3dHost(MemoryExecutionEnv());
       expect(host, isNotNull);
       expect(Js3dUrlGlbParser.fileBytesLoader, isNotNull);
+    });
+  });
+
+  group('faWidgetNeedsThree', () {
+    test('detects direct and official-example upstream API usage', () {
+      expect(faWidgetNeedsThree('new THREE.Scene();'), isTrue);
+      expect(faWidgetNeedsThree('var e = globalThis.THREE;'), isTrue);
+      expect(faWidgetNeedsThree("jsr.three.createCanvas('main');"), isTrue);
+      expect(faWidgetNeedsThree("{type: 'three', canvasId: 'main'}"), isTrue);
+    });
+
+    test('keeps ordinary widgets on the lightweight boot path', () {
+      expect(
+        faWidgetNeedsThree("jsr.render({type: 'text', data: 'THREE guide'});"),
+        isFalse,
+      );
     });
   });
 }

@@ -380,6 +380,7 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
                         ),
                         mediaHost: const FaMediaHost(),
                         js3dHost: createFaJs3dHost(widget.service.env),
+                        threeHost: engine.threeHost,
                         // Voxel worlds: the bridge-owned world the engine's
                         // backend created at start — the SAME world every
                         // `voxel.*` hostCall lands in (see

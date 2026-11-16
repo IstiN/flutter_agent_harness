@@ -414,6 +414,7 @@ class _AppTileHostState extends State<AppTileHost> {
               // 3D scenes render in tiles too (display-only — no tap picking:
               // any tap opens the full app).
               js3dHost: createFaJs3dHost(widget.env),
+              threeHost: engine.threeHost,
               // Without a media host the renderer falls back to a placeholder
               // for video/audio nodes — live tiles with media need it too.
               mediaHost: const FaMediaHost(),
