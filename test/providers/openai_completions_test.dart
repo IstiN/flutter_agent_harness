@@ -2552,6 +2552,79 @@ void main() {
     );
 
     test(
+      'a tool-calls-only assistant message carries an explicit content: null '
+      '(gh-2221 — strict OpenAI-compatible backends with a '
+      'discriminated-union request schema reject the message when the key '
+      'is omitted, surfacing a confusing unrelated-field error)',
+      () async {
+        final body = await sentBody(
+          testModel,
+          Context(
+            messages: [
+              AssistantMessage(
+                content: const [TextContent(text: 'Working on it.')],
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+              AssistantMessage(
+                content: const [
+                  TextContent(text: 'Let me check.'),
+                  ToolCall(id: 'c1', name: 'read', arguments: {}),
+                ],
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                usage: Usage.zero,
+                stopReason: StopReason.toolUse,
+                timestamp: DateTime.utc(2026),
+              ),
+              AssistantMessage(
+                content: const [
+                  ToolCall(id: 'c2', name: 'bash', arguments: {}),
+                ],
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                usage: Usage.zero,
+                stopReason: StopReason.toolUse,
+                timestamp: DateTime.utc(2026),
+              ),
+            ],
+          ),
+        );
+        expect(messagesOf(body), [
+          {'role': 'assistant', 'content': 'Working on it.'},
+          {
+            'role': 'assistant',
+            'content': 'Let me check.',
+            'tool_calls': [
+              {
+                'id': 'c1',
+                'type': 'function',
+                'function': {'name': 'read', 'arguments': '{}'},
+              },
+            ],
+          },
+          {
+            'role': 'assistant',
+            'content': null,
+            'tool_calls': [
+              {
+                'id': 'c2',
+                'type': 'function',
+                'function': {'name': 'bash', 'arguments': '{}'},
+              },
+            ],
+          },
+        ]);
+      },
+    );
+
+    test(
       'an image-only tool result attaches the image for vision models',
       () async {
         final body = await sentBody(
