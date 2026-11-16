@@ -50,6 +50,7 @@ mkdir -p "$target"
 # by test/publish_staging_test.dart).
 rsync -a "$repo_root"/ "$target"/ \
   --include 'vendor/xterm/' --include 'vendor/xterm/**' \
+  --include 'vendor/pty2/' --include 'vendor/pty2/**' \
   --include 'packages/fa_llm_mock/' --include 'packages/fa_llm_mock/**' \
   --exclude '/.git' --exclude '/.github' --exclude '/.worktrees' \
   --exclude '/flutter_app' --exclude '/browser_ext' \
