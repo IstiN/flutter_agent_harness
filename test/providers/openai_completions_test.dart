@@ -2552,6 +2552,37 @@ void main() {
     );
 
     test(
+      'a tool-calls-only assistant message carries an explicit content: null '
+      '(gh-2037 — strict OpenAI-compatible backends with a '
+      'discriminated-union request schema reject the message when the key '
+      'is omitted, surfacing a confusing unrelated-field error)',
+      () async {
+        final body = await sentBody(
+          testModel,
+          Context(
+            messages: [
+              AssistantMessage(
+                content: const [
+                  ToolCall(id: 'c1', name: 'read', arguments: {}),
+                ],
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-4o-mini',
+                usage: Usage.zero,
+                stopReason: StopReason.toolUse,
+                timestamp: DateTime.utc(2026),
+              ),
+            ],
+          ),
+        );
+        final assistant = messagesOf(body).single as Map<String, dynamic>;
+        expect(assistant.containsKey('content'), isTrue);
+        expect(assistant['content'], isNull);
+        expect(assistant.containsKey('tool_calls'), isTrue);
+      },
+    );
+
+    test(
       'an image-only tool result attaches the image for vision models',
       () async {
         final body = await sentBody(
