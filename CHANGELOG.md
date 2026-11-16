@@ -13,6 +13,7 @@ block a release again.
 
 ## Unreleased
 
+- **CLI inbound network DM delivery (#2214):** the app's fanet1 DM codec/reply routing now lives in the pure-Dart connector core, and the CLI writes current-session app DMs into its real mailbox for existing idle-wake/mid-run steering. Delivery preserves per-sender order, dedups redelivery with stable sortable mailbox ids plus inbox/read idempotency, acks only after the mailbox write, and distinguishes encrypted accepted vs. queued/not-listening receipts. Permanent malformed/wrong-key/tamper failures ack once with safe notices; transient failures stay unacked. Agents reply through the existing `agent_message` tool using a durable opaque `network-dm:v1:` address.
 - fix(gh-2194): the fa1.dev landing page no longer exposes two broken
   Windows download links. The windows-release landing (#2158) deep-linked
   `releases/latest/download/fa-app-windows-x64.zip` / `.msix`, but those

@@ -18,19 +18,8 @@ typedef DmChannelParts = ({String userId, String agentName, String deviceId});
 typedef _DmDecoded = ({String? text, String? sessionId, String senderPubB64});
 
 /// Parses a DM channel id; null on any shape violation.
-DmChannelParts? parseDmChannelId(String channelId) {
-  if (!channelId.startsWith('dm:user:')) return null;
-  final rest = channelId.substring('dm:user:'.length);
-  final colon = rest.indexOf(':');
-  if (colon <= 0) return null;
-  final at = rest.indexOf('@', colon);
-  if (at < 0 || at + 1 >= rest.length) return null;
-  return (
-    userId: rest.substring(0, colon),
-    agentName: rest.substring(colon + 1, at),
-    deviceId: rest.substring(at + 1),
-  );
-}
+DmChannelParts? parseDmChannelId(String channelId) =>
+    parseDeviceDmChannelId(channelId);
 
 /// Whether the rewritten sender id still points at THIS account — the
 /// only direction signal left for an undecryptable DM frame.
@@ -371,22 +360,8 @@ extension NetworkSessionDm on NetworkSession {
   /// directions. Legacy raw assistant text and malformed wrappers pass
   /// through unchanged and therefore land in the device-general bucket.
   ({String text, String? sessionId}) _unwrapDmText(String plaintext) {
-    if (!plaintext.startsWith('{')) return (text: plaintext, sessionId: null);
-    try {
-      final decoded = jsonDecode(plaintext);
-      if (decoded is Map && decoded['text'] is String) {
-        final sessionId = decoded['sessionId'];
-        return (
-          text: decoded['text'] as String,
-          sessionId: sessionId is String && sessionId.isNotEmpty
-              ? sessionId
-              : null,
-        );
-      }
-    } on FormatException {
-      // Raw text also decrypts here — keep it as-is.
-    }
-    return (text: plaintext, sessionId: null);
+    final decoded = unwrapDeviceDmText(plaintext);
+    return (text: decoded.text, sessionId: decoded.sessionId);
   }
 
   void _onDmMail(NetworkEnvelope envelope) {

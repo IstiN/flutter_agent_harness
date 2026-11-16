@@ -26,6 +26,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
 // The fanet1 DM primitives are pure Dart in the messaging core.
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
+// Shared connector DM channel/text semantics (issue #2214 extraction).
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 
 part 'network_session_dm.dart';
 

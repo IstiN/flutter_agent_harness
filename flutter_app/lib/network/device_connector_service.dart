@@ -37,6 +37,8 @@ import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/connector_mux.dart';
 // ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
+// ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/device_registry.dart';
@@ -405,9 +407,6 @@ class DeviceConnectorService {
   late final DeviceDmKeyProvider _dmKeys;
   final _dmPubs = <String, String>{};
   final _remoteDmPubs = <String, ({String network, String dmPub})>{};
-  final _dmUserPubs = <String, SimplePublicKey>{};
-  final _dmSessionTargets = <String, String>{};
-  final _dmThreadedRequests = <String>{};
   Future<SimpleKeyPair>? _userDmKeyPair;
   String? _accountUserId;
   SinkRegistration? _dmSink;
@@ -861,56 +860,6 @@ class DeviceConnectorService {
     }
   }
 
-  Future<String> _decodeDmMail(NetworkEnvelope envelope) async {
-    // Non-actionable DM traffic (own reply echo, mail for OTHER agents)
-    // skips crypto entirely: the sink guard acks it without delivery and
-    // a decrypt attempt on an own-address echo would always fail.
-    if (!_isActionableDm(envelope)) return '';
-    final channel = envelope.channel ?? '';
-    final ciphertext = envelope.ciphertext ?? '';
-    if (!isDmChannel(channel)) return ciphertext;
-    final frame = hubTryOpenFanet1(ciphertext);
-    if (frame == null) throw const FormatException('DM is not fanet1');
-    final key = await _dmKeys.loadOrCreate(_localAgentAddress());
-    final plaintext = await hubDecryptPayloadWithKeyPair(
-      recipientDhKeyPair: key.keyPair,
-      senderDhPubkey: frame.senderPubkey,
-      frameId: envelope.msgId,
-      aadTarget: channel,
-      ciphertextB64: frame.ciphertextB64,
-    );
-    if (_dmUserPubs.length >= 256 && !_dmUserPubs.containsKey(channel)) {
-      _dmUserPubs.remove(_dmUserPubs.keys.first);
-    }
-    _dmUserPubs[channel] = frame.senderPubkey;
-    return _decodeDmPlaintext(envelope.msgId, plaintext);
-  }
-
-  String _decodeDmPlaintext(String msgId, String plaintext) {
-    try {
-      final decoded = jsonDecode(plaintext);
-      if (decoded is! Map || decoded['text'] is! String) return plaintext;
-      final sessionId = decoded['sessionId'];
-      if (sessionId is String && sessionId.isNotEmpty) {
-        if (_dmSessionTargets.length >= 256) {
-          final oldest = _dmSessionTargets.keys.first;
-          _dmSessionTargets.remove(oldest);
-          _dmThreadedRequests.remove(oldest);
-        }
-        _dmSessionTargets[msgId] = sessionId;
-      }
-      if (decoded['threading'] == 1) {
-        if (_dmThreadedRequests.length >= 256) {
-          _dmThreadedRequests.remove(_dmThreadedRequests.first);
-        }
-        _dmThreadedRequests.add(msgId);
-      }
-      return decoded['text'] as String;
-    } on FormatException {
-      return plaintext;
-    }
-  }
-
   /// True only for DM mail addressed TO this device's agent by someone
   /// else — the one shape that may wake a session and auto-reply. Own
   /// reply echoes and other agents' mail are acked and dropped.
@@ -938,10 +887,8 @@ class DeviceConnectorService {
     final host = dmSessionHost;
     if (host == null) throw StateError('no DM session host configured');
     final envelope = mail.envelope;
-    final sessionId = _dmSessionTargets.remove(envelope.msgId);
-    final threaded = _dmThreadedRequests.remove(envelope.msgId);
     final reply = await host.deliverUserText(
-      sessionId: sessionId,
+      sessionId: mail.sessionId,
       text: mail.text,
     );
     // e2e diagnostics (issue #2062): the reply path is otherwise silent.
@@ -949,75 +896,23 @@ class DeviceConnectorService {
       debugPrint('[dm] inbound ${envelope.msgId} reply=${reply?.length}');
     }
     if (reply == null || reply.trim().isEmpty) return;
-    final channel = envelope.channel;
-    final network = envelope.network;
-    final sender = envelope.from;
-    final userPub = _dmUserPubs[channel];
-    if (channel == null ||
-        network == null ||
-        sender == null ||
-        userPub == null) {
-      throw StateError('incomplete DM reply route');
-    }
-    // The live backend rewrites an authenticated user sender from
-    // `user:<uid>` to bare `<uid>` on inbound mail. Device-WS routing needs
-    // the explicit user prefix on the reply; a bare uid is echoed to the
-    // sending agent instead of delivered to the user's devices.
-    final replyRecipient = _dmReplyRecipient(sender);
-    await _sendDmReply(
-      network: network,
-      channel: channel,
-      replyRecipient: replyRecipient,
-      userPub: userPub,
-      reply: reply,
-      sessionId: sessionId,
-      threaded: threaded,
+    final connector = _connector;
+    if (connector == null) throw StateError('device connector is not running');
+    final route = DeviceDmReplyRoute.fromMail(
+      mail,
+      currentAgentAddress: _localAgentAddress(),
     );
-  }
-
-  String _dmReplyRecipient(String sender) =>
-      sender.startsWith('user:') || sender.contains('@')
-      ? sender
-      : 'user:$sender';
-
-  String _dmReplyPlaintext(
-    String reply, {
-    required String? sessionId,
-    required bool threaded,
-  }) => threaded ? jsonEncode({'text': reply, 'sessionId': ?sessionId}) : reply;
-
-  Future<void> _sendDmReply({
-    required String network,
-    required String channel,
-    required String replyRecipient,
-    required SimplePublicKey userPub,
-    required String reply,
-    required String? sessionId,
-    required bool threaded,
-  }) async {
-    final agent = await _dmKeys.loadOrCreate(_localAgentAddress());
     try {
-      await sendMail(
-        network: network,
-        channel: channel,
-        from: _localAgentAddress(),
-        to: replyRecipient,
-        ciphertextFor: (frameId) => hubSealFanet1(
-          senderDhKeyPair: agent.keyPair,
-          recipientDhPubkey: userPub,
-          frameId: frameId,
-          aadTarget: channel,
-          plaintext: _dmReplyPlaintext(
-            reply,
-            sessionId: sessionId,
-            threaded: threaded,
-          ),
-        ),
+      await sendDeviceDmReply(
+        connector: connector,
+        keys: _dmKeys,
+        route: route,
+        reply: reply,
       );
       if (kDebugMode) {
         debugPrint(
-          '[dm] reply sent network=$network channel=$channel '
-          'to=$replyRecipient',
+          '[dm] reply sent network=${route.network} channel=${route.channel} '
+          'to=${route.replyRecipient}',
         );
       }
     } on Object catch (error) {
@@ -1080,13 +975,17 @@ class DeviceConnectorService {
       localAddress,
       _agentPresenceState(snapshot.sessions, snapshot.activity),
     );
+    final dmCodec = DeviceDmCodec(
+      keys: _dmKeys,
+      deviceId: credentials.deviceId,
+    );
     final connector = MachineConnector(
       registry: registry,
       upstream: upstream,
       outbox: _outboxOverride ?? await _defaultOutbox(),
       presence: presence,
       leases: () async => sessionManager.sessions.keys.toSet(),
-      decodeMail: _decodeDmMail,
+      decodeMail: dmCodec.decode,
       idFactory: idFactory,
       onLog: onLog,
     );
@@ -1705,9 +1604,6 @@ class DeviceConnectorService {
   Future<void> _teardown() async {
     _lastRosterByNetwork.clear();
     _remoteDmPubs.clear();
-    _dmUserPubs.clear();
-    _dmSessionTargets.clear();
-    _dmThreadedRequests.clear();
     _accountUserId = null;
     _userDmKeyPair = null;
     _dmSink?.close();

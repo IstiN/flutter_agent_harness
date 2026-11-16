@@ -66,6 +66,29 @@ void main() {
       expect(readDir, hasLength(2));
     });
 
+    test(
+      'send is idempotent for an existing inbox or read message id',
+      () async {
+        await repo.send(msg(id: 'network-stable-1', text: 'original'));
+        await repo.send(msg(id: 'network-stable-1', text: 'duplicate rewrite'));
+        expect(await repo.peek('a1'), hasLength(1));
+        expect((await repo.peek('a1')).single.text, 'original');
+
+        expect((await repo.drain('a1')).single.text, 'original');
+        await repo.send(msg(id: 'network-stable-1', text: 'after crash'));
+        expect(
+          await repo.peek('a1'),
+          isEmpty,
+          reason:
+              'read/<id>.json closes crash-after-write/before-ack redelivery',
+        );
+        final readDir = (await env.listDir(
+          '$messagesRoot/a1/read',
+        )).getOrThrow();
+        expect(readDir, hasLength(1));
+      },
+    );
+
     test('inbox order is arrival order (filename sort)', () async {
       // Ids deliberately out of alphabetical order vs insertion order.
       await repo.send(msg(id: '20260101_0003_z', text: 'third'));

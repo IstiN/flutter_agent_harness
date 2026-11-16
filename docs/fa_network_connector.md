@@ -189,6 +189,36 @@ Rules:
   semantics).
 - DM history: windowed reads (existing `/api/inbox` views), never
   auto-relayed in bulk.
+- **CLI inbound delivery (issue #2214):** the connector's ack-owning DM sink
+  decrypts and ACL-sanitizes the complete payload before writing into the
+  current session's real `<mailboxPrefix>/main` mailbox as `kind:user` mail.
+  The existing inbox watcher / `externalSteeringSource` supplies idle wake and
+  mid-run steering; no second agent invocation or wake loop is introduced.
+  Mailbox ids combine zero-padded server `seq` (timestamp fallback) with the
+  base64url `msgId`, so filename sorting preserves order and redelivery is
+  idempotent across both pending `inbox/<id>.json` and consumed
+  `read/<id>.json` records.
+- **Ack vs. receipt:** the accepted order is completed current-mailbox write
+  → encrypted `accepted, awaiting steering` receipt → original ack. A receipt
+  send failure therefore leaves the original unacked for idempotent retry. A
+  missing listener, stale local agent address, or non-current `sessionId` gets
+  an encrypted `queued / not listening` reply and the original stays unacked
+  so a later live session can receive it. Resume/wake for that later session
+  remains issue #2213. Sink/mailbox/key-store failures are transient and stay
+  unacked. Malformed fanet1, wrong-key, AAD, and authentication/tamper
+  failures are permanent typed rejections: they are acked once to stop hostile
+  redelivery, with a credential-free/plaintext-free notice. `dmMail` is a
+  post-sink observation stream only; it is not an acknowledgement mechanism.
+- **Replies:** inbound steering includes `reply with agent_message to:
+  "network-dm:v1:<base64url(route-json)>"`. The opaque route contains the
+  network/channel, normalized sender address, sender x25519 public key,
+  current agent address, and optional session/threading metadata. The CLI
+  agent uses the existing `agent_message` tool with that exact address; its
+  host gateway validates that the route belongs to the current CLI session,
+  loads only an existing local DM key, and sends through `sendMail` with the
+  freshly minted envelope `msgId` as the fanet1 `frameId`. Unknown, malformed,
+  or wrong-session routes return an actionable error and are never silently
+  dropped.
 
 ## 8. Wake paths
 

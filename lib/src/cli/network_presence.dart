@@ -8,8 +8,11 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
+import '../network/connector/connector_mux.dart';
 import '../network/connector/device_api.dart';
+import '../network/connector/device_dm.dart';
 import '../network/connector/device_dm_keys.dart';
 import '../network/connector/device_registry.dart';
 import '../network/connector/envelope.dart';
@@ -20,16 +23,68 @@ import '../network/connector/upstream_client.dart';
 import '../network/network_account.dart';
 import '../network/network_roster.dart';
 
+/// One authenticated network DM ready for the current CLI mailbox.
+final class CliNetworkDm {
+  const CliNetworkDm({
+    required this.mail,
+    required this.senderLabel,
+    required this.replyAddress,
+  });
+
+  /// ACL-sanitized text and authenticated fanet1 metadata.
+  final InboundMail mail;
+
+  /// Human sender projection from recent roster frames (or an honest fallback).
+  final String senderLabel;
+
+  /// Durable opaque route for the existing `agent_message` reply tool.
+  final String replyAddress;
+}
+
+/// Deterministic, filename-safe mailbox id ordered by server sequence.
+///
+/// The timestamp fallback retains wire order for servers that omit `seq`.
+/// Encoding the raw msgId as base64url keeps arbitrary UUID/legacy ids out of
+/// path syntax while retaining collision-free crash/redelivery idempotency.
+String networkDmMailboxMessageId(NetworkEnvelope envelope) {
+  final parsedTs = DateTime.tryParse(envelope.ts)?.toUtc();
+  final sequence = envelope.seq;
+  final order = sequence ?? parsedTs?.microsecondsSinceEpoch ?? 0;
+  final prefix = sequence == null ? 't' : 's';
+  final encodedId = base64UrlEncode(
+    utf8.encode(envelope.msgId),
+  ).replaceAll('=', '');
+  return 'network-dm_$prefix${order.toString().padLeft(20, '0')}_$encodedId';
+}
+
+/// Ack-owning current-session delivery callback. A throw leaves the original
+/// network mail unacked and suppresses its accepted receipt.
+typedef CliNetworkDmSink = Future<void> Function(CliNetworkDm dm);
+
+/// Safe, credential-free diagnostic notice (decode rejection/receipt failure).
+typedef CliNetworkNotice = void Function(String message);
+
 /// The live session identity projected onto the device network.
 final class CliNetworkSession {
-  /// Builds a session identity.
-  const CliNetworkSession({required this.sessionId, this.mailboxPrefix});
+  /// Builds a session identity with optional inbound DM delivery callbacks.
+  const CliNetworkSession({
+    required this.sessionId,
+    this.mailboxPrefix,
+    this.dmSink,
+    this.onNotice,
+  });
 
   /// Current persisted session id.
   final String sessionId;
 
   /// Fabric mailbox prefix. Falls back to [sessionId] when empty.
   final String? mailboxPrefix;
+
+  /// Current mailbox write; null means no session is listening.
+  final CliNetworkDmSink? dmSink;
+
+  /// Visible rejection/diagnostic callback.
+  final CliNetworkNotice? onNotice;
 
   /// Agent name used in the contract address.
   String get agentName {
@@ -52,8 +107,19 @@ abstract interface class CliNetworkPresence {
   Future<void> stop();
 }
 
+/// Optional reply capability implemented by the production controller.
+/// Kept separate so existing [CliNetworkPresence] fakes remain source-compatible.
+abstract interface class CliNetworkDmReplySender {
+  /// Sends [text] to the durable opaque [address] from an inbound DM.
+  Future<String> sendNetworkDmReply({
+    required String address,
+    required String text,
+  });
+}
+
 /// The production [CliNetworkPresence], built over [MachineConnector].
-final class NetworkPresenceController implements CliNetworkPresence {
+final class NetworkPresenceController
+    implements CliNetworkPresence, CliNetworkDmReplySender {
   /// Builds a controller. [ticketProvider] must mint a fresh single-use
   /// device ticket for every dial; [transport] is fakeable in unit tests.
   /// Production passes its credential store as [dmKeyStore] so agent DM keys
@@ -99,11 +165,14 @@ final class NetworkPresenceController implements CliNetworkPresence {
   final _dmPubs = <String, String>{};
   MachineConnector? _connector;
   DeviceRegistry? _registry;
+  DeviceDmCodec? _dmCodec;
+  SinkRegistration? _dmSinkRegistration;
   CliNetworkSession? _session;
   String? _agentAddress;
   ConnectorLinkState _phase = ConnectorLinkState.disconnected;
   final _phaseChanges = StreamController<ConnectorLinkState>.broadcast();
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
+  final _recentRosterFrames = <NetworkEnvelope>[];
   final _subscriptions = <StreamSubscription<Object?>>[];
   final _pendingRosterAgents = <String, DeviceRosterAgent>{};
   final _pendingRosterSessions = <String, DeviceRosterSession>{};
@@ -180,6 +249,48 @@ final class NetworkPresenceController implements CliNetworkPresence {
   }
 
   @override
+  Future<String> sendNetworkDmReply({
+    required String address,
+    required String text,
+  }) async {
+    final route = DeviceDmReplyRoute.parse(address);
+    final connector = _connector;
+    final currentAddress = _agentAddress;
+    if (connector == null || currentAddress == null) {
+      throw StateError(
+        'network DM replies are unavailable before a CLI session starts',
+      );
+    }
+    final parts = parseDeviceDmChannelId(route.channel);
+    if (route.agentAddress != currentAddress ||
+        parts == null ||
+        agentAddress(parts.agentName, parts.deviceId) != currentAddress ||
+        route.network != (device.personalNetworkId ?? 'personal')) {
+      throw StateError(
+        'network DM reply route does not belong to the current CLI session; '
+        'use the address from a DM received by this session',
+      );
+    }
+    if (text.trim().isEmpty) {
+      throw StateError('network DM reply text must not be empty');
+    }
+    try {
+      return await sendDeviceDmReply(
+        connector: connector,
+        keys: _dmKeys,
+        route: route,
+        reply: text,
+      );
+    } on Object {
+      // Host/key-store failures can contain implementation details. The tool
+      // gets an actionable safe error instead of credentials or dial URLs.
+      throw StateError(
+        'network DM reply could not be queued; check the connection and retry',
+      );
+    }
+  }
+
+  @override
   Future<void> stop() async {
     await _retractRoster();
     await _connector?.stop();
@@ -194,12 +305,16 @@ final class NetworkPresenceController implements CliNetworkPresence {
       await subscription.cancel();
     }
     _subscriptions.clear();
+    _dmSinkRegistration?.close();
+    _dmSinkRegistration = null;
     _connector?.dispose();
     _connector?.upstream.dispose();
     _registry?.dispose();
     _connector?.presence.dispose();
     _connector = null;
     _registry = null;
+    _dmCodec = null;
+    _recentRosterFrames.clear();
     await _phaseChanges.close();
     await _rosterFrames.close();
   }
@@ -337,18 +452,132 @@ final class NetworkPresenceController implements CliNetworkPresence {
       idFactory: idFactory,
       onLog: onLog,
     );
+    final dmCodec = DeviceDmCodec(keys: _dmKeys, deviceId: device.deviceId);
     final connector = MachineConnector(
       registry: registry,
       upstream: upstream,
       outbox: MemoryOutboxStore(),
       leases: () async => {if (_session case final session?) session.sessionId},
+      decodeMail: _decodeDmMail,
       idFactory: idFactory,
       onLog: onLog,
     );
     _registry = registry;
     _connector = connector;
+    _dmCodec = dmCodec;
+    _dmSinkRegistration = connector.registerLocalSink(
+      network: device.personalNetworkId ?? 'personal',
+      channel: dmChannelPrefix,
+      sink: _onDmSink,
+    );
     _subscriptions.add(upstream.stateChanges.listen(_handleUpstreamState));
-    _subscriptions.add(connector.rosterFrames.listen(_rosterFrames.add));
+    _subscriptions.add(connector.rosterFrames.listen(_handleRosterFrame));
+    _subscriptions.add(connector.rejections.listen(_onDmRejection));
+  }
+
+  Future<DecodedMail> _decodeDmMail(NetworkEnvelope envelope) async {
+    final parts = parseDeviceDmChannelId(envelope.channel ?? '');
+    if (parts == null || parts.deviceId != device.deviceId) {
+      throw StateError('non-local DM route left unacked');
+    }
+    final addressedAgent = agentAddress(parts.agentName, parts.deviceId);
+    // Own reply echoes are non-actionable and safe to ack/drop. Everything
+    // else must target the agent encoded by its authenticated DM channel.
+    if (envelope.from == addressedAgent && envelope.to != addressedAgent) {
+      return const DecodedMail(payload: '');
+    }
+    if (envelope.to != addressedAgent) {
+      throw StateError('DM channel/recipient mismatch left unacked');
+    }
+    return _dmCodec!.decode(envelope);
+  }
+
+  Future<void> _onDmSink(InboundMail mail) async {
+    final connector = _connector;
+    final envelope = mail.envelope;
+    final parts = parseDeviceDmChannelId(envelope.channel ?? '');
+    final addressedAgent = parts == null
+        ? null
+        : agentAddress(parts.agentName, parts.deviceId);
+    if (connector == null ||
+        parts == null ||
+        parts.deviceId != device.deviceId ||
+        envelope.to != addressedAgent) {
+      throw StateError('non-local DM write refused; original left unacked');
+    }
+    final route = DeviceDmReplyRoute.fromMail(
+      mail,
+      currentAgentAddress: addressedAgent!,
+    );
+    final session = _session;
+    final sink = session?.dmSink;
+    final isCurrent =
+        session != null &&
+        sink != null &&
+        envelope.to == _agentAddress &&
+        (mail.sessionId == null || mail.sessionId == session.sessionId);
+    if (!isCurrent) {
+      await sendDeviceDmReply(
+        connector: connector,
+        keys: _dmKeys,
+        route: route,
+        reply: deviceDmQueuedReceipt,
+      );
+      // The receipt is honest about queueing; the ORIGINAL remains unacked so
+      // a later live session/restart can receive it. Mux dedup prevents a
+      // same-process reconnect from spamming repeated queued notices.
+      throw StateError('network DM queued / not listening; left unacked');
+    }
+
+    await sink(
+      CliNetworkDm(
+        mail: mail,
+        senderLabel: _senderLabel(envelope.from ?? ''),
+        replyAddress: route.toAddress(),
+      ),
+    );
+    // Distinct accepted-unread receipt: it is sent only after the mailbox
+    // Future completed, and the connector acks only after this method returns.
+    await sendDeviceDmReply(
+      connector: connector,
+      keys: _dmKeys,
+      route: route,
+      reply: deviceDmAcceptedReceipt,
+    );
+  }
+
+  void _handleRosterFrame(NetworkEnvelope frame) {
+    _recentRosterFrames.add(frame);
+    if (_recentRosterFrames.length > 64) _recentRosterFrames.removeAt(0);
+    if (!_rosterFrames.isClosed) _rosterFrames.add(frame);
+  }
+
+  void _onDmRejection(RejectedMail rejection) {
+    try {
+      _session?.onNotice?.call(
+        'network DM ${rejection.envelope.msgId} rejected: ${rejection.reason}',
+      );
+    } on Object {
+      // Diagnostics are best-effort and never change ack/delivery semantics.
+    }
+  }
+
+  String _senderLabel(String sender) {
+    final at = sender.lastIndexOf('@');
+    if (at > 0 && at + 1 < sender.length) {
+      final agent = sender.substring(0, at);
+      final deviceId = sender.substring(at + 1);
+      for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
+        if (row.deviceId == deviceId && row.agentAddresses.contains(sender)) {
+          return '${row.name} · $agent';
+        }
+      }
+      return '$deviceId · $agent';
+    }
+    final userId = sender.startsWith('user:')
+        ? sender.substring('user:'.length)
+        : sender;
+    return 'network user $userId';
   }
 
   void _setPhase(ConnectorLinkState next) {
