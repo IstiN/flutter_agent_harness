@@ -26,9 +26,12 @@
 /fa-local/
 /coverage/
 
-# Vendored forks: only the xterm dev-dependency ships (pubspec dev_deps).
+# Vendored forks: only the xterm + pty2 dev-dependencies ship (pubspec
+# dev_deps). pty2 is the gh-2208 patched fork (pid getter) — staged like
+# xterm so the publish payload resolves the same sources (CI run 43851264755).
 /vendor/*
 !/vendor/xterm/
+!/vendor/pty2/
 
 # Local packages: only the fa_llm_mock dev-dependency ships.
 /packages/*
