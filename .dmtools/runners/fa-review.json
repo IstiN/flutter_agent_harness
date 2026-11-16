@@ -15,7 +15,11 @@
     "inputJql": "",
     "customParams": {
       "allowApproveWithSuggestions": true,
-      "formalGithubReview": true
+      "formalGithubReview": true,
+      "targetRepository": {
+        "owner": "IstiN",
+        "repo": "flutter_agent_harness"
+      }
     },
     "cliPrompts": [
       "pack:instructions/pr_review/review_verdict_rules.md"
