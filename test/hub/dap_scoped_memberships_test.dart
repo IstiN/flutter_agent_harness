@@ -114,6 +114,53 @@ void main() {
     expect(jsonDecode(overlayRaw)['team']['priv'], priv);
   });
 
+  test('AC8/AC14: union() registers every plaintext priv it loads with '
+      'onSecret — masked before ANY caller can surface it (gh-219 '
+      'CI-red regression)', () async {
+    // The pure-env / imported record shape: a PLAINTEXT priv riding a
+    // session record. union() puts it into memory; registration must be
+    // complete by the time the await resolves.
+    sessionRecords.add({
+      'hubUrl': hub,
+      'channelId': 'runtime',
+      'scope': 'session',
+      'joinedAt': DateTime.now().toUtc().toIso8601String(),
+      'pub': pub,
+      'priv': priv,
+    });
+    final seen = <String>[];
+    final s = DapScopedMemberships(
+      globalConfigFile: globalConfig,
+      globalChannelsFile: globalChannels,
+      overlayChannelsFile: overlay,
+      projectFile: projectFile,
+      environment: const {},
+      appendSessionRecord: (type, data) async {
+        sessionRecords.add(Map<String, Object?>.from(data));
+      },
+      readSessionRecords: (type) async => sessionRecords,
+      keychain: keychain,
+      onSecret: seen.add,
+    );
+
+    // The previous registration points (seedOverlay / runtimeEffective)
+    // ride the unawaited boot connect, so `publicChannelFor` — which
+    // reads the union DIRECTLY — raced them on a loaded CI runner and
+    // lost (gh-219). The load seam itself must register.
+    final effective = await s.union().then((u) => u.effective());
+    expect(effective.map((m) => m.channelId), contains('runtime'));
+    expect(seen, contains(priv));
+
+    // An at-rest envelope is NOT secret material in memory: the load
+    // must not register envelope bytes — only the decrypted plaintext
+    // is (that still happens in _runtimeSecret at runtime resolution).
+    seen.clear();
+    sessionRecords[0]['priv'] = await encryptChannelPriv(priv, pass);
+    s.invalidateCache();
+    await s.union();
+    expect(seen, isEmpty, reason: 'envelope bytes are never registered');
+  });
+
   test('AC2: project scope is invisible from a sibling folder; session '
       'scope is invisible to a second CLI (different records)', () async {
     final env = {'DAP_KEY_PASSPHRASE': pass};
