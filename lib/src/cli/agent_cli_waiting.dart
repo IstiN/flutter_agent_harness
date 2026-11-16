@@ -1113,8 +1113,18 @@ extension AgentCliShellJobSettle on AgentCli {
     // (steered below / fresh idle run) and headless-visible through the
     // [bash] line above, both byte-identical; on resume the persisted
     // notice still replays through the #446 renderer.
+    // Mid-run: the steering queue delivers it at the next step boundary.
+    _deliverJobNotice(message);
+  }
+
+  /// The shared delivery for every model-facing job notice (settle,
+  /// adoption, liveness): after the run's exit wrap-up (gh-1589) or the
+  /// REPL quit the notice is bookkeeping-only; mid-run it rides the
+  /// steering queue to the next step boundary; idle it starts a fresh
+  /// reaction run.
+  void _deliverJobNotice(String message) {
+    if (_exited || _reactionRunsSealed) return;
     if (isBusy) {
-      // Mid-run: the steering queue delivers it at the next step boundary.
       _agent.steer(UserMessage.text(message));
     } else {
       _startRun(message);
@@ -1137,16 +1147,11 @@ extension AgentCliShellJobSettle on AgentCli {
         '${adopted.length == 1 ? '' : 'es'} — completion will be reported',
       ),
     );
-    if (_exited || _reactionRunsSealed) return;
-    final message =
-        '<system-notice>\n'
-        '${adoptedSurvivorsNoticeText(adopted, source: source)}\n'
-        '</system-notice>';
-    if (isBusy) {
-      _agent.steer(UserMessage.text(message));
-    } else {
-      _startRun(message);
-    }
+    _deliverJobNotice(
+      '<system-notice>\n'
+      '${adoptedSurvivorsNoticeText(adopted, source: source)}\n'
+      '</system-notice>',
+    );
   }
 
   /// Still-running reminder for an adopted process (issue #2201 AC4,
@@ -1158,6 +1163,13 @@ extension AgentCliShellJobSettle on AgentCli {
     if (_exited) return;
     final text = adoptedLivenessNoticeText(job, elapsed);
     io.writeln(_style.dim('[bash] $text'));
+    _steerAdoptedLiveness(text);
+  }
+
+  /// Still-running reminders never START a run — an idle reminder would
+  /// burn a reaction run for nothing, and the waiting row already shows
+  /// the job continuously. Only a live run gets the steer.
+  void _steerAdoptedLiveness(String text) {
     if (!isBusy || _reactionRunsSealed) return;
     _agent.steer(UserMessage.text('<system-notice>\n$text\n</system-notice>'));
   }

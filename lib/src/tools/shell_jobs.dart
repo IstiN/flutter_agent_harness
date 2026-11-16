@@ -409,9 +409,11 @@ final class ShellJobRegistry {
   final void Function(ShellJobEntry job, Duration elapsed)? onAdoptedLiveness;
 
   /// Test seam: the adoption poll's process table. Null restores the
-  /// real `ps` probe.
+  /// real `ps` probe. A null RETURN from the function models "probe
+  /// unavailable" — unverifiable evidence never destroys an entry
+  /// (#478 rule) — it does NOT fall through to the real probe.
   @visibleForTesting
-  final Future<ShellLivenessTable?> Function()? livenessTableOverride;
+  Future<ShellLivenessTable?> Function()? livenessTableOverride;
 
   /// Test seam: the adopted-job kill round. Null restores the real
   /// TERM/KILL pair.

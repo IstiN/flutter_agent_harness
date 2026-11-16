@@ -25,17 +25,30 @@ void main() {
   });
   tearDown(() => io.close());
 
-  AgentCli cliFor(FakeStreamFunction fake, {JobsConfig? jobs}) => AgentCli(
+  AgentCli cliForStream(
+    AssistantMessageEventStream Function(
+      Model,
+      Context, {
+      CancelToken? cancelToken,
+    })
+    streamFunction, {
+    JobsConfig? jobs,
+  }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
       apiKey: 'test-key',
       env: env,
       sessionRoot: '/sessions',
+      // Full run boot (session persistence) needs a concrete provider
+      // kind — the bare testModel alone never writes a session file.
+      providerKind: 'openai-completions',
       jobs: jobs ?? const JobsConfig(),
     ),
     io: io,
-    streamFunction: fake.call,
+    streamFunction: streamFunction,
   );
+  AgentCli cliFor(FakeStreamFunction fake, {JobsConfig? jobs}) =>
+      cliForStream(fake.call, jobs: jobs);
   test(
     'boot sweep reaps a previous-run orphan group and warns '
     '(issue #517)',
@@ -605,4 +618,231 @@ void main() {
       expect('sh-live'.allMatches(manifest), hasLength(1));
     },
   );
+
+  // Issue #2201 r4 (CRAP gate): scoped coverage for the notice-delivery
+  // helpers the refactor extracted (_deliverJobNotice /
+  // _steerAdoptedLiveness), driven through the real registry wiring.
+
+  test(
+    'adopted survivors: dim line always, fresh reaction run when idle '
+    '(issue #2201)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Session persistence roots under the project cwd: bind /work
+      // so waitForSessions probes the root the boot writes.
+      env = MemoryExecutionEnv(cwd: '/work');
+      final stream = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+      // Pin the registry poll table: the fake pid stays verifiably alive
+      // on every host (a real probe would drop it on Linux and the
+      // settle path would muddy the assertions).
+      cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
+          (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+
+      await cli.shellJobsRegistryForTest
+          .adoptSurvivors('nohup backtest &', const [
+            ShellSurvivor(
+              pid: 4242,
+              startTag: 'Mon Nov 16 10:00:00 2026',
+              command: 'sleep 300',
+            ),
+          ]);
+      await waitForIt(
+        () => stream.calls >= 1,
+        reason: 'the idle adoption starts a fresh reaction run',
+      );
+      await waitForIt(() => !cli.isBusy);
+      expect(io.out.toString(), contains('adopted 1 background process'));
+      final delivered = [
+        for (final message in stream.contexts[0].messages)
+          if (message is UserMessage) messageText(message),
+      ].join('\n');
+      expect(delivered, contains('<system-notice>'));
+      expect(delivered, contains('adopted as tracked jobs'));
+      expect(delivered, contains('pid 4242'));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'adopted survivors: steered into a live run, never a second stream '
+    '(issue #2201)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Session persistence roots under the project cwd: bind /work
+      // so waitForSessions probes the root the boot writes.
+      env = MemoryExecutionEnv(cwd: '/work');
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = cliForStream(stream.call);
+      final run = cli.run();
+      await waitForSessions(env);
+      cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
+          (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      await cli.shellJobsRegistryForTest
+          .adoptSurvivors('nohup migrate &', const [
+            ShellSurvivor(
+              pid: 4243,
+              startTag: 'Mon Nov 16 10:00:00 2026',
+              command: 'sleep 300',
+            ),
+          ]);
+      expect(io.out.toString(), contains('adopted 1 background process'));
+      stream.gate.complete();
+      await waitForIt(() => stream.calls >= 2, reason: 'notice steers a turn');
+      await waitForIt(() => !cli.isBusy);
+      final delivered = [
+        for (final message in stream.contexts[1].messages)
+          if (message is UserMessage) messageText(message),
+      ].join('\n');
+      expect(delivered, contains('<system-notice>'));
+      expect(delivered, contains('adopted as tracked jobs'));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test('adopted liveness reminder: dim line idle, never starts a run '
+      '(issue #2201 AC4)', () async {
+    // Session persistence roots under the project cwd: bind /work
+    // so waitForSessions probes the root the boot writes.
+    env = MemoryExecutionEnv(cwd: '/work');
+    const cadence = JobsConfig(
+      adopted: AdoptedJobsConfig(livenessNoticeMinutes: 10),
+    );
+    final stream = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(stream, jobs: cadence);
+    final run = cli.run();
+    await waitForSessions(env);
+    cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
+        (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+    // Boot re-adoption with an OLD start: the 10-minute cadence is due
+    // on the very first poll tick.
+    cli.shellJobsRegistryForTest.adoptRunningEntry(
+      id: 'sh-live-r4',
+      command: 'watch.sh',
+      pid: 4242,
+      pidStart: 'Mon Nov 16 10:00:00 2026',
+      startedAtMs:
+          DateTime.now().millisecondsSinceEpoch -
+          const Duration(minutes: 11).inMilliseconds,
+    );
+
+    await cli.shellJobsRegistryForTest.adoptedPollTickForTest();
+    await pumpEventQueue();
+    expect(io.out.toString(), contains('still running after 11 min'));
+    expect(stream.calls, 0, reason: 'an idle reminder never starts a run');
+
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test(
+    'adopted liveness reminder: steers a live run (issue #2201 AC4)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Session persistence roots under the project cwd: bind /work
+      // so waitForSessions probes the root the boot writes.
+      env = MemoryExecutionEnv(cwd: '/work');
+      const cadence = JobsConfig(
+        adopted: AdoptedJobsConfig(livenessNoticeMinutes: 10),
+      );
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = cliForStream(stream.call, jobs: cadence);
+      final run = cli.run();
+      await waitForSessions(env);
+      cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
+          (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+      cli.shellJobsRegistryForTest.adoptRunningEntry(
+        id: 'sh-live-r4b',
+        command: 'watch.sh',
+        pid: 4242,
+        pidStart: 'Mon Nov 16 10:00:00 2026',
+        startedAtMs:
+            DateTime.now().millisecondsSinceEpoch -
+            const Duration(minutes: 11).inMilliseconds,
+      );
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      await cli.shellJobsRegistryForTest.adoptedPollTickForTest();
+      stream.gate.complete();
+      await waitForIt(() => stream.calls >= 2, reason: 'reminder steers');
+      await waitForIt(() => !cli.isBusy);
+      final delivered = [
+        for (final message in stream.contexts[1].messages)
+          if (message is UserMessage) messageText(message),
+      ].join('\n');
+      expect(delivered, contains('<system-notice>'));
+      expect(delivered, contains('still running after 11 min'));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+}
+
+/// Boot-completion wait: the session persisted (copied from the busy
+/// steering harness — the same deterministic boot edge).
+Future<void> waitForSessions(MemoryExecutionEnv env) async {
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+  for (var i = 0; i < 5000; i++) {
+    if ((await repo.list(cwd: '/work')).isNotEmpty) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('timed out waiting: session persisted');
+}
+
+/// A stream function that blocks one chosen call on a gate (copied from
+/// the busy-gate test): the deterministic way to hold a run open while
+/// the test drives mid-run registry callbacks.
+class _GatedStream {
+  _GatedStream(this.turns, {required this.gateOnCall});
+
+  final List<List<AssistantMessageEvent>> turns;
+  final int gateOnCall;
+  final gate = Completer<void>();
+  final contexts = <Context>[];
+
+  int get calls => contexts.length;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
+    final stream = AssistantMessageEventStream();
+    void emit(List<AssistantMessageEvent> events) {
+      for (final event in events) {
+        stream.push(event);
+      }
+      stream.end();
+    }
+
+    if (calls == gateOnCall) {
+      unawaited(gate.future.then((_) => emit(turns.removeAt(0))));
+    } else {
+      emit(turns.removeAt(0));
+    }
+    return stream;
+  }
 }
