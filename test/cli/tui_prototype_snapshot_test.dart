@@ -12,6 +12,8 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:test/test.dart';
 
+import '../integration/pty_harness.dart';
+
 /// Strips ANSI escape sequences for assertions on visible content.
 String _stripAnsi(String s) =>
     s.replaceAll(RegExp(r'\x1b\[[0-9;]*[A-Za-z]'), '');
@@ -84,9 +86,15 @@ void main() {
     return terminal;
   }
 
-  tearDown(() {
-    pty?.kill();
+  tearDown(() async {
+    // gh-2208: awaited reap-or-escalate — a fire-and-forget `kill()` let a
+    // `dart run` child outlive the test, and its pty2 `_waitForExitCode`
+    // isolate (blocked in native waitpid) wedged the VM's exit handshake
+    // (`Attempt:N waiting for isolate _waitForExitCode to check in`, PR
+    // #2121's 36-min all-green hang, tracker #2122).
+    final dying = pty;
     pty = null;
+    if (dying != null) await shutdownPty(dying);
   });
 
   test('starts with banner and input prompt', () async {

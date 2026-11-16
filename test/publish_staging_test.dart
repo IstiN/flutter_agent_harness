@@ -347,6 +347,13 @@ void main() {
       for (final probe in [
         'vendor/xterm/pubspec.yaml',
         'vendor/xterm/lib/core.dart',
+        // gh-2208: the pty2 fork (pid getter) joined pubspec.yaml
+        // dev_dependencies as a path dep — it must ship with the stage
+        // exactly like xterm, or the staged analyze re-resolves hosted
+        // pty2 (no `pid`) and fails on the harness's `pty.pid` uses
+        // (CI run 43851264755).
+        'vendor/pty2/pubspec.yaml',
+        'vendor/pty2/lib/pty2.dart',
         'packages/fa_llm_mock/pubspec.yaml',
         'packages/fa_llm_mock/lib/fa_llm_mock.dart',
       ]) {
@@ -505,11 +512,11 @@ void main() {
     });
 
     test('.pubignore negations are an explicit allowlist', () {
-      // Every negated tree ships on the pub payload; only fa_llm_mock and
-      // vendor/xterm are mirrored by a stage INCLUDE (core path
-      // dev-deps), fa_llm is pubignore-only (gh-1511). A negation
-      // outside this set is mirror drift the anti-drift test would
-      // otherwise silently tolerate.
+      // Every negated tree ships on the pub payload; fa_llm_mock,
+      // vendor/xterm and vendor/pty2 are mirrored by a stage INCLUDE
+      // (core path dev-deps), fa_llm is pubignore-only (gh-1511). A
+      // negation outside this set is mirror drift the anti-drift test
+      // would otherwise silently tolerate.
       final negated = _pubIgnoreRules()
           .where((r) => r.negated)
           .map((r) => r.body)
@@ -518,6 +525,7 @@ void main() {
         negated,
         unorderedEquals([
           'vendor/xterm',
+          'vendor/pty2',
           'packages/fa_llm_mock',
           'packages/fa_llm',
         ]),

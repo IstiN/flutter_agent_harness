@@ -32,6 +32,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/pty_wait_budget.dart';
 import 'package:pty2/pty2.dart';
+import 'package:test/test.dart' show addTearDown;
 import 'package:xterm/xterm.dart';
 
 /// The secret sheet's frame-closed masked value row on a captured screen
@@ -203,6 +204,91 @@ List<String> faCliCommand(
   return bin != null ? [bin, ...args] : [...jitPrefix, ...args];
 }
 
+/// Grace windows for [shutdownPty] (gh-2208): the cooperative SIGTERM
+/// budget, then the post-SIGKILL reap budget. Both scale with
+/// `FA_PTY_BUDGET_SCALE` (issue #1391) — the merge-blocking CI legs run
+/// with scale 2.
+const ptyShutdownGrace = Duration(seconds: 5);
+
+/// Post-SIGKILL reap window — SIGKILL is not trappable, so a child that
+/// survives THIS long is in uninterruptible kernel sleep (D-state); the
+/// caller must fail loudly rather than leak a child that would wedge the
+/// VM's exit handshake.
+const ptyShutdownKillGrace = Duration(seconds: 5);
+
+/// Terminates a pty2 child and guarantees it is REAPED before returning —
+/// the gh-2208 wedge fix.
+///
+/// Why: pty2's `BlockingPseudoTerminal` runs a `_waitForExitCode` isolate
+/// blocked in a native `waitpid` with no timeout. While the child lives,
+/// that isolate can neither reach a safepoint nor answer the VM's
+/// exit-time check-in handshake — the process then wedges forever
+/// (`Attempt:N waiting for isolate _waitForExitCode to check in`; CI runs
+/// 43835937617 and 43151400571, tracker #2122). The old teardown paths
+/// (`kill` + a silent `onTimeout: () => -1` give-up, or a fire-and-forget
+/// `pty.kill()` in tearDown) left exactly such children behind.
+///
+/// Sequence: cooperative `pty.kill()` (SIGTERM + SIGHUP), an awaited
+/// grace window ([grace], default [ptyShutdownGrace]) — then, because
+/// pty2's `kill()` is ONCE-ONLY and cannot escalate, a re-sent
+/// SIGKILL through `Process.killPid(pty.pid, …)` (the vendored fork
+/// exposes `pid` for exactly this — vendor/pty2/VENDORED.md), an awaited
+/// reap window ([ptyShutdownKillGrace]), and a loud [StateError] if the
+/// child STILL lives: a leaked child is guaranteed to zombie the whole
+/// test leg, so failing this test with the pid in the message is strictly
+/// better. Grandchildren (e.g. `dart run`'s inner VM) need no handling —
+/// they are reparented to init and never waited on by this process.
+///
+/// [hard] starts at SIGKILL directly (the `hardKill()` contract — a real
+/// crash, no graceful exit): pty2's once-only kill flag still allows the
+/// follow-up `killPid` re-send, which is a harmless ESRCH no-op once the
+/// child is gone.
+///
+/// [budgetScale] scales both windows (issue #1391); pass the harness's
+/// [FaCliHarness.waitBudgetScale] — direct callers (tearDowns) may omit
+/// it to read the ambient `FA_PTY_BUDGET_SCALE`.
+Future<void> shutdownPty(
+  PseudoTerminal pty, {
+  bool hard = false,
+  Duration? grace,
+  double? budgetScale,
+}) async {
+  final scale =
+      budgetScale ??
+      resolvePtyWaitBudgetScale(
+        envValue: Platform.environment[kPtyWaitBudgetScaleEnv],
+      );
+  final softBudget = scalePtyWaitBudget(grace ?? ptyShutdownGrace, scale);
+  final killBudget = scalePtyWaitBudget(ptyShutdownKillGrace, scale);
+  if (hard) {
+    pty.kill(ProcessSignal.sigkill);
+  } else {
+    pty.kill();
+  }
+  if (await _exitWithin(pty, softBudget)) return;
+  // pid > 0: the vendored Windows getter yields 0 when no process was
+  // ever spawned, and killPid(0) on POSIX would mean "my whole process
+  // group" — never signal a sentinel value.
+  if (pty.pid > 0) Process.killPid(pty.pid, ProcessSignal.sigkill);
+  if (await _exitWithin(pty, killBudget)) return;
+  throw StateError(
+    'shutdownPty: child pid ${pty.pid} survived SIGTERM, SIGHUP and '
+    'SIGKILL ($killBudget) — uninterruptible (D-state) child; killing the '
+    'test instead of leaking a child that would wedge the VM exit '
+    '(gh-2208: "waiting for isolate _waitForExitCode to check in").',
+  );
+}
+
+/// Whether [pty]'s exit code completes within [budget].
+Future<bool> _exitWithin(PseudoTerminal pty, Duration budget) async {
+  try {
+    await pty.exitCode.timeout(budget);
+    return true;
+  } on TimeoutException {
+    return false;
+  }
+}
+
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
 ///
@@ -369,6 +455,18 @@ final class FaCliHarness {
     if (columns != 80 || rows != 24) terminal.resize(columns, rows);
     final harness = FaCliHarness._(pty, terminal, columns, rows, ownedCwd);
     harness.startListening();
+    // gh-2208 safety net: register close() on the active test's teardown
+    // chain so a throw BETWEEN spawn and the caller's inline close() can
+    // never leak a live CLI (its pty2 `_waitForExitCode` isolate stays
+    // blocked in native waitpid and wedges the VM's exit handshake —
+    // tracker #2122). close() is idempotent (`_closed`), so suites with
+    // their own `addTearDown(harness.close)` or try/finally close() are
+    // unaffected; probe scripts with no active test register nothing.
+    try {
+      addTearDown(harness.close);
+    } on StateError {
+      // No active test zone — the caller owns the lifecycle entirely.
+    }
     // Answer the CLI's terminal queries (device attributes etc.) so it
     // does not wait out a response timeout on every boot.
     terminal.onOutput = pty.write;
@@ -428,11 +526,17 @@ final class FaCliHarness {
   /// exit, no boundary work). Use when the test needs the exact
   /// process-death residue (issue #437 phase 2).
   Future<void> hardKill() async {
-    pty.kill(ProcessSignal.sigkill);
-    await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
-    await _outputSub?.cancel();
-    _releaseOwnedCwd();
-    _releaseTranscript();
+    // try/finally (gh-2208 review): the loud StateError from shutdownPty
+    // must still release the harness resources — an open output stream
+    // keeps the runner's event loop alive and the owned temp CWD would
+    // linger on dev machines after the failure.
+    try {
+      await shutdownPty(pty, hard: true, budgetScale: waitBudgetScale);
+    } finally {
+      await _outputSub?.cancel();
+      _releaseOwnedCwd();
+      _releaseTranscript();
+    }
   }
 
   /// gh-1789: the group declarer keeps every addTearDown closure — and thus
@@ -644,13 +748,18 @@ final class FaCliHarness {
   /// open stream keeps the test runner's event loop alive), and waits for
   /// the process to exit. Deletes the harness-owned temp CWD only AFTER
   /// the process is dead — never under a live CLI (issue #936 vector 1).
+  /// The releases run in `finally` (gh-2208 review): shutdownPty's loud
+  /// StateError (child survived even SIGKILL) still propagates, but must
+  /// not skip the resource release.
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    pty.kill();
-    await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
-    await _outputSub?.cancel();
-    _releaseOwnedCwd();
-    _releaseTranscript();
+    try {
+      await shutdownPty(pty, budgetScale: waitBudgetScale);
+    } finally {
+      await _outputSub?.cancel();
+      _releaseOwnedCwd();
+      _releaseTranscript();
+    }
   }
 }
