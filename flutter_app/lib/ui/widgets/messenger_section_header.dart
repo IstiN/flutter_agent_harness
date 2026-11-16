@@ -327,19 +327,22 @@ final class _HeaderGeometry {
 }
 
 /// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.
-/// Only the title pill and controls are glass; there is deliberately no
-/// full-width header surface or progressive blur band.
+/// An optional [underlayKey] enables the same progressive blur band used by
+/// the Networks header; scrollable hosts then put [bodyTop] in their scroll
+/// padding so content travels underneath it.
 final class MessengerFloatingPageScaffold extends StatelessWidget {
   const MessengerFloatingPageScaffold({
     super.key,
     required this.header,
     required this.body,
+    this.underlayKey,
   });
 
   static const double bodyTop = 108;
 
   final Widget header;
   final Widget body;
+  final Key? underlayKey;
 
   @override
   Widget build(BuildContext context) {
@@ -352,6 +355,14 @@ final class MessengerFloatingPageScaffold extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         Positioned.fill(child: body),
+        if (glass && underlayKey != null)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: bodyTop,
+            child: MessengerGlassUnderlay(underlayKey: underlayKey!),
+          ),
         Positioned(top: 0, left: 0, right: 0, child: header),
       ],
     );

@@ -61,6 +61,7 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
     if (sessions == null || !sessions.hasJwt) return const SizedBox.shrink();
     return DevicesPage(
       service: _devicesConnector,
+      compact: compact,
       sessions: _chatController,
       onOpenSession: (entry) => unawaited(_openLocalEntry(entry)),
       onOpenRemoteConversation:
