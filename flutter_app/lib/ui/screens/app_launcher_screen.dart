@@ -1678,21 +1678,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final crossAxisCount = _crossAxisCount(constraints.maxWidth);
-              // iOS-like distribution: the 16px side padding stays, the
-              // leftover width stretches the gaps (capped) so the grid
-              // always fills the screen width instead of huddling in the
-              // center with dead margins.
-              final spacing = _gridSpacing(
-                constraints.maxWidth,
-                crossAxisCount,
-              );
+              // Keep the same compact rhythm as the surrounding lists and
+              // grids. The centered stage may leave side whitespace; it must
+              // not manufacture 44pt gutters between otherwise dense tiles.
+              const spacing = LauncherGridSpec.spacing;
               final keys = _previewOrder ?? layout.topLevelKeys;
               final rects = layOutTileRects(
                 crossAxisCount: crossAxisCount,
                 spans: [for (final key in keys) _tileSpan(key, crossAxisCount)],
                 spacing: spacing,
-                // Only the CROSS-axis gaps stretch with the screen width —
-                // the row gap stays the tight spec default.
                 mainAxisSpacing: LauncherGridSpec.spacing,
               );
               final gridWidth =
@@ -1807,19 +1801,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           LauncherLayoutStore.maxGridColumns,
         )
         .clamp(1, fits);
-  }
-
-  /// Gap between cells for the current width: the side padding (16+16)
-  /// stays fixed, the leftover width distributes into the gaps — iOS-like
-  /// full-width grids on any screen. Capped so huge windows keep sane
-  /// spacing (the grid then centers, as before).
-  static double _gridSpacing(double width, int columns) {
-    if (columns <= 1) return LauncherGridSpec.spacing;
-    const minSpacing = LauncherGridSpec.spacing;
-    const maxSpacing = 44.0;
-    final inner = width - 32; // the GridView's horizontal padding
-    final raw = (inner - columns * LauncherGridSpec.iconSize) / (columns - 1);
-    return raw.clamp(minSpacing, maxSpacing);
   }
 
   /// The grid span of one tile: apps with a live tile get their WxH —
