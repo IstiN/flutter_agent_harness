@@ -692,7 +692,16 @@ async function main() {
         `fa-macos-nosandbox-x86_64-${v}.dmg`,
         ...extra,
       ]);
-    const STABLE_ONLY = rel('v1.0.740', [
+    // AC1 headline, the ONLY case where preference is observable: the
+    // release carries BOTH name classes, versioned twins uploaded FIRST
+    // (the release leg's ASSETS order: $DMGS before $STABLE_COPIES) — the
+    // stable URL must win anyway, and the subtitle version falls back to
+    // the release tag (stable names carry no digits).
+    const MIXED_ORDER = rel('v1.0.740', [
+      'fa-linux-x64.tar.gz',
+      'fa-macos-nosandbox-arm64-1.0.740.dmg',
+      'fa-macos-nosandbox-x86_64-1.0.740.dmg',
+      'fa-macos-nosandbox-arm64-1.0.740-mac.zip',
       'fa-nosandbox-macos-arm64.dmg',
       'fa-nosandbox-macos-x86_64.dmg',
     ]);
@@ -756,14 +765,18 @@ async function main() {
           subText.includes('builds:') && subText.includes('see releases'), subText);
       });
 
-    // AC1: the stable-named copy wins over the versioned twin.
-    await withApi([STABLE_ONLY], async (page) => {
+    // AC1: the stable-named copy wins over the versioned twin even when
+    // the twin was uploaded first (upload-order independence).
+    await withApi([MIXED_ORDER], async (page) => {
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
       await waitResolved(page);
-      ok('AC1 stable-named copy preferred',
+      ok('AC1 stable-named copy preferred over the first-uploaded twin',
         (await page.getAttribute('#macos-download', 'href')) ===
         `${ASSET_BASE}/v1.0.740/fa-nosandbox-macos-arm64.dmg`,
         (await page.getAttribute('#macos-download', 'href')) || 'null');
+      const subText = await page.locator('#macos-dl-sub').innerText();
+      ok('AC1 subtitle version falls back to the release tag',
+        subText.includes('v1.0.740'), subText);
     });
 
     // AC4: a DRAFT release carrying the app is skipped (published-only);

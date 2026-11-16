@@ -151,10 +151,35 @@ void main() {
       );
       expect(
         js,
-        contains("'|^fa-macos-nosandbox-'"),
+        contains("'^fa-macos-nosandbox-' + arch + '-.+\\\\.dmg\$'"),
         reason:
             'versioned-twin matcher (works before the first stable '
             'release exists)',
+      );
+      // AC1 headline: the stable-over-versioned preference is IMPLEMENTED
+      // in the pick, never delegated to the release's asset upload order.
+      expect(
+        js,
+        contains('return stable || versioned'),
+        reason: 'the pick must state the stable-first priority explicitly',
+      );
+      expect(
+        js,
+        contains("pickDmg(assets, 'arm64')"),
+        reason: 'both arches resolve through the two-pass pick',
+      );
+      // Stable-only names carry no version digits — the release tag fills
+      // the subtitle instead of a blank version.
+      expect(
+        js,
+        contains('|| releases[i].tag_name'),
+        reason: 'subtitle version falls back to the release tag',
+      );
+      // A corrupted cache entry must expire, never stick forever.
+      expect(
+        js,
+        contains("typeof hit.ts !== 'number'"),
+        reason: 'non-numeric cache ts must invalidate the entry',
       );
       // 1h localStorage TTL (rate-limit budget, gh-2209 border case).
       expect(js, contains('TTL_MS = 60 * 60 * 1000'));

@@ -28,14 +28,27 @@
   var LOOKBACK = 50;
   var TTL_MS = 60 * 60 * 1000; // 1h — an unauthenticated 60/h IP budget
 
-  // Stable name first (the AC1 copies the release leg attaches alongside
-  // the versioned twin), versioned name second — both carry the same bytes.
-  function dmgRe(arch) {
-    return new RegExp(
-      '^fa-nosandbox-macos-' + arch + '\\.dmg$' +
-      '|^fa-macos-nosandbox-' + arch + '-.+\\.dmg$',
-      'i',
-    );
+  // gh-2209 AC1: the stable-named copy wins over the versioned twin
+  // regardless of the release's asset upload order — the pick tracks both
+  // name classes in one scan and prefers the stable one (the release leg
+  // uploads the versioned names first).
+  function stableRe(arch) {
+    return new RegExp('^fa-nosandbox-macos-' + arch + '\\.dmg$', 'i');
+  }
+
+  function versionedRe(arch) {
+    return new RegExp('^fa-macos-nosandbox-' + arch + '-.+\\.dmg$', 'i');
+  }
+
+  function pickDmg(assets, arch) {
+    var stable = null;
+    var versioned = null;
+    for (var j = 0; j < assets.length; j++) {
+      var name = assets[j].name;
+      if (!stable && stableRe(arch).test(name)) stable = assets[j];
+      if (!versioned && versionedRe(arch).test(name)) versioned = assets[j];
+    }
+    return stable || versioned;
   }
 
   // Hint only — both arch links stay visible once resolved (gh-2209 border
@@ -59,7 +72,12 @@
   function readCache(arch) {
     try {
       var hit = JSON.parse(localStorage.getItem('fa-dl-macos-' + arch) || 'null');
-      if (!hit || !hit.url || Date.now() - hit.ts > TTL_MS) return null;
+      // typeof guard: a corrupted entry with a non-numeric ts must never
+      // stick forever (NaN comparisons are always false).
+      if (!hit || !hit.url || typeof hit.ts !== 'number' ||
+          Date.now() - hit.ts > TTL_MS) {
+        return null;
+      }
       return hit;
     } catch (_) {
       return null;
@@ -83,21 +101,19 @@
       for (var i = 0; i < releases.length && i < LOOKBACK; i++) {
         if (releases[i].draft) continue;
         var assets = releases[i].assets || [];
-        var url = { arm64: '', x86_64: '' };
-        var named = '';
-        for (var j = 0; j < assets.length; j++) {
-          var a = assets[j];
-          if (dmgRe('arm64').test(a.name) && !url.arm64) {
-            url.arm64 = a.browser_download_url;
-            named = named || a.name;
-          }
-          if (dmgRe('x86_64').test(a.name) && !url.x86_64) {
-            url.x86_64 = a.browser_download_url;
-            named = named || a.name;
-          }
-        }
-        if (url.arm64 || url.x86_64) {
-          return { url: url, version: versionOf(named), ts: 0 };
+        var arm = pickDmg(assets, 'arm64');
+        var x86 = pickDmg(assets, 'x86_64');
+        if (arm || x86) {
+          return {
+            url: {
+              arm64: arm ? arm.browser_download_url : '',
+              x86_64: x86 ? x86.browser_download_url : '',
+            },
+            // Stable-only names carry no version digits — fall back to the
+            // release tag (already v-prefixed) so the subtitle never blank.
+            version: versionOf((arm || x86).name) || releases[i].tag_name,
+            ts: 0,
+          };
         }
       }
       return null; // answered, but no app build in the lookback window
