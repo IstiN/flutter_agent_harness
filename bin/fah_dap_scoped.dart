@@ -256,6 +256,27 @@ final class DapScopedMemberships {
       ...await _loadSession(),
       ..._loadEnv(),
     ];
+    // AC8/AC14 register-time contract: a plaintext key that just entered
+    // memory through this load is registered BEFORE union() returns, so
+    // EVERY consumer (`publicChannelFor`, `privateChannelKeyMissing`,
+    // `preferredBootMembership`, `seedOverlay`, `runtimeEffective`) is
+    // covered. The previous registration points (`_runtimeSecret` via
+    // seedOverlay/runtimeEffective) ride the unawaited boot connect, so
+    // a direct union read raced the boot and could surface an unmasked
+    // plaintext key (gh-219 CI-red). `dapkey1.` envelopes are not secret
+    // material in memory — they register after decryption instead.
+    for (final m in all) {
+      final priv = m.priv;
+      if (priv != null && priv.isNotEmpty && !isEncryptedChannelPriv(priv)) {
+        onSecret?.call(priv);
+      }
+      final clientSecret = m.hubClientSecret;
+      if (clientSecret != null &&
+          clientSecret.isNotEmpty &&
+          !isEncryptedChannelPriv(clientSecret)) {
+        onSecret?.call(clientSecret);
+      }
+    }
     return _union = DapMembershipUnion(all);
   }
 
