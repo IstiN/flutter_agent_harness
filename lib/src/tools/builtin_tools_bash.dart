@@ -192,11 +192,17 @@ AgentTool shellTool(
   /// pipeline masks it in transcripts (review 5456649624).
   Set<String> Function()? approvedSecretLiterals,
 }) {
+  // Issue #2201: adoption (and its prompt line) rides the jobs capability
+  // — no registry or a no-jobs environment teaches nothing.
+  final canAdopt = jobs != null && jobs.isSupported;
   return AgentTool(
     name: bashToolName,
     label: 'bash',
     tier: ApprovalTier.exec,
-    description: _shellToolDescription(autoBackgroundAfter),
+    description: _shellToolDescription(
+      autoBackgroundAfter,
+      survivorAdoption: canAdopt,
+    ),
     parameters: const {
       'type': 'object',
       'properties': {
@@ -243,14 +249,21 @@ AgentTool shellTool(
 /// The `bash` tool description. The gh-1835 auto-background sentence joins
 /// only when the threshold is armed (`Duration.zero` = the kill switch —
 /// legacy foreground behavior, so the model must not be taught the
-/// conversion it will never get).
+/// conversion it will never get). The #2201 adoption sentence joins only
+/// when the jobs capability is live — hosts without it (web, mobile,
+/// memory envs) must not be taught adoption either, which also keeps the
+/// gh-1835 8192-token wiring fixture byte-identical (its memory env has
+/// no jobs capability).
 ///
 /// Token-budget note (gh-1835 CI): the description is priced into every
 /// request estimate at 4 chars/token, and the host_agent_wiring telemetry
 /// fixture runs a full 27-tool stack at an 8192-token window with ~13
 /// tokens of headroom on main. The wording is deliberately tight — do not
 /// expand it without re-checking that fixture.
-String _shellToolDescription(Duration autoBackgroundAfter) =>
+String _shellToolDescription(
+  Duration autoBackgroundAfter, {
+  required bool survivorAdoption,
+}) =>
     'Execute a bash command in the working directory; returns stdout and '
     'stderr, truncated to the last $defaultToolMaxLines lines or '
     '${defaultToolMaxBytes ~/ 1024}KB. Timeouts you '
@@ -261,7 +274,8 @@ String _shellToolDescription(Duration autoBackgroundAfter) =>
     'a notice when it finishes; check progress with bash_job. A '
     'foreground command still running when the user sends a message is '
     'moved to a background job untouched (never killed).'
-    '${autoBackgroundAfter > Duration.zero ? ' A command still running after ${autoBackgroundAfter.inSeconds}s is moved to a background job automatically (never restarted); carried timeouts are NOT auto-retried — retry if the completion notice reports a timeout.' : ''}';
+    '${autoBackgroundAfter > Duration.zero ? ' A command still running after ${autoBackgroundAfter.inSeconds}s is moved to a background job automatically (never restarted); carried timeouts are NOT auto-retried — retry if the completion notice reports a timeout.' : ''}'
+    '${survivorAdoption ? ' A `cmd &`/nohup survivor of a call is adopted as a tracked job (completion reported; no captured output or exit code).' : ''}';
 
 /// The `bash` tool call body ([shellTool]'s `execute`): parse the
 /// arguments, then dispatch — `background: true` fast path, the bare-sleep
@@ -480,6 +494,7 @@ Future<ToolExecutionResult> _runForegroundBashCall(
 
   return _runForegroundBash(
     env,
+    jobs,
     command,
     timeout: timeout,
     timeoutArg: timeoutArg,
@@ -498,8 +513,14 @@ Future<ToolExecutionResult> _runForegroundBashCall(
 /// failures (non-zero exit, exec errors) are never retried. Every retry
 /// lands in the result as a `[bash attempt N]` notice so the model knows
 /// earlier attempts hung or timed out.
+///
+/// With the jobs capability, live processes the script left behind
+/// (issue #2201: `cmd &`, nohup) are adopted into the registry before the
+/// verdict is rendered — including on the non-zero-exit path — and ONE
+/// adoption notice rides the result either way.
 Future<ToolExecutionResult> _runForegroundBash(
   ExecutionEnv env,
+  ShellJobRegistry? jobs,
   String command, {
   required Duration? timeout,
   required num? timeoutArg,
@@ -557,6 +578,11 @@ Future<ToolExecutionResult> _runForegroundBash(
     }
 
     final execResult = result.valueOrNull!;
+    // Issue #2201: adopt survivors BEFORE the exit-code verdict — a
+    // script may leave live children behind a failing exit too. The
+    // notice joins the retry notices so it rides both the success text
+    // and any failure throw below.
+    await _adoptExecSurvivors(jobs, command, execResult, notices);
     final rawOutput = _bashOutput(execResult);
     if (execResult.exitCode != 0) {
       throw StateError(
@@ -599,6 +625,30 @@ StateError _bashFailureError(
     ),
     _ => StateError('${_retryNoticePrefix(notices)}$error'),
   };
+}
+
+/// The issue #2201 adoption step of the inline foreground run: hand the
+/// exec's survivors to the registry and surface ONE adoption notice in
+/// the result notices. No-op without the jobs capability or when the
+/// scan found nothing. Split out so [_runForegroundBash] stays under the
+/// CRAP ratchet.
+Future<void> _adoptExecSurvivors(
+  ShellJobRegistry? jobs,
+  String command,
+  ShellExecResult execResult,
+  List<String> notices,
+) async {
+  if (jobs == null || !jobs.isSupported || execResult.survivors.isEmpty) {
+    return;
+  }
+  final adopted = await jobs.adoptSurvivors(
+    command,
+    execResult.survivors,
+    notify: false,
+  );
+  if (adopted.isNotEmpty) {
+    notices.add(adoptedSurvivorsNoticeText(adopted, source: command));
+  }
 }
 
 /// Appends the killed call's partial capture (stderr after stdout, each
@@ -920,10 +970,11 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
     // (task_send precedent); status/output are plain reads.
     tier: ApprovalTier.write,
     description:
-        'Manage background shell jobs (from bash background: true). '
-        'Actions: "status" lists running + last 20 exited (all: true = '
-        'every job; id = one), "output" tails a log (id, lines), "stop" '
-        'kills a running job (id).',
+        'Manage background shell jobs (from bash background: true, and '
+        'adopted cmd & / nohup survivors). Actions: "status" lists '
+        'running + last 20 exited (all: true = every job; id = one), '
+        '"output" tails a log (id, lines), "stop" kills a running job '
+        '(id).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -1075,6 +1126,11 @@ Future<ToolExecutionResult> _bashJobOutputResult(
       // gh-1459 ask #4: reading the job's log is the model probing it —
       // it counts as liveness for the drain's liveness leg.
       entry.markProbed();
+      // Issue #2201 AC3: adopted jobs have no harness log — the honest
+      // adopted-explanation instead of an empty-log reading.
+      if (entry.isAdopted) {
+        return ToolExecutionResult.text(adoptedJobOutputText(entry));
+      }
       return ToolExecutionResult.text(
         await _exactOutputText(jobs, entry, maxLines),
       );
@@ -1119,6 +1175,35 @@ Future<ToolExecutionResult> _unknownOutputResult(
   return ToolExecutionResult.text(_unknownIdText(jobs, id, closestIds));
 }
 
+/// Issue #2201: the pre-stop honest wording for a job that is already
+/// done — an adopted job has no exit code to report (liveness-only), a
+/// registry-native job reports its real one. Null when [entry] still
+/// runs (the caller proceeds to stop it).
+ToolExecutionResult? _alreadyFinishedStopResult(
+  ShellJobEntry entry,
+  String id,
+) {
+  if (entry.isRunning) return null;
+  return ToolExecutionResult.text(
+    entry.isAdopted
+        ? '$id already exited (adopted — liveness-only, no exit code)'
+        : '$id already finished (exit code ${entry.exitCode})',
+  );
+}
+
+/// Issue #2201 r3: `ShellJobEntry.stop` re-verifies the #478 start tag
+/// before signaling. When the guard refused — the process was already
+/// gone, or its pid was recycled onto a stranger — nothing was signaled,
+/// so "Stopped" would be a lie. Null when the stop ran normally.
+ToolExecutionResult? _refusedAdoptedStopResult(ShellJobEntry entry, String id) {
+  if (entry.isRunning || !entry.isAdopted || entry.stopReason != null) {
+    return null;
+  }
+  return ToolExecutionResult.text(
+    '$id already exited (adopted — liveness-only, no exit code)',
+  );
+}
+
 Future<ToolExecutionResult> _bashJobStopResult(
   ShellJobRegistry jobs,
   String? id,
@@ -1126,13 +1211,11 @@ Future<ToolExecutionResult> _bashJobStopResult(
   if (id == null) throw StateError('bash_job stop requires an id');
   final entry = jobs.job(id);
   if (entry != null) {
-    if (!entry.isRunning) {
-      return ToolExecutionResult.text(
-        '$id already finished (exit code ${entry.exitCode})',
-      );
-    }
+    final already = _alreadyFinishedStopResult(entry, id);
+    if (already != null) return already;
     await entry.stop();
-    return ToolExecutionResult.text('Stopped $id');
+    return _refusedAdoptedStopResult(entry, id) ??
+        ToolExecutionResult.text('Stopped $id');
   }
   // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —
   // malformed ids keep the shortest error, GC'd ids are honestly done, and
@@ -1175,6 +1258,12 @@ String _staleIdNote(String requested, String resolved) =>
 String _resolvedStateLine(ShellJobEntry entry) {
   if (entry.isRunning) {
     return '${entry.id} is still running — use ${entry.id} for further calls.';
+  }
+  // Issue #2201: adopted jobs never have an exit code.
+  if (entry.isAdopted) {
+    return '${entry.id} already exited '
+        '(no exit code — adopted, liveness-only; ${_settledAgo(entry)}) — '
+        'stop polling the stale id.';
   }
   return '${entry.id} already exited '
       '(exit code ${entry.exitCode}, ${_settledAgo(entry)}) — '
@@ -1257,12 +1346,26 @@ int _bySettledDescending(ShellJobEntry a, ShellJobEntry b) {
 }
 
 String _shellJobStatusLine(ShellJobEntry entry) {
-  final state = entry.isRunning ? 'running' : 'exited(${entry.exitCode})';
+  final String state;
+  if (entry.isRunning) {
+    // Issue #2201: adopted jobs are liveness-only — no exit code will
+    // ever exist, so say what the entry IS while it runs.
+    state = entry.isAdopted ? 'running (adopted pid ${entry.pid})' : 'running';
+  } else if (entry.isAdopted) {
+    state = 'exited (adopted; no exit code — liveness-only tracking)';
+  } else {
+    state = 'exited(${entry.exitCode})';
+  }
   // gh-1604: first/last ~120 chars of the flattened command — a multi-KB
   // pipeline never renders in full into the wall again.
   final command = shellJobCommandLabel(entry.command);
   // gh-1438: exited rows carry their age — a settled-but-never-collected
   // job is the exact thing stale-id polling hunts for.
   final ago = entry.isRunning ? '' : ' — exited ${_settledAgo(entry)}';
-  return '${entry.id}: $state — $command (log: ${entry.logPath})$ago';
+  // Issue #2201: an adopted job has no harness log; the honest pointer
+  // replaces the path.
+  final log = entry.isAdopted
+      ? 'no captured log — output in its own redirect'
+      : 'log: ${entry.logPath}';
+  return '${entry.id}: $state — $command ($log)$ago';
 }

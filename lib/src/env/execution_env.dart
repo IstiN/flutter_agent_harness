@@ -431,6 +431,31 @@ final class ShellExecOptions {
   final JobLogRedactor? jobLogRedactor;
 }
 
+/// One live process left behind by a completed shell call (issue #2201):
+/// a `cmd &` / `nohup` child that outlived its foreground shell. The
+/// observer only holds the OS identity — no pipe, no waitpid — so the
+/// fields are exactly what `ps` reports.
+final class ShellSurvivor {
+  /// Creates a [ShellSurvivor].
+  const ShellSurvivor({
+    required this.pid,
+    required this.startTag,
+    this.command,
+  });
+
+  /// The survivor's OS pid.
+  final int pid;
+
+  /// The OS start string (`ps -o lstart=`) observed at detection — the
+  /// pid-reuse guard (issue #478): a later liveness sample of [pid] only
+  /// counts when the start string still matches.
+  final String startTag;
+
+  /// The `ps` command column; null when unreadable (permissions) — the
+  /// surfaces then show a `<unknown cmd>` label.
+  final String? command;
+}
+
 /// Outcome of a completed [Shell.exec] invocation.
 final class ShellExecResult {
   /// Creates a [ShellExecResult].
@@ -438,6 +463,7 @@ final class ShellExecResult {
     required this.stdout,
     required this.stderr,
     required this.exitCode,
+    this.survivors = const [],
   });
 
   /// Captured standard output.
@@ -448,6 +474,13 @@ final class ShellExecResult {
 
   /// Process exit code.
   final int exitCode;
+
+  /// Live processes this call left behind, detected at the direct child's
+  /// exit (issue #2201). Empty everywhere the platform cannot scan
+  /// (Windows, web, sandboxed shells); a normal-exit-only signal —
+  /// timeout/cancel kills reap the whole tree (gh-1053), so survivors
+  /// there are never reported.
+  final List<ShellSurvivor> survivors;
 }
 
 /// Shell execution capability used by the harness.
@@ -529,6 +562,19 @@ abstract interface class BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   });
+}
+
+/// Optional [ShellJob] capability (issue #2201): the environment observed
+/// the live processes this job's script left behind at its NORMAL exit —
+/// the same survivors the foreground exec path reports through
+/// [ShellExecResult.survivors], surfaced here because a detached job's
+/// completion reaches the registry, not a tool result. Jobs whose shells
+/// cannot scan (or that were stopped/timed out — gh-1053 reaps those
+/// trees) never implement this or return empty.
+abstract interface class SurvivorReporting {
+  /// The survivors observed at this job's exit, consuming the buffer
+  /// (exactly-once). Empty when the exit path reported none.
+  List<ShellSurvivor> takeSurvivors();
 }
 
 /// Filesystem and process execution environment used by the harness.

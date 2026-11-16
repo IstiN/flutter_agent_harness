@@ -1605,7 +1605,8 @@ final class CliConfig {
   String _jobsYaml() {
     final jobsConfig = jobs;
     if (jobsConfig.staleHours == defaultJobsStaleHours &&
-        jobsConfig.logRetentionDays == defaultJobsLogRetentionDays) {
+        jobsConfig.logRetentionDays == defaultJobsLogRetentionDays &&
+        jobsConfig.adopted.isDefault) {
       return '';
     }
     return jobsConfig.toYaml();
