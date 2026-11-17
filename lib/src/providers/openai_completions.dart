@@ -1381,11 +1381,22 @@ Map<String, dynamic>? _convertAssistantMessage(
   _applyAssistantToolCalls(assistantMsg, message.content, model);
 
   // Skip assistant messages that have no content and no tool calls.
+  // When tool_calls are present, the OpenAI Chat Completions wire format
+  // always carries an explicit "content": null alongside them — some
+  // strict OpenAI-compatible backends (e.g. Pydantic-discriminated-union
+  // request schemas) reject the message when the key is omitted entirely:
+  // the structural mismatch sends their Union validator down the wrong
+  // variant, surfacing a confusing unrelated field error instead of
+  // flagging the missing key (gh-2221).
   final hasContent =
       assistantMsg['content'] is String &&
       (assistantMsg['content'] as String).isNotEmpty;
-  if (!hasContent && !assistantMsg.containsKey('tool_calls')) {
+  final hasToolCalls = assistantMsg.containsKey('tool_calls');
+  if (!hasContent && !hasToolCalls) {
     return null;
+  }
+  if (!hasContent && hasToolCalls) {
+    assistantMsg['content'] = null;
   }
   return assistantMsg;
 }
