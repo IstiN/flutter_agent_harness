@@ -28,7 +28,6 @@ import '../exceptions.dart';
 import '../env/session_parse_executor.dart';
 import '../session_io_retry.dart';
 import 'session_chunk_reader.dart';
-import 'session_io_health.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 
@@ -1290,21 +1289,10 @@ void _fsOrThrow(
   String? sessionId,
 }) {
   if (result is Err<void, FileError>) {
-    final error = result.error;
-    final text = '$message: ${error.message}';
-    // Issue #2248 AC5: the surfaced failure joins the per-session IO
-    // health so the stall watchdog can name it while the run is wedged.
-    // notFound is NOT a health signal (a deleted/raced path — the same
-    // mapping below keeps it out of `storage`).
-    if (sessionId != null && error.code != FileErrorCode.notFound) {
-      SessionIoHealth.noteFailure(sessionId, text);
-    }
-    throw SessionException(
-      text,
-      code: error.code == FileErrorCode.notFound
-          ? SessionErrorCode.notFound
-          : SessionErrorCode.storage,
-      cause: error,
+    throw sessionFsException(
+      result.error,
+      message: message,
+      sessionId: sessionId,
     );
   }
 }

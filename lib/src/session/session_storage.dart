@@ -264,28 +264,39 @@ Never _invalidEntry(
   );
 }
 
+/// The [SessionException] for a surfaced [FileError] (issue #2248): the
+/// errno text rides the message, notFound stays out of the IO-health
+/// verdict (a deleted/raced path is benign — noting it would arm the fs
+/// banner on a healthy fs), every other code maps to `storage`. Split
+/// out of the `_fsOrThrow` dispatchers so they stay under the CRAP gate.
+SessionException sessionFsException(
+  FileError error, {
+  required String message,
+  String? sessionId,
+}) {
+  final text = '$message: ${error.message}';
+  if (sessionId != null && error.code != FileErrorCode.notFound) {
+    SessionIoHealth.noteFailure(sessionId, text);
+  }
+  return SessionException(
+    text,
+    code: error.code == FileErrorCode.notFound
+        ? SessionErrorCode.notFound
+        : SessionErrorCode.storage,
+    cause: error,
+  );
+}
+
 T _fsOrThrow<T>(
   Result<T, FileError> result,
   String message, {
   String? sessionId,
 }) {
   if (result is Err<T, FileError>) {
-    final error = result.error;
-    final text = '$message: ${error.message}';
-    // Issue #2248 AC5: the surfaced failure joins the per-session IO
-    // health so the stall watchdog can name it while the run is wedged.
-    // notFound is NOT a health signal (a deleted/raced path — the same
-    // mapping below keeps it out of `storage`): noting it would arm the
-    // fs banner on a healthy fs (RC round-1 suggestion).
-    if (sessionId != null && error.code != FileErrorCode.notFound) {
-      SessionIoHealth.noteFailure(sessionId, text);
-    }
-    throw SessionException(
-      text,
-      code: error.code == FileErrorCode.notFound
-          ? SessionErrorCode.notFound
-          : SessionErrorCode.storage,
-      cause: error,
+    throw sessionFsException(
+      result.error,
+      message: message,
+      sessionId: sessionId,
     );
   }
   return (result as Ok<T, FileError>).value;
