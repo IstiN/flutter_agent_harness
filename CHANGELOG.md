@@ -16,6 +16,27 @@ block a release again.
 - **Interactive network enrollment and roster hygiene (#2212):** the TUI now provides `/network login` (OAuth loopback or masked JWT), hostname-defaulted `/network enroll`, `/network rename`, `status`, and `devices` through the existing command runner, while preserving bare/join DAP behavior and adding the explicit `/network dap` alias. First app enrollment asks for a friendly device name on desktop and mobile; same-account re-login preserves the stored device identity to prevent duplicates. Devices applies a documented 30-day offline-row display TTL, accepts address-only roster agents, and excludes active or orphaned sub-agent rows. CLI/app publishers explicitly retract legacy child rows so a device with active subagents exposes exactly one parent session; the fa_network server-side reaping contract is documented separately.
 - **Full per-device session catalog + wake-on-DM (#2213):** CLI and app connectors now publish every exposed stored session with its persisted name (or first-prompt/cwd fallback), cwd and last activity, using a full connect snapshot and debounced incremental roster pages. Devices rows and CLI roster output use human labels, relative activity, project context and live/wake-on-DM/offline states instead of bare UUIDs. On desktop, a DM to a catalog sleeper launches the existing cwd-guarded headless wake with explicit session/inbox targeting, leaves the DM unacked for the woken mailbox, and preserves live-session steering; mobile/extension remain honestly queue-only.
 - **CLI inbound network DM delivery (#2214):** the app's fanet1 DM codec/reply routing now lives in the pure-Dart connector core, and the CLI writes current-session app DMs into its real mailbox for existing idle-wake/mid-run steering. Delivery preserves per-sender order, dedups redelivery with stable sortable mailbox ids plus inbox/read idempotency, acks only after the mailbox write, and distinguishes encrypted accepted vs. queued/not-listening receipts. Permanent malformed/wrong-key/tamper failures ack once with safe notices; transient failures stay unacked. Agents reply through the existing `agent_message` tool using a durable opaque `network-dm:v1:` address.
+- fix(gh-2230): a failed tag train no longer orphans its staged release
+  draft for 24h. The issue #282 draft lifecycle invariant was enforced
+  only per creating job, but since the gh-1801 rework the staged draft's
+  publish owner is the tag train (ci.yml `release-provenance`, the sole
+  publish point): a train that died upstream of the publish point (core
+  tests → quality-gate red → binaries skipped → provenance skipped) left
+  the staged draft (e.g. v1.0.728) to rot until the daily sweeper deleted
+  it and filed the recurring `[daily-publish] stale release drafts swept`
+  issue. ci.yml now carries a train-level `train-draft-guard` job
+  (`needs: release-provenance`, `always()` on tag pushes / release
+  events) running `scripts/release_train_draft_guard.sh` with the publish
+  point's settled result exported: it deletes drafts for the trained tag
+  ONLY when that result is `skipped` (`rerun --failed` never resurrects
+  skipped jobs, so nobody else would ever publish them) and the draft's
+  well-formed ownership marker names a COMPLETED run; the git tag is
+  untouched. A failed/cancelled provenance is rerunnable, so the staged
+  draft stays as the `rerun --failed` recovery vessel (gh-1899
+  convention). Drafts owned by in-flight runs, unmarked/human drafts
+  (E1), lookup failures, and an unexported result are kept fail-safe —
+  the 24h sweeper remains the backstop.
+  Pinned by `test/release_hygiene_test.dart` (`#2230`)
 - fix(gh-2194): the fa1.dev landing page no longer exposes two broken
   Windows download links. The windows-release landing (#2158) deep-linked
   `releases/latest/download/fa-app-windows-x64.zip` / `.msix`, but those

@@ -4893,6 +4893,46 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/release_draft_dedupe.sh "${GITHUB_REF_NAME}" || echo "::warning::gh-1899 twin-draft dedupe failed — the 24h sweeper remains the backstop"
 
+  # Train-level draft lifecycle guard (issue #282, gh-2230): this train is
+  # the PUBLISH OWNER of every staged draft (gh-1801 rework —
+  # release-provenance above is the sole --draft=false --latest flip), but
+  # the per-creating-job guards cover only their own job's failure. A train
+  # that dies upstream of the publish point (core tests → quality-gate red
+  # → binaries skipped → release-provenance SKIPPED) used to orphan the
+  # staged draft: the creating run's jobs all succeeded (their guards never
+  # fire), the failed train is superseded and never rerun, and
+  # verify_pubdev_release.sh heals the LATEST tag only — so the draft rotted
+  # exactly 24h until the daily sweeper deleted it and filed the recurring
+  # sweep issue (gh-2230, v1.0.728). This job runs AFTER the publish point
+  # settled — needs release-provenance + always(), so it fires on failed AND
+  # cancelled trains and never on the success path's result (the script
+  # no-ops on a published release). The script deletes ONLY when the
+  # publish point is unreachable (result == 'skipped' — rerun --failed
+  # never resurrects skipped jobs): drafts for THIS train's tag whose
+  # owner-marker run has completed (scripts/release_train_draft_guard.sh).
+  # A failed/cancelled provenance is rerunnable, so the staged draft stays
+  # as the rerun --failed recovery vessel (gh-1899 convention). In-flight
+  # owner runs and unmarked/human drafts stay with the sweeper (E1).
+  train-draft-guard:
+    name: Train draft lifecycle guard
+    needs: release-provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      always() &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # delete the orphaned staged draft (issue #282 E2)
+      actions: read # probe the draft-owner marker run's status (gh-2008 pattern)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Delete drafts the failed train will never publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROVENANCE_RESULT: ${{ needs.release-provenance.result }}
+        run: bash scripts/release_train_draft_guard.sh "${GITHUB_REF_NAME}"
+
   # gh-1832 AC3: post-publish smoke. Probes (1) EVERY releases/(latest/)?
   # download/ URL the fa1.dev landing page exposes (site/index.html) and
   # (2) the full required set from scripts/release_required_assets.txt via
