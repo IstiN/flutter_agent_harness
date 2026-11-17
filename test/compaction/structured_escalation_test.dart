@@ -1479,7 +1479,7 @@ final class _CapturingAutoHooks implements AutoCompactorHooks {
   void onPass(AutoCompactorPass pass) => passes.add(pass);
 
   @override
-  void onDone(int passes, int tokens) => doneCount++;
+  void onDone(int passes, int tokens, {String? reason}) => doneCount++;
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}

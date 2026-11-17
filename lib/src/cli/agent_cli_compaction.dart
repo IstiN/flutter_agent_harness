@@ -207,10 +207,27 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   int? _runTokensBefore;
 
   @override
-  void onDone(int passes, int tokens) {
+  void onDone(int passes, int tokens, {String? reason}) {
     if (passes > 0) {
       cli._logDiagnostic(
         'auto-compact done sid=${cli._logSid} passes=$passes tokens=$tokens',
+      );
+    } else {
+      // gh-2237: an `auto-compact start` line must never be the last
+      // word. A zero-pass outcome is a terminal receipt too — the exit
+      // reason (deciding gate + basis/trigger numbers, threaded from the
+      // engine) states WHY nothing folded, on both surfaces (OQ2): the
+      // diagnostic lane for post-mortems and a dim row for the user
+      // (boot-cap defer precedent). The old `passes > 0` guard here
+      // turned a gate/engine basis divergence into an unbounded silent
+      // start loop.
+      final why = reason ?? 'under-trigger basis (no fold ran)';
+      cli._logDiagnostic(
+        'auto-compact done sid=${cli._logSid} passes=0 (no-op: $why)',
+      );
+      _closeDeltaStreamLine();
+      cli.io.writeln(
+        cli._style.dim('[auto-compact] done passes=0 — no-op: $why'),
       );
     }
     // Backend agent mode (issue #155): close the compaction bracket once
@@ -253,6 +270,20 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       'until you switch models (e.g. `/model`) or start a new session '
       '(`/new`).',
     );
+  }
+}
+
+/// Test seam for the compaction receipt surface (gh-2237): drives the
+/// hooks' [AutoCompactorHooks.onDone] exactly as a compactor would, so
+/// the zero-pass terminal receipt is unit-testable without a compactor
+/// run (same pattern as `logDiagnosticForTest`).
+@visibleForTesting
+extension AgentCliCompactionDoneForTest on AgentCli {
+  void compactionDoneForTest(int passes, int tokens, {String? reason}) {
+    _AutoCompactorCliHooks(
+      this,
+      auto: true,
+    ).onDone(passes, tokens, reason: reason);
   }
 }
 
