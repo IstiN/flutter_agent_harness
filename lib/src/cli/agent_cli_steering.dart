@@ -268,15 +268,6 @@ extension AgentCliSteering on AgentCli {
     } on Object catch (error) {
       recordId = null;
       persistError = error;
-      // Issue #2249 AC1: the failure is announced NOW, with the raw
-      // error (#2248's surfacing discipline) — the banner must never be
-      // the last word promising a save the fs refused.
-      io.writeln(
-        tuiWarning(
-          '⚠ steering NOT saved to session (fs error: $error) — '
-          'recovery after restart will not see it',
-        ),
-      );
     }
     final index = _pendingSteering.indexWhere(
       (entry) => identical(entry.message, message),
@@ -290,12 +281,14 @@ extension AgentCliSteering on AgentCli {
       if (id != null && session != null) {
         await _writeSteeringConsumed(session, id);
       }
+      _announceSteeringNotSaved(persistError);
       return;
     }
     if (_agent.state.messages.contains(message)) {
       // Already merged (the boundary beat the write): honest delivery.
       final entry = _pendingSteering.removeAt(index);
       await _steeringDelivered(entry.message, recordId, entry.panel);
+      _announceSteeringNotSaved(persistError);
       return;
     }
     _pendingSteering[index] = PendingSteering(
@@ -303,6 +296,23 @@ extension AgentCliSteering on AgentCli {
       recordId: recordId,
       panel: panel,
       persistError: persistError,
+    );
+    _announceSteeringNotSaved(persistError);
+  }
+
+  /// The accept-append failure warning (issue #2249 AC1): the raw error
+  /// surfaced (#2248's surfacing discipline) — the banner must never be
+  /// the last word promising a save the fs refused. Printed AFTER the
+  /// delivery/patch resolution on every path, matching the idle-steer
+  /// twin's ordering (delivery truth first, recovery caveat second —
+  /// review round-2 digest).
+  void _announceSteeringNotSaved(Object? persistError) {
+    if (persistError == null) return;
+    io.writeln(
+      tuiWarning(
+        '⚠ steering NOT saved to session (fs error: $persistError) — '
+        'recovery after restart will not see it',
+      ),
     );
   }
 
@@ -408,12 +418,6 @@ extension AgentCliSteering on AgentCli {
     final entries = _reconcileSettledEntries(drained);
     _pendingSteering.removeWhere(entries.contains);
     if (!_abortRequested) {
-      io.writeln(
-        _style.dim(
-          'steering arrived after the last checkpoint — running '
-          '${texts.length} message(s) now',
-        ),
-      );
       if (isBusy) {
         // A competing submit/mail/scheduled run started before the
         // settle ran: the drained texts have no carrier left — loud
@@ -421,6 +425,12 @@ extension AgentCliSteering on AgentCli {
         await _dropSettledSteering(entries, texts);
         return;
       }
+      io.writeln(
+        _style.dim(
+          'steering arrived after the last checkpoint — running '
+          '${texts.length} message(s) now',
+        ),
+      );
       // Start the follow-up run BEFORE any await (review round 1): the
       // per-entry persist retries below yield the event loop, and a run
       // started in that window would make _startRun's busy guard refuse
@@ -558,9 +568,25 @@ extension AgentCliSteering on AgentCli {
     );
     if (ioFailure) {
       final raw = SessionIoHealth.lastFailure(_session?.cachedId ?? '')!.error;
-      final savedNote = queued > 0
-          ? '$queued steering message(s) saved to the session; '
-          : '';
+      // Issue #2249 AC4: even under a session-IO failure the banner must
+      // not claim a save the failing fs refused — the ONE clause builder
+      // states the queue's real persistence state (landed record ids are
+      // real; failed or in-flight appends read NOT saved, with the raw
+      // error when one is known).
+      var saved = 0;
+      var unsaved = 0;
+      Object? firstError;
+      for (final entry in _pendingSteering) {
+        if (entry.recordId != null) {
+          saved++;
+        } else {
+          unsaved++;
+          firstError ??= entry.persistError;
+        }
+      }
+      final savedNote = _pendingSteering.isEmpty
+          ? ''
+          : '${steeringSaveClause(saved: saved, unsaved: unsaved, error: firstError)}; ';
       return '⚠ session IO failing: $raw — $savedNote'
           'session writes are failing; restart the host '
           '(check open fds / container access), esc aborts';
