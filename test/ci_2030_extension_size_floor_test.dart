@@ -30,6 +30,12 @@
 //      baseline BYTE-IDENTICAL to the committed file — the committed
 //      floor stays the exact `--reseed` output shape for the shipped
 //      artifact (no hand-massaged rows, no sort/format drift).
+//
+// gh-2215 follow-up — the intentional jsr 0.4.204 / THREE and FA typography
+// payloads required the next reseed. The independent fixture below now pins
+// validation run 43986372662's Linux artifact (78 tracked rows + TOTAL), not
+// the historical gh-2030 shape. The green, +10% rejection, and byte-exact
+// round-trip checks above are deliberately unchanged in strength.
 library;
 
 import 'dart:convert';
@@ -40,22 +46,56 @@ import 'package:test/test.dart';
 /// The fa-extension baseline the build-macos.yml extension gate reads.
 const baseline = 'scripts/size_budget/fa-extension.tsv';
 
-/// Run 41276487426 fa-extension.zip TOTAL (gate output, uncompressed
+/// Run 43986372662 fa-extension.zip TOTAL (gate output, uncompressed
 /// bytes — includes the sub-64 KiB payload below the manifest floor).
-const artifactTotalBytes = 155887040;
+const artifactTotalBytes = 164042708;
 
-/// The gate-printed manifest of the failing run's artifact
-/// (run 41276487426, job "Build Chrome extension"): every row ≥ 64 KiB,
+/// The gate-printed manifest of validation run 43986372662's Linux artifact
+/// (job "Extension size gate (fa-extension.zip)"): every row ≥ 64 KiB,
 /// `<bytes>\t<path>`, path-sorted — the exact `size_manifest.py --reseed`
-/// output shape.
+/// output shape. This is an independent literal, not loaded from the baseline.
 const artifactManifest = [
-  [1574782, 'panel/app/assets/NOTICES'],
+  [1641820, 'panel/app/assets/NOTICES'],
+  [90384, 'panel/app/assets/assets/fonts/Geist-Bold.ttf'],
+  [90360, 'panel/app/assets/assets/fonts/Geist-ExtraBold.ttf'],
+  [90388, 'panel/app/assets/assets/fonts/Geist-Medium.ttf'],
+  [90344, 'panel/app/assets/assets/fonts/Geist-Regular.ttf'],
+  [90460, 'panel/app/assets/assets/fonts/Geist-SemiBold.ttf'],
+  [101980, 'panel/app/assets/assets/fonts/GeistMono-Medium.ttf'],
+  [101868, 'panel/app/assets/assets/fonts/GeistMono-Regular.ttf'],
+  [101888, 'panel/app/assets/assets/fonts/GeistMono-SemiBold.ttf'],
+  [137784, 'panel/app/assets/assets/fonts/IBMPlexMono-Bold.ttf'],
+  [136704, 'panel/app/assets/assets/fonts/IBMPlexMono-Medium.ttf'],
+  [135580, 'panel/app/assets/assets/fonts/IBMPlexMono-Regular.ttf'],
+  [140216, 'panel/app/assets/assets/fonts/IBMPlexMono-SemiBold.ttf'],
+  [218136, 'panel/app/assets/assets/fonts/IBMPlexSans-Bold.ttf'],
+  [218256, 'panel/app/assets/assets/fonts/IBMPlexSans-Medium.ttf'],
+  [218076, 'panel/app/assets/assets/fonts/IBMPlexSans-Regular.ttf'],
+  [218240, 'panel/app/assets/assets/fonts/IBMPlexSans-SemiBold.ttf'],
   [420428, 'panel/app/assets/assets/fonts/Inter-Bold.ttf'],
+  [344000, 'panel/app/assets/assets/fonts/Inter-ExtraBold.ttf'],
   [417300, 'panel/app/assets/assets/fonts/Inter-Medium.ttf'],
   [411640, 'panel/app/assets/assets/fonts/Inter-Regular.ttf'],
   [419744, 'panel/app/assets/assets/fonts/Inter-SemiBold.ttf'],
   [274096, 'panel/app/assets/assets/fonts/JetBrainsMono-Bold.ttf'],
+  [115032, 'panel/app/assets/assets/fonts/JetBrainsMono-ExtraBold.ttf'],
+  [115212, 'panel/app/assets/assets/fonts/JetBrainsMono-Medium.ttf'],
   [270224, 'panel/app/assets/assets/fonts/JetBrainsMono-Regular.ttf'],
+  [115084, 'panel/app/assets/assets/fonts/JetBrainsMono-SemiBold.ttf'],
+  [97424, 'panel/app/assets/assets/fonts/Manrope-Bold.ttf'],
+  [98056, 'panel/app/assets/assets/fonts/Manrope-ExtraBold.ttf'],
+  [97536, 'panel/app/assets/assets/fonts/Manrope-Medium.ttf'],
+  [97436, 'panel/app/assets/assets/fonts/Manrope-Regular.ttf'],
+  [97584, 'panel/app/assets/assets/fonts/Manrope-SemiBold.ttf'],
+  [96468, 'panel/app/assets/assets/fonts/PlusJakartaSans-Bold.ttf'],
+  [96480, 'panel/app/assets/assets/fonts/PlusJakartaSans-ExtraBold.ttf'],
+  [96600, 'panel/app/assets/assets/fonts/PlusJakartaSans-Medium.ttf'],
+  [96572, 'panel/app/assets/assets/fonts/PlusJakartaSans-Regular.ttf'],
+  [96596, 'panel/app/assets/assets/fonts/PlusJakartaSans-SemiBold.ttf'],
+  [88256, 'panel/app/assets/assets/fonts/SpaceGrotesk-Bold.ttf'],
+  [88328, 'panel/app/assets/assets/fonts/SpaceGrotesk-Medium.ttf'],
+  [88300, 'panel/app/assets/assets/fonts/SpaceGrotesk-Regular.ttf'],
+  [88216, 'panel/app/assets/assets/fonts/SpaceGrotesk-SemiBold.ttf'],
   [
     82244,
     'panel/app/assets/packages/flutter_inappwebview/assets/t_rex_runner/t-rex.html',
@@ -64,23 +104,35 @@ const artifactManifest = [
     89344,
     'panel/app/assets/packages/flutter_inappwebview_web/assets/web/web_support.js',
   ],
-  [86987, 'panel/app/canvaskit/<rev>/canvaskit.js'],
-  [1356926, 'panel/app/canvaskit/<rev>/canvaskit.js.symbols'],
-  [7284602, 'panel/app/canvaskit/<rev>/canvaskit.wasm'],
-  [86226, 'panel/app/canvaskit/<rev>/chromium/canvaskit.js'],
-  [1235870, 'panel/app/canvaskit/<rev>/chromium/canvaskit.js.symbols'],
-  [5428806, 'panel/app/canvaskit/<rev>/chromium/canvaskit.wasm'],
-  [1540006, 'panel/app/canvaskit/<rev>/skwasm.js.symbols'],
-  [3593715, 'panel/app/canvaskit/<rev>/skwasm.wasm'],
-  [1672152, 'panel/app/canvaskit/<rev>/skwasm_heavy.js.symbols'],
-  [5216217, 'panel/app/canvaskit/<rev>/skwasm_heavy.wasm'],
+  [
+    898445,
+    'panel/app/assets/packages/js_widget_runtime/assets/three/jsr_three_native.js',
+  ],
+  [
+    859738,
+    'panel/app/assets/packages/js_widget_runtime/assets/three/jsr_three_web.js',
+  ],
+  [
+    612752,
+    'panel/app/assets/packages/js_widget_runtime/assets/three/three_r1.shaderbundle',
+  ],
+  [87031, 'panel/app/canvaskit/<rev>/canvaskit.js'],
+  [1363368, 'panel/app/canvaskit/<rev>/canvaskit.js.symbols'],
+  [7315452, 'panel/app/canvaskit/<rev>/canvaskit.wasm'],
+  [86270, 'panel/app/canvaskit/<rev>/chromium/canvaskit.js'],
+  [1242746, 'panel/app/canvaskit/<rev>/chromium/canvaskit.js.symbols'],
+  [5463539, 'panel/app/canvaskit/<rev>/chromium/canvaskit.wasm'],
+  [1550249, 'panel/app/canvaskit/<rev>/skwasm.js.symbols'],
+  [3612036, 'panel/app/canvaskit/<rev>/skwasm.wasm'],
+  [1682137, 'panel/app/canvaskit/<rev>/skwasm_heavy.js.symbols'],
+  [5232173, 'panel/app/canvaskit/<rev>/skwasm_heavy.wasm'],
   [76114, 'panel/app/canvaskit/<rev>/webparagraph/canvaskit.js'],
-  [963641, 'panel/app/canvaskit/<rev>/webparagraph/canvaskit.js.symbols'],
-  [3729129, 'panel/app/canvaskit/<rev>/webparagraph/canvaskit.wasm'],
-  [1813030, 'panel/app/canvaskit/<rev>/wimp.js.symbols'],
-  [3581677, 'panel/app/canvaskit/<rev>/wimp.wasm'],
-  [12343041, 'panel/app/main.dart.js'],
-  [2040013, 'sw/agent.js'],
+  [967481, 'panel/app/canvaskit/<rev>/webparagraph/canvaskit.js.symbols'],
+  [3753480, 'panel/app/canvaskit/<rev>/webparagraph/canvaskit.wasm'],
+  [1810576, 'panel/app/canvaskit/<rev>/wimp.js.symbols'],
+  [3604253, 'panel/app/canvaskit/<rev>/wimp.wasm'],
+  [12965432, 'panel/app/main.dart.js'],
+  [2090896, 'sw/agent.js'],
   [1070863, 'vendor/interpreters/asyncify/emscripten-module.wasm'],
   [2224743, 'vendor/interpreters/index.global.js'],
   [106335, 'vendor/interpreters/pyodide-lock.json'],
@@ -162,30 +214,27 @@ ProcessResult runGate({
 );
 
 void main() {
-  test('extension size floor gates the run-41276487426 artifact shape green '
-      '(gh-2030)', () {
+  test('extension size floor gates the run-43986372662 artifact shape green '
+      '(gh-2030 / gh-2215)', () {
     final artifact = buildArtifactFixture();
     final result = runGate(artifact: artifact, baselinePath: baseline);
     expect(
       result.exitCode,
       0,
       reason:
-          'the committed extension floor must accept the shipped '
-          'run-41276487426 shape — the daily-publish cli leg red with '
-          '`GREW +7.9% sw/agent.js` (intentional accumulated dart2js '
-          'growth, the gate\'s own reseed case). Gate output:\n'
-          '${result.stdout}\n${result.stderr}',
+          'the committed extension floor must accept the pinned Linux '
+          'artifact shape after the intentional THREE/jsr reseed. '
+          'Gate output:\n${result.stdout}\n${result.stderr}',
     );
     expect(result.stdout, contains('size budget OK'));
   });
   test('a +10% inflated artifact is still rejected — the ratchet stays '
       'armed (gh-2030)', () {
-    // sw/agent.js grown ×1.1 (2,040,013 → 2,244,014 = +10.0%): double the
+    // sw/agent.js grown ×1.1 (2,090,896 → 2,299,986 = +10.0%): double the
     // +5% budget, shaped like a next real regression. The committed floor
-    // must refuse it — a floor that accepts anything would not have
-    // caught run 41276487426's `GREW +7.9% sw/agent.js` in the first
-    // place.
-    final artifact = buildArtifactFixture(swAgentExtraBytes: 204001);
+    // must refuse it — a floor that accepts anything would not have caught
+    // the original gh-2030 regression or the post-reseed platform skew.
+    final artifact = buildArtifactFixture(swAgentExtraBytes: 209090);
     final result = runGate(artifact: artifact, baselinePath: baseline);
     expect(
       result.exitCode,
@@ -225,7 +274,7 @@ void main() {
       File(baseline).readAsBytesSync(),
       reason:
           'the committed $baseline must be the byte-exact `--reseed` '
-          'output for the shipped run-41276487426 shape (41 rows '
+          'output for the shipped run-43986372662 shape (78 rows '
           '≥ 64 KiB + TOTAL, path-sorted) — any hand-edit drift desyncs '
           'the floor from what the gate would have seeded',
     );
