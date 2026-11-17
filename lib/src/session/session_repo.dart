@@ -514,12 +514,28 @@ final class JsonlSessionRepo implements SessionRepo {
   @override
   Future<List<SessionMetadata>> list({String? cwd}) async {
     debugOnListingPass?.call();
-    final sessions = await _collectRootSessions();
-    if (cwd != null) {
-      sessions.retainWhere((m) => m.cwd == cwd);
+    // Issue #2248 (border case): a wholesale-failure sweep logged one
+    // `session_list_skip` PER directory — 80+ lines in 9s during the
+    // incident. Per pass: the FIRST skip logs in full; the rest count.
+    // One summary line lands at pass end, so the flood reads as one row.
+    _listSkipLogged = false;
+    _listSkipSuppressed = 0;
+    try {
+      final sessions = await _collectRootSessions();
+      if (cwd != null) {
+        sessions.retainWhere((m) => m.cwd == cwd);
+      }
+      sessions.sort(compareSessionActivity);
+      return sessions;
+    } finally {
+      if (_listSkipSuppressed > 0) {
+        _ioRetry.logger?.call(
+          'session_list_skips suppressed=$_listSkipSuppressed '
+          'last=$_listSkipLastPath error=$_listSkipLastError',
+        );
+        _listSkipSuppressed = 0;
+      }
     }
-    sessions.sort(compareSessionActivity);
-    return sessions;
   }
 
   /// Test seam (issue #2053 op-count assertions): fired once per [list]
@@ -1913,9 +1929,29 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// One `session_list_skip` diagnostic line through the ioRetry logger
   /// (the sink hosts already wire for `session_io_retry`). Silent when
-  /// no logger is configured.
-  void _logListSkip(String path, SessionException error) => _ioRetry.logger
-      ?.call('session_list_skip path=$path error=${error.message}');
+  /// no logger is configured. Issue #2248 (border case): after the FIRST
+  /// line of a [list] pass, further skips in the same sweep are counted
+  /// and summarized in one `session_list_skips` line at pass end — the
+  /// wholesale-failure flood (80+ per sweep) must not bury the log.
+  /// Concurrent [list] passes would split the accounting across both;
+  /// acceptable for a log summary.
+  void _logListSkip(String path, SessionException error) {
+    if (!_listSkipLogged) {
+      _listSkipLogged = true;
+      _ioRetry.logger?.call(
+        'session_list_skip path=$path error=${error.message}',
+      );
+      return;
+    }
+    _listSkipSuppressed++;
+    _listSkipLastPath = path;
+    _listSkipLastError = error.message;
+  }
+
+  bool _listSkipLogged = false;
+  int _listSkipSuppressed = 0;
+  String? _listSkipLastPath;
+  String? _listSkipLastError;
 
   Future<List<SessionRecord>> _entriesToFork(
     SessionStorage storage,
