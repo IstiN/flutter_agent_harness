@@ -183,7 +183,13 @@ def check_play(root, expected)
   headers = { "Authorization" => "Bearer #{access}", "Accept" => "application/json" }
   api = "#{base}/androidpublisher/v3/applications/#{package}"
 
-  code, edit, raw = json_response("Post", "#{api}/edits", headers: headers, body: "{}")
+  # The body must be declared JSON: Net::HTTP silently defaults a body POST
+  # to application/x-www-form-urlencoded, and Google binds form fields as
+  # request params — edits.insert answered "400: Unknown name \"{}\": Cannot
+  # bind query parameter" (gh-2207, daily red since 2026-10-28).
+  code, edit, raw = json_response("Post", "#{api}/edits",
+                                  headers: headers.merge("Content-Type" => "application/json"),
+                                  body: "{}")
   raise "Play edits.insert answered #{code}: #{raw.to_s[0, 160]}" unless [200, 201].include?(code)
 
   edit_id = edit["id"]
