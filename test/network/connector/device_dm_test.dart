@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_registry.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/exposure_acl.dart';
 import 'package:flutter_agent_harness/src/network/connector/machine_connector.dart';
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
 import 'package:test/test.dart';
@@ -213,6 +214,132 @@ void main() {
         expect(error.toString(), isNot(contains(wrong.privateKey)));
       },
     );
+  });
+
+  group('app send ↔ CLI receive round-trip (live empty-payload incident)', () {
+    // flutter_app device_connector_service.sendDmToAgent seals exactly this
+    // frame (from 'user:<uid>', to the roster agent address, msgId doubling
+    // as the fanet1 frameId, wrapper {'text','sessionId'?,'threading'}).
+    Future<String> appSealedDm(
+      String frameId,
+      SimpleKeyPair user,
+      String pub,
+    ) => hubSealFanet1(
+      senderDhKeyPair: user,
+      recipientDhPubkey: SimplePublicKey(
+        base64Decode(pub),
+        type: KeyPairType.x25519,
+      ),
+      frameId: frameId,
+      aadTarget: channel,
+      plaintext: jsonEncode({
+        'text': 'hello mac',
+        'sessionId': 'session-1',
+        'threading': 1,
+      }),
+    );
+
+    for (final sender in ['user:user-1', 'user-1']) {
+      test(
+        'app-built envelope from "$sender" decodes to a non-empty payload',
+        () async {
+          final store = MemoryDeviceDmKeyStore();
+          final agent = await DeviceDmKeyProvider(
+            store,
+          ).loadOrCreate(agentAddress);
+          final user = await hubGenerateX25519KeyPair();
+          final userPub = await user.extractPublicKey();
+          final ciphertext = await appSealedDm(
+            'frame-live',
+            user,
+            agent.publicKey,
+          );
+          final codec = DeviceDmCodec(
+            keys: DeviceDmKeyProvider(store),
+            deviceId: 'device-1',
+          );
+
+          // 'user-1' covers the live backend's documented 'user:<uid>' →
+          // bare-<uid> sender rewrite (normalizeDeviceDmReplyRecipient).
+          final decoded = await codec.decode(
+            _mail(
+              msgId: 'frame-live',
+              channel: channel,
+              from: sender,
+              ciphertext: ciphertext,
+            ),
+          );
+
+          expect(decoded.payload, isNotEmpty);
+          expect(jsonDecode(decoded.payload)['text'], 'hello mac');
+          expect(decoded.sessionId, 'session-1');
+          expect(decoded.senderPubkey, base64Encode(userPub.bytes));
+          final decision = sanitizeRemoteWrite(decoded.payload);
+          expect(decision, isA<AclAllow>());
+          expect((decision as AclAllow).text, 'hello mac');
+        },
+      );
+    }
+
+    // Live incident (msgId 8ff48b96-e4b8-46c4-9b3c-a2f48490bcb7): the DM
+    // decrypted fine yet arrived EMPTY, so the ACL rejected it with
+    // 'empty remote write carries nothing to deliver'. These are the ONLY
+    // envelope shapes whose decode SUCCEEDS with an empty payload — and
+    // none of them is producible by the app send path (its text is guarded
+    // non-empty). All of them carry `from` rewritten to the ADDRESSED AGENT
+    // address: a server-side direction rewrite in the dm-mail → device-WS
+    // push relay (from/to swap or from ← routing target). Characterized
+    // here for the fa_network owner; a local "fix" would re-deliver the
+    // agent's own reply echoes, breaking the echo ack/drop invariant.
+    for (final shape in <({String label, String from, String to})>[
+      (
+        label: 'from rewritten to the addressee',
+        from: 'main@device-1',
+        to: 'main@device-1',
+      ),
+      (label: 'from/to swapped', from: 'main@device-1', to: 'user:user-1'),
+      (
+        label: 'from/to swapped + bare uid',
+        from: 'main@device-1',
+        to: 'user-1',
+      ),
+    ]) {
+      test(
+        'relay-mangled envelope (${shape.label}) reproduces the empty payload',
+        () async {
+          final store = MemoryDeviceDmKeyStore();
+          final agent = await DeviceDmKeyProvider(
+            store,
+          ).loadOrCreate(agentAddress);
+          final user = await hubGenerateX25519KeyPair();
+          final ciphertext = await appSealedDm(
+            'frame-mangled',
+            user,
+            agent.publicKey,
+          );
+          final codec = DeviceDmCodec(
+            keys: DeviceDmKeyProvider(store),
+            deviceId: 'device-1',
+          );
+
+          final decoded = await codec.decode(
+            _mail(
+              msgId: 'frame-mangled',
+              channel: channel,
+              from: shape.from,
+              to: shape.to,
+              ciphertext: ciphertext,
+            ),
+          );
+
+          expect(decoded.payload, isEmpty);
+          expect(
+            sanitizeRemoteWrite(decoded.payload),
+            const AclReject('empty remote write carries nothing to deliver'),
+          );
+        },
+      );
+    }
   });
 
   group('DeviceDmReplyRoute', () {
