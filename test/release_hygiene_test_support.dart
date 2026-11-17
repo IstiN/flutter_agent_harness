@@ -591,6 +591,14 @@ case "\$cmd" in
       else
         echo '{"jobs":[]}'
       fi
+    elif [ "\$2" = "view" ] && printf '%s' "\$*" | grep -q -- '--json status'; then
+      # gh-2230: the train-level draft guard probes the draft-owner run's
+      # lifecycle status; run-status.json when planted, completed otherwise.
+      if [ -s "\$GH_STUB_DIR/run-status.json" ]; then
+        cat "\$GH_STUB_DIR/run-status.json"
+      else
+        echo '{"status":"completed"}'
+      fi
     else
       [ "\$2" = "list" ] && cat "\$GH_STUB_DIR/runs.tsv" 2>/dev/null || true
     fi
@@ -699,6 +707,66 @@ String sweepPermissions() {
   final perms = sweep['permissions'];
   if (perms is! YamlMap || perms.isEmpty) return '';
   return perms.keys.map((k) => k.toString()).join(' ');
+}
+
+/// Permission scopes the ci.yml train-level draft guard job actually
+/// carries, read live from the workflow — same stub-enforcement rationale
+/// as [sweepPermissions] (gh-2230).
+String trainGuardPermissions() {
+  final job =
+      jobsOf('.github/workflows/ci.yml')['train-draft-guard'] as YamlMap?;
+  final perms = job?['permissions'];
+  if (perms is! YamlMap || perms.isEmpty) return '';
+  return perms.keys.map((k) => k.toString()).join(' ');
+}
+
+class TrainGuardRun {
+  TrainGuardRun(this.exitCode, this.out, this.log);
+  final int exitCode;
+  final String out;
+  final List<String> log;
+}
+
+/// Runs the train-level draft guard (scripts/release_train_draft_guard.sh)
+/// for tag v1.2.3 against the stub-gh sandbox: releases.json served from
+/// [stubFiles], the draft-owner run's status from run-status.json
+/// (defaults to completed), [extraEnv] for permission-restriction cases.
+TrainGuardRun runTrainGuard(
+  String name,
+  Map<String, String> stubFiles, {
+  Map<String, String> extraEnv = const {},
+}) {
+  final dir = Directory(
+    '${hygieneFixtureRoot.path}/train-guard-$name-${DateTime.now().microsecondsSinceEpoch}',
+  )..createSync(recursive: true);
+  final bin = stubGh(dir.path);
+  for (final e in stubFiles.entries) {
+    File('${dir.path}/${e.key}').writeAsStringSync(e.value);
+  }
+  File('${dir.path}/log').writeAsStringSync('');
+  final res = Process.runSync(
+    'bash',
+    ['scripts/release_train_draft_guard.sh', 'v1.2.3'],
+    workingDirectory: Directory.current.path,
+    environment: {
+      'PATH': '$bin:${Platform.environment['PATH']}',
+      'GITHUB_REPOSITORY': 'OWNER/REPO',
+      'GH_TOKEN': 'stub',
+      'GH_STUB_DIR': dir.path,
+      'GH_LOG_FILE': '${dir.path}/log',
+      'GH_STUB_PERMISSIONS': trainGuardPermissions(),
+      // Production default: the ci.yml job exports the publish point's
+      // settled result. Individual tests override it (or drop it to pin the
+      // fail-safe unset case).
+      'PROVENANCE_RESULT': 'skipped',
+      ...extraEnv,
+    },
+  );
+  return TrainGuardRun(
+    res.exitCode,
+    '${res.stdout}${res.stderr}',
+    File('${dir.path}/log').readAsLinesSync(),
+  );
 }
 
 SweepRun runSweeper(String stubDir, Map<String, String> stubFiles) {
