@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-17T08:41:24.302Z",
+  "ticketKey": "gh-2233",
+  "headSha": "02934fee4b9121eed628e01b7e90fb5eaa1b3cf4",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:2cb9240c4dfc599e",
+      "size": 498
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:7d495525b5db4a2f",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:93fc22994cbf0205",
+      "size": 4756
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:02106f9a7f924776",
+      "size": 1478
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:31b031f25d43a6ee",
+      "size": 3438
+    },
+    "request.md": {
+      "hash": "fnv1a64:1ee466dada54e89c",
+      "size": 4075
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:93efb64963b86a2d",
+      "size": 710
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:15f56d08c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c58012cb80da0c9c",
+      "size": 4179
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1ee466dada54e89c",
+      "size": 4075
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc64VaC5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-mobile.yml:1059",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: integrity-gate failure message conflates the two failure modes**\n\nAll four rewritten steps gate unzip behind one combined condition, so a future red leg that passes the size check but fails the digest prints e.g.\n`failed its integrity gate (97238501 / 97238501 bytes or sha256 mismatch)` — the reader must notice two equal numbers to infer a sha256 mismatch (and a size mismatch prints the actual counts, already unambiguous).\n\nSplitting the message makes the next failure immediately diagnosable, e.g.:\n\n```bash\nif [ \"$got\" -ne \"$ASSET_BYTES\" ]; then\n  echo \"::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping (gh-2233)\"\nelif ! echo \"$ASSET_DIGEST  $ZIP\" | shasum -a 256 -c - >/dev/null; then\n  echo \"::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping (gh-2233)\"\nfi\n```\n\nThe same echo exists in all four steps (`build-mobile.yml` build-ios; `ci.yml` build-ios + build-macos; `nightly.yml` build-release) — apply consistently or let it ride: purely diagnosability, no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:8ffabbf4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: integrity-gate failure message conflates the two failure modes**\n\nAll four rewritten steps gate unzip behind one combined condition, so a future red leg that passes the size check but fails the digest prints e.g.\n`failed its integrity gate (97238501 / 97238501 bytes or sha256 mismatch)` — the reader must notice two equal numbers to infer a sha256 mismatch (and a size mismatch prints the actual counts, already unambiguous).\n\nSplitting the message makes the next failure immediately diagnosable, e.g.:\n\n```bash\nif [ \"$got\" -ne \"$ASSET_BYTES\" ]; then\n  echo \"::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping (gh-2233)\"\nelif ! echo \"$ASSET_DIGEST  $ZIP\" | shasum -a 256 -c - >/dev/null; then\n  echo \"::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping (gh-2233)\"\nfi\n```\n\nThe same echo exists in all four steps (`build-mobile.yml` build-ios; `ci.yml` build-ios + build-macos; `nightly.yml` build-release) — apply consistently or let it ride: purely diagnosability, no behavior change."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:014b174a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, minimal fix for the gh-2233 testflight leg: the four WasmRun restore steps (`build-mobile.yml` build-ios; `ci.yml` build-ios + build-macos; `nightly.yml` build-release) now download to job-private `$RUNNER_TEMP` with `curl --fail`, gated by a pinned size+sha256 before unzip — the same posture build-macos.yml has carried since gh-1759 — and a new 12-assert static shape test pins the invariants.\n\n**Key Issues**: None blocking or important. Verified live during this review: the pinned constants (97,238,501 bytes / sha256 `aca903d7…c548a98`) match the asset GitHub serves today; the gate accepts the authentic bytes and rejects truncated bytes; YAML parse + `bash -n` are clean on all four rewritten run scripts (`set -euo pipefail` present, which makes the `|| echo 0` fallback functional); unzip ordering is gate→unzip in all four; no arch-less `/tmp/WasmRun.xcframework.zip` use remains (build-macos.yml's per-arch persisted partial is the untouched gh-1759 design, per the PR notes). All 33 wasmrun-family tests green, `dart analyze` clean on the new test.\n- digest: `.github/workflows/{build-mobile,ci,nightly}.yml` — the ~20-line hardening block is now copy-pasted 4× (plus build-macos.yml's 5th variant); drift is already guarded by `test/wasmrun_restore_temp_race_test.dart`, so this is refactor-only — a shared composite action would DRY it but is beyond this ticket's scope.\n\n**Next Steps**:\n1. Optional NIT thread: make the integrity-gate error message distinguish size-mismatch from sha256-mismatch (see inline comment).\n2. Let the next daily-publish run confirm the testflight leg goes green — the ticket auto-closes on green; root cause matches the leg log (curl 100% but unzip bad-CRC on the shared fixed path)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-17:aa1cfd24",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚖️ Verdict reconciliation: the effective review verdict on head `02934fee4b9121eed628e01b7e90fb5eaa1b3cf4` is **APPROVE** (at 2026-11-17T08:24:46.593Z, source: pr_review.json).\n\nRemoving `agent:rework` (suggestions do not justify a rework arm; the approval stands). (open nits stay: the polish lap owns them — nits never hold labels)"
+    }
+  ]
+}
