@@ -4,9 +4,12 @@
 // 21 minutes with tokens GROWING and zero pass/done receipts — the
 // engine's collapsed basis under-trigger-exited receipt-free every time.
 //
-// Pure scanner over diagnostic-log lines (no I/O) so any CI job (and the
-// E2E soak replay) can fail on the signature. A CI job running this
-// detector over a run's diagnostic log blocks merge when it fires.
+// Pure scanner over diagnostic-log lines (no I/O). Current consumers are
+// in-repo: the unit tests below and the CLI zero-pass-receipt ITs, which
+// assert REG-1 clean (no start-without-terminal-receipt stretch) on every
+// reachable arming of the auto-compactor. No CI step replays soak/E2E logs
+// through it yet — wiring that job is future work; until then this helper
+// is the asserted library contract, not a merge gate.
 
 /// Whether [lines] contain the gh-2237 defect signature: an
 /// `auto-compact start` receipt never followed by a terminal receipt
