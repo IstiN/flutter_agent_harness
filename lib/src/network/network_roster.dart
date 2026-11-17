@@ -222,28 +222,7 @@ void _readSessions(Object? value, Map<String, NetworkSessionRow> target) {
   if (value is! List) return;
   for (final session in value) {
     if (session is Map) {
-      final id = _nonEmpty(session['id']) ?? _nonEmpty(session['sessionId']);
-      if (id == null) continue;
-      final state = _nonEmpty(session['state']) ?? 'unknown';
-      final networks = session['networks'];
-      if (state == 'offline' && networks is List && networks.isEmpty) {
-        target.remove(id);
-        continue;
-      }
-      final row = NetworkSessionRow(
-        id: id,
-        state: state,
-        title: _nonEmpty(session['title']),
-        snippet: _nonEmpty(session['snippet']),
-        path: _nonEmpty(session['path']),
-        cwd: _nonEmpty(session['cwd']),
-        lastActivity: switch (session['lastActivity'] ??
-            session['lastActiveAt']) {
-          final String raw => DateTime.tryParse(raw)?.toUtc(),
-          _ => null,
-        },
-      );
-      target[id] = row.merge(target[id]);
+      _readSessionMap(session, target);
     } else if (session is String && session.isNotEmpty) {
       target.putIfAbsent(
         session,
@@ -251,6 +230,30 @@ void _readSessions(Object? value, Map<String, NetworkSessionRow> target) {
       );
     }
   }
+}
+
+void _readSessionMap(Map session, Map<String, NetworkSessionRow> target) {
+  final id = _nonEmpty(session['id']) ?? _nonEmpty(session['sessionId']);
+  if (id == null) return;
+  final state = _nonEmpty(session['state']) ?? 'unknown';
+  final networks = session['networks'];
+  if (state == 'offline' && networks is List && networks.isEmpty) {
+    target.remove(id);
+    return;
+  }
+  final row = NetworkSessionRow(
+    id: id,
+    state: state,
+    title: _nonEmpty(session['title']),
+    snippet: _nonEmpty(session['snippet']),
+    path: _nonEmpty(session['path']),
+    cwd: _nonEmpty(session['cwd']),
+    lastActivity: switch (session['lastActivity'] ?? session['lastActiveAt']) {
+      final String raw => DateTime.tryParse(raw)?.toUtc(),
+      _ => null,
+    },
+  );
+  target[id] = row.merge(target[id]);
 }
 
 String? _nonEmpty(Object? value) =>

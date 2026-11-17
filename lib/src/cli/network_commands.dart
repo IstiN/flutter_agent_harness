@@ -217,6 +217,11 @@ fa network rename --clear               Clear THIS device's friendly name''';
         openUrl: open,
       ).signIn(provider: provider);
     }
+    await _completeLogin(account);
+    return 0;
+  }
+
+  Future<void> _completeLogin(NetworkAccount account) async {
     final previousAccount = await store.readAccount();
     final previousDevice = await store.readDevice();
     // Re-login/token refresh on the same account must not orphan the stored
@@ -229,7 +234,6 @@ fa network rename --clear               Clear THIS device's friendly name''';
     await store.writeAccount(account);
     _out('signed in: ${account.label}');
     _out(prompt == null ? 'next: fa network enroll' : 'next: /network enroll');
-    return 0;
   }
 
   static ({String? jwt, String provider, String? error}) _parseLoginArgs(
@@ -278,20 +282,10 @@ fa network rename --clear               Clear THIS device's friendly name''';
   }
 
   Future<int> _enroll(List<String> args) async {
-    var name = deviceName;
-    var explicitName = false;
-    for (var i = 0; i < args.length; i++) {
-      if (args[i] == '--name') {
-        if (++i >= args.length) return _usageError('--name requires a value');
-        name = args[i];
-        explicitName = true;
-      } else if (args[i].startsWith('--name=')) {
-        name = args[i].substring('--name='.length);
-        explicitName = true;
-      } else {
-        return _usageError('unknown enroll option: ${args[i]}');
-      }
-    }
+    final options = _parseEnrollArgs(args, deviceName);
+    if (options.error case final error?) return _usageError(error);
+    var name = options.name;
+    final explicitName = options.explicitName;
     if (explicitName && (name.trim().isEmpty || name.runes.length > 128)) {
       return _usageError('device name must contain 1–128 characters');
     }
@@ -334,6 +328,38 @@ fa network rename --clear               Clear THIS device's friendly name''';
     _out('personal network: ${device.personalNetworkId ?? 'unknown'}');
     _printEnrollmentNextSteps();
     return 0;
+  }
+
+  static ({String name, bool explicitName, String? error}) _parseEnrollArgs(
+    List<String> args,
+    String initialName,
+  ) {
+    var name = initialName;
+    var explicitName = false;
+    for (var i = 0; i < args.length; i++) {
+      final arg = args[i];
+      if (arg == '--name') {
+        if (++i >= args.length) {
+          return (
+            name: name,
+            explicitName: explicitName,
+            error: '--name requires a value',
+          );
+        }
+        name = args[i];
+        explicitName = true;
+      } else if (arg.startsWith('--name=')) {
+        name = arg.substring('--name='.length);
+        explicitName = true;
+      } else {
+        return (
+          name: name,
+          explicitName: explicitName,
+          error: 'unknown enroll option: $arg',
+        );
+      }
+    }
+    return (name: name, explicitName: explicitName, error: null);
   }
 
   void _printEnrollmentNextSteps() {

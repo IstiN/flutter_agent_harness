@@ -91,42 +91,43 @@ final class JsonlSessionCatalogStore implements SessionCatalogStore {
         ),
         _ => (await fs.readTextLines(session.path, maxLines: 256)).valueOrNull,
       };
-      if (lines != null) {
-        for (final line in lines) {
-          if (line.trim().isEmpty) continue;
-          final Object? decoded;
-          try {
-            decoded = jsonDecode(line);
-          } on Object {
-            continue;
-          }
-          if (decoded is! Map) continue;
-          final SessionRecord record;
-          try {
-            record = SessionRecord.fromJson(decoded.cast<String, dynamic>());
-          } on Object {
-            continue;
-          }
-          if (record is! MessageRecord || record.message is! UserMessage) {
-            continue;
-          }
-          final text = userMessageText(
-            (record.message as UserMessage).content,
-          ).replaceAll(RegExp(r'\s+'), ' ').trim();
-          if (text.isEmpty || isSyntheticUserText(text)) continue;
-          final runes = text.runes;
-          snippet = String.fromCharCodes(
-            runes.take(sessionCatalogSnippetMaxRunes),
-          );
-          break;
-        }
-      }
+      if (lines != null) snippet = _firstPromptFromLines(lines);
     } on Object {
       // A broken/foreign session remains in the catalog with path/id fallback.
       snippet = null;
     }
     _promptCache[session.path] = _CachedPrompt(stamp, snippet);
     return snippet;
+  }
+
+  String? _firstPromptFromLines(List<String> lines) {
+    for (final line in lines) {
+      if (line.trim().isEmpty) continue;
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(line);
+      } on Object {
+        continue;
+      }
+      if (decoded is! Map) continue;
+      final SessionRecord record;
+      try {
+        record = SessionRecord.fromJson(decoded.cast<String, dynamic>());
+      } on Object {
+        continue;
+      }
+      if (record is! MessageRecord || record.message is! UserMessage) {
+        continue;
+      }
+      final text = userMessageText(
+        (record.message as UserMessage).content,
+      ).replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (text.isEmpty || isSyntheticUserText(text)) continue;
+      return String.fromCharCodes(
+        text.runes.take(sessionCatalogSnippetMaxRunes),
+      );
+    }
+    return null;
   }
 
   Future<List<String>> _readHeadLines(

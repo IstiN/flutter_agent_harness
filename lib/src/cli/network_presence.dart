@@ -738,14 +738,8 @@ final class NetworkPresenceController
       mail,
       currentAgentAddress: addressedAgent!,
     );
-    final session = _session;
-    final sink = session?.dmSink;
-    final isCurrent =
-        session != null &&
-        sink != null &&
-        envelope.to == _agentAddress &&
-        (mail.sessionId == null || mail.sessionId == session.sessionId);
-    if (!isCurrent) {
+    final sink = _session?.dmSink;
+    if (!_isCurrentDmSession(mail, envelope)) {
       if (await _wakeCatalogSession(mail, route)) {
         throw StateError('network DM wake requested; original left unacked');
       }
@@ -761,7 +755,7 @@ final class NetworkPresenceController
       throw StateError('network DM queued / not listening; left unacked');
     }
 
-    await sink(
+    await sink!(
       CliNetworkDm(
         mail: mail,
         senderLabel: _senderLabel(envelope.from ?? ''),
@@ -776,6 +770,14 @@ final class NetworkPresenceController
       route: route,
       reply: deviceDmAcceptedReceipt,
     );
+  }
+
+  bool _isCurrentDmSession(InboundMail mail, NetworkEnvelope envelope) {
+    final session = _session;
+    return session != null &&
+        session.dmSink != null &&
+        envelope.to == _agentAddress &&
+        (mail.sessionId == null || mail.sessionId == session.sessionId);
   }
 
   Future<bool> _wakeCatalogSession(
@@ -847,17 +849,23 @@ final class NetworkPresenceController
     if (at > 0 && at + 1 < sender.length) {
       final agent = sender.substring(0, at);
       final deviceId = sender.substring(at + 1);
-      for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
-        if (row.deviceId == deviceId && row.agentAddresses.contains(sender)) {
-          return '${row.name} · $agent';
-        }
-      }
+      final rosterLabel = _rosterSenderLabel(sender, deviceId, agent);
+      if (rosterLabel != null) return rosterLabel;
       return '$deviceId · $agent';
     }
     final userId = sender.startsWith('user:')
         ? sender.substring('user:'.length)
         : sender;
     return 'network user $userId';
+  }
+
+  String? _rosterSenderLabel(String sender, String deviceId, String agent) {
+    for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
+      if (row.deviceId == deviceId && row.agentAddresses.contains(sender)) {
+        return '${row.name} · $agent';
+      }
+    }
+    return null;
   }
 
   void _setPhase(ConnectorLinkState next) {
