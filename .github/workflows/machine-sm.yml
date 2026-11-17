@@ -66,6 +66,7 @@ jobs:
           echo "$HOME/.dmtools/bin" >> "$GITHUB_PATH"
 
       - name: Reconcile the machine loop (patched pack)
+        timeout-minutes: 8   # a hung tick fails fast instead of burning 15 min
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
