@@ -445,8 +445,8 @@ void main() {
         reason: 'the funnel compaction started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('interrupted by user'),
+      await io.out.waitUntilContains(
+        'interrupted by user',
         reason: 'the abort surfaces as an error line',
       );
       // No retry after the abort: give a would-be second pass ample time to
@@ -619,8 +619,8 @@ void main() {
         reason: 'the manual compaction summarizer started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('compaction interrupted'),
+      await io.out.waitUntilContains(
+        'compaction interrupted',
         reason: 'the compaction-only interrupt prints its dim receipt',
       );
       fake.hangFromCall = 1 << 30; // re-arm: the follow-up turn must play out
@@ -704,8 +704,8 @@ void main() {
         reason: 'turn 1 completed and the post-run compaction started',
       );
       io.interrupt();
-      await waitForIt(
-        () => io.out.toString().contains('compaction interrupted'),
+      await io.out.waitUntilContains(
+        'compaction interrupted',
         reason: 'the post-run compaction interrupt prints its dim receipt',
       );
       fake.hangFromCall = 1 << 30; // re-arm: the follow-up turn must play out

@@ -73,26 +73,21 @@ void main() {
 
       // The full add wizard: api type → URL → name → key → model.
       io.sendLine('/provider custom');
-      await waitForIt(() => io.out.toString().contains('type a number:'));
+      await io.out.waitUntilContains('type a number:');
       io.sendLine('1'); // openai-like
-      await waitForIt(() => io.out.toString().contains('base URL (empty ='));
+      await io.out.waitUntilContains('base URL (empty =');
       io.sendLine('https://api.kimi.com/coding/v1');
-      await waitForIt(
-        () => io.out.toString().contains('provider name (empty ='),
-      );
+      await io.out.waitUntilContains('provider name (empty =');
       io.sendLine('kimi_ira1');
-      await waitForIt(
-        () => io.out.toString().contains('API key (empty for none):'),
+      await io.out.waitUntilContains(
+        'API key (empty for none):',
         reason: 'key step',
       );
       io.sendLine('sk-ira1-secret');
-      await waitForIt(
-        () => io.out.toString().contains('model id'),
-        reason: 'model step',
-      );
+      await io.out.waitUntilContains('model id', reason: 'model step');
       io.sendLine('kimi-for-coding');
-      await waitForIt(
-        () => io.out.toString().contains('saved provider kimi_ira1'),
+      await io.out.waitUntilContains(
+        'saved provider kimi_ira1',
         reason: 'saved',
       );
       io.sendLine('/exit');
@@ -126,11 +121,9 @@ void main() {
         streamFunction: FakeStreamFunction([]).call,
       );
       final run2 = cli2.run();
-      await waitForIt(() => io2.out.toString().contains('[Model]'));
+      await io2.out.waitUntilContains('[Model]');
       io2.sendLine('/provider kimi_ira1');
-      await waitForIt(
-        () => io2.out.toString().contains('switched provider to openai'),
-      );
+      await io2.out.waitUntilContains('switched provider to openai');
       io2.sendLine('/exit');
       await run2;
 
@@ -166,16 +159,10 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider kimi_me');
-      await waitForIt(
-        () => io.out.toString().contains(
-          '/key delete FA_KEY_API_KIMI_COM_KIMI_ME',
-        ),
-      );
+      await io.out.waitUntilContains('/key delete FA_KEY_API_KIMI_COM_KIMI_ME');
       io.sendLine('/provider kimi_ira1');
-      await waitForIt(
-        () => io.out.toString().contains(
-          '/key delete FA_KEY_API_KIMI_COM_KIMI_IRA1',
-        ),
+      await io.out.waitUntilContains(
+        '/key delete FA_KEY_API_KIMI_COM_KIMI_IRA1',
       );
       io.sendLine('/exit');
       await run;
@@ -213,9 +200,7 @@ void main() {
       io.sendLine(
         '/provider openai https://api.kimi.com/coding/v1 sk-fresh-token',
       );
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to openai'),
-      );
+      await io.out.waitUntilContains('switched provider to openai');
       io.sendLine('/exit');
       await run;
 
@@ -253,9 +238,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/model other-kimi-model');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to other-kimi-model'),
-      );
+      await io.out.waitUntilContains('switched model to other-kimi-model');
       io.sendLine('/exit');
       await run;
 
@@ -317,9 +300,7 @@ void main() {
       await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
       await cli.tuiSelectModelForTest('kimi_me|k3-256k');
-      await waitForIt(
-        () => io.out.toString().contains('switched model to k3-256k'),
-      );
+      await io.out.waitUntilContains('switched model to k3-256k');
       io.sendLine('go');
       await waitForIt(() => sentKeys.isNotEmpty && !cli.isBusy);
       io.sendLine('/exit');
@@ -346,7 +327,7 @@ void main() {
 
       // The delete picker is TUI; line mode exposes it through the registry
       // removal API the picker calls.
-      await waitForIt(() => io.out.toString().contains('[Model]'));
+      await io.out.waitUntilContains('[Model]');
       cli.removeProvider(registry.find('kimi_ira1')!);
       io.sendLine('/exit');
       await run;
@@ -363,12 +344,10 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/key set FA_KEY_API_KIMI_COM_KIMI_IRA1 sk-via-key-set');
-      await waitForIt(
-        () => io.out.toString().contains('FA_KEY_API_KIMI_COM_KIMI_IRA1'),
-      );
+      await io.out.waitUntilContains('FA_KEY_API_KIMI_COM_KIMI_IRA1');
       io.sendLine('/key');
-      await waitForIt(
-        () => io.out.toString().contains('fake store'),
+      await io.out.waitUntilContains(
+        'fake store',
         reason: 'key listing shows the store as the source',
       );
       io.sendLine('/exit');
@@ -390,14 +369,12 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/key set FA_KEY_DEGRADED_GH1059 sk-v1');
-        await waitForIt(
-          () => io.out.toString().contains('could not save'),
+        await io.out.waitUntilContains(
+          'could not save',
           reason: 'the loud per-save print still fires',
         );
         io.sendLine('/key');
-        await waitForIt(
-          () => io.out.toString().contains('secure storage: fake store'),
-        );
+        await io.out.waitUntilContains('secure storage: fake store');
         io.sendLine('/exit');
         await run;
 
@@ -439,9 +416,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot-x');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
@@ -493,9 +468,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/provider copilot-x');
-      await waitForIt(
-        () => io.out.toString().contains('switched provider to copilot'),
-      );
+      await io.out.waitUntilContains('switched provider to copilot');
       io.sendLine('/exit');
       await run;
 
