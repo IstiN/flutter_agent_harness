@@ -48,8 +48,8 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, sessionName: 'widgets');
     final run = cli.run();
-    await waitForIt(
-      () => io.out.toString().contains(local.id),
+    await io.out.waitUntilContains(
+      local.id,
       reason: 'the local session id appears in the boot banner',
     );
     expect(io.out.toString(), isNot(contains(foreign.id)));
@@ -62,7 +62,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, sessionName: 'widgets');
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains(foreign.id));
+    await io.out.waitUntilContains(foreign.id);
     io.sendLine('/exit');
     await run;
   });
@@ -75,7 +75,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, sessionName: 'widgets');
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains(newer.id));
+    await io.out.waitUntilContains(newer.id);
     final out = io.out.toString();
     expect(out, contains("2 sessions named 'widgets'"));
     expect(out, contains('fa --session <id>'));
@@ -94,8 +94,8 @@ void main() {
     await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
 
     io.sendLine('/session widgets');
-    await waitForIt(
-      () => io.out.toString().contains("Several sessions named 'widgets'"),
+    await io.out.waitUntilContains(
+      "Several sessions named 'widgets'",
       reason: 'the ambiguity question lists the candidates',
     );
     // Both rows carry their folder + id; answer with the number of the
@@ -109,8 +109,8 @@ void main() {
         .firstWhere((line) => line.contains(second.id));
     final number = RegExp(r'^\s*(\d+)\)').firstMatch(row)!.group(1)!;
     io.sendLine(number);
-    await waitForIt(
-      () => io.out.toString().contains("switched to session 'widgets'"),
+    await io.out.waitUntilContains(
+      "switched to session 'widgets'",
       reason: 'the chosen session loads',
     );
     io.sendLine('/exit');

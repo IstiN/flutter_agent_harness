@@ -80,10 +80,7 @@ void main() {
     // The REPL settles only at /exit; the test ends via tearDown.
     unawaited(cli.run());
     io.sendLine('/help');
-    await waitForIt(
-      () => io.out.toString().contains('/tasks'),
-      reason: 'REPL is up',
-    );
+    await io.out.waitUntilContains('/tasks', reason: 'REPL is up');
     return cli;
   }
 
@@ -95,10 +92,7 @@ void main() {
     () async {
       final cli = await bootedCli(FakeStreamFunction([textTurn('')]).call);
       io.sendLine('/model-edit contextWindow 478000');
-      await waitForIt(
-        () => io.out.toString().contains('478000'),
-        reason: 'the pin applied',
-      );
+      await io.out.waitUntilContains('478000', reason: 'the pin applied');
       expect(cli.contextWindowRegistry.isVerified(testModel), isTrue);
       expect(cli.contextWindowRegistry.windowFor(testModel), 478000);
     },
@@ -132,10 +126,7 @@ void main() {
       );
       final cli = await bootedRichCli(richModel);
       io.sendLine('/model-edit contextWindow 478000');
-      await waitForIt(
-        () => io.out.toString().contains('478000'),
-        reason: 'the pin applied',
-      );
+      await io.out.waitUntilContains('478000', reason: 'the pin applied');
       final model = cli.agent.state.model;
       // The swap itself…
       expect(model.contextWindow, 478000);
