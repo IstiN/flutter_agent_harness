@@ -175,6 +175,7 @@ void main() {
     PluginPickOption? pickOption,
     bool hubUp = false,
     Object? spawnError,
+    Future<int> Function(String url)? hubStopper,
   }) {
     final env = environment ?? <String, String>{};
     final plugin = _ScriptedHubPlugin(environment: env, home: tempHome.path);
@@ -194,6 +195,7 @@ void main() {
       localHubUrl: 'ws://127.0.0.1:26499/ws',
       hubHealthProbe: probe,
       hubSpawner: spawner,
+      hubStopper: hubStopper,
     );
     final io = _CapturingIo();
     final context = PluginContext(
@@ -309,6 +311,25 @@ void main() {
       expect(io.text, contains('DAP is up'));
       expect(spawnPorts, [26499]);
       expect(plugin.connectCalls, ['ws://127.0.0.1:26499/ws']);
+    });
+
+    test('stop choice stops quietly when nothing is running', () async {
+      // Hermetic stop wiring: the menu pick must reach the `/dap stop`
+      // handler and its `hubStopper` seam with the local hub url; exit
+      // 0 prints nothing (the quiet stop) — anything else prints the
+      // `[hub] stop did not complete` line.
+      final stopCalls = <String>[];
+      final (slash, io, _, _, _) = registerStartHost(
+        environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
+        pickOption: (title, options, {initialKey}) async => 'stop',
+        hubStopper: (url) async {
+          stopCalls.add(url);
+          return 0;
+        },
+      );
+      await slash([]);
+      expect(stopCalls, ['ws://127.0.0.1:26499/ws']);
+      expect(io.text, isNot(contains('[hub] stop did not complete')));
     });
   });
 

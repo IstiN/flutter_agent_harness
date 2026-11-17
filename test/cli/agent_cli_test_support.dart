@@ -99,10 +99,12 @@ class ListenableOutput implements StringSink {
   bool contains(String needle) => _buf.toString().contains(needle);
 
   /// Bounded, timer-free wait for [needle] in the accumulated output.
-  /// The sync check and the firstWhere arm run in the same synchronous
-  /// block, so a chunk cannot slip between them; firstWhere cancels its
-  /// own subscription on completion. [seconds] caps the wait — expiry
-  /// throws a named TimeoutException (loud, like waitForIt's fail).
+  /// The sync check and the [StreamIterator] arm run in the same
+  /// synchronous block, so a chunk cannot slip between them; the
+  /// iterator's subscription is cancelled on EVERY exit path — match
+  /// or timeout — so no stale waiter lingers on the broadcast stream.
+  /// [seconds] caps the wait — expiry throws a named TimeoutException
+  /// (loud, like waitForIt's fail).
   Future<void> waitUntilContains(
     String needle, {
     String? reason,
@@ -116,9 +118,10 @@ class ListenableOutput implements StringSink {
     // `await _settled` in the input handler.
     await Future<void>.delayed(Duration.zero);
     if (contains(needle)) return;
-    await _chunks.stream
-        .firstWhere((_) => contains(needle))
-        .timeout(
+    final chunks = StreamIterator<void>(_chunks.stream);
+    try {
+      while (!contains(needle)) {
+        await chunks.moveNext().timeout(
           Duration(seconds: seconds),
           onTimeout: () {
             final tail = _buf.toString();
@@ -132,6 +135,10 @@ class ListenableOutput implements StringSink {
             );
           },
         );
+      }
+    } finally {
+      await chunks.cancel();
+    }
   }
 
   void clear() => _buf.clear();
