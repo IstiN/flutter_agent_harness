@@ -2,15 +2,6 @@
   "issue-2050": [
     {
       "leg": "dev",
-      "at": "2026-11-03T06:37:17Z",
-      "prompt": 6453,
-      "completion": 0,
-      "total": 6453,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "dev",
       "at": "2026-11-03T06:49:19Z",
       "prompt": 7122,
       "completion": 0,
@@ -4223,6 +4214,15 @@
       "completion": 61605,
       "total": 184899,
       "cacheRead": 11931456,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-17T06:47:33Z",
+      "prompt": 104942,
+      "completion": 32496,
+      "total": 137438,
+      "cacheRead": 1693312,
       "model": "glm-5.3-flash"
     }
   ],
