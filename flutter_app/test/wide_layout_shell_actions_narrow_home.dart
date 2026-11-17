@@ -75,6 +75,16 @@ void wideShellNarrowHomeTests() {
       },
     );
 
+    test('phone dock moves 15% below its #2196 position', () {
+      // #2196 reduced the original 8pt gap to 6.4pt. Issue #2215 asks for
+      // another 15% downward move, not 15% of the screen or dock height.
+      expect(MessengerBottomNavigation.bottomGap, closeTo(6.4 * .85, .0001));
+      expect(
+        MessengerFloatingDockInsets.minInflatedBottom,
+        MessengerBottomNavigation.height + MessengerBottomNavigation.bottomGap,
+      );
+    });
+
     testWidgets('floating dock geometry is invariant across themes', (
       tester,
     ) async {

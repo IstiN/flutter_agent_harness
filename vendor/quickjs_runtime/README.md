@@ -21,6 +21,15 @@ A fresh checkout (including a pub-cache download) has **no** `.so` — run
 the build once after `pub add`. pub packages cannot ship binaries, so
 consumers wire this into their own build (Makefile / CI step).
 
+When consumed through Dart/Flutter Native Assets (`hook/build.dart`), no
+manual step is needed: the hook compiles the vendored C sources on iOS,
+Android, macOS, Linux, and Windows. On Windows it uses the MSVC toolchain
+resolved by `native_toolchain_c`, applying the `native/quickjs/msvc`
+compatibility shims (forced include) so the GCC-oriented QuickJS sources
+compile with `cl.exe`; non-Windows builds are unaffected. On Windows,
+`Atomics.*` operations are unavailable (pthreads-only in upstream
+QuickJS).
+
 The library is looked up via the `JSR_QUICKJS_LIB` env var, inside this
 package's checkout, or in `<cwd>/native/quickjs/` — in that order.
 

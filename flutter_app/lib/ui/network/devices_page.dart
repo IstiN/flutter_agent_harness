@@ -17,6 +17,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_session_folders.dart'
     show folderAvatarGradient;
+import 'package:fa/ui/widgets/messenger_section_header.dart';
 
 import 'package:fa_ui/fa_ui.dart';
 // The presence payload model is pure Dart in the connector core.
@@ -53,10 +54,101 @@ import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart
 /// supported). Signed out → the not-running retry line above the rail;
 /// connecting → skeleton line; link lost → a muted reconnecting line above
 /// the last-known rail.
+/// Shared desktop/mobile first-connect friendly-name question. Empty input
+/// resolves to [defaultName]; dismissing returns null (the connector retains
+/// the same default rather than creating an unnamed device).
+Future<String?> showDeviceEnrollmentNameDialog(
+  BuildContext context, {
+  required String defaultName,
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _DeviceEnrollmentNameDialog(defaultName: defaultName),
+);
+
+final class _DeviceEnrollmentNameDialog extends StatefulWidget {
+  const _DeviceEnrollmentNameDialog({required this.defaultName});
+
+  final String defaultName;
+
+  @override
+  State<_DeviceEnrollmentNameDialog> createState() =>
+      _DeviceEnrollmentNameDialogState();
+}
+
+final class _DeviceEnrollmentNameDialogState
+    extends State<_DeviceEnrollmentNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.defaultName)
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: widget.defaultName.length,
+      );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final entered = _controller.text.trim();
+    Navigator.of(context).pop(entered.isEmpty ? widget.defaultName : entered);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      key: const ValueKey('enrollDeviceNameDialog'),
+      title: Text(l10n.networkDeviceEnrollNameTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(l10n.networkDeviceEnrollNamePrompt),
+          const SizedBox(height: 16),
+          FaTextField(
+            key: const ValueKey('enrollDeviceName'),
+            controller: _controller,
+            autofocus: true,
+            maxLength: 64,
+            labelText: l10n.networkDeviceNameLabel,
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        FaButton(
+          key: const ValueKey('enrollDeviceNameCancel'),
+          label: l10n.commonCancel,
+          variant: FaButtonVariant.secondary,
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        FaButton(
+          key: const ValueKey('enrollDeviceNameConfirm'),
+          label: l10n.networkDeviceEnrollNameAction,
+          onPressed: _submit,
+        ),
+      ],
+    );
+  }
+}
+
+/// Stale, timestamped offline rows disappear from Devices after 30 days.
+/// This is only a client display TTL; fa_network must reap its stored rows.
+const deviceOfflineSessionRetention = Duration(days: 30);
+
 class DevicesPage extends StatefulWidget {
   const DevicesPage({
     super.key,
     required this.service,
+    this.compact = false,
+    this.now,
     this.sessions,
     this.onOpenSession,
     this.selectedSessionId,
@@ -76,6 +168,12 @@ class DevicesPage extends StatefulWidget {
 
   /// The app-scope device connector service (one upstream socket, AC1).
   final DeviceConnectorService service;
+
+  /// Narrow shell chrome uses the same 54pt glass band as Networks.
+  final bool compact;
+
+  /// Clock for the 30-day offline-row TTL (injectable in tests).
+  final DateTime Function()? now;
 
   /// The app's local chat list — the same controller the chat screen's
   /// Local sessions panel projects. The This-device pane ALWAYS lists its
@@ -307,7 +405,11 @@ class _DevicesPageState extends State<DevicesPage> {
         msgId: envelope.msgId,
         ts: envelope.ts,
         machine: machine,
-        agents: _serverAgents(device['agents'], oldPresence?.agents),
+        agents: _serverAgents(
+          device['agents'],
+          oldPresence?.agents,
+          deviceId: roster.deviceId,
+        ),
         sessions: _serverSessions(
           device['sessions'],
           oldPresence?.sessions,
@@ -326,16 +428,27 @@ class _DevicesPageState extends State<DevicesPage> {
   /// list is its new snapshot, so an empty list deliberately clears it.
   Map<String, AgentRunState> _serverAgents(
     Object? value,
-    Map<String, AgentRunState>? previous,
-  ) {
+    Map<String, AgentRunState>? previous, {
+    required String deviceId,
+  }) {
     if (value is! List) return previous ?? const {};
     final agents = <String, AgentRunState>{};
     for (final node in value) {
-      if (node is! Map || node['exposed'] != true) continue;
-      final name = node['name'];
+      if (node is! Map || node['exposed'] == false) continue;
+      final rawAddress = node['address'];
+      final rawName = node['name'];
       final state = AgentRunState.tryParse('${node['state'] ?? ''}');
-      if (name is! String || name.isEmpty || state == null) continue;
-      agents[name] = state;
+      if (rawAddress is String && rawAddress.trim().isNotEmpty) {
+        if (state == null) continue;
+        final address = rawAddress.trim();
+        agents[address.contains('@') ? address : '$address@$deviceId'] = state;
+      } else if (rawName is String &&
+          rawName.trim().isNotEmpty &&
+          state != null) {
+        // Legacy `name` is already the roster key (sometimes the bare agent,
+        // sometimes a full address); retain it verbatim for DM compatibility.
+        agents[rawName.trim()] = state;
+      }
     }
     return agents;
   }
@@ -344,66 +457,93 @@ class _DevicesPageState extends State<DevicesPage> {
     Object? value,
     Map<String, ConnectorSessionPresence>? previous,
     NetworkEnvelopeKind kind,
-  ) {
-    if (value is! List) return previous ?? const {};
-    // ROSTER carries the complete persisted projection. PRESENCE carries
-    // live/heartbeat deltas from the registry (often live-only, sometimes an
-    // explicit empty list): merge those deltas instead of erasing hundreds of
-    // persisted REST rows after the next heartbeat.
-    final sessions = <String, ConnectorSessionPresence>{
-      if (kind == NetworkEnvelopeKind.presence) ...?previous,
-    };
-    for (final node in value) {
-      if (node is! Map) continue;
-      final id = node['id'];
-      if (id is! String || id.isEmpty) continue;
-      final legacyKnownRow = _legacyKnownServerSession(
-        node,
-        previous,
-        kind,
-        id,
-      );
-      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
-        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
-          sessions.remove(id);
-        }
-        continue;
-      }
-      final state = ConnectorSessionPresence.tryParse('${node['state'] ?? ''}');
-      if (state != null) sessions[id] = state;
-    }
-    return sessions;
-  }
+  ) => _projectServerSessions(
+    value,
+    previous,
+    kind,
+    (node, _) => ConnectorSessionPresence.tryParse('${node['state'] ?? ''}'),
+  );
 
   Map<String, ConnectorSessionMetadata> _serverSessionMetadata(
     Object? value,
     Map<String, ConnectorSessionMetadata>? previous,
     NetworkEnvelopeKind kind,
+  ) => _projectServerSessions(value, previous, kind, (_, metadata) => metadata);
+
+  /// Applies one roster/presence row to either session projection. ROSTER is
+  /// a complete snapshot; PRESENCE starts from the persisted rows and merges
+  /// live deltas, including explicit removals.
+  Map<String, T> _projectServerSessions<T>(
+    Object? value,
+    Map<String, T>? previous,
+    NetworkEnvelopeKind kind,
+    T? Function(Map<Object?, Object?> node, ConnectorSessionMetadata? metadata)
+    project,
   ) {
     if (value is! List) return previous ?? const {};
-    final metadata = <String, ConnectorSessionMetadata>{
+    final projected = <String, T>{
       if (kind == NetworkEnvelopeKind.presence) ...?previous,
     };
     for (final node in value) {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
-      final legacyKnownRow = _legacyKnownServerSession(
-        node,
-        previous,
-        kind,
-        id,
-      );
-      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
-        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
-          metadata.remove(id);
-        }
+      final metadata = ConnectorSessionMetadata.fromJson(node);
+      final action = _serverSessionAction(node, previous, kind, id, metadata);
+      if (action == _ServerSessionAction.remove) {
+        projected.remove(id);
         continue;
       }
-      final parsed = ConnectorSessionMetadata.fromJson(node);
-      if (parsed != null) metadata[id] = parsed;
+      if (action == _ServerSessionAction.skip) continue;
+      final row = project(node, metadata);
+      if (row != null) projected[id] = row;
     }
-    return metadata;
+    return projected;
+  }
+
+  _ServerSessionAction _serverSessionAction<T>(
+    Map<Object?, Object?> node,
+    Map<String, T>? previous,
+    NetworkEnvelopeKind kind,
+    String id,
+    ConnectorSessionMetadata? metadata,
+  ) {
+    if ((metadata?.isSubagent ?? false) || _serverSessionExpired(node)) {
+      return _ServerSessionAction.remove;
+    }
+    final legacyKnownRow = _legacyKnownServerSession(node, previous, kind, id);
+    if (_serverSessionVisible(node, kind) || legacyKnownRow) {
+      return _ServerSessionAction.retain;
+    }
+    if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
+      return _ServerSessionAction.remove;
+    }
+    return _ServerSessionAction.skip;
+  }
+
+  bool _localSessionExpired(ChatListEntry session) {
+    if (session.presence == ChatPresence.live ||
+        session.presence == ChatPresence.busy ||
+        session.isStreaming) {
+      return false;
+    }
+    final activity = session.lastActivity ?? session.createdAt;
+    final now = widget.now?.call() ?? DateTime.now();
+    return now.toUtc().difference(activity.toUtc()) >
+        deviceOfflineSessionRetention;
+  }
+
+  bool _serverSessionExpired(Map<Object?, Object?> session) {
+    if (ConnectorSessionPresence.tryParse('${session['state'] ?? ''}') !=
+        ConnectorSessionPresence.offline) {
+      return false;
+    }
+    final raw = session['lastActivity'] ?? session['lastActiveAt'];
+    final lastActivity = raw is String ? DateTime.tryParse(raw) : null;
+    if (lastActivity == null) return false;
+    final now = widget.now?.call() ?? DateTime.now();
+    return now.toUtc().difference(lastActivity.toUtc()) >
+        deviceOfflineSessionRetention;
   }
 
   bool _serverSessionVisible(
@@ -435,6 +575,15 @@ class _DevicesPageState extends State<DevicesPage> {
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final header = MessengerSectionHeader(
+      title: context.l10n.networkDevicesTitle,
+      compact: widget.compact,
+      searchController: null,
+      searchCollapsed: true,
+      searchHint: context.l10n.launcherSearchHint,
+      onProfile: null,
+      onNew: null,
+    );
     return StreamBuilder<DeviceConnectorPhase>(
       stream: widget.service.phaseStream,
       initialData: widget.service.phase,
@@ -444,41 +593,30 @@ class _DevicesPageState extends State<DevicesPage> {
             phase == DeviceConnectorPhase.preparing ||
             phase == DeviceConnectorPhase.connecting;
         if (!waitingForConnection) _hasPresentedBody = true;
-        return Column(
+        return MessengerGlassPanel(
           key: const ValueKey('devicesPage'),
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _sectionHeader(context, colors),
-            Expanded(
-              child: waitingForConnection && !_hasPresentedBody
-                  ? _phaseLine(
+          compact: widget.compact,
+          underlayKey: const ValueKey('devicesChromeUnderlay'),
+          header: header,
+          body: Builder(
+            builder: (context) => waitingForConnection && !_hasPresentedBody
+                ? Padding(
+                    padding: EdgeInsets.only(
+                      top: MessengerGlassBodyInsets.topOf(context),
+                    ),
+                    child: _phaseLine(
                       context,
                       key: const ValueKey('devicesSkeleton'),
                       label: context.l10n.networkDeviceConnecting,
                       color: colors.dim.withValues(alpha: 0.5),
-                    )
-                  : _connectedBody(context, colors, phase),
-            ),
-          ],
+                    ),
+                  )
+                : _connectedBody(context, colors, phase),
+          ),
         );
       },
     );
   }
-
-  /// The small-caps section header (the page's one label line — the
-  /// selected device's name lives in the pane header).
-  Widget _sectionHeader(BuildContext context, FahColors colors) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-    child: Text(
-      context.l10n.networkDevicesTitle.toUpperCase(),
-      style: TextStyle(
-        color: colors.dim,
-        fontSize: 12,
-        fontWeight: FontWeight.bold,
-        letterSpacing: 0.5,
-      ),
-    ),
-  );
 
   /// The connected body: the phase banners above the last-known rail +
   /// pane (a failed start keeps the rail mounted — the own device stays
@@ -490,6 +628,8 @@ class _DevicesPageState extends State<DevicesPage> {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (phase != DeviceConnectorPhase.online)
+        SizedBox(height: MessengerGlassBodyInsets.topOf(context)),
       if (phase == DeviceConnectorPhase.preparing ||
           phase == DeviceConnectorPhase.connecting)
         _phaseLine(
@@ -575,23 +715,30 @@ class _DevicesPageState extends State<DevicesPage> {
                 ),
                 VerticalDivider(width: 1, color: FahColors.of(context).border),
                 Expanded(
-                  child: _DevicePane(
-                    device: selected,
-                    onOpenSession: widget.onOpenSession,
-                    selectedSessionId: widget.selectedSessionId,
-                    selectedRemoteSessionId: _selectedRemoteSessionId,
-                    onRenameOwn: () => unawaited(_renameOwnDevice()),
-                    onOpenConversation:
-                        (deviceId, agentAddress, sessionId, sessionTitle) {
-                          setState(() => _selectedRemoteSessionId = sessionId);
-                          widget.onOpenRemoteConversation?.call(
-                            deviceId: deviceId,
-                            deviceLabel: selected.label,
-                            agentAddress: agentAddress,
-                            sessionId: sessionId,
-                            sessionTitle: sessionTitle,
-                          );
-                        },
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: MessengerGlassBodyInsets.topOf(context),
+                    ),
+                    child: _DevicePane(
+                      device: selected,
+                      onOpenSession: widget.onOpenSession,
+                      selectedSessionId: widget.selectedSessionId,
+                      selectedRemoteSessionId: _selectedRemoteSessionId,
+                      onRenameOwn: () => unawaited(_renameOwnDevice()),
+                      onOpenConversation:
+                          (deviceId, agentAddress, sessionId, sessionTitle) {
+                            setState(
+                              () => _selectedRemoteSessionId = sessionId,
+                            );
+                            widget.onOpenRemoteConversation?.call(
+                              deviceId: deviceId,
+                              deviceLabel: selected.label,
+                              agentAddress: agentAddress,
+                              sessionId: sessionId,
+                              sessionTitle: sessionTitle,
+                            );
+                          },
+                    ),
                   ),
                 ),
               ],
@@ -622,9 +769,14 @@ class _DevicesPageState extends State<DevicesPage> {
     final defaultOwnLabel = context.l10n.networkDeviceThisDevice;
     final ownFriendlyName = ownDevice?.friendlyName;
     final ownMachineKey = _enrollmentMachineGroupKey(ownDevice);
+    final visibleLocalSessions = controller == null
+        ? const <ChatListEntry>[]
+        : deviceVisibleLocalSessions(controller)
+              .where((entry) => !_localSessionExpired(entry))
+              .toList(growable: false);
     final ownSessionIds = <String>{
       ...?ownFrame?.sessions.keys,
-      ...?controller?.localEntries.map((entry) => entry.id.value),
+      for (final entry in visibleLocalSessions) entry.id.value,
     };
 
     final grouping = _RemoteDeviceGrouping.build(
@@ -692,9 +844,7 @@ class _DevicesPageState extends State<DevicesPage> {
                   in entry.value.presence?.agents.keys ?? const <String>{})
                 name: entry.key,
         },
-        localSessions: controller == null
-            ? const <ChatListEntry>[]
-            : deviceVisibleLocalSessions(controller),
+        localSessions: visibleLocalSessions,
       ),
       for (final groupKey in groupKeys)
         _remoteGroupEntry(
@@ -737,6 +887,7 @@ class _DevicesPageState extends State<DevicesPage> {
           ? (first.roster?.friendlyName == null ? null : first.roster!.name)
           : first.roster?.name,
       dotColor: deviceMachineDotColor(colors, best),
+      isOffline: best == MachinePresence.offline,
       icon: devicePlatformIcon(
         name: first.roster?.name,
         friendlyName: first.roster?.friendlyName,
@@ -938,6 +1089,8 @@ class _RemoteDeviceGrouping {
   }
 }
 
+enum _ServerSessionAction { retain, skip, remove }
+
 /// Presence rows without an exposure list are legacy patches: retain a known
 /// persisted row even though the patch itself carries no visibility fields.
 bool _legacyKnownServerSession<T>(
@@ -1045,6 +1198,7 @@ class _DeviceEntry {
     this.subtitle,
     required this.dotColor,
     this.isOwn = false,
+    this.isOffline = false,
     this.agents = const {},
     this.agentDmPubs = const {},
     this.exposedSessions = const {},
@@ -1067,6 +1221,10 @@ class _DeviceEntry {
   /// True for This device (the `deviceRow`/`deviceAvatar`/`deviceDot`
   /// unsuffixed keys).
   final bool isOwn;
+
+  /// Last-known machine presence forces every child row offline, even when
+  /// its last session heartbeat was wake-on-DM before an unclean disconnect.
+  final bool isOffline;
   final Color dotColor;
   final Map<String, AgentRunState> agents;
 
@@ -1117,7 +1275,10 @@ class _DeviceRail extends StatelessWidget {
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: ListView(
         key: const ValueKey('deviceRail'),
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: EdgeInsets.only(
+          top: MessengerGlassBodyInsets.topOf(context) + 6,
+          bottom: 6,
+        ),
         children: [
           for (final device in devices)
             _DeviceRailCell(
@@ -1481,25 +1642,34 @@ class _DevicePane extends StatelessWidget {
     Widget remoteCard(
       MapEntry<String, ConnectorSessionPresence> entry, {
       required bool hairline,
-    }) => DeviceSessionCard(
-      key: ValueKey('sessionRow:${entry.key}'),
-      dotKey: ValueKey('sessionDot:${entry.key}'),
-      dotColor: deviceSessionDotColor(colors, entry.value),
-      title: _sessionTitle(
-        entry.key,
-        device.sessionMetadata[entry.key]?.title,
-        path: device.sessionMetadata[entry.key]?.path,
-      ),
-      subtitle: device.sessionMetadata[entry.key]?.path ?? '',
-      timestamp: chatListRelativeTime(
-        context,
-        device.sessionMetadata[entry.key]?.lastActivity,
-      ),
-      showPresenceDot: entry.value == ConnectorSessionPresence.live,
-      hairline: hairline,
-      selected: entry.key == selectedRemoteSessionId,
-      onTap: _sessionConversation(entry.key),
-    );
+    }) {
+      final metadata = device.sessionMetadata[entry.key];
+      final state = device.isOffline
+          ? ConnectorSessionPresence.offline
+          : entry.value;
+      final cwd = metadata?.path ?? metadata?.cwd ?? '';
+      return DeviceSessionCard(
+        key: ValueKey('sessionRow:${entry.key}'),
+        dotKey: ValueKey('sessionDot:${entry.key}'),
+        dotColor: deviceSessionDotColor(colors, state),
+        title: _sessionTitle(
+          entry.key,
+          metadata?.title,
+          preview: metadata?.snippet,
+          path: metadata?.path ?? metadata?.cwd,
+        ),
+        subtitle: [
+          if (cwd.isNotEmpty) cwd,
+          deviceSessionLabel(context, state),
+        ].join(' · '),
+        timestamp: chatListRelativeTime(context, metadata?.lastActivity),
+        showPresenceDot: true,
+        hairline: hairline,
+        selected: entry.key == selectedRemoteSessionId,
+        onTap: _sessionConversation(entry.key),
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       children: [
@@ -1566,7 +1736,8 @@ class _DevicePane extends StatelessWidget {
     final title = _sessionTitle(
       sessionId,
       metadata?.title,
-      path: metadata?.path,
+      preview: metadata?.snippet,
+      path: metadata?.path ?? metadata?.cwd,
     );
     for (final name in device.agents.keys) {
       if ((device.agentDeviceIds[name] ?? device.id) == deviceId) {
@@ -1784,7 +1955,12 @@ List<_RemoteFolder> _groupRemoteFolders(
   final byPath = <String, List<MapEntry<String, ConnectorSessionPresence>>>{};
   DateTime? activityOf(String id) => metadata[id]?.lastActivity;
   for (final entry in remote) {
-    byPath.putIfAbsent(metadata[entry.key]?.path ?? '', () => []).add(entry);
+    byPath
+        .putIfAbsent(
+          metadata[entry.key]?.path ?? metadata[entry.key]?.cwd ?? '',
+          () => [],
+        )
+        .add(entry);
   }
   String basename(String path) {
     final normalized = path.replaceAll('\\', '/');

@@ -4886,6 +4886,24 @@ abstract class AppLocalizations {
   /// **'Connector not running — tap to retry'**
   String get networkDeviceNotRunning;
 
+  /// Title of the first-connect friendly device name dialog.
+  ///
+  /// In en, this message translates to:
+  /// **'Name this device'**
+  String get networkDeviceEnrollNameTitle;
+
+  /// Explanation in the first-connect friendly device name dialog.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a friendly name for this device. Leave it unchanged to use the hostname.'**
+  String get networkDeviceEnrollNamePrompt;
+
+  /// Confirm action for first-connect device naming.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect device'**
+  String get networkDeviceEnrollNameAction;
+
   /// Own-device edit action and long-press accessibility label
   ///
   /// In en, this message translates to:

@@ -205,7 +205,16 @@ final class FileMessagingRepository implements MessagingRepository {
     if ((await _env.exists(marker)).valueOrNull != true) {
       (await _env.writeFile(marker, message.toId)).getOrThrow();
     }
-    final path = '$dir/${_fileName(message)}';
+    final fileName = _fileName(message);
+    final path = '$dir/$fileName';
+    final readPath = '$root/${sanitizeAgentId(message.toId)}/read/$fileName';
+    // Stable producer ids (network DM seq/msgId) make a crash AFTER the write
+    // but BEFORE the transport ack idempotent on redelivery. A consumed read
+    // record is just as authoritative as a pending inbox file.
+    if ((await _env.exists(path)).valueOrNull == true ||
+        (await _env.exists(readPath)).valueOrNull == true) {
+      return;
+    }
     (await _env.writeFile(path, jsonEncode(message.toJson()))).getOrThrow();
   }
 

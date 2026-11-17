@@ -193,6 +193,51 @@ void main() {
               'never unzipping unverified bytes',
         );
       });
+      test(
+        '$workflowPath:$job "$stepName" splits its integrity-gate errors '
+        'by failure mode (gh-2233 review NIT)',
+        () {
+          final (run, label) = stepRun(workflowPath, job, stepName);
+          expect(
+            run.contains('bytes (expected \$ASSET_BYTES)'),
+            isTrue,
+            reason:
+                '$label must print a SIZE-MISMATCH message naming the '
+                'actual vs expected byte counts ("is N bytes (expected M '
+                'bytes)") — the conflated single message "failed its '
+                'integrity gate (N / M bytes or sha256 mismatch)" forces '
+                'the reader to notice two EQUAL numbers to infer a sha256 '
+                'mismatch (gh-2233 review NIT)',
+          );
+          expect(
+            run.contains('failed its pinned sha256'),
+            isTrue,
+            reason:
+                '$label must print a DISTINCT digest-mismatch message — a '
+                'future red leg that passes the size check but fails the '
+                'sha256 gate must be diagnosable from the error line alone '
+                '(gh-2233 review NIT)',
+          );
+          expect(
+            run.contains('bytes or sha256 mismatch'),
+            isFalse,
+            reason:
+                '$label must not keep the conflated "bytes or sha256 '
+                'mismatch" message that makes the reader compare two '
+                'printed numbers to tell the failure modes apart '
+                '(gh-2233 review NIT)',
+          );
+          final sizeIndex = run.indexOf('bytes (expected \$ASSET_BYTES)');
+          final digestIndex = run.indexOf('failed its pinned sha256');
+          expect(
+            sizeIndex,
+            lessThan(digestIndex),
+            reason:
+                '$label must check the cheap byte-size mode before the '
+                'digest mode in its gate (gh-2233 review NIT shape)',
+          );
+        },
+      );
     }
   });
 }

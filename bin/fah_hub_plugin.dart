@@ -28,7 +28,18 @@ import 'dart:math' show Random;
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
-    show defaultHubStateFile, envHubSecret, readHubStateSecret;
+    show
+        FileNetworkCredentialStore,
+        IoConnectorTransport,
+        NetworkOAuthLoopback,
+        defaultHubStateFile,
+        envHubSecret,
+        openNetworkAuthUrl,
+        readHubStateSecret;
+import 'package:flutter_agent_harness/src/cli/network_commands.dart';
+import 'package:flutter_agent_harness/src/network/connector/device_api.dart';
+import 'package:flutter_agent_harness/src/network/network_account_client.dart';
+import 'package:http/http.dart' as http;
 
 import 'fah_dap_command.dart' show DapHubController, resolveDapLocalHubUrl;
 import 'fah_dap_scoped.dart';
@@ -46,6 +57,10 @@ import 'package:flutter_agent_harness/src/cli/dap_menu_options.dart';
 
 /// Plugin name used by `--plugin hub` and `.fah/packages.yaml`.
 const _pluginName = 'hub';
+
+/// Test seam for interactive `/network` account/device management commands.
+typedef NetworkSlashCommandRunner =
+    Future<int> Function(List<String> args, PluginContext context);
 
 /// Host for the vendored [hub.HubPlugin]: adapts the package's mirrored
 /// plugin seam onto the real [FahPlugin] API and contributes the `dap_*`
@@ -69,6 +84,7 @@ final class HubPluginHost implements FahPlugin {
     this.hubStopper,
     this.secretRedactor,
     this.redactionPipeline,
+    this._networkCommandRunner,
   }) : _hub = hubPlugin,
        // ignore: prefer_initializing_formals
        _environment = environment ?? Platform.environment,
@@ -117,6 +133,9 @@ final class HubPluginHost implements FahPlugin {
   /// hosts without them (tests, embedders) just skip registration.
   final SecretRedactor? secretRedactor;
   final RedactionPipeline? redactionPipeline;
+
+  /// Null uses the real IO composition; tests inject a recording runner.
+  final NetworkSlashCommandRunner? _networkCommandRunner;
 
   /// Scoped channel membership (issue #1825), built at register time.
   DapScopedMemberships? _scoped;
@@ -362,10 +381,14 @@ final class HubPluginHost implements FahPlugin {
     unawaited(connecting);
     context.registerSlashCommand(
       '/network',
-      (args) => _networkSlash(context, args),
+      (args) => _networkManagementSlash(
+        context,
+        args,
+        dapCommand: (args) => _networkSlash(context, args),
+      ),
       description:
-          'DAP channels — join by invite (session/project/global scope), '
-          'list, leave, copy invite, status',
+          'Network account/devices + DAP channels (login, enroll, join; '
+          '/network dap … for the channel wizard)',
     );
     context.registerSlashCommand(
       '/dap',
@@ -884,6 +907,137 @@ final class HubPluginHost implements FahPlugin {
       return out;
     } on Object {
       return const [];
+    }
+  }
+
+  static const _networkManagementVerbs = {
+    'login',
+    'logout',
+    'enroll',
+    'rename',
+    'status',
+    'devices',
+  };
+
+  Future<void> _networkManagementSlash(
+    PluginContext context,
+    List<String> args, {
+    required Future<void> Function(List<String> args) dapCommand,
+  }) async {
+    if (args.isEmpty) {
+      await dapCommand(args);
+      return;
+    }
+    if (args.length == 1 &&
+        (args.single == 'help' || args.single == '--help')) {
+      context.io.writeln('''
+/network login [--jwt [token]]       OAuth loopback, or masked JWT fallback
+/network enroll [--name <name>]      Enroll (prompts; default is hostname)
+/network rename <name> | --clear     Rename this device / clear friendly name
+/network status | devices [--roster] Account, device and roster inspection
+/network join <invite>               Legacy DAP channel join (still supported)
+/network dap                         DAP channel wizard (bare /network alias)
+/network dap join <invite>           Explicit legacy join alias''');
+      return;
+    }
+    if (args.first == 'dap') {
+      await dapCommand(args.sublist(1));
+      return;
+    }
+    if (!_networkManagementVerbs.contains(args.first)) {
+      await dapCommand(args);
+      return;
+    }
+    final runner = _networkCommandRunner;
+    if (runner != null) {
+      await runner(args, context);
+      return;
+    }
+    await _runNetworkManagement(context, args);
+  }
+
+  /// Real IO composition for interactive account/device management. The pure
+  /// runner is shared verbatim with `fa network`; only prompts/notices differ.
+  Future<int> _runNetworkManagement(
+    PluginContext context,
+    List<String> args,
+  ) async {
+    final httpClient = http.Client();
+    try {
+      final home =
+          _home ??
+          Platform.environment['HOME'] ??
+          Platform.environment['USERPROFILE'];
+      if (home == null || home.trim().isEmpty) {
+        throw StateError('cannot locate the home credential store');
+      }
+      final store = FileNetworkCredentialStore(home);
+      final relay = _networkEnvironmentValue(
+        'FA_NETWORK_BASE_URL',
+        networkRelayProductionUrl,
+      );
+      final auth = _networkEnvironmentValue(
+        'FA_NETWORK_AUTH_URL',
+        networkAuthProductionUrl,
+      );
+      final devices = DeviceEnrollmentClient(httpClient: httpClient);
+      final runner = NetworkCommandRunner(
+        store: store,
+        accountClient: NetworkAccountClient(
+          baseUrl: auth,
+          httpClient: httpClient,
+        ),
+        deviceClient: devices,
+        relayBaseUrl: relay,
+        deviceName: _interactiveNetworkDeviceName(),
+        platform: Platform.operatingSystem,
+        startReceiver: NetworkOAuthLoopback.bind,
+        openUrl: (uri) => openNetworkAuthUrl(uri, onStatus: context.io.writeln),
+        rosterReader: () async {
+          final device = await store.readDevice();
+          if (device == null) {
+            throw const NetworkAuthException('not enrolled; run enroll first');
+          }
+          return readNetworkDeviceRoster(
+            NetworkPresenceController(
+              device: device,
+              baseUrl: relay,
+              ticketProvider: () => devices.wsTicket(
+                baseUrl: relay,
+                deviceToken: device.deviceToken,
+              ),
+              transport: const IoConnectorTransport(),
+              rosterClient: devices,
+              dmKeyStore: store,
+            ),
+          );
+        },
+        prompt: context.askLine,
+        out: context.io.writeln,
+        error: context.io.writeln,
+      );
+      return await runner.run(args);
+    } on Object catch (error) {
+      context.io.writeln('network error: $error');
+      return 1;
+    } finally {
+      httpClient.close();
+    }
+  }
+
+  String _networkEnvironmentValue(String key, String fallback) {
+    final value = _environment[key]?.trim();
+    return value == null || value.isEmpty ? fallback : value;
+  }
+
+  String _interactiveNetworkDeviceName() {
+    final override = _environment['FA_NETWORK_DEVICE_NAME']?.trim();
+    if (override != null && override.isNotEmpty) return override;
+    try {
+      final hostname = Platform.localHostname.trim();
+      return hostname.isEmpty ? 'fa-cli' : hostname;
+    } on Object {
+      return 'fa-cli';
     }
   }
 

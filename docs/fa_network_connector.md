@@ -189,6 +189,36 @@ Rules:
   semantics).
 - DM history: windowed reads (existing `/api/inbox` views), never
   auto-relayed in bulk.
+- **CLI inbound delivery (issue #2214):** the connector's ack-owning DM sink
+  decrypts and ACL-sanitizes the complete payload before writing into the
+  current session's real `<mailboxPrefix>/main` mailbox as `kind:user` mail.
+  The existing inbox watcher / `externalSteeringSource` supplies idle wake and
+  mid-run steering; no second agent invocation or wake loop is introduced.
+  Mailbox ids combine zero-padded server `seq` (timestamp fallback) with the
+  base64url `msgId`, so filename sorting preserves order and redelivery is
+  idempotent across both pending `inbox/<id>.json` and consumed
+  `read/<id>.json` records.
+- **Ack vs. receipt:** the accepted order is completed current-mailbox write
+  → encrypted `accepted, awaiting steering` receipt → original ack. A receipt
+  send failure therefore leaves the original unacked for idempotent retry. A
+  missing listener, stale local agent address, or non-current `sessionId` gets
+  an encrypted `queued / not listening` reply and the original stays unacked
+  so a later live session can receive it. Resume/wake for that later session
+  remains issue #2213. Sink/mailbox/key-store failures are transient and stay
+  unacked. Malformed fanet1, wrong-key, AAD, and authentication/tamper
+  failures are permanent typed rejections: they are acked once to stop hostile
+  redelivery, with a credential-free/plaintext-free notice. `dmMail` is a
+  post-sink observation stream only; it is not an acknowledgement mechanism.
+- **Replies:** inbound steering includes `reply with agent_message to:
+  "network-dm:v1:<base64url(route-json)>"`. The opaque route contains the
+  network/channel, normalized sender address, sender x25519 public key,
+  current agent address, and optional session/threading metadata. The CLI
+  agent uses the existing `agent_message` tool with that exact address; its
+  host gateway validates that the route belongs to the current CLI session,
+  loads only an existing local DM key, and sends through `sendMail` with the
+  freshly minted envelope `msgId` as the fanet1 `frameId`. Unknown, malformed,
+  or wrong-session routes return an actionable error and are never silently
+  dropped.
 
 ## 8. Wake paths
 
@@ -200,6 +230,92 @@ Rules:
 - **Extension:** `wake_hint {type: "extension"}` — best-effort SW
   revive while the browser runs; browser closed = device offline,
   queue on server. Extensions never spawn processes.
+
+### 8.1 Full session catalog and desktop wake-on-DM (#2213)
+
+A device publishes its complete exposed local session listing, not only the
+session with a live lease. Connect/enroll sends a full snapshot; store change
+notifications trigger a debounced incremental patch (changed/new rows plus
+retractions for removed rows). One roster patch contains at most 40 session
+rows and larger stores are sent as ordered pages, so 1000+ session stores do
+not create one unbounded frame. The listing itself remains backed by the
+existing persisted listing index and bounded reads; no transcript records are
+sent.
+
+The roster session's existing `id`, `title`, `path`, and `lastActivity` fields
+remain the interoperability baseline. `title` is the persisted session name,
+or the bounded first-prompt snippet, or a cwd label as a final human fallback;
+`path` is the existing connector cwd field and clients render its basename as
+the cwd slug. `lastActivity` is RFC3339 UTC. Clients sort by `lastActivity`
+descending (id tie-break). The connector also emits additive optional
+`snippet` and `cwd` keys; roster servers MUST preserve unknown/additive
+session metadata keys when merging patches so structured snippet/cwd survive
+a round trip. Until then the baseline `title`/`path` mapping above is lossless
+for display and requires no new endpoint. A missing/unknown id is never
+invented into the catalog.
+
+Rows render three states: `live` (current lease), `wake-on-DM` (catalog row
+without a live lease on an online desktop), and `offline` (device offline).
+A DM addressed to a wake-on-DM row launches the existing sender-driven
+`mailboxWakeCommand` with explicit `--session <id>` and
+`--inbox <target-mailbox>` arguments. The existing gh-1744 same-cwd guard and
+gh-1180 wake receipts apply unchanged; the just-arrived DM stays unacked until
+the woken target session consumes it through the #2214 mailbox path. The
+current/live session never spawns a second agent and steers through its
+existing mailbox. Mobile and extension devices stay queue-only and send the
+honest encrypted queued/not-listening receipt rather than claiming a wake.
+
+### 8.2 Interactive enrollment and roster hygiene (#2212)
+
+The interactive TUI shares the headless `NetworkCommandRunner` contract:
+`/network login` performs OAuth loopback (with `/network login --jwt [token]`
+as the masked-paste fallback), `/network enroll [--name <name>]` prompts for a
+friendly name with the local hostname as its blank-input default, and
+`/network rename <name>` / `/network rename --clear` updates the enrolled
+label. `/network status` and `/network devices [--roster]` inspect account,
+device and live roster state. Bare `/network` and `/network join <invite>`
+remain the DAP wizard; `/network dap …` is its explicit alias and
+`/network help` disambiguates the two surfaces. Enrollment output points to
+the app **Devices** surface: only live sessions are steerable directly, while
+catalog sleepers are woken from their Devices row. The app asks the same
+friendly-name question only when it has no stored device credentials; the
+existing device-row rename dialog remains available on desktop and mobile.
+
+Re-login/token refresh for the same account subject (or non-empty email
+fallback) preserves the stored `deviceId`/`deviceToken`; only an actual
+account switch clears the pairing. Enrolling with an existing stored device
+identity is therefore a no-op and cannot manufacture same-host duplicate
+rows. Revocation/account switching still requires a fresh enrollment.
+
+Sub-agent transcripts are internal child state, never roster or DM targets.
+CLI/app catalog projections exclude both children with a live parent and
+orphaned/legacy children. Because roster PATCH is additive, they also publish
+`{id, state: "offline", networks: []}` for known legacy child ids on a full
+sync (and when a new child appears). Devices filters any legacy remote rows
+marked `agent: "subagent"`, `subagent: true`, `parent`, or `parentId` before
+folder grouping. A device with active sub-agents consequently renders exactly
+one parent session row. Folder fallback must never turn an orphan into a DM
+target.
+
+The Devices UI applies a **30-day client display TTL** to offline session rows
+whose `lastActivity`/`lastActiveAt` timestamp is older than the TTL. The same
+rule applies to own persisted rows and remote rows; live/busy rows never age
+out. Rows without a usable timestamp remain visible for legacy compatibility.
+This is not server deletion.
+
+**Required fa_network behavior (documentation-only here; no Go change in this
+branch):**
+
+1. Treat an offline + empty-`networks` session patch as an authoritative
+   retraction/tombstone for that `(deviceId, sessionId)`, omit it from later
+   roster snapshots, and do not let an older cached snapshot resurrect it.
+2. Reap retracted rows promptly and persisted offline rows after the same
+   30-day TTL (using server receive/update time, not an untrusted client
+   timestamp). Device revocation must remove the device from account rosters.
+3. Preserve additive roster agent shapes: `address` + `state` is sufficient
+   when `exposed` is omitted; explicit `exposed: false` remains hidden. Do not
+   report `agents=0` merely because no socket-local agent is present—the
+   roster is the exposed catalog, not only the live registry.
 
 ## 9. Backend OpenAPI delta (fa_network)
 

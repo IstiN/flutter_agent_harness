@@ -309,8 +309,7 @@ Future<void> _expectStore(
           '${_playImagesDir(locale.languageCode)}/tenInchScreenshots/'
           '${_playOrder[screen]}_$screen.png';
     default:
-      golden =
-          'store/${locale.languageCode}/${device.name}/$screen.png';
+      golden = 'store/${locale.languageCode}/${device.name}/$screen.png';
   }
   await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
   if (_isWideDevice(device) || disposeAfter) {
@@ -690,37 +689,45 @@ final class _FakeTileEngine extends JsAppEngine {
           ],
         },
         {
+          // Give the metadata the remaining width instead of laying it out
+          // after a zero-width spacer at its intrinsic width. The latter
+          // overflows narrow 4x2 tiles under Flutter 3.50's text metrics.
           'type': 'expanded',
-          'child': {'type': 'sizedBox'},
-        },
-        {
-          'type': 'column',
-          'mainAxisSize': 'min',
-          'crossAxisAlignment': 'end',
-          'children': [
-            {
-              'type': 'text',
-              'data': lang == 'ru' ? 'ТВОРЧЕСКИЙ РЕЖИМ' : 'CREATIVE MODE',
-              'style': {
-                'fontSize': 10,
-                'fontWeight': 'w700',
-                'color': '#7EC850',
+          'child': {
+            'type': 'column',
+            'mainAxisSize': 'min',
+            'crossAxisAlignment': 'end',
+            'children': [
+              {
+                'type': 'text',
+                'data': lang == 'ru' ? 'ТВОРЧЕСКИЙ РЕЖИМ' : 'CREATIVE MODE',
+                'maxLines': 1,
+                'overflow': 'ellipsis',
+                'style': {
+                  'fontSize': 10,
+                  'fontWeight': 'w700',
+                  'color': '#7EC850',
+                },
               },
-            },
-            {'type': 'sizedBox', 'height': 5},
-            {
-              'type': 'text',
-              'data': lang == 'ru' ? 'Мир 07' : 'World 07',
-              'style': {'fontSize': 14, 'fontWeight': 'w600'},
-            },
-            {
-              'type': 'text',
-              'data': lang == 'ru'
-                  ? '9 чанков • локальное сохранение'
-                  : '9 chunks • local save',
-              'style': {'fontSize': 10, 'color': '#A8B3C7'},
-            },
-          ],
+              {'type': 'sizedBox', 'height': 5},
+              {
+                'type': 'text',
+                'data': lang == 'ru' ? 'Мир 07' : 'World 07',
+                'maxLines': 1,
+                'overflow': 'ellipsis',
+                'style': {'fontSize': 14, 'fontWeight': 'w600'},
+              },
+              {
+                'type': 'text',
+                'data': lang == 'ru'
+                    ? '9 чанков • локальное сохранение'
+                    : '9 chunks • local save',
+                'maxLines': 1,
+                'overflow': 'ellipsis',
+                'style': {'fontSize': 10, 'color': '#A8B3C7'},
+              },
+            ],
+          },
         },
       ],
     },

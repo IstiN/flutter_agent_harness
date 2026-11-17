@@ -29,13 +29,15 @@ import 'dart:io';
 import 'package:cryptography/cryptography.dart';
 import 'package:fa_ui/fa_ui.dart' show KeychainStore;
 import 'package:flutter/foundation.dart'
-    show Listenable, debugPrint, kDebugMode;
+    show Listenable, debugPrint, kDebugMode, kIsWeb;
 // The machine-connector core is pure Dart; the src imports follow the
 // lib/network implementation-import convention (key_wallet.dart).
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/connector_mux.dart';
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 // ignore: implementation_imports
@@ -50,6 +52,8 @@ import 'package:flutter_agent_harness/src/network/connector/offline_outbox.dart'
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/session/session_catalog.dart';
 import 'package:path_provider/path_provider.dart';
 
 // ignore: implementation_imports
@@ -71,6 +75,7 @@ typedef _ChatSessionSnapshot = ({
   Map<String, DeviceChatSession> sessions,
   Map<String, DeviceChatSessionMetadata> metadata,
   Map<String, DeviceChatSessionActivity> activity,
+  Set<String> retractedSessionIds,
 });
 
 /// One chat session in the device roster: [live] means its agent is loaded
@@ -83,6 +88,7 @@ typedef DeviceChatSession = ({String id, bool live});
 typedef DeviceChatSessionMetadata = ({
   String id,
   String? title,
+  String? snippet,
   String? path,
   DateTime? lastActivity,
 });
@@ -105,10 +111,19 @@ abstract interface class DeviceChatSessionActivitySource {
   Future<List<DeviceChatSessionActivity>> loadActivity();
 }
 
+/// Optional legacy-row cleanup source. Ids are sent as offline/no-network
+/// retractions and are never exposed as sessions or DM targets themselves.
+abstract interface class DeviceChatSessionRetractionSource {
+  /// Loads hidden sub-agent ids that older clients may have published.
+  Future<Set<String>> loadRetractedSessionIds();
+}
+
 ConnectorSessionMetadata _presenceMetadata(DeviceChatSessionMetadata row) =>
     ConnectorSessionMetadata(
-      title: row.title,
+      title: row.title ?? row.snippet,
+      snippet: row.snippet,
       path: row.path,
+      cwd: sessionCatalogCwdSlug(row.path ?? ''),
       lastActivity: row.lastActivity,
     );
 
@@ -131,7 +146,8 @@ final class CallbackDeviceChatSessionSource
     implements
         DeviceChatSessionSource,
         DeviceChatSessionMetadataSource,
-        DeviceChatSessionActivitySource {
+        DeviceChatSessionActivitySource,
+        DeviceChatSessionRetractionSource {
   /// Creates a source from a change listenable and a complete-snapshot loader.
   /// Optional metadata/activity loaders preserve legacy id-only projections.
   const CallbackDeviceChatSessionSource({
@@ -139,6 +155,7 @@ final class CallbackDeviceChatSessionSource
     required this.loader,
     this.metadataLoader,
     this.activityLoader,
+    this.retractedSessionIdsLoader,
   });
 
   /// Loads the source's complete current snapshot.
@@ -149,6 +166,9 @@ final class CallbackDeviceChatSessionSource
 
   /// Loads the real per-session agent run state.
   final Future<List<DeviceChatSessionActivity>> Function()? activityLoader;
+
+  /// Loads hidden legacy child ids for explicit server-side retraction.
+  final Future<Set<String>> Function()? retractedSessionIdsLoader;
 
   @override
   final Listenable changes;
@@ -163,6 +183,10 @@ final class CallbackDeviceChatSessionSource
   @override
   Future<List<DeviceChatSessionActivity>> loadActivity() async =>
       await activityLoader?.call() ?? const [];
+
+  @override
+  Future<Set<String>> loadRetractedSessionIds() async =>
+      await retractedSessionIdsLoader?.call() ?? const {};
 }
 
 /// Back-compat projection used when no chat-session source is injected.
@@ -372,10 +396,15 @@ class DeviceConnectorService {
     ConnectorTransport? transport,
     Future<String> Function()? supportDirProvider,
     Future<String> Function()? deviceNameProvider,
+    this.deviceNamePrompt,
     this.idFactory = defaultIdFactory,
     this.onLog,
     this.rosterDebounce = const Duration(milliseconds: 500),
-  }) : _tokenStore = tokenStore ?? KeychainDeviceTokenStore(),
+    bool? mobileQueueOnly,
+  }) : _mobileQueueOnly =
+           mobileQueueOnly ??
+           (!kIsWeb && (Platform.isAndroid || Platform.isIOS)),
+       _tokenStore = tokenStore ?? KeychainDeviceTokenStore(),
        _outboxOverride = outbox,
        _transport = transport ?? const IoConnectorTransport(),
        _deviceNameProvider = deviceNameProvider ?? platformEnrollmentDeviceName,
@@ -405,9 +434,6 @@ class DeviceConnectorService {
   late final DeviceDmKeyProvider _dmKeys;
   final _dmPubs = <String, String>{};
   final _remoteDmPubs = <String, ({String network, String dmPub})>{};
-  final _dmUserPubs = <String, SimplePublicKey>{};
-  final _dmSessionTargets = <String, String>{};
-  final _dmThreadedRequests = <String>{};
   Future<SimpleKeyPair>? _userDmKeyPair;
   String? _accountUserId;
   SinkRegistration? _dmSink;
@@ -416,8 +442,16 @@ class DeviceConnectorService {
   final Future<String> Function() _supportDirProvider;
   final Future<String> Function() _deviceNameProvider;
 
+  /// First-enrollment-only friendly-name question. Null keeps non-UI hosts
+  /// automatic; a null/blank answer retains the computed hostname default.
+  final Future<String?> Function(String defaultName)? deviceNamePrompt;
+
   /// Delay used to coalesce rapid REST roster changes (test-adjustable).
   final Duration rosterDebounce;
+
+  /// Mobile has no sender-driven headless CLI wake: sleepers stay queue-only
+  /// and receive the honest queued receipt instead of a false live delivery.
+  final bool _mobileQueueOnly;
 
   /// Frame id factory.
   final IdFactory idFactory;
@@ -443,6 +477,7 @@ class DeviceConnectorService {
   var _observedSessions = <String, DeviceChatSession>{};
   var _observedSessionMetadata = <String, DeviceChatSessionMetadata>{};
   var _observedSessionActivity = <String, DeviceChatSessionActivity>{};
+  var _observedRetractedSessionIds = <String>{};
   final _knownAgentNames = <String>{};
   var _rosterActive = false;
   var _sessionProjectionRevision = 0;
@@ -861,56 +896,6 @@ class DeviceConnectorService {
     }
   }
 
-  Future<String> _decodeDmMail(NetworkEnvelope envelope) async {
-    // Non-actionable DM traffic (own reply echo, mail for OTHER agents)
-    // skips crypto entirely: the sink guard acks it without delivery and
-    // a decrypt attempt on an own-address echo would always fail.
-    if (!_isActionableDm(envelope)) return '';
-    final channel = envelope.channel ?? '';
-    final ciphertext = envelope.ciphertext ?? '';
-    if (!isDmChannel(channel)) return ciphertext;
-    final frame = hubTryOpenFanet1(ciphertext);
-    if (frame == null) throw const FormatException('DM is not fanet1');
-    final key = await _dmKeys.loadOrCreate(_localAgentAddress());
-    final plaintext = await hubDecryptPayloadWithKeyPair(
-      recipientDhKeyPair: key.keyPair,
-      senderDhPubkey: frame.senderPubkey,
-      frameId: envelope.msgId,
-      aadTarget: channel,
-      ciphertextB64: frame.ciphertextB64,
-    );
-    if (_dmUserPubs.length >= 256 && !_dmUserPubs.containsKey(channel)) {
-      _dmUserPubs.remove(_dmUserPubs.keys.first);
-    }
-    _dmUserPubs[channel] = frame.senderPubkey;
-    return _decodeDmPlaintext(envelope.msgId, plaintext);
-  }
-
-  String _decodeDmPlaintext(String msgId, String plaintext) {
-    try {
-      final decoded = jsonDecode(plaintext);
-      if (decoded is! Map || decoded['text'] is! String) return plaintext;
-      final sessionId = decoded['sessionId'];
-      if (sessionId is String && sessionId.isNotEmpty) {
-        if (_dmSessionTargets.length >= 256) {
-          final oldest = _dmSessionTargets.keys.first;
-          _dmSessionTargets.remove(oldest);
-          _dmThreadedRequests.remove(oldest);
-        }
-        _dmSessionTargets[msgId] = sessionId;
-      }
-      if (decoded['threading'] == 1) {
-        if (_dmThreadedRequests.length >= 256) {
-          _dmThreadedRequests.remove(_dmThreadedRequests.first);
-        }
-        _dmThreadedRequests.add(msgId);
-      }
-      return decoded['text'] as String;
-    } on FormatException {
-      return plaintext;
-    }
-  }
-
   /// True only for DM mail addressed TO this device's agent by someone
   /// else — the one shape that may wake a session and auto-reply. Own
   /// reply echoes and other agents' mail are acked and dropped.
@@ -935,13 +920,18 @@ class DeviceConnectorService {
 
   Future<void> _receiveDm(InboundMail mail) async {
     if (!_isActionableDm(mail.envelope)) return;
+    final targetLive = mail.sessionId == null
+        ? _observedSessions.values.any((session) => session.live)
+        : _observedSessions[mail.sessionId]?.live == true;
+    if (_mobileQueueOnly && !targetLive) {
+      await _replyToDm(mail, deviceDmQueuedReceipt);
+      throw StateError('mobile DM queued for a non-live session; left unacked');
+    }
     final host = dmSessionHost;
     if (host == null) throw StateError('no DM session host configured');
     final envelope = mail.envelope;
-    final sessionId = _dmSessionTargets.remove(envelope.msgId);
-    final threaded = _dmThreadedRequests.remove(envelope.msgId);
     final reply = await host.deliverUserText(
-      sessionId: sessionId,
+      sessionId: mail.sessionId,
       text: mail.text,
     );
     // e2e diagnostics (issue #2062): the reply path is otherwise silent.
@@ -949,75 +939,27 @@ class DeviceConnectorService {
       debugPrint('[dm] inbound ${envelope.msgId} reply=${reply?.length}');
     }
     if (reply == null || reply.trim().isEmpty) return;
-    final channel = envelope.channel;
-    final network = envelope.network;
-    final sender = envelope.from;
-    final userPub = _dmUserPubs[channel];
-    if (channel == null ||
-        network == null ||
-        sender == null ||
-        userPub == null) {
-      throw StateError('incomplete DM reply route');
-    }
-    // The live backend rewrites an authenticated user sender from
-    // `user:<uid>` to bare `<uid>` on inbound mail. Device-WS routing needs
-    // the explicit user prefix on the reply; a bare uid is echoed to the
-    // sending agent instead of delivered to the user's devices.
-    final replyRecipient = _dmReplyRecipient(sender);
-    await _sendDmReply(
-      network: network,
-      channel: channel,
-      replyRecipient: replyRecipient,
-      userPub: userPub,
-      reply: reply,
-      sessionId: sessionId,
-      threaded: threaded,
-    );
+    await _replyToDm(mail, reply);
   }
 
-  String _dmReplyRecipient(String sender) =>
-      sender.startsWith('user:') || sender.contains('@')
-      ? sender
-      : 'user:$sender';
-
-  String _dmReplyPlaintext(
-    String reply, {
-    required String? sessionId,
-    required bool threaded,
-  }) => threaded ? jsonEncode({'text': reply, 'sessionId': ?sessionId}) : reply;
-
-  Future<void> _sendDmReply({
-    required String network,
-    required String channel,
-    required String replyRecipient,
-    required SimplePublicKey userPub,
-    required String reply,
-    required String? sessionId,
-    required bool threaded,
-  }) async {
-    final agent = await _dmKeys.loadOrCreate(_localAgentAddress());
+  Future<void> _replyToDm(InboundMail mail, String reply) async {
+    final connector = _connector;
+    if (connector == null) throw StateError('device connector is not running');
+    final route = DeviceDmReplyRoute.fromMail(
+      mail,
+      currentAgentAddress: _localAgentAddress(),
+    );
     try {
-      await sendMail(
-        network: network,
-        channel: channel,
-        from: _localAgentAddress(),
-        to: replyRecipient,
-        ciphertextFor: (frameId) => hubSealFanet1(
-          senderDhKeyPair: agent.keyPair,
-          recipientDhPubkey: userPub,
-          frameId: frameId,
-          aadTarget: channel,
-          plaintext: _dmReplyPlaintext(
-            reply,
-            sessionId: sessionId,
-            threaded: threaded,
-          ),
-        ),
+      await sendDeviceDmReply(
+        connector: connector,
+        keys: _dmKeys,
+        route: route,
+        reply: reply,
       );
       if (kDebugMode) {
         debugPrint(
-          '[dm] reply sent network=$network channel=$channel '
-          'to=$replyRecipient',
+          '[dm] reply sent network=${route.network} channel=${route.channel} '
+          'to=${route.replyRecipient}',
         );
       }
     } on Object catch (error) {
@@ -1054,6 +996,7 @@ class DeviceConnectorService {
     }
     _observedSessionMetadata = snapshot.metadata;
     _observedSessionActivity = snapshot.activity;
+    _observedRetractedSessionIds = snapshot.retractedSessionIds;
     _registerLiveSessions(registry, snapshot.sessions);
     _observedSessions = snapshot.sessions;
 
@@ -1073,12 +1016,16 @@ class DeviceConnectorService {
     );
     presence.sessionMetadata = () => {
       for (final entry in _observedSessions.entries)
-        if (entry.value.live && _observedSessionMetadata[entry.key] != null)
+        if (_observedSessionMetadata[entry.key] != null)
           entry.key: _presenceMetadata(_observedSessionMetadata[entry.key]!),
     };
     presence.setAgentState(
       localAddress,
       _agentPresenceState(snapshot.sessions, snapshot.activity),
+    );
+    final dmCodec = DeviceDmCodec(
+      keys: _dmKeys,
+      deviceId: credentials.deviceId,
     );
     final connector = MachineConnector(
       registry: registry,
@@ -1086,10 +1033,19 @@ class DeviceConnectorService {
       outbox: _outboxOverride ?? await _defaultOutbox(),
       presence: presence,
       leases: () async => sessionManager.sessions.keys.toSet(),
-      decodeMail: _decodeDmMail,
+      decodeMail: dmCodec.decode,
       idFactory: idFactory,
       onLog: onLog,
     );
+    // Presence heartbeats and REST patches share the complete persisted
+    // catalog. Registry membership still identifies loaded sessions for DM
+    // routing, while these delegates expose every row and mark only loaded
+    // ones live (never clobbering sleepers with a live-only heartbeat).
+    connector.presence.exposedSessions = () => _observedSessions.keys.toSet();
+    connector.presence.liveLeases = () => {
+      for (final entry in _observedSessions.entries)
+        if (entry.value.live) entry.key,
+    };
     final dmSink = connector.registerLocalSink(
       network: personal,
       // Catch-all dm-prefix route: actionable mail is filtered inside
@@ -1135,8 +1091,17 @@ class DeviceConnectorService {
     if (client == null) {
       throw StateError('not signed in — cannot enroll the device');
     }
+    final computedName = await _computedDeviceName();
+    var enrollmentName = computedName;
+    final prompted = await deviceNamePrompt?.call(computedName);
+    if (prompted != null && prompted.trim().isNotEmpty) {
+      enrollmentName = prompted.trim();
+    }
+    if (enrollmentName.runes.length > 64) {
+      throw StateError('device name must contain at most 64 characters');
+    }
     final enrollment = await client.enrollDevice(
-      name: await _computedDeviceName(),
+      name: enrollmentName,
       platform: Platform.operatingSystem,
     );
     final credentials = DeviceCredentials(
@@ -1304,7 +1269,18 @@ class DeviceConnectorService {
       final sessions = await _chatSessionSource.load();
       var metadata = _observedSessionMetadata;
       var activity = _observedSessionActivity;
+      var retractedSessionIds = _observedRetractedSessionIds;
       final source = _chatSessionSource;
+      if (source is DeviceChatSessionRetractionSource) {
+        try {
+          retractedSessionIds =
+              await (source as DeviceChatSessionRetractionSource)
+                  .loadRetractedSessionIds();
+        } on Object catch (error) {
+          // Cleanup is additive; a failed legacy scan cannot hide parent rows.
+          onLog?.call('device chat-session retraction scan failed: $error');
+        }
+      }
       if (source is DeviceChatSessionMetadataSource) {
         try {
           final rows = await (source as DeviceChatSessionMetadataSource)
@@ -1330,6 +1306,9 @@ class DeviceConnectorService {
         sessions: {for (final session in sessions) session.id: session},
         metadata: metadata,
         activity: activity,
+        retractedSessionIds: retractedSessionIds.difference(
+          sessions.map((session) => session.id).toSet(),
+        ),
       );
     } on Object catch (error) {
       onLog?.call('device chat-session projection failed: $error');
@@ -1337,6 +1316,7 @@ class DeviceConnectorService {
         sessions: _observedSessions,
         metadata: _observedSessionMetadata,
         activity: _observedSessionActivity,
+        retractedSessionIds: _observedRetractedSessionIds,
       );
     }
   }
@@ -1355,17 +1335,20 @@ class DeviceConnectorService {
     }
     _observedSessionMetadata = current.metadata;
     _observedSessionActivity = current.activity;
+    _observedRetractedSessionIds = current.retractedSessionIds;
     _syncRegistrySessions(_observedSessions, current.sessions);
     _observedSessions = current.sessions;
     _connector?.presence.setAgentState(
       _localAgentAddress(),
       _agentPresenceState(current.sessions, current.activity),
     );
+    _connector?.presence.publishNow();
     _rosterActive = true;
     _queueRoster(
       _buildRosterProjection(
         sessions: current.sessions.values,
         metadata: current.metadata,
+        retractedSessionIds: current.retractedSessionIds,
         agentState: _agentRosterState(current.sessions, current.activity),
       ),
     );
@@ -1380,21 +1363,25 @@ class DeviceConnectorService {
     final previous = _observedSessions;
     final previousMetadata = _observedSessionMetadata;
     final previousActivity = _observedSessionActivity;
+    final previousRetractedIds = _observedRetractedSessionIds;
     final current = await _currentChatSessions();
     if (!_rosterActive || revision != _sessionProjectionRevision) return;
     if (_sameChatSessions(previous, current.sessions) &&
         _sameSessionMetadata(previousMetadata, current.metadata) &&
-        _sameSessionActivity(previousActivity, current.activity)) {
+        _sameSessionActivity(previousActivity, current.activity) &&
+        _sameStringSets(previousRetractedIds, current.retractedSessionIds)) {
       return;
     }
     _observedSessionMetadata = current.metadata;
     _observedSessionActivity = current.activity;
+    _observedRetractedSessionIds = current.retractedSessionIds;
     _syncRegistrySessions(previous, current.sessions);
     _observedSessions = current.sessions;
     _connector?.presence.setAgentState(
       _localAgentAddress(),
       _agentPresenceState(current.sessions, current.activity),
     );
+    _connector?.presence.publishNow();
     _queueChangedRosterSessions(
       previous,
       previousMetadata,
@@ -1410,6 +1397,18 @@ class DeviceConnectorService {
       current.sessions,
       current.activity,
     );
+    final newRetractions = current.retractedSessionIds.difference(
+      previousRetractedIds,
+    );
+    if (newRetractions.isNotEmpty) {
+      _queueRoster((
+        agents: const [],
+        sessions: [
+          for (final id in newRetractions)
+            DeviceRosterSession(id: id, state: 'offline', networks: const []),
+        ],
+      ));
+    }
   }
 
   void _queueChangedRosterSessions(
@@ -1475,6 +1474,9 @@ class DeviceConnectorService {
       ),
     );
   }
+
+  bool _sameStringSets(Set<String> left, Set<String> right) =>
+      left.length == right.length && left.containsAll(right);
 
   bool _sameChatSessions(
     Map<String, DeviceChatSession> left,
@@ -1565,6 +1567,7 @@ class DeviceConnectorService {
   _RosterProjection _buildRosterProjection({
     required Iterable<DeviceChatSession> sessions,
     Map<String, DeviceChatSessionMetadata> metadata = const {},
+    Set<String> retractedSessionIds = const {},
     String? sessionState,
     required String agentState,
     bool includeAgents = true,
@@ -1572,6 +1575,25 @@ class DeviceConnectorService {
     Iterable<String> extraAgentNames = const [],
   }) {
     final projected = sessions.toList(growable: false);
+    final catalog = normalizeSessionCatalog([
+      for (final session in projected)
+        SessionCatalogEntry(
+          id: session.id,
+          live: session.live,
+          title: metadata[session.id]?.title,
+          snippet: metadata[session.id]?.snippet,
+          cwd: metadata[session.id]?.path ?? '',
+          lastActiveAt:
+              metadata[session.id]?.lastActivity ??
+              DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        ),
+    ]);
+    final projectedIds = projected.map((session) => session.id).toSet();
+    final retracted =
+        retractedSessionIds
+            .where((id) => id.trim().isNotEmpty && !projectedIds.contains(id))
+            .toList()
+          ..sort();
     final agentNames = includeAgents
         ? <String>{...extraAgentNames, ..._registeredAgentNames(projected)}
         : <String>{};
@@ -1592,17 +1614,25 @@ class DeviceConnectorService {
           ),
       ],
       sessions: [
-        for (final session in projected)
+        for (final session in catalog)
           DeviceRosterSession(
             id: session.id,
             state: sessionState ?? (session.live ? 'live' : 'wake_on_dm'),
             networks: networks,
-            title: metadata[session.id]?.title,
-            path: metadata[session.id]?.path,
+            title: metadata.containsKey(session.id)
+                ? session.displayName
+                : null,
+            snippet: session.snippet,
+            path: session.cwd.isEmpty ? null : session.cwd,
+            cwd: session.cwdSlug,
+            // Preserve legacy id-only rows: the epoch is a sorting sentinel,
+            // not a fabricated activity timestamp to put on the wire.
             lastActivity: metadata[session.id]?.lastActivity
                 ?.toUtc()
                 .toIso8601String(),
           ),
+        for (final id in retracted)
+          DeviceRosterSession(id: id, state: 'offline', networks: const []),
       ],
     );
   }
@@ -1642,7 +1672,7 @@ class DeviceConnectorService {
     // deployed roster-patch limit. Publish the COMPLETE projection in small
     // sequential merge patches rather than truncating it to a live/recent
     // subset; agents ride only the first request.
-    const batchSize = 40;
+    const batchSize = sessionCatalogRosterPageSize;
     if (sessions.isEmpty) {
       _rosterWrites = _rosterWrites.then(
         (_) => _writeRoster(deviceId, agents, const []),
@@ -1705,9 +1735,6 @@ class DeviceConnectorService {
   Future<void> _teardown() async {
     _lastRosterByNetwork.clear();
     _remoteDmPubs.clear();
-    _dmUserPubs.clear();
-    _dmSessionTargets.clear();
-    _dmThreadedRequests.clear();
     _accountUserId = null;
     _userDmKeyPair = null;
     _dmSink?.close();
@@ -1720,6 +1747,7 @@ class DeviceConnectorService {
     _observedSessions = {};
     _observedSessionMetadata = {};
     _observedSessionActivity = {};
+    _observedRetractedSessionIds = {};
     _knownAgentNames.clear();
     _rosterActive = false;
     final subscriptions = List.of(_subscriptions);

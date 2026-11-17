@@ -3213,8 +3213,12 @@ jobs:
             -o "$ZIP" \
             https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
           got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
-          if [ "$got" -ne "$ASSET_BYTES" ] || ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
-            echo "::error::downloaded WasmRun.xcframework.zip failed its integrity gate ($got / $ASSET_BYTES bytes or sha256 mismatch) — not unzipping unverified bytes (gh-2233)"
+          if [ "$got" -ne "$ASSET_BYTES" ]; then
+            echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
+            rm -f "$ZIP"
+            exit 1
+          elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+            echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
             rm -f "$ZIP"
             exit 1
           fi
@@ -3467,8 +3471,12 @@ jobs:
             -o "$ZIP" \
             https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
           got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
-          if [ "$got" -ne "$ASSET_BYTES" ] || ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
-            echo "::error::downloaded WasmRun.xcframework.zip failed its integrity gate ($got / $ASSET_BYTES bytes or sha256 mismatch) — not unzipping unverified bytes (gh-2233)"
+          if [ "$got" -ne "$ASSET_BYTES" ]; then
+            echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
+            rm -f "$ZIP"
+            exit 1
+          elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+            echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
             rm -f "$ZIP"
             exit 1
           fi

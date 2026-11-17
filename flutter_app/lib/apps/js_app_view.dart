@@ -1454,6 +1454,7 @@ class _JsAppViewState extends State<JsAppView> {
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.
           js3dHost: createFaJs3dHost(widget.env),
+          threeHost: engine.threeHost,
           // Voxel worlds: the bridge-owned world the engine's backend
           // created at start — the SAME world every `voxel.*` hostCall
           // lands in (see JsAppEngine.voxelWorld). Without it the renderer
