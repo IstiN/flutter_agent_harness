@@ -10,6 +10,11 @@
 // ai-teammate passes factory_ref; sm/merge resolve the engine from
 // releases via vars (latest default).
 //
+// fa #2244: machine-sm.yml MIGRATED OUT of the factory lockstep — it now
+// runs the pack DIRECTLY (dmtools run sm_github.json from the latest
+// dmtools-agents release) and is guarded by the dedicated test at the
+// bottom of this file instead of the factory-ref map.
+//
 // Ported from epam/dmtools-dart (test/machine_kit/factory_stub_ref_test.dart)
 // minus the submodule cross-check: fa pins the factory ref directly, there
 // is no `agents` submodule here.
@@ -40,7 +45,6 @@ void main() {
   /// all checks.
   final stubs = <String, (String, String)>{
     'ai-teammate.yml': (teammate, 'factory-teammate.yml'),
-    'machine-sm.yml': (sm, 'factory-sm.yml'),
     'machine-merge.yml': (merge, 'factory-merge.yml'),
     'sm-kicker.yml': (kicker, 'factory-sm-kicker.yml'),
     'merge-trigger.yml': (mergeTrigger, 'factory-merge-trigger.yml'),
@@ -55,7 +59,6 @@ void main() {
   /// per-callee, asserted below.
   final explicitSecretStubs = <String, String>{
     'ai-teammate.yml': teammate,
-    'machine-sm.yml': sm,
     'machine-merge.yml': merge,
   };
 
@@ -222,6 +225,54 @@ void main() {
       teammate.contains("github.event.issue.user.login == 'ai-teammate'"),
       isFalse,
       reason: 'the old author filter must not linger',
+    );
+  });
+
+  test('machine-sm runs the pack DIRECTLY (factory hop removed, #2244)', () {
+    // fa #2244: the frozen factory-sm.yml carried no concurrency block —
+    // ticks overlapped (live 2026-11-17 12:55: two cron ticks ran
+    // concurrently ~7 min) — and the io-cache/probe perf work ships via
+    // pack releases anyway. The SM tick therefore runs the pack DIRECTLY:
+    // release-gated always-latest, LIVE by default, single-flight.
+    expect(
+      sm.contains(
+        'dmtools-agentic-workflows/.github/workflows/factory-sm.yml',
+      ),
+      isFalse,
+      reason: 'the factory hop must not come back: the frozen factory '
+          'holds no machine-sm concurrency group and cannot run an '
+          'unreleased pack',
+    );
+    expect(
+      sm.contains('dmtools run sm_github.json'),
+      isTrue,
+      reason: 'the tick must run the sm_github pack directly',
+    );
+    expect(
+      sm.contains('releases/latest'),
+      isTrue,
+      reason: 'the pack ref resolves the latest RELEASE at tick time '
+          '(release-gated always-latest; a raw branch ref would run '
+          'unreleased WIP)',
+    );
+    expect(
+      sm.contains('group: machine-sm'),
+      isTrue,
+      reason: 'single-flight: ticks must queue, never overlap — the '
+          'missing group was the factory-era defect',
+    );
+    expect(
+      sm.contains("inputs.dryRun || 'false'"),
+      isTrue,
+      reason: 'the tick defaults to LIVE — the dryRun input exists only '
+          'as an emergency brake',
+    );
+    expect(
+      sm.contains('actions/create-github-app-token@v2'),
+      isTrue,
+      reason: 'live ticks ride the App installation token (15k req/h) — '
+          'the PAT budget was exhausted by SM ticks before (dmtools-agents '
+          'run 39034080472)',
     );
   });
 }
