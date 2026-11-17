@@ -286,7 +286,7 @@ fa network rename --clear               Clear THIS device's friendly name''';
     if (options.error case final error?) return _usageError(error);
     var name = options.name;
     final explicitName = options.explicitName;
-    if (explicitName && (name.trim().isEmpty || name.runes.length > 128)) {
+    if (explicitName && !_validEnrollDeviceName(name)) {
       return _usageError('device name must contain 1–128 characters');
     }
     final account = await store.readAccount();
@@ -306,7 +306,7 @@ fa network rename --clear               Clear THIS device's friendly name''';
       }
       if (answer.trim().isNotEmpty) name = answer;
     }
-    if (name.trim().isEmpty || name.runes.length > 128) {
+    if (!_validEnrollDeviceName(name)) {
       return _usageError('device name must contain 1–128 characters');
     }
     final fresh = await _freshAccount(account);
@@ -329,6 +329,9 @@ fa network rename --clear               Clear THIS device's friendly name''';
     _printEnrollmentNextSteps();
     return 0;
   }
+
+  static bool _validEnrollDeviceName(String name) =>
+      name.trim().isNotEmpty && name.runes.length <= 128;
 
   static ({String name, bool explicitName, String? error}) _parseEnrollArgs(
     List<String> args,
