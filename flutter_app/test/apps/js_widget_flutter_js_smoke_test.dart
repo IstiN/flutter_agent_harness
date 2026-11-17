@@ -9,6 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:js_widget_runtime/src/runtime/js_widget_engine_flutter_js.dart';
 
+import '../native_test_guard.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -42,5 +44,5 @@ void main() {
         await engine.dispose();
       }
     });
-  });
+  }, skip: !quickJsBridgeAvailable);
 }
