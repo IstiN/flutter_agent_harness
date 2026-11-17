@@ -193,6 +193,7 @@ extension AgentCliSteering on AgentCli {
     DeferredPanel panel,
   ) async {
     String? recordId;
+    Object? persistError;
     try {
       final session = _session;
       if (session != null) {
@@ -203,17 +204,22 @@ extension AgentCliSteering on AgentCli {
       }
     } on Object catch (error) {
       recordId = null;
+      persistError = error;
+    }
+    await _steeringDelivered(message, recordId, panel);
+    if (persistError != null) {
       // Issue #2249 AC1: the run itself still carries the text, but the
       // steering RECORD (crash-recovery attribution) is lost — say so
-      // with the raw error instead of swallowing it silently.
+      // with the raw error instead of swallowing it silently. After the
+      // delivered line (review digest): the delivery truth first, the
+      // recovery caveat second.
       io.writeln(
         tuiWarning(
-          '⚠ steering NOT saved to session (fs error: $error) — '
+          '⚠ steering NOT saved to session (fs error: $persistError) — '
           'recovery after restart will not see it',
         ),
       );
     }
-    await _steeringDelivered(message, recordId, panel);
   }
 
   /// Whether the busy run's event heartbeat is silent past
@@ -306,8 +312,13 @@ extension AgentCliSteering on AgentCli {
   /// entry's record id when the persist is healthy or the retry lands;
   /// null keeps the honest unsaved state (already announced at accept
   /// time) — an in-flight write (no error, no id) is left to its own
-  /// resolution, which writes the marker.
-  Future<String?> _retrySteeringPersist(PendingSteering entry) async {
+  /// resolution, which writes the marker. A FAILED re-attempt prints the
+  /// same warning the accept did (review digest parity) unless the
+  /// caller announces the outcome itself.
+  Future<String?> _retrySteeringPersist(
+    PendingSteering entry, {
+    bool announceFailure = true,
+  }) async {
     final id = entry.recordId;
     if (id != null) return id;
     if (entry.persistError == null) return null;
@@ -318,7 +329,15 @@ extension AgentCliSteering on AgentCli {
         customType: steeringRecordType,
         data: {'text': _steerMessageText(entry.message)},
       );
-    } on Object {
+    } on Object catch (error) {
+      if (announceFailure) {
+        io.writeln(
+          tuiWarning(
+            '⚠ steering still NOT saved to session (fs error: $error) — '
+            'recovery after restart will not see it',
+          ),
+        );
+      }
       return null;
     }
   }
@@ -395,13 +414,25 @@ extension AgentCliSteering on AgentCli {
           '${texts.length} message(s) now',
         ),
       );
+      if (isBusy) {
+        // A competing submit/mail/scheduled run started before the
+        // settle ran: the drained texts have no carrier left — loud
+        // re-drop, never a consume-and-lose (review round 1).
+        await _dropSettledSteering(entries, texts);
+        return;
+      }
+      // Start the follow-up run BEFORE any await (review round 1): the
+      // per-entry persist retries below yield the event loop, and a run
+      // started in that window would make _startRun's busy guard refuse
+      // with the texts already consumed. Drain → start is synchronous;
+      // the retries ride the fresh run.
+      _startRun(texts.join('\n'));
       for (final entry in entries) {
         // Bounded persist re-attempt (issue #2249 AC1): a failed accept
         // append gets exactly one fresh append per delivery attempt.
         final recordId = await _retrySteeringPersist(entry);
         unawaited(_steeringDelivered(entry.message, recordId, entry.panel));
       }
-      _startRun(texts.join('\n'));
       return;
     }
     await _dropSettledSteering(entries, texts);
@@ -457,26 +488,30 @@ extension AgentCliSteering on AgentCli {
     for (final entry in entries) {
       entry.panel.state = DeferredPanelState.aborted;
       io.writeln(_style.dim(deferredPanelTransitionLine(entry.panel)));
-      final recordId = await _retrySteeringPersist(entry);
+      // The drop's own lost-print below announces a failed retry — the
+      // helper's warning would double-print the same error.
+      final recordId = await _retrySteeringPersist(
+        entry,
+        announceFailure: false,
+      );
       if (recordId != null) {
         if (session != null) {
           unawaited(_writeSteeringConsumed(session, recordId));
         }
         continue;
       }
-      if (entry.recordId != null) continue;
       // The drop destroys the LAST carrier: the session append failed
       // (or is still in flight), the FIFO entry is gone, the agent
       // queue is drained. Print the text verbatim — a silent drop is
-      // indistinguishable from a lost message (issue #2249 AC2).
+      // indistinguishable from a lost message (issue #2249 AC2). The
+      // in-flight shape claims loss only conditionally: the parked
+      // append can still land right after this line (review round 1).
       final why = entry.persistError == null
-          ? 'save still in flight'
-          : 'fs error: ${entry.persistError}';
+          ? 'save still in flight — unless the parked append lands, '
+                'the text is lost'
+          : 'fs error: ${entry.persistError} — the text is lost';
       io.writeln(
-        tuiWarning(
-          '⚠ dropped steering was NOT saved to session ($why) — '
-          'the text is lost:',
-        ),
+        tuiWarning('⚠ dropped steering was NOT saved to session ($why):'),
       );
       io.writeln('  • ${_steerMessageText(entry.message)}');
     }

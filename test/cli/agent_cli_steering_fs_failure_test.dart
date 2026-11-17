@@ -391,7 +391,7 @@ void main() {
       // surfacing) — wrapped by the session layer, never swallowed.
       expect(out, contains('fs error: '));
       expect(out, contains('injected fs failure'));
-      expect(out, contains('the text is lost:'));
+      expect(out, contains('the text is lost'));
       // The FULL text, verbatim — what was lost is exactly readable.
       expect(out, contains('  • [steering from user] $text'));
       expect(out, contains('[btw] steering from you → aborted'));
