@@ -47,7 +47,7 @@ ShellJobRegistry _registry({
   void Function(ShellJobEntry job, Duration elapsed)? onAdoptedLiveness,
   int adoptedLivenessNoticeMinutes = 0,
   Future<ShellLivenessTable?> Function()? livenessTableOverride,
-  Future<bool> Function(int pid)? stopAdoptedOverride,
+  Future<List<ShellSurvivor>?> Function(int pid)? stopAdoptedOverride,
 }) => ShellJobRegistry(
   env: _FakeBackgroundEnv(),
   onStart: onStart,
@@ -275,7 +275,7 @@ void main() async {
         livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
-          return true;
+          return const [];
         },
       );
       final entry = (await registry.adoptSurvivors('cmd', const [
@@ -288,6 +288,81 @@ void main() async {
       expect(entry.stopReason, 'stopped');
       expect(entry.exitCode, isNull);
       expect(settled, contains(entry));
+    });
+
+    test(
+      'stop surfaces the group residue on the entry (issue #2260)',
+      () async {
+        final registry = _registry(
+          livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+          stopAdoptedOverride: (pid) async => [
+            ShellSurvivor(pid: 7, startTag: 'S7', command: 'tee /tmp/b.log'),
+          ],
+        );
+        final entry = (await registry.adoptSurvivors('cmd', const [
+          ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+        ])).single;
+        await entry.stop();
+        expect(entry.stopAttempted, isTrue);
+        expect(entry.stopSurvivors, hasLength(1));
+        expect(entry.stopSurvivors!.single.pid, 7);
+        expect(entry.stopSurvivors!.single.startTag, 'S7');
+      },
+    );
+
+    test(
+      'a natural death reports no stop and no residue (issue #2260)',
+      () async {
+        ({Set<int> pids, Map<int, String> starts})? table = (
+          pids: {42},
+          starts: {42: 'S1'},
+        );
+        final registry = _registry(livenessTableOverride: () async => table);
+        final entry = (await registry.adoptSurvivors('cmd', const [
+          ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+        ])).single;
+        table = (pids: <int>{}, starts: <int, String>{});
+        await registry.adoptedPollTickForTest();
+        expect(entry.isRunning, isFalse);
+        expect(entry.stopAttempted, isFalse);
+        expect(entry.stopSurvivors, isNull);
+        expect(adoptedStopKeepsManifestRecord(entry), isFalse);
+      },
+    );
+
+    test('the manifest-keep predicate answers the stop residue tri-state '
+        '(issue #2260)', () async {
+      Future<ShellJobEntry> entryWithResidue(
+        List<ShellSurvivor>? residue,
+      ) async {
+        final registry = _registry(
+          livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+          stopAdoptedOverride: (pid) async => residue,
+        );
+        final entry = (await registry.adoptSurvivors('cmd', const [
+          ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+        ])).single;
+        await entry.stop();
+        return entry;
+      }
+
+      // Verified-gone stop: the manifest record is dropped as before.
+      expect(
+        adoptedStopKeepsManifestRecord(await entryWithResidue(const [])),
+        isFalse,
+      );
+      // Unverified group / survivors: the record is KEPT — the boot
+      // sweep's only path back to the orphaned group (AC2).
+      expect(
+        adoptedStopKeepsManifestRecord(await entryWithResidue(null)),
+        isTrue,
+      );
+      expect(
+        adoptedStopKeepsManifestRecord(
+          await entryWithResidue(const [ShellSurvivor(pid: 7, startTag: 'S7')]),
+        ),
+        isTrue,
+      );
     });
 
     test('adoptRunningEntry keeps the manifest identity (AC5)', () {
@@ -436,7 +511,7 @@ void main() async {
         livenessTableOverride: () async => (pids: {99}, starts: {99: 'S'}),
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
-          return true;
+          return const [];
         },
       );
       final entry = (await registry.adoptSurvivors('nohup x &', const [
@@ -447,7 +522,48 @@ void main() async {
         'id': entry.id,
       });
       expect(killed, [99]);
-      expect(text, contains('Stopped'));
+      expect(text, 'Stopped ${entry.id}');
+    });
+
+    test('stop with surviving group members names them, never bare '
+        '"Stopped" (issue #2260)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {99}, starts: {99: 'S'}),
+        stopAdoptedOverride: (pid) async => const [
+          ShellSurvivor(pid: 7, startTag: 'S7', command: 'tee /tmp/b.log'),
+          ShellSurvivor(pid: 8, startTag: 'S8'),
+        ],
+      );
+      final entry = (await registry.adoptSurvivors('nohup x &', const [
+        ShellSurvivor(pid: 99, startTag: 'S', command: 'sleep 300'),
+      ])).single;
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(text, contains('Stopped the leader ${entry.id}'));
+      expect(text, isNot(contains('Stopped ${entry.id}')));
+      expect(text, contains('2 process group member(s) still running'));
+      expect(text, contains(': pid 7, pid 8.'));
+      expect(text, contains('the next boot reaps the survivors'));
+    });
+
+    test('stop on an unverifiable group admits it instead of bare '
+        '"Stopped" (issue #2260 AC2)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {99}, starts: {99: 'S'}),
+        stopAdoptedOverride: (pid) async => null,
+      );
+      final entry = (await registry.adoptSurvivors('nohup x &', const [
+        ShellSurvivor(pid: 99, startTag: 'S', command: 'sleep 300'),
+      ])).single;
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(text, isNot(contains('Stopped ${entry.id}')));
+      expect(text, contains('group members may remain'));
+      expect(text, contains('the next boot reaps any survivors'));
     });
 
     test('stop refuses a recycled pid and marks the entry gone (r3)', () async {
@@ -460,7 +576,7 @@ void main() async {
         livenessTableOverride: () async => table,
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
-          return true;
+          return const [];
         },
       );
       final entry = (await registry.adoptSurvivors('nohup x &', const [
@@ -487,7 +603,7 @@ void main() async {
         livenessTableOverride: () async => table,
         stopAdoptedOverride: (pid) async {
           killed.add(pid);
-          return true;
+          return const [];
         },
       );
       final entry = (await registry.adoptSurvivors('nohup x &', const [
@@ -560,6 +676,43 @@ void main() async {
       expect(text, contains('pid 777'));
       expect(text, contains('no exit code'));
       expect(text, contains('nohup.out'));
+    });
+
+    test('settle notice after a survivors stop names the members and the '
+        'kept record (issue #2260 AC2)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+        stopAdoptedOverride: (pid) async => const [
+          ShellSurvivor(pid: 7, startTag: 'S7', command: 'tee b.log'),
+        ],
+      );
+      final entry = (await registry.adoptSurvivors('make test', const [
+        ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+      ])).single;
+      await entry.stop();
+      final text = adoptedJobSettleNoticeText(entry);
+      expect(text, contains('<system-notice>'));
+      expect(text, isNot(contains('no longer running')));
+      expect(text, contains('1 process group member(s) is still running'));
+      expect(text, contains('pid 7 (`tee b.log`)'));
+      expect(text, contains('the next boot reaps the survivors'));
+      expect(text, contains('nohup.out'));
+    });
+
+    test('settle notice after an unverified-group stop admits the '
+        'survivors may remain (issue #2260 AC2)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+        stopAdoptedOverride: (pid) async => null,
+      );
+      final entry = (await registry.adoptSurvivors('make test', const [
+        ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+      ])).single;
+      await entry.stop();
+      final text = adoptedJobSettleNoticeText(entry);
+      expect(text, isNot(contains('no longer running')));
+      expect(text, contains('group members may remain'));
+      expect(text, contains('the next boot reaps any survivors'));
     });
 
     test('liveness reminder names the elapsed minutes (AC4)', () {

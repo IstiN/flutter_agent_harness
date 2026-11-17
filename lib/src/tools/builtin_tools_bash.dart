@@ -1214,8 +1214,30 @@ Future<ToolExecutionResult> _bashJobStopResult(
     final already = _alreadyFinishedStopResult(entry, id);
     if (already != null) return already;
     await entry.stop();
-    return _refusedAdoptedStopResult(entry, id) ??
-        ToolExecutionResult.text('Stopped $id');
+    final refused = _refusedAdoptedStopResult(entry, id);
+    if (refused != null) return refused;
+    // Issue #2260: bare "Stopped" only when the whole process group
+    // verified gone. An adopted stop on a host without group leadership
+    // (or with a failed verification scan) killed only the leader; a
+    // partial kill names the surviving members. Both keep the manifest
+    // record, and the next boot's sweep reaps the group through it.
+    final survivors = entry.stopSurvivors;
+    if (survivors != null && survivors.isNotEmpty) {
+      final pids = [for (final s in survivors) 'pid ${s.pid}'].join(', ');
+      return ToolExecutionResult.text(
+        'Stopped the leader $id — ${survivors.length} process group '
+        'member(s) still running: $pids. The job record is kept; the '
+        'next boot reaps the survivors.',
+      );
+    }
+    if (survivors == null) {
+      return ToolExecutionResult.text(
+        'Stopped the leader $id (pid ${entry.pid}); its process group '
+        'could not be verified on this host — group members may remain. '
+        'The job record is kept; the next boot reaps any survivors.',
+      );
+    }
+    return ToolExecutionResult.text('Stopped $id');
   }
   // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —
   // malformed ids keep the shortest error, GC'd ids are honestly done, and

@@ -11,12 +11,13 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
+import 'package:flutter_agent_harness/src/env/process_probe_io.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-void main() {
+void main() async {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
   setUp(() {
@@ -24,6 +25,14 @@ void main() {
     io = FakeCliIO();
   });
   tearDown(() => io.close());
+
+  // Whether the host lets this process run `ps` (hardened/sandboxed test
+  // hosts deny it; CI Linux runs the real process-table paths).
+  final psAvailable = await Process.run('ps', [
+    '-ax',
+    '-o',
+    'pid=',
+  ]).then((p) => p.exitCode == 0).catchError((Object _) => false);
 
   AgentCli cliForStream(
     AssistantMessageEventStream Function(
@@ -107,6 +116,174 @@ void main() {
           .where((l) => l.contains('sleep $secs') && !l.contains('sh -c'))
           .toList();
       expect(survivors, isEmpty);
+    },
+  );
+
+  test(
+    'bash_job stop on an adopted setsid job kills the whole group and '
+    'clears the manifest (issue #2260 AC1)',
+    skip: !LocalShell.ownProcessGroupAvailable || !psAvailable
+        ? 'needs setsid (group leadership) with ps access'
+        : null,
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah2260a-');
+      addTearDown(() => workspace.delete(recursive: true));
+      // A live setsid group: leader sh + a two-sleep pipeline, all one
+      // group (pgid == leader pid) — the issue's exact burn-CPU shape.
+      final micros = DateTime.now().microsecondsSinceEpoch % 1000000;
+      final s1 = '31$micros';
+      final s2 = '32$micros';
+      final leader = await Process.start('setsid', [
+        'sh',
+        '-c',
+        'sleep $s1 | sleep $s2',
+      ]);
+      addTearDown(() => Process.killPid(leader.pid, ProcessSignal.sigkill));
+      addTearDown(() => Process.run('pkill', ['-f', 'sleep $s1']));
+      addTearDown(() => Process.run('pkill', ['-f', 'sleep $s2']));
+      // The group must be table-visible before the boot, and the record
+      // needs the real #478 start tag or the reconcile drops it.
+      var startTag = '';
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (DateTime.now().isBefore(deadline)) {
+        startTag = await pidStartSnapshot(leader.pid) ?? '';
+        final detail = await processDetailTableSnapshot();
+        final members = [
+          if (detail != null)
+            for (final row in detail)
+              if (row.pgid == leader.pid) row.pid,
+        ];
+        if (startTag.isNotEmpty && members.length >= 3) break;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(startTag, isNotEmpty);
+
+      final dir = workspace.path;
+      final localEnv = LocalExecutionEnv(cwd: dir);
+      final localIo = FakeCliIO();
+      addTearDown(localIo.close);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: localEnv,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: localIo,
+        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+      );
+      final manifest = '$dir/.fah/bash_jobs/running.json';
+      await localEnv.createDir('$dir/.fah/bash_jobs');
+      await localEnv.writeFile(
+        manifest,
+        jsonEncode([
+          {
+            'id': 'sh-2260-prev',
+            'command': 'sleep $s1 | sleep $s2',
+            'pid': '${leader.pid}',
+            'pidStart': startTag,
+          },
+        ]),
+      );
+
+      // Boot: the live entry re-adopts as a real registry job.
+      await cli.waitingCaptureLostJobsForTest();
+      final entry = cli.shellJobsRegistryForTest.jobs
+          .where((job) => job.id == 'sh-2260-prev')
+          .single;
+      expect(entry.isAdopted, isTrue);
+      expect(entry.isRunning, isTrue);
+      entry.suppressSettleNotification();
+
+      // bash_job action:stop drives the same stop path.
+      await entry.stop();
+      await pumpEventQueue();
+
+      expect(entry.isRunning, isFalse);
+      expect(entry.stopAttempted, isTrue);
+      expect(entry.stopSurvivors, isEmpty, reason: 'the group verified gone');
+      // AC1: NO live process carries the leader's pgid.
+      final after = await processDetailTableSnapshot();
+      expect([
+        if (after != null)
+          for (final row in after)
+            if (row.pgid == leader.pid &&
+                !(row.command?.contains('defunct') ?? false))
+              row.pid,
+      ], isEmpty);
+      final ps = await Process.run('ps', ['-ax', '-o', 'args=']);
+      expect(ps.stdout.toString(), isNot(contains('sleep $s1')));
+      expect(ps.stdout.toString(), isNot(contains('sleep $s2')));
+      // AC1: running.json no longer lists the id (verified-gone stop).
+      final recorded =
+          (await localEnv.readTextFile(manifest)).valueOrNull ?? '';
+      expect(recorded, isNot(contains('sh-2260-prev')));
+    },
+  );
+
+  test(
+    'stop of a non-group-leader adopted job keeps the manifest record '
+    '(issue #2260 AC2)',
+    skip: !psAvailable ? 'needs POSIX with ps access' : null,
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah2260b-');
+      addTearDown(() => workspace.delete(recursive: true));
+      // No setsid: the child sits in OUR group — the harness can never
+      // prove the group is gone, so the stop must keep the record.
+      final micros = DateTime.now().microsecondsSinceEpoch % 1000000;
+      final child = await Process.start('sleep', ['30$micros']);
+      addTearDown(() => Process.killPid(child.pid, ProcessSignal.sigkill));
+      final startTag = await pidStartSnapshot(child.pid);
+      expect(startTag, isNotNull);
+
+      final dir = workspace.path;
+      final localEnv = LocalExecutionEnv(cwd: dir);
+      final localIo = FakeCliIO();
+      addTearDown(localIo.close);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: localEnv,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: localIo,
+        streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+      );
+      final manifest = '$dir/.fah/bash_jobs/running.json';
+      await localEnv.createDir('$dir/.fah/bash_jobs');
+      await localEnv.writeFile(
+        manifest,
+        jsonEncode([
+          {
+            'id': 'sh-2260-live',
+            'command': 'sleep 30$micros',
+            'pid': '${child.pid}',
+            'pidStart': startTag,
+          },
+        ]),
+      );
+      await cli.waitingCaptureLostJobsForTest();
+      final entry = cli.shellJobsRegistryForTest.jobs
+          .where((job) => job.id == 'sh-2260-live')
+          .single;
+      entry.suppressSettleNotification();
+
+      await entry.stop();
+      await pumpEventQueue();
+
+      expect(entry.isRunning, isFalse);
+      expect(entry.stopAttempted, isTrue);
+      expect(entry.stopSurvivors, isNull, reason: 'group unverifiable');
+      final recorded =
+          (await localEnv.readTextFile(manifest)).valueOrNull ?? '';
+      expect(
+        recorded,
+        contains('sh-2260-live'),
+        reason: 'the boot sweep reaps the group through this record',
+      );
     },
   );
 

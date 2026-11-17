@@ -255,6 +255,25 @@ final class ShellJobEntry {
   /// null when it exited on its own.
   String? get stopReason => job.stopReason;
 
+  /// Whether a stop kill round ran (issue #2260, adopted jobs only —
+  /// always false otherwise): the #478 refusal fast paths and the
+  /// natural liveness-poll death signaled nothing.
+  bool get stopAttempted => switch (job) {
+    _AdoptedShellJob adopted => adopted.stopAttempted,
+    _ => false,
+  };
+
+  /// The stop residue of an attempted adopted stop (issue #2260): null =
+  /// the process group could not be verified (single-pid kill on a host
+  /// without group leadership, probe failure) — survivors may remain;
+  /// empty = the whole group verified gone; non-empty = these members
+  /// survived. Native jobs report an empty list (their killTree reaps
+  /// the whole tree, gh-1053).
+  List<ShellSurvivor>? get stopSurvivors => switch (job) {
+    _AdoptedShellJob adopted => adopted.stopSurvivors,
+    _ => const [],
+  };
+
   /// The exec timeout the job was started with (gh-1444 AC5): the honest
   /// "timed out after Ns" text reports THIS cap when the job's own
   /// `stopReason` is 'timeout', instead of "unknown seconds" — the model's
@@ -415,10 +434,12 @@ final class ShellJobRegistry {
   @visibleForTesting
   Future<ShellLivenessTable?> Function()? livenessTableOverride;
 
-  /// Test seam: the adopted-job kill round. Null restores the real
-  /// TERM/KILL pair.
+  /// Test seam: the adopted-job stop. Returns the stop residue exactly
+  /// like [stopDetachedProcess] (issue #2260): null = the group could
+  /// not be verified, empty = the whole group verified gone, non-empty =
+  /// these members survived. Null function restores the real stop.
   @visibleForTesting
-  final Future<bool> Function(int pid)? stopAdoptedOverride;
+  final Future<List<ShellSurvivor>?> Function(int pid)? stopAdoptedOverride;
 
   var _staleJobLogWarned = false;
   final _jobs = <ShellJobEntry>[];
@@ -1002,8 +1023,27 @@ final class _AdoptedShellJob implements ShellJob {
   /// The #478 start string at adoption time; '' when the platform could
   /// not report one (presence-only liveness, same degrade as reconcile).
   final String _startTag;
-  final Future<bool> Function(int pid) _stopProcess;
+  final Future<List<ShellSurvivor>?> Function(int pid) _stopProcess;
   final Future<ShellLivenessTable?> Function()? _livenessSample;
+
+  /// Whether a stop kill round ran (issue #2260): false on the natural
+  /// liveness-poll death and on the #478 refusal fast paths — those
+  /// signaled nothing, so there is no group question to answer.
+  bool _stopAttempted = false;
+
+  /// The stop residue (issue #2260), set only by [stop]: null = the
+  /// process group could not be verified (single-pid kill, probe
+  /// failure, or a throw) — survivors may remain; empty = the whole
+  /// group verified gone; non-empty = these members survived the kill
+  /// rounds. The host keeps the manifest record through the leader pid
+  /// in the first and last case, so the boot sweep can reap the group.
+  List<ShellSurvivor>? _stopSurvivors;
+
+  /// See [_stopSurvivors].
+  List<ShellSurvivor>? get stopSurvivors => _stopSurvivors;
+
+  /// See [_stopAttempted].
+  bool get stopAttempted => _stopAttempted;
 
   bool _running = true;
   String? _stopReason;
@@ -1062,10 +1102,16 @@ final class _AdoptedShellJob implements ShellJob {
       if (actual != null && actual != _startTag) return _markGone();
     }
     _stopReason ??= 'stopped';
+    // Issue #2260: the kill round is group-aware ([stopDetachedProcess])
+    // and reports the group residue; the settle that follows stays
+    // honest through [stopSurvivors]/[stopAttempted] — the host keeps
+    // the manifest record unless the whole group verified gone.
+    _stopAttempted = true;
     try {
-      await _stopProcess(pid);
+      _stopSurvivors = await _stopProcess(pid);
     } on Object {
-      // Best-effort — the settle below reflects the stop intent either way.
+      // Best-effort — the settle below reflects the stop intent either
+      // way, with the unverified-group honesty in [stopSurvivors].
     }
     if (_running) _markGone();
   }
@@ -1106,19 +1152,65 @@ String adoptedSurvivorsNoticeText(
   return lines.toString();
 }
 
+/// Whether a settled ADOPTED job keeps its manifest record (issue
+/// #2260): a stop whose process group did not verify gone — unverified
+/// (null) or survivors remaining — keeps the leader-pid row, the only
+/// record the boot sweep (`reapOrphanJobGroups`) can reap the leftover
+/// group through. Everything else removes it (natural deaths, verified
+/// stops).
+bool adoptedStopKeepsManifestRecord(ShellJobEntry job) =>
+    job.isAdopted &&
+    job.stopAttempted &&
+    (job.stopSurvivors == null || job.stopSurvivors!.isNotEmpty);
+
 /// The model-facing settle notice for an ADOPTED job (issue #2201 AC3):
 /// liveness-only honesty — no exit code, no harness log — plus the
-/// pointer at the launcher's own redirect.
-String adoptedJobSettleNoticeText(ShellJobEntry job) =>
-    '<system-notice>\n'
-    'Adopted background process ${job.id} (pid ${job.pid}, '
-    '`${shellJobCommandLabel(job.command)}`) is no longer running '
-    '(liveness poll; no exit code — it was not our child).\n'
-    'Its output went to whatever redirect its launcher used (e.g. '
-    'nohup.out), not a harness log. If you still need its result, check '
-    'that redirect, or re-run the work with background: true to capture '
-    'it.\n'
-    '</system-notice>';
+/// pointer at the launcher's own redirect. Survivor-aware (issue #2260):
+/// a stop that could not verify the whole process group never claims the
+/// job is simply "no longer running" — it names the survivors or admits
+/// the unverified group, and points at the kept record the boot sweep
+/// reaps through.
+String adoptedJobSettleNoticeText(ShellJobEntry job) {
+  const redirectHint =
+      'Its output went to whatever redirect its launcher used (e.g. '
+      'nohup.out), not a harness log.';
+  final head =
+      'Adopted background process ${job.id} '
+      '(pid ${job.pid}, `${shellJobCommandLabel(job.command)}`) ';
+  if (job.stopAttempted) {
+    final survivors = job.stopSurvivors;
+    if (survivors == null) {
+      return '<system-notice>\n'
+          '${head}was stopped by its leader pid, but its process group '
+          'could not be verified on this host — group members may remain. '
+          'The job record is kept, and the next boot reaps any survivors.\n'
+          '$redirectHint\n'
+          '</system-notice>';
+    }
+    if (survivors.isNotEmpty) {
+      final named = [
+        for (final survivor in survivors)
+          'pid ${survivor.pid}'
+              '${survivor.command == null ? '' : ' (`${survivor.command}`)'}',
+      ].join(', ');
+      return '<system-notice>\n'
+          '${head}was stopped: the leader pid is gone, but '
+          '${survivors.length} process group member(s) '
+          '${survivors.length == 1 ? 'is' : 'are'} still running: '
+          '$named. The job record is kept — the next boot reaps the '
+          'survivors.\n'
+          '$redirectHint\n'
+          '</system-notice>';
+    }
+  }
+  return '<system-notice>\n'
+      '${head}is no longer running '
+      '(liveness poll; no exit code — it was not our child).\n'
+      '$redirectHint If you still need its result, check '
+      'that redirect, or re-run the work with background: true to capture '
+      'it.\n'
+      '</system-notice>';
+}
 
 /// The AC4 cadence reminder for a still-running adopted job (default
 /// cadence 0 = never). Tag-free — the host wraps it as a system-notice.
