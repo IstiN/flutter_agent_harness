@@ -279,6 +279,82 @@ void main() {
       await run;
     },
   );
+
+  test(
+    'AC6 REG (RC round-1): the container walk never gates boot — boot '
+    'completes while the walk is still pending on a gated .trash '
+    'listing (boot discovery skips trash; the container walk does not), '
+    'and the sessions_container line lands once the gate opens',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      await env.createDir('/sessions/.trash');
+      await env.writeFile('/sessions/.trash/blob.bin', 'x' * 512);
+      env.gatedListDirPaths = {'/sessions/.trash'};
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = buildCli(stream: fake.call);
+      final run = cli.run();
+      // Boot must NOT wait on the container walk: boot's own discovery
+      // skips .trash, so a gated .trash listing can only hold the
+      // container-size walk — and boot still completes.
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+      final bootLog = await faLog();
+      expect(
+        bootLog,
+        contains('fa boot'),
+        reason: 'boot landed while the walk was still gated',
+      );
+      expect(bootLog, isNot(contains('sessions_container')));
+
+      env.listDirGate.complete();
+      await waitForIt(
+        () async => (await faLog()).contains('sessions_container bytes='),
+        reason: 'the unawaited walk lands once the gate opens',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'AC4 REG (RC round-1): fail→ok→hang — a hang mid-recovery-flush '
+    'fails bounded and never wedges the append chain or the exit drain',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      env.failNextLogAppends = 1; // call #0 (boot line) fails → buffering.
+      env.failLogMessage = emfileMessage;
+      env.hangLogAppendsFrom = 2; // call #1 (the container line) succeeds
+      // → recovery fires; the FLUSH (call #2) and everything after hang.
+      final cli = buildCli(
+        stream: FakeStreamFunction([textTurn('ok')]).call,
+        sessionIoTimeout: const Duration(milliseconds: 300),
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+      cli.logDiagnosticForTest('probe-1');
+      cli.logDiagnosticForTest('probe-2');
+      // The wedge-proof: with the flush unbounded this await never
+      // returns (the gh-2097 chain + the exit drain would be wedged).
+      await cli.flushDiagnosticLog().timeout(const Duration(seconds: 10));
+
+      final log = await faLog();
+      // Exactly the line whose LIVE append succeeded landed; everything
+      // after the hang buffered and exits via the drain.
+      expect(log, contains('sessions_container'));
+      expect(log, isNot(contains('probe-1')));
+      expect(log, isNot(contains('probe-2')));
+      expect(log, isNot(contains('fa boot')));
+      final out = io.out.toString();
+      expect(out, contains('fa_log_sink=fail(errno='));
+      // The recovery marker hung — the sink stays failing and the
+      // buffered lines exit-drain.
+      expect(out, contains('(marker failed)'));
+      expect(out, contains('fa_log_sink=exit_drain buffered='));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }
 
 /// The gated stream of agent_cli_stalled_run_test: one call hangs on

@@ -120,13 +120,7 @@ extension AgentCliDiagLog on AgentCli {
         await _env.createDir('${config.homeDir}/.fah/logs', recursive: true);
         await _rotateDiagnosticLogIfOversized(path);
       }
-      result = await _env
-          .appendFile(path, line)
-          .timeout(
-            config.sessionIoTimeout,
-            onTimeout: () =>
-                throw StateError('diagnostic log append timed out'),
-          );
+      result = await _boundedLogAppend(path, line);
     } on Object catch (error) {
       result = Err(FileError(FileErrorCode.unknown, '$error'));
     }
@@ -138,6 +132,24 @@ extension AgentCliDiagLog on AgentCli {
     _emitDiagFallbackLine(line);
     _bufferDiagLine(line);
   }
+
+  /// One fa.log append under the session-IO bound (RC round-1: the
+  /// recovery flush ran unbounded inside the gh-2097 chain — a
+  /// fail→ok→hang fs would have wedged the chain and the exit drain,
+  /// the exact class this PR eliminates). A timeout surfaces as an Err
+  /// flush result instead of awaiting forever.
+  Future<Result<void, FileError>> _boundedLogAppend(String path, String line) =>
+      _env
+          .appendFile(path, line)
+          .timeout(
+            config.sessionIoTimeout,
+            onTimeout: () => Err(
+              FileError(
+                FileErrorCode.aborted,
+                'diagnostic log append timed out',
+              ),
+            ),
+          );
 
   /// AC4: first-failure marker — `fa_log_sink=fail(errno=...)` rides the
   /// stderr fallback (the file sink is the thing that is down); the boot
@@ -170,18 +182,20 @@ extension AgentCliDiagLog on AgentCli {
   }
 
   /// AC4: first successful write after a failure — flush the ring into
-  /// the file (best-effort per line; a still-failing flush keeps the
-  /// buffer), then mark the recovery with `log_sink_recovered buffered=N`
-  /// so the post-mortem knows exactly which lines were delayed. Awaited
-  /// inside the append chain, so the flush lines never race the live
-  /// appends that follow.
+  /// the file (best-effort per line; a still-failing or TIMED-OUT flush
+  /// keeps the buffer and the failing state), then mark the recovery
+  /// with `log_sink_recovered buffered=N` so the post-mortem knows
+  /// exactly which lines were delayed. Every append runs under the
+  /// session-IO bound (RC round-1: an unbounded flush here could wedge
+  /// the append chain on a fail→ok→hang fs). Awaited inside the append
+  /// chain, so the flush lines never race the live appends that follow.
   Future<void> _recoverDiagSink(String path) async {
     final state = _ioState;
     final buffered = List<String>.of(state.diagRing);
     state.diagRing.clear();
     var flushed = 0;
     for (final bufferedLine in buffered) {
-      final landed = await _env.appendFile(path, bufferedLine);
+      final landed = await _boundedLogAppend(path, bufferedLine);
       if (landed.isOk) {
         flushed++;
       } else {
@@ -191,7 +205,7 @@ extension AgentCliDiagLog on AgentCli {
     state.diagFailing = false;
     final errno = state.diagFirstErrno;
     state.diagFirstErrno = null;
-    final marker = await _env.appendFile(
+    final marker = await _boundedLogAppend(
       path,
       '${DateTime.now().toIso8601String()} info '
       'log_sink_recovered buffered=$flushed '

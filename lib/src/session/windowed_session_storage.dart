@@ -1294,7 +1294,11 @@ void _fsOrThrow(
     final text = '$message: ${error.message}';
     // Issue #2248 AC5: the surfaced failure joins the per-session IO
     // health so the stall watchdog can name it while the run is wedged.
-    if (sessionId != null) SessionIoHealth.noteFailure(sessionId, text);
+    // notFound is NOT a health signal (a deleted/raced path — the same
+    // mapping below keeps it out of `storage`).
+    if (sessionId != null && error.code != FileErrorCode.notFound) {
+      SessionIoHealth.noteFailure(sessionId, text);
+    }
     throw SessionException(
       text,
       code: error.code == FileErrorCode.notFound

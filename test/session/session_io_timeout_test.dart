@@ -196,6 +196,36 @@ void main() {
     expect(SessionIoHealth.lastFailure('s1'), isNull);
   });
 
+  test('AC5 REG (RC round-1): a surfaced notFound is NOT a health signal — '
+      'a genuinely missing path never arms the fs banner', () async {
+    final fs = FlakySessionFs(MemoryFileSystem())
+      ..failNextAppends = 99; // retries exhaust → the notFound surfaces.
+    // The DEFAULT ioTimeout (30s) comfortably covers the #427 retry
+    // window (~1.5s); a shrunken test bound would cut the retries off
+    // before exhaustion and surface the timeout instead.
+    final storage = await JsonlSessionStorage.create(
+      fs,
+      path,
+      cwd: '/work',
+      sessionId: 's1',
+    );
+    await expectLater(
+      storage.appendEntry(record('e1')),
+      throwsA(
+        isA<SessionException>().having(
+          (e) => e.code,
+          'code',
+          SessionErrorCode.notFound,
+        ),
+      ),
+    );
+    expect(
+      SessionIoHealth.lastFailure('s1'),
+      isNull,
+      reason: 'file-missing is benign — no fs-failure verdict',
+    );
+  });
+
   test('AC5 classification: stallIsSessionIo windows the last failure — '
       'per-session isolation and old failures stay provider stalls', () async {
     final now = DateTime.now();

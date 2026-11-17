@@ -27,6 +27,19 @@ final class WedgeEnv
   int failNextLogAppends = 0;
   String failLogMessage = 'simulated fs down';
 
+  /// When set, fa.log appends from this CALL INDEX onward never complete
+  /// (the fail→ok→hang shape of RC round-1: a flaky fs that fails once,
+  /// succeeds once, then hangs mid-flush).
+  int? hangLogAppendsFrom;
+
+  /// listDir calls for these paths never complete until [listDirGate]
+  /// completes (the boot-not-gated probe: gate a container SUBDIR so the
+  /// walk pends while boot proceeds).
+  Set<String> gatedListDirPaths = {};
+  final Completer<void> listDirGate = Completer<void>();
+
+  int _logAppendCalls = 0;
+
   int sessionAppendCalls = 0;
 
   bool _isSessionJsonl(String path) => path.endsWith('.jsonl');
@@ -42,11 +55,18 @@ final class WedgeEnv
         return Completer<Result<void, FileError>>().future;
       }
     }
-    if (_isDiagLog(path) && failNextLogAppends > 0) {
-      failNextLogAppends--;
-      return Future.value(
-        Err(FileError(FileErrorCode.unknown, failLogMessage, path: path)),
-      );
+    if (_isDiagLog(path)) {
+      final index = _logAppendCalls++;
+      final hangFrom = hangLogAppendsFrom;
+      if (hangFrom != null && index >= hangFrom) {
+        return Completer<Result<void, FileError>>().future;
+      }
+      if (failNextLogAppends > 0) {
+        failNextLogAppends--;
+        return Future.value(
+          Err(FileError(FileErrorCode.unknown, failLogMessage, path: path)),
+        );
+      }
     }
     return _delegate.appendFile(path, content);
   }
@@ -91,8 +111,12 @@ final class WedgeEnv
       _delegate.fileInfo(path);
 
   @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) {
+    if (gatedListDirPaths.contains(path) && !listDirGate.isCompleted) {
+      return listDirGate.future.then((_) => _delegate.listDir(path));
+    }
+    return _delegate.listDir(path);
+  }
 
   @override
   Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);

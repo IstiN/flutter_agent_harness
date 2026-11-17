@@ -913,15 +913,16 @@ extension ApprovalCommands on AgentCli {
 
   /// The boot fa.log line (issue #2248 AC6): version + sid, plus the IO
   /// gauges — the fd count (the EMFILE candidate) and the per-minute
-  /// fs-failure counter — and the container walk starts out-of-band (it
-  /// must never gate boot).
+  /// fs-failure counter — and the container walk STARTS out-of-band
+  /// (unawaited: a 77GB cold stat walk must never gate boot — RC round-1
+  /// blocking finding).
   Future<void> _logBootLine() async {
     _logDiagnostic(
       'fa boot sid=$_logSid version=$_version '
       'fds=${fdGaugeLabel(await openFdCount(_env))} '
       'fs_fail_1m=${SessionIoHealth.failuresInLastMinute()}',
     );
-    await _startSessionsContainerGauge();
+    unawaited(_startSessionsContainerGauge());
   }
 
   /// Issue #2248 AC6: starts the sessions-container walk at boot
