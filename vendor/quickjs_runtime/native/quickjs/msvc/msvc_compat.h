@@ -84,8 +84,15 @@ static __forceinline int qjs_atomic_fetch_add_int(volatile int *p, int delta)
     return (int)_InterlockedExchangeAdd((volatile long *)p, (long)delta);
 }
 
+static __forceinline void qjs_atomic_store_release(volatile int *p, int value)
+{
+    (void)_InterlockedExchange((volatile long *)p, (long)value);
+}
+
 #define __atomic_load_n(ptr, order) \
     qjs_atomic_load_acquire((volatile int *)(ptr))
+#define __atomic_store_n(ptr, value, order) \
+    qjs_atomic_store_release((volatile int *)(ptr), (int)(value))
 #define __sync_fetch_and_add(ptr, delta) \
     qjs_atomic_fetch_add_int((volatile int *)(ptr), (int)(delta))
 

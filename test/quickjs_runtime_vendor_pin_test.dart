@@ -146,10 +146,28 @@ void main() {
       final code = _hookCode();
       expect(code, contains('native/quickjs/msvc'));
       expect(code, contains('forcedIncludes'));
+      final shim = File('$vendorDir/native/quickjs/msvc/msvc_compat.h');
       expect(
-        File('$vendorDir/native/quickjs/msvc/msvc_compat.h').existsSync(),
+        shim.existsSync(),
         isTrue,
         reason: 'the upstream 0.4.9 forced-include shim must be vendored',
+      );
+      final shimSource = shim.readAsStringSync();
+      expect(
+        shimSource,
+        contains('#define __atomic_store_n'),
+        reason:
+            'quickjs_bridge.c uses __atomic_store_n for the 0.4.9 drain-stop '
+            'flag. Without the MSVC mapping, cl.exe reports __ATOMIC_RELEASE '
+            'as an undeclared identifier and the Windows release build fails.',
+      );
+      expect(
+        shimSource,
+        contains('_InterlockedExchange('),
+        reason:
+            'MSVC release stores must lower to the full-barrier '
+            '_InterlockedExchange intrinsic, matching the existing atomic '
+            'load/fetch-add compatibility path.',
       );
       expect(
         File('$vendorDir/native/quickjs/msvc/sys/time.h').existsSync(),
