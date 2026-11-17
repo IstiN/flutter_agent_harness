@@ -311,6 +311,12 @@ class JsAppEngine {
   void Function()? onCloseRequested;
 
   JsWidgetEngine? _engine;
+  JsThreeHost? _threeHost;
+
+  /// The exact upstream-THREE host owned by the running engine. Renderers
+  /// must reuse it rather than allocating a second surface registry.
+  JsThreeHost? get threeHost => _threeHost;
+
   JsResolveCallback? _resolve;
 
   /// Per-process group of LIVE engines keyed by app id — the sibling set
@@ -480,6 +486,8 @@ class JsAppEngine {
     // the old revision's silenced keys silenced, gh-1164 review).
     _sourceRevision = await computeSourceRevision(env, app.dir, entryFile);
     final storage = await _readStorage();
+    final threeHost = faWidgetNeedsThree(js) ? createFaThreeHost() : null;
+    _threeHost = threeHost;
     final config = JsRuntimeConfig(
       widgetId: app.id,
       // The native router keys live engines by `instanceId ?? widgetId`:
@@ -512,6 +520,10 @@ class JsAppEngine {
       // GLB/GLTF) — shared with the renderer's `js3dHost`, which resolves
       // the same per-sceneId controllers the bridge mutates.
       js3dHost: createFaJs3dHost(env),
+      // Load the package's pinned native/web THREE bundle only for widgets
+      // that reference it; ordinary apps keep the lightweight boot path.
+      threeEnabled: threeHost != null,
+      threeHost: threeHost,
       // External links leave the app: jsr.openUrl(url) opens the host
       // browser (rejects with {'__error': ...} when the URL cannot be
       // launched).

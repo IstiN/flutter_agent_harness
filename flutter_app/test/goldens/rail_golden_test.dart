@@ -12,6 +12,8 @@
 ///   avatars, live status meta).
 library;
 
+import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/fa_network_client.dart' show DeviceInfo;
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
@@ -19,6 +21,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
+import 'package:fa/ui/network/devices_page.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FahColors, FaVisualDirection, buildFaTheme;
@@ -27,6 +30,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import '../network/fakes.dart';
+import '../ui/devices_page_test.dart' show FakeDevicesService;
 import 'golden_test_helper.dart';
 
 /// Long-dead activity stamps (> 7 days old) so [chatListRelativeTime]
@@ -242,6 +246,90 @@ void main() {
       ]),
     );
   });
+
+  testWidgets('Devices glass keeps its title clear over the scrolled rail', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'self',
+      ownDevice: const DeviceInfo(
+        deviceId: 'self',
+        name: 'workstation',
+        friendlyName: 'Workstation',
+      ),
+      rosterDevices: [
+        for (var index = 0; index < 12; index++)
+          DeviceInfo(
+            deviceId: 'device-$index',
+            name: 'device-$index',
+            friendlyName: 'Device $index',
+          ),
+      ],
+    );
+    final sessions = await _controller([
+      _session('design-session', '/work/flutter_agent', unread: 3),
+      _session('docs-session', '/work/flutter_agent'),
+    ]);
+    await pumpGolden(
+      tester,
+      DevicesPage(
+        service: service,
+        sessions: sessions,
+        now: () => DateTime.utc(2025, 12, 2),
+      ),
+      size: const Size(430, 760),
+      theme: buildFaTheme(
+        direction: FaVisualDirection.glass,
+        brightness: Brightness.dark,
+      ),
+    );
+
+    await tester.drag(
+      find.byKey(const ValueKey('deviceRail')),
+      const Offset(0, -180),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('devicesChromeUnderlay')), findsOneWidget);
+    final underHeaderRow = tester.getRect(
+      find.byKey(const ValueKey('deviceRow:device-1')),
+    );
+    expect(underHeaderRow.top, lessThan(52));
+    expect(underHeaderRow.bottom, greaterThan(0));
+    await expectGolden(tester, 'rail_devices_glass_scrolled');
+  });
+
+  for (final size in const [Size(390, 844), Size(1280, 800)]) {
+    testWidgets('first-connect device name dialog ${size.width.toInt()}', (
+      tester,
+    ) async {
+      await pumpGolden(
+        tester,
+        Builder(
+          builder: (context) => Center(
+            child: FilledButton(
+              onPressed: () => showDeviceEnrollmentNameDialog(
+                context,
+                defaultName: 'workstation',
+              ),
+              child: const Text('Connect'),
+            ),
+          ),
+        ),
+        size: size,
+        theme: buildFaTheme(
+          direction: FaVisualDirection.glass,
+          brightness: Brightness.dark,
+        ),
+        wrap: (child) => Scaffold(body: child),
+      );
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('enrollDeviceName')), findsOneWidget);
+      await expectGolden(tester, 'device_enroll_name_${size.width.toInt()}');
+    });
+  }
 
   testWidgets('chats networks panel: membership rows with live status', (
     tester,

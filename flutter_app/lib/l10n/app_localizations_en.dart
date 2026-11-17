@@ -2727,6 +2727,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get networkDeviceNotRunning => 'Connector not running — tap to retry';
 
   @override
+  String get networkDeviceEnrollNameTitle => 'Name this device';
+
+  @override
+  String get networkDeviceEnrollNamePrompt =>
+      'Choose a friendly name for this device. Leave it unchanged to use the hostname.';
+
+  @override
+  String get networkDeviceEnrollNameAction => 'Connect device';
+
+  @override
   String get networkDeviceRenameAction => 'Rename device';
 
   @override

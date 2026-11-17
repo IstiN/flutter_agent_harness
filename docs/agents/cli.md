@@ -23,6 +23,22 @@ Failures fall back to manual entry. `startAgentModelFlow` pins the `smol`/`subag
 - `lib/src/web_search/` — `web_search` (DDG keyless → Brave/Tavily keyed) and `web_fetch` (HTML→markdown, pub.dev handler) via `builtinTools(env, webSearch:)`.
 - `lib/src/model_roles/provider_catalog.dart` — provider table (incl. `chatgpt` Codex-backend `chatgpt-codex`); specs default `input: ['text','image']` (vision). `FA_PROVIDERS` dart-define / runtime env (`providerFilterEnvOverride`, wired from process env in `bin/fah.dart`; define wins) allowlists per build — `enabledProviders`/`providerEnabledInBuild`/`catalogProvider` honor it, default everything on (`test/build_filter/provider_filter_test.dart`).
 
+## Interactive network account/device commands
+
+In the TUI, `/network login` uses OAuth loopback; `/network login --jwt`
+prompts for a masked pasted token when that is preferable. `/network enroll`
+prompts for a friendly device name (blank keeps the hostname), or accepts
+`--name <name>`. Use `/network rename <name>` or `/network rename --clear` to
+change the enrolled label, and `/network status` / `/network devices
+[--roster]` to inspect state. Successful enrollment points to the app Devices
+surface: live sessions are steerable and catalog sleepers can be woken there.
+
+The existing DAP wizard is unchanged: bare `/network` and `/network join
+<invite>` still work. `/network dap …` is an explicit alias, and `/network
+help` lists both the account/device commands and the DAP entry points. All
+account/device commands reuse `NetworkCommandRunner`; only the TUI prompt and
+notice adapters differ from headless `fa network`.
+
 ## Provider catalog (CLI auth flows)
 
 See [providers.md](providers.md) for the full provider catalog with auth mechanisms, endpoint patterns, and CLI flags.

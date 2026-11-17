@@ -34,7 +34,55 @@ static HostCallback g_callbacks[MAX_HOST_FNS];
  * is atomic to avoid a data race on concurrent registration. */
 static int g_callback_count = 0;
 
+/* ── Cooperative drain stop ──────────────────────────────────────────
+ * Process-global one-way flag, set by the embedding app when it begins
+ * shutting an engine down (js_widget_runtime's isolate-backend dispose).
+ * The QuickJS worker isolate processes commands SEQUENTIALLY, so a
+ * 'shutdown' message cannot be dequeued while a pending-job drain is
+ * running — and a drain can execute up to 100k promise reactions, each
+ * potentially entering a host-callback trampoline. At app exit the Dart
+ * VM tears down its FFI-callback machinery BEFORE all isolates have
+ * exited (Dart::Cleanup → WaitForIsolateShutdown; the root isolate is
+ * already gone), and from that moment ANY trampoline entry FATALs in
+ * DLRT_GetFfiCallbackMetadata ("GetFfiCallbackMetadata called after
+ * shutdown") — SIGABRT on the worker thread. Both job-drain loops below
+ * therefore check this flag per job and return early, leaving the
+ * remaining jobs pending (close() frees them): the worker stops touching
+ * Dart receivers within one job of dispose() instead of seconds later.
+ * Cleared by the caller once the shutdown handshake resolves so other
+ * (live) engines keep draining. */
+static int g_drain_stop = 0;
+
+void qjs_request_drain_stop(void) {
+    __atomic_store_n(&g_drain_stop, 1, __ATOMIC_RELEASE);
+}
+
+void qjs_clear_drain_stop(void) {
+    __atomic_store_n(&g_drain_stop, 0, __ATOMIC_RELEASE);
+}
+
+int qjs_drain_stop_requested(void) {
+    return __atomic_load_n(&g_drain_stop, __ATOMIC_ACQUIRE);
+}
+
 /* ── Dispatch: the single C function all registered host fns call ──── */
+
+/* Re-anchor QuickJS's stack limit to the CURRENT thread before any JS
+ * can run. QuickJS captures rt->stack_top once, in JS_NewRuntime, on
+ * whatever OS thread created the runtime, and every JS call checks
+ * the machine SP against stack_top - stack_size. The Dart VM freely
+ * migrates an isolate to a different OS thread once it is not pinned
+ * inside an FFI call, so an eval can run on a thread whose stack sits
+ * at an unrelated address: the stale comparison then fails at parse
+ * time with a spurious SyntaxError("stack overflow") — and rendering
+ * that error overflows again, so the failure surfaces upstream as a
+ * SILENT undefined/null eval result (the ubuntu CI flake). Dart
+ * isolates never execute one runtime on two threads simultaneously
+ * (each engine is owned by exactly one isolate; see async_engine_pool),
+ * so re-capturing here is race-free. */
+static void qjs_refresh_stack_top(JSContext* ctx) {
+    JS_UpdateStackTop(JS_GetRuntime(ctx));
+}
 
 static JSValue qjs_dispatch(JSContext* ctx, JSValueConst this_val,
                             int argc, JSValueConst* argv, int magic) {
@@ -142,6 +190,8 @@ char* qjs_eval(JSContext* ctx, const char* code, const char* filename,
                char** err_msg) {
     if (err_msg) *err_msg = NULL;
 
+    qjs_refresh_stack_top(ctx);
+
     JSValue val = JS_Eval(ctx, code, strlen(code),
                           filename ? filename : "<eval>",
                           JS_EVAL_TYPE_GLOBAL);
@@ -185,9 +235,13 @@ char* qjs_eval(JSContext* ctx, const char* code, const char* filename,
  * jobs, or -1 if a job raised an exception (reported on stderr, cleared). */
 int qjs_execute_pending_jobs(JSContext* ctx) {
     JSRuntime* rt = JS_GetRuntime(ctx);
+    qjs_refresh_stack_top(ctx);
     int executed = 0;
     for (;;) {
         JSContext* ctx1;
+        /* Cooperative drain stop: leave the remaining jobs pending so no
+         * host trampoline runs after the app began shutting down. */
+        if (qjs_drain_stop_requested()) break;
         int rc = JS_ExecutePendingJob(rt, &ctx1);
         if (rc == 0) break;
         if (rc < 0) {
@@ -212,9 +266,13 @@ int qjs_execute_pending_jobs(JSContext* ctx) {
  * on stderr, cleared). */
 int qjs_execute_pending_jobs_capped(JSContext* ctx, int max_jobs) {
     JSRuntime* rt = JS_GetRuntime(ctx);
+    qjs_refresh_stack_top(ctx);
     int executed = 0;
     for (;;) {
         JSContext* ctx1;
+        /* Cooperative drain stop: leave the remaining jobs pending so no
+         * host trampoline runs after the app began shutting down. */
+        if (qjs_drain_stop_requested()) break;
         int rc = JS_ExecutePendingJob(rt, &ctx1);
         if (rc == 0) break;
         if (rc < 0) {

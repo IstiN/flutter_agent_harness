@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/network/device_dm_session_host.dart';
 import 'package:fa/network/envelope_codec.dart';
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart'
@@ -239,6 +240,84 @@ void main() {
       expect(opened.plaintext, 'assistant answer');
     });
   }
+
+  test(
+    'mobile non-live catalog DM stays queued with an honest receipt',
+    () async {
+      final user = await EnvelopeCodec.newX25519KeyPair();
+      final userKeyPair = await codec.keyPairFromPriv(user.priv);
+      final host = _FakeDmSessionHost('must not be delivered');
+      final tokens = fixture.enrolledTokens();
+      final source = fixture.FakeChatSessionSource(const [
+        (id: 'session-offline', live: false),
+      ]);
+      final (service, _, _, transport, _) = await fixture.buildService(
+        httpClient: http(),
+        tokenStore: tokens,
+        dmSessionHost: host,
+        chatSessionSource: source,
+        mobileQueueOnly: true,
+        idFactory: () => 'reply-mobile-1',
+      );
+      addTearDown(service.dispose);
+      await service.start();
+      await fixture.pumpUntilOnline(service);
+      final local = await DeviceDmKeyProvider(tokens).loadOrCreate('fa@dev-1');
+      const channel = 'dm:user:remote-user:fa@dev-1';
+      final ciphertext = await codec.encrypt(
+        senderIdentity: userKeyPair,
+        channelPub: codec.publicKeyFromB64(local.publicKey),
+        frameId: 'inbound-mobile-1',
+        aadTarget: channel,
+        plaintext: jsonEncode({
+          'text': 'please wake this session',
+          'sessionId': 'session-offline',
+        }),
+      );
+
+      transport.sockets.first.serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.mail,
+          msgId: 'inbound-mobile-1',
+          network: 'net-personal',
+          channel: channel,
+          from: 'user:remote-user',
+          to: 'fa@dev-1',
+          ts: '2026-11-12T10:00:00.000Z',
+          ciphertext: ciphertext,
+        ),
+      );
+
+      await waitFor(
+        () => transport.sockets.first.sent.any(
+          (frame) =>
+              frame.kind == NetworkEnvelopeKind.mail &&
+              frame.msgId == 'reply-mobile-1',
+        ),
+      );
+      expect(host.calls, isEmpty);
+      expect(
+        transport.sockets.first.sent.any(
+          (frame) =>
+              frame.kind == NetworkEnvelopeKind.ack &&
+              frame.refId == 'inbound-mobile-1',
+        ),
+        isFalse,
+      );
+      final reply = transport.sockets.first.sent.singleWhere(
+        (frame) =>
+            frame.kind == NetworkEnvelopeKind.mail &&
+            frame.msgId == 'reply-mobile-1',
+      );
+      final opened = await codec.decrypt(
+        channelKeyPair: userKeyPair,
+        frameId: reply.msgId,
+        aadTarget: channel,
+        payloadB64: reply.ciphertext!,
+      );
+      expect(opened.plaintext, deviceDmQueuedReceipt);
+    },
+  );
 
   test(
     'structured slash-command plaintext stays blocked by connector ACL',

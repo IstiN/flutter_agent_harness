@@ -1,49 +1,113 @@
-# 0.4.2
+# 0.4.9
 
-## Vendored fork (flutter_agent_harness, PR #1785 rework)
+## Vendored fork (flutter_agent_harness, gh-2215 follow-up)
 
-Tracked upstream: pub.dev quickjs_runtime 0.4.2
-(sha256 `4ea408c7f2f278d95979c92a8c217c78dd8161d046d15858995450a2cb5a0398`).
-`hook/build.dart` carries exactly two deltas and the vendored C sources carry
-three widening casts (with explanatory comments); everything else is upstream
-verbatim. Pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
+Tracks upstream quickjs_runtime 0.4.9, including its Windows MSVC shim,
+isolate stack-top fix, and cooperative drain-stop bridge. Carries only these
+local deltas, pinned by `test/quickjs_runtime_vendor_pin_test.dart`:
 
-- **Android**: no longer links `-lpthread` — bionic ships pthread inside
-  libc and the NDK sysroot has had no libpthread since r18, so the
-  unconditional `-lpthread` failed the link on every ABI
-  (`ld.lld: error: unable to find library -lpthread`, Build Android APK
-  CI leg).
-- **Windows**: the hook returns before the Native Assets `CBuilder` —
-  the QuickJS 2024-01-13 sources are not MSVC-clean (C11 atomics,
-  `sys/time.h`, GNU packed attributes) and upstream 0.4.2 died in
-  `flutter_assemble.vcxproj` (Lockfile smoke windows CI leg).
-  `QuickjsFfi.isAvailable` is false without the asset, so js_widget_runtime
-  falls back to its flutter_js backend — the pre-0.4.0 Windows behavior.
-- **C sources (3 value-identical widening casts)**: CodeQL default setup
-  analyzes C/C++ in `none` build mode (every vendored source is extracted)
-  and flagged 3 upstream "multiplication result converted to larger type"
-  idioms (`cpp/integer-multiplication-cast-to-long`, high severity,
-  failing the CodeQL check): `libbf.c` sqrtrem else-arm `q * q`,
-  `libbf.c` `digits_per_limb * radix_bits`, `quickjs.c` `new_size *
-  elem_size` in the `js_realloc2` call. Each is rewritten as an explicit
-  cast-before-multiply that is VALUE-IDENTICAL to upstream under its
-  existing guard/invariant — `(dlimb_t)q * q` (the `(q >> l) != 0`
-  else-arm bounds q < 2^l, so the narrow product never wraps),
-  `(slimb_t)digits_per_limb * radix_bits` (product is exactly LIMB_BITS),
-  `(size_t)new_size * elem_size` (identical wherever the int product was
-  defined; the theoretical >INT_MAX path — Bellard's own `XXX: potential
-  arithmetic overflow` remark — becomes a clean OOM instead of signed UB).
-  Inline `// codeql [...]` suppression comments were tried first and do
-  NOT work: GitHub code scanning does not honor them
-  (github/codeql#11427).
-
-Re-vendor (copy the published package over this directory) on the next
-upstream publish that fixes both; re-apply the three widening casts
-(`test/quickjs_runtime_vendor_pin_test.dart` fails with the exact
-statements to re-cast).
+- **Android**: omit `-lpthread`; bionic provides pthread in libc and the NDK
+  has no separate libpthread.so. Linux/desktop pthread linkage is unchanged.
+- **CodeQL**: retain the three value-identical cast-before-multiply forms in
+  `libbf.c` and `quickjs.c` (`q * q`, `digits_per_limb * radix_bits`, and
+  `new_size * elem_size`). Inline CodeQL suppression comments are not honored
+  by GitHub code scanning.
+- No prebuilt `libquickjs_bridge.so` is vendored; Native Assets builds the C
+  sources for each target. The old 0.4.2 Windows skip-build workaround is
+  removed because upstream 0.4.9 ships the MSVC compatibility shim.
 
 ## Upstream
 
+- **Fix the app-exit SIGABRT during pending-job drains**: `DLRT_GetFfiCallbackMetadata`
+  FATALs once the Dart VM begins teardown (`IsolateCreationEnabled` goes false
+  before `WaitForIsolateShutdown` returns), so an isolate-backend worker still
+  draining up to 100k queued promise reactions — each entering an FFI
+  trampoline through `qjs_bytes_dispatch` — aborts the process when the host
+  closes while such a drain is in flight. The bridge now carries a
+  process-global `g_drain_stop` atomic checked by BOTH
+  `qjs_execute_pending_jobs*` loops per job: `qjs_request_drain_stop()` makes
+  the drain return early (remaining jobs stay pending and are freed by
+  `close()`), `qjs_clear_drain_stop()` resumes normal draining, and
+  `qjs_drain_stop_requested()` reports the state. The Dart side binds the
+  exports instance-consistently (`QuickjsFfi.hasDrainStop/requestDrainStop/
+  clearDrainStop/drainStopRequested`) so pre-flag bridges degrade to no-ops
+  instead of silently decoupling the flag. Verified by a dispose-mid-drain
+  regression (js_widget_runtime `js_isolate_shutdown_drain_race_test.dart`,
+  validated red without the flag) and this repo's `test/drain_stop_test.dart`
+  (4 tests, all red against a pre-flag bridge).
+# 0.4.8
+
+- **Fix the ubuntu CI isolate flake (silent `undefined` evals)**: the Dart
+  VM migrates an isolate to a different OS thread once it is not pinned
+  inside an FFI call. QuickJS anchors its stack-overflow limit
+  (`rt->stack_top - stack_size`) to the thread that created the runtime,
+  so an eval running on a migrated thread compared its stack pointer
+  against an unrelated address range and failed at parse time with a
+  spurious `SyntaxError: stack overflow`. Rendering that error overflows
+  again, so `JS_ToCString` returned NULL and the failure surfaced as a
+  silent `undefined`/`null` eval result — the intermittent
+  `async_engine_pool` / `cross_runtime_conformance` failures on
+  ubuntu-latest. The bridge now calls `JS_UpdateStackTop` at every JS
+  entry point (`qjs_eval`, `qjs_execute_pending_jobs[_capped]`), which
+  Dart's one-runtime-per-isolate discipline makes race-free. Verified via
+  CI instrumentation on the failing runner: the wedged exception reads
+  `SyntaxError: stack overflow` at eval depth 0.
+
+# 0.4.7
+
+- **Windows (MSVC) link fix**:  called
+   unconditionally, but the decimal support
+  (, i.e. CONFIG_BIGNUM) is not compiled — MS linker fails
+  with LNK2019 (macOS  silently tolerates the dangling reference in
+  a dylib, which is why it went unnoticed). The call is now guarded by
+  ;  is never TRUE on that path without it (the sole
+  TRUE caller, , is itself guarded). Zero behavior change.
+
+# 0.4.6
+
+- **Windows (MSVC) build fix, part 4**: use -HUGE_VAL / HUGE_VAL instead of
+  -1.0 / 0.0 and 1.0 / 0.0 in js_math_min_max (C2124). After 0.4.5 the MSVC
+  compile reports exactly this one diagnostic.
+
+# 0.4.5
+
+- **Windows (MSVC) build fix, part 3**: neutralize the single-trailing-underscore
+  GCC spelling  (used by upstream on ) in the
+  shim, and use  instead of  under  (C2124).
+  After 0.4.4 the full MSVC compile is down to these two diagnostics.
+
+# 0.4.4
+
+- **Windows (MSVC) build fix, part 2**: force `DIRECT_DISPATCH 0` for
+  `_MSC_VER` (quickjs.c) — MSVC has no computed goto / labels-as-values,
+  so `JS_CallInternal` uses the plain `switch` dispatch (same as the
+  Emscripten build; identical semantics, slightly slower interpreter).
+  Add `ssize_t` (`intptr_t`) to the MSVC shim (`msvc_compat.h`); MSVC has
+  no POSIX `ssize_t`, which broke `JS_DumpMemoryUsage`.
+- Verification upgraded from a plain-clang `_MSC_VER` simulation (which
+  silently accepts GNU extensions such as labels-as-values) to
+  **clang-cl `/Zs`** (MSVC driver mode from Homebrew LLVM) over all six
+  translation units plus a standalone harness for the `sys/time.h` shim:
+  0 errors.
+
+# 0.4.3
+
+- **Windows (MSVC) build fix**: `native_toolchain_c` resolves `cl.exe` on
+  GitHub Actions `windows-latest`, which cannot compile the vendored
+  GCC-oriented QuickJS 2024-01-13 sources directly. On Windows only, the
+  build hook now force-includes `native/quickjs/msvc/msvc_compat.h`
+  (`sys/time.h` + `gettimeofday` shim, `alloca`/`strdup`, GCC atomic
+  builtins on `_Interlocked*` intrinsics, `isnan`/`isfinite`, GNU
+  `__attribute__` neutralized) and prepends `native/quickjs/msvc` to the
+  include path. The vendored sources gained `_MSC_VER`-guarded branches
+  (compound-literal-free `JS_MKVAL`/`JS_MKPTR`/`JS_NAN` constructors,
+  packed structs via `#pragma pack`, `clz`/`ctz` via `_BitScanReverse`,
+  stack-pointer probe via `_AddressOfReturnAddress`); clang/GCC builds see
+  zero changes. Tradeoff: on Windows, `Atomics.*`/`SharedArrayBuffer`
+  futex-style waiting stays disabled (it requires pthreads), matching
+  single-threaded QuickJS builds.
+
+# 0.4.2
 
 - `hook/build.dart`: pass `-Wl,-z,max-page-size=16384` on Android (Google
   Play 16 KB page-size alignment gate) and `-headerpad_max_install_names` +
