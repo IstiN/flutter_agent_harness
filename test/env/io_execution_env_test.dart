@@ -87,6 +87,42 @@ void main() {
       expect(missing.errorOrNull?.code, FileErrorCode.notFound);
     });
 
+    test('a real EACCES surfaces the raw OS errno in the FileError message '
+        '(issue #2248 AC1: the engine text alone said only "Cannot open '
+        'file" — EMFILE vs EACCES vs a container revocation were '
+        'indistinguishable)', () async {
+      if (Platform.isWindows) return; // POSIX permission bits only.
+      await fs.writeFile('locked.txt', 'data');
+      final lockedPath = '${tempDir.path}/locked.txt';
+      // Drop every permission bit, then try to append through the env.
+      await Process.run('chmod', ['000', lockedPath]);
+      try {
+        final result = await fs.appendFile('locked.txt', 'more');
+        final error = result.errorOrNull;
+        expect(error, isNotNull, reason: 'the append must fail');
+        expect(error!.message, contains('errno 13'));
+        expect(
+          error.message,
+          contains('Permission denied'),
+          reason: 'the OS message rides next to the errno',
+        );
+        expect(error.code, FileErrorCode.permissionDenied);
+      } finally {
+        await Process.run('chmod', ['644', lockedPath]);
+      }
+    });
+
+    test('a real ENOTDIR (a file where a directory is needed) carries its '
+        'errno too', () async {
+      if (Platform.isWindows) return; // POSIX errno shapes only.
+      await fs.writeFile('plain', 'a file, not a directory');
+      final result = await fs.appendFile('plain/child.jsonl', 'x');
+      final error = result.errorOrNull;
+      expect(error, isNotNull);
+      expect(error!.message, contains('errno 20'));
+      expect(error.code, FileErrorCode.notDirectory);
+    });
+
     test('readTextLines with maxLines truncates the output', () async {
       await fs.writeFile('many.txt', 'a\nb\nc\nd\n');
       expect((await fs.readTextLines('many.txt', maxLines: 2)).getOrThrow(), [

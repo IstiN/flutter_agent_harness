@@ -36,6 +36,7 @@ final class AgentCliConfig {
     this.sessionName,
     this.resume = false,
     this.steeringStaleAfter = const Duration(minutes: 2),
+    this.sessionIoTimeout = SessionIoRetryConfig.defaultSessionIoTimeout,
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
     this.envVarValue,
@@ -846,6 +847,14 @@ final class AgentCliConfig {
   /// mid-thinking family) crosses this threshold. A late delivery from
   /// `dead` stays possible — dead means "not responding", not "lost".
   final Duration steeringStaleAfter;
+
+  /// The session-IO bound (issue #2248 AC2): the wall-clock budget for
+  /// one locked session-file operation (open/write envelope, plus the
+  /// queue wait behind a stuck head). A hung append fails the turn with
+  /// a named `session IO timed out` error at this bound instead of
+  /// wedging it (the 21-minute yoclip hang). Default: 30s — ride
+  /// [SessionIoRetryConfig.defaultSessionIoTimeout].
+  final Duration sessionIoTimeout;
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, or `google`.
   final String providerKind;

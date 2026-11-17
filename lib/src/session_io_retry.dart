@@ -73,14 +73,16 @@ final class SessionIoRetryPolicy {
 }
 
 /// Retry wiring for one session store: the [policy] caps the window, the
-/// [logger] receives one `session_io_retry` line per retry, and [delay]
-/// replaces the wall-clock sleep (tests inject an instant recorder).
+/// [logger] receives one `session_io_retry` line per retry, [delay]
+/// replaces the wall-clock sleep (tests inject an instant recorder), and
+/// [ioTimeout] bounds every locked session-file operation.
 final class SessionIoRetryConfig {
   /// Creates a [SessionIoRetryConfig].
   const SessionIoRetryConfig({
     this.policy = const SessionIoRetryPolicy(),
     this.logger,
     this.delay = defaultSessionIoDelay,
+    this.ioTimeout = defaultSessionIoTimeout,
   });
 
   /// The backoff schedule.
@@ -91,6 +93,18 @@ final class SessionIoRetryConfig {
 
   /// The sleep between retries.
   final Future<void> Function(Duration delay) delay;
+
+  /// The default session-IO bound (issue #2248 AC2): "tens of seconds" —
+  /// a whole-line append on a 3.7GB segment must fit comfortably; a hung
+  /// open/write must not. Overridable per host (tests shrink it).
+  static const defaultSessionIoTimeout = Duration(seconds: 30);
+
+  /// Hard wall-clock bound for one locked session-file operation — the
+  /// open/write/retry-loop envelope inside [withSessionFileLock], plus
+  /// the queue wait behind a stuck head (AC3). When it trips, the
+  /// operation fails with a NAMED [SessionException] instead of wedging
+  /// the turn (the 21-minute no-event hang of the yoclip incident).
+  final Duration ioTimeout;
 }
 
 /// Runs [operation] — one [FileSystem]-shaped call returning a
