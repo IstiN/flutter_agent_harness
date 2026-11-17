@@ -457,78 +457,68 @@ class _DevicesPageState extends State<DevicesPage> {
     Object? value,
     Map<String, ConnectorSessionPresence>? previous,
     NetworkEnvelopeKind kind,
-  ) {
-    if (value is! List) return previous ?? const {};
-    // ROSTER carries the complete persisted projection. PRESENCE carries
-    // live/heartbeat deltas from the registry (often live-only, sometimes an
-    // explicit empty list): merge those deltas instead of erasing hundreds of
-    // persisted REST rows after the next heartbeat.
-    final sessions = <String, ConnectorSessionPresence>{
-      if (kind == NetworkEnvelopeKind.presence) ...?previous,
-    };
-    for (final node in value) {
-      if (node is! Map) continue;
-      final id = node['id'];
-      if (id is! String || id.isEmpty) continue;
-      if (ConnectorSessionMetadata.fromJson(node)?.isSubagent ?? false) {
-        sessions.remove(id);
-        continue;
-      }
-      if (_serverSessionExpired(node)) {
-        sessions.remove(id);
-        continue;
-      }
-      final legacyKnownRow = _legacyKnownServerSession(
-        node,
-        previous,
-        kind,
-        id,
-      );
-      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
-        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
-          sessions.remove(id);
-        }
-        continue;
-      }
-      final state = ConnectorSessionPresence.tryParse('${node['state'] ?? ''}');
-      if (state != null) sessions[id] = state;
-    }
-    return sessions;
-  }
+  ) => _projectServerSessions(
+    value,
+    previous,
+    kind,
+    (node, _) => ConnectorSessionPresence.tryParse('${node['state'] ?? ''}'),
+  );
 
   Map<String, ConnectorSessionMetadata> _serverSessionMetadata(
     Object? value,
     Map<String, ConnectorSessionMetadata>? previous,
     NetworkEnvelopeKind kind,
+  ) => _projectServerSessions(value, previous, kind, (_, metadata) => metadata);
+
+  /// Applies one roster/presence row to either session projection. ROSTER is
+  /// a complete snapshot; PRESENCE starts from the persisted rows and merges
+  /// live deltas, including explicit removals.
+  Map<String, T> _projectServerSessions<T>(
+    Object? value,
+    Map<String, T>? previous,
+    NetworkEnvelopeKind kind,
+    T? Function(Map<Object?, Object?> node, ConnectorSessionMetadata? metadata)
+    project,
   ) {
     if (value is! List) return previous ?? const {};
-    final metadata = <String, ConnectorSessionMetadata>{
+    final projected = <String, T>{
       if (kind == NetworkEnvelopeKind.presence) ...?previous,
     };
     for (final node in value) {
       if (node is! Map) continue;
       final id = node['id'];
       if (id is! String || id.isEmpty) continue;
-      final parsed = ConnectorSessionMetadata.fromJson(node);
-      if ((parsed?.isSubagent ?? false) || _serverSessionExpired(node)) {
-        metadata.remove(id);
+      final metadata = ConnectorSessionMetadata.fromJson(node);
+      final action = _serverSessionAction(node, previous, kind, id, metadata);
+      if (action == _ServerSessionAction.remove) {
+        projected.remove(id);
         continue;
       }
-      final legacyKnownRow = _legacyKnownServerSession(
-        node,
-        previous,
-        kind,
-        id,
-      );
-      if (!_serverSessionVisible(node, kind) && !legacyKnownRow) {
-        if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
-          metadata.remove(id);
-        }
-        continue;
-      }
-      if (parsed != null) metadata[id] = parsed;
+      if (action == _ServerSessionAction.skip) continue;
+      final row = project(node, metadata);
+      if (row != null) projected[id] = row;
     }
-    return metadata;
+    return projected;
+  }
+
+  _ServerSessionAction _serverSessionAction<T>(
+    Map<Object?, Object?> node,
+    Map<String, T>? previous,
+    NetworkEnvelopeKind kind,
+    String id,
+    ConnectorSessionMetadata? metadata,
+  ) {
+    if ((metadata?.isSubagent ?? false) || _serverSessionExpired(node)) {
+      return _ServerSessionAction.remove;
+    }
+    final legacyKnownRow = _legacyKnownServerSession(node, previous, kind, id);
+    if (_serverSessionVisible(node, kind) || legacyKnownRow) {
+      return _ServerSessionAction.retain;
+    }
+    if (kind == NetworkEnvelopeKind.presence && node['networks'] is List) {
+      return _ServerSessionAction.remove;
+    }
+    return _ServerSessionAction.skip;
   }
 
   bool _localSessionExpired(ChatListEntry session) {
@@ -1098,6 +1088,8 @@ class _RemoteDeviceGrouping {
         (ids.length == 1 ? 'device:${ids.first}' : 'shared:${ids.first}');
   }
 }
+
+enum _ServerSessionAction { retain, skip, remove }
 
 /// Presence rows without an exposure list are legacy patches: retain a known
 /// persisted row even though the patch itself carries no visibility fields.
