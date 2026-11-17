@@ -161,7 +161,13 @@ abstract class AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error);
 
   /// Called once after the loop terminates, on success or exhaustion.
-  void onDone(int passes, int tokens);
+  ///
+  /// gh-2237 AC2: [reason] carries the exit reason for a ZERO-pass
+  /// outcome — the deciding under-trigger gate and the basis/trigger
+  /// numbers (`basis N below trigger M at the <gate>`), so a started
+  /// compaction never ends in silence. Null when passes ran (the pass
+  /// receipts carry the story) or the engine did not name a reason.
+  void onDone(int passes, int tokens, {String? reason});
 
   /// Called when both smol and main failed in the same pass. The CLI
   /// prints a "switch models" hint here; the Flutter sheet shows a
@@ -1177,7 +1183,14 @@ class AutoCompactorFactory {
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
         // so a structured run that skips it leaves them open forever.
-        hooks.onDone(adapter.passCount, _requestTokens());
+        // gh-2237 AC2: a zero-pass outcome rides the engine's exit reason
+        // — the deciding gate and the basis/trigger numbers — so the
+        // host's terminal receipt can say why nothing ran.
+        hooks.onDone(
+          adapter.passCount,
+          _requestTokens(),
+          reason: adapter.passCount == 0 ? outcome.zeroPassReason : null,
+        );
         return true;
       }
       if (outcome.timedOut) {
@@ -1221,7 +1234,12 @@ class AutoCompactorFactory {
     return build().run();
   }
 
-  Future<({bool ok, bool timedOut, Object? error})> _runStructured({
+  /// gh-2237: [zeroPassReason] carries the engine's exit reason for an
+  /// unforced under-trigger run — the factory surfaces it through
+  /// [AutoCompactorHooks.onDone] so the zero-pass terminal receipt says
+  /// why nothing ran.
+  Future<({bool ok, bool timedOut, Object? error, String? zeroPassReason})>
+  _runStructured({
     _StructuredHooksAdapter? adapter,
     bool capTriggered = false,
   }) async {
@@ -1326,13 +1344,18 @@ class AutoCompactorFactory {
           throw timeout;
         },
       );
-      return (ok: ok, timedOut: false, error: null);
+      return (
+        ok: ok,
+        timedOut: false,
+        error: null,
+        zeroPassReason: compactor.zeroPassReason,
+      );
     } on TimeoutException catch (error) {
       // The engine run may settle later (the abort propagates
       // asynchronously); drop that late settle — the named failure here
       // is the authoritative outcome.
       running.ignore();
-      return (ok: false, timedOut: true, error: error);
+      return (ok: false, timedOut: true, error: error, zeroPassReason: null);
     }
   }
 

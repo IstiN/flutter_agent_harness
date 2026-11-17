@@ -207,22 +207,39 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   int? _runTokensBefore;
 
   @override
-  void onDone(int passes, int tokens) {
+  void onDone(int passes, int tokens, {String? reason}) {
     if (passes > 0) {
       cli._logDiagnostic(
         'auto-compact done sid=${cli._logSid} passes=$passes tokens=$tokens',
       );
+    } else {
+      // gh-2237 AC2: a started compaction can never end in silence. The
+      // zero-pass outcome emits its terminal receipt on BOTH surfaces —
+      // the diagnostic lane (REG-1's terminal-receipt vocabulary) and a
+      // dim user-facing row (the boot-cap defer precedent). Post-AC1 the
+      // no-op is rare (the gate and the engine measure the same basis),
+      // so the noise budget is bounded; under a hostile-provider anchor
+      // flood the visible row is the feature — the user sees the meter
+      // being steered. Manual runs keep their own no-op note.
+      final why = reason ?? 'no passes ran';
+      cli._logDiagnostic(
+        'auto-compact done sid=${cli._logSid} passes=0 (no-op: $why)',
+      );
+      if (auto) {
+        cli.io.writeln(
+          cli._style.dim('[compaction] no-op: $why — context unchanged'),
+        );
+      }
     }
     // Backend agent mode (issue #155): close the compaction bracket once
     // per run with the net freed delta (clamped — a restamped estimator
     // can report a slightly larger after-count than the usage-anchored
-    // before-count).
+    // before-count). gh-2237: a zero-pass run closes it too — a start
+    // receipt must never leave an open compaction bracket behind.
     final before = _runTokensBefore;
-    if (before != null) {
-      final freed = before - tokens;
-      cli._hep?.compactionEnd(freed < 0 ? 0 : freed);
-      _runTokensBefore = null;
-    }
+    final freed = before == null ? 0 : before - tokens;
+    cli._hep?.compactionEnd(freed < 0 ? 0 : freed);
+    _runTokensBefore = null;
   }
 
   /// Returns a user-facing hint for a compaction failure, pointing at the

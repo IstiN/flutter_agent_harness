@@ -713,8 +713,11 @@ final class _VisibleHooks implements AutoCompactorHooks {
   }
 
   @override
-  void onDone(int passes, int tokens) {
-    log('[fah][sw] compaction done passes=$passes freed=$tokens');
+  void onDone(int passes, int tokens, {String? reason}) {
+    log(
+      '[fah][sw] compaction done passes=$passes freed=$tokens'
+      '${reason == null ? '' : ' no-op: $reason'}',
+    );
   }
 
   @override

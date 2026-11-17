@@ -160,18 +160,20 @@ final class StructuredCompactionPass {
   final CompactionUsageTotals? usage;
 }
 
-/// Rebuilds [state.messages] from the session projection, zeroing usage
-/// anchors on rebuilt transcripts (rebuilt messages carry no trustworthy
-/// usage). The ONE refresh both the engine passes and the agent-initiated
-/// hide use (issue #1379 tier 2) — a single contract, not two copies.
+/// Rebuilds [state.messages] from the session projection. The ONE refresh
+/// both the engine passes and the agent-initiated hide use (issue #1379
+/// tier 2) — a single contract, not two copies.
+///
+/// gh-2237 AC1 (projection-trust): NO usage re-normalization here.
+/// `buildContextMessages` already applies the projection's boundary-keyed
+/// stale-anchor reset (`_resetStaleUsageAnchors`), so anchors travel with
+/// the data and the engine's basis equals the trigger gate's. The old
+/// blanket `Usage.zero` re-map destroyed what the projection curated and
+/// let the engine re-derive a collapsed whole-list chars/4 basis the
+/// arming gate never saw — the silent zero-pass auto-compact start loop
+/// (a started compaction that ended in receipt-free silence).
 Future<void> refreshAgentState(Session session, AgentState state) async {
-  final rebuilt = await session.buildContextMessages();
-  state.messages = [
-    for (final message in rebuilt)
-      message is AssistantMessage
-          ? message.copyWith(usage: Usage.zero)
-          : message,
-  ];
+  state.messages = await session.buildContextMessages();
 }
 
 /// The structured compaction engine.
@@ -307,6 +309,15 @@ final class StructuredCompactor {
 
   int _pass = 0;
 
+  /// gh-2237 AC3/OQ3: why the last [run] returned without a receipted
+  /// pass — the deciding under-trigger gate and the basis/trigger numbers
+  /// that decided it (`basis N below trigger M at the <gate>`). The
+  /// factory surfaces it through the run-level terminal receipt so a
+  /// zero-pass outcome is never receipt-free; for runs that folded, the
+  /// pass receipts carry the story and this stays null. Counts only,
+  /// never content.
+  String? zeroPassReason;
+
   /// Issue #1499: per-run ledger entry memo — the judge/LRU/checkpoint
   /// passes each rebuild the ledger over the whole visible path, and the
   /// memo turns every rebuild after the first into O(changed records)
@@ -326,6 +337,7 @@ final class StructuredCompactor {
   /// Runs both passes; returns whether the context ended under pressure.
   Future<bool> run({bool force = false}) async {
     if (window <= 0) return true;
+    zeroPassReason = null;
     // gh-2097: re-anchor the agent state from the session projection
     // BEFORE any trigger/before/over math. The in-memory transcript can
     // lag the session file (an in-memory tail cut, a second writer
@@ -335,9 +347,14 @@ final class StructuredCompactor {
     // the ledger cache (O(changed records)).
     await _refreshState();
     final trigger = window - settings.reserveTokens;
-    if (!force && _requestTokens() <= trigger) {
+    final basis = _requestTokens();
+    if (!force && basis <= trigger) {
+      zeroPassReason =
+          'basis $basis below trigger $trigger '
+          'at the run gate';
       return true;
     }
+
     // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
     // expansion artifacts first — the oldest expand call/result pairs
     // re-fold into markers before the judge ever sees the ledger.
@@ -392,10 +409,11 @@ final class StructuredCompactor {
     final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: evictions.toList()..sort());
     final after = await _refreshState();
+    final passNumber = ++_pass;
     hooks?.onPass(
       StructuredCompactionPass(
         kind: 'hide-lru',
-        pass: ++_pass,
+        pass: passNumber,
         tokensBefore: before,
         tokensAfter: after,
         ok: true,
@@ -550,9 +568,20 @@ final class StructuredCompactor {
     _judgeLatched = health.latched;
     for (var i = 0; i < maxHidePasses; i++) {
       final before = _requestTokens();
-      if (before <= trigger) return true;
+      if (before <= trigger) {
+        if (_pass == 0) {
+          zeroPassReason ??=
+              'basis $before below trigger $trigger at the hide-pass gate';
+        }
+        return true;
+      }
       final view = await _buildView();
-      if (view == null) return true;
+      if (view == null) {
+        if (_pass == 0) {
+          zeroPassReason ??= 'no ledger view at the hide-pass gate';
+        }
+        return true;
+      }
       if (_hideableEntries(view.ledger).isEmpty) break;
 
       // gh-2096: the cross-run latch gate — while latched the judge
@@ -602,10 +631,11 @@ final class StructuredCompactor {
       if (ids.isEmpty) break;
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
       final after = await _refreshState();
+      final passNumber = ++_pass;
       hooks?.onPass(
         StructuredCompactionPass(
           kind: 'hide',
-          pass: ++_pass,
+          pass: passNumber,
           tokensBefore: before,
           tokensAfter: after,
           ok: true,
@@ -738,10 +768,11 @@ final class StructuredCompactor {
   }) async {
     _consecutiveJudgeFailures++;
     final tokens = _requestTokens();
+    final passNumber = ++_pass;
     hooks?.onPass(
       StructuredCompactionPass(
         kind: 'hide',
-        pass: ++_pass,
+        pass: passNumber,
         tokensBefore: tokens,
         tokensAfter: tokens,
         ok: false,
@@ -788,10 +819,11 @@ final class StructuredCompactor {
   /// The receipt names the consequence explicitly ("budget unwinnable
   /// for the configured class"), then the deterministic hide decides.
   Future<bool> _latchedSkipHide(int trigger, int before) async {
+    final passNumber = ++_pass;
     hooks?.onPass(
       StructuredCompactionPass(
         kind: 'hide',
-        pass: ++_pass,
+        pass: passNumber,
         tokensBefore: before,
         tokensAfter: before,
         ok: false,
@@ -905,10 +937,11 @@ final class StructuredCompactor {
     if (ids.isEmpty) {
       // E1: even oldest-first cannot free anything — name the largest
       // remaining record instead of looping silently.
+      final passNumber = ++_pass;
       hooks?.onPass(
         StructuredCompactionPass(
           kind: 'hide',
-          pass: ++_pass,
+          pass: passNumber,
           tokensBefore: before,
           tokensAfter: before,
           ok: false,
@@ -925,10 +958,11 @@ final class StructuredCompactor {
     final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: ids.toList()..sort());
     final after = await _refreshState();
+    final passNumber = ++_pass;
     hooks?.onPass(
       StructuredCompactionPass(
         kind: 'hide-fallback',
-        pass: ++_pass,
+        pass: passNumber,
         tokensBefore: before,
         tokensAfter: after,
         ok: true,
@@ -979,7 +1013,13 @@ final class StructuredCompactor {
   Future<bool> _runCheckpointPasses(int trigger) async {
     for (var i = 0; i < maxCheckpointPasses; i++) {
       final before = _requestTokens();
-      if (before <= trigger) return true;
+      if (before <= trigger) {
+        if (_pass == 0) {
+          zeroPassReason ??=
+              'basis $before below trigger $trigger at the checkpoint gate';
+        }
+        return true;
+      }
       // gh-2101: the pass's measured window — the summarizer call(s), the
       // append and the refresh all belong to the pass's duration/usage.
       final watch = Stopwatch()..start();
@@ -1020,10 +1060,11 @@ final class StructuredCompactor {
           summarizedCount++;
         }
       }
+      final passNumber = ++_pass;
       hooks?.onPass(
         StructuredCompactionPass(
           kind: 'checkpoint',
-          pass: ++_pass,
+          pass: passNumber,
           tokensBefore: before,
           tokensAfter: after,
           ok: true,
@@ -1087,8 +1128,10 @@ final class StructuredCompactor {
       int summarizedCount = 0,
       String? summary,
     }) {
+      final passNumber = ++_pass;
       hooks?.onPass(
         _escalationReceipt(
+          passNumber: passNumber,
           before: before,
           after: after,
           ok: ok,
@@ -1243,6 +1286,7 @@ final class StructuredCompactor {
   /// so the pass's report shape stays in one place (gh-2044 rework: CRAP
   /// ratchet — the pass body keeps its decision flow only).
   StructuredCompactionPass _escalationReceipt({
+    required int passNumber,
     required int before,
     required int after,
     required bool ok,
@@ -1257,7 +1301,7 @@ final class StructuredCompactor {
     CompactionUsageTotals? usage,
   }) => StructuredCompactionPass(
     kind: 'checkpoint-escalation',
-    pass: ++_pass,
+    pass: passNumber,
     tokensBefore: before,
     tokensAfter: after,
     ok: ok,

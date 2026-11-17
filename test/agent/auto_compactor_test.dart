@@ -33,7 +33,7 @@ final class _RecordingHooks implements AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {
+  void onDone(int passes, int tokens, {String? reason}) {
     donePasses = passes;
     doneTokens = tokens;
   }
