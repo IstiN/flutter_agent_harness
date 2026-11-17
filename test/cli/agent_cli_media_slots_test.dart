@@ -50,7 +50,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.agent.state.tools.isNotEmpty);
       io.sendLine('/tools');
-      await waitForIt(() => io.out.toString().contains('inspect_image'));
+      await io.out.waitUntilContains('inspect_image');
       io.sendLine('/exit');
       await run;
       final line = io.out
@@ -84,7 +84,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.agent.state.tools.isNotEmpty);
       io.sendLine('/tools');
-      await waitForIt(() => io.out.toString().contains('inspect_image'));
+      await io.out.waitUntilContains('inspect_image');
       io.sendLine('/exit');
       await run;
       final line = io.out
@@ -103,7 +103,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.agent.state.tools.isNotEmpty);
       io.sendLine('/tools');
-      await waitForIt(() => io.out.toString().contains('transcribe_audio'));
+      await io.out.waitUntilContains('transcribe_audio');
       io.sendLine('/exit');
       await run;
       final line = io.out
@@ -237,7 +237,7 @@ void main() {
       await readOf().execute({'path': '/work/shot.png'}, null, null);
       expect(calls, 1);
       io.sendLine('/stats');
-      await waitForIt(() => io.out.toString().contains('total tokens:'));
+      await io.out.waitUntilContains('total tokens:');
       io.sendLine('/exit');
       await run;
       expect(
@@ -306,7 +306,7 @@ void main() {
     // next availability rebuild reflects it live.
     slotServes = false;
     io.sendLine('/tools reload');
-    await waitForIt(() => io.out.toString().contains('availability reloaded'));
+    await io.out.waitUntilContains('availability reloaded');
     io.sendLine('/tools');
     await waitForIt(() => inspectLines() >= 2);
     expect(lastInspectLine(), contains(' off '));
@@ -402,14 +402,14 @@ void main() {
     // the tool through the sync site (thread 5's live registration).
     slotServes = true;
     io.sendLine('/tools reload');
-    await waitForIt(() => io.out.toString().contains('availability reloaded'));
+    await io.out.waitUntilContains('availability reloaded');
     AgentTool inspectOf() => cli.agent.state.tools
         .whereType<AgentTool>()
         .firstWhere((t) => t.name == 'inspect_image');
     await inspectOf().execute({'path': '/work/shot.png'}, null, null);
     expect(calls, 1);
     io.sendLine('/stats');
-    await waitForIt(() => io.out.toString().contains('total tokens:'));
+    await io.out.waitUntilContains('total tokens:');
     io.sendLine('/exit');
     await run;
     expect(

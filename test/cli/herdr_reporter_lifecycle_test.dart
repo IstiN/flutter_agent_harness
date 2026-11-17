@@ -88,7 +88,7 @@ void main() {
       streamFunction: fake.call,
     );
     final run = cli.run();
-    await waitForIt(() => cliIo.out.toString().contains('fa> '));
+    await cliIo.out.waitUntilContains('fa> ');
     if (gateActive) {
       await waitForIt(
         () => reports.any((argv) => _stateOf(argv) == 'idle'),
@@ -265,8 +265,8 @@ void main() {
           ioOverride: caseIo,
         );
         caseIo.sendLine('hello');
-        await waitForIt(
-          () => caseIo.out.toString().contains('hello back'),
+        await caseIo.out.waitUntilContains(
+          'hello back',
           reason: '${entry.key}: turn completed',
         );
         await finish();
@@ -293,9 +293,9 @@ void main() {
         streamFunction: fake.call,
       );
       final run = cli.run();
-      await waitForIt(() => io.out.toString().contains('fa> '));
+      await io.out.waitUntilContains('fa> ');
       io.sendLine('hello');
-      await waitForIt(() => io.out.toString().contains('hello back'));
+      await io.out.waitUntilContains('hello back');
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), isNot(contains('herdr')));
@@ -314,7 +314,7 @@ void main() {
       // The secret rides the transcript (the user prompt) and the cwd is a
       // secret-shaped path — neither may ever reach an argv.
       io.sendLine('please echo $_canarySecret');
-      await waitForIt(() => io.out.toString().contains('hello back'));
+      await io.out.waitUntilContains('hello back');
       await finish();
 
       expect(reports, isNotEmpty);

@@ -158,6 +158,56 @@ void main() {
     }
   }
 
+  /// Hermetic `/dap start` harness: probe/spawner/connect are all
+  /// injected (no process spawn, no sockets). The probe answers [hubUp]
+  /// until the (scripted) spawner runs, which flips it up — mirroring
+  /// "spawn then poll". [spawnError] makes the spawner throw.
+  (
+    SlashCommand,
+    _CapturingIo,
+    Map<String, String>,
+    _ScriptedHubPlugin,
+    List<int>,
+  )
+  registerStartHost({
+    Map<String, String>? environment,
+    PluginAskLine? askLine,
+    PluginPickOption? pickOption,
+    bool hubUp = false,
+    Object? spawnError,
+    Future<int> Function(String url)? hubStopper,
+  }) {
+    final env = environment ?? <String, String>{};
+    final plugin = _ScriptedHubPlugin(environment: env, home: tempHome.path);
+    var up = hubUp;
+    final spawnPorts = <int>[];
+    Future<bool> probe(int port) async => up;
+    Future<void> spawner(int port) async {
+      if (spawnError != null) throw spawnError;
+      spawnPorts.add(port);
+      up = true;
+    }
+
+    final host = HubPluginHost(
+      plugin,
+      environment: env,
+      home: tempHome.path,
+      localHubUrl: 'ws://127.0.0.1:26499/ws',
+      hubHealthProbe: probe,
+      hubSpawner: spawner,
+      hubStopper: hubStopper,
+    );
+    final io = _CapturingIo();
+    final context = PluginContext(
+      env: MemoryExecutionEnv(cwd: '/work'),
+      io: io,
+      pickOption: pickOption,
+      askLine: askLine,
+    );
+    host.register(context);
+    return (context.slashCommands['/dap']!, io, env, plugin, spawnPorts);
+  }
+
   group('/dap args (no interactive host)', () {
     test(
       'no args prints the disabled one-liner without a master secret',
@@ -180,15 +230,21 @@ void main() {
       },
     );
 
-    test('start generates the session secret and fails the local spawn '
-        'gracefully', () async {
-      final (slash, io, env, _) = registerHost();
-      await slash(['start']);
-      expect(env['DAP_MASTER_SECRET'], isNotNull);
-      expect(io.text, contains('master secret generated'));
-      expect(io.text, contains('local hub'));
-      expect(io.text, isNot(contains('DAP is up')));
-    });
+    test(
+      'start generates the session secret and fails the local spawn gracefully',
+      () async {
+        final (slash, io, env, _, spawnPorts) = registerStartHost(
+          spawnError: StateError('vendored hub binary missing'),
+        );
+        await slash(['start']);
+        expect(env['DAP_MASTER_SECRET'], isNotNull);
+        expect(io.text, contains('master secret generated'));
+        expect(io.text, contains('could not start a local hub'));
+        expect(io.text, contains('vendored hub binary missing'));
+        expect(io.text, isNot(contains('DAP is up')));
+        expect(spawnPorts, isEmpty);
+      },
+    );
   });
 
   group('/dap menu (interactive host)', () {
@@ -245,72 +301,37 @@ void main() {
     });
 
     test('start choice runs the one-step bring-up', () async {
-      final (slash, io, env, plugin) = registerHost(
-        environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
+      final (slash, io, env, plugin, spawnPorts) = registerStartHost(
         pickOption: (title, options, {initialKey}) async => 'start',
         askLine: (prompt, {secret = false}) async => '',
       );
-      await settleBoot(plugin);
       await slash([]);
       expect(env['DAP_MASTER_SECRET'], isNotNull);
       expect(io.text, contains('master secret generated'));
+      expect(io.text, contains('DAP is up'));
+      expect(spawnPorts, [26499]);
+      expect(plugin.connectCalls, ['ws://127.0.0.1:26499/ws']);
     });
 
     test('stop choice stops quietly when nothing is running', () async {
-      final (slash, io, _, _) = registerHost(
+      // Hermetic stop wiring: the menu pick must reach the `/dap stop`
+      // handler and its `hubStopper` seam with the local hub url; exit
+      // 0 prints nothing (the quiet stop) — anything else prints the
+      // `[hub] stop did not complete` line.
+      final stopCalls = <String>[];
+      final (slash, io, _, _, _) = registerStartHost(
         environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
         pickOption: (title, options, {initialKey}) async => 'stop',
+        hubStopper: (url) async {
+          stopCalls.add(url);
+          return 0;
+        },
       );
       await slash([]);
-      expect(io.text, contains('not running'));
+      expect(stopCalls, ['ws://127.0.0.1:26499/ws']);
+      expect(io.text, isNot(contains('[hub] stop did not complete')));
     });
   });
-
-  /// Hermetic `/dap start` harness: probe/spawner/connect are all
-  /// injected (no process spawn, no sockets). The probe answers [hubUp]
-  /// until the (scripted) spawner runs, which flips it up — mirroring
-  /// "spawn then poll". [spawnError] makes the spawner throw.
-  (
-    SlashCommand,
-    _CapturingIo,
-    Map<String, String>,
-    _ScriptedHubPlugin,
-    List<int>,
-  )
-  registerStartHost({
-    Map<String, String>? environment,
-    PluginAskLine? askLine,
-    bool hubUp = false,
-    Object? spawnError,
-  }) {
-    final env = environment ?? <String, String>{};
-    final plugin = _ScriptedHubPlugin(environment: env, home: tempHome.path);
-    var up = hubUp;
-    final spawnPorts = <int>[];
-    Future<bool> probe(int port) async => up;
-    Future<void> spawner(int port) async {
-      if (spawnError != null) throw spawnError;
-      spawnPorts.add(port);
-      up = true;
-    }
-
-    final host = HubPluginHost(
-      plugin,
-      environment: env,
-      home: tempHome.path,
-      localHubUrl: 'ws://127.0.0.1:26499/ws',
-      hubHealthProbe: probe,
-      hubSpawner: spawner,
-    );
-    final io = _CapturingIo();
-    final context = PluginContext(
-      env: MemoryExecutionEnv(cwd: '/work'),
-      io: io,
-      askLine: askLine,
-    );
-    host.register(context);
-    return (context.slashCommands['/dap']!, io, env, plugin, spawnPorts);
-  }
 
   File hubStateFile() => File('${tempHome.path}/.dap/hub.json');
 

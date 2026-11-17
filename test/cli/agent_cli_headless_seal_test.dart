@@ -420,8 +420,8 @@ void main() {
     // One driven turn: the session exists and has content (a sealed
     // EMPTY session is deleted before the seal, not exercised here).
     io.sendLine('hello');
-    await waitForIt(
-      () => io.out.toString().contains('repl answer.'),
+    await io.out.waitUntilContains(
+      'repl answer.',
       reason: 'the turn completes',
     );
     io.sendLine('/exit');
