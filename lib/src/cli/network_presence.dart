@@ -861,12 +861,18 @@ final class NetworkPresenceController
 
   String? _rosterSenderLabel(String sender, String deviceId, String agent) {
     for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
-      if (row.deviceId == deviceId && row.agentAddresses.contains(sender)) {
+      if (_rosterRowMatchesSender(row, deviceId, sender)) {
         return '${row.name} · $agent';
       }
     }
     return null;
   }
+
+  static bool _rosterRowMatchesSender(
+    NetworkDeviceRow row,
+    String deviceId,
+    String sender,
+  ) => row.deviceId == deviceId && row.agentAddresses.contains(sender);
 
   void _setPhase(ConnectorLinkState next) {
     if (_phase == next) return;
