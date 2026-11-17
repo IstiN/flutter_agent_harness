@@ -29,6 +29,7 @@ import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
 import '../compaction/structured/markers.dart' show localTrimMarkerPrefix;
 import '../compaction/structured/judge.dart';
+import '../exceptions.dart' show CompactionErrorCode, CompactionException;
 import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
@@ -813,6 +814,27 @@ final class AutoCompactor {
           summarizedMessages: summarized,
         );
       } catch (error) {
+        // gh-2237 (AC5): the gh-2044 empty-region refusal is a NO-WORK
+        // outcome, not a summarizer failure — the endpoint is healthy,
+        // there is simply nothing above the keep-recent cut to fold. It is
+        // deterministic (never retried) and must NOT arm the mechanical
+        // trim valve: the valve is the both-summarizers-DOWN rescue, and
+        // routing a healthy-endpoint no-region pass into it silently
+        // dropped the newest turn whenever projected checkpoint markers
+        // trailed it in the live context. The no-work terminal reports the
+        // honest no-op receipt instead; the host's settled verdict (passes
+        // ran + still over the trigger) surfaces the exhaustion story.
+        if (error is CompactionException &&
+            error.code == CompactionErrorCode.invalidSession) {
+          return _AttemptOutcome(
+            ok: true,
+            error: null,
+            noWork: true,
+            summary: null,
+            hiddenRecords: 0,
+            summarizedMessages: 0,
+          );
+        }
         final errorText = error.toString();
         final isTransient = _transient.hasMatch(errorText);
         // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —

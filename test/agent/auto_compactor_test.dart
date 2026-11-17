@@ -39,7 +39,13 @@ final class _RecordingHooks implements AutoCompactorHooks {
   }
 
   @override
-  void onBothRolesFailed(Object lastError) {}
+  void onBothRolesFailed(Object lastError) {
+    bothRolesError = lastError;
+  }
+
+  /// Set by [onBothRolesFailed] — the both-summarizers-down signal must
+  /// stay silent for outcomes that are not endpoint failures.
+  Object? bothRolesError;
 }
 
 class _FakeSummarizer {
@@ -279,6 +285,90 @@ void main() {
     // The no-op pass never reaches the summarizer (nothing to cut).
     expect(fake.calls, 1); // only the real compaction above
   });
+
+  test(
+    'gh-2237 AC5: an empty foldable region over a healthy endpoint is a '
+    'no-work terminal — never the trim valve, never a false failure',
+    () async {
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      // The gh-2044 empty-region fixture shape: one ~10-token user turn —
+      // keepRecentTokens (150) covers the whole transcript, so the cut
+      // keeps everything and the region above it holds no messages. The
+      // summarizer lane has nothing to fold; `force` skips the trigger
+      // gate so the pass behavior is what's under test.
+      final newestText = 'newest${'z' * 40}';
+      await session.appendMessage(UserMessage.text(newestText));
+
+      final state = AgentState(
+        model: _model,
+        messages: await session.buildContextMessages(),
+      );
+      final fake = _FakeSummarizer([SummarizationResult.success('SUMMARY')]);
+      final hooks = _RecordingHooks();
+      // window 100 / reserve 100 — the AC5 shape: the summarizer payload
+      // budget (max(0, 50)) sits under the prompt skeleton alone, so the
+      // empty region rides the #729 chunked path, folds zero chunks, and
+      // never reaches the LM (issue #515's budget pin is untouched).
+      final ok = await AutoCompactor(
+        session: session,
+        state: state,
+        window: 100,
+        settings: settings,
+        summary: fake.call,
+        mainSummary: fake.call,
+        smolModel: null,
+        hooks: hooks,
+        force: true,
+        attemptBudget: const Duration(minutes: 10),
+      ).run();
+
+      // The empty-region refusal is a NO-WORK outcome: the summarizer is
+      // healthy, there is simply nothing above the cut to fold. The pass
+      // ends as a no-op receipt — not a both-roles failure (the endpoint
+      // is up) and not a mechanical trim (the valve is the down-endpoint
+      // rescue; routing a healthy no-region pass into it silently dropped
+      // the newest turn whenever projected markers trailed it).
+      expect(ok, isTrue, reason: 'nothing to fold is not a failure');
+      expect(
+        hooks.bothRolesError,
+        isNull,
+        reason: 'a healthy endpoint must not raise the both-roles failure',
+      );
+      expect(
+        hooks.passes.where((p) => p.fallback == 'local-trim'),
+        isEmpty,
+        reason: 'the emergency valve never arms on an empty region',
+      );
+      expect(hooks.passes, hasLength(1));
+      expect(hooks.passes.single.ok, isTrue);
+      expect(
+        hooks.passes.single.tokensBefore,
+        hooks.passes.single.tokensAfter,
+        reason: 'a no-work pass moves no tokens',
+      );
+      expect(fake.calls, 0, reason: 'no LM call — zero chunks fold');
+      // The live transcript is intact: no trim marker, the newest turn
+      // still present, and no record appended behind the run's back.
+      expect(
+        state.messages.any(
+          (m) => m is UserMessage && (m.content as String) == newestText,
+        ),
+        isTrue,
+        reason: 'the unsuppressible newest turn survives',
+      );
+      expect(
+        state.messages.whereType<UserMessage>().any(
+          (m) => (m.content as String).contains('context trimmed locally'),
+        ),
+        isFalse,
+      );
+      expect(
+        (await session.getBranch()).whereType<CompactionRecord>(),
+        isEmpty,
+        reason: 'the run appends nothing',
+      );
+    },
+  );
 
   test('a hung summarizer burns the attempt budget, not the session — the '
       'local trim still rescues the turn', () async {
