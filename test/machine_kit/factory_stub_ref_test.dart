@@ -268,11 +268,11 @@ void main() {
           'as an emergency brake',
     );
     expect(
-      sm.contains('actions/create-github-app-token@v2'),
+      sm.contains('actions/create-github-app-token@64ab729a'),
       isTrue,
       reason: 'live ticks ride the App installation token (15k req/h) — '
           'the PAT budget was exhausted by SM ticks before (dmtools-agents '
-          'run 39034080472)',
+          'run 39034080472); the action is pinned at the gh-995 manifest SHA',
     );
   });
 }

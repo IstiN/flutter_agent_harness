@@ -25,7 +25,7 @@ void main() {
         ..sort((a, b) => a.path.compareTo(b.path));
 
   group('sm-kicker live-tick guard (#1092)', () {
-    test('machine-sm.yml keeps the dryRun=true dispatch trap documented', () {
+    test('machine-sm.yml dispatch defaults to LIVE (dryRun is the brake, #2244)', () {
       final doc =
           loadYaml(File('.github/workflows/machine-sm.yml').readAsStringSync())
               as YamlMap;
@@ -36,12 +36,14 @@ void main() {
       final dryRun = inputs['dryRun'] as YamlMap? ?? YamlMap();
       expect(
         dryRun['default'],
-        true,
+        false,
         reason:
-            'machine-sm.yml workflow_dispatch dryRun default must stay true '
-            '(cron ticks pass no input and must run live; manual dispatches '
-            'MUST pass -f dryRun=false). If you are flipping this default, '
-            'update sm_kicker_test.dart deliberately.',
+            'machine-sm.yml workflow_dispatch dryRun default must be false '
+            '(fa #2244 flipped the 2026-09-29 trap deliberately: the tick '
+            'runs the pack DIRECTLY now and cron ticks pass no input — a '
+            'dry default would silently no-op the production reconcile). '
+            'dry=true is the explicit emergency brake. If you are flipping '
+            'this back, update sm_kicker_test.dart deliberately.',
       );
     });
 
@@ -60,9 +62,10 @@ void main() {
             contains('dryRun='),
             reason:
                 '${file.path}:${i + 1} dispatches machine-sm.yml without an '
-                'explicit `-f dryRun=` flag — the input defaults to true and '
-                'the tick will silently no-op (live incident 2026-09-29 '
-                '21:14-21:24Z). Pass -f dryRun=false.',
+                'explicit `-f dryRun=` flag — the default is LIVE now '
+                '(fa #2244), so a dispatch that meant to rehearse must say '
+                'dryRun=true out loud; explicit beats implicit on an '
+                'irreversible leg',
           );
         }
       }
