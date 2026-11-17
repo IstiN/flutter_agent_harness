@@ -386,40 +386,7 @@ extension AgentCliSteering on AgentCli {
         if (message is UserMessage) _steerMessageText(message),
     ].where((text) => text.trim().isNotEmpty).toList();
     if (texts.isEmpty) return;
-    // Reconcile the delivery FIFO with the drained leftovers by OBJECT
-    // IDENTITY (issue #2249 AC3): the same object the boundary merge and
-    // the in-flight persist consume by. Text matching here made two
-    // same-text steers lose their consumed markers (double delivery
-    // after restart); the zip pairs one entry per drained message, and
-    // only entries whose object left the queue fall back to text — one
-    // slot per drained text, so a raced persist still settles its
-    // record. Whatever the settle branch now does to a text, its record
-    // must not stay pending (the next boot would re-deliver it).
-    final drainedUserMessages = [
-      for (final message in drained)
-        if (message is UserMessage) message,
-    ];
-    final textSlots = <String, int>{};
-    for (final message in drainedUserMessages) {
-      final text = _steerMessageText(message);
-      textSlots[text] = (textSlots[text] ?? 0) + 1;
-    }
-    final pool = List<PendingSteering>.of(_pendingSteering);
-    final entries = <PendingSteering>[];
-    for (final message in drainedUserMessages) {
-      final index = pool.indexWhere(
-        (entry) => identical(entry.message, message),
-      );
-      if (index >= 0) entries.add(pool.removeAt(index));
-    }
-    for (final entry in List<PendingSteering>.of(pool)) {
-      final text = _steerMessageText(entry.message);
-      final slots = textSlots[text] ?? 0;
-      if (slots <= 0) continue;
-      textSlots[text] = slots - 1;
-      pool.remove(entry);
-      entries.add(entry);
-    }
+    final entries = _reconcileSettledEntries(drained);
     _pendingSteering.removeWhere(entries.contains);
     if (!_abortRequested) {
       io.writeln(
@@ -437,11 +404,55 @@ extension AgentCliSteering on AgentCli {
       _startRun(texts.join('\n'));
       return;
     }
-    // Dropped by user interrupt: the panels go `aborted` (issue #2249
-    // AC4 — one truth per state: the message will never queue again, so
-    // it must not keep reading "queued (agent stalled)"). A consumed
-    // marker (or a healed-fs retry that lands the record) keeps it from
-    // resurrecting on restart.
+    await _dropSettledSteering(entries, texts);
+  }
+
+  /// Reconciles the delivery FIFO with the drained leftovers by OBJECT
+  /// IDENTITY (issue #2249 AC3): the same object the boundary merge and
+  /// the in-flight persist consume by. Text matching here made two
+  /// same-text steers lose their consumed markers (double delivery
+  /// after restart); the zip pairs one entry per drained message, and
+  /// only entries whose object left the queue fall back to text — one
+  /// slot per drained text, so a raced persist still settles its
+  /// record. Returns the consumed entries, in FIFO order.
+  List<PendingSteering> _reconcileSettledEntries(List<Message> drained) {
+    final drainedUserMessages = drained.whereType<UserMessage>().toList();
+    final textSlots = <String, int>{};
+    for (final message in drainedUserMessages) {
+      final text = _steerMessageText(message);
+      textSlots[text] = (textSlots[text] ?? 0) + 1;
+    }
+    final pool = List<PendingSteering>.of(_pendingSteering);
+    final entries = <PendingSteering>[];
+    for (final message in drainedUserMessages) {
+      final index = pool.indexWhere(
+        (entry) => identical(entry.message, message),
+      );
+      if (index >= 0) entries.add(pool.removeAt(index));
+    }
+    // Text fallback: only for entries whose object left the queue
+    // without a boundary consumption (a racing persist). One slot per
+    // drained text — never a same-text collapse.
+    for (final entry in List<PendingSteering>.of(pool)) {
+      final text = _steerMessageText(entry.message);
+      final slots = textSlots[text] ?? 0;
+      if (slots <= 0) continue;
+      textSlots[text] = slots - 1;
+      pool.remove(entry);
+      entries.add(entry);
+    }
+    return entries;
+  }
+
+  /// The esc-drop branch (issue #2249 AC4): the panels go `aborted` —
+  /// the message will never queue again, so it must not keep reading
+  /// "queued (agent stalled)". A consumed marker (or a healed-fs retry
+  /// that lands the record) keeps it from resurrecting on restart;
+  /// [texts] prints verbatim at the end.
+  Future<void> _dropSettledSteering(
+    List<PendingSteering> entries,
+    List<String> texts,
+  ) async {
     final session = _session;
     for (final entry in entries) {
       entry.panel.state = DeferredPanelState.aborted;
@@ -451,22 +462,23 @@ extension AgentCliSteering on AgentCli {
         if (session != null) {
           unawaited(_writeSteeringConsumed(session, recordId));
         }
-      } else if (entry.recordId == null) {
-        // The drop destroys the LAST carrier: the session append failed
-        // (or is still in flight), the FIFO entry is gone, the agent
-        // queue is drained. Print the text verbatim — a silent drop is
-        // indistinguishable from a lost message (issue #2249 AC2).
-        final why = entry.persistError == null
-            ? 'save still in flight'
-            : 'fs error: ${entry.persistError}';
-        io.writeln(
-          tuiWarning(
-            '⚠ dropped steering was NOT saved to session ($why) — '
-            'the text is lost:',
-          ),
-        );
-        io.writeln('  • ${_steerMessageText(entry.message)}');
+        continue;
       }
+      if (entry.recordId != null) continue;
+      // The drop destroys the LAST carrier: the session append failed
+      // (or is still in flight), the FIFO entry is gone, the agent
+      // queue is drained. Print the text verbatim — a silent drop is
+      // indistinguishable from a lost message (issue #2249 AC2).
+      final why = entry.persistError == null
+          ? 'save still in flight'
+          : 'fs error: ${entry.persistError}';
+      io.writeln(
+        tuiWarning(
+          '⚠ dropped steering was NOT saved to session ($why) — '
+          'the text is lost:',
+        ),
+      );
+      io.writeln('  • ${_steerMessageText(entry.message)}');
     }
     _printDroppedSteering(texts);
   }
