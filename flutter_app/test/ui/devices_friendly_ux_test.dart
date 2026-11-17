@@ -10,6 +10,8 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/network/device_roster_panel.dart';
+import 'package:fa/ui/network/devices_page.dart'
+    show showDeviceEnrollmentNameDialog;
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -154,6 +156,49 @@ void main() {
     },
   );
 
+  testWidgets('first-connect name dialog returns a friendly name or hostname', (
+    tester,
+  ) async {
+    String? result;
+    await tester.pumpWidget(
+      _wrap(
+        Builder(
+          builder: (context) => TextButton(
+            key: const ValueKey('openEnrollmentPrompt'),
+            onPressed: () async =>
+                result = await showDeviceEnrollmentNameDialog(
+                  context,
+                  defaultName: 'workstation',
+                ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('openEnrollmentPrompt')));
+    await tester.pumpAndSettle();
+    final field = tester.widget<FaTextField>(
+      find.byKey(const ValueKey('enrollDeviceName')),
+    );
+    expect(field.controller?.text, 'workstation');
+
+    await tester.enterText(
+      find.byKey(const ValueKey('enrollDeviceName')),
+      'Studio Mac',
+    );
+    await tester.tap(find.byKey(const ValueKey('enrollDeviceNameConfirm')));
+    await tester.pumpAndSettle();
+    expect(result, 'Studio Mac');
+
+    await tester.tap(find.byKey(const ValueKey('openEnrollmentPrompt')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('enrollDeviceName')), '');
+    await tester.tap(find.byKey(const ValueKey('enrollDeviceNameConfirm')));
+    await tester.pumpAndSettle();
+    expect(result, 'workstation');
+  });
+
   testWidgets('own session rows use preview/path instead of a hash', (
     tester,
   ) async {
@@ -260,6 +305,85 @@ void main() {
     expect(openedAddress, 'fa@dev-duo-000');
     expect(openedSession, sessionId);
     expect(openedSessionTitle, 'flutter_agent');
+  });
+
+  testWidgets('named remote catalog rows render snippet/cwd/activity and '
+      'live, wake-on-DM, offline states without raw UUID labels', (
+    tester,
+  ) async {
+    const uuid = '123e4567-e89b-12d3-a456-426614174000';
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+      personalNetworkId: 'net-personal',
+    );
+    service.seededRoster.add(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.roster,
+        msgId: 'roster-named',
+        ts: rfc3339Timestamp(DateTime.utc(2026, 11, 12)),
+        network: 'net-personal',
+        payload: {
+          'devices': [
+            {
+              'deviceId': 'dev-named',
+              'name': 'Named workstation',
+              'presence': 'online',
+              'agents': [
+                {'name': 'fa', 'state': 'live', 'dmPub': 'cHVi'},
+              ],
+              'sessions': [
+                {
+                  'id': uuid,
+                  'state': 'wake_on_dm',
+                  'networks': ['net-personal'],
+                  'snippet': 'Continue the roster work',
+                  'path': '/work/flutter_agent',
+                  'lastActivity': '2026-11-12T11:58:00Z',
+                },
+                {
+                  'id': 'live-row',
+                  'state': 'live',
+                  'networks': ['net-personal'],
+                  'title': 'Current plan',
+                  'path': '/work/flutter_agent',
+                  'lastActivity': '2026-11-12T12:00:00Z',
+                },
+                {
+                  'id': 'offline-row',
+                  'state': 'offline',
+                  'networks': ['net-personal'],
+                  'title': 'Old plan',
+                  'path': '/work/flutter_agent',
+                  'lastActivity': '2026-11-11T12:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-named')));
+    await tester.pump();
+
+    DeviceSessionCard card(String id) => tester.widget<DeviceSessionCard>(
+      find.byKey(ValueKey('sessionRow:$id')),
+    );
+    expect(card(uuid).title, 'Continue the roster work');
+    expect(card(uuid).title, isNot(uuid));
+    expect(card(uuid).title, isNot('123e4567'));
+    expect(card(uuid).subtitle, contains('/work/flutter_agent'));
+    expect(card(uuid).subtitle, contains('Wake on DM'));
+    expect(card(uuid).timestamp, isNotEmpty);
+    expect(card('live-row').title, 'Current plan');
+    expect(card('live-row').subtitle, contains('Online'));
+    expect(card('offline-row').title, 'Old plan');
+    expect(card('offline-row').subtitle, contains('Offline'));
+    expect(card(uuid).showPresenceDot, isTrue);
+    expect(card('offline-row').showPresenceDot, isTrue);
   });
 
   testWidgets('repaired app enrollment unions with same-host CLI enrollment', (

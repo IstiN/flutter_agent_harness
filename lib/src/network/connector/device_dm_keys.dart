@@ -102,6 +102,28 @@ final class DeviceDmKeyProvider {
     return operation.whenComplete(() => _pending.remove(agentAddress));
   }
 
+  /// Restores an already-provisioned key without creating or persisting one.
+  ///
+  /// Inbound DM decode uses this instead of [loadOrCreate]: a frame addressed
+  /// to an arbitrary/stale agent must never mint fresh key material. A missing
+  /// or malformed stored key returns null; store read failures propagate so
+  /// the connector treats them as transient and leaves the mail unacked.
+  Future<DeviceDmKeyPair?> loadExisting(String agentAddress) async {
+    if (agentAddress.isEmpty) {
+      throw ArgumentError.value(
+        agentAddress,
+        'agentAddress',
+        'must not be empty',
+      );
+    }
+    final cached = _cache[agentAddress];
+    if (cached != null) return cached;
+    final stored = await _store.readDmPrivateKeys();
+    final restored = await _restore(stored[agentAddress]);
+    if (restored != null) _cache[agentAddress] = restored;
+    return restored;
+  }
+
   Future<T> _serialize<T>(Future<T> Function() operation) {
     final result = _writes.then((_) => operation());
     _writes = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});

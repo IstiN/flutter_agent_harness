@@ -2757,6 +2757,16 @@ class AppLocalizationsRu extends AppLocalizations {
       'Коннектор не запущен — нажмите, чтобы повторить';
 
   @override
+  String get networkDeviceEnrollNameTitle => 'Имя этого устройства';
+
+  @override
+  String get networkDeviceEnrollNamePrompt =>
+      'Выберите понятное имя для этого устройства. Оставьте имя без изменений, чтобы использовать имя хоста.';
+
+  @override
+  String get networkDeviceEnrollNameAction => 'Подключить устройство';
+
+  @override
   String get networkDeviceRenameAction => 'Переименовать устройство';
 
   @override

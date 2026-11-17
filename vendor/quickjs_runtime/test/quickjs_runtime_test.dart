@@ -63,9 +63,12 @@ void _defineBytesTests(QuickjsRuntime Function() getRt) {
       return;
     }
     final received = <String, Uint8List>{};
-    expect(rt.registerHostBytesFn('__jsrSendBytes', (name, data) {
-      received[name] = Uint8List.fromList(data);
-    }), isTrue);
+    expect(
+      rt.registerHostBytesFn('__jsrSendBytes', (name, data) {
+        received[name] = Uint8List.fromList(data);
+      }),
+      isTrue,
+    );
     rt.executePendingJobs();
     rt.eval('''
       var f = new Float32Array(11);

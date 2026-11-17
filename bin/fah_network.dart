@@ -60,7 +60,9 @@ Future<List<NetworkDeviceRow>> _readNetworkRoster({
 /// Restores device-only presence. Account access-token expiry deliberately
 /// does not gate this: after the one-time enrollment, the deviceToken owns
 /// ws-ticket + presence until logout/revocation.
-Future<CliNetworkPresence?> _restoreNetworkPresence() async {
+Future<CliNetworkPresence?> _restoreNetworkPresence({
+  String? sessionRoot,
+}) async {
   try {
     final store = FileNetworkCredentialStore(_homeDir());
     final account = await store.readAccount();
@@ -69,7 +71,13 @@ Future<CliNetworkPresence?> _restoreNetworkPresence() async {
     final baseUrl = _networkRelayBaseUrl();
     final httpClient = http.Client();
     final devices = DeviceEnrollmentClient(httpClient: httpClient);
+    final env = LocalExecutionEnv(cwd: Directory.current.path);
+    final repo = JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: sessionRoot ?? _defaultSessionRoot(),
+    );
     return NetworkPresenceController(
+      catalogStore: JsonlSessionCatalogStore(repo: repo),
       device: device,
       baseUrl: baseUrl,
       ticketProvider: () =>

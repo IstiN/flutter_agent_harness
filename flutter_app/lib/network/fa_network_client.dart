@@ -166,7 +166,7 @@ Map<String, String> _agentDmPubs(Object? value, String deviceId) {
 }
 
 ({String address, String dmPub})? _agentDmPub(Object? value, String deviceId) {
-  if (value is! Map || value['exposed'] != true) return null;
+  if (value is! Map || value['exposed'] == false) return null;
   final dmPub = value['dmPub'];
   if (dmPub is! String || dmPub.isEmpty) return null;
   final address = _rosterAgentAddress(value, deviceId);
@@ -175,7 +175,9 @@ Map<String, String> _agentDmPubs(Object? value, String deviceId) {
 
 String? _rosterAgentAddress(Map<Object?, Object?> agent, String deviceId) {
   final address = agent['address'];
-  if (address is String && address.isNotEmpty) return address;
+  if (address is String && address.isNotEmpty) {
+    return address.contains('@') ? address : '$address@$deviceId';
+  }
   final name = agent['name'];
   if (name is String && name.isNotEmpty) return '$name@$deviceId';
   return null;
@@ -223,7 +225,9 @@ final class DeviceRosterSession {
     required this.state,
     this.networks = const [],
     this.title,
+    this.snippet,
     this.path,
+    this.cwd,
     this.lastActivity,
   });
 
@@ -239,8 +243,14 @@ final class DeviceRosterSession {
   /// Optional human-readable title; omitted by legacy peers.
   final String? title;
 
+  /// Optional first-prompt snippet fallback.
+  final String? snippet;
+
   /// Optional project/working-directory path for the session row subtitle.
   final String? path;
+
+  /// Optional compact cwd basename.
+  final String? cwd;
 
   /// Optional RFC3339 last-activity timestamp.
   final String? lastActivity;
@@ -250,7 +260,9 @@ final class DeviceRosterSession {
     'state': state,
     'networks': networks,
     if (title != null) 'title': title,
+    if (snippet != null) 'snippet': snippet,
     if (path != null) 'path': path,
+    if (cwd != null) 'cwd': cwd,
     if (lastActivity != null) 'lastActivity': lastActivity,
   };
 }

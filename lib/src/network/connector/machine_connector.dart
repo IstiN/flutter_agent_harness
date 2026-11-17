@@ -37,14 +37,57 @@ import 'presence_engine.dart';
 import 'upstream_client.dart';
 
 /// Decodes one inbound mail frame to the plain text the ACL and the sink
-/// see. Slice-1 default ([plainCiphertextDecoder]) treats the ciphertext
-/// as plain text (personal-network/dev mode); the DM fanet1 decode rides a
-/// later slice through this seam (contract §7).
-typedef MailDecoder = FutureOr<String> Function(NetworkEnvelope envelope);
+/// see. The default ([plainCiphertextDecoder]) treats the ciphertext as
+/// plain text (personal-network/dev mode); the fanet1 device-DM codec plugs
+/// into this seam and returns authenticated metadata with the full payload.
+typedef MailDecoder = FutureOr<DecodedMail> Function(NetworkEnvelope envelope);
+
+/// The complete decrypted mail payload and its optional DM routing metadata.
+///
+/// [payload] deliberately retains a structured DM wrapper: the connector ACL
+/// must inspect the complete decrypted value, not only an extracted `text`
+/// field. DM senders use [sessionId] and [senderPubkey] to construct durable
+/// reply routes; [threaded] preserves the app's legacy-raw-reply contract.
+final class DecodedMail {
+  const DecodedMail({
+    required this.payload,
+    this.sessionId,
+    this.senderPubkey,
+    this.threaded = false,
+  });
+
+  /// Complete decrypted payload (or the opaque plaintext in pass-through
+  /// mode). This is the value the remote-write ACL sanitizes.
+  final String payload;
+
+  /// Target session carried inside an encrypted DM wrapper, when present.
+  final String? sessionId;
+
+  /// Base64 X25519 sender public key from an authenticated fanet1 frame.
+  final String? senderPubkey;
+
+  /// Whether the sender opted into structured/threaded DM replies.
+  final bool threaded;
+}
+
+/// A permanent, credential-free inbound mail decode rejection.
+///
+/// Hosts ack these failures to prevent malicious or undecryptable payloads
+/// from redelivering forever. Key-store and other transient failures MUST NOT
+/// be converted to this type. [reason] never contains plaintext or keys.
+final class MailDecodeException implements Exception {
+  const MailDecodeException(this.reason);
+
+  /// Stable safe-to-log rejection reason.
+  final String reason;
+
+  @override
+  String toString() => 'MailDecodeException: $reason';
+}
 
 /// The plain-ciphertext pass-through decoder.
-String plainCiphertextDecoder(NetworkEnvelope envelope) =>
-    envelope.ciphertext ?? '';
+DecodedMail plainCiphertextDecoder(NetworkEnvelope envelope) =>
+    DecodedMail(payload: envelope.ciphertext ?? '');
 
 /// Pulls the session ids with an ACTIVE owner lease (§5, issue #428
 /// semantics). Polled by the presence publisher at start, upstream attach
@@ -55,13 +98,28 @@ typedef SessionLeaseDelegate = Future<Set<String>> Function();
 /// plus the ACL-sanitized plain user text (remote writers are viewers —
 /// §6).
 final class InboundMail {
-  const InboundMail({required this.envelope, required this.text});
+  const InboundMail({
+    required this.envelope,
+    required this.text,
+    this.sessionId,
+    this.senderPubkey,
+    this.threaded = false,
+  });
 
   /// The wire frame (msgId/network/channel/from/to as received).
   final NetworkEnvelope envelope;
 
   /// The plain user text after connector-side sanitization.
   final String text;
+
+  /// Target session from the authenticated DM wrapper, when present.
+  final String? sessionId;
+
+  /// Base64 X25519 sender public key from the authenticated fanet1 frame.
+  final String? senderPubkey;
+
+  /// Whether replies should retain the structured DM thread wrapper.
+  final bool threaded;
 
   /// The frame id (dedup/ack key).
   String get msgId => envelope.msgId;
@@ -162,6 +220,7 @@ final class MachineConnector {
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast();
   final _wakeHints = StreamController<NetworkEnvelope>.broadcast();
+  final _dmMail = StreamController<InboundMail>.broadcast(sync: true);
 
   /// ACL-refused remote writes (AC6 reporting).
   Stream<RejectedMail> get rejections => _rejections.stream;
@@ -174,6 +233,14 @@ final class MachineConnector {
 
   /// Wake hints (§8; mobile/extension wake rides a later slice).
   Stream<NetworkEnvelope> get wakeHints => _wakeHints.stream;
+
+  /// Post-sink observation of accepted inbound mail.
+  ///
+  /// This is NOT a delivery mechanism: the owning [registerLocalSink] future
+  /// has already completed when an event is emitted, and the connector acks
+  /// immediately afterwards. Listeners must never be responsible for mailbox
+  /// writes or delivery backpressure.
+  Stream<InboundMail> get dmMail => _dmMail.stream;
 
   /// Whether the upstream link is ready (handshake complete).
   bool get isConnected => upstream.isReady;
@@ -282,8 +349,30 @@ final class MachineConnector {
     NetworkEnvelope envelope,
     Future<void> Function(InboundMail mail) sink,
   ) async {
-    final text = await decodeMail(envelope);
-    final decision = sanitizeRemoteWrite(text);
+    final DecodedMail decoded;
+    try {
+      decoded = await decodeMail(envelope);
+    } on MailDecodeException catch (error) {
+      _rejections.add(RejectedMail(envelope: envelope, reason: error.reason));
+      _onLog?.call(
+        'permanently rejected undecryptable mail ${envelope.msgId}: '
+        '${error.reason}',
+      );
+      // A permanent cryptographic/shape failure must not redeliver forever.
+      upstream.acknowledge(envelope.msgId);
+      return;
+    } on Object {
+      // Secure-store and other transient decode failures leave the original
+      // unacked. Never log the thrown value: host errors may contain secrets.
+      _onLog?.call(
+        'mail decode failed for ${envelope.msgId}; delivery left unacked',
+      );
+      return;
+    }
+
+    // ACL inspection always sees the COMPLETE decrypted wrapper. Its allow
+    // result is the only plain text a local sink can observe.
+    final decision = sanitizeRemoteWrite(decoded.payload);
     if (decision is AclReject) {
       _rejections.add(
         RejectedMail(envelope: envelope, reason: decision.reason),
@@ -293,15 +382,21 @@ final class MachineConnector {
       upstream.acknowledge(envelope.msgId);
       return;
     }
+    final mail = InboundMail(
+      envelope: envelope,
+      text: (decision as AclAllow).text,
+      sessionId: decoded.sessionId,
+      senderPubkey: decoded.senderPubkey,
+      threaded: decoded.threaded,
+    );
     try {
-      await sink(
-        InboundMail(envelope: envelope, text: (decision as AclAllow).text),
-      );
+      await sink(mail);
     } on Object catch (error) {
       // No ack — the server redelivers (§3: no lost input).
       _onLog?.call('sink write failed for ${envelope.msgId}: $error');
       return;
     }
+    _dmMail.add(mail);
     upstream.acknowledge(envelope.msgId);
   }
 
@@ -409,6 +504,7 @@ final class MachineConnector {
     _rosterFrames.close();
     _presenceFrames.close();
     _wakeHints.close();
+    _dmMail.close();
     mux.dispose();
   }
 }

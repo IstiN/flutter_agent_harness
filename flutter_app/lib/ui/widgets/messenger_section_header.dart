@@ -327,19 +327,22 @@ final class _HeaderGeometry {
 }
 
 /// Hosts a [MessengerFloatingPageHeader] over a full-size transparent body.
-/// Only the title pill and controls are glass; there is deliberately no
-/// full-width header surface or progressive blur band.
+/// An optional [underlayKey] enables the same progressive blur band used by
+/// the Networks header; scrollable hosts then put [bodyTop] in their scroll
+/// padding so content travels underneath it.
 final class MessengerFloatingPageScaffold extends StatelessWidget {
   const MessengerFloatingPageScaffold({
     super.key,
     required this.header,
     required this.body,
+    this.underlayKey,
   });
 
   static const double bodyTop = 108;
 
   final Widget header;
   final Widget body;
+  final Key? underlayKey;
 
   @override
   Widget build(BuildContext context) {
@@ -352,6 +355,14 @@ final class MessengerFloatingPageScaffold extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         Positioned.fill(child: body),
+        if (glass && underlayKey != null)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: bodyTop,
+            child: MessengerGlassUnderlay(underlayKey: underlayKey!),
+          ),
         Positioned(top: 0, left: 0, right: 0, child: header),
       ],
     );
@@ -389,7 +400,7 @@ final class MessengerGlassBodyInsets extends InheritedWidget {
 /// The narrow shell scaffold sets `extendBody` while the dock rides in its
 /// `bottomNavigationBar` slot, so the ambient [MediaQuery] padding.bottom
 /// inside the narrow body is INFLATED to exactly the dock's occupied height
-/// (home indicator + 8pt separation gap + 56pt pill). Sections consume that
+/// (home indicator + bottomGap separation + 56pt pill). Sections consume that
 /// value as scroll padding so their final rows stay reachable above the
 /// glass instead of being cut behind the pill.
 ///
@@ -401,13 +412,13 @@ final class MessengerGlassBodyInsets extends InheritedWidget {
 final class MessengerFloatingDockInsets {
   MessengerFloatingDockInsets._();
 
-  /// 56pt pill ([MessengerBottomNavigation.height]) + 6.4pt bottom gap
+  /// 56pt pill ([MessengerBottomNavigation.height]) + 5.44pt bottom gap
   /// ([MessengerBottomNavigation.bottomGap]) — the smallest inflated value
   /// the narrow scaffold can report. Raw device safe areas (iOS home
   /// indicator ≈ 34) stay below it, so only the scaffold's inflated inset
   /// qualifies. (Literal: importing the controls file here would create an
   /// import cycle.)
-  static const double minInflatedBottom = 62.4;
+  static const double minInflatedBottom = 61.44;
 
   /// The dock's occupied bottom height, or 0 when the ambient MediaQuery
   /// was not inflated for the floating dock (desktop, standalone hosts).

@@ -14,6 +14,8 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
+import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
@@ -263,6 +265,48 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Files'), findsOneWidget);
+    });
+
+    testWidgets('app tiles use the surrounding list spacing metrics', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+
+      final alpha = tester.getRect(_cell('app:alpha'));
+      final beta = tester.getRect(_cell('app:beta'));
+
+      // The same 16pt gap as the launcher's own grid spec, not a stretched
+      // 44pt gutter that makes every icon feel like an isolated card.
+      expect(alpha.width, LauncherGridSpec.cellCrossExtent);
+      expect(beta.left - alpha.right, LauncherGridSpec.spacing);
+      expect(LauncherGridSpec.spacing, 16);
+    });
+
+    testWidgets('glass header keeps actions while grid scrolls beneath it', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(390, 844));
+
+      expect(find.byKey(const ValueKey('appsChromeUnderlay')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('appsNarrowSearchReveal')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('appsHeaderCatalog')), findsOneWidget);
+
+      final scroll = tester.widget<SingleChildScrollView>(
+        find.byKey(const ValueKey('appsGridScrollView')),
+      );
+      expect(tester.getRect(find.byWidget(scroll)).top, 0);
+      expect(
+        scroll.padding,
+        const EdgeInsets.fromLTRB(
+          16,
+          MessengerFloatingPageScaffold.bodyTop + 8,
+          16,
+          128,
+        ),
+      );
     });
 
     testWidgets('main grid reserves bottom navigation clearance', (
@@ -611,9 +655,8 @@ void main() {
         tileEngineFactory: _fakeTileEngineFactory(),
       );
       const i = 56.0, cellMain = 76.0;
-      // Dynamic cross-axis spacing: 800px surface, 6 columns →
-      // (768 − 6×56)/5 = 86.4, capped at 44; the row gap stays 16.
-      const g = 44.0, gr = 16.0;
+      // The compact spec gap is shared by both axes.
+      const g = 16.0, gr = 16.0;
       final hostRect = tester.getRect(find.byType(AppTileHost));
       final betaRect = tester.getRect(_cell('app:beta'));
       // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 row-gap high.
@@ -657,7 +700,7 @@ void main() {
       expect(betaRect.top, moreOrLessEquals(hostRect.top, epsilon: 0.5));
       expect(
         betaRect.left,
-        moreOrLessEquals(hostRect.left + i + 44, epsilon: 0.5),
+        moreOrLessEquals(hostRect.left + i + 16, epsilon: 0.5),
       );
       expect(betaRect.width, moreOrLessEquals(i, epsilon: 0.5));
     });
@@ -709,14 +752,14 @@ void main() {
       expect(settingsRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
       expect(settingsRect.left, greaterThan(gammaRect.left));
       expect(filesRect.top, greaterThan(settingsRect.top));
-      // Dynamic spacing: (390 − 32 − 4×56)/3 ≈ 44.67 → capped 44, so the
-      // grid is 4×56 + 3×44 = 356 wide, nearly filling the padded area.
+      // Four compact columns are centered inside the 16pt side padding:
+      // 4×56 + 3×16 = 272 wide, without stretched inter-tile gutters.
       expect(
         alphaRect.left,
-        moreOrLessEquals(16 + (390 - 32 - 356) / 2, epsilon: 0.5),
+        moreOrLessEquals(16 + (390 - 32 - 272) / 2, epsilon: 0.5),
       );
       // A 5th column would NOT fit — the count stays 4.
-      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 100.0);
+      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 72.0);
     });
 
     testWidgets('dragging over an edge half live-reflows the grid', (
@@ -829,14 +872,14 @@ void main() {
       // No override yet → no reset entry.
       expect(find.text('Reset to default'), findsNothing);
 
-      // Pick Medium: the override lands and the tile resizes (dynamic
-      // spacing 44 on the 800px surface → 4×56 + 3×44).
+      // Pick Medium: the override lands and the tile resizes to four
+      // compact icon slots plus three 16pt gaps.
       await tester.tap(find.text('Medium (4×2)'));
       await tester.pumpAndSettle();
       expect(harness.layout.tileSizeFor('alpha'), (w: 4, h: 2));
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        moreOrLessEquals(4 * 56 + 3 * 44, epsilon: 0.5),
+        moreOrLessEquals(4 * 56 + 3 * 16, epsilon: 0.5),
       );
 
       // Menu again → current size checked, reset offered; reset clears.
@@ -935,8 +978,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        // Dynamic spacing caps at 44 on the 800px surface: 2×56 + 44.
-        moreOrLessEquals(2 * 56 + 44, epsilon: 0.5),
+        // Two icon slots plus the shared 16pt grid gap.
+        moreOrLessEquals(2 * 56 + 16, epsilon: 0.5),
       );
 
       // The agent reconfigures: 3 columns + a 4x2 override (clamped to 3).
@@ -953,8 +996,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        // 3 columns, spacing still capped at 44: 3×56 + 2×44.
-        moreOrLessEquals(3 * 56 + 2 * 44, epsilon: 0.5),
+        // Three icon slots plus two shared 16pt grid gaps.
+        moreOrLessEquals(3 * 56 + 2 * 16, epsilon: 0.5),
       );
     });
 

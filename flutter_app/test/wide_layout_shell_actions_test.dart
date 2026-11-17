@@ -1302,7 +1302,17 @@ void main() {
       final header = find.byType(MessengerSectionHeader);
       expect(header, findsOneWidget, reason: destination);
       expect(tester.getRect(header).height, 52, reason: destination);
-      final underlay = find.byType(MessengerGlassUnderlay);
+      final blurFinder = destination == 'apps'
+          ? find.byKey(const ValueKey('appsChromeUnderlay'))
+          : find.descendant(
+              of: find.byType(MessengerGlassUnderlay),
+              matching: find.byType(ProgressiveBlur),
+            );
+      expect(blurFinder, findsOneWidget, reason: destination);
+      final underlay = find.ancestor(
+        of: blurFinder,
+        matching: find.byType(MessengerGlassUnderlay),
+      );
       expect(underlay, findsOneWidget, reason: destination);
       expect(
         find.descendant(
@@ -1311,10 +1321,6 @@ void main() {
         ),
         findsNothing,
         reason: '$destination must fade without a bounded glass rectangle',
-      );
-      final blurFinder = find.descendant(
-        of: underlay,
-        matching: find.byType(ProgressiveBlur),
       );
       final blur = tester.widget<ProgressiveBlur>(blurFinder);
       expect(blur.maxSigma, 8, reason: destination);
@@ -1354,7 +1360,11 @@ void main() {
         closeTo(panelRect.right - 3, .001),
         reason: destination,
       );
-      expect(glassRect.height, 58, reason: destination);
+      expect(
+        glassRect.height,
+        destination == 'apps' ? 108 : 58,
+        reason: destination,
+      );
       expect(
         find.byKey(const ValueKey('chatListChromeFade')),
         findsNothing,

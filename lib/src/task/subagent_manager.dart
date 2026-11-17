@@ -16,6 +16,7 @@ import '../a2a/a2a_mail_gateway.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
+import '../network/connector/device_dm.dart' show deviceDmReplyAddressPrefix;
 import '../session/ledger_caps.dart';
 import 'subagent.dart';
 
@@ -46,6 +47,12 @@ enum ReplyRecordOutcome {
 
 typedef ChildSessionFactory =
     Future<String> Function(String parentSessionId, String childId);
+
+/// Host gateway for a durable `network-dm:v1:` reply address. The manager
+/// keeps the existing agent_message contract; only the CLI host knows how to
+/// encrypt and route these addresses through its device connector.
+typedef NetworkDmGateway =
+    Future<void> Function(String address, SubagentMessage message);
 
 /// Callback to record the subagent registry into the parent session.
 typedef SubagentRegistrySink =
@@ -104,6 +111,7 @@ final class SubagentManager {
     this.source,
     this.messaging,
     this.wakeProcess,
+    this.networkDmGateway,
     this.homeDir,
     this.selfId = 'main',
     this.maxPendingMessages = 16,
@@ -222,6 +230,10 @@ final class SubagentManager {
     }
     return started;
   }
+
+  /// CLI-installed gateway for encrypted network DM replies. Null preserves
+  /// the legacy unknown-recipient behavior on hosts without that transport.
+  NetworkDmGateway? networkDmGateway;
 
   /// The A2A boundary gateway (issue #27 phase 3): when set, a
   /// `name@machine` address naming ANOTHER machine delivers through the
@@ -450,6 +462,12 @@ final class SubagentManager {
     final handle = _handles[id];
     await _guardRecipient(id, handle);
     final capped = capText ? _capMessage(message) : message;
+    if (id.startsWith(deviceDmReplyAddressPrefix)) {
+      // _guardRecipient proved this gateway exists. Keep the opaque address
+      // unprefixed: it is a self-contained route, never a file mailbox.
+      await networkDmGateway!(id, capped);
+      return;
+    }
     final gateway = a2aGateway;
     if (gateway != null && id.contains('@')) {
       await _deliverViaA2a(gateway, id, capped);
@@ -528,6 +546,9 @@ final class SubagentManager {
   /// mailbox when the fabric is wired, a foreign `name@machine` address
   /// when the A2A gateway is, or a hub target the routing fabric resolves.
   Future<bool> _isDeliverable(String id, SubagentHandle? handle) async {
+    if (id.startsWith(deviceDmReplyAddressPrefix)) {
+      return networkDmGateway != null;
+    }
     if (handle != null) return true;
     if ((id == selfId || id.contains('/')) && messaging != null) return true;
     if (id.contains('@') && a2aGateway != null) return true;
@@ -559,6 +580,7 @@ final class SubagentManager {
   /// routing transport is down — offline hub mail fails honestly instead
   /// of dead-dropping into a file inbox nobody polls.
   Future<bool> _hubResolvable(String id) async {
+    if (id.startsWith(deviceDmReplyAddressPrefix)) return false;
     if (_handles.containsKey(id) || id == selfId || id.contains('/')) {
       return false;
     }

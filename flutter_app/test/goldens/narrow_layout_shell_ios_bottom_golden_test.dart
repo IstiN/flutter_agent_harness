@@ -364,9 +364,9 @@ void main() {
   });
 
   test('dock gate stays pinned to the dock geometry (review digest)', () {
-    // The ≥64pt gate duplicates MessengerBottomNavigation.height + 8pt
-    // bottomGap as a literal (an import cycle forbids sharing it in
-    // production); this test is the pin so the two can never drift.
+    // The occupied-height gate duplicates height + bottomGap as a literal
+    // (an import cycle forbids sharing it in production); this test is the
+    // pin so the two can never drift.
     expect(
       MessengerFloatingDockInsets.minInflatedBottom,
       MessengerBottomNavigation.height + MessengerBottomNavigation.bottomGap,
