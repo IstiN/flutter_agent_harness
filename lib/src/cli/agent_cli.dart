@@ -214,6 +214,7 @@ import '../env/session_parse_executor.dart';
 import '../session/session_repo.dart';
 import '../session_io_retry.dart';
 import '../session_repair.dart' show SessionRepairReport, repairSessionLedgers;
+import 'agent_cli_io_gauges.dart';
 import '../session/attach/file_presence_store.dart';
 import '../session_retention.dart';
 import '../session/attach/session_presence.dart';
@@ -229,6 +230,7 @@ import 'model_switch_coherence.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
+import '../session/session_io_health.dart';
 import '../session/ledger_caps.dart';
 import '../session/obligations_ledger.dart';
 import '../session/session_tree.dart';
@@ -787,7 +789,10 @@ class AgentCli {
           },
           // Issue #427: the task-resume reopen of a child's session file
           // rides the same transient-ENOENT retry, logged to fa.log.
-          sessionIoRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+          sessionIoRetry: SessionIoRetryConfig(
+            logger: _logDiagnostic,
+            ioTimeout: config.sessionIoTimeout,
+          ),
         ),
         extRuntimeFactory: config.extRuntimeFactory,
         sessionRoot: config.sessionRoot,
@@ -1777,9 +1782,11 @@ class AgentCli {
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
-    // Issue #427: transient-ENOENT retries of session-file IO log one
-    // `session_io_retry` line each into the diagnostic log (fa.log).
-    ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+    // Issues #427/#2248: retry logging + the session-IO bound (AC2).
+    ioRetry: SessionIoRetryConfig(
+      logger: _logDiagnostic,
+      ioTimeout: config.sessionIoTimeout,
+    ),
     // Resume diagnostics: session-open timings (read/parse/rebuild, bytes,
     // record counts) as `resume_timing` lines in fa.log — answers "why is
     // resume slow" without a profiler.
@@ -2149,7 +2156,7 @@ class AgentCli {
     // Boot marker: every wedge post-mortem starts with "which BUILD held
     // the busy row?" — parallel fa processes share this log, so name the
     // version next to the session id before any lifecycle line.
-    _logDiagnostic('fa boot sid=$_logSid version=$_version');
+    await _logBootLine();
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
     _wireDeliverableDurabilityLog();
@@ -2744,6 +2751,9 @@ class AgentCli {
   final Map<String, String> _runtimeSecrets = {};
 
   var _diagnosticLogDirEnsured = false;
+
+  // Issue #2248 AC4/AC6 state — see [AgentCliIoState].
+  final AgentCliIoState _ioState = AgentCliIoState();
 
   /// gh-2097: the serialized diagnostic-append chain — every
   /// `_logDiagnostic` call links its append onto this future, so bursts
