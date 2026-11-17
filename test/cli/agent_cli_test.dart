@@ -120,9 +120,7 @@ void main() {
     final run = cli.run();
     await waitForAsync(() async => (await repo.list(cwd: '/work')).isNotEmpty);
     io.sendLine('/session named-one');
-    await waitForIt(
-      () => io.out.toString().contains("created session 'named-one'"),
-    );
+    await io.out.waitUntilContains("created session 'named-one'");
     io.sendLine('/exit');
     await run;
     // Only the (equally untouched) fresh session would remain — but it is
@@ -262,7 +260,7 @@ void main() {
       envVarIsSet: (name) => name == 'ANTHROPIC_API_KEY',
     );
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('[Model]'));
+    await io.out.waitUntilContains('[Model]');
     io.sendLine('/exit');
     await run;
     final output = io.out.toString();
@@ -280,7 +278,7 @@ void main() {
       envVarIsSet: (_) => false,
     );
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('[Model]'));
+    await io.out.waitUntilContains('[Model]');
     io.sendLine('/exit');
     await run;
     expect(
@@ -293,7 +291,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call, providerKind: 'test-kind');
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('[Model]'));
+    await io.out.waitUntilContains('[Model]');
     io.sendLine('/exit');
     await run;
 
@@ -313,7 +311,7 @@ void main() {
       );
       final run = cli.run();
 
-      await waitForIt(() => io.out.toString().contains('[Model]'));
+      await io.out.waitUntilContains('[Model]');
       io.sendLine('/exit');
       await run;
 
@@ -336,7 +334,7 @@ void main() {
     );
     final run = cli.run();
 
-    await waitForIt(() => io.out.toString().contains('[Model]'));
+    await io.out.waitUntilContains('[Model]');
     io.sendLine('/exit');
     await run;
 
@@ -378,7 +376,7 @@ void main() {
       io.sendLine('delegate it');
       await waitForIt(() => fake.calls == 4 && !cli.isBusy);
       io.sendLine('/tasks');
-      await waitForIt(() => io.out.toString().contains('background agents:'));
+      await io.out.waitUntilContains('background agents:');
       io.sendLine('/exit');
       await run;
 
@@ -451,25 +449,17 @@ void main() {
         final cli = cliFor(fake.call, skillsAccess: SkillsAccess.ask);
         final run = cli.run();
         // The startup consent dialog appears (a third-party root exists).
-        await waitForIt(
-          () => io.out.toString().contains('Found Claude/Copilot/Codex'),
-        );
+        await io.out.waitUntilContains('Found Claude/Copilot/Codex');
         io.sendLine('2'); // "Not now" — stays undecided and hidden.
         io.sendLine('/skills');
         // Builtins are first-party (issue #1151): no consent gate.
-        await waitForIt(
-          () => io.out.toString().contains('create-goal — Turn a feature'),
-        );
+        await io.out.waitUntilContains('create-goal — Turn a feature');
         expect(io.out.toString(), isNot(contains('review — Review code')));
 
         io.sendLine('/skills access granted');
-        await waitForIt(
-          () => io.out.toString().contains('skills access: granted'),
-        );
+        await io.out.waitUntilContains('skills access: granted');
         io.sendLine('/skills');
-        await waitForIt(
-          () => io.out.toString().contains('review — Review code'),
-        );
+        await io.out.waitUntilContains('review — Review code');
         io.sendLine('/exit');
         await run;
       },
@@ -484,18 +474,12 @@ void main() {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call, skillsAccess: SkillsAccess.ask);
       final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('Found Claude/Copilot/Codex'),
-      );
+      await io.out.waitUntilContains('Found Claude/Copilot/Codex');
       io.sendLine('3'); // "Never".
-      await waitForIt(
-        () => io.out.toString().contains('skills access: denied'),
-      );
+      await io.out.waitUntilContains('skills access: denied');
       io.sendLine('/skills');
       // Builtins list under denied consent; the codex skill stays hidden.
-      await waitForIt(
-        () => io.out.toString().contains('create-goal — Turn a feature'),
-      );
+      await io.out.waitUntilContains('create-goal — Turn a feature');
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), isNot(contains('release — Ship a release')));
@@ -519,9 +503,7 @@ void main() {
           isNot(contains('Found Claude/Copilot/Codex')),
         );
         io.sendLine('/skills');
-        await waitForIt(
-          () => io.out.toString().contains('review — Review code'),
-        );
+        await io.out.waitUntilContains('review — Review code');
         io.sendLine('/exit');
         await run;
       },
@@ -539,19 +521,13 @@ void main() {
       await waitForIt(() => cli.systemPrompt.contains('<name>review</name>'));
 
       io.sendLine('/skills access');
-      await waitForIt(
-        () => io.out.toString().contains('Third-party skills access'),
-      );
+      await io.out.waitUntilContains('Third-party skills access');
       expect(io.out.toString(), contains('(current)'));
       io.sendLine('3'); // "Disabled".
-      await waitForIt(
-        () => io.out.toString().contains('skills access: denied'),
-      );
+      await io.out.waitUntilContains('skills access: denied');
       io.sendLine('/skills');
       // Builtins list under denied consent; the claude skill stays hidden.
-      await waitForIt(
-        () => io.out.toString().contains('create-goal — Turn a feature'),
-      );
+      await io.out.waitUntilContains('create-goal — Turn a feature');
       expect(io.out.toString(), isNot(contains('review — Review code')));
       io.sendLine('/exit');
       await run;
@@ -573,13 +549,11 @@ void main() {
       final cli = cliFor(fake.call, skillsAccess: SkillsAccess.denied);
       final run = cli.run();
       // No consent dialog (denied); the hint explains the missing skills.
-      await waitForIt(() => io.out.toString().contains('found but disabled'));
+      await io.out.waitUntilContains('found but disabled');
       expect(io.out.toString(), isNot(contains('Found Claude/Copilot/Codex')));
 
       io.sendLine('/skills');
-      await waitForIt(
-        () => io.out.toString().contains('deploy — Deploy the app'),
-      );
+      await io.out.waitUntilContains('deploy — Deploy the app');
       // The non-empty list still carries the hint + the way out.
       expect(io.out.toString(), contains('enable via /skills'));
       expect(io.out.toString(), isNot(contains('review — Review code')));
@@ -598,7 +572,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.systemPrompt.contains('<name>triage</name>'));
       io.sendLine('/skills import');
-      await waitForIt(() => io.out.toString().contains('imported triage'));
+      await io.out.waitUntilContains('imported triage');
       io.sendLine('/exit');
       await run;
 
@@ -644,7 +618,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.systemPrompt.contains('<name>hidden</name>'));
       io.sendLine('/skill:hidden');
-      await waitForIt(() => io.out.toString().contains('hidden is model-only'));
+      await io.out.waitUntilContains('hidden is model-only');
       io.sendLine('/exit');
       await run;
       expect(fake.calls, 0);
@@ -830,7 +804,7 @@ void main() {
     io.sendLine('q');
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/stats');
-    await waitForIt(() => io.out.toString().contains('cost:'));
+    await io.out.waitUntilContains('cost:');
     io.sendLine('/exit');
     await run;
 
@@ -850,7 +824,7 @@ void main() {
     io.sendLine('one');
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/reset');
-    await waitForIt(() => io.out.toString().contains('new session started'));
+    await io.out.waitUntilContains('new session started');
     io.sendLine('two');
     await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     io.sendLine('/exit');
@@ -880,7 +854,7 @@ void main() {
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
     await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
-    await waitForIt(() => io.out.toString().contains('● compacted'));
+    await io.out.waitUntilContains('● compacted');
     io.sendLine('next');
     await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
@@ -927,7 +901,7 @@ void main() {
 
     io.sendLine('q');
     await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
-    await waitForIt(() => io.out.toString().contains('● auto-compacted'));
+    await io.out.waitUntilContains('● auto-compacted');
     io.sendLine('/exit');
     await run;
 
@@ -1047,7 +1021,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/help');
-    await waitForIt(() => io.out.toString().contains('/compact'));
+    await io.out.waitUntilContains('/compact');
     io.sendLine('/exit');
     await run;
 
@@ -1070,7 +1044,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/settings');
-    await waitForIt(() => io.out.toString().contains('provider:'));
+    await io.out.waitUntilContains('provider:');
     io.sendLine('/exit');
     await run;
 
@@ -1087,11 +1061,8 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/');
-    await waitForIt(
-      () => io.out.toString().contains('[Commands]'),
-      reason: 'menu appears',
-    );
-    await waitForIt(() => io.out.toString().contains('1) /exit'));
+    await io.out.waitUntilContains('[Commands]');
+    await io.out.waitUntilContains('1) /exit');
     // Pick the exit command by number.
     io.sendLine('1');
     await run;
@@ -1465,7 +1436,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/compact');
-    await waitForIt(() => io.out.toString().contains('nothing to compact'));
+    await io.out.waitUntilContains('nothing to compact');
     io.sendLine('/exit');
     await run;
   });
@@ -1493,10 +1464,7 @@ void main() {
     io.sendLine('q');
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
-    await waitForIt(
-      () => io.out.toString().contains('compaction'),
-      reason: 'compaction message appeared in io.out',
-    );
+    await io.out.waitUntilContains('compaction');
     io.sendLine('next');
     await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
@@ -1652,7 +1620,7 @@ void main() {
     await waitForIt(() => fake.calls == 2 && !cli.isBusy);
     expect(cli.checkpoints.activeCheckpoint, isNotNull);
     io.sendLine('/reset');
-    await waitForIt(() => io.out.toString().contains('new session started'));
+    await io.out.waitUntilContains('new session started');
     expect(cli.checkpoints.activeCheckpoint, isNull);
     io.sendLine('/exit');
     await run;
@@ -1668,7 +1636,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('!echo hi');
-      await waitForIt(() => io.out.toString().contains('exit code: 2'));
+      await io.out.waitUntilContains('exit code: 2');
       io.sendLine('/exit');
       await run;
 
@@ -1755,9 +1723,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/session fresh');
-    await waitForIt(
-      () => io.out.toString().contains("created session 'fresh'"),
-    );
+    await io.out.waitUntilContains("created session 'fresh'");
     io.sendLine('/exit');
     await run;
 
@@ -1899,9 +1865,7 @@ void main() {
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     expect(io.out.toString(), contains('15tok'));
     io.sendLine('/session fresh');
-    await waitForIt(
-      () => io.out.toString().contains("created session 'fresh'"),
-    );
+    await io.out.waitUntilContains("created session 'fresh'");
     io.sendLine('/exit');
     await run;
 
@@ -1963,9 +1927,7 @@ void main() {
       );
       final run2 = cli2.run();
       // The resumed session replays its transcript after the banner.
-      await waitForIt(
-        () => io2.out.toString().contains('restored session: work'),
-      );
+      await io2.out.waitUntilContains('restored session: work');
       io2.sendLine('continue');
       await waitForIt(() => fake2.calls == 1 && !cli2.isBusy);
       io2.sendLine('/exit');
@@ -1987,24 +1949,16 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/session-new alpha');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'alpha'"),
-      );
+      await io.out.waitUntilContains("created session 'alpha'");
       io.sendLine('/rename-session beta');
-      await waitForIt(
-        () => io.out.toString().contains("renamed current session to 'beta'"),
-      );
+      await io.out.waitUntilContains("renamed current session to 'beta'");
       io.sendLine('/sessions');
-      await waitForIt(
-        () => io.out.toString().contains('rename: /rename-session'),
-      );
+      await io.out.waitUntilContains('rename: /rename-session');
       expect(io.out.toString(), contains('sessions:'));
       io.sendLine('/session gamma');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'gamma'"),
-      );
+      await io.out.waitUntilContains("created session 'gamma'");
       io.sendLine('/session');
-      await waitForIt(() => io.out.toString().contains('session: gamma'));
+      await io.out.waitUntilContains('session: gamma');
       expect(io.out.toString(), contains('rename: /rename-session'));
       // Say something in gamma — the only session worth keeping.
       io.sendLine('hi');
@@ -2149,7 +2103,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/session other-project');
-      await waitForIt(() => io.out.toString().contains('[other]'));
+      await io.out.waitUntilContains('[other]');
       io.sendLine('/exit');
       await run;
 
@@ -2333,21 +2287,15 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'alpha'"),
-      );
+      await io.out.waitUntilContains("created session 'alpha'");
       io.sendLine('one');
       await waitForIt(() => fake.calls == 1 && !cli.isBusy);
       io.sendLine('/session beta');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'beta'"),
-      );
+      await io.out.waitUntilContains("created session 'beta'");
       io.sendLine('two');
       await waitForIt(() => fake.calls == 2 && !cli.isBusy);
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains('restored session: alpha'),
-      );
+      await io.out.waitUntilContains('restored session: alpha');
       io.sendLine('/exit');
       await run;
 
@@ -2367,21 +2315,15 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/session alpha');
-        await waitForIt(
-          () => io.out.toString().contains("created session 'alpha'"),
-        );
+        await io.out.waitUntilContains("created session 'alpha'");
         for (var i = 1; i <= 6; i++) {
           io.sendLine('q$i');
           await waitForIt(() => fake.calls == i && !cli.isBusy);
         }
         io.sendLine('/session beta');
-        await waitForIt(
-          () => io.out.toString().contains("created session 'beta'"),
-        );
+        await io.out.waitUntilContains("created session 'beta'");
         io.sendLine('/session alpha');
-        await waitForIt(
-          () => io.out.toString().contains('restored session: alpha'),
-        );
+        await io.out.waitUntilContains('restored session: alpha');
         io.sendLine('/exit');
         await run;
 
@@ -2408,19 +2350,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'alpha'"),
-      );
+      await io.out.waitUntilContains("created session 'alpha'");
       io.sendLine('go');
       await waitForIt(() => fake.calls == 2 && !cli.isBusy);
       io.sendLine('/session beta');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'beta'"),
-      );
+      await io.out.waitUntilContains("created session 'beta'");
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains('restored session: alpha'),
-      );
+      await io.out.waitUntilContains('restored session: alpha');
       io.sendLine('/exit');
       await run;
 
@@ -2454,19 +2390,13 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'alpha'"),
-      );
+      await io.out.waitUntilContains("created session 'alpha'");
       io.sendLine('go');
       await waitForIt(() => fake.calls == 3 && !cli.isBusy);
       io.sendLine('/session beta');
-      await waitForIt(
-        () => io.out.toString().contains("created session 'beta'"),
-      );
+      await io.out.waitUntilContains("created session 'beta'");
       io.sendLine('/session alpha');
-      await waitForIt(
-        () => io.out.toString().contains('restored session: alpha'),
-      );
+      await io.out.waitUntilContains('restored session: alpha');
       io.sendLine('/exit');
       await run;
 
@@ -2616,13 +2546,11 @@ void main() {
         streamFunction: fake2.call,
       );
       final run2 = cli2.run();
-      await waitForIt(() => io2.out.toString().contains('fa'));
+      await io2.out.waitUntilContains('fa');
       // The startup session is newer than the first run's, so /resume is
       // already there.
       io2.sendLine('/resume');
-      await waitForIt(
-        () => io2.out.toString().contains('already on the latest session'),
-      );
+      await io2.out.waitUntilContains('already on the latest session');
       io2.sendLine('/exit');
       await run2;
     });
@@ -2678,7 +2606,7 @@ void main() {
       final run = cli.run();
       await waitForIt(() => cli.systemPrompt.contains('<name>deploy</name>'));
       io.sendLine('/skills');
-      await waitForIt(() => io.out.toString().contains('skills:'));
+      await io.out.waitUntilContains('skills:');
       io.sendLine('/exit');
       await run;
 

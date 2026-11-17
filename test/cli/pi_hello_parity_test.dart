@@ -58,8 +58,8 @@ void main() {
       final fake = FakeStreamFunction([textTurn('hello')]);
       final cli = cliFor(fake.call, agentMode: 'pi');
       final run = cli.run();
-      await waitForIt(
-        () => io.out.toString().contains('pi benchmark: initial context'),
+      await io.out.waitUntilContains(
+        'pi benchmark: initial context',
         reason: 'pi boot',
       );
       io.sendLine('/exit');
@@ -82,8 +82,8 @@ void main() {
     final piFake = FakeStreamFunction([textTurn('hello')]);
     final piCli = cliFor(piFake.call, agentMode: 'pi');
     final piRun = piCli.run();
-    await waitForIt(
-      () => io.out.toString().contains('pi benchmark: initial context'),
+    await io.out.waitUntilContains(
+      'pi benchmark: initial context',
       reason: 'pi boot',
     );
     io.sendLine('/exit');

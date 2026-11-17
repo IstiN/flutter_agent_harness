@@ -77,10 +77,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-    await waitForIt(
-      () => io.out.toString().contains('no sessions to resume in this folder'),
-      reason: 'the honest resume-miss note prints',
-    );
+    await io.out.waitUntilContains('no sessions to resume in this folder');
     expect(io.out.toString(), isNot(contains(foreign.id)));
     io.sendLine('/exit');
     await run;
@@ -103,10 +100,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-    await waitForIt(
-      () => io.out.toString().contains(targetId),
-      reason: 'the stale header-only target still opens',
-    );
+    await io.out.waitUntilContains(targetId);
     // While the session is open the file must still be on disk: the boot
     // sweep exempted the resolved target. (After /exit the clean-exit
     // deleteSessionIfEmpty may legitimately trash the empty file — that
