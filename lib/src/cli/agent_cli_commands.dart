@@ -375,7 +375,7 @@ extension SlashCommandDispatch on AgentCli {
       case '/help':
         _printHelp(filter: rest);
       case '/stats':
-        _printStats();
+        unawaited(_printStats());
       case '/tasks':
         _listTaskJobs(rest);
       case '/transcript':
