@@ -186,6 +186,28 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   draft (foreign or unmarked drafts are left to the sweeper). Pinned by
   `test/release_hygiene_test.dart` (a job with an asset-carrying create
   and no guard fails CI).
+- **Train-level draft lifecycle guard** (gh-2230) — the per-job guards
+  above fire only on their own job's failure, but since the gh-1801
+  rework the staged draft's publish owner is the TAG TRAIN (ci.yml's
+  `release-provenance`, the sole publish point). A train that dies
+  upstream of the publish point (core tests → quality-gate red → binaries
+  skipped → provenance skipped) used to orphan the staged draft until the
+  24h sweeper reclaimed it and filed the recurring sweep issue. ci.yml now
+  carries a `train-draft-guard` job (`needs: release-provenance`,
+  `if: always()` on tag-push/release events) running
+  `scripts/release_train_draft_guard.sh` with the publish point's settled
+  result exported. It deletes ONLY when that result is `skipped` (the
+  publish point is unreachable — `rerun --failed` never resurrects skipped
+  jobs): drafts for the trained tag whose well-formed ownership marker
+  names a COMPLETED run go away (a superseded failed train is never rerun,
+  so nobody else would ever publish them; the git tag is untouched). A
+  FAILED or CANCELLED provenance is rerunnable, so the staged draft stays
+  as the `rerun --failed` recovery vessel (gh-1899 convention). Fail-safe
+  keeps — in-flight owner runs (a concurrent creator leg may be
+  mid-upload), unmarked/human drafts (E1), any owner-status lookup failure
+  (never delete blind), and an unexported result; the sweeper remains the
+  backstop. Grants `contents: write` + `actions: read`, same
+  stub-enforced model as the sweep-drafts job.
 - **Attach-or-create** — the draft-capable creates of build-macos.yml /
   build-mobile.yml live in `scripts/release_attach_or_create.sh`, which is
   idempotent under the view→create race (#282 E3): a create that loses to

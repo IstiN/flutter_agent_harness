@@ -248,6 +248,247 @@ jobs:
     });
   });
 
+  // ── gh-2230 — train-level draft lifecycle guard ──────────────────────────
+  // The per-job guards above cover only their OWN job's failure. Since the
+  // gh-1801 rework the staged draft's publish owner is the TAG TRAIN
+  // (ci.yml's release-provenance job, the sole --draft=false --latest
+  // flip), so a train that dies upstream of the publish point (core tests
+  // → quality-gate red → binaries skipped → provenance skipped) left the
+  // staged draft orphaned until the 24h sweeper reclaimed it and filed the
+  // recurring sweep issue (gh-2230, v1.0.728). The train now cleans up
+  // after itself: a guard job right after the publish point deletes drafts
+  // for the trained tag whose owner run has completed; drafts owned by
+  // in-flight runs and unmarked (possibly human) drafts stay with the
+  // sweeper (E1), and a dropped actions:read grant degrades fail-safe.
+  group('gh-2230 — train-level draft lifecycle guard', () {
+    String markerDraft(int id, String run, {String tag = 'v1.2.3'}) =>
+        '{"id":$id,"draft":true,"tag_name":"$tag",'
+        '"body":"Release notes\\n<!-- release-draft-owner: run/$run/job/build-macos-cli-arm64 -->",'
+        '"created_at":"2026-11-15T05:23:55Z",'
+        '"author":{"login":"release-owner","type":"User"}}';
+
+    test('deletes a staged draft whose owner run completed (tag-scoped)', () {
+      final run = runTrainGuard('delete-completed', {
+        'releases.json':
+            '[${markerDraft(55, '222')},'
+            '${markerDraft(66, '333', tag: 'v9.9.9')}]',
+      });
+      expect(run.exitCode, 0, reason: run.out);
+      final deletes = run.log.where((l) => l.contains('-X DELETE')).toList();
+      expect(deletes, hasLength(1), reason: 'log: ${run.log}');
+      expect(
+        deletes.single,
+        contains('releases/55'),
+        reason: 'only the trained tag\'s draft',
+      );
+      expect(run.out, contains('deleted=1'));
+    });
+
+    test('keeps the staged draft while its owner run is still in-flight', () {
+      final run = runTrainGuard('keep-inflight', {
+        'releases.json': '[${markerDraft(55, '222')}]',
+        'run-status.json': '{"status":"in_progress"}',
+      });
+      expect(run.exitCode, 0, reason: run.out);
+      expect(
+        run.log.where((l) => l.contains('-X DELETE')),
+        isEmpty,
+        reason: 'a concurrent creator leg may be mid-upload',
+      );
+      expect(run.out, contains('sweeper'));
+      expect(run.out, contains('deleted=0 kept=1'));
+    });
+
+    test('never deletes an unmarked (possibly human) draft — E1', () {
+      final run = runTrainGuard('keep-unmarked', {
+        'releases.json':
+            '[{"id":55,"draft":true,"tag_name":"v1.2.3","body":"my local draft",'
+            '"created_at":"2026-11-15T05:23:55Z",'
+            '"author":{"login":"a-human","type":"User"}}]',
+      });
+      expect(run.exitCode, 0, reason: run.out);
+      expect(
+        run.log.where((l) => l.contains('-X DELETE')),
+        isEmpty,
+        reason: 'no marker, no proof of pipeline ownership — sweeper only',
+      );
+      expect(run.out, contains('deleted=0 kept=1'));
+    });
+
+    test('no-op when the release for the tag is already published', () {
+      final run = runTrainGuard('noop-published', {
+        'releases.json':
+            '[{"id":55,"draft":false,"tag_name":"v1.2.3","body":"published",'
+            '"created_at":"2026-11-15T05:23:55Z",'
+            '"author":{"login":"release-owner","type":"User"}}]',
+      });
+      expect(run.exitCode, 0, reason: run.out);
+      expect(run.log.where((l) => l.contains('-X DELETE')), isEmpty);
+      expect(run.out, contains('deleted=0 kept=0'));
+    });
+
+    test('no-op when no release exists for the trained tag', () {
+      final run = runTrainGuard('noop-absent', {'releases.json': '[]'});
+      expect(run.exitCode, 0, reason: run.out);
+      expect(run.log.where((l) => l.contains('-X DELETE')), isEmpty);
+      expect(run.out, contains('deleted=0 kept=0'));
+    });
+
+    test('deletes both staged twins sharing the trained tag (gh-189)', () {
+      final run = runTrainGuard('delete-twins', {
+        'releases.json':
+            '[${markerDraft(55, '222')},${markerDraft(56, '333')}]',
+      });
+      expect(run.exitCode, 0, reason: run.out);
+      final deletes = run.log.where((l) => l.contains('-X DELETE')).toList();
+      expect(deletes, hasLength(2));
+      expect(run.out, contains('deleted=2 kept=0'));
+    });
+
+    test(
+      'a dropped actions:read grant degrades fail-safe: keep, never blind',
+      () {
+        final run = runTrainGuard(
+          'keep-no-actions-grant',
+          {'releases.json': '[${markerDraft(55, '222')}]'},
+          extraEnv: {'GH_STUB_PERMISSIONS': 'contents'},
+        );
+        expect(run.exitCode, 0, reason: run.out);
+        expect(
+          run.log.where((l) => l.contains('-X DELETE')),
+          isEmpty,
+          reason:
+              'owner-run status unprovable (403) — the guard must not '
+              'delete a possibly in-flight draft blind',
+        );
+        expect(run.out, contains('deleted=0 kept=1'));
+      },
+    );
+
+    test('a FAILED publish point is rerunnable: the draft stays as the '
+        'rerun --failed recovery vessel (gh-1899 convention)', () {
+      final run = runTrainGuard(
+        'keep-provenance-failed',
+        {'releases.json': '[${markerDraft(55, '222')}]'},
+        extraEnv: {'PROVENANCE_RESULT': 'failure'},
+      );
+      expect(run.exitCode, 0, reason: run.out);
+      expect(
+        run.log.where((l) => l.contains('-X DELETE')),
+        isEmpty,
+        reason:
+            'gh run rerun --failed CAN resurrect a failed provenance; '
+            'deleting would kill the recovery path',
+      );
+      expect(run.out, contains('recovery vessel'));
+    });
+
+    test('a CANCELLED publish point is rerunnable too: keep', () {
+      final run = runTrainGuard(
+        'keep-provenance-cancelled',
+        {'releases.json': '[${markerDraft(55, '222')}]'},
+        extraEnv: {'PROVENANCE_RESULT': 'cancelled'},
+      );
+      expect(run.exitCode, 0, reason: run.out);
+      expect(run.log.where((l) => l.contains('-X DELETE')), isEmpty);
+      expect(run.out, contains('recovery vessel'));
+    });
+
+    test(
+      'an unexported publish-point result keeps fail-safe (never blind)',
+      () {
+        final run = runTrainGuard(
+          'keep-result-unset',
+          {'releases.json': '[${markerDraft(55, '222')}]'},
+          extraEnv: {'PROVENANCE_RESULT': ''},
+        );
+        expect(run.exitCode, 0, reason: run.out);
+        expect(
+          run.log.where((l) => l.contains('-X DELETE')),
+          isEmpty,
+          reason: 'broken env wiring must degrade to keep, not to delete',
+        );
+      },
+    );
+
+    test('ci.yml: the guard job is wired to the publish point', () {
+      final jobs = jobsOf('.github/workflows/ci.yml');
+      final guardJobs = [
+        for (final e in jobs.entries)
+          if (e.value is Map &&
+              ((e.value as Map)['steps'] as YamlList?)?.any(
+                    (s) =>
+                        s is YamlMap &&
+                        s['run']?.toString().contains(
+                              'release_train_draft_guard.sh',
+                            ) ==
+                            true,
+                  ) ==
+                  true)
+            MapEntry(e.key.toString(), e.value as Map),
+      ];
+      expect(guardJobs, hasLength(1), reason: 'exactly one train-level guard');
+      final guard = guardJobs.single;
+      final needs = guard.value['needs'];
+      final needsList = needs is YamlList
+          ? needs.map((n) => n.toString()).toList()
+          : [if (needs != null) needs.toString()];
+      expect(
+        needsList,
+        contains('release-provenance'),
+        reason:
+            'the guard must run only after the publish point settled '
+            '(success, failure, or skip)',
+      );
+      final cond = (guard.value['if'] ?? '').toString();
+      expect(
+        cond,
+        contains('always()'),
+        reason: 'must run on failed AND cancelled trains',
+      );
+      expect(
+        cond,
+        contains("refs/tags/v"),
+        reason: 'scoped to the tag train (the publish owner)',
+      );
+      expect(
+        cond.contains("result == 'success'"),
+        isFalse,
+        reason:
+            'gating on the publish point succeeding would skip the guard '
+            'exactly when the train fails',
+      );
+      final perms = guard.value['permissions'] as YamlMap;
+      expect(
+        perms['contents']?.toString(),
+        'write',
+        reason: 'delete the orphaned draft',
+      );
+      expect(
+        perms['actions']?.toString(),
+        'read',
+        reason: 'probe the draft-owner run status (gh-2008 pattern)',
+      );
+      final guardStep = ((guard.value['steps'] as YamlList?) ?? const [])
+          .whereType<YamlMap>()
+          .firstWhere(
+            (s) =>
+                s['run']?.toString().contains('release_train_draft_guard.sh') ==
+                true,
+          );
+      final stepEnv = guardStep['env'] as YamlMap?;
+      expect(
+        stepEnv?['PROVENANCE_RESULT']?.toString(),
+        contains('needs.release-provenance.result'),
+        reason:
+            'the script must learn the publish point\'s settled result from '
+            'the workflow — deletion is correct only for the unreachable '
+            "(skipped) case; a failed provenance is the rerun --failed "
+            'recovery vessel',
+      );
+    });
+  });
+
   // ── E3 — idempotent attach-or-create (review of #294) ───────────────────
   group('release_attach_or_create.sh — race-idempotent create, ownership-stamped', () {
     AttachOut runAttach(
@@ -1281,8 +1522,7 @@ gh release create "v9.9.9" \
               '<!-- release-draft-owner: run/42566734746/job/build-extension -->',
         },
       ]);
-      final trainUrl =
-          'https://github.com/OWNER/REPO/actions/runs/4256724426';
+      final trainUrl = 'https://github.com/OWNER/REPO/actions/runs/4256724426';
       Map<String, String> sweepFixtures({
         required String trainRuns,
         String trainJobs = '{"jobs":[]}',
@@ -1294,141 +1534,127 @@ gh release create "v9.9.9" \
         'train-jobs.json': trainJobs,
       };
 
-      test(
-        'a stale pipeline draft whose tag train failed names the train run '
-        'and its failed jobs',
-        () {
-          final run = runSweeper(
-            'train-failed',
-            sweepFixtures(
-              trainRuns: jsonEncode([
+      test('a stale pipeline draft whose tag train failed names the train run '
+          'and its failed jobs', () {
+        final run = runSweeper(
+          'train-failed',
+          sweepFixtures(
+            trainRuns: jsonEncode([
+              {
+                'databaseId': 4256724426,
+                'conclusion': 'failure',
+                'url': trainUrl,
+              },
+            ]),
+            trainJobs: jsonEncode({
+              'jobs': [
                 {
-                  'databaseId': 4256724426,
+                  'name': 'Terminal visual (PTY screenshots, PR)',
                   'conclusion': 'failure',
-                  'url': trainUrl,
                 },
-              ]),
-              trainJobs: jsonEncode({
-                'jobs': [
-                  {
-                    'name': 'Terminal visual (PTY screenshots, PR)',
-                    'conclusion': 'failure',
-                  },
-                  {
-                    'name': 'Quality gate',
-                    'conclusion': 'failure',
-                  },
-                ],
-              }),
-            ),
-          );
-          expect(
-            run.log,
-            contains('api -X DELETE repos/OWNER/REPO/releases/697'),
-            reason: 'the stale pipeline draft is still deleted',
-          );
-          expect(run.body, isNotNull, reason: 'the sweep issue is still filed');
-          expect(
-            run.body,
-            contains('actions/runs/4256724426'),
-            reason:
-                'the failed tag train must be named in the issue — it, '
-                'not the creating run, is the broken step for a staging '
-                'draft that never published',
-          );
-          expect(
-            run.body,
-            contains('concluded failure'),
-            reason: 'the train conclusion rides the issue',
-          );
-          expect(
-            run.body,
-            contains('Terminal visual (PTY screenshots, PR)'),
-            reason:
-                'the failed jobs are named so the reader lands on the '
-                'broken step without re-deriving the run graph',
-          );
-          expect(
-            run.body,
-            contains('Quality gate'),
-          );
-          expect(
-            run.body,
-            isNot(contains('died between asset upload and publish')),
-            reason:
-                'the generic create-death prose must NOT fire when the '
-                'real blocker is known — for a failed train the create '
-                'step did not die, the publish owner never ran',
-          );
-          expect(
-            run.body,
-            contains('Rerun the train'),
-            reason: 'the recovery action is named explicitly',
-          );
-        },
-      );
+                {'name': 'Quality gate', 'conclusion': 'failure'},
+              ],
+            }),
+          ),
+        );
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/697'),
+          reason: 'the stale pipeline draft is still deleted',
+        );
+        expect(run.body, isNotNull, reason: 'the sweep issue is still filed');
+        expect(
+          run.body,
+          contains('actions/runs/4256724426'),
+          reason:
+              'the failed tag train must be named in the issue — it, '
+              'not the creating run, is the broken step for a staging '
+              'draft that never published',
+        );
+        expect(
+          run.body,
+          contains('concluded failure'),
+          reason: 'the train conclusion rides the issue',
+        );
+        expect(
+          run.body,
+          contains('Terminal visual (PTY screenshots, PR)'),
+          reason:
+              'the failed jobs are named so the reader lands on the '
+              'broken step without re-deriving the run graph',
+        );
+        expect(run.body, contains('Quality gate'));
+        expect(
+          run.body,
+          isNot(contains('died between asset upload and publish')),
+          reason:
+              'the generic create-death prose must NOT fire when the '
+              'real blocker is known — for a failed train the create '
+              'step did not die, the publish owner never ran',
+        );
+        expect(
+          run.body,
+          contains('Rerun the train'),
+          reason: 'the recovery action is named explicitly',
+        );
+      });
 
-      test(
-        'a stale pipeline draft whose train succeeded keeps the '
-        'create-death prose (there the create step really did die)',
-        () {
-          final run = runSweeper(
-            'train-green',
-            sweepFixtures(
-              trainRuns: jsonEncode([
-                {
-                  'databaseId': 4256724426,
-                  'conclusion': 'success',
-                  'url': trainUrl,
-                },
-              ]),
-            ),
-          );
-          expect(run.body, isNotNull);
-          expect(
-            run.body,
-            contains('died between asset upload and publish'),
-            reason:
-                'no failed train found — the static prose stays as the '
-                'best available diagnosis',
-          );
-          expect(
-            run.body,
-            isNot(contains('concluded failure')),
-            reason: 'no failed-train line may appear for a green train',
-          );
-        },
-      );
+      test('a stale pipeline draft whose train succeeded keeps the '
+          'create-death prose (there the create step really did die)', () {
+        final run = runSweeper(
+          'train-green',
+          sweepFixtures(
+            trainRuns: jsonEncode([
+              {
+                'databaseId': 4256724426,
+                'conclusion': 'success',
+                'url': trainUrl,
+              },
+            ]),
+          ),
+        );
+        expect(run.body, isNotNull);
+        expect(
+          run.body,
+          contains('died between asset upload and publish'),
+          reason:
+              'no failed train found — the static prose stays as the '
+              'best available diagnosis',
+        );
+        expect(
+          run.body,
+          isNot(contains('concluded failure')),
+          reason: 'no failed-train line may appear for a green train',
+        );
+      });
 
-      test(
-        'an unreadable train lookup degrades to the static prose and never '
-        'blocks the delete + issue filing',
-        () {
-          final run = runSweeper(
-            'train-junk',
-            sweepFixtures(trainRuns: 'not-json-at-all'),
-          );
-          expect(
-            run.log,
-            contains('api -X DELETE repos/OWNER/REPO/releases/697'),
-            reason: 'the delete is the sweeper\'s contract — diagnosis '
-                    'must never gate it',
-          );
-          expect(run.body, isNotNull, reason: 'the issue is still filed');
-          expect(
-            run.body,
-            contains('died between asset upload and publish'),
-            reason:
-                'an unreadable lookup degrades to the static prose — '
-                'never a missing diagnosis line, never a red sweep',
-          );
-          expect(
-            run.stdoutText,
-            isNot(contains('::error::')),
-            reason: 'the sweep must stay green through a lookup blip',
-          );
-        },
-      );
+      test('an unreadable train lookup degrades to the static prose and never '
+          'blocks the delete + issue filing', () {
+        final run = runSweeper(
+          'train-junk',
+          sweepFixtures(trainRuns: 'not-json-at-all'),
+        );
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/697'),
+          reason:
+              'the delete is the sweeper\'s contract — diagnosis '
+              'must never gate it',
+        );
+        expect(run.body, isNotNull, reason: 'the issue is still filed');
+        expect(
+          run.body,
+          contains('died between asset upload and publish'),
+          reason:
+              'an unreadable lookup degrades to the static prose — '
+              'never a missing diagnosis line, never a red sweep',
+        );
+        expect(
+          run.stdoutText,
+          isNot(contains('::error::')),
+          reason: 'the sweep must stay green through a lookup blip',
+        );
+      });
 
       test('fresh and human drafts never trigger a train lookup', () {
         final freshDate = DateTime.now()
