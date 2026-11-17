@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2230): a failed tag train no longer orphans its staged release
+  draft for 24h. The issue #282 draft lifecycle invariant was enforced
+  only per creating job, but since the gh-1801 rework the staged draft's
+  publish owner is the tag train (ci.yml `release-provenance`, the sole
+  publish point): a train that died upstream of the publish point (core
+  tests → quality-gate red → binaries skipped → provenance skipped) left
+  the staged draft (e.g. v1.0.728) to rot until the daily sweeper deleted
+  it and filed the recurring `[daily-publish] stale release drafts swept`
+  issue. ci.yml now carries a train-level `train-draft-guard` job
+  (`needs: release-provenance`, `always()` on tag pushes / release
+  events) running `scripts/release_train_draft_guard.sh` with the publish
+  point's settled result exported: it deletes drafts for the trained tag
+  ONLY when that result is `skipped` (`rerun --failed` never resurrects
+  skipped jobs, so nobody else would ever publish them) and the draft's
+  well-formed ownership marker names a COMPLETED run; the git tag is
+  untouched. A failed/cancelled provenance is rerunnable, so the staged
+  draft stays as the `rerun --failed` recovery vessel (gh-1899
+  convention). Drafts owned by in-flight runs, unmarked/human drafts
+  (E1), lookup failures, and an unexported result are kept fail-safe —
+  the 24h sweeper remains the backstop.
+  Pinned by `test/release_hygiene_test.dart` (`#2230`)
 - fix(gh-2194): the fa1.dev landing page no longer exposes two broken
   Windows download links. The windows-release landing (#2158) deep-linked
   `releases/latest/download/fa-app-windows-x64.zip` / `.msix`, but those
