@@ -647,7 +647,14 @@ jobs:
 
       - name: Build macOS release (${{ matrix.arch }})
         env:
-          BUILD_NUMBER: ${{ github.run_number }}
+          # gh-2246: unique per arch + per attempt. A bare run_number is
+          # shared by both matrix legs (sibling ASC build/review race) and
+          # reused by reruns (altool -19232 "bundle version must be higher
+          # than the previously uploaded version"). run_number*10 +
+          # run_attempt*2 + archIndex stays monotonic: the next dispatch
+          # (+10) always exceeds every attempt/arch combo of the previous
+          # run, so a re-upload is always legal.
+          BUILD_NUMBER: ${{ github.run_number * 10 + github.run_attempt * 2 + (matrix.arch == 'arm64' && 1 || 0) }}
           BUILD_VERSION: ${{ needs.version.outputs.version }}
           # gh-1865: CODE_SIGN_IDENTITY as a SHA-1 fingerprint (read from
           # THIS job's own keychain right after import) instead of the
@@ -1037,7 +1044,38 @@ jobs:
           xcrun stapler staple "$DMG_NAME"
           echo "✅ Notarization complete"
 
+      # gh-2246: bank the artifacts BEFORE the TestFlight submit — an
+      # ASC-side wall (same-train review race, altool validation) must
+      # never forfeit already-built binaries. The PKG artifact and the
+      # DMG/ZIP/manifest land here; only distribution (below) may fail.
+      - name: Upload TestFlight PKG artifact
+        if: steps.testflight_pkg.outputs.pkg_name != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fa-macos-testflight-pkg
+          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
+          retention-days: 14
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Fa-macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.package.outputs.dmg_name }}
+            ${{ steps.package.outputs.zip_name }}
+            ${{ steps.package.outputs.manifest_name }}
+          retention-days: 14
+
       - name: Submit PKG to TestFlight
+        id: testflight_submit
+        # gh-2246: distribution is EXTERNAL ASC state ("Another build is
+        # in review. Another build in the same train" — the v1.0.740
+        # arm64 leg) that no leg can control; the artifacts are already
+        # banked above and the aggregate release attach needs this leg
+        # GREEN to run. A loud warning (step below) keeps the failure
+        # visible; the next daily retries distribution with a fresh build
+        # number.
+        continue-on-error: true
         if: steps.testflight_pkg.outputs.pkg_name != ''
         working-directory: flutter_app
         env:
@@ -1064,23 +1102,12 @@ jobs:
           bundle install
           bundle exec fastlane mac submit_only
 
-      - name: Upload TestFlight PKG artifact
-        if: steps.testflight_pkg.outputs.pkg_name != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: fa-macos-testflight-pkg
-          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
-          retention-days: 14
-
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: Fa-macos-${{ matrix.arch }}
-          path: |
-            ${{ steps.package.outputs.dmg_name }}
-            ${{ steps.package.outputs.zip_name }}
-            ${{ steps.package.outputs.manifest_name }}
-          retention-days: 14
+      # gh-2246: the submit above is continue-on-error — surface a failed
+      # distribution loudly instead of letting it hide behind a green leg.
+      - name: Report TestFlight submit outcome
+        if: steps.testflight_submit.outcome == 'failure'
+        run: |
+          echo "::warning::TestFlight distribution failed (external ASC state — review race or build-number validation). Artifacts are banked and the release attach proceeds; the next daily retries distribution with a fresh build number (gh-2246)."
 
       - name: Build and package no-sandbox release
         id: package_nosandbox
