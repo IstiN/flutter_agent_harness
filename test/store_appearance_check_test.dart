@@ -290,6 +290,7 @@ void main() {
     late String fixtureRepo;
     final capturedAuth = <String>[];
     final capturedGrants = <String>[];
+    final capturedPlayInsert = <String>[];
 
     /// Per-scenario store mode: which recorded fixture each fake endpoint
     /// serves — present / absent / rollover / error (500s).
@@ -363,6 +364,26 @@ void main() {
             return;
           }
           if (path.endsWith('/edits')) {
+            // gh-2207: Net::HTTP defaults a body POST to urlform, and Google
+            // binds form fields as request params ("Unknown name \"{}\": Cannot
+            // bind query parameter" — the daily red since 2026-10-28). Enforce
+            // the same contract so a dropped header fails this IT the way
+            // production fails.
+            final ct = req.headers.value('content-type') ?? '';
+            capturedPlayInsert.add(ct);
+            if (!ct.contains('application/json')) {
+              await serveJson(req, {
+                "error": {
+                  "code": 400,
+                  "message":
+                      "Invalid JSON payload received. Unknown name \"{}\": "
+                      "Cannot bind query parameter. Field '{}' could not be "
+                      "found in request to message: "
+                      "'androidpublisher.edits.insertRequest'",
+                },
+              }, 400);
+              return;
+            }
             await serveJson(req, {"id": "EDIT-1"});
             return;
           }
@@ -577,6 +598,7 @@ exit 0
       Directory(stubDir).deleteSync(recursive: true);
       capturedAuth.clear();
       capturedGrants.clear();
+      capturedPlayInsert.clear();
     });
 
     test(
@@ -852,6 +874,24 @@ exit 0
           isEmpty,
           reason: 'a commit would PUBLISH — forbidden (I3)',
         );
+      },
+    );
+
+    test(
+      'edits.insert rides Content-Type: application/json (gh-2207: Net::HTTP '
+      'form-typed the body → Google bound "{}" as a query param → 400)',
+      () async {
+        if (!rubyAvailable) return;
+        await runCheck();
+        expect(capturedPlayInsert, isNotEmpty);
+        for (final ct in capturedPlayInsert) {
+          expect(
+            ct,
+            contains('application/json'),
+            reason: 'Google rejects the form-typed body with '
+                '"Cannot bind query parameter" (gh-2207)',
+          );
+        }
       },
     );
 
