@@ -41,6 +41,7 @@ import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
 import 'tool_pairing.dart' show repairToolPairing;
+import '../exceptions.dart' show CompactionErrorCode, CompactionException;
 import '../session/session_record.dart' show CompactionRecord, MessageRecord;
 
 /// Per-pass outcome surfaced through [AutoCompactorHooks.onPass].
@@ -807,6 +808,26 @@ final class AutoCompactor {
           summarizedMessages: summarized,
         );
       } catch (error) {
+        // gh-2103/AC5 re-fire regression: compactSession's gh-204 refusal
+        // (CompactionErrorCode.invalidSession — today thrown only by the
+        // empty-foldable-region guard) means the branch has NOTHING to
+        // summarize above the keep-recent cut, not that the summarizer
+        // is down. Reading it as a failure here routed the pass to the
+        // local-trim valve, which mechanically DROPPED the unsuppressible
+        // newest tail (a trim receipt over content no pass may fold) and
+        // cost the host ladder its honest exhaustion verdict. It is the
+        // no-work terminal, identical to a null preparation.
+        if (error is CompactionException &&
+            error.code == CompactionErrorCode.invalidSession) {
+          return _AttemptOutcome(
+            ok: true,
+            error: null,
+            noWork: true,
+            summary: null,
+            hiddenRecords: 0,
+            summarizedMessages: 0,
+          );
+        }
         final errorText = error.toString();
         final isTransient = _transient.hasMatch(errorText);
         // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —

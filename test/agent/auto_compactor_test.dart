@@ -54,6 +54,33 @@ class _FakeSummarizer {
   }
 }
 
+/// Captures the failure channel too — the re-fire ladder regression
+/// (gh-2103/AC5) distinguishes "no work" from "summarizer down" only
+/// through [AutoCompactorHooks.onBothRolesFailed] and the pass receipts.
+final class _LadderHooks implements AutoCompactorHooks {
+  Object? bothRolesError;
+  final passes = <AutoCompactorPass>[];
+  int doneCount = 0;
+
+  @override
+  void onDelta(String delta) {}
+
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) {}
+
+  @override
+  void onPass(AutoCompactorPass pass) => passes.add(pass);
+
+  @override
+  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
+
+  @override
+  void onDone(int passes, int tokens) => doneCount++;
+
+  @override
+  void onBothRolesFailed(Object lastError) => bothRolesError = lastError;
+}
+
 void main() {
   late MemoryFileSystem fs;
   late JsonlSessionRepo repo;
@@ -1019,5 +1046,128 @@ void main() {
     // key off onDone — a structured run must close the bracket exactly
     // like the classic AutoCompactor.run() does.
     expect(hooks.donePasses, hooks.passes.length);
+  });
+
+  // The AC5 re-fire shape (gh-2103 regression): the first forced pass
+  // folds everything foldable; the second forced pass finds an EMPTY
+  // foldable region (the newest tail alone exceeds keepRecent) and the
+  // summarizer answers blank — compactSession's gh-204 refusal. That
+  // refusal means "nothing to fold", NOT "summarizer down": mapping it
+  // to a failure routed the pass to the local-trim valve, which DROPPED
+  // the unsuppressible newest tail and reported a trim receipt while the
+  // host ladder lost its honest exhaustion verdict.
+  test('gh-2103/AC5 regression: a forced pass over an empty foldable region '
+      'is the NO-WORK terminal — never the local-trim valve, the '
+      'unsuppressible newest tail survives', () async {
+    // The AC5 wiring at window 512: reserve 128, keep 256 (the shared
+    // forWindow curve). u1/r1 are ~300 tokens each (foldable), the
+    // huge newest message ~400 tokens exceeds the kept region (256).
+    const windowSettings = CompactionSettings(
+      enabled: true,
+      reserveTokens: 128,
+      keepRecentTokens: 256,
+    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('u1${'a' * 1200}'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [TextContent(text: 'r1${'b' * 1200}')],
+        api: _model.api,
+        provider: _model.provider,
+        model: _model.id,
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(UserMessage.text('huge${'z' * 1600}'));
+    var state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    // Pass 1 folds the region above the keep cut; the compaction
+    // record's kept boundary is the huge message.
+    final hooks1 = _LadderHooks();
+    await AutoCompactor(
+      session: session,
+      state: state,
+      window: 512,
+      settings: windowSettings,
+      summary: (_) async => SummarizationResult.success('summary'),
+      mainSummary: (_) async => SummarizationResult.success('summary'),
+      smolModel: null,
+      hooks: hooks1,
+      force: true,
+    ).run();
+    expect(
+      (await session.getBranch()).whereType<CompactionRecord>(),
+      isNotEmpty,
+      reason: 'pass 1 folded the region above the keep cut',
+    );
+
+    // The re-fire shape: a non-message record (the structured engine's
+    // compact checkpoint) lands AFTER the compaction record — the branch
+    // leaf defeats prepareCompaction's leaf rule, but the only valid cut
+    // point is still the previous compaction's kept boundary (the huge
+    // message), so the escalation cannot advance and the foldable region
+    // is EMPTY. The blank summarizer answer triggers compactSession's
+    // gh-204 refusal deterministically.
+    final branch = await session.getBranch();
+    await session.appendCompactCheckpoint(
+      firstRecordId: branch.first.id,
+      lastRecordId: branch.last.id,
+      text: 'checkpoint',
+      coversRecordIds: [branch.first.id],
+      flattenedRecordIds: [branch.first.id],
+    );
+    state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final messagesBefore = state.messages;
+    final hooks2 = _LadderHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 512,
+      settings: windowSettings,
+      summary: (_) async => SummarizationResult.success(''),
+      mainSummary: (_) async => SummarizationResult.success(''),
+      smolModel: null,
+      hooks: hooks2,
+      force: true,
+    ).run();
+
+    expect(ok, isTrue, reason: 'no work is not a failure');
+    expect(hooks2.bothRolesError, isNull);
+    expect(
+      hooks2.passes.any((p) => p.fallback == 'local-trim'),
+      isFalse,
+      reason: 'the empty-region refusal must never reach the trim valve',
+    );
+    expect(hooks2.passes, hasLength(1));
+    expect(hooks2.passes.single.ok, isTrue);
+    expect(hooks2.doneCount, 1);
+    // No second compaction record: nothing was foldable.
+    expect(
+      (await session.getBranch()).whereType<CompactionRecord>(),
+      hasLength(1),
+    );
+    // The unsupressible newest tail survives the forced pass — the
+    // live transcript is untouched by a no-work terminal.
+    // AgentState copies on assign (its getter wraps a fresh list), so
+    // pin element identity: a re-stamp would build new message objects.
+    expect(state.messages.length, messagesBefore.length);
+    for (var i = 0; i < messagesBefore.length; i++) {
+      expect(identical(state.messages[i], messagesBefore[i]), isTrue);
+    }
+    expect(
+      state.messages.any(
+        (m) => m is UserMessage && m.content.toString().contains('z' * 40),
+      ),
+      isTrue,
+      reason: 'the huge newest message survives',
+    );
   });
 }
