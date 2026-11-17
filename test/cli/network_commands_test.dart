@@ -144,6 +144,30 @@ void main() {
       });
     }
 
+    test(
+      'interactive JWT fallback prompts without echoing the token',
+      () async {
+        final output = <String>[];
+        final questions = <(String, bool)>[];
+        final store = MemoryNetworkStore();
+        final runner = commandRunner(
+          store: store,
+          handler: (_) => throw StateError('pasted JWTs must not use HTTP'),
+          out: output.add,
+          prompt: (question, {secret = false}) async {
+            questions.add((question, secret));
+            return '  pasted-token  ';
+          },
+        );
+
+        expect(await runner.run(['login', '--jwt']), 0);
+        expect(store.account?.accessToken, 'pasted-token');
+        expect(questions, hasLength(1));
+        expect(questions.single.$2, isTrue);
+        expect(output.join('\n'), isNot(contains('pasted-token')));
+      },
+    );
+
     test('login reports when loopback OAuth is unavailable', () async {
       final errors = <String>[];
       final runner = commandRunner(
@@ -169,6 +193,184 @@ void main() {
       expect(await runner.run(['login', '--provider=']), 64);
       expect(errors.join('\n'), contains('--provider requires a name'));
     });
+  });
+
+  test('same-account login preserves the stored device identity', () async {
+    final store = MemoryNetworkStore()
+      ..account = NetworkAccount.fromJwt(jwt({'sub': 'user-1'}))
+      ..device = const NetworkDeviceCredentials(
+        deviceId: 'device-stable',
+        deviceToken: 'device-secret',
+        name: 'workstation',
+      );
+    final runner = commandRunner(
+      store: store,
+      handler: (_) => throw StateError('pasted JWTs must not use HTTP'),
+    );
+
+    expect(
+      await runner.run([
+        'login',
+        '--jwt',
+        jwt({'sub': 'user-1'}),
+      ]),
+      0,
+    );
+    expect(store.device?.deviceId, 'device-stable');
+    expect(store.device?.deviceToken, 'device-secret');
+
+    expect(
+      await runner.run([
+        'login',
+        '--jwt',
+        jwt({'sub': 'user-2'}),
+      ]),
+      0,
+    );
+    expect(store.device, isNull);
+  });
+
+  test('interactive enroll prompts with the hostname default and points to '
+      'the live Devices surface', () async {
+    final output = <String>[];
+    final questions = <String>[];
+    final store = MemoryNetworkStore()
+      ..account = const NetworkAccount(accessToken: 'account-jwt');
+    final runner = commandRunner(
+      store: store,
+      out: output.add,
+      prompt: (question, {secret = false}) async {
+        questions.add(question);
+        return '';
+      },
+      handler: (_) async => http.Response(
+        jsonEncode({'deviceId': 'device-1', 'deviceToken': 'device-secret'}),
+        200,
+      ),
+    );
+
+    expect(await runner.run(['enroll']), 0);
+    expect(questions.single, contains('test-host'));
+    expect(store.device?.name, 'test-host');
+    expect(output.join('\n'), contains('Devices'));
+    expect(output.join('\n'), contains('live sessions'));
+    expect(output.join('\n'), contains('steerable'));
+  });
+
+  test(
+    'interactive enroll cancellation and invalid hostname fail safely',
+    () async {
+      final store = MemoryNetworkStore()
+        ..account = const NetworkAccount(accessToken: 'account-jwt');
+      final cancelled = commandRunner(
+        store: store,
+        handler: (_) => throw StateError('cancelled enroll must not use HTTP'),
+        prompt: (_, {secret = false}) async => null,
+      );
+      expect(await cancelled.run(['enroll']), 1);
+      expect(store.device, isNull);
+
+      final invalid = commandRunner(
+        store: store,
+        deviceName: ' ',
+        handler: (_) => throw StateError('invalid enroll must not use HTTP'),
+        prompt: (_, {secret = false}) async => '',
+      );
+      expect(await invalid.run(['enroll']), 64);
+    },
+  );
+
+  test('existing device enrollment skips the prompt and repeats Devices '
+      'discoverability', () async {
+    final output = <String>[];
+    var prompts = 0;
+    final store = MemoryNetworkStore()
+      ..account = const NetworkAccount(accessToken: 'account-jwt')
+      ..device = const NetworkDeviceCredentials(
+        deviceId: 'device-stable',
+        deviceToken: 'device-secret',
+      );
+    final runner = commandRunner(
+      store: store,
+      out: output.add,
+      prompt: (_, {secret = false}) async {
+        prompts++;
+        return 'duplicate-name';
+      },
+      handler: (_) => throw StateError('existing enroll must not use HTTP'),
+    );
+
+    expect(await runner.run(['enroll']), 0);
+    expect(prompts, 0);
+    expect(store.device?.deviceId, 'device-stable');
+    expect(output.join('\n'), contains('Devices'));
+  });
+
+  test('interactive enroll accepts an explicit friendly answer', () async {
+    String? enrolledName;
+    final store = MemoryNetworkStore()
+      ..account = const NetworkAccount(accessToken: 'account-jwt');
+    final runner = commandRunner(
+      store: store,
+      prompt: (_, {secret = false}) async => 'Studio Mac',
+      handler: (request) async {
+        enrolledName = (jsonDecode(request.body) as Map)['name'] as String?;
+        return http.Response(
+          jsonEncode({'deviceId': 'device-1', 'deviceToken': 'device-secret'}),
+          200,
+        );
+      },
+    );
+
+    expect(await runner.run(['enroll']), 0);
+    expect(enrolledName, 'Studio Mac');
+  });
+
+  test('email-only account matching preserves identity but a subject boundary '
+      'clears it', () async {
+    final store = MemoryNetworkStore()
+      ..account = const NetworkAccount(
+        accessToken: 'old',
+        email: 'Dev@Example.test',
+      )
+      ..device = const NetworkDeviceCredentials(
+        deviceId: 'device-stable',
+        deviceToken: 'device-secret',
+      );
+    final runner = commandRunner(
+      store: store,
+      handler: (_) => throw StateError('pasted JWTs must not use HTTP'),
+    );
+
+    expect(
+      await runner.run([
+        'login',
+        '--jwt',
+        jwt({'email': 'dev@example.test'}),
+      ]),
+      0,
+    );
+    expect(store.device?.deviceId, 'device-stable');
+
+    store
+      ..account = const NetworkAccount(
+        accessToken: 'subject-account',
+        subject: 'user-1',
+        email: 'dev@example.test',
+      )
+      ..device = const NetworkDeviceCredentials(
+        deviceId: 'device-stable',
+        deviceToken: 'device-secret',
+      );
+    expect(
+      await runner.run([
+        'login',
+        '--jwt',
+        jwt({'email': 'dev@example.test'}),
+      ]),
+      0,
+    );
+    expect(store.device, isNull);
   });
 
   test(
@@ -603,9 +805,11 @@ NetworkCommandRunner commandRunner({
   void Function(String)? out,
   void Function(String)? error,
   String platform = 'test-os',
+  String deviceName = 'test-host',
   NetworkStartOAuthReceiver? startReceiver,
   NetworkOpenAuthUrl? openUrl,
   NetworkRosterReader? rosterReader,
+  Future<String?> Function(String, {bool secret})? prompt,
 }) {
   final client = MockClient(handler);
   return NetworkCommandRunner(
@@ -617,11 +821,12 @@ NetworkCommandRunner commandRunner({
     ),
     deviceClient: DeviceEnrollmentClient(httpClient: client),
     relayBaseUrl: 'https://relay.test',
-    deviceName: 'test-host',
+    deviceName: deviceName,
     platform: platform,
     startReceiver: startReceiver,
     openUrl: openUrl,
     rosterReader: rosterReader,
+    prompt: prompt,
     clock: () => DateTime.utc(2026),
     out: out,
     error: error,

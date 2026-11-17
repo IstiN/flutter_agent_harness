@@ -301,6 +301,7 @@ Widget devicesPage(
   ChatListController? sessions,
   void Function(ChatListEntry)? onOpen,
   String? selected,
+  DateTime Function()? now,
   void Function({
     required String deviceId,
     required String deviceLabel,
@@ -312,6 +313,7 @@ Widget devicesPage(
 }) => DevicesPage(
   service: service,
   sessions: sessions,
+  now: now,
   selectedSessionId: selected,
   onOpenSession: onOpen == null ? null : (entry) => onOpen(entry),
   onOpenRemoteConversation: onOpenRemoteConversation,
@@ -336,7 +338,7 @@ void main() {
     // The network_center Row anatomy: fixed rail column, hairline
     // divider, expanded pane.
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.text('My devices'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const ValueKey('deviceRail'))).width,
@@ -357,6 +359,27 @@ void main() {
     expect(find.text('Offline'), findsNothing);
   });
 
+  testWidgets('glass header lets the rail scroll underneath its blur', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('devicesChromeUnderlay')), findsOneWidget);
+    final railFinder = find.byKey(const ValueKey('deviceRail'));
+    final rail = tester.widget<ListView>(railFinder);
+    expect(tester.getRect(railFinder).top, 0);
+    expect(rail.padding, const EdgeInsets.only(top: 58, bottom: 6));
+    expect(
+      tester.getRect(find.byKey(const ValueKey('devicePaneTitle'))).top,
+      greaterThanOrEqualTo(52),
+    );
+  });
+
   testWidgets(
     'signed-out phase → not-running line + This device rail cell (own dot '
     'teal locally), tap retries',
@@ -371,7 +394,7 @@ void main() {
       // Never blank (issue #2062 field feedback): the header, the
       // not-running line and the own-device rail cell + pane all render.
       expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-      expect(find.text('MY DEVICES'), findsOneWidget);
+      expect(find.text('My devices'), findsOneWidget);
       expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
       expect(find.text('Connector not running — tap to retry'), findsOneWidget);
       expect(find.text('This device'), findsOneWidget);
@@ -418,7 +441,7 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('MY DEVICES'), findsOneWidget);
+    expect(find.text('My devices'), findsOneWidget);
     expect(find.byKey(const ValueKey('devicesSkeleton')), findsOneWidget);
     expect(find.text('Connecting…'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
@@ -537,8 +560,9 @@ void main() {
     expect(opened, ['sess-main']);
   });
 
-  testWidgets('local subagent sessions follow the messenger visibility '
-      'rule: live-parent subagents hidden, orphans shown', (tester) async {
+  testWidgets('active and orphaned subagents render exactly one parent row', (
+    tester,
+  ) async {
     final controller = chatListOf([
       localEntry('parent-1', title: 'Parent'),
       localEntry('sub-1', title: 'Sub', isSubagent: true, parentId: 'parent-1'),
@@ -555,7 +579,8 @@ void main() {
 
     expect(find.byKey(const ValueKey('sessionRow:parent-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('sessionRow:sub-1')), findsNothing);
-    expect(find.byKey(const ValueKey('sessionRow:orphan-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:orphan-1')), findsNothing);
+    expect(find.byType(DeviceSessionCard), findsOneWidget);
   });
 
   testWidgets('remote frame adds a rail cell; tapping it switches the '
@@ -1715,7 +1740,7 @@ void main() {
         ),
       );
       expect(titled.title, 'Release plan');
-      expect(titled.subtitle, '/work/flutter_agent');
+      expect(titled.subtitle, '/work/flutter_agent · Wake on DM');
       expect(titled.timestamp, isNotEmpty);
       expect(find.text('123e4567-e89b-12d3-a456-426614174000'), findsNothing);
       expect(find.text('Offline'), findsNothing);
@@ -1803,6 +1828,175 @@ void main() {
         expect(find.byKey(const ValueKey('devicesSkeleton')), findsNothing);
         expect(find.text('Stable chat'), findsOneWidget);
       }
+    });
+  });
+
+  testWidgets('marked remote child and orphaned rows never leak into folders', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+      personalNetworkId: 'net-personal',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        devices: const [
+          {
+            'deviceId': 'dev-parent',
+            'name': 'Workstation',
+            'presence': 'online',
+            'sessions': [
+              {
+                'id': 'parent',
+                'state': 'live',
+                'networks': ['net-personal'],
+                'title': 'Parent session',
+                'path': '/work/parent',
+              },
+              {
+                'id': 'child',
+                'state': 'live',
+                'networks': ['net-personal'],
+                'title': 'Child session',
+                'path': '/work/child',
+                'agent': 'subagent',
+                'parent': 'parent',
+              },
+              {
+                'id': 'orphan',
+                'state': 'live',
+                'networks': ['net-personal'],
+                'title': 'Legacy child',
+                'path': '/work/legacy',
+                'subagent': true,
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-parent')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('sessionRow:parent')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:child')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:orphan')), findsNothing);
+    expect(find.byType(DeviceSessionCard), findsOneWidget);
+  });
+
+  testWidgets('offline session rows age out after the documented TTL', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+      personalNetworkId: 'net-personal',
+    );
+    await tester.pumpWidget(
+      _wrap(devicesPage(service, now: () => DateTime.utc(2026, 11, 15))),
+    );
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        devices: const [
+          {
+            'deviceId': 'dev-offline',
+            'name': 'Offline workstation',
+            'presence': 'offline',
+            'sessions': [
+              {
+                'id': 'stale',
+                'state': 'offline',
+                'networks': ['net-personal'],
+                'title': 'Stale session',
+                'lastActivity': '2026-10-01T00:00:00Z',
+              },
+              {
+                'id': 'recent',
+                'state': 'offline',
+                'networks': ['net-personal'],
+                'title': 'Recent session',
+                'lastActivity': '2026-11-14T00:00:00Z',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-offline')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('sessionRow:stale')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:recent')), findsOneWidget);
+  });
+
+  testWidgets('own offline rows use the same TTL while live old rows stay', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+    );
+    final sessions = chatListOf([
+      localEntry('stale', createdAt: DateTime.utc(2026, 10)),
+      localEntry('recent', createdAt: DateTime.utc(2026, 11, 14)),
+      localEntry(
+        'old-live',
+        createdAt: DateTime.utc(2026, 10),
+        presence: ChatPresence.live,
+      ),
+    ]);
+    await tester.pumpWidget(
+      _wrap(
+        devicesPage(
+          service,
+          sessions: sessions,
+          now: () => DateTime.utc(2026, 11, 15),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('sessionRow:stale')), findsNothing);
+    expect(find.byKey(const ValueKey('sessionRow:recent')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sessionRow:old-live')), findsOneWidget);
+  });
+
+  testWidgets('roster agents with address and implicit exposure still render', (
+    tester,
+  ) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-own',
+    );
+    await tester.pumpWidget(_wrap(devicesPage(service)));
+    await tester.pump();
+    service.emitRoster(
+      _devicesEnvelope(
+        devices: const [
+          {
+            'deviceId': 'dev-agent',
+            'name': 'Agent host',
+            'agents': [
+              {'address': 'fa', 'state': 'live', 'dmPub': 'public-key'},
+            ],
+          },
+        ],
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-agent')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('agentRow:fa@dev-agent')), findsOneWidget);
+    final dynamic pageState = tester.state(find.byType(DevicesPage));
+    expect(pageState.debugRemoteAgentDmPubs('dev-agent'), {
+      'fa@dev-agent': 'public-key',
     });
   });
 

@@ -28,6 +28,7 @@ void main() {
   MachineConnector buildConnector({
     SessionLeaseDelegate? leases,
     PresenceEngine? presence,
+    MailDecoder? decodeMail,
   }) {
     final upstream = ConnectorUpstreamClient(
       url: Uri.parse('wss://fake/ws'),
@@ -43,6 +44,7 @@ void main() {
       registry: registry,
       upstream: upstream,
       leases: leases,
+      decodeMail: decodeMail ?? plainCiphertextDecoder,
       idFactory: () => 'mail-${frameCounter++}',
       onLog: logs.add,
       presence: presence,
@@ -415,6 +417,154 @@ void main() {
     connector.dispose();
   });
 
+  test(
+    'DecodedMail metadata crosses the ACL; dmMail observes after sink and before ack',
+    () async {
+      final sinkEntered = Completer<void>();
+      final releaseSink = Completer<void>();
+      final written = <InboundMail>[];
+      final observed = <InboundMail>[];
+      final connector = buildConnector(
+        decodeMail: (envelope) => DecodedMail(
+          payload: envelope.ciphertext ?? '',
+          sessionId: 'session-1',
+          senderPubkey: 'c2VuZGVyLXB1Yg==',
+          threaded: true,
+        ),
+      );
+      connector.registerLocalSink(
+        network: 'personal-x',
+        channel: 'chan-1',
+        sink: (mail) async {
+          written.add(mail);
+          sinkEntered.complete();
+          await releaseSink.future;
+        },
+      );
+      final sub = connector.dmMail.listen(observed.add);
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+      server.deliverTo(
+        deviceId: 'macbook',
+        mail: _mailFor(
+          'metadata-1',
+          'chan-1',
+          ciphertext: '{"text":"clean steering","sessionId":"session-1"}',
+        ),
+      );
+      await sinkEntered.future;
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(observed, isEmpty, reason: 'sink has not completed');
+      expect(
+        server.received.where((frame) => frame.kind == NetworkEnvelopeKind.ack),
+        isEmpty,
+        reason: 'ack cannot precede the mailbox write',
+      );
+
+      releaseSink.complete();
+      await _waitUntil(
+        () =>
+            observed.isNotEmpty &&
+            server.received.any(
+              (frame) =>
+                  frame.kind == NetworkEnvelopeKind.ack &&
+                  frame.refId == 'metadata-1',
+            ),
+      );
+      expect(written.single.text, 'clean steering');
+      expect(observed.single.text, 'clean steering');
+      expect(observed.single.sessionId, 'session-1');
+      expect(observed.single.senderPubkey, 'c2VuZGVyLXB1Yg==');
+      expect(observed.single.threaded, isTrue);
+      await sub.cancel();
+      await connector.stop();
+      connector.dispose();
+    },
+  );
+
+  test(
+    'permanent MailDecodeException is rejected and acked without a loop',
+    () async {
+      final rejected = <RejectedMail>[];
+      final connector = buildConnector(
+        decodeMail: (_) =>
+            throw const MailDecodeException('fanet1 authentication failed'),
+      );
+      connector.registerLocalSink(
+        network: 'personal-x',
+        channel: 'chan-1',
+        sink: (_) async => fail('undecryptable mail reached the sink'),
+      );
+      final sub = connector.rejections.listen(rejected.add);
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+      server.deliverTo(
+        deviceId: 'macbook',
+        mail: _mailFor(
+          'permanent-1',
+          'chan-1',
+          ciphertext: 'ciphertext-secret',
+        ),
+      );
+      await _waitUntil(
+        () =>
+            rejected.isNotEmpty &&
+            server.received.any(
+              (frame) =>
+                  frame.kind == NetworkEnvelopeKind.ack &&
+                  frame.refId == 'permanent-1',
+            ),
+      );
+      expect(rejected.single.reason, 'fanet1 authentication failed');
+      expect(logs.join('\n'), isNot(contains('ciphertext-secret')));
+      server.dropAll();
+      await _waitUntil(() => connector.isConnected);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(
+        server.deliveries.where((delivery) => delivery.msgId == 'permanent-1'),
+        hasLength(1),
+        reason: 'acked permanent failures never redeliver',
+      );
+      await sub.cancel();
+      await connector.stop();
+      connector.dispose();
+    },
+  );
+
+  test(
+    'transient decoder failure stays unacked and is not a rejection',
+    () async {
+      final rejected = <RejectedMail>[];
+      final connector = buildConnector(
+        decodeMail: (_) =>
+            throw StateError('secure store temporarily unavailable'),
+      );
+      connector.registerLocalSink(
+        network: 'personal-x',
+        channel: 'chan-1',
+        sink: (_) async => fail('transient decode failure reached the sink'),
+      );
+      final sub = connector.rejections.listen(rejected.add);
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+      server.deliverTo(
+        deviceId: 'macbook',
+        mail: _mailFor('transient-1', 'chan-1'),
+      );
+      await _waitUntil(
+        () => logs.any((line) => line.contains('mail decode failed')),
+      );
+      expect(rejected, isEmpty);
+      expect(
+        server.received.where((frame) => frame.kind == NetworkEnvelopeKind.ack),
+        isEmpty,
+      );
+      await sub.cancel();
+      await connector.stop();
+      connector.dispose();
+    },
+  );
+
   test('MailDecoder seam: inbound ciphertext decodes before the ACL', () async {
     final written = <String>[];
     // Build a connector with a decoder to prove the seam.
@@ -429,7 +579,8 @@ void main() {
     final decoded = MachineConnector(
       registry: registry,
       upstream: upstream,
-      decodeMail: (envelope) => 'DECODED(${envelope.ciphertext})',
+      decodeMail: (envelope) =>
+          DecodedMail(payload: 'DECODED(${envelope.ciphertext})'),
       onLog: logs.add,
     );
     decoded.registerLocalSink(
@@ -452,7 +603,7 @@ void main() {
   test('ACL types are re-exported through the connector API surface', () {
     final decision = sanitizeRemoteWrite('/config');
     expect(decision, isA<AclReject>());
-    expect(plainCiphertextDecoder(_mailFor('x', 'c')), 'c');
+    expect(plainCiphertextDecoder(_mailFor('x', 'c')).payload, 'c');
     expect(
       const MailRoute(network: 'n', channel: 'c'),
       const MailRoute(network: 'n', channel: 'c'),
@@ -575,7 +726,7 @@ void main() {
           upstream: upstream,
           decodeMail: (envelope) async {
             await Future<void>.delayed(Duration.zero);
-            return 'DECODED(${envelope.ciphertext})';
+            return DecodedMail(payload: 'DECODED(${envelope.ciphertext})');
           },
           onLog: logs.add,
         )..registerLocalSink(
