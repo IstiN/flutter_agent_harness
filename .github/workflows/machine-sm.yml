@@ -1,111 +1,95 @@
-# Machine SM — thin stub over the dmtools-agents factory (reusable pack).
+# ⚗️ EXPERIMENT BRANCH — do not merge as-is.
 #
-# The whole reconcile tick (engine checkout, dmtools install, rule run)
-# lives in IstiN/dmtools-agents/.github/workflows/factory-sm.yml. This
-# file carries only the triggers (cron + manual dry dispatch) and the
-# call. NO caller-side concurrency: the factory owns the `machine-sm`
-# group — a caller declaring the same group deadlocks the called workflow
-# (it waits forever on a group its own caller holds).
+# This replaces the awf-factory hop with a DIRECT dmtools run of the
+# PATCHED sm pack (IstiN/dmtools-agents @ fix/io-cache-tl) so the tick can
+# be dispatched FROM THIS BRANCH against the real repo state and timed.
+# dryRun defaults to TRUE (reads only, zero writes).
+#
+#   gh workflow run machine-sm.yml --ref experiment/sm-tick-pack-branch
+#
+# Production baseline (factory + released pack, live): recent ticks
+# 524–764s wall; this morning's sample: 882s. The known live-side fat
+# (per-rule check-run stamps 261x, per-rule state publish 84x, ensure-
+# branch 38x — ~90 writes/~300s per tick) is NOT addressed by the pack
+# branch yet — the dry run measures the read-side only.
+#
+# test/machine_kit/factory_stub_ref_test.dart FAILS on this branch by
+# design (the `uses:` hop is gone here). Revert = git checkout main.
 
 name: 'Machine SM'
 
-run-name: >-
-  🧹 SM ${{
-    github.event_name == 'workflow_dispatch' && 'manual tick' ||
-    format('tick {0}', github.event.schedule || '') }}${{
-  github.event.inputs.dryRun == 'true' && ' (dry)' || '' }}
+run-name: '🧹 SM tick (branch experiment, dry=${{ inputs.dryRun || ''true'' }})'
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # short ticks — the engine idles when busy
+    - cron: '*/10 * * * *'   # inert on a non-default branch
   workflow_dispatch:
     inputs:
       dryRun:
-        description: 'Log the plan, perform no action'
+        description: 'Log the plan, perform no action (default: true)'
         required: false
         type: boolean
         default: true
 
-
-# The factory's own permissions block cannot raise rights above the
-# caller, and the org default caps the token at read-only — the silent
-# update-branch path (workflow token, updatePullRequestBranch) failed
-# live with "github-actions[bot] does not have permission to update
-# this pull request" until this explicit block lifted the ceiling.
+# Same ceiling as the production stub (the factory cannot raise rights
+# above the caller; org default caps the token at read-only).
 permissions:
-  # contents: write — update-branch pushes a merge commit onto the PR head
-  # branch; PullRequests: write alone is denied at the refs level (live:
-  # "github-actions[bot] does not have permission to update this pull
-  # request" even with PullRequests: write granted).
-  contents: write         # checkout + silent update-branch pushes
-  issues: write           # labels + close-issue safety net
-  pull-requests: write    # update-branch + merge
-  checks: write           # bridge-free validation stamps (factory #510):
-                          # the reusable factory requests it — the caller
-                          # must grant an equal-or-superset or the workflow
-                          # dies with startup_failure (live 16:03-16:13 ×3).
-  actions: write          # workflow_dispatch on the teammate workflow
+  contents: write
+  issues: write
+  pull-requests: write
+  checks: write
+  actions: write
 
 jobs:
   sm:
-    # Tracks dmtools-agentic-workflows @main — always-latest policy (owner
-    # directive 2026-10-04): awf main is load-bearing and review-gated, so
-    # pack fixes go live on merge with no re-pin ceremony (recently
-    # shipped on main: #579 conflict-rework, #577/#578
-    # mutexExcludeSelf-by-fact-of-holding, #576 review-machine-unlinked,
-    # #573-#574 pack snapshots + registry env, #572 review-stale-verdict,
-    # #571 dmtools self-heal, #570 SM budget 1→3, #569 rework fatality,
-    # #568 mergeBot workspace/repository args, #566 pack-registry runner
-    # overrides). Accepted trade-off: a mutable ref executes whatever
-    # sits at the awf main head at run start. The ENGINE (dmtools-agents)
-    # resolves from releases via vars — no factory_ref here. Flip in
-    # lockstep with the other machine-loop stubs — guarded by
-    # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@main
-    with:
-      # Manual ticks default to dry; cron ticks run live.
-      dryRun: ${{ github.event.inputs.dryRun || 'false' }}
-      # #687: one source of truth for the machine login (repo variable).
-      machine-author: ${{ vars.MACHINE_AUTHOR || '' }}
-      # #687: the workflow token — silent branch updates (pushes trigger
-      # no workflows). Input channel: secrets-block mapping arrives empty.
-      silent-token: ${{ github.token }}
-      # Dispatch-only CI: this repo's CI file (the SM dispatches it on PR
-      # heads; default 'quality.yml' fits dmtools-dart, not this repo).
-      # gh-1537: the dispatched run is the SINGLE pre-merge gate — ci.yml
-      # no longer fires on push:main (post-merge main CI retired), so the
-      # validation dispatch must cover every whole-tree gate (crap4dart
-      # baseline, coverage ratchet, jscpd, app-crap-gate — all full-gate on
-      # non-PR events). The serialized-validation invariant (#687) is
-      # alarmed repo-side by sm-merge-guard.yml: a main push whose tree no
-      # successful dispatch covered files an sm-guard issue.
-      ci-workflow: ci.yml
-      # Bridge-free mode (factory #510): the tick stamps the three required
-      # protection checks itself — ci-gate.yml bridge is deleted in this PR.
-      validation-checks: '["Quality gate","JS engine integration (quickjs-ng)","Binaries smoke gate"]'
-      # Factory-state snapshot → public prerelease asset (board: site/factory)
-      state-publish: '{"channel":"release","tag":"factory-data","asset":"fa-state.json"}'
-    # Explicit mapping — the factory DECLARES SOURCE_GITHUB_TOKEN as a
-    # required named secret (plus optional ZAI_CODE_KEY / KIMI_REVIEW_KEY),
-    # and `secrets: inherit` does not satisfy required-secret validation at
-    # call time (live bisect: inherit => startup failure, explicit => green).
-    secrets:
-      # EXACTLY the set factory-sm.yml declares (SOURCE only) — mapping a
-      # secret the callee does not declare is rejected at call time
-      # (probe H2: +ZAI/KIMI => startup failure; probe I: exact set => green).
-      # NOTE: github.token CANNOT ride this block — GitHub delivers an
-      # empty value when it is mapped through a reusable call's secrets
-      # (live-verified); it rides the silent-token INPUT below instead.
-      # gh-1106: github.token CANNOT push workflow-file changes (no
-      # 'workflows' permission exists for GITHUB_TOKEN; fork PR updates
-      # were rejected — "refusing to allow a GitHub App to create or
-      # update workflow ..."). The dedicated silent-update PAT rides the
-      # SILENT_GH_TOKEN secret of the reusable workflow (the with-input
-      # channel cannot reference secrets — HTTP 422 "Unrecognized
-      # named-value: 'secrets'", live #1718 follow-up).
-      SILENT_GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-      SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
-      # App auth (awf#52): minted installation token wins over the PAT
-      # inside the factory when both secrets are present.
-      APP_ID: ${{ secrets.APP_ID }}
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 30
+    concurrency:
+      group: machine-sm-branch-exp
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout patched pack (fix/io-cache-ttl)
+        uses: actions/checkout@v4
+        with:
+          repository: IstiN/dmtools-agents
+          ref: fix/io-cache-ttl
+          path: agents
+
+      - name: Install dmtools CLI
+        run: |
+          curl -fsSL --connect-timeout 15 --max-time 45 \
+            "https://github.com/epam/dmtools-dart/releases/download/v0.1.103/install.sh" \
+            -o /tmp/dmtools-install.sh
+          DMTOOLS_GITHUB_TOKEN=${{ github.token }} bash /tmp/dmtools-install.sh v0.1.103
+          echo "$HOME/.dmtools/bin" >> "$GITHUB_PATH"
+
+      - name: Reconcile the machine loop (patched pack)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_GITHUB_TOKEN: ${{ github.token }}
+          CHECKS_GH_TOKEN: ${{ github.token }}
+          SILENT_GH_TOKEN: ${{ github.token }}
+          DRY: ${{ inputs.dryRun || 'true' }}
+          MACHINE_AUTHOR: ${{ vars.MACHINE_AUTHOR }}
+        run: |
+          # Local-json runs resolve js/* against CWD (= pack root), while
+          # configLoader discovers .dmtools/config.js from CWD too — so the
+          # deployment config rides INTO the pack checkout.
+          mkdir -p agents/.dmtools
+          cp .dmtools/config.js agents/.dmtools/config.js
+          cd agents
+          OVERRIDE=$(jq -n \
+            --arg repo "$GH_REPO" \
+            --arg tok "$SILENT_GH_TOKEN" \
+            --arg checks "$CHECKS_GH_TOKEN" \
+            --arg ma "${MACHINE_AUTHOR:-ai-teammate,github-actions[bot],dmtools-factory-bot}" \
+            --argjson dry "$DRY" \
+            '{params:{jobParams:{
+                repo: $repo, dryRun: $dry, machineAuthor: $ma,
+                ciWorkflow: "ci.yml",
+                validationChecks: "[\"Quality gate\",\"JS engine integration (quickjs-ng)\",\"Binaries smoke gate\"]",
+                silentToken: $tok, checksToken: $checks}}}')
+          dmtools run sm_github.json "$OVERRIDE"
