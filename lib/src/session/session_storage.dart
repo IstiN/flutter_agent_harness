@@ -18,6 +18,7 @@ import '../exceptions.dart';
 import '../session_io_retry.dart';
 import '../session_line_scanner.dart';
 import 'record_quarantine.dart';
+import 'session_io_health.dart';
 import 'session_record.dart';
 import 'uuid.dart';
 
@@ -184,12 +185,62 @@ final Map<String, Future<void>> _sessionFileOps = <String, Future<void>>{};
 
 /// Runs [op] after every previously queued operation on [filePath]
 /// completes. Never lets one failure poison the chain for later callers.
-Future<T> withSessionFileLock<T>(String filePath, Future<T> Function() op) {
-  final result = (_sessionFileOps[filePath] ?? Future<void>.value()).then(
-    (_) => op(),
-  );
+///
+/// Issue #2248 (AC2/AC3): [timeout] — the session-IO bound — fences both
+/// halves of an entry. The WAIT half: a queued append fails with a named
+/// [SessionException] when it sits behind a head stuck past [timeout],
+/// instead of inheriting the head's hang forever (the 21-minute wedge).
+/// The OP half: the operation itself gets the same wall — a hung
+/// open/write/retry-loop fails named instead of never returning. The
+/// queue slot advances on the bounded shape, so later appends are never
+/// blocked behind a stuck head. An op abandoned at the bound may still
+/// land its bytes late — whole-line appends keep the file shape intact
+/// even when two slow writers interleave (the same cross-process
+/// contract the chain already relies on).
+///
+/// [sessionId], when given, notes the timeout into [SessionIoHealth] so
+/// the stall watchdog can reclassify the stall as a session-IO failure
+/// (AC5).
+Future<T> withSessionFileLock<T>(
+  String filePath,
+  Future<T> Function() op, {
+  Duration? timeout,
+  String? sessionId,
+}) {
+  final previous = _sessionFileOps[filePath] ?? Future<void>.value();
+  final acquired = timeout == null
+      ? previous
+      : previous.timeout(
+          timeout,
+          onTimeout: () => throw SessionException(
+            'session IO queue timed out after ${_ioSeconds(timeout)} '
+            'waiting for the previous operation on $filePath '
+            '(a hung session IO held the lock)',
+            code: SessionErrorCode.storage,
+          ),
+        );
+  final result = acquired.then((_) {
+    if (timeout == null) return op();
+    return op().timeout(
+      timeout,
+      onTimeout: () {
+        final message =
+            'session IO timed out after ${_ioSeconds(timeout)} '
+            'on $filePath (the open/write never completed)';
+        if (sessionId != null) {
+          SessionIoHealth.noteFailure(sessionId, message);
+        }
+        throw SessionException(message, code: SessionErrorCode.storage);
+      },
+    );
+  });
   _sessionFileOps[filePath] = result.then<void>((_) {}, onError: (Object _) {});
   return result;
+}
+
+String _ioSeconds(Duration timeout) {
+  final ms = timeout.inMilliseconds;
+  return ms % 1000 == 0 ? '${ms ~/ 1000}s' : '${ms}ms';
 }
 
 Never _invalidSession(String filePath, String message, [Object? cause]) {
@@ -213,17 +264,43 @@ Never _invalidEntry(
   );
 }
 
-T _fsOrThrow<T>(Result<T, FileError> result, String message) =>
-    switch (result) {
-      Ok<T, FileError>(:final value) => value,
-      Err<T, FileError>(:final error) => throw SessionException(
-        '$message: ${error.message}',
-        code: error.code == FileErrorCode.notFound
-            ? SessionErrorCode.notFound
-            : SessionErrorCode.storage,
-        cause: error,
-      ),
-    };
+/// The [SessionException] for a surfaced [FileError] (issue #2248): the
+/// errno text rides the message, notFound stays out of the IO-health
+/// verdict (a deleted/raced path is benign — noting it would arm the fs
+/// banner on a healthy fs), every other code maps to `storage`. Split
+/// out of the `_fsOrThrow` dispatchers so they stay under the CRAP gate.
+SessionException sessionFsException(
+  FileError error, {
+  required String message,
+  String? sessionId,
+}) {
+  final text = '$message: ${error.message}';
+  if (sessionId != null && error.code != FileErrorCode.notFound) {
+    SessionIoHealth.noteFailure(sessionId, text);
+  }
+  return SessionException(
+    text,
+    code: error.code == FileErrorCode.notFound
+        ? SessionErrorCode.notFound
+        : SessionErrorCode.storage,
+    cause: error,
+  );
+}
+
+T _fsOrThrow<T>(
+  Result<T, FileError> result,
+  String message, {
+  String? sessionId,
+}) {
+  if (result is Err<T, FileError>) {
+    throw sessionFsException(
+      result.error,
+      message: message,
+      sessionId: sessionId,
+    );
+  }
+  return (result as Ok<T, FileError>).value;
+}
 
 /// Parses the header line of a session file into its [SessionHeader].
 ///
@@ -675,6 +752,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
               maxFullOpenBytes,
               wholeFileOnly,
             ),
+            timeout: ioRetry.ioTimeout,
           )
           ..onMutated = onMutated;
     timingLog?.call(
@@ -1469,17 +1547,23 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       parentSessionPath: parentSessionPath,
       metadata: metadata,
     );
-    await withSessionFileLock(filePath, () async {
-      _fsOrThrow(
-        await retryTransientSessionFileIo(
-          () => fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
-          op: 'create',
-          path: filePath,
-          config: ioRetry,
-        ),
-        'Failed to create session $filePath',
-      );
-    });
+    await withSessionFileLock(
+      filePath,
+      () async {
+        _fsOrThrow(
+          await retryTransientSessionFileIo(
+            () => fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
+            op: 'create',
+            path: filePath,
+            config: ioRetry,
+          ),
+          'Failed to create session $filePath',
+          sessionId: sessionId,
+        );
+      },
+      timeout: ioRetry.ioTimeout,
+      sessionId: sessionId,
+    );
     return JsonlSessionStorage._(
       fs,
       filePath,
@@ -1541,24 +1625,35 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // append, inside the file lock, was measurable).
     final line = jsonEncode(record.toJson());
     var chainMutated = false;
-    await withSessionFileLock(_filePath, () async {
-      // Segment rotation + hard cap ride the same lock as the append so a
-      // concurrent reader never sees a segment mid-rotation. UTF-8 bytes,
-      // not UTF-16 code units: the caps guard an on-disk byte limit.
-      chainMutated = await _rotateIfNeededLocked(utf8.encode(line).length + 1);
-      // Issue #427: a transient ENOENT on the record append (the
-      // submit-death path) rides a short capped retry instead of losing
-      // the record; exhaustion still fails as a named SessionException.
-      _fsOrThrow(
-        await retryTransientSessionFileIo(
-          () => _fs.appendFile(_filePath, '$line\n'),
-          op: 'append',
-          path: _filePath,
-          config: _ioRetry,
-        ),
-        'Failed to append session entry ${record.id}',
-      );
-    });
+    await withSessionFileLock(
+      _filePath,
+      () async {
+        // Segment rotation + hard cap ride the same lock as the append so a
+        // concurrent reader never sees a segment mid-rotation. UTF-8 bytes,
+        // not UTF-16 code units: the caps guard an on-disk byte limit.
+        chainMutated = await _rotateIfNeededLocked(
+          utf8.encode(line).length + 1,
+        );
+        // Issue #427: a transient ENOENT on the record append (the
+        // submit-death path) rides a short capped retry instead of losing
+        // the record; exhaustion still fails as a named SessionException.
+        // Issue #2248: the whole locked envelope is bounded by ioTimeout —
+        // a hung open/write fails the append named (AC2) instead of
+        // wedging the turn.
+        _fsOrThrow(
+          await retryTransientSessionFileIo(
+            () => _fs.appendFile(_filePath, '$line\n'),
+            op: 'append',
+            path: _filePath,
+            config: _ioRetry,
+          ),
+          'Failed to append session entry ${record.id}',
+          sessionId: _metadata.id,
+        );
+      },
+      timeout: _ioRetry.ioTimeout,
+      sessionId: _metadata.id,
+    );
     if (chainMutated) {
       // Issue #2053 AC6: the rotation/restore hook fires only AFTER the
       // record landed, so the index sees the post-append stats (firing it
