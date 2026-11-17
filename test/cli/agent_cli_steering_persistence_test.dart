@@ -322,7 +322,10 @@ void main() {
         contains('steering from you · queued (agent stalled)'),
       );
       expect(io.out.toString(), contains('agent stalled'));
-      expect(io.out.toString(), contains('saved to the session'));
+      // Issue #2249 AC1/AC4: the accept-time banner names the delivery
+      // truth; the fs was healthy, so nothing claims a save that failed
+      // — and no "saved to the session" promise is printed either.
+      expect(io.out.toString(), contains('1 steering message queued'));
       expect(
         io.out.toString(),
         isNot(contains('steering from you → complete')),

@@ -484,6 +484,63 @@ void main() {
         deferredPanelTransitionLine(panel..state = DeferredPanelState.dead),
         '[btw] steering from you → queued (agent stalled)',
       );
+      // Issue #2249 AC4: a dropped steer never queues again — the settle
+      // drop transitions it to `aborted`, one truth per state.
+      expect(
+        deferredPanelTransitionLine(panel..state = DeferredPanelState.aborted),
+        '[btw] steering from you → aborted',
+      );
+    });
+
+    test('steering persistence vocabulary has ONE source (issue #2249 '
+        'AC4)', () {
+      // Saved state: the #437 copy, byte-identical.
+      expect(
+        steeringStallWarningLine(saved: 1, unsaved: 0),
+        '⚠ agent not responding — 1 steering message saved to session, '
+        'will deliver if the run wakes',
+      );
+      expect(
+        steeringStallWarningLine(saved: 2, unsaved: 0),
+        '⚠ agent not responding — 2 steering messages saved to session, '
+        'will deliver if the run wakes',
+      );
+      // Failed append: the raw error surfaces, the claim is NOT saved.
+      final failed = steeringStallWarningLine(
+        saved: 0,
+        unsaved: 1,
+        error: StateError('Cannot open file'),
+      );
+      expect(failed, contains('NOT saved to session'));
+      expect(failed, contains('fs error: Bad state: Cannot open file'));
+      expect(failed, contains('the unsaved text is lost'));
+      expect(failed, isNot(contains('will deliver')));
+      // In flight (no error yet): still no save claim.
+      final inflight = steeringStallWarningLine(saved: 0, unsaved: 1);
+      expect(
+        inflight,
+        contains(
+          'NOT saved to session (save still in '
+          'flight)',
+        ),
+      );
+      // Mixed queue: the unsaved count leads, the saved count stays.
+      final mixed = steeringStallWarningLine(
+        saved: 1,
+        unsaved: 2,
+        error: 'disk full',
+      );
+      expect(mixed, contains('2 of 3 steering messages NOT saved'));
+      expect(mixed, contains('fs error: disk full'));
+      // The clause builder and the warning line cannot disagree: the
+      // line embeds the clause verbatim.
+      final clause = steeringSaveClause(saved: 3, unsaved: 1, error: 'EIO');
+      expect(
+        steeringStallWarningLine(saved: 3, unsaved: 1, error: 'EIO'),
+        '⚠ agent not responding — $clause — esc aborts and the unsaved '
+        'text is lost',
+      );
+      expect(clause, contains('1 of 4 steering messages NOT saved'));
     });
 
     test('run settle completes ride-along panels but never steering', () {
