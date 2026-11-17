@@ -241,9 +241,9 @@ void main() {
       'headless legs only (gh-1292)', () async {
     final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('fa> '));
+    await io.out.waitUntilContains('fa> ');
     io.sendLine('hi');
-    await waitForIt(() => io.out.toString().contains('ok'));
+    await io.out.waitUntilContains('ok');
     io.sendLine('/exit');
     await run;
 
@@ -388,7 +388,7 @@ void main() {
       final run = cli2.run();
       await waitForIt(() => !cli2.isBusy);
       io2.sendLine('/usage rebuild');
-      await waitForIt(() => io2.out.toString().contains('usage: rebuilt'));
+      await io2.out.waitUntilContains('usage: rebuilt');
       io2.sendLine('/exit');
       await run;
 
@@ -405,12 +405,10 @@ void main() {
     // (the `fa> ` prompt means boot finished and _session is stable).
     final cli = cliFor(const []);
     final run = cli.run();
-    await waitForIt(() => io.out.toString().contains('fa> '));
+    await io.out.waitUntilContains('fa> ');
     cli.sessionForTest = Session(_EmptyChainPathStorage());
     io.sendLine('/usage rebuild');
-    await waitForIt(
-      () => io.out.toString().contains('usage: no session chain'),
-    );
+    await io.out.waitUntilContains('usage: no session chain');
     io.sendLine('/exit');
     await run;
     expect(io.out.toString(), contains('usage: no session chain'));

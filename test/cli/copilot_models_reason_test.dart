@@ -83,7 +83,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('fetch notes:'));
+    await io.out.waitUntilContains('fetch notes:');
     io.sendLine('/exit');
     await run;
 
@@ -121,7 +121,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/models');
-    await waitForIt(() => io.out.toString().contains('fetch notes:'));
+    await io.out.waitUntilContains('fetch notes:');
     io.sendLine('/exit');
     await run;
 
@@ -160,9 +160,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/models');
-      await waitForIt(
-        () => io.out.toString().contains('models (provider/model):'),
-      );
+      await io.out.waitUntilContains('models (provider/model):');
       io.sendLine('/exit');
       await run;
 
@@ -210,9 +208,7 @@ void main() {
         await waitForIt(() => requests.length >= 2);
 
         io.sendLine('/models');
-        await waitForIt(
-          () => io.out.toString().contains('models (provider/model):'),
-        );
+        await io.out.waitUntilContains('models (provider/model):');
         io.sendLine('/exit');
         await run;
 
@@ -246,9 +242,7 @@ void main() {
       final run = cli.run();
 
       io.sendLine('/models');
-      await waitForIt(
-        () => io.out.toString().contains('models (provider/model):'),
-      );
+      await io.out.waitUntilContains('models (provider/model):');
       io.sendLine('/exit');
       await run;
 
@@ -284,9 +278,7 @@ void main() {
         final run = cli.run();
 
         io.sendLine('/models');
-        await waitForIt(
-          () => io.out.toString().contains('models (provider/model):'),
-        );
+        await io.out.waitUntilContains('models (provider/model):');
         io.sendLine('/exit');
         await run;
 
