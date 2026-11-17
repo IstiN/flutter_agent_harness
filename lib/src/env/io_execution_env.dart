@@ -42,8 +42,18 @@ FileError _toFileError(Object error, String path) {
   );
 }
 
+/// The raw OS reason a [FileSystemException] carries (issue #2248 AC1):
+/// `error.message` alone is the generic engine text ("Cannot open file")
+/// — EMFILE vs EACCES vs a sandbox/container revocation are
+/// indistinguishable from it, which is exactly why the 2026-11-17
+/// wedge's root cause could not be diagnosed from fa.log. The errno +
+/// OS message ride every [FileError] this env produces.
+String _osErrorDetail(OSError? osError) =>
+    osError == null ? '' : ' (errno ${osError.errorCode}: ${osError.message})';
+
 FileError _fromFileSystemException(FileSystemException error, String path) {
   final osError = error.osError;
+  final detail = _osErrorDetail(osError);
   if (osError != null) {
     // EPERM / EACCES on POSIX; ERROR_ACCESS_DENIED (5) on Windows.
     if (osError.errorCode == 13 ||
@@ -51,7 +61,7 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
         osError.errorCode == 5) {
       return FileError(
         FileErrorCode.permissionDenied,
-        error.message,
+        '${error.message}$detail',
         path: path,
         cause: error,
       );
@@ -60,7 +70,7 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
     if (osError.errorCode == 20) {
       return FileError(
         FileErrorCode.notDirectory,
-        error.message,
+        '${error.message}$detail',
         path: path,
         cause: error,
       );
@@ -68,7 +78,7 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
   }
   return FileError(
     FileErrorCode.unknown,
-    error.message,
+    '${error.message}$detail',
     path: path,
     cause: error,
   );

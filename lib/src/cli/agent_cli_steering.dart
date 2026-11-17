@@ -385,6 +385,30 @@ extension AgentCliSteering on AgentCli {
         ? ' (${describeRunIdleWindow(window.window, window.source)} — '
               'the run keeps waiting)'
         : '';
+    // Issue #2248 AC5: a session-IO failure inside the stall window
+    // RECLASSIFIES the stall — the provider-stall levers (/compact,
+    // image budgets) cannot unstick a failing filesystem, and the
+    // incident burned 21 minutes under exactly that misleading banner.
+    // The fs variant names the raw error and swaps the levers (restart
+    // the host, check fds/container access).
+    final threshold = stallNoticeThreshold(
+      noticeCeiling: config.steeringStaleAfter,
+      window: window.window,
+    );
+    final ioFailure = stallIsSessionIo(
+      last: SessionIoHealth.lastFailure(_session?.cachedId ?? ''),
+      now: DateTime.now(),
+      window: threshold,
+    );
+    if (ioFailure) {
+      final raw = SessionIoHealth.lastFailure(_session?.cachedId ?? '')!.error;
+      final savedNote = queued > 0
+          ? '$queued steering message(s) saved to the session; '
+          : '';
+      return '⚠ session IO failing: $raw — $savedNote'
+          'session writes are failing; restart the host '
+          '(check open fds / container access), esc aborts';
+    }
     // Issue #2119 AC3: the image levers are advice about IMAGE payloads —
     // /compact and images.maxBytesPerRequest cannot unstick an image-free
     // session, so the line names the cause (still waiting on the provider)
