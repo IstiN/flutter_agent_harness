@@ -178,7 +178,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('openEnrollmentPrompt')));
     await tester.pumpAndSettle();
-    final field = tester.widget<TextField>(
+    final field = tester.widget<FaTextField>(
       find.byKey(const ValueKey('enrollDeviceName')),
     );
     expect(field.controller?.text, 'workstation');

@@ -112,26 +112,27 @@ final class _DeviceEnrollmentNameDialogState
         children: [
           Text(l10n.networkDeviceEnrollNamePrompt),
           const SizedBox(height: 16),
-          TextField(
+          FaTextField(
             key: const ValueKey('enrollDeviceName'),
             controller: _controller,
             autofocus: true,
             maxLength: 64,
-            decoration: InputDecoration(labelText: l10n.networkDeviceNameLabel),
+            labelText: l10n.networkDeviceNameLabel,
             onSubmitted: (_) => _submit(),
           ),
         ],
       ),
       actions: [
-        TextButton(
+        FaButton(
           key: const ValueKey('enrollDeviceNameCancel'),
+          label: l10n.commonCancel,
+          variant: FaButtonVariant.secondary,
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.commonCancel),
         ),
-        FilledButton(
+        FaButton(
           key: const ValueKey('enrollDeviceNameConfirm'),
+          label: l10n.networkDeviceEnrollNameAction,
           onPressed: _submit,
-          child: Text(l10n.networkDeviceEnrollNameAction),
         ),
       ],
     );
