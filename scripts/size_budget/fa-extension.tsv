@@ -1,4 +1,4 @@
-169118987	TOTAL
+164042708	TOTAL
 1641820	panel/app/assets/NOTICES
 90384	panel/app/assets/assets/fonts/Geist-Bold.ttf
 90360	panel/app/assets/assets/fonts/Geist-ExtraBold.ttf
@@ -51,9 +51,6 @@
 86270	panel/app/canvaskit/<rev>/chromium/canvaskit.js
 1242746	panel/app/canvaskit/<rev>/chromium/canvaskit.js.symbols
 5463539	panel/app/canvaskit/<rev>/chromium/canvaskit.wasm
-76497	panel/app/canvaskit/<rev>/experimental_webparagraph/canvaskit.js
-1004464	panel/app/canvaskit/<rev>/experimental_webparagraph/canvaskit.js.symbols
-4138344	panel/app/canvaskit/<rev>/experimental_webparagraph/canvaskit.wasm
 1550249	panel/app/canvaskit/<rev>/skwasm.js.symbols
 3612036	panel/app/canvaskit/<rev>/skwasm.wasm
 1682137	panel/app/canvaskit/<rev>/skwasm_heavy.js.symbols
@@ -64,7 +61,7 @@
 1810576	panel/app/canvaskit/<rev>/wimp.js.symbols
 3604253	panel/app/canvaskit/<rev>/wimp.wasm
 12965432	panel/app/main.dart.js
-1947910	sw/agent.js
+2090896	sw/agent.js
 1070863	vendor/interpreters/asyncify/emscripten-module.wasm
 2224743	vendor/interpreters/index.global.js
 106335	vendor/interpreters/pyodide-lock.json
