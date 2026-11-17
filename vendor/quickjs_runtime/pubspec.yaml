@@ -2,7 +2,7 @@ name: quickjs_runtime
 description: >-
   Pure-Dart QuickJS JavaScript runtime on dart:ffi with synchronous host
   callbacks. Vendored QuickJS 2024-01-13 + a C bridge with JSON marshaling.
-version: 0.4.2
+version: 0.4.9
 homepage: https://github.com/IstiN/quickjs_runtime
 repository: https://github.com/IstiN/quickjs_runtime
 

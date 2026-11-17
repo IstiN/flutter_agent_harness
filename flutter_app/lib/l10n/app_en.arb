@@ -1428,6 +1428,18 @@
   "@networkDeviceNotRunning": {
     "description": "Device roster line when the connector failed or stopped; tapping restarts it"
   },
+  "networkDeviceEnrollNameTitle": "Name this device",
+  "@networkDeviceEnrollNameTitle": {
+    "description": "Title of the first-connect friendly device name dialog."
+  },
+  "networkDeviceEnrollNamePrompt": "Choose a friendly name for this device. Leave it unchanged to use the hostname.",
+  "@networkDeviceEnrollNamePrompt": {
+    "description": "Explanation in the first-connect friendly device name dialog."
+  },
+  "networkDeviceEnrollNameAction": "Connect device",
+  "@networkDeviceEnrollNameAction": {
+    "description": "Confirm action for first-connect device naming."
+  },
   "networkDeviceRenameAction": "Rename device",
   "@networkDeviceRenameAction": {
     "description": "Own-device edit action and long-press accessibility label"

@@ -299,6 +299,11 @@ final class JsonlSessionRepo implements SessionRepo {
        now = now ?? DateTime.now;
 
   final FileSystem _fs;
+
+  /// Read-only filesystem view for metadata-only projections (session
+  /// catalog). Repository mutations still go through this repo.
+  FileSystem get fileSystem => _fs;
+
   final String _sessionsRootInput;
   String? _sessionsRoot;
   final SessionParseExecutor? _parseExecutor;

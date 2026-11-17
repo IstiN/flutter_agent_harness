@@ -1942,11 +1942,7 @@ void main() {
           find.byKey(const ValueKey('messengerPrimaryNav-apps')),
         );
         await tester.pumpAndSettle();
-        await verifySection(
-          'apps',
-          'messengerPageTitlePill',
-          find.text('Demo'),
-        );
+        await verifySection('apps', 'appsChromeUnderlay', find.text('Demo'));
         expect(
           find.byKey(const ValueKey('appsBackButton')),
           findsNothing,

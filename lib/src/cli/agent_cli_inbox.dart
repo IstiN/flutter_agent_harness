@@ -116,8 +116,11 @@ extension AgentCliMessagingFlow on AgentCli {
     // explicit hint agents tend to DM the sender (a dead end for app
     // members) instead of posting back into the channel (gh-1825).
     final isChannel = channel != null && channel.startsWith('#');
+    final isNetworkDm = fromId.startsWith(deviceDmReplyAddressPrefix);
     final where = isChannel ? ' in $channel' : '';
-    final hint = isChannel
+    final hint = isNetworkDm
+        ? '\n[reply with agent_message to: "$fromId"]'
+        : isChannel
         ? '\n[reply into this channel with agent_message to: "$channel"]'
         : '';
     final body = text.trim();

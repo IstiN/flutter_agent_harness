@@ -47,6 +47,7 @@ import '../browser/browser_tools.dart';
 import 'headless_config.dart';
 import 'headless_prompt.dart';
 import 'network_presence.dart';
+import '../network/connector/device_dm.dart' show deviceDmReplyAddressPrefix;
 import 'hep.dart';
 import 'stream_json.dart';
 import 'resumed_context_cache.dart';
