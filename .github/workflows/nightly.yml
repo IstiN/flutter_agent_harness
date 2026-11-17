@@ -308,10 +308,28 @@ jobs:
           DEST="vendor/wasm_run_flutter/${{ matrix.target }}/Frameworks"
           rm -rf "$DEST/WasmRun.xcframework"
           mkdir -p "$DEST"
-          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-            -o /tmp/WasmRun.xcframework.zip \
+          # gh-2233: same hardening as build-mobile.yml's testflight step —
+          # the zip goes to $RUNNER_TEMP (job-private), NOT the arch-less
+          # fixed /tmp path that every WasmRun-downloading leg on the ONE
+          # fa-m5 box shares (multiple concurrent runner processes,
+          # gh-2134): overlapping downloads interleave two transfers into
+          # one file and unzip reads a patchwork (testflight leg run
+          # 44023345849: bad CRC at file #6, curl reported 100%). --fail +
+          # the pinned size+sha256 (same immutable asset build-macos.yml
+          # pins, gh-1759) keep unverified bytes out of the build tree.
+          ZIP="$RUNNER_TEMP/WasmRun.xcframework.zip"
+          ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
+          ASSET_BYTES=97238501
+          curl --fail -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o "$ZIP" \
             https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-          unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+          got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+          if [ "$got" -ne "$ASSET_BYTES" ] || ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+            echo "::error::downloaded WasmRun.xcframework.zip failed its integrity gate ($got / $ASSET_BYTES bytes or sha256 mismatch) — not unzipping unverified bytes (gh-2233)"
+            rm -f "$ZIP"
+            exit 1
+          fi
+          unzip -q "$ZIP" -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
       - name: Install Flutter dependencies

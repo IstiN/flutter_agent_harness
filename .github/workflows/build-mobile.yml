@@ -1035,10 +1035,32 @@ jobs:
             echo "Local framework not found, downloading from upstream release..."
             # --retry alone skips transient mid-transfer resets (curl 56) —
             # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
-            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-              -o /tmp/WasmRun.xcframework.zip \
+            # gh-2233: the zip goes to $RUNNER_TEMP, NOT the arch-less fixed
+            # /tmp path — the fa-m5 pool is ONE box hosting multiple
+            # concurrent runner processes (gh-2134), and two legs curling
+            # the same fixed path open it with O_TRUNC and interleave two
+            # transfers into one file: every curl exits 0 with its own full
+            # byte count, but the file on disk is a patchwork. Run
+            # 44023345849 unzipped exactly such a patchwork (bad CRC at
+            # file #6) though curl itself reported 100%. --fail keeps an
+            # HTTP error page from unzipping as success, and the pinned
+            # size+sha256 (the same immutable wasm_run-v0.1.0 asset
+            # build-macos.yml pins, gh-1759) gates unzip behind "the bytes
+            # are the release bytes" — unzip CRC32 proves internal
+            # consistency only.
+            ZIP="$RUNNER_TEMP/WasmRun.xcframework.zip"
+            ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
+            ASSET_BYTES=97238501
+            curl --fail -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+              -o "$ZIP" \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+            got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+            if [ "$got" -ne "$ASSET_BYTES" ] || ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+              echo "::error::downloaded WasmRun.xcframework.zip failed its integrity gate ($got / $ASSET_BYTES bytes or sha256 mismatch) — not unzipping unverified bytes (gh-2233)"
+              rm -f "$ZIP"
+              exit 1
+            fi
+            unzip -q "$ZIP" -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
 
