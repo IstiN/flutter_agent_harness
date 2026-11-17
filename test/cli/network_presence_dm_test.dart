@@ -474,15 +474,188 @@ void main() {
       );
     }
 
-    test('from rewritten to the addressed agent reproduces the 8ff48b96 '
-        'rejection and loses the mail', () async {
+    // The live-loss half of the incident is now a CLASSIFICATION, not a
+    // silent drop: every from-rewritten shape (msgId the connector never
+    // minted) must be acknowledged (server caps redelivery at 32/device)
+    // but NEVER silently — the loud non-echo warning is the regression
+    // tripwire that would have made 8ff48b96 visible in the field.
+    for (final shape in <({String label, String from, String? to})>[
+      (
+        label: 'from rewritten to the addressee',
+        from: address,
+        to: null, // envelope to stays the addressed agent
+      ),
+      (label: 'from/to swapped', from: address, to: 'user:user-1'),
+      (label: 'from/to swapped + bare uid', from: address, to: 'user-1'),
+    ]) {
+      test('rewritten-sender frame (${shape.label}) is acked with the loud '
+          'non-echo warning, never silently dropped', () async {
+        final server = FakeDeviceServer()
+          ..seedDevice(device.deviceId, networks: const ['personal-1']);
+        final store = MemoryDeviceDmKeyStore();
+        final agent = await DeviceDmKeyProvider(store).loadOrCreate(address);
+        final user = await hubGenerateX25519KeyPair();
+        final delivered = <CliNetworkDm>[];
+        final notices = <String>[];
+        final logs = <String>[];
+        final controller = NetworkPresenceController(
+          device: device,
+          dmKeyStore: store,
+          baseUrl: 'https://relay.test',
+          ticketProvider: () async => 'ticket',
+          transport: server.transport,
+          idFactory: _ids(),
+          onLog: logs.add,
+        );
+        addTearDown(controller.dispose);
+        await controller.startSession(
+          CliNetworkSession(
+            sessionId: session.sessionId,
+            mailboxPrefix: session.mailboxPrefix,
+            dmSink: (dm) async => delivered.add(dm),
+            onNotice: notices.add,
+          ),
+        );
+        await _waitUntil(() => controller.connector?.isConnected == true);
+
+        // Byte-for-byte the app send-path envelope, except `from` (and
+        // for the swapped shapes `to`) carries the rewritten direction.
+        // The ciphertext/frameId/channel stay intact — exactly what the
+        // live log proved for 8ff48b96 (decryption machinery intact).
+        final msgId = '8ff48b96-e4b8-46c4-9b3c-a2f48490bcb7-${shape.label}';
+        server.deliverTo(
+          deviceId: device.deviceId,
+          mail: await _appDm(
+            id: msgId,
+            text: 'hello from ios',
+            from: shape.from,
+            to: shape.to,
+            user: user,
+            agentPub: agent.publicKey,
+          ),
+        );
+        await _waitUntil(() => notices.length == 1);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(delivered, isEmpty);
+        expect(
+          notices.single,
+          'network DM $msgId rejected: '
+          'non-echo frame with rewritten sender: sender id equals the '
+          'addressed agent and the payload is empty',
+        );
+        expect(
+          logs,
+          anyElement(
+            allOf(
+              contains('::warning'),
+              contains('non-echo frame with rewritten sender'),
+              contains(msgId),
+            ),
+          ),
+          reason:
+              'the field-visible regression tripwire (incident '
+              '8ff48b96 was lost silently for a full day)',
+        );
+        expect(
+          server.received.any(
+            (frame) =>
+                frame.kind == NetworkEnvelopeKind.ack && frame.refId == msgId,
+          ),
+          isTrue,
+          reason:
+              'still acked: a malformed inbound must not loop forever '
+              '(fa_network caps redelivery at 32/device)',
+        );
+      });
+    }
+
+    test(
+      'own reply echo (frame id this connector minted) acks quietly',
+      () async {
+        final server = FakeDeviceServer()
+          ..seedDevice(device.deviceId, networks: const ['personal-1']);
+        final store = MemoryDeviceDmKeyStore();
+        final agent = await DeviceDmKeyProvider(store).loadOrCreate(address);
+        final user = await hubGenerateX25519KeyPair();
+        final delivered = <CliNetworkDm>[];
+        final notices = <String>[];
+        final logs = <String>[];
+        final controller = NetworkPresenceController(
+          device: device,
+          dmKeyStore: store,
+          baseUrl: 'https://relay.test',
+          ticketProvider: () async => 'ticket',
+          transport: server.transport,
+          idFactory: _ids(),
+          onLog: logs.add,
+        );
+        addTearDown(controller.dispose);
+        await controller.startSession(
+          CliNetworkSession(
+            sessionId: session.sessionId,
+            mailboxPrefix: session.mailboxPrefix,
+            dmSink: (dm) async {
+              delivered.add(dm);
+              await controller.sendNetworkDmReply(
+                address: dm.replyAddress,
+                text: 'an answer',
+              );
+            },
+            onNotice: notices.add,
+          ),
+        );
+        await _waitUntil(() => controller.connector?.isConnected == true);
+
+        server.deliverTo(
+          deviceId: device.deviceId,
+          mail: await _appDm(
+            id: 'dm-echo-source',
+            text: 'trigger a reply',
+            user: user,
+            agentPub: agent.publicKey,
+          ),
+        );
+        await _waitUntil(() => delivered.length == 1);
+        // The reply this connector minted, fanned back by the server to
+        // the sending device itself — the true own-reply echo shape.
+        await _waitUntil(
+          () => server.persistedMail.any(
+            (frame) => frame.from == address && frame.to == 'user:user-1',
+          ),
+        );
+        final echo = server.persistedMail
+            .where((frame) => frame.from == address)
+            .first;
+        server.deliverTo(deviceId: device.deviceId, mail: echo);
+        await _waitUntil(
+          () => server.received.any(
+            (frame) =>
+                frame.kind == NetworkEnvelopeKind.ack &&
+                frame.refId == echo.msgId,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(delivered, hasLength(1), reason: 'the echo is not user mail');
+        expect(notices, isEmpty);
+        expect(logs, anyElement(contains('own reply echo')));
+        expect(
+          logs.where((line) => line.contains('non-echo')),
+          isEmpty,
+          reason: 'a frame we minted must never raise the rewrite alarm',
+        );
+      },
+    );
+
+    test('stored unacked DM resume-sync delivers the ORIGINAL sender verbatim '
+        'with a non-empty payload (8ff48b96 flow end-to-end)', () async {
       final server = FakeDeviceServer()
         ..seedDevice(device.deviceId, networks: const ['personal-1']);
       final store = MemoryDeviceDmKeyStore();
       final agent = await DeviceDmKeyProvider(store).loadOrCreate(address);
       final user = await hubGenerateX25519KeyPair();
       final delivered = <CliNetworkDm>[];
-      final notices = <String>[];
       final controller = NetworkPresenceController(
         device: device,
         dmKeyStore: store,
@@ -491,50 +664,75 @@ void main() {
         transport: server.transport,
         idFactory: _ids(),
       );
-      addTearDown(controller.dispose);
+      // First incarnation: the addressed session is NOT listening, so
+      // the DM gets the honest queued receipt and stays UNACKED — the
+      // exact state the incident's first delivery left on the server.
       await controller.startSession(
         CliNetworkSession(
           sessionId: session.sessionId,
           mailboxPrefix: session.mailboxPrefix,
           dmSink: (dm) async => delivered.add(dm),
-          onNotice: notices.add,
         ),
       );
       await _waitUntil(() => controller.connector?.isConnected == true);
-
-      // Byte-for-byte the app send-path envelope, except `from` carries
-      // the addressed agent address (the relay rewrite under test). The
-      // ciphertext/frameId/channel stay intact — exactly what the live
-      // log proves (decryption succeeded, no MailDecodeException).
       server.deliverTo(
         deviceId: device.deviceId,
         mail: await _appDm(
-          id: '8ff48b96-e4b8-46c4-9b3c-a2f48490bcb7',
+          id: 'dm-stored-1',
           text: 'hello from ios',
-          from: address,
+          sessionId: 'session-other',
           user: user,
           agentPub: agent.publicKey,
         ),
       );
-      await _waitUntil(() => notices.length == 1);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
-      expect(
-        notices.single,
-        'network DM 8ff48b96-e4b8-46c4-9b3c-a2f48490bcb7 rejected: '
-        'empty remote write carries nothing to deliver',
+      await _waitUntil(
+        () => server.persistedMail.any((frame) => frame.to == 'user:user-1'),
       );
-      expect(delivered, isEmpty);
       expect(
-        server.received.any(
+        server.received.where(
           (frame) =>
               frame.kind == NetworkEnvelopeKind.ack &&
-              frame.refId == '8ff48b96-e4b8-46c4-9b3c-a2f48490bcb7',
+              frame.refId == 'dm-stored-1',
         ),
-        isTrue,
-        reason:
-            'the ack makes the rejected DM permanently undeliverable '
-            '(severity: user input silently lost)',
+        isEmpty,
+        reason: 'queued mail stays stored server-side for resume',
+      );
+      await controller.dispose();
+
+      // Later live session (new process): the resume push hands over the
+      // STORED frame. The sink must see the envelope senderId VERBATIM —
+      // user:user-1, never the local agent address — and the payload
+      // must decode non-empty. This is the client half fa_network
+      // 2a5bf20 now guarantees on the wire; a client-side from rewrite
+      // anywhere in pull → re-emit → decode fails here.
+      final redelivered = <CliNetworkDm>[];
+      final second = NetworkPresenceController(
+        device: device,
+        dmKeyStore: store,
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket',
+        transport: server.transport,
+        idFactory: _ids('second'),
+      );
+      addTearDown(second.dispose);
+      await second.startSession(
+        CliNetworkSession(
+          sessionId: 'session-other',
+          mailboxPrefix: session.mailboxPrefix,
+          dmSink: (dm) async => redelivered.add(dm),
+        ),
+      );
+      await _waitUntil(() => redelivered.length == 1);
+
+      expect(redelivered.single.mail.text, 'hello from ios');
+      expect(redelivered.single.mail.envelope.from, 'user:user-1');
+      expect(redelivered.single.mail.envelope.from, isNot(address));
+      await _waitUntil(
+        () => server.received.any(
+          (frame) =>
+              frame.kind == NetworkEnvelopeKind.ack &&
+              frame.refId == 'dm-stored-1',
+        ),
       );
     });
   });
@@ -559,6 +757,7 @@ Future<NetworkEnvelope> _appDm({
   String sessionId = 'session-1',
   String targetAddress = 'mailbox-1@device-1',
   String from = 'user:user-1',
+  String? to,
 }) async {
   final channel = dmChannelId('user-1', targetAddress);
   return NetworkEnvelope(
@@ -567,7 +766,7 @@ Future<NetworkEnvelope> _appDm({
     network: 'personal-1',
     channel: channel,
     from: from,
-    to: targetAddress,
+    to: to ?? targetAddress,
     ts: '2026-11-15T10:00:00.000Z',
     ciphertext: await hubSealFanet1(
       senderDhKeyPair: user,

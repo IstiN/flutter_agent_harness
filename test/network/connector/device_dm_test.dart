@@ -287,10 +287,15 @@ void main() {
     // envelope shapes whose decode SUCCEEDS with an empty payload — and
     // none of them is producible by the app send path (its text is guarded
     // non-empty). All of them carry `from` rewritten to the ADDRESSED AGENT
-    // address: a server-side direction rewrite in the dm-mail → device-WS
-    // push relay (from/to swap or from ← routing target). Characterized
-    // here for the fa_network owner; a local "fix" would re-deliver the
-    // agent's own reply echoes, breaking the echo ack/drop invariant.
+    // address (from/to swap or from ← routing target). fa_network fixed the
+    // relay (2a5bf20: from stored/forwarded verbatim); the client-side belt
+    // (MachineConnector, incident follow-up) now classifies these shapes by
+    // frame id — an id the connector minted is a benign own-reply echo
+    // (quiet ack/drop), anything else raises the loud 'non-echo frame with
+    // rewritten sender' warning while still acking. The codec's ownEcho
+    // flag feeds that belt; the swapped shapes reach it through the CLI
+    // host's _decodeDmMail echo branch (controller-level tests cover all
+    // three shapes end-to-end).
     for (final shape in <({String label, String from, String to})>[
       (
         label: 'from rewritten to the addressee',
@@ -333,6 +338,11 @@ void main() {
           );
 
           expect(decoded.payload, isEmpty);
+          // Shape 'from rewritten to the addressee' (from == to == the
+          // addressed agent) is the codec's own-echo classification; the
+          // swapped shapes empty out on the malformed recipient instead
+          // (the CLI host flags them in _decodeDmMail before the codec).
+          expect(decoded.ownEcho, shape.to == 'main@device-1');
           expect(
             sanitizeRemoteWrite(decoded.payload),
             const AclReject('empty remote write carries nothing to deliver'),
