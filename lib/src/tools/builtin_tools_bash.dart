@@ -1219,11 +1219,22 @@ Future<ToolExecutionResult> _bashJobStopResult(
     // Issue #2260: bare "Stopped" only when the whole process group
     // verified gone. An adopted stop on a host without group leadership
     // (or with a failed verification scan) killed only the leader; a
-    // partial kill names the surviving members. Both keep the manifest
-    // record, and the next boot's sweep reaps the group through it.
+    // partial kill names the surviving members; a leader that survived
+    // the kill rounds is never claimed stopped. All keep the manifest
+    // record (the boot sweep reaps the group through it — but only once
+    // the leader is gone; it skips live leaders).
     final survivors = entry.stopSurvivors;
     if (survivors != null && survivors.isNotEmpty) {
-      final pids = [for (final s in survivors) 'pid ${s.pid}'].join(', ');
+      final pids = stopSurvivorPidList(survivors);
+      if (stopLeaderSurvived(entry)) {
+        return ToolExecutionResult.text(
+          '$id is still running (pid ${entry.pid}) — the stop signals '
+          'did not take it down, and ${survivors.length} process group '
+          'member(s) remain alive: $pids. The job record is kept, but '
+          'the boot sweep skips live leaders — this group needs manual '
+          'cleanup (kill -9).',
+        );
+      }
       return ToolExecutionResult.text(
         'Stopped the leader $id — ${survivors.length} process group '
         'member(s) still running: $pids. The job record is kept; the '

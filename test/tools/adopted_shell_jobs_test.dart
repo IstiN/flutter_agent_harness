@@ -566,6 +566,30 @@ void main() async {
       expect(text, contains('the next boot reaps any survivors'));
     });
 
+    test('a leader that survived the kill rounds is never claimed stopped '
+        '(issue #2260 review)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {99}, starts: {99: 'S'}),
+        stopAdoptedOverride: (pid) async => const [
+          // The leader pid itself, plus one member: D-state/EPERM shape.
+          ShellSurvivor(pid: 99, startTag: 'S', command: 'make test'),
+          ShellSurvivor(pid: 7, startTag: 'S7'),
+        ],
+      );
+      final entry = (await registry.adoptSurvivors('nohup x &', const [
+        ShellSurvivor(pid: 99, startTag: 'S', command: 'sleep 300'),
+      ])).single;
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(text, contains('still running (pid 99)'));
+      expect(text, isNot(contains('Stopped')));
+      expect(text, isNot(contains('next boot reaps')));
+      expect(text, contains('pid 7'));
+      expect(text, contains('manual cleanup'));
+    });
+
     test('stop refuses a recycled pid and marks the entry gone (r3)', () async {
       final killed = <int>[];
       ({Set<int> pids, Map<int, String> starts})? table = (
@@ -713,6 +737,29 @@ void main() async {
       expect(text, isNot(contains('no longer running')));
       expect(text, contains('group members may remain'));
       expect(text, contains('the next boot reaps any survivors'));
+    });
+
+    test('settle notice for a leader that survived the kill rounds claims '
+        'no stop and no boot reap (issue #2260 review)', () async {
+      final registry = _registry(
+        livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+        stopAdoptedOverride: (pid) async => const [
+          ShellSurvivor(pid: 42, startTag: 'S1', command: 'make test'),
+          ShellSurvivor(pid: 7, startTag: 'S7'),
+        ],
+      );
+      final entry = (await registry.adoptSurvivors('make test', const [
+        ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+      ])).single;
+      await entry.stop();
+      final text = adoptedJobSettleNoticeText(entry);
+      expect(text, contains('could NOT be stopped'));
+      expect(text, isNot(contains('was stopped')));
+      expect(text, isNot(contains('no longer running')));
+      expect(text, isNot(contains('the next boot reaps')));
+      expect(text, contains('pid 42 (`make test`)'));
+      expect(text, contains('pid 7'));
+      expect(text, contains('manual cleanup'));
     });
 
     test('liveness reminder names the elapsed minutes (AC4)', () {

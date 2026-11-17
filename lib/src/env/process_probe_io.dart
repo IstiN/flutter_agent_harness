@@ -25,9 +25,13 @@ Future<String?> processGroupTableSnapshot() =>
     _psOutput(['-ax', '-o', 'pid=,pgid=']);
 
 /// The raw `ps -o lstart= -p <pid>` stdout, or null when ps fails or
-/// prints nothing.
+/// prints nothing. TRIMMED (issue #2260 review): ps right-aligns the
+/// single-pid column, so the raw value carries leading whitespace —
+/// every consumer compares/parses start tags against trimmed values
+/// (`tryParseLstart`, the reconcile, the liveness table), and an
+/// untrimmed tag made every recorded entry read as recycled.
 Future<String?> pidStartSnapshot(int pid) async {
-  final out = await _psOutput(['-o', 'lstart=', '-p', '$pid']);
+  final out = (await _psOutput(['-o', 'lstart=', '-p', '$pid']))?.trim();
   if (out == null || out.isEmpty) return null;
   return out;
 }

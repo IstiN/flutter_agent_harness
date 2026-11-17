@@ -1163,6 +1163,31 @@ bool adoptedStopKeepsManifestRecord(ShellJobEntry job) =>
     job.stopAttempted &&
     (job.stopSurvivors == null || job.stopSurvivors!.isNotEmpty);
 
+/// Whether the leader pid itself is among the stop's surviving group
+/// members (issue #2260 review): the kill rounds did not take the
+/// leader down (EPERM, D-state), so no "stopped" phrasing may claim it,
+/// and the boot sweep — which skips live leaders — cannot reap this
+/// group. `false` on the unverified (null) residue: nothing there is
+/// claimed either way.
+bool stopLeaderSurvived(ShellJobEntry job) {
+  final survivors = job.stopSurvivors;
+  if (survivors == null) return false;
+  final pid = job.pid;
+  if (pid == null) return false;
+  return survivors.any((survivor) => survivor.pid == pid);
+}
+
+/// "pid 7, pid 8" — the bare member list for one-line surfaces.
+String stopSurvivorPidList(List<ShellSurvivor> survivors) =>
+    [for (final survivor in survivors) 'pid ${survivor.pid}'].join(', ');
+
+/// "pid 7 (`tee b.log`)" — the member list with commands for notices.
+String stopSurvivorNames(List<ShellSurvivor> survivors) => [
+  for (final survivor in survivors)
+    'pid ${survivor.pid}'
+        '${survivor.command == null ? '' : ' (`${survivor.command}`)'}',
+].join(', ');
+
 /// The model-facing settle notice for an ADOPTED job (issue #2201 AC3):
 /// liveness-only honesty — no exit code, no harness log — plus the
 /// pointer at the launcher's own redirect. Survivor-aware (issue #2260):
@@ -1188,17 +1213,26 @@ String adoptedJobSettleNoticeText(ShellJobEntry job) {
           '</system-notice>';
     }
     if (survivors.isNotEmpty) {
-      final named = [
-        for (final survivor in survivors)
-          'pid ${survivor.pid}'
-              '${survivor.command == null ? '' : ' (`${survivor.command}`)'}',
-      ].join(', ');
+      if (stopLeaderSurvived(job)) {
+        // Issue #2260 review: the leader itself survived the kill
+        // rounds — no "stopped" claim, and the boot sweep skips live
+        // leaders, so the reap promise would be false.
+        return '<system-notice>\n'
+            '${head}could NOT be stopped: the stop signals did not take '
+            'pid ${job.pid} down, and ${survivors.length} process group '
+            'member(s) ${survivors.length == 1 ? 'is' : 'are'} still '
+            'running: ${stopSurvivorNames(survivors)}. The job record is '
+            'kept, but the boot sweep skips live leaders — the group '
+            'needs manual cleanup (kill -9).\n'
+            '$redirectHint\n'
+            '</system-notice>';
+      }
       return '<system-notice>\n'
           '${head}was stopped: the leader pid is gone, but '
           '${survivors.length} process group member(s) '
           '${survivors.length == 1 ? 'is' : 'are'} still running: '
-          '$named. The job record is kept — the next boot reaps the '
-          'survivors.\n'
+          '${stopSurvivorNames(survivors)}. The job record is kept — the '
+          'next boot reaps the survivors.\n'
           '$redirectHint\n'
           '</system-notice>';
     }

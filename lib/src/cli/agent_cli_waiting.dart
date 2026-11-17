@@ -1072,7 +1072,8 @@ int waitingMinutesElapsed(DateTime? since, DateTime now) =>
 
 /// The console dim line for an adopted job's settle (issue #450,
 /// survivor-aware per issue #2260): a stop whose process group did not
-/// verify gone admits it instead of the plain "no longer running".
+/// verify gone admits it instead of the plain "no longer running"; a
+/// leader that survived the kill rounds is never called "stopped".
 String _adoptedSettleDimLine(ShellJobEntry job) {
   if (job.stopAttempted) {
     final survivors = job.stopSurvivors;
@@ -1081,9 +1082,13 @@ String _adoptedSettleDimLine(ShellJobEntry job) {
           'group is unverified; survivors may remain';
     }
     if (survivors.isNotEmpty) {
-      final pids = [for (final s in survivors) s.pid].join(', ');
+      final pids = stopSurvivorPidList(survivors);
+      if (stopLeaderSurvived(job)) {
+        return '${job.id} NOT stopped — pid ${job.pid} survived the kill '
+            'signals; group member(s) still alive: $pids';
+      }
       return '${job.id} stopped (adopted pid ${job.pid}) — '
-          '${survivors.length} group member(s) still alive: pid $pids';
+          '${survivors.length} group member(s) still alive: $pids';
     }
   }
   return '${job.id} is no longer running '

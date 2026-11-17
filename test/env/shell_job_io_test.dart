@@ -671,6 +671,31 @@ a.wait(); b.wait()
         expect(survivors, isNull);
       },
     );
+
+    test(
+      'pidStartSnapshot is trimmed and byte-matches the table lstart '
+      '(issue #2260 review: an untrimmed tag reads as recycled at boot)',
+      skip: psAvailable ? null : 'needs POSIX with ps access',
+      () async {
+        final child = await Process.start('sleep', ['30']);
+        addTearDown(() => Process.killPid(child.pid, ProcessSignal.sigkill));
+
+        final tag = await pidStartSnapshot(child.pid);
+
+        expect(tag, isNotNull);
+        expect(tag, tag!.trim(), reason: 'no ps column padding may leak');
+        final row = await rowFor(child.pid);
+        expect(row, isNotNull);
+        expect(
+          tag,
+          row!.lstart,
+          reason:
+              'the producer must byte-match the table parser, or '
+              'every recorded entry compares as recycled at boot',
+        );
+        expect(tryParseLstart(tag), isNotNull);
+      },
+    );
   });
 }
 
