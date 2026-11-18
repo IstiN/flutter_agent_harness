@@ -41,6 +41,7 @@ import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
 import 'tool_pairing.dart' show repairToolPairing;
+import '../exceptions.dart' show CompactionErrorCode, CompactionException;
 import '../session/session_record.dart' show CompactionRecord, MessageRecord;
 
 /// Per-pass outcome surfaced through [AutoCompactorHooks.onPass].
@@ -712,6 +713,17 @@ final class AutoCompactor {
     );
   }
 
+  /// The empty-foldable-region refusal: `CompactionErrorCode.invalidSession`
+  /// is today thrown only by compactSession's guard when the branch has
+  /// NOTHING to summarize above the keep-recent cut. It is the no-work
+  /// terminal, not a summarizer failure — reading it as one routed the pass
+  /// to the local-trim valve, which dropped the unsuppressible newest tail
+  /// (gh-2246-era data-loss shape; see the failing-first test in
+  /// test/agent/auto_compactor_test.dart).
+  bool _isEmptyFoldableRegionRefusal(Object error) =>
+      error is CompactionException &&
+      error.code == CompactionErrorCode.invalidSession;
+
   /// Runs one pass with up to [maxAttempts] retries on transient errors.
   /// Returns the outcome plus, on success, the compaction record's summary
   /// and the hidden/summarized counts (computed from the branch up to
@@ -812,6 +824,25 @@ final class AutoCompactor {
           summarizedMessages: summarized,
         );
       } catch (error) {
+        // gh-2103/AC5 re-fire regression: compactSession's gh-204 refusal
+        // (CompactionErrorCode.invalidSession — today thrown only by the
+        // empty-foldable-region guard) means the branch has NOTHING to
+        // summarize above the keep-recent cut, not that the summarizer
+        // is down. Reading it as a failure here routed the pass to the
+        // local-trim valve, which mechanically DROPPED the unsuppressible
+        // newest tail (a trim receipt over content no pass may fold) and
+        // cost the host ladder its honest exhaustion verdict. It is the
+        // no-work terminal, identical to a null preparation.
+        if (_isEmptyFoldableRegionRefusal(error)) {
+          return _AttemptOutcome(
+            ok: true,
+            error: null,
+            noWork: true,
+            summary: null,
+            hiddenRecords: 0,
+            summarizedMessages: 0,
+          );
+        }
         final errorText = error.toString();
         final isTransient = _transient.hasMatch(errorText);
         // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —
