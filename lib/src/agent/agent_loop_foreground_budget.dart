@@ -124,11 +124,12 @@ final class _BudgetClock {
 /// Whether the budget supervises a tool call: everything EXCEPT the same
 /// human-blocking / self-supervised class the stuck supervisor excludes —
 /// consulted through the SAME effective exclusion list (issue #2271): the
-/// configured [StuckToolConfig.excludeTools] when a stuck config exists,
-/// the static defaults otherwise. One source of truth — no
-/// static-vs-configured divergence between the two gates.
+/// configured [StuckToolConfig.excludeTools] when stuck supervision is
+/// enabled, the static defaults otherwise. A disabled stuck section cannot
+/// remove this independent budget's unconditional outer bound.
 bool _budgetAppliesTo(String toolName, StuckToolConfig? stuck) =>
-    !(stuck ?? const StuckToolConfig()).excludes(toolName);
+    !(stuck != null && stuck.enabled ? stuck : const StuckToolConfig())
+        .excludes(toolName);
 
 /// Arms the ladder's two timers for one call: the rung-1 offer deadline at
 /// B/2 and the rung-2 force deadline at B. Timers are no-ops once the call

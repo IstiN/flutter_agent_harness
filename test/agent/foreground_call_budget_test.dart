@@ -921,6 +921,35 @@ void main() {
       expect(result.isError, isFalse);
       expect(_resultText(outcome.agent.state.messages), contains('clean'));
     });
+
+    test('REG: a disabled stuck section cannot exclude bash from the '
+        'independent budget outer bound', () async {
+      CancelToken? heldToken;
+      final outcome = await _runBudgetTurn(
+        budget: const ForegroundCallBudgetConfig(
+          budget: Duration(milliseconds: 150),
+          cancelGrace: Duration(milliseconds: 250),
+        ),
+        stuck: const StuckToolConfig(enabled: false, excludeTools: ['bash']),
+        executor: (attempt, onUpdate, cancelToken) async {
+          heldToken = cancelToken;
+          await Future.any<void>([
+            cancelToken!.onCancel,
+            Future<void>.delayed(const Duration(milliseconds: 400)),
+          ]);
+          return ToolExecutionResult.text('budget token observed');
+        },
+      );
+
+      expect(outcome.stuckEvents, isEmpty);
+      expect(heldToken!.isCancelled, isTrue);
+      // A token-obeying completion is marked, not announced as forced.
+      expect(outcome.budgetEvents, isEmpty);
+      expect(
+        _resultText(outcome.agent.state.messages),
+        contains('the call completed as the budget fired'),
+      );
+    });
   });
 
   group('announcement formatter (UT-6)', () {
