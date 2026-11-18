@@ -492,7 +492,7 @@ extension on AgentCli {
       } on Object {
         // Dead endpoint — the seeds below keep the provider listed.
       }
-      final seeds = _envCatalogSeedModels(spec);
+      final seeds = _catalogSeedModels(spec.kind);
       if (seeds.isNotEmpty) _allProvidersModelCache[spec.name] = seeds;
     }
   }
@@ -505,16 +505,26 @@ extension on AgentCli {
     await Future.wait(registry.entries.map(_fetchProviderModels));
   }
 
-  /// Fetches models for one saved provider entry and caches them.
+  /// Fetches models for one saved provider entry and caches them. The
+  /// cache only ever holds the endpoint's answer: on an empty or
+  /// failed fetch the catalog seed list fills the gap (the documented
+  /// `chatFallbackFor` contract). A fake "live" list — the old
+  /// `[entry.modelId]` sentinel — made the row builder treat the
+  /// cache hit as an endpoint answer and skip the seeds (#2297); the
+  /// entry's modelId stays in the row via the row builder instead.
   Future<void> _fetchProviderModels(CustomProviderEntry entry) async {
     try {
       final cookieOrKey = _providerEntryToken(entry);
       final ids = await _fetchIdsForProvider(entry, cookieOrKey);
-      _allProvidersModelCache[entry.name] = ids.isEmpty ? [entry.modelId] : ids;
+      if (ids.isNotEmpty) {
+        _allProvidersModelCache[entry.name] = ids;
+        return;
+      }
     } on Object {
-      // Dead endpoint — use the entry's last-known model.
-      _allProvidersModelCache[entry.name] = [entry.modelId];
+      // Dead endpoint — the seeds below keep the provider listed.
     }
+    final seeds = _catalogSeedModels(_providerKindForEntry(entry));
+    if (seeds.isNotEmpty) _allProvidersModelCache[entry.name] = seeds;
   }
 
   /// Resolves the API token for a saved provider entry.
@@ -632,23 +642,20 @@ extension on AgentCli {
             _envKeyEntry(spec) != null)
           for (final modelId
               in _allProvidersModelCache[spec.name] ??
-                  _envCatalogSeedModels(spec))
+                  _catalogSeedModels(spec.kind))
             (spec.name, modelId),
     ];
   }
 
-  /// The offline seed ids for a catalog provider: the remote catalog's
-  /// chat fallback (deduped). Empty when the catalog ships nothing — such
-  /// a provider is never listed with zero models. No local default id is
-  /// merged: providers carry no default model by design.
-  List<String> _envCatalogSeedModels(ProviderSpec spec) {
-    final merged = <String>[
-      // The remote catalog keys by adapter KIND (issue #772).
-      ...remoteCatalogEnrichment.chatFallbackFor(spec.kind),
-    ];
+  /// The offline seed ids for a provider KIND: the remote catalog's
+  /// chat fallback (deduped). Empty when the catalog ships nothing —
+  /// such a provider is never listed with zero models. No local
+  /// default id is merged: providers carry no default model by design.
+  List<String> _catalogSeedModels(String? providerKind) {
     final seen = <String>{};
     return [
-      for (final id in merged)
+      // The remote catalog keys by adapter KIND (issue #772).
+      for (final id in remoteCatalogEnrichment.chatFallbackFor(providerKind))
         if (id.isNotEmpty && seen.add(id)) id,
     ];
   }
@@ -669,34 +676,25 @@ extension on AgentCli {
     ];
   }
 
-  /// The model ids used for one saved provider entry. Three sources,
-  /// deduped in priority order:
-  /// 1. Live-fetched ids from `_allProvidersModelCache` (the endpoint's
-  ///    `/v1/models` answer when it was willing to talk to us — even
-  ///    if the answer came back as a single-id last-resort seed).
-  /// 2. The bundled remote-catalog seed list for the entry's
-  ///    providerKind — fills gaps the live fetch couldn't answer
-  ///    (401, network down, providers whose /v1/models isn't paginated
-  ///    like `minimax` without a key).
-  /// 3. The entry's last-known `modelId` — always present as a
-  ///    last-resort seed so the picker never collapses to nothing.
+  /// The model ids used for one saved provider entry. The endpoint's
+  /// live `/v1/models` answer ([_allProvidersModelCache]) is the whole
+  /// row, plus the entry's last-known `modelId`. The remote-catalog
+  /// seed list for the entry's providerKind fills the row ONLY on the
+  /// empty/failed branch (the documented `chatFallbackFor` contract):
+  /// a kind-keyed seed list merged over a live answer served models
+  /// the endpoint never listed (issue #2297 — gemini ids under a
+  /// bedrock endpoint that proxy-400s on them).
   List<String> _registryEntryModels(dynamic entry) {
-    final cached = _allProvidersModelCache[entry.name] ?? const <String>[];
+    final cached = _allProvidersModelCache[entry.name];
     final providerKind = _providerKindForEntry(entry);
-    final seed = remoteCatalogEnrichment.chatFallbackFor(providerKind);
-    final merged = <String>[
-      for (final id in cached)
-        if (id.isNotEmpty) id,
-      for (final id in seed)
-        if (id.isNotEmpty) id,
-      if (entry.modelId.isNotEmpty) entry.modelId,
-    ];
+    final row = (cached == null || cached.isEmpty)
+        ? _catalogSeedModels(providerKind)
+        : cached;
     final seen = <String>{};
-    final unique = <String>[
-      for (final id in merged)
-        if (seen.add(id)) id,
+    return [
+      for (final id in [...row, if (entry.modelId.isNotEmpty) entry.modelId])
+        if (id.isNotEmpty && seen.add(id)) id,
     ];
-    return unique;
   }
 
   /// The adapter KIND of a saved entry (issue #772): `apiType` (the
