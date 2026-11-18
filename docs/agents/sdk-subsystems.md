@@ -162,11 +162,15 @@
   `[image dropped: <key8>]` placeholders (payload-only, JSONL
   byte-identical); kept-region images ride on under the normal caps; the 413 recovery ladder
   (`agent_loop_image_recovery.dart` + `image_recovery.dart`, bounded at
-  2 passes per response, each 413 halving the session's adaptive
-  `images.maxBytesPerRequest`) drops the oldest images (pass 1), then
-  strips ALL images including the current message (pass 2, latched
-  session-wide), carrying the `[images] recovered from 413:` notice +
-  model-visible note; classification lives in `image_overflow.dart`
+  2 passes per response, each 413 halving the (provider, model)-keyed
+  adaptive `images.maxBytesPerRequest` — issue #2269: the latches ride
+  the same `imageCapLatchKey` as the #1750 image-cap latches, so a
+  `/model` switch starts the new pair clean and the printed "switch
+  provider" remedy actually restores images) drops the oldest images
+  (pass 1), then strips ALL images including the current message
+  (pass 2, latched per model — the same pair remembers), carrying the
+  `[images] recovered from 413:` notice + model-visible note;
+  classification lives in `image_overflow.dart`
   (`isPayloadTooLargeError`), surface wording in `image_drop_ux.dart`
   (`ImageDropReason.evicted`).
   Stateless per-request rebuild — determinism, compaction eviction and

@@ -408,8 +408,8 @@ Future<(AssistantMessage, Context)> _streamAssistantResponseInner(
   // the retried request build and latches for the run.
   final imageCapState = _ImageCapHealState();
   // gh-1934: the bounded 413 image-payload recovery ladder; pass 1
-  // halves the session's adaptive budget, pass 2 strips all images, and
-  // the session-level consequences ride config.imageRecovery.
+  // halves the (provider, model)-keyed adaptive budget, pass 2 strips
+  // all images, and the per-model consequences ride config.imageRecovery.
   final image413State = _Image413RecoveryState();
   for (var attempt = 0; ; attempt++) {
     final steer = _SteeringYieldWatch(
