@@ -336,17 +336,20 @@ String imageContentKey(ImageContent image) => sha256
 /// gh-1934): the kill switch skips it entirely (byte-identical legacy — no
 /// rewrite, no reports), the cap resolves per model (`#1750` learned latch >
 /// `perModel` config > catalog maxImages > the global maxPerRequest), the
-/// byte budget resolves per session (`images.maxBytesPerRequest`, lowered
-/// by the 413 recovery state's learned budget), and the host-facing seam is
-/// the per-request [ImageDropReport] (one call per build, zero drops
-/// included). Also publishes the outbound-size estimate for the
-/// payload-aware stall watchdogs ([noteOutboundEstimate] — every provider
-/// call funnels through here, so the estimate never goes stale). Lives
-/// beside the seam it fans out to so the loop's call site stays one
-/// expression. [recovery] (gh-1934) arms the compaction/413 eviction rules
-/// and feeds the build's drop/strip counts back to the recovery state.
+/// byte budget resolves per (provider, model) (`images.maxBytesPerRequest`,
+/// lowered by the pair's 413-recovery learned budget — issue #2269: a model
+/// switch starts the new pair clean, so the printed "switch provider"
+/// remedy works), and the host-facing seam is the per-request
+/// [ImageDropReport] (one call per build, zero drops included). Also
+/// publishes the outbound-size estimate for the payload-aware stall
+/// watchdogs ([noteOutboundEstimate] — every provider call funnels through
+/// here, so the estimate never goes stale). Lives beside the seam it fans
+/// out to so the loop's call site stays one expression. [recovery]
+/// (gh-1934) arms the compaction/413 eviction rules and feeds the build's
+/// drop/strip counts back to the recovery state.
 List<Message> rewriteRequestImages(
   List<Message> messages, {
+  required String provider,
   required String modelId,
   required int? catalogMaxImages,
   required int? capOverride,
@@ -355,6 +358,8 @@ List<Message> rewriteRequestImages(
   noteOutboundEstimate(messages);
   if (!imageRegistryConfig.enabled) return messages;
   final configuredBytes = imageRegistryConfig.maxBytesPerRequest;
+  // The 413 latches ride the (provider, model) pair (issue #2269).
+  final latch = recovery?.latchFor(provider, modelId);
   ImageDropReport? report;
   final rewritten = rewriteHistoryImages(
     messages,
@@ -362,18 +367,18 @@ List<Message> rewriteRequestImages(
         capOverride ??
         resolveImageCap(modelId: modelId, catalogMaxImages: catalogMaxImages),
     maxBytesPerRequest:
-        recovery?.effectiveByteBudget(configuredBytes) ?? configuredBytes,
+        latch?.effectiveByteBudget(configuredBytes) ?? configuredBytes,
     modelId: modelId,
     onReport: (r) {
       report = r;
-      // Once-evicted keys never ride again this session (E4): boundary
+      // Once-evicted keys never ride again for this pair (E4): boundary
       // evictions re-derive from the persisted boundary anyway, the latch
       // covers the window where that boundary is no longer visible.
-      recovery?.evictedKeys.addAll(r.evictedKeys);
+      latch?.evictedKeys.addAll(r.evictedKeys);
       imageDropReportNotice?.call(r);
     },
-    stripAll: recovery?.stripAll ?? false,
-    evictedKeys: recovery?.evictedKeys,
+    stripAll: latch?.stripAll ?? false,
+    evictedKeys: latch?.evictedKeys,
   );
   // gh-1934 review: EVERY build records what the payload rode — the
   // image-free fast path included (it reports no drops by the #1889
@@ -555,7 +560,7 @@ const int embeddedImageMinChars = 64 * 1024;
 ///   placeholders ride token accounting, and no boundary can re-carriage
 ///   old image bytes.
 /// - [evictedKeys] pins additional content keys to the placeholder (the
-///   session recovery latch).
+///   per-model recovery latch — issue #2269).
 ///
 /// Returns the SAME list instance when there is nothing to rewrite (no
 /// images and no `[Image N]` mentions), so image-free sessions pay
