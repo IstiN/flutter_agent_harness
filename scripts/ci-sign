@@ -271,6 +271,19 @@ case "$CMD" in
       security delete-keychain "$KC" 2>/dev/null || rm -f "$KC"
     fi
     ensure_keychain
+
+    # WWDR G6 (public Apple intermediate, no secret): host-level
+    # infrastructure for every codesign verification chain on this pool.
+    # Import ONCE into the persistent keychain — per-job workflow lines
+    # must not write to the host keychain (the per-job build.keychain
+    # model died with gh-1865; the yoclip workflow leftover was the last
+    # straggler — coordinated with yoclip 92b45fc).
+    if ! security find-certificate -a -c "Apple Worldwide Developer Relations" "$KC" >/dev/null 2>&1; then
+      WWDR_G6_URL="https://www.apple.com/certificateauthority/AppleWWDRCAG6.cer"
+      curl -fsSL "$WWDR_G6_URL" -o "$TMP/wwdr.pem" || die "cannot fetch WWDR G6 from $WWDR_G6_URL"
+      security import "$TMP/wwdr.pem" -k "$KC" >/dev/null 2>&1 \
+        || err "WARN: WWDR G6 import failed — codesign chains may not verify; re-run install"
+    fi
     TMP="$(mktemp -d)"
     # One consolidated EXIT trap (a second `trap ... EXIT` would REPLACE
     # the lock-release trap above, leaking the lock dir).
