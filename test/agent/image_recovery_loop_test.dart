@@ -73,6 +73,17 @@ Model _model() => Model(
   maxTokens: 4096,
 );
 
+/// A second model of the SAME provider — the `/model` switch target.
+Model _modelB() => Model(
+  id: 'vision-b',
+  api: 'test-api',
+  provider: 'copilot',
+  baseUrl: 'https://example.test',
+  input: const ['text', 'image'],
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
 AssistantMessage _assistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,
@@ -166,11 +177,12 @@ Future<List<Message>> _run(
   bool always413 = false,
   List<AgentEvent>? events,
   TransformContextHook? transformContext,
+  Model? model,
 }) => runAgentLoop(
   prompts: [UserMessage.text('continue')],
   context: Context(messages: history ?? _poisonedHistory()),
   config: AgentLoopConfig(
-    model: _model(),
+    model: model ?? _model(),
     imageRecovery: recovery,
     transformContext: transformContext,
   ),
@@ -329,12 +341,13 @@ void main() {
     expect(assistant.errorMessage, contains('413'));
 
     // Each 413 halved the budget: 8MiB → 4MiB → 2MiB.
+    final latch = recovery.latchFor('copilot', 'vision');
     expect(
-      recovery.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
+      latch.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
       2 * 1024 * 1024,
     );
     // Pass 2 latched the strip-all.
-    expect(recovery.stripAll, isTrue);
+    expect(latch.stripAll, isTrue);
     // The last payload carried zero image bytes.
     expect(_imageBytes(provider.contexts.last.messages), 0);
 
@@ -386,8 +399,9 @@ void main() {
     final recovery = ImagePayloadRecoveryState();
     await _run(provider, recovery: recovery);
     // Learned: half of the configured 8MiB.
+    final latch = recovery.latchFor('copilot', 'vision');
     expect(
-      recovery.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
+      latch.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
       4 * 1024 * 1024,
     );
 
@@ -441,9 +455,9 @@ void main() {
     expect(drops.map((d) => d.reason), everyElement(ImageDropReason.bytes));
 
     // A LOWER configured value wins over the learned budget (AC5).
-    expect(recovery.effectiveByteBudget(1024), 1024);
+    expect(latch.effectiveByteBudget(1024), 1024);
     // A disabled (0) configured budget cannot raise the learned one.
-    expect(recovery.effectiveByteBudget(0), 4 * 1024 * 1024);
+    expect(latch.effectiveByteBudget(0), 4 * 1024 * 1024);
   });
 
   test('IT-6 (AC6): a text-only session never engages the ladder', () async {
@@ -485,7 +499,8 @@ void main() {
     // false recovery copy) on every later 413. The gate must evaluate
     // the REQUEST that was refused — image-free after the latch — and
     // stand down.
-    final recovery = ImagePayloadRecoveryState()..stripAll = true;
+    final recovery = ImagePayloadRecoveryState()
+      ..latchFor('copilot', 'vision').stripAll = true;
     final provider = _CappedProvider(5 * 1000 * 1000);
     final events = <AgentEvent>[];
     final messages = await _run(
@@ -510,6 +525,52 @@ void main() {
     );
     // The latch invariant holds: the refused payload rode zero bytes.
     expect(_imageBytes(provider.contexts.single.messages), 0);
+  });
+
+  test('IT-7 (#2269): a model switch resets the 413 latches — model B '
+      'rides images at the configured budget while A stays latched', () async {
+    // Latch model A the hard way: two 413s, pass 2 strips all.
+    final providerA = _CappedProvider(5 * 1000 * 1000);
+    final recovery = ImagePayloadRecoveryState();
+    final latchA = recovery.latchFor('copilot', 'vision');
+    await _run(providerA, recovery: recovery, always413: true);
+    expect(latchA.stripAll, isTrue);
+    expect(
+      latchA.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
+      2 * 1024 * 1024,
+    );
+
+    // Switch to model B in the SAME session state: B never saw a 413, so
+    // its first build rides images under the FULL configured budget (the
+    // byte cap drops pre-emptively, no strip-all), the 413 re-engages the
+    // ladder fresh, and pass 1 converges on B's own learned half.
+    final providerB = _CappedProvider(5 * 1000 * 1000);
+    final messages = await _run(
+      providerB,
+      recovery: recovery,
+      model: _modelB(),
+    );
+    expect(providerB.contexts, hasLength(2), reason: 'one pass-1 retry only');
+    final assistant = messages.whereType<AssistantMessage>().last;
+    expect(assistant.stopReason, StopReason.stop);
+    expect(
+      _imageBytes(providerB.contexts.first.messages),
+      greaterThan(0),
+      reason: 'model B is not strip-all-latched — images ride again',
+    );
+    // B learned its OWN budget: half of the CONFIGURED 8MiB, not A's 2MiB.
+    expect(
+      recovery
+          .latchFor('copilot', 'vision-b')
+          .effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
+      4 * 1024 * 1024,
+    );
+    // A's latches persist — switching back never re-learns (AC3).
+    expect(latchA.stripAll, isTrue);
+    expect(
+      latchA.effectiveByteBudget(imageRegistryConfig.maxBytesPerRequest),
+      2 * 1024 * 1024,
+    );
   });
 
   test('IT-4c (review: AC6 gate): a text-only 413 with a small inline icon '
