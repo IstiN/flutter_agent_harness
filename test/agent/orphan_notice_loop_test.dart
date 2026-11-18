@@ -307,6 +307,7 @@ void main() {
         'AC2: a pre-wire provider throw does not consume the latch',
         () async {
           final latch = <String>{};
+          final key = orphanReportKey(_orphanContext()[1] as ToolResultMessage);
           AssistantMessageEventStream throwing(
             Model model,
             Context context, {
@@ -342,7 +343,7 @@ void main() {
           );
           await stream2.result as List<dynamic>;
           expect(_noteCount(delivered.contexts.single), 1);
-          expect(latch, isNotEmpty);
+          expect(latch, {key});
         },
       );
 
