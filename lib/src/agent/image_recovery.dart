@@ -1,20 +1,29 @@
-/// Session-scoped 413 image-payload recovery state (gh-1934) — the
-/// persistent half of the recovery ladder.
+/// The 413 image-payload recovery state (gh-1934) — the persistent half
+/// of the recovery ladder.
 ///
 /// A provider rejecting a request for SIZE (413-class,
 /// `isPayloadTooLargeError`) must never end in an unusable session. The
 /// ladder in the agent loop (see `agent_loop_image_recovery.dart`) adapts
 /// the payload — pass 1 drops the oldest images under an adaptive byte
 /// budget, pass 2 strips ALL images to placeholders — and this state holds
-/// what survives the retry: the learned per-session budget (halved on
-/// every 413 — the cap is measured, never hardcoded per provider), the
-/// strip-all latch, and the one-shot model-visible recovery note.
+/// what survives the retry: the learned adaptive budget (halved on every
+/// 413 — the cap is measured, never hardcoded per provider), the
+/// strip-all latch, the evicted-key set, and the one-shot model-visible
+/// recovery note.
+///
+/// The latches (budget, strip-all, evicted keys) are keyed per
+/// (provider, model) — issue #2269, the same [imageCapLatchKey] family
+/// the #1750 `imageCapLatches` use — so a mid-run `/model` switch starts
+/// clean and the printed "switch provider" remedy actually restores
+/// images; switching back to a latched pair remembers. The one-shot note
+/// + build-observation plumbing stays session-global (one request build
+/// is in flight at a time).
 ///
 /// The state is HOST-OWNED session state (the same pattern as
 /// `imageCapLatches`): one instance lives on the `Agent` for the session's
 /// runtime, consulted by every request build and mutated by the ladder.
-/// Session-scoped v1 (the ticket's open question 1 recommendation) — the
-/// learned cap is runtime-only, never persisted.
+/// Runtime-only, never persisted (the ticket's open question 1
+/// recommendation).
 library;
 
 import 'image_registry.dart';
@@ -77,11 +86,75 @@ typedef ImageRecoveryNotice = void Function(ImageRecoveryEvent event);
 /// The active recovery reporter — wired once by the host at boot.
 ImageRecoveryNotice? imageRecoveryNotice;
 
-/// The session-scoped 413 recovery state: the adaptive budget, the
-/// strip-all latch, and the one-shot recovery note. Mutated by the loop's
+/// The per-(provider, model) 413 latches (issue #2269): the adaptive
+/// byte budget, the strip-all latch, and the evicted-key set of ONE
+/// (provider, model) pair — the same [imageCapLatchKey] key family the
+/// #1750 image-cap latches use. Within a pair the contract is unchanged
+/// (a set strip-all never clears, a learned budget only sinks, evicted
+/// keys never ride again); another pair never inherits any of it, which
+/// is what makes the printed "switch provider" remedy work.
+final class ImagePayloadRecoveryLatch {
+  /// The adaptive budget the pair learned from 413 refusals (halving);
+  /// null before the first 413.
+  int? learnedByteBudget;
+
+  /// Pass-2 latch: every image block — current message included — rides
+  /// as a placeholder from now on. Once set it never clears for the
+  /// pair (it proved it cannot take image bytes).
+  bool stripAll = false;
+
+  /// Image content keys evicted by a recovery pass — they never ride
+  /// again for this pair; every later build replaces them with the
+  /// `[image dropped: …]` placeholder.
+  final Set<String> evictedKeys = {};
+
+  /// The effective image byte budget for a request build: the learned
+  /// budget when it is lower than [configured] — the config value is
+  /// still honored when IT is lower (AC5). A disabled configured budget
+  /// (0) cannot raise the learned one, and a learned budget never sinks
+  /// below [imageRecoveryBudgetFloor].
+  int effectiveByteBudget(int configured) {
+    final learned = learnedByteBudget;
+    if (learned == null) return configured;
+    var effective = learned < imageRecoveryBudgetFloor
+        ? imageRecoveryBudgetFloor
+        : learned;
+    if (configured > 0 && configured < effective) effective = configured;
+    return effective;
+  }
+
+  /// One 413 arrived: halve the adaptive budget (learn the provider cap —
+  /// measured, never a per-provider table). A disabled configured budget
+  /// (0) seeds from the package default: the provider proved a cap
+  /// exists, so the ladder must have something to halve.
+  void halveBudget(int configured) {
+    final base =
+        learnedByteBudget ??
+        (configured > 0 ? configured : defaultMaxImageBytesPerRequest);
+    final halved = (base / 2).floor();
+    learnedByteBudget = halved < imageRecoveryBudgetFloor
+        ? imageRecoveryBudgetFloor
+        : halved;
+  }
+}
+
+/// The session's 413 recovery state: the per-(provider, model) latches
+/// ([ImagePayloadRecoveryLatch] via [latchFor]) plus the session-global
+/// one-shot note + build-observation plumbing. Mutated by the loop's
 /// ladder, read by every request build.
 final class ImagePayloadRecoveryState {
-  int? _learnedByteBudget;
+  final Map<String, ImagePayloadRecoveryLatch> _latches = {};
+
+  /// The latch slice of one (provider, model) pair, created on demand —
+  /// keyed by [imageCapLatchKey] like the #1750 image-cap latches
+  /// (issue #2269): a mid-run `/model` switch starts the new pair clean,
+  /// and switching back to a latched pair remembers.
+  ImagePayloadRecoveryLatch latchFor(String provider, String modelId) =>
+      _latches.putIfAbsent(
+        imageCapLatchKey(provider, modelId),
+        ImagePayloadRecoveryLatch.new,
+      );
+
   bool _noteArmed = false;
   int _armedPass = 0;
   int _lastDropped = 0;
@@ -98,55 +171,12 @@ final class ImagePayloadRecoveryState {
   /// request build records the fact (`rewriteRequestImages`).
   bool lastPayloadCarriedImages = true;
 
-  /// The adaptive budget the session learned from 413 refusals
-  /// (halving); null before the first 413.
-  int? get learnedByteBudget => _learnedByteBudget;
-
   /// Image blocks the last observed build dropped by the adaptive byte
   /// budget (the counts the pass events and notices render).
   int get lastDropped => _lastDropped;
 
   /// Image blocks the last observed build stripped to placeholders.
   int get lastStripped => _lastStripped;
-
-  /// Pass-2 latch: every image block — current message included — rides
-  /// as a placeholder from now on. Once set it never clears for the
-  /// session (the provider proved it cannot take image bytes).
-  bool stripAll = false;
-
-  /// Image content keys evicted by a recovery pass — they never ride
-  /// again this session; every later build replaces them with the
-  /// `[image dropped: …]` placeholder.
-  final Set<String> evictedKeys = {};
-
-  /// The effective image byte budget for a request build: the learned
-  /// budget when it is lower than [configured] — the config value is
-  /// still honored when IT is lower (AC5). A disabled configured budget
-  /// (0) cannot raise the learned one, and a learned budget never sinks
-  /// below [imageRecoveryBudgetFloor].
-  int effectiveByteBudget(int configured) {
-    final learned = _learnedByteBudget;
-    if (learned == null) return configured;
-    var effective = learned < imageRecoveryBudgetFloor
-        ? imageRecoveryBudgetFloor
-        : learned;
-    if (configured > 0 && configured < effective) effective = configured;
-    return effective;
-  }
-
-  /// One 413 arrived: halve the adaptive budget (learn the provider cap —
-  /// measured, never a per-provider table). A disabled configured budget
-  /// (0) seeds from the package default: the provider proved a cap
-  /// exists, so the ladder must have something to halve.
-  void halveBudget(int configured) {
-    final base =
-        _learnedByteBudget ??
-        (configured > 0 ? configured : defaultMaxImageBytesPerRequest);
-    final halved = (base / 2).floor();
-    _learnedByteBudget = halved < imageRecoveryBudgetFloor
-        ? imageRecoveryBudgetFloor
-        : halved;
-  }
 
   /// Records what one request build did with the images (called from the
   /// rewrite path on EVERY build while the state is attached — the

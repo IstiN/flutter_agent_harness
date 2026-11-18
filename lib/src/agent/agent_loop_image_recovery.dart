@@ -1,18 +1,23 @@
 /// The gh-1934 413 image-payload recovery ladder: a provider rejecting a
 /// request for SIZE (`413`-class, `isPayloadTooLargeError`) never ends in
 /// an unusable session. Bounded at TWO recovery passes per streamed
-/// response, each refusal halving the session's adaptive image budget:
+/// response, each refusal halving the (provider, model)-keyed adaptive
+/// image budget (issue #2269 — the same latch key the #1750 image-cap
+/// latches use):
 ///
 /// - **Pass 1** — drop the oldest images until the payload rides under
 ///   the halved adaptive budget (the registry's byte-budget fill; config
 ///   still honored when lower), and retry.
 /// - **Pass 2** — halve again AND strip ALL images to `[image dropped:
-///   …]` placeholders (the session-wide strip-all latch), and retry.
+///   …]` placeholders (the per-model strip-all latch), and retry.
 /// - **Exhausted** — ONE actionable failure notice (`switch provider or
 ///   lower images.maxBytesPerRequest`) and the provider error surfaces
 ///   exactly as before. No loops: the strip-all latch keeps every later
-///   request of the session image-free, so neither the ladder nor a
-///   compaction⇄413 cycle can re-engage on the same bytes.
+///   request of the latched model image-free — and since the latches are
+///   keyed per (provider, model), switching provider/model starts clean,
+///   so the printed remedy actually restores images (issue #2269);
+///   neither the ladder nor a compaction⇄413 cycle can re-engage on the
+///   same bytes of the same pair.
 ///
 /// Same family as the #1750 image-cap heal (a count refusal) and the
 /// gh-1680 message-cap heal — this one is the SIZE refusal twin. The
@@ -85,12 +90,14 @@ bool _needsImage413Recovery(
     isPayloadTooLargeError(finished.errorMessage) &&
     (passes > 0 ||
         (config.imageRecovery!.lastPayloadCarriedImages &&
-            !config.imageRecovery!.stripAll));
+            !config.imageRecovery!
+                .latchFor(config.model.provider, config.model.id)
+                .stripAll));
 
 /// The mutable gh-1934 ladder state of one streamed response: whether the
 /// ladder exhausted (no more passes) and how many passes ran. Mirrors how
-/// the other self-heal states stay response-local while the session-level
-/// consequences (budget, strip-all latch) ride
+/// the other self-heal states stay response-local while the per-model
+/// consequences (budget, strip-all latch — issue #2269) ride
 /// [AgentLoopConfig.imageRecovery].
 final class _Image413RecoveryState {
   bool exhausted = false;
@@ -136,9 +143,11 @@ final class _Image413RecoveryState {
     passes++;
     final pass = passes;
     // Each 413 halves the adaptive budget (AC4) — pass 1 learns, pass 2
-    // halves again before the strip.
-    recovery.halveBudget(imageRegistryConfig.maxBytesPerRequest);
-    if (pass == 2) recovery.stripAll = true;
+    // halves again before the strip. The latches ride the CURRENT
+    // (provider, model) pair (issue #2269): another pair starts clean.
+    final latch = recovery.latchFor(config.model.provider, config.model.id);
+    latch.halveBudget(imageRegistryConfig.maxBytesPerRequest);
+    if (pass == 2) latch.stripAll = true;
     recovery.armNote(pass: pass);
     return _AttemptRetry(context);
   }
