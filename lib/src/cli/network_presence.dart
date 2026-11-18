@@ -712,8 +712,13 @@ final class NetworkPresenceController
     final addressedAgent = agentAddress(parts.agentName, parts.deviceId);
     // Own reply echoes are non-actionable and safe to ack/drop. Everything
     // else must target the agent encoded by its authenticated DM channel.
+    // The empty DecodedMail carries the own-echo SHAPE flag so the
+    // connector belt can split true echoes (frame id we minted → quiet
+    // ack/drop) from rewritten-sender frames (foreign id → loud 'non-echo
+    // frame with rewritten sender' warning, still acked — incident
+    // 8ff48b96 was a user DM lost through exactly this shape).
     if (envelope.from == addressedAgent && envelope.to != addressedAgent) {
-      return const DecodedMail(payload: '');
+      return const DecodedMail(payload: '', ownEcho: true);
     }
     if (envelope.to != addressedAgent) {
       throw StateError('DM channel/recipient mismatch left unacked');

@@ -12,7 +12,12 @@
 ///   throwing sink is NOT acked so the server redelivers (no lost input);
 ///   an ACL rejection is reported AND acked (no redelivery loop of
 ///   refused payloads); unrouted mail is answered with an `error` frame
-///   referencing the mail's msgId;
+///   referencing the mail's msgId; own-reply-echo-shaped frames (sender
+///   equals the addressed agent, empty payload — `DecodedMail.ownEcho`)
+///   are acked either way, but split by frame id: our minted id = quiet
+///   echo drop, anything else = malformed inbound with a rewritten
+///   sender, acked with a loud ::warning + AC6 rejection (incident
+///   8ff48b96 belt);
 /// - outbound: `sendMail` mints the msgId ONCE (it IS the fanet1 frameId
 ///   — contract v1.1), puts it in the outbox and drains head-first while
 ///   the upstream is ready; a failed/lost link leaves the frame queued
@@ -27,6 +32,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'connector_mux.dart';
 import 'device_registry.dart';
@@ -54,6 +60,7 @@ final class DecodedMail {
     this.sessionId,
     this.senderPubkey,
     this.threaded = false,
+    this.ownEcho = false,
   });
 
   /// Complete decrypted payload (or the opaque plaintext in pass-through
@@ -68,6 +75,17 @@ final class DecodedMail {
 
   /// Whether the sender opted into structured/threaded DM replies.
   final bool threaded;
+
+  /// Decoder classification: this frame has the own-reply-echo SHAPE — the
+  /// envelope sender equals the addressed local agent, so the codec cannot
+  /// decrypt it (our own replies are sealed to the user) and returned an
+  /// empty payload. The connector belt classifies by frame id: an id THIS
+  /// connector minted is a benign echoed reply (quiet ack/drop); any other
+  /// id is a malformed inbound whose sender was rewritten — acknowledged
+  /// (no redelivery loop) but never silently (incident 8ff48b96: a user DM
+  /// relayed with `from` rewritten to the addressee was ACL-rejected as an
+  /// empty write and lost).
+  final bool ownEcho;
 }
 
 /// A permanent, credential-free inbound mail decode rejection.
@@ -315,6 +333,12 @@ final class MachineConnector {
       throw ArgumentError('provide exactly one of ciphertext or ciphertextFor');
     }
     final msgId = idFactory();
+    // Echo-dedup state: the id is recorded at mint time so the inbound
+    // belt can distinguish our own fanned-back replies (quiet ack/drop)
+    // from a foreign frame whose sender was rewritten (loud, incident
+    // 8ff48b96). An echo can only exist after the server saw the frame,
+    // so recording before the drain is safe.
+    _rememberSentMail(msgId);
     final body = ciphertext ?? await ciphertextFor!(msgId);
     final envelope = NetworkEnvelope(
       kind: NetworkEnvelopeKind.mail,
@@ -329,6 +353,21 @@ final class MachineConnector {
     await outbox.put(OutboxEntry(envelope: envelope));
     unawaited(_drainOutbox());
     return envelope.msgId;
+  }
+
+  /// Recently minted outbound mail ids — the own-echo half of the belt.
+  /// Bounded like the mux dedup window; per-process by design (a fresh
+  /// incarnation re-learns nothing, so an old own echo re-classifies as
+  /// non-echo: still acked, the warning is the honest signal).
+  final _sentMailIds = <String>{};
+  final _sentMailOrder = Queue<String>();
+
+  void _rememberSentMail(String msgId) {
+    if (!_sentMailIds.add(msgId)) return;
+    _sentMailOrder.addLast(msgId);
+    while (_sentMailOrder.length > ConnectorMux.defaultDedupWindow) {
+      _sentMailIds.remove(_sentMailOrder.removeFirst());
+    }
   }
 
   /// Registers a local sink for `(network, channel, to)` mail: the write
@@ -367,6 +406,36 @@ final class MachineConnector {
       _onLog?.call(
         'mail decode failed for ${envelope.msgId}; delivery left unacked',
       );
+      return;
+    }
+
+    if (decoded.ownEcho && decoded.payload.isEmpty) {
+      // Own-reply-echo belt (incident 8ff48b96): the decoder flagged the
+      // echo SHAPE — envelope sender equals the addressed local agent, so
+      // the payload is empty by construction. The frame id is the only
+      // honest classifier left: an id this connector minted is our own
+      // fanned-back reply (quiet ack/drop); anything else is a malformed
+      // inbound whose sender was rewritten somewhere on the wire. Both
+      // ack — the server caps redelivery (32/device) — but the rewrite
+      // case is NEVER silent: the ::warning log line plus the AC6
+      // rejection surface make a recurrence visible in the field.
+      if (_sentMailIds.contains(envelope.msgId)) {
+        _onLog?.call(
+          'own reply echo acknowledged and dropped (${envelope.msgId})',
+        );
+      } else {
+        const reason =
+            'non-echo frame with rewritten sender: sender id equals the '
+            'addressed agent and the payload is empty';
+        _rejections.add(RejectedMail(envelope: envelope, reason: reason));
+        _onLog?.call(
+          '::warning non-echo frame with rewritten sender '
+          '(${envelope.msgId}): sender id equals the addressed agent with '
+          'an empty payload; acknowledged as malformed inbound '
+          '(incident 8ff48b96 shape)',
+        );
+      }
+      upstream.acknowledge(envelope.msgId);
       return;
     }
 
