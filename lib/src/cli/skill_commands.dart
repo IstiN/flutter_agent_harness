@@ -392,7 +392,11 @@ extension AgentCliSkillsExt on AgentCli {
     if (isBusy) {
       _agent.steer(UserMessage.text(rendered.body));
     } else {
-      _startRun(rendered.body);
+      // The grants armed above ARE this run's policy — carry them past the
+      // funnel's run-boundary expiry (issue #2268). They expire at the next
+      // run boundary: a fork result, job notice, or any other reaction run
+      // starts clean.
+      _startRun(rendered.body, carryTurnGrants: true);
     }
   }
 
