@@ -1074,6 +1074,7 @@ class AgentCli {
             persistMessage: _persistOneMessage,
             persistInjection: _persistTtsrInjection,
           ),
+          onRewindApplied: (messageCount) => _persistedCount = messageCount,
           onTriggered: (rules) => io.writeln(
             '[ttsr] rule violation: '
             '${rules.map((rule) => rule.name).join(', ')} — retrying',
