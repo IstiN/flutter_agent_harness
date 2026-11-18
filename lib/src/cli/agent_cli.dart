@@ -2604,11 +2604,18 @@ class AgentCli {
   /// read it.
   bool _submissionCancelRestorePending = false;
 
-  /// Every compaction pass that actually STARTED (issue #1085 round-1):
-  /// the over-window funnel's exhaustion verdict names how many passes
-  /// ran — zero is possible (compaction disabled or nothing to
-  /// summarize) and must not read as "N attempts failed".
+  /// Every compaction pass that produced a RECEIPT (issue #1085 round-1;
+  /// receipt-counting per issue #2273): the over-window funnel's
+  /// exhaustion verdict names how many passes ran — zero is possible
+  /// (compaction disabled, nothing to summarize, or a zero-pass run)
+  /// and must not read as "N attempts failed".
   int _compactionPassesStarted = 0;
+
+  /// Test seam: the compaction pass counter — a zero-pass run (issue
+  /// #2273) must leave it untouched so the funnel's `passesRan` trim
+  /// gate never counts runs that executed no pass.
+  @visibleForTesting
+  int get compactionPassesStartedForTest => _compactionPassesStarted;
 
   /// Empty-reply "continue" nudge budget per LOGICAL turn
   /// (issue #1085 M2b): auto-continued runs get the nudge like any run,
