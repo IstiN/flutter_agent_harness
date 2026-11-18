@@ -745,6 +745,149 @@ void main() {
     await decoded.stop();
     decoded.dispose();
   });
+
+  group('own-echo belt (incident 8ff48b96)', () {
+    // The connector's decode seam classifies own-reply-echo-shaped frames
+    // (DecodedMail.ownEcho + empty payload). The belt splits them by the
+    // ONLY honest local signal — the frame id: an id this connector minted
+    // is our echoed reply (quiet ack/drop); anything else with a rewritten
+    // sender is a malformed inbound that must never disappear silently.
+    test('own reply echo (id this connector minted) acks quietly', () async {
+      final connector = buildConnector(
+        decodeMail: (envelope) => const DecodedMail(payload: '', ownEcho: true),
+      );
+      final written = <InboundMail>[];
+      final rejections = <RejectedMail>[];
+      connector.registerLocalSink(
+        network: 'personal-x',
+        channel: 'chan-1',
+        sink: (mail) async => written.add(mail),
+      );
+      connector.rejections.listen(rejections.add);
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+      final sentId = await connector.sendMail(
+        network: 'personal-x',
+        channel: 'chan-1',
+        from: 'goal_builder@macbook',
+        to: 'user:u1',
+        ciphertext: 'c1',
+      );
+      await _waitUntil(
+        () => server.persistedMail.any((frame) => frame.msgId == sentId),
+      );
+      // The server fans our own frame back to the sending device — the
+      // own-reply echo shape (from == addressed agent, to elsewhere).
+      final echo = server.persistedMail
+          .where((frame) => frame.msgId == sentId)
+          .first;
+      server.deliverTo(deviceId: 'macbook', mail: echo);
+      await _waitUntil(
+        () => server.received.any(
+          (frame) =>
+              frame.kind == NetworkEnvelopeKind.ack && frame.refId == sentId,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(written, isEmpty);
+      expect(rejections, isEmpty);
+      expect(logs, anyElement(contains('own reply echo')));
+      expect(
+        logs.where((line) => line.contains('non-echo')),
+        isEmpty,
+        reason: 'a frame we minted must never raise the rewrite alarm',
+      );
+      await connector.stop();
+      connector.dispose();
+    });
+
+    test(
+      'non-echo own-echo-shaped frame (rewritten sender) acks loudly',
+      () async {
+        final connector = buildConnector(
+          decodeMail: (envelope) =>
+              const DecodedMail(payload: '', ownEcho: true),
+        );
+        final written = <InboundMail>[];
+        final rejections = <RejectedMail>[];
+        connector.registerLocalSink(
+          network: 'personal-x',
+          channel: 'chan-1',
+          sink: (mail) async => written.add(mail),
+        );
+        connector.rejections.listen(rejections.add);
+        await connector.start();
+        await _waitUntil(() => connector.isConnected);
+
+        // msgId 8ff48b96-… shape: an id the connector NEVER minted, with
+        // the sender rewritten to the addressed agent. The wire ciphertext
+        // stays INTACT (validation requires it); the DECODED payload is
+        // empty because the decoder short-circuited on the rewritten
+        // sender — exactly how the live frame behaved.
+        server.deliverTo(
+          deviceId: 'macbook',
+          mail: _mailFor('8ff48b96', 'chan-1', ciphertext: 'frame-ciphertext'),
+        );
+        await _waitUntil(
+          () => server.received.any(
+            (frame) =>
+                frame.kind == NetworkEnvelopeKind.ack &&
+                frame.refId == '8ff48b96',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(written, isEmpty);
+        expect(rejections, hasLength(1));
+        expect(
+          rejections.single.reason,
+          'non-echo frame with rewritten sender: sender id equals the '
+          'addressed agent and the payload is empty',
+        );
+        expect(
+          logs,
+          anyElement(
+            allOf(
+              contains('::warning'),
+              contains('non-echo frame with rewritten sender'),
+              contains('8ff48b96'),
+            ),
+          ),
+          reason: 'the field-visible regression tripwire',
+        );
+        await connector.stop();
+        connector.dispose();
+      },
+    );
+
+    test('empty payload WITHOUT the own-echo flag still takes the ACL reject '
+        'path (belt never swallows plain empty writes)', () async {
+      final connector = buildConnector(
+        decodeMail: (envelope) => const DecodedMail(payload: ''),
+      );
+      final rejections = <RejectedMail>[];
+      connector.registerLocalSink(
+        network: 'personal-x',
+        channel: 'chan-1',
+        sink: (_) async {},
+      );
+      connector.rejections.listen(rejections.add);
+      await connector.start();
+      await _waitUntil(() => connector.isConnected);
+      server.deliverTo(
+        deviceId: 'macbook',
+        mail: _mailFor('empty-plain', 'chan-1', ciphertext: 'opaque'),
+      );
+      await _waitUntil(() => rejections.isNotEmpty);
+      expect(
+        rejections.single.reason,
+        'empty remote write carries nothing to deliver',
+      );
+      await connector.stop();
+      connector.dispose();
+    });
+  });
 }
 
 NetworkEnvelope _mailFor(
