@@ -32,15 +32,6 @@
   ],
   "pr-2056": [
     {
-      "leg": "review",
-      "at": "2026-11-04T07:56:14Z",
-      "prompt": 63854,
-      "completion": 17810,
-      "total": 81664,
-      "cacheRead": 1336768,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "rework",
       "at": "2026-11-04T09:13:39Z",
       "prompt": 76774,
@@ -4552,6 +4543,17 @@
       "completion": 17742,
       "total": 82541,
       "cacheRead": 1689600,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2295": [
+    {
+      "leg": "review",
+      "at": "2026-11-18T08:26:18Z",
+      "prompt": 62658,
+      "completion": 25433,
+      "total": 88091,
+      "cacheRead": 693632,
       "model": "glm-5.3-flash"
     }
   ]
