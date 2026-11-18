@@ -409,6 +409,11 @@ final class CellRenderer implements TeaRenderer {
   // Tallest grid ever rendered; the scroll path additionally requires the
   // grid to match it (see _detectScrollShift).
   int _maxRows = 0;
+  // #2311: whether the previous emitted frame took the scroll fast path.
+  // A pinned leading edge showing up on the frame right after a scroll is
+  // evidence that op's shift belief was wrong — the next render heals by
+  // full repaint instead of diffing against the false grid forever.
+  bool _scrolledLastFrame = false;
   final _cursorState = _CursorRendererState();
   final _terminalViewState = TerminalViewState();
 
@@ -443,6 +448,7 @@ final class CellRenderer implements TeaRenderer {
     final nextGrid = _buildGrid(view.content);
     final prev = _lastGrid;
     var wroteCells = false;
+    var scrolledThisFrame = false;
     // gh-1197 AC3: a throw mid-frame must not strand the BSU — a terminal
     // left inside DEC 2026 sync mode defers every subsequent paint
     // indefinitely, which presents as the silent freeze. Close the frame
@@ -458,18 +464,36 @@ final class CellRenderer implements TeaRenderer {
         wroteCells = nextGrid.isNotEmpty;
         wroteCells = _diffAndEmit(nextGrid) || wroteCells;
         _syncEnd();
+        scrolledThisFrame = false;
       } else {
         final shift = _detectScrollShift(prev, nextGrid);
-        if (shift != null) {
-          // Scroll fast path: one scroll op + the fresh rows (+ any overlap
-          // rows the live chrome rewrote across the shift) — never a repaint.
+        final k = shift.k;
+        if (shift.edgeViolation && _scrolledLastFrame) {
+          // Self-heal (#2311): the frame right after a scroll op shows a
+          // pinned contentful leading edge — that op's shift belief is
+          // broken, and a surgical diff would land on its false grid
+          // forever (stale footers, fused digits). Drop the cache and
+          // rebuild the screen from scratch.
+          invalidate();
           _syncBegin();
-          _emitScrollFrame(k: shift.k, repaint: shift.repaint, next: nextGrid);
+          for (var row = 0; row < nextGrid.length; row++) {
+            _output.write('\x1b[${row + 1};1H\x1b[K');
+          }
+          wroteCells = _diffAndEmit(nextGrid);
+          _syncEnd();
+          scrolledThisFrame = false;
+        } else if (k != null) {
+          // Scroll fast path: one scroll op + the fresh rows (+ any
+          // enumerated mismatch rows) — never a repaint.
+          _syncBegin();
+          _emitScrollFrame(k: k, repaint: shift.repaint, next: nextGrid);
           _syncEnd();
           wroteCells = true;
+          scrolledThisFrame = true;
         } else {
           wroteCells = _diffAndEmit(nextGrid);
           _syncEnd();
+          scrolledThisFrame = false;
         }
       }
     } on Object {
@@ -479,6 +503,7 @@ final class CellRenderer implements TeaRenderer {
     if (nextGrid.length > _maxRows) _maxRows = nextGrid.length;
     _lastGrid = nextGrid;
     _lastContent = view.content;
+    _scrolledLastFrame = scrolledThisFrame;
     _cursorState.apply(_output, view.cursor, forceHome: wroteCells);
     _logSink?.writeln('--- cell frame ---\n${view.content}');
   }
@@ -495,18 +520,21 @@ final class CellRenderer implements TeaRenderer {
   void insertAbove(String line) {
     if (!_modes.altScreenEnabled) {
       _output.writeln(line);
-      _cursorState.invalidate();
-      return;
+    } else {
+      _output.write('\x1b[s');
+      _output.write('\x1b[1;1H');
+      _output.write('\x1b[S');
+      _output.write('\x1b[1;1H');
+      // Clear the row before writing so a full-width line keeps its last
+      // column (see AnsiRenderer.insertAbove / #7).
+      _output.write('\x1b[K');
+      _output.write(line);
+      _output.write('\x1b[u');
     }
-    _output.write('\x1b[s');
-    _output.write('\x1b[1;1H');
-    _output.write('\x1b[S');
-    _output.write('\x1b[1;1H');
-    // Clear the row before writing so a full-width line keeps its last column
-    // (see AnsiRenderer.insertAbove / #7).
-    _output.write('\x1b[K');
-    _output.write(line);
-    _output.write('\x1b[u');
+    // #2311 AC4: both branches move the physical screen outside the frame
+    // pipeline (an inline writeln scrolls every row up; the alt-screen op
+    // shifts the buffer). The cached grid is stale the moment these bytes
+    // land — drop it so the next render repaints from scratch.
     _lastGrid = null;
     _lastContent = null;
     _cursorState.invalidate();
@@ -739,20 +767,29 @@ final class CellRenderer implements TeaRenderer {
   /// (content advanced toward the top), -k when shifted down (viewport moved
   /// toward older history).
   ///
-  /// Tolerant variant: a small number of overlap rows may differ (the live
-  /// chrome — busy spinner, scroll indicator — rewrites itself every frame
-  /// even when the content is a pure shift). Those rows are REPAINTED after
-  /// the scroll op (see [_emitScrollFrame]), so the emitted stream stays
-  /// byte-correct; the tolerance only decides whether the fast path pays
-  /// off. The pure-shift case (no mismatches) is still preferred and keeps
-  /// the headline budget: 1 op + k fresh rows.
+  /// #2311: the detector never GUESSES. A candidate k is eligible only when
+  /// its mismatch tolerance (see below) holds, and the op fires only when
+  /// EXACTLY ONE candidate is eligible — on repetitive transcripts several
+  /// k values look plausible (rows repeat), a majority vote picks a wrong
+  /// one, the physical screen mis-scrolls and every later diff lands on
+  /// false beliefs. Ambiguous (>=2 eligible) => plain cell diff.
+  ///
+  /// Eligibility is cheapness only (whether the fast path pays off): a
+  /// small number of overlap rows may differ (the live chrome — busy
+  /// spinner, scroll indicator — rewrites itself every frame even when the
+  /// content is a pure shift). Every mismatch is fully enumerated and
+  /// REPAINTED whole after the scroll op ([_emitScrollFrame]), so the
+  /// emitted stream converges to [next] exactly. Rows containing
+  /// width-ambiguous glyphs (#342) are never trusted matches: their
+  /// cell-equality says "unchanged" while the terminal's own table lays
+  /// the bytes out differently — skipped "matched" rows would leave stale
+  /// bytes, so they always ride the repaint list instead.
   ///
   /// A candidate whose leading edge row (top for +k, bottom for -k) is
-  /// static AND non-blank is rejected outright: the screen did not globally
-  /// scroll, and the op would push that pinned row into the terminal
-  /// scrollback (#761) — the frame degrades to the cell diff.
-  ///
-  /// Returns null when no shift is worth taking → cell diff.
+  /// static AND non-blank is rejected: the screen did not globally scroll,
+  /// and the op would push that pinned row into the terminal scrollback
+  /// (#761). [edgeViolation] reports that rejection so the caller can
+  /// self-heal when it happens right after a scroll frame.
   ///
   /// Additionally requires the grid to be as tall as the tallest grid ever
   /// rendered: a scroll op shifts the PHYSICAL screen, and rows below a
@@ -760,72 +797,79 @@ final class CellRenderer implements TeaRenderer {
   /// repaints. Views that render fewer rows than the terminal simply keep
   /// the cell-diff path (fa_tui pads its view to full height).
   // ponytail: k capped at 40 (a wheel/page scroll never exceeds a
-  // viewport); per-k early exit once the mismatch budget is blown. Row
-  // hashing only if this ever shows up in a profile.
-  ({int k, List<int> repaint})? _detectScrollShift(
-      List<List<_Cell>> prev, List<List<_Cell>> next) {
+  // viewport); candidate scan is a single pass over both directions.
+  ({
+    int? k,
+    List<int> repaint,
+    bool edgeViolation,
+  }) _detectScrollShift(List<List<_Cell>> prev, List<List<_Cell>> next) {
     final rows = prev.length;
-    if (rows < 2 || rows != next.length || rows != _maxRows) return null;
+    if (rows < 2 || rows != next.length || rows != _maxRows) {
+      return (k: null, repaint: const [], edgeViolation: false);
+    }
     const maxK = 40;
-    var best = (matched: -1, k: 0, up: false);
+    ({int k, bool up, List<int> mismatches})? sole;
+    var eligible = 0;
     for (var k = 1; k <= (rows - 1 < maxK ? rows - 1 : maxK); k++) {
       // Up: overlap rows i in [0, rows-k) map from prev[i+k].
-      {
-        final overlap = rows - k;
-        final budget = overlap > 16 ? overlap ~/ 8 : 2;
-        var matched = 0;
-        for (var i = 0; i < overlap; i++) {
-          if (_rowsEqual(next[i], prev[i + k])) matched++;
-        }
-        // Majority guard: a degenerate k (tiny overlap, all noise) must
-        // not win — then op + full repaint costs more than the plain diff.
-        if (overlap - matched <= budget &&
-            matched * 2 > overlap &&
-            matched > best.matched) {
-          best = (matched: matched, k: k, up: true);
-        }
-      }
       // Down: overlap rows i in [k, rows) map from prev[i-k].
-      {
+      for (final up in const [true, false]) {
+        final mismatches = <int>[];
+        var trusted = 0;
+        if (up) {
+          for (var i = 0; i < rows - k; i++) {
+            if (_rowsEqual(next[i], prev[i + k]) &&
+                !_hasUnstableLayout(next[i]) &&
+                !_hasUnstableLayout(prev[i + k])) {
+              trusted++;
+            } else {
+              mismatches.add(i);
+            }
+          }
+        } else {
+          for (var i = k; i < rows; i++) {
+            if (_rowsEqual(next[i], prev[i - k]) &&
+                !_hasUnstableLayout(next[i]) &&
+                !_hasUnstableLayout(prev[i - k])) {
+              trusted++;
+            } else {
+              mismatches.add(i);
+            }
+          }
+        }
         final overlap = rows - k;
         final budget = overlap > 16 ? overlap ~/ 8 : 2;
-        var matched = 0;
-        for (var i = k; i < rows; i++) {
-          if (_rowsEqual(next[i], prev[i - k])) matched++;
-        }
-        if (overlap - matched <= budget &&
-            matched * 2 > overlap &&
-            matched > best.matched) {
-          best = (matched: matched, k: k, up: false);
-        }
+        // Cheapness gates: degenerate k (tiny overlap, all noise) or too
+        // much noise means the plain diff writes fewer bytes anyway.
+        if (mismatches.length > budget) continue;
+        if (trusted * 2 <= overlap) continue;
+        eligible++;
+        if (eligible == 1) sole = (k: k, up: up, mismatches: mismatches);
       }
     }
-    if (best.k == 0) return null;
+    // More than one viable k is an ambiguous shift: emitting any of them
+    // is a guess (a wrong k physically mis-scrolls the screen and poisons
+    // the diff belief). Only a sole candidate is proof.
+    if (sole == null || eligible > 1) {
+      return (k: null, repaint: const [], edgeViolation: false);
+    }
     // Static-edge invariant (#761): a scroll op shifts the PHYSICAL screen,
     // pushing the leading edge row (top for `CSI S`, bottom for `CSI T`)
     // into the terminal's native scrollback. If that edge row is identical
     // AND non-blank across frames, the frame is a history shift under
     // pinned chrome (fa_tui's sticky echo at row 0, composer at the
     // bottom) — not a global scroll — and the op would eject a copy of the
-    // pinned row into the scrollback every frame. Reject the candidate and
-    // let the cell diff repaint the shifted rows in place. A blank edge
-    // scrolls without a visible trace, so it keeps the fast path.
-    final edge = best.up ? 0 : rows - 1;
+    // pinned row into the scrollback every frame. Reject the candidate; a
+    // blank edge scrolls without a visible trace, so it keeps the fast path.
+    final edge = sole.up ? 0 : rows - 1;
     if (_rowsEqual(prev[edge], next[edge]) && _rowHasContent(prev[edge])) {
-      return null;
+      return (k: null, repaint: const [], edgeViolation: true);
     }
-    final k = best.k;
-    final mismatches = <int>[];
-    if (best.up) {
-      for (var i = 0; i < rows - k; i++) {
-        if (!_rowsEqual(next[i], prev[i + k])) mismatches.add(i);
-      }
-    } else {
-      for (var i = k; i < rows; i++) {
-        if (!_rowsEqual(next[i], prev[i - k])) mismatches.add(i);
-      }
-    }
-    return (k: best.up ? k : -k, repaint: mismatches);
+    return (
+      k: sole.up ? sole.k : -sole.k,
+      repaint: sole.mismatches,
+      edgeViolation: false,
+    );
   }
 
   bool _rowsEqual(List<_Cell> a, List<_Cell> b) {
