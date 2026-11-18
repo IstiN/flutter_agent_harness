@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -680,6 +681,73 @@ void main() {
     expect((await store.inspect(meta.path)).lease!.bootId, 'new-owner');
   });
 
+  test('#2257: a stalled heartbeat cannot pile up or re-enter demotion',
+      () async {
+    final meta = await namedSession('stalled-beat');
+    final gate = _HiccupGateEnv(env);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'stalled-beat',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    await waitForIt(
+      () async => (await gatedStore.inspect(meta.path)).lease?.pid == 4242,
+      reason: 'the boot claim',
+    );
+
+    // A rival owns the sidecar, but reading that verdict stalls past the
+    // next heartbeat tick. Only one beat may be in flight while blocked.
+    await seedLiveLease(meta.path, pid: 31337, bootId: 'new-owner');
+    gate.sidecarReadBarrier = Completer<void>();
+    await waitForIt(
+      () => gate.blockedSidecarReads == 1,
+      reason: 'the first stalled heartbeat',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    expect(
+      gate.blockedSidecarReads,
+      1,
+      reason: 'the next inbox tick does not queue another heartbeat',
+    );
+
+    gate.sidecarReadBarrier!.complete();
+    await waitForIt(
+      () => out().contains('lease: lost — another host is driving'),
+      reason: 'the stalled beat demotes after the read resumes',
+    );
+    await waitForIt(
+      () => out().contains('Driven by fa CLI (pid 31337)'),
+      reason: 'the new owner viewer banner',
+    );
+
+    // A second demotion would leave two live watch streams. Append one
+    // row through the repository and prove that it is rendered once.
+    final owned = await repo.open(meta);
+    await owned.appendMessage(UserMessage.text('after demote'));
+    await waitForIt(
+      () => out().contains('user: after demote'),
+      reason: 'the viewer watch delivers the appended row',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect('user: after demote'.allMatches(out()).length, 1);
+    expect('lease: lost — another host is driving'.allMatches(out()).length, 1);
+
+    io.sendLine('/exit');
+    await run;
+  });
+
   test('#2257: a heartbeat sidecar IO hiccup does NOT demote the owner — '
       'alarm fires, lease stays held, no lie printed', () async {
     final meta = await namedSession('hiccup');
@@ -761,8 +829,18 @@ final class _HiccupGateEnv implements ExecutionEnv, RenamableFileSystem {
   /// The next N `.owner.json` reads fail. 0 = reads pass through.
   int failingSidecarReads = 0;
 
+  /// Optional open gate for stalled-I/O coverage. Reads arriving while it
+  /// is non-null wait on the same completer and are counted before waiting.
+  Completer<void>? sidecarReadBarrier;
+  int blockedSidecarReads = 0;
+
   @override
   Future<Result<String, FileError>> readTextFile(String path) async {
+    final barrier = sidecarReadBarrier;
+    if (barrier != null && path.endsWith('.owner.json')) {
+      blockedSidecarReads++;
+      await barrier.future;
+    }
     if (failingSidecarReads > 0 && path.endsWith('.owner.json')) {
       failingSidecarReads--;
       return Err(const FileError(FileErrorCode.unknown, 'sidecar read hiccup'));

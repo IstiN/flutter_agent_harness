@@ -1479,6 +1479,11 @@ class AgentCli {
   /// every renewed or lost beat.
   int _leaseBeatFailures = 0;
 
+  /// The unawaited inbox-tick heartbeat must not pile up behind a stalled
+  /// sidecar read. Besides bounding IO, this serializes the lost-lease
+  /// demotion so queued beats cannot replace (and leak) a live viewer.
+  bool _leaseBeatInFlight = false;
+
   /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
   /// wake_attempted / turn_started / wake_refused lands here so a
   /// post-mortem can tell "timer never fired" from "wake refused". A

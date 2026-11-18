@@ -372,46 +372,57 @@ extension AgentCliLease on AgentCli {
   /// #2257) NEVER demotes: ownership stands, the next tick retries, and
   /// persistent failures alarm without touching the owner role.
   Future<void> _leaseHeartbeat() async {
-    final path = _heldLeasePath;
-    final store = config.leaseStore;
-    if (path == null || store == null) return;
-    final beat = await store.heartbeat(path, _leaseBootId);
-    switch (beat) {
-      case LeaseBeatRenewed():
-        _leaseBeatFailures = 0;
-        return;
-      case LeaseBeatIoFailed(:final error):
-        // #2257: a sidecar IO hiccup does not refute ownership — keep
-        // driving and retry on the next tick; alarm while it persists.
-        _leaseBeatFailures++;
-        if (_leaseBeatFailures % _leaseBeatAlarmEvery == 0) {
-          io.writeln(
-            tuiWarning(
-              'lease heartbeat failing — fs error: ${error.message} '
-              '(ownership kept; retrying)',
-            ),
-          );
-        }
-        return;
-      case LeaseBeatLost():
-        _leaseBeatFailures = 0;
+    if (_leaseBeatInFlight || _viewer != null) return;
+    _leaseBeatInFlight = true;
+    try {
+      final path = _heldLeasePath;
+      final store = config.leaseStore;
+      if (path == null || store == null) return;
+      final beat = await store.heartbeat(path, _leaseBootId);
+      switch (beat) {
+        case LeaseBeatRenewed():
+          _leaseBeatFailures = 0;
+          return;
+        case LeaseBeatIoFailed(:final error):
+          // #2257: a sidecar IO hiccup does not refute ownership — keep
+          // driving and retry on the next tick; alarm while it persists.
+          _leaseBeatFailures++;
+          if (_leaseBeatFailures % _leaseBeatAlarmEvery == 0) {
+            io.writeln(
+              tuiWarning(
+                'lease heartbeat failing — fs error: ${error.message} '
+                '(ownership kept; retrying)',
+              ),
+            );
+          }
+          return;
+        case LeaseBeatLost():
+          _leaseBeatFailures = 0;
+      }
+      // A release/session switch or an already-completed demotion wins
+      // over this stale beat. In particular, never overwrite a viewer:
+      // its event subscription would remain live but become unreachable.
+      if (_viewer != null || _heldLeasePath != path) return;
+      _heldLeasePath = null;
+      final session = _session;
+      if (session == null) return;
+      final meta = await session.getMetadata();
+      final inspect = await store.inspect(path);
+      if (_viewer != null) return;
+      await _enterViewerMode(
+        lease: inspect.lease ?? beat.lease ?? _orphanLease(meta),
+        meta: meta,
+      );
+      io.writeln(
+        tuiWarning(
+          'lease: lost — another host is driving this session; you are a '
+          'viewer now',
+        ),
+      );
+      await _printViewerBannerIfAny();
+    } finally {
+      _leaseBeatInFlight = false;
     }
-    _heldLeasePath = null;
-    final session = _session;
-    if (session == null) return;
-    final meta = await session.getMetadata();
-    final inspect = await store.inspect(path);
-    await _enterViewerMode(
-      lease: inspect.lease ?? beat.lease ?? _orphanLease(meta),
-      meta: meta,
-    );
-    io.writeln(
-      tuiWarning(
-        'lease: lost — another host is driving this session; you are a '
-        'viewer now',
-      ),
-    );
-    await _printViewerBannerIfAny();
   }
 
   SessionLease _orphanLease(SessionMetadata meta) => SessionLease(
