@@ -481,7 +481,20 @@ extension AgentCliCompactionRun on AgentCli {
     // tokens while the message count still trips the cap gate is not a
     // success; the caller retries relief and the funnel reports
     // exhaustion instead of silently re-arming a pass every turn.
-    return after <= _effectiveContextWindow && !overCap;
+    // Issue #2264: both dimensions are re-measured POST-RUN — the
+    // pre-run `overCap` snapshot is stale by here (a pass that relieved
+    // the count too used to fail this check on the stale flag, the
+    // funnel's second attempt no-oped, and the gh-1914 valve plus its
+    // false "still ~N vs W" verdict fired on a now-HEALTHY transcript).
+    // The re-check PEEKS the current count against the learned cap and
+    // never touches the one-shot E1 pass: the pre-run gate above already
+    // consumed it where it fired, and a measurement must not spend
+    // relief.
+    return after <= _effectiveContextWindow &&
+        !messageCapTriggerReached(
+          _agent.state.messages.length,
+          _modelCaps.learnedCapFor(model),
+        );
   }
 
   /// The gh-1680 message-count gate shared by the loop and boot-cap
@@ -1170,6 +1183,24 @@ extension OverWindowContinuation on AgentCli {
     // verdict stand.
     if (passesRan > 0) {
       final tokens = _liveRequestTokens();
+      // Issue #2264: never trim a HEALTHY transcript. The criterion can
+      // still report failure here when only the message-cap dimension is
+      // unrelieved (the transcript already fits the window): below the
+      // window the request is legal as-is — no valve, no trim, and no
+      // false "still ~N tokens vs the W-token window" claim (N < W).
+      // Continue the interrupted task on the transcript that fits.
+      if (tokens <= _effectiveContextWindow) {
+        io.writeln(
+          _style.dim(
+            '[context fits] ~$tokens tokens vs the '
+            '$_effectiveContextWindow-token window after $passesRan '
+            'compaction ${passesRan == 1 ? 'pass' : 'passes'} — continuing '
+            'the interrupted task',
+          ),
+        );
+        await _runContinuationPromptSafe();
+        return true;
+      }
       final trimmed = localTrimValve(
         messages: _agent.state.messages,
         reason:

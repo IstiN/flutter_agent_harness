@@ -29,6 +29,8 @@
 //    throws on cancel, the funnel rethrow is live, the task ends with
 //    the loud interrupted-by-user error and no resumed task.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -890,6 +892,123 @@ void main() {
       expect(output, isNot(contains('compaction interrupted')));
       expect(output, isNot(contains('The task was NOT continued')));
       await io.close();
+    },
+  );
+
+  test(
+    'a run that relieves BOTH dimensions succeeds: no second pass, no '
+    'local trim, no false still-over message (issue #2264)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      // The refusal shape: a moderately large real-user prompt (~6.8k
+      // tokens — real user turns never hide, F8) plus growing read
+      // results (500·i tokens, DISTINCT paths so the dedup has nothing
+      // to fold). With the request-size overhead on top, the first three
+      // requests stay under the trigger and the fourth/fifth go over it,
+      // where the relief's keep-2 hide budget cannot free the overage and
+      // its valve declines (every result exceeds the 200-token keep
+      // budget) — so the window guard REFUSES with BOTH dimensions over:
+      // tokens > window AND count ≥ cap − margin.
+      for (var i = 1; i <= 5; i++) {
+        env.writeFile('note$i.txt', List.filled(100 * i, 'x' * 20).join('\n'));
+      }
+      final home = await Directory.systemTemp.createTemp('fa_2264_');
+      // A learned cap (24 → trigger at count ≥ 8) the way a previous
+      // process left it: the PRE-RUN gate snapshot is over on BOTH
+      // dimensions when the funnel fires.
+      Directory('${home.path}/.fah').createSync(recursive: true);
+      File('${home.path}/.fah/model_caps.json').writeAsStringSync(
+        jsonEncode({
+          ModelCapsStore.keyOf('test-provider', 'tiny-window'): {
+            'maxMessages': 24,
+          },
+        }),
+      );
+      final io = FakeCliIO();
+      // The funnel's classic pass lands both dimensions under — and the
+      // success criterion must judge that from the POST-RUN measurements,
+      // not the stale pre-run overCap snapshot (issue #2264: the stale
+      // true used to fail the check, the second attempt no-oped, and the
+      // gh-1914 valve / exhaustion verdict fired on a now-HEALTHY
+      // transcript with a false "still ~N tokens vs the W-token window"
+      // line at N < W).
+      final fake = FakeStreamFunction([
+        for (var i = 1; i <= 5; i++)
+          toolTurn([
+            ToolCall(
+              id: 't$i',
+              name: 'read',
+              arguments: {'path': 'note$i.txt'},
+            ),
+          ]),
+        textTurn('summary pass one'),
+        textTurn('continuing the task after the compact'),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 20000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          homeDir: home.path,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 200,
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      final exitCode = await cli.runHeadless('count the words ${'x' * 27200}');
+      await io.close();
+      home.deleteSync(recursive: true);
+
+      // Poisoned-run sanity: the guard refused LATE enough that the
+      // message-count dimension was over the learned-cap trigger. The
+      // poisoned minimum is a refusal at read 4 (count 9 ≥ cap − margin
+      // 8): 4 reads + the summarizer pass + the continuation. A collapsed
+      // scenario — an early refusal under the cap trigger (≤ 5 calls), or
+      // a run that never reached the funnel — fails here instead of
+      // guarding nothing.
+      expect(
+        fake.calls,
+        greaterThanOrEqualTo(6),
+        reason:
+            'the refusal must land at read 4 or later (count ≥ cap − '
+            'margin), with the summarizer pass and the continuation behind '
+            'it',
+      );
+      // The relieved run IS a success: the funnel took the success
+      // branch and continued the interrupted task.
+      expect(exitCode, 0, reason: 'the relieved run continues the task');
+      final output = io.out.toString();
+      expect(output, contains('auto-compacted; continuing the turn'));
+      expect(output, contains('[resuming] continuing the interrupted task'));
+      // No second pass, no local trim of the now-HEALTHY transcript, and
+      // no false "still ~N tokens vs the W-token window" line (N < W).
+      expect(output, isNot(contains('[context trimmed]')));
+      expect(output, isNot(contains('still ~')));
+      expect(output, isNot(contains('did not free it')));
+      expect(output, isNot(contains('The task was NOT continued')));
+      // The continuation rode the COMPACTED transcript, not a re-trimmed
+      // copy: no [context trimmed locally] valve marker anywhere.
+      for (final message in fake.contexts.last.messages) {
+        final text = message is UserMessage ? messageText(message) : '';
+        expect(text, isNot(contains('context trimmed locally')));
+      }
     },
   );
 }
