@@ -4099,7 +4099,6 @@ jobs:
         run: |
           gh run view "$RUN_ID" --repo "$REPO" --json jobs > watchdog-jobs.json
           bash scripts/watchdog_trip_check.sh watchdog-jobs.json
-          bash scripts/watchdog_trip_check.sh watchdog-jobs.json
 
       # ── PR arm: empty-commit push (unchanged remedy) ──────────────────
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

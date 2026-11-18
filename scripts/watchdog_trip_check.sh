@@ -81,8 +81,6 @@ fi
 
 if [ "$trip" = "true" ]; then
   echo "::notice::watchdog_trip_check: $matches job(s) match the timeout-kill signature (gh-2290):"
-  printf '%s' "$jobs_json" | jq -r "$projection | .[]" >/dev/null 2>&1 \
-    || true
   printf '%s' "$jobs_json" | jq -r '
     [.jobs[]?
      | select(.conclusion == "failure" or .conclusion == "cancelled")

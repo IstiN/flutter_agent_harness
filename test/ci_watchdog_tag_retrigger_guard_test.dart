@@ -61,8 +61,9 @@ import 'package:yaml/yaml.dart';
 String read(String path) => File(path).readAsStringSync();
 
 List<YamlMap> _jobSteps(YamlMap jobs, String name) =>
-    (((jobs[name] as YamlMap)['steps'] as YamlList).map((s) => s as YamlMap))
-        .toList();
+    (((jobs[name] as YamlMap)['steps'] as YamlList).map(
+      (s) => s as YamlMap,
+    )).toList();
 
 void main() {
   final ciText = read('.github/workflows/ci.yml');
@@ -270,6 +271,35 @@ void main() {
             'the checkout must be UNCONDITIONAL — every arm that can '
             'run the trip step needs the file (a skipped pre-check would '
             'empty the trip output)',
+      );
+    });
+
+    test('the trip step invokes watchdog_trip_check.sh EXACTLY once '
+        '(one trip= line in GITHUB_OUTPUT)', () {
+      final steps = _jobSteps(jobs, 'watchdog');
+      final tripStep = steps
+          .where(
+            (s) => (s['run']?.toString() ?? '').contains(
+              'scripts/watchdog_trip_check',
+            ),
+          )
+          .single;
+      final run = tripStep['run'].toString();
+      final invocations = RegExp(
+        r'bash scripts/watchdog_trip_check\.sh',
+      ).allMatches(run).length;
+      expect(
+        invocations,
+        1,
+        reason:
+            'each invocation appends one trip=<bool> line to '
+            'GITHUB_OUTPUT (the RG3 contract in '
+            'scripts/watchdog_trip_selftest.sh) — a duplicated '
+            'invocation lands TWO trip= lines in one output file and '
+            'doubles the ::notice:: diagnostics in every watchdog log '
+            '(review PRRT_kwDOTXdlLc644EjI). The script is pure — same '
+            'input file, no network, no state — so a second run cannot '
+            'change the verdict; there is no retry semantics to preserve',
       );
     });
   });
