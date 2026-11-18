@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-18T10:01:22.164Z",
+  "ticketKey": "gh-2288",
+  "headSha": "67b0f09f5f5bffca105352eddc838b6ac2d97812",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:22523578d58188d5",
+      "size": 55212
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:f1249a03b58b2259",
+      "size": 54504
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:ec35958b6495982a",
+      "size": 306
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:58c910272a600173",
+      "size": 12300
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:8d9f1556436f3bf7",
+      "size": 6235
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:d56bc8cdf13e5fa2",
+      "size": 3017
+    },
+    "request.md": {
+      "hash": "fnv1a64:883213f52aa07285",
+      "size": 876
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:ba47b08bc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f3f7713098a47a27",
+      "size": 941
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:883213f52aa07285",
+      "size": 876
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:eb96e748",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: tighten `additivePlus` — the guard misses unspaced/partially-spaced variants of the exact defect class AC1 exists to ban**\n\n`test/workflow_expression_arithmetic_guard_test.dart:29` anchors the never-again guard on `RegExp(r'\\s\\+\\s')`, which only matches space-delimited `+`. I probed the guard's own regex logic against the defect family: the historical spaced form (`github.run_number * 10 + …`) is caught, but the same parse-422 defect written without spaces — `${{ github.run_number*10+1 }}`, `${{ … *10 +1 }}`, `${{ …*10+ 1 }}` — **all slip through uncaught**, and each would 422 the workflow at dispatch again (exactly the gh-2288 failure mode this guard exists to preempt).\n\nUnlike `-`, the `+` character has no legal use outside quoted string literals in GitHub Actions expressions — there is no additive operator and no unary `+`. After `stripQuotes`, **any** `+` is invalid, so the regex can be tightened with zero false-positive risk:\n\n```dart\nfinal additivePlus = RegExp(r'\\+');\n```\n\nMy probe of the legal-expression surface (`!negation`, `&&`/`||`, quoted `format('0.0.0+1')`, negative literals `== -1`, `>=` comparisons, `fromJSON(…)[1]` indexing, `{{ env.X }}-v1` suffix concatenation) confirms none of them trip the tightened form — quoted literals are already stripped by `stripQuotes` before matching. The `additiveMinus` regex at line 34 needs to keep its lookbehind/lookahead shape (unary minus in negative number literals is legal — `== -1` must stay unflagged), but the same probe shows it also misses binary `github.run_number-1`; worth a comment or a follow-up there if the spaced assumption is documented as deliberate.\n\nNot blocking: the guard catches the canonical spaced form (the style used by every operator in every workflow in this repo), and the daily pipeline remains the detector of last resort — this is a one-line strengthening of a guard introduced in this same PR."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:6888227a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread PRRT_kwDOTXdlLc640WdB — tighten `additivePlus` (unspaced `+` variants)\n\n**Fixed** in the rework commit on `ai/gh-2288` — `test/workflow_expression_arithmetic_guard_test.dart`.\n\n## What changed\n\n- `additivePlus` tightened from `RegExp(r'\\s\\+\\s')` to **`RegExp(r'\\+')`** — exactly the proposed one-liner. Quoted literals are already stripped by `stripQuotes` before matching, and `+` has no legal unquoted use in a GitHub expression (no additive operator, no unary `+`), so spacing never mattered and now the guard no longer assumes it does.\n- `additiveMinus` keeps its spaced lookbehind/lookahead shape, and the doc comment now **documents that as deliberate** with the concrete reason: `-` has legal unspaced uses — negative literals (`== -1`) and hyphenated identifiers (`inputs.max-attempts`, ~100 dispatch inputs across this repo's workflows). A spacing-agnostic minus regex would false-positive on those; the unspaced binary form (`github.run_number-1`) stays detector-of-last-resort territory (daily leg).\n\n## TDD evidence\n\n- **RED**: new `AC1b` test flags the exact probe family (`${{ github.run_number*10+1 }}`, `${{ … *10 +1 }}`, `${{ …*10+ 1 }}`, plus an unspaced-after-paren variant) — failed against the old `\\s\\+\\s` regex, reporting `\"${{ github.run_number*10+1 }}\" … spacing must not matter`.\n- **GREEN**: all 4 tests in the guard file pass after the tightening; paired `build_macos_asc_collision_guard_test.dart` still green (8/8 total).\n- **Zero false positives**: `AC1c` pins the legal surface unflagged — `inputs.max-attempts`, `== -1`, `!x && y || z`, quoted `format('0.0.0+1')` (stripped), `{{ env.X }}-v1` suffix concatenation. Repo-wide pre-check: 0 of 1108 extracted `${{ }}` expressions contain any `+` at all.\n- **Mutation check (end-to-end)**: appending `probe-env: ${{ github.run_number*10+1 }}` to `.github/workflows/build-macos.yml` makes `AC1` fail naming exactly that file/expression; reverted byte-clean afterwards.\n- `dart format` clean, `dart analyze` clean on the file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:9cdc27af",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Correct, minimal root-cause fix for the dispatch 422 that killed the daily `cli` leg — the gh-2246 BUILD_NUMBER arithmetic moves from the unparseable `${{ }}` expression into the step's bash block byte-for-byte in semantics (verified: sole consumer `--build-number=$BUILD_NUMBER` at build-macos.yml:763 sits in the same run block), with the collision guard reshaped and a new repo-wide arithmetic guard (6/6 tests pass, `dart analyze` clean, zero additive-expression violations across all 33 workflows).\n\n**Key Issues**:\n- 💡 1 suggestion thread: the new guard's `\\s\\+\\s` regex misses unspaced/partially-spaced `+`/`-` variants of the same defect class; `\\+` is a provably zero-false-positive tightening (no legal `+` exists outside quoted literals in GHA expressions).\n- 🪶 Digest: test/workflow_expression_arithmetic_guard_test.dart:77 — AC2 duplicates the reshaped AC1 asserts of build_macos_asc_collision_guard_test.dart (deliberate double-pin, self-detecting drift; a future reshape must touch both files).\n\n**Next Steps**:\n1. (Optional, non-blocking) Tighten `additivePlus` to `RegExp(r'\\+')` in the guard — one line, cannot false-positive.\n2. Merge — the dispatch blocker is gone and the gh-2246 per-arch/per-attempt ASC contract is preserved exactly; the known attempt ≥ 6 collision window remains deliberately out of scope as documented in the PR description."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:ec04867c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 1b4682b4f848065366d804e86a0eb451e0ff064c — stale base at 2026-11-18T07:49:43.193Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
