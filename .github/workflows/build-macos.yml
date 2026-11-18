@@ -654,7 +654,15 @@ jobs:
           # run_attempt*2 + archIndex stays monotonic: the next dispatch
           # (+10) always exceeds every attempt/arch combo of the previous
           # run, so a re-upload is always legal.
-          BUILD_NUMBER: ${{ github.run_number * 10 + github.run_attempt * 2 + (matrix.arch == 'arm64' && 1 || 0) }}
+          # gh-2288: GitHub expression syntax has NO additive '+' — the
+          # inline sum made the whole file unparseable (dispatch API 422
+          # "Unexpected symbol: '+'", daily cli leg dead, run
+          # 44243345944). The raw operands travel as plain env scalars;
+          # the run block computes the sum in bash, which has additive
+          # arithmetic. Pinned by test/workflow_expression_arithmetic_
+          # guard_test.dart (AC2) + build_macos_asc_collision_guard_test.
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           BUILD_VERSION: ${{ needs.version.outputs.version }}
           # gh-1865: CODE_SIGN_IDENTITY as a SHA-1 fingerprint (read from
           # THIS job's own keychain right after import) instead of the
@@ -667,7 +675,13 @@ jobs:
           PROFILE_TEAM: ${{ steps.signing.outputs.profile_team }}
         run: |
           ARCH="${{ matrix.arch }}"
-          echo "Building for architecture: $ARCH"
+          # gh-2246 BUILD_NUMBER, computed HERE because GitHub expressions
+          # have no additive '+' (gh-2288): run_number*10 + run_attempt*2
+          # + archIndex stays monotonic — the next dispatch (+10) always
+          # exceeds every attempt/arch combo of the previous run.
+          if [ "$ARCH" = "arm64" ]; then ARCH_INDEX=1; else ARCH_INDEX=0; fi
+          BUILD_NUMBER=$(( RUN_NUMBER * 10 + RUN_ATTEMPT * 2 + ARCH_INDEX ))
+          echo "Building for architecture: $ARCH (BUILD_NUMBER=$BUILD_NUMBER)"
           cd flutter_app
           if [ -n "${CERT_SHA1:-}" ]; then
             export FA_CODE_SIGN_IDENTITY="$CERT_SHA1"
