@@ -112,11 +112,13 @@ final class TtsrController {
     TtsrSessionSink? sink,
     void Function(List<TtsrRule> rules)? onTriggered,
     void Function(String message)? onWarning,
+    void Function(int messageCount)? onRewindApplied,
   }) : _agent = agent,
        _manager = manager,
        _sink = sink,
        _onTriggered = onTriggered,
-       _onWarning = onWarning {
+       _onWarning = onWarning,
+       _onRewindApplied = onRewindApplied {
     _unsubscribe = _agent.subscribe(_onAgentEvent);
   }
 
@@ -125,6 +127,12 @@ final class TtsrController {
   final TtsrSessionSink? _sink;
   final void Function(List<TtsrRule> rules)? _onTriggered;
   final void Function(String message)? _onWarning;
+
+  /// Fires after a discard prune removed a counted message, with the new
+  /// in-memory message count, so the host can realign its persistence
+  /// cursor (gh-2261: the checkpoint controller's `onRewindApplied` hook,
+  /// missing on the TSR prune path).
+  final void Function(int messageCount)? _onRewindApplied;
 
   final _pendingInjections = <TtsrRule>[];
   var _abortPending = false;
@@ -359,6 +367,16 @@ final class TtsrController {
         messages.last is AssistantMessage &&
         _isFailedGeneration(messages.last as AssistantMessage)) {
       _agent.state.messages = messages.sublist(0, messages.length - 1);
+      // gh-2261: backend agent mode persisted the aborted partial (issue
+      // #155), so the host cursor counted it — dropping the message must
+      // realign the cursor (the checkpoint onRewindApplied hook) or it runs
+      // ahead of state.messages and the retry chain's messages silently
+      // skip persistence. The frontend default never persisted the partial,
+      // so the count already matches and the hook stays silent there.
+      final count = _sink?.persistedMessageCount() ?? 0;
+      if (count > _agent.state.messages.length) {
+        _onRewindApplied?.call(_agent.state.messages.length);
+      }
       return _agent.state.messages;
     }
     return messages;

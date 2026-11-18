@@ -221,6 +221,26 @@ class _TestHost {
     }
     persistedCount = messages.length;
   }
+
+  /// Mirrors the CLI's live `_persistIncremental` persistence. [persistAborted]
+  /// models backend agent mode (issue #155): aborted partials persist so a
+  /// cancel leaves a resumable transcript; the frontend default skips them.
+  void attachLivePersist(Agent agent, {bool persistAborted = false}) {
+    agent.subscribe((event, cancelToken) async {
+      if (event is! MessageEndEvent) return;
+      final message = event.message;
+      if (message is AssistantMessage &&
+          message.stopReason == StopReason.aborted &&
+          !persistAborted) {
+        return;
+      }
+      final session = this.session;
+      if (session == null) return;
+      if (persistedCount >= agent.state.messages.length) return;
+      await session.appendMessage(message);
+      persistedCount++;
+    });
+  }
 }
 
 TtsrRule _rule(String name, String pattern, {TtsrScope? scope}) {
@@ -753,6 +773,128 @@ void main() {
         (agent.state.messages[1] as UserMessage).content as String,
         contains('<system-interrupt'),
       );
+    });
+
+    test('backend mode: pruning a persisted partial resyncs the cursor so the '
+        'retry chain persists', () async {
+      final host = _TestHost(await newSession());
+      final fake = _FakeStreamFunction([
+        _textTurnChunks(['I will use con', 'sole.log(']),
+        _textTurn('Switched to the logger.'),
+      ]);
+      final agent = _agent(fake);
+      // Backend agent mode (issue #155): the aborted partial persists
+      // live, so the cursor counts the message the discard prune drops.
+      host.attachLivePersist(agent, persistAborted: true);
+      final manager = TtsrManager(settings: _settings())
+        ..addRule(_rule('no-console', r'console\.log\('));
+      final rewinds = <int>[];
+      final controller = TtsrController(
+        agent: agent,
+        manager: manager,
+        sink: host.sink,
+        onRewindApplied: (messageCount) {
+          rewinds.add(messageCount);
+          host.persistedCount = messageCount;
+        },
+      );
+
+      await agent.prompt('add logging');
+      await controller.settled;
+
+      // The prune dropped the persisted partial (prompt + partial were
+      // counted): the cursor realigned to the pruned transcript.
+      expect(rewinds, [1]);
+      expect(host.persistedCount, agent.state.messages.length);
+      // The retried assistant message reached the session file — before
+      // the fix the stale cursor silently skipped it. The aborted partial
+      // itself stays (backend mode persists resumable partials).
+      final rebuilt = await host.session!.buildContextMessages();
+      final assistants = rebuilt.whereType<AssistantMessage>().toList();
+      expect(assistants, hasLength(2));
+      expect(assistants[0].stopReason, StopReason.aborted);
+      expect(assistants[1].stopReason, StopReason.stop);
+      expect(
+        (assistants[1].content.single as TextContent).text,
+        'Switched to the logger.',
+      );
+    });
+
+    test(
+      'frontend mode: the un-persisted partial prunes with no cursor resync',
+      () async {
+        final host = _TestHost(await newSession());
+        final fake = _FakeStreamFunction([
+          _textTurnChunks(['using con', 'sole.log(']),
+          _textTurn('fixed'),
+        ]);
+        final agent = _agent(fake);
+        // Frontend default: aborted partials never persist, so the cursor
+        // never counts the message the prune drops — the resync hook must
+        // stay silent and the semantics unchanged.
+        host.attachLivePersist(agent, persistAborted: false);
+        final manager = TtsrManager(settings: _settings())
+          ..addRule(_rule('no-console', r'console\.log\('));
+        final rewinds = <int>[];
+        final controller = TtsrController(
+          agent: agent,
+          manager: manager,
+          sink: host.sink,
+          onRewindApplied: (messageCount) {
+            rewinds.add(messageCount);
+            host.persistedCount = messageCount;
+          },
+        );
+
+        await agent.prompt('go');
+        await controller.settled;
+        await host.flush(agent);
+
+        expect(rewinds, isEmpty);
+        expect(host.persistedCount, agent.state.messages.length);
+        final rebuilt = await host.session!.buildContextMessages();
+        final assistants = rebuilt.whereType<AssistantMessage>().toList();
+        expect(assistants, hasLength(1));
+        expect(assistants.single.stopReason, StopReason.stop);
+        expect((assistants.single.content.single as TextContent).text, 'fixed');
+      },
+    );
+
+    test('keep mode persists the full chain and never resyncs', () async {
+      final host = _TestHost(await newSession());
+      final fake = _FakeStreamFunction([
+        _textTurnChunks(['bad con', 'sole.log(']),
+        _textTurn('fixed'),
+      ]);
+      final agent = _agent(fake);
+      host.attachLivePersist(agent, persistAborted: true);
+      final manager = TtsrManager(
+        settings: _settings(contextMode: TtsrContextMode.keep),
+      )..addRule(_rule('no-console', r'console\.log\('));
+      final rewinds = <int>[];
+      final controller = TtsrController(
+        agent: agent,
+        manager: manager,
+        sink: host.sink,
+        onRewindApplied: (messageCount) {
+          rewinds.add(messageCount);
+          host.persistedCount = messageCount;
+        },
+      );
+
+      await agent.prompt('go');
+      await controller.settled;
+      await host.flush(agent);
+
+      // Keep mode prunes nothing: no resync hook ever fires.
+      expect(rewinds, isEmpty);
+      expect(host.persistedCount, agent.state.messages.length);
+      final rebuilt = await host.session!.buildContextMessages();
+      final assistants = rebuilt.whereType<AssistantMessage>().toList();
+      expect(assistants, hasLength(2));
+      expect(assistants[0].stopReason, StopReason.aborted);
+      expect(assistants[1].stopReason, StopReason.stop);
+      expect((assistants[1].content.single as TextContent).text, 'fixed');
     });
   });
 }
