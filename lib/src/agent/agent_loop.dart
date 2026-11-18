@@ -657,8 +657,10 @@ final class AgentLoopConfig {
   final Map<String, int>? imageCapLatches;
 
   /// gh-1934: session-scoped 413 image-payload recovery state (learned
-  /// budget, strip-all latch, evicted-key latch, armed note; full contract
-  /// in `image_recovery.dart`). Hosts own it (as [imageCapLatches]).
+  /// budget, strip-all latch, evicted-key latch — keyed per
+  /// (provider, model) since issue #2269, the same latch key as
+  /// [imageCapLatches]; full contract in `image_recovery.dart`). Hosts
+  /// own it (as [imageCapLatches]).
   final ImagePayloadRecoveryState? imageRecovery;
 
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
@@ -1752,6 +1754,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // surface inside the same report.
   final rewritten = rewriteRequestImages(
     requestContext.messages,
+    provider: config.model.provider,
     modelId: config.model.id,
     catalogMaxImages: config.model.maxImages,
     capOverride: imageCapOverride,
