@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-18T10:26:41.181Z",
+  "ticketKey": "pr-2289",
+  "headSha": "ae58bb6c6e282b87af1e4b69c3b17c27d0fe5a07",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:1fe8a3a2362a9690",
+      "size": 77255
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:e05fab6c3fa05050",
+      "size": 661545
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:4491952110154f0f",
+      "size": 521
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:141ee4a5e217ac7f",
+      "size": 11617
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:8f43e3e24877400e",
+      "size": 7544
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:7120efe556729f0f",
+      "size": 4825
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:5da5de955d5f9d54",
+      "size": 2974
+    },
+    "request.md": {
+      "hash": "fnv1a64:19735e60d021e6cb",
+      "size": 2638
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:7d6d08515adc3f48",
+      "size": 599
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:94eb3fcdc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:2e320085cdc71149",
+      "size": 2714
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:19735e60d021e6cb",
+      "size": 2638
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The fix correctly diagnoses gh-2287: machine-account drafts (`ai-gh-*`/`ai-pr-*`, User-typed, marker-less) bucketed as human and kept forever, so the sweep issue never auto-closed. The exact-login jq rule, the machine-account prose override (gh-2105 class), the `--assignee \"$assignee\"` dedup, and the explicit `DAILY_PUBLISH_ASSIGNEE` export are all consistent with the existing `daily_publish_report.sh` convention (`scripts/daily_publish_report.sh:25`).\n\n**Key Issues**: None. Verified locally: new AC2 test GREEN; full `test/release_hygiene_test.dart` 69/69 passed; `bash -n` + `shellcheck` clean; workflow YAML valid; branch diff matches the PR (+179/−6, 3 files). E1 is regression-tested — human drafts kept, fresh drafts untouched, look-alike login (`ai-teammate-bot`) NOT matched; the machine-account assumption is documented and confirmed against `ai-teammate.yml`.\n\n**Next Steps**:\n1. None required — merge as is."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 859fadb8c0bce9741b75f3652f744d94b21c0af4 — stale base at 2026-11-18T06:45:50.522Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "thread-3",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 19405a4e53f68d3f32edb444986a4f2117b5e165 — stale base at 2026-11-18T08:12:59.487Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "thread-4",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Rework lap — audit-resolve (no change required)\n\nThank you for the review. This thread raises **no findings** (\"Key Issues: None — merge as is\"), so the rework lap re-verified every claim of the review against the current head (`ae58bb6c6e282b87af1e4b69c3b17c27d0fe5a07`, the fix commit `10d80d2f90` on `ai/gh-2287`) and confirms the APPROVE stands:\n\n- **Diff parity** — `git diff origin/main...HEAD --stat` = exactly the 3 PR files (`.github/workflows/daily-publish.yml` +5, `scripts/sweep_stale_drafts.sh` +33/−6, `test/release_hygiene_test.dart` +147), +179/−6 total — matches the review's stated delta.\n- **Tests** — full `dart test test/release_hygiene_test.dart` re-run on HEAD: **69/69 passed** (exit 0), including the new AC2 test `gh-2287: stale drafts authored by the machine account (ai-teammate, plain User login) are swept, not kept as human` (`test/release_hygiene_test.dart:1452` — multi-item: `ai-gh-*`/`ai-pr-*` swept, human draft kept (E1), fresh machine draft untouched, look-alike `ai-teammate-bot` not matched).\n- **Script hygiene** — `bash -n scripts/sweep_stale_drafts.sh` and `shellcheck -x` both clean.\n- **Workflow** — `.github/workflows/daily-publish.yml` parses as valid YAML; the `DAILY_PUBLISH_ASSIGNEE: ai-teammate` export is present in the `sweep-drafts` job (`:674`).\n- **CI status** — the only red on this commit, `Core tests (shard 1/4)`, is a runner-infra flake unrelated to this PR: `test/browser/llm_relay_test.dart` failed at **load time** (`Connection closed before full header was received … /ws`) — the same flake class already quarantined twice (`test/cli/jsr_cli_test.dart` → #2227, `test/integration/agents_render_gate_test.dart` → #2277, both `scripts/test_quarantine.json` `since 2026-11-18`). The file is **not touched by this PR's diff**, its sibling `bridge_protocol_test.dart` ran green in the same shard, and the file passes locally on this exact SHA (7/7, exit 0). Owned violations: 0 (`ci_violations.json`) — nothing to chase here.\n\nNo code change was needed for this lap; the audit line above is the resolution evidence."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:9534b979",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The fix correctly diagnoses gh-2287: machine-account drafts (`ai-gh-*`/`ai-pr-*`, User-typed, marker-less) bucketed as human and kept forever, so the sweep issue never auto-closed. The exact-login jq rule, the machine-account prose override (gh-2105 class), the `--assignee \"$assignee\"` dedup, and the explicit `DAILY_PUBLISH_ASSIGNEE` export are all consistent with the existing `daily_publish_report.sh` convention (`scripts/daily_publish_report.sh:25`).\n\n**Key Issues**: None. Verified locally: new AC2 test GREEN; full `test/release_hygiene_test.dart` 69/69 passed; `bash -n` + `shellcheck` clean; workflow YAML valid; branch diff matches the PR (+179/−6, 3 files). E1 is regression-tested — human drafts kept, fresh drafts untouched, look-alike login (`ai-teammate-bot`) NOT matched; the machine-account assumption is documented and confirmed against `ai-teammate.yml`.\n\n**Next Steps**:\n1. None required — merge as is."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:26fd5ec3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 859fadb8c0bce9741b75f3652f744d94b21c0af4 — stale base at 2026-11-18T06:45:50.522Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:5b723fed",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 19405a4e53f68d3f32edb444986a4f2117b5e165 — stale base at 2026-11-18T08:12:59.487Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:98838150",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Rework lap — audit-resolve (no change required)\n\nThank you for the review. This thread raises **no findings** (\"Key Issues: None — merge as is\"), so the rework lap re-verified every claim of the review against the current head (`ae58bb6c6e282b87af1e4b69c3b17c27d0fe5a07`, the fix commit `10d80d2f90` on `ai/gh-2287`) and confirms the APPROVE stands:\n\n- **Diff parity** — `git diff origin/main...HEAD --stat` = exactly the 3 PR files (`.github/workflows/daily-publish.yml` +5, `scripts/sweep_stale_drafts.sh` +33/−6, `test/release_hygiene_test.dart` +147), +179/−6 total — matches the review's stated delta.\n- **Tests** — full `dart test test/release_hygiene_test.dart` re-run on HEAD: **69/69 passed** (exit 0), including the new AC2 test `gh-2287: stale drafts authored by the machine account (ai-teammate, plain User login) are swept, not kept as human` (`test/release_hygiene_test.dart:1452` — multi-item: `ai-gh-*`/`ai-pr-*` swept, human draft kept (E1), fresh machine draft untouched, look-alike `ai-teammate-bot` not matched).\n- **Script hygiene** — `bash -n scripts/sweep_stale_drafts.sh` and `shellcheck -x` both clean.\n- **Workflow** — `.github/workflows/daily-publish.yml` parses as valid YAML; the `DAILY_PUBLISH_ASSIGNEE: ai-teammate` export is present in the `sweep-drafts` job (`:674`).\n- **CI status** — the only red on this commit, `Core tests (shard 1/4)`, is a runner-infra flake unrelated to this PR: `test/browser/llm_relay_test.dart` failed at **load time** (`Connection closed before full header was received … /ws`) — the same flake class already quarantined twice (`test/cli/jsr_cli_test.dart` → #2227, `test/integration/agents_render_gate_test.dart` → #2277, both `scripts/test_quarantine.json` `since 2026-11-18`). The file is **not touched by this PR's diff**, its sibling `bridge_protocol_test.dart` ran green in the same shard, and the file passes locally on this exact SHA (7/7, exit 0). Owned violations: 0 (`ci_violations.json`) — nothing to chase here.\n\nNo code change was needed for this lap; the audit line above is the resolution evidence."
+    }
+  ]
+}
