@@ -308,7 +308,10 @@ void main() {
 
       final queued = cli.stallBannerLineForTest(queued: 2, hasImages: false);
       expect(queued, startsWith('⚠ agent stalled'));
-      expect(queued, contains('2 steering messages saved to the session'));
+      // Issue #2249 AC1: at accept time the append has not resolved, so
+      // the banner names the delivery truth — never a persistence claim.
+      expect(queued, contains('2 steering messages queued'));
+      expect(queued, isNot(contains('saved')));
       expect(queued, contains('still waiting on the provider'));
       expect(
         queued,
@@ -317,8 +320,8 @@ void main() {
       expect(queued, isNot(contains('/compact')));
     });
 
-    test('with images the banner keeps the historical levers byte-identical '
-        '(the #1786 REG-3 shape, budgetOffer=false)', () {
+    test('with images the banner keeps the levers and budget note '
+        'byte-identical (the #1786 REG-3 shape, budgetOffer=false)', () {
       const windowNote = '';
       final plain = cli.stallBannerLineForTest(hasImages: true);
       expect(
@@ -335,7 +338,7 @@ void main() {
       expect(
         queued,
         '⚠ agent stalled — no response for 1m. '
-        '1 steering message saved to the session: /compact (drops image '
+        '1 steering message queued: /compact (drops image '
         'data) or a lower images.maxBytesPerRequest may unstick it; '
         '/restart delivers it into a fresh run, esc aborts; press b to '
         'background the running call & deliver steering now',
