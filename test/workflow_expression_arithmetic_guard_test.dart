@@ -24,13 +24,24 @@ import 'package:yaml/yaml.dart';
 
 const workflowsDir = '.github/workflows';
 
-/// Any space-delimited `+` — never valid in a GitHub expression outside
-/// a quoted string literal.
-final additivePlus = RegExp(r'\s\+\s');
+/// ANY `+` — there is no legal use outside a quoted string literal:
+/// GitHub expressions have no additive `+` operator and no unary `+`
+/// (gh-2288; PR #2293 review). Quoted literals are stripped by
+/// [stripQuotes] before matching, so spacing never matters.
+final additivePlus = RegExp(r'\+');
 
 /// Space-delimited binary `-` between operand-ish tokens (version
 /// strings inside quotes are stripped first; this is the subtraction
 /// form the same parser defect class would produce).
+///
+/// Deliberately SPACED-only: unlike `+`, `-` has legal unspaced uses —
+/// negative number literals (`== -1`) and hyphenated identifiers
+/// (`inputs.max-attempts`, ~100 dispatch inputs across this repo's
+/// workflows). A spacing-agnostic minus regex would false-positive on
+/// those and report legal workflows as violations. The unspaced binary
+/// form (`github.run_number-1`) would 422 at dispatch but cannot be
+/// flagged without colliding with those legal forms — the daily leg
+/// stays the detector of last resort for that shape (PR #2293 review).
 final additiveMinus = RegExp(r'(?<=[0-9A-Za-z_)\]])\s-\s(?=[0-9A-Za-z_(])');
 
 /// Strips single- and double-quoted substrings — the only legal home
@@ -72,6 +83,55 @@ void main() {
           '(HTTP 422 "Unexpected symbol", gh-2288). Compute sums in a '
           'bash run block and pass the raw operands as env scalars.',
     );
+  });
+
+  test('AC1b: guard catches unspaced/partially-spaced + variants (422 too)', () {
+    // gh-2288's defect family is spacing-agnostic: the server-side
+    // parser rejects every one of these exactly like the historical
+    // spaced form (PR #2293 review probe). The guard must not depend
+    // on operator spacing.
+    const defectVariants = <String>[
+      r'${{ github.run_number*10+1 }}', // fully unspaced
+      r'${{ github.run_number *10 +1 }}', // right-spaced only
+      r'${{ github.run_number*10+ 1 }}', // left-spaced only
+      r'${{ (matrix.arch == 1 || 0)+2 }}', // unspaced after a paren
+    ];
+    for (final variant in defectVariants) {
+      expect(
+        additivePlus.hasMatch(stripQuotes(variant)),
+        isTrue,
+        reason:
+            'guard must flag the dispatch-422 defect "$variant" — '
+            'any unquoted + is invalid, spacing must not matter',
+      );
+    }
+  });
+
+  test('AC1c: legal +/− uses stay unflagged (no false positives)', () {
+    // Negative pins for the tightened additivePlus and the deliberately
+    // spaced additiveMinus: `+` has no legal unquoted use, but `-`
+    // appears legally in negative literals, hyphenated identifiers
+    // (inputs.max-attempts et al.) and suffix concatenation.
+    const legalForms = <String>[
+      r'${{ inputs.max-attempts }}',
+      r'${{ github.event.number == -1 }}',
+      r'${{ !inputs.x && env.Y || env.Z }}',
+      r"${{ format('0.0.0+1') }}", // + lives inside quotes — stripped
+      r'${{ env.X }}-v1', // suffix concatenation: - follows a brace
+    ];
+    for (final form in legalForms) {
+      final bare = stripQuotes(form);
+      expect(
+        additivePlus.hasMatch(bare),
+        isFalse,
+        reason: '"$form" is legal — additivePlus must not flag it',
+      );
+      expect(
+        additiveMinus.hasMatch(bare),
+        isFalse,
+        reason: '"$form" is legal — additiveMinus must not flag it',
+      );
+    }
   });
 
   test('AC2: build-macos BUILD_NUMBER sum lives in bash, operands as env', () {
