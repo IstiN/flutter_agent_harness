@@ -708,6 +708,17 @@ final class AutoCompactor {
     );
   }
 
+  /// The empty-foldable-region refusal: `CompactionErrorCode.invalidSession`
+  /// is today thrown only by compactSession's guard when the branch has
+  /// NOTHING to summarize above the keep-recent cut. It is the no-work
+  /// terminal, not a summarizer failure — reading it as one routed the pass
+  /// to the local-trim valve, which dropped the unsuppressible newest tail
+  /// (gh-2246-era data-loss shape; see the failing-first test in
+  /// test/agent/auto_compactor_test.dart).
+  bool _isEmptyFoldableRegionRefusal(Object error) =>
+      error is CompactionException &&
+      error.code == CompactionErrorCode.invalidSession;
+
   /// Runs one pass with up to [maxAttempts] retries on transient errors.
   /// Returns the outcome plus, on success, the compaction record's summary
   /// and the hidden/summarized counts (computed from the branch up to
@@ -817,8 +828,7 @@ final class AutoCompactor {
         // newest tail (a trim receipt over content no pass may fold) and
         // cost the host ladder its honest exhaustion verdict. It is the
         // no-work terminal, identical to a null preparation.
-        if (error is CompactionException &&
-            error.code == CompactionErrorCode.invalidSession) {
+        if (_isEmptyFoldableRegionRefusal(error)) {
           return _AttemptOutcome(
             ok: true,
             error: null,
