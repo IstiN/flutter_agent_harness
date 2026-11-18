@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-17T13:02:56.727Z",
+  "ticketKey": "pr-2228",
+  "headSha": "f2942f46612754809df0779b199090257e318d31",
+  "baseBranch": "main",
+  "reviewDecision": "CHANGES_REQUESTED",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:811e69fc1cf436b3",
+      "size": 159640
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:7f531a5e8a2d6481",
+      "size": 3059135
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:6d9e74bc6c231f0f",
+      "size": 1129
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:887cfda73fcceef9",
+      "size": 556
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:9ae703de4ae7f12c",
+      "size": 12977
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:2c409798c0aac9f8",
+      "size": 768
+    },
+    "request.md": {
+      "hash": "fnv1a64:9d494719f12e3229",
+      "size": 412
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:a3ef3c6efabce2d5",
+      "size": 743
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:7607c0a4c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:cac0d412a8bb240a",
+      "size": 466
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:9d494719f12e3229",
+      "size": 412
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:768c99ad",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: The quarantine shields only the PTY/integration legs — the deterministic gate still compiles-and-loads this file on every PR, and the flake watcher is blind to that leg.**\n\nThe entry's skip applies where `apply_quarantine.py` filters target selection (`ci.yml:1400` PTY shards; `ci.yml:1101` integration-mock). But `test/cli/jsr_cli_test.dart` also runs on every core/shared PR via the **hardcoded** unit-lcov trio:\n\n- `ci.yml:1002-1005` — `dart test --tags integration --coverage=coverage test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart`\n- `scripts/ci_fast_gate.sh:243-246` — same invocation in `stage_test_core` (0 references to `apply_quarantine` in that script)\n\nThe trio is deliberately unfiltered (it feeds the unit-lcov consumers per the gh-1033 comment), so this is per the documented quarantine contract (\"integration legs\" only) — but note the operational consequence: the flake here is a **file-load failure** (`loading test/cli/jsr_cli_test.dart`), and `flake_watch.py` scans only `junit-integration-shard-*` artifacts. If the load flake reproduces in the unit trio, the gate stays red while the watcher can neither see it nor accumulate the AC4 repeat-run proof for un-quarantine.\n\nSuggestion: record this residual exposure in tracker issue #2227 (\"flake evidence class: PTY shards only; trio leg unshielded by design for unit lcov\"), so the fix PR targets the load path and a trio red is triaged as this flake rather than a new regression. (The trio passed 45/45 locally at this head, so no evidence it currently fires there — hence suggestion, not blocking.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:cf673c3e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Reply — 🚨 BLOCKING thread (`scripts/test_quarantine.json:133`)\n\n**Verdict: invalid finding on the current tree — the required `PTY gates` leg is green WITH this quarantine entry, with 0.80pp of measured headroom. No code change needed. Your own falsification criterion is met by counter-evidence.**\n\n## Your wiring citations are correct (and not in dispute)\n\n- `scripts/test_integration_shards.json:63` lists `test/cli/jsr_cli_test.dart` → the entry drops it from the `pty-integration-linux` shards (`ci.yml:1400`).\n- `pty-coverage-gate` merges **only** `pty-coverage-shards/*/lcov.info` (`ci.yml:1575`) and `check_cli_coverage.py` is quarantine-blind, only-up vs `scripts/cli_coverage_baseline.txt` = `18.42` (verified: no tolerance, `pct + 1e-9 < baseline` → exit 1).\n- The static 45-hit loss on `lib/src/cli/jsr_cli.dart` is plausible as a delta.\n\n## Where the finding breaks: the headroom model\n\nThe \"~0.05pp headroom\" premise is the `check_cli_coverage.py` **docstring note about local x64 runs without `FA_PTY_BUDGET_SCALE=2`** (\"the same tree measures ~18.37% — below the committed floor\"). That is explicitly the *local, unscaled* environment — the docstring itself says the baseline is the CI leg's measurement **with** the scale. The leg's actual numbers, with this quarantine entry in the tree:\n\n| run | head | tree content | `pty-coverage-gate` | measured (job log) |\n|---|---|---|---|---|\n| `44029302888` | `5549cc88` | identical to this PR's diff | **success** | `CLI surface coverage (lib/src/cli/**): 19.22%` vs baseline 18.42% → OK |\n| `44013020032` | `f70b3fb0` | content-identical re-create | **success** | 19.22% |\n| `44019654201` | `044f70e3` | content-identical re-create | **success** | 19.56% |\n\nThe first row is decisive: run [`44029302888`](https://github.com/IstiN/flutter_agent_harness/actions/runs/44029302888) at the current head, PTY-gates job `133858591479`, ratchet step at `2026-11-17T06:14:56Z`:\n\n```\nCLI surface coverage (lib/src/cli/**): 19.22%\nBaseline: 18.42% (ratchet: only up)\nOK\n```\n\n**Measured margin = 0.80pp — ~4× your worst-case modeled loss (0.19pp) and ~16× the claimed ~0.05pp headroom.** The four weeks of main development since gh-1697 (2026-10-20) raised the leg's measured value well above the never-down baseline. Your stated falsification test — \"the leg's current measurement sitting ≥ ~0.2pp above 18.42\" — is satisfied at 0.80pp. \"Goes red on every PR until the fix lands\" is contradicted by three independent full-CI runs, including one at this exact head.\n\n## Why no code change follows\n\n- Fix option 1 (merge the unit trio's lcov into `pty-coverage-gate`) would expand this quarantine PR into `ci.yml` wiring to solve a leg that is measurably green — a baseline-erosion backstop, not a fix for an actual red.\n- Fix option 3 (land the load-flake fix) is the real fix and stays tracked in #2227; the quarantine is what keeps the merge-blockable gate green until it lands (the PR description's stated contract).\n- Option 2 (compensation tests) would add pass-through coverage for a gate that currently passes with margin.\n\nIf future main-side churn erodes the 0.80pp margin to the point where a quarantined file's hits matter, the designed levers are exactly the ones you list — the weekly `coverage-gardener.yml` re-measure (only-up) and a reviewed compensation PR. That is a hypothetical about a different tree, not this PR's state."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:e778bc2a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Reply — 💡 SUGGESTION thread (`scripts/test_quarantine.json:134`)\n\n**Picked up — the requested tracker note is posted: [#2227 (comment)](https://github.com/IstiN/flutter_agent_harness/issues/2227#issuecomment-6942940645).**\n\nWhat the comment records in #2227, matching your suggestion:\n\n- **Evidence class: PTY shards only.** The quarantine shields exactly where `apply_quarantine.py` filters selection (`ci.yml` `pty-integration-linux` shards, `ci.yml` `integration-mock`).\n- **Unshielded by design:** the hardcoded unit-lcov trio — test-core shard 0 in `ci.yml` (`dart test --tags integration --coverage=coverage test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart`) and `scripts/ci_fast_gate.sh` `stage_test_core` (0 `apply_quarantine` references) — still compiles-and-loads the file on every core/shared PR, per the gh-1033 contract that it feeds the unit lcov.\n- **Watcher blind spot:** `flake_watch.py` scans only `junit-integration-shard-*` artifacts, so a trio-red can neither be seen nor accumulate the AC4 repeat-run proof for un-quarantine.\n- **Triage rule:** a red `test/cli/jsr_cli_test.dart` in the trio / ci_fast_gate is triaged as *this* flake (issue #2227), not a new regression; the fix PR targets the file-load path. Trio at quarantine time: 45/45 green locally, matching your observation — so the note documents residual exposure without claiming an active trio flake.\n\nNo code change accompanies this thread (the trio is deliberately unfiltered per the documented quarantine contract; recording the exposure in the tracker was the suggested remedy and is done). No closing keywords were used — issue #2227 lifecycle is managed by the workflow, not this comment."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:8f2c8a0e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: This quarantine strips 45 unique `lib/src/cli` coverage hits from the PTY shards that exclusively feed the only-up CLI coverage ratchet — the required \"PTY gates\" leg goes red on every PR until the fix lands.**\n\n**Wiring (verified in this diff's own repo):**\n\n- `ci.yml:1400` — the `pty-integration-linux` shards select targets via `shard_files.py … | apply_quarantine.py`, and `scripts/test_integration_shards.json:63` lists `test/cli/jsr_cli_test.dart`, so this entry drops the file from those shards. That part works as intended.\n- `ci.yml:1570-1578` — the \"PTY gates (coverage ratchet + duration budget)\" job (a required `quality-gate` input: \"red blocks the merge via the quality-gate platform class\") builds `coverage/lcov.merged.info` from **`pty-coverage-shards/*/lcov.info` only** and runs `check_cli_coverage.py --lcov coverage/lcov.merged.info` against `scripts/cli_coverage_baseline.txt` = **18.42, ratchet only-up**. `check_cli_coverage.py` has no quarantine awareness.\n\n**Measured loss (run locally at this head):** `dart test --tags integration` over the trio (`jsr_cli_test.dart` + `cli_args_jsr_test.dart` + `agent_cli_jsr_test.dart`, 45/45 green) records **111** hit-lines on `lib/src/cli`; the duo without `jsr_cli_test.dart` records **66** — a **45-line marginal loss** concentrated in `lib/src/cli/jsr_cli.dart` (120 DA lines: 111→66). No other file in the repo imports `jsr_cli.dart`; those delegate paths (streaming, exit-code mapping, error paths) have no other coverage source.\n\n**Why it dips below the baseline:** baseline 18.42 was raised from this leg's own measurement on 2026-10-20 (gh-1697, b3092a6a17) — *with* jsr hits included (the trio entered the manifest 2026-09-30). The `check_cli_coverage.py` docstring documents the margin at that point: local x64 measures **18.37 vs baseline 18.42** (~0.05pp), and no bump has landed in the 4 weeks since, i.e. headroom ≈ 0. Removing 45 hits costs **0.11–0.19pp** on the leg's denominator (23.5k–40k DA lines) → the ratchet reads below 18.42 → red on every PR.\n\n**This exact interaction has a precedent in this repo:** when `dap_cli_e2e_test.dart` (also a manifest-listed PTY-shard file) was quarantined, #1565 (8da327d9a7, 2026-10-15) compensated with **774 lines of new CLI behavior tests** *before* ratcheting the baseline to 17.93. This PR carries no such compensation.\n\n**Fix options (any one resolves it):**\n1. Restore the hits at the ratchet input: the test-core shard-0 trio (`ci.yml:1002-1005`) is **not** quarantine-filtered and still runs `jsr_cli_test.dart` into the unit lcov — add that `coverage/lcov.info` to the `merge_lcov.py` inputs at `ci.yml:1575` (union DA merge makes the sources additive).\n2. The #1565 playbook: compensate the ~0.2pp with new `lib/src/cli` behavior tests in the same PR (the baseline never moves down, so compensation — not a baseline edit — is the lever).\n3. Land the actual `jsr_cli_test.dart` load-flake fix and drop this entry (the ratchet self-heals once the file runs again).\n\nVerification that would falsify this: the leg's current measurement sitting ≥ ~0.2pp above 18.42 before this entry (no evidence exists for that — the last baseline movement is 4 weeks old and the documented margin was 0.05pp)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-17:f1581e8f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The quarantine entry itself is well-formed (schema-valid, passes `apply_quarantine.py --check`, generator-consistent, nightly supervision verified), but quarantining `test/cli/jsr_cli_test.dart` removes its 45 unique `lib/src/cli` coverage hits from the PTY shards whose coverage exclusively feeds the only-up CLI coverage ratchet (baseline 18.42, raised *with* those hits, ~0.05pp documented headroom) — the required \"PTY gates\" leg reds on every PR until the fix lands, the same interaction #1565 previously resolved with a 774-line compensation PR.\n\n**Key Issues**:\n- 🚨 BLOCKING — `scripts/test_quarantine.json:133` — the entry strips jsr_cli_test.dart from the pty-coverage shards feeding `check_cli_coverage.py`; measured 45-hit loss (0.11–0.19pp) exceeds the documented ~0.05pp headroom → ratchet leg red (details + 3 fix options in the inline thread).\n\n**Next Steps**:\n1. Restore the ratchet input: merge the unit-side lcov (the un-quarantined test-core shard-0 trio still produces the jsr hits) into `coverage/lcov.merged.info` at `ci.yml:1575` — or apply the #1565 compensation playbook, or land the flake fix and drop the entry.\n2. Note in #2227 that the load-flake evidence class is PTY-shards-only; the hardcoded unit trio (`ci.yml:1002-1005`, `ci_fast_gate.sh:243-246`) still loads the file every PR and the flake watcher cannot see that leg."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-17:39ed63b6",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 29d3a15d43ff5d01a1ac1377d5384faacd85a66f — run 44049800511 still queued at 2026-11-17T09:50:23.949Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-17:0ae08333",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 3b6de435189f9df967700508846ee7c0e1ef977f — stale base at 2026-11-17T12:13:37.679Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
