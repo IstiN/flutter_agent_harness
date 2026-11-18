@@ -804,6 +804,20 @@ jobs:
       - name: Release dedupe self-test (gh-1625)
         run: bash scripts/release_dedupe_selftest.sh
 
+      # gh-2290: the watchdog's timeout-kill trip decision is
+      # fixture-self-tested against real jobs-API shapes — the hung
+      # v1.0.745 shard shape (conclusion `cancelled`, mid-flight step
+      # `cancelled`, trailing always()-evidence steps `skipped`), the
+      # classic failure-with-cut-step shape, real test failures in both
+      # landing shapes (failed step last AND failed step trailed by
+      # success evidence — the old last-step detector was blind to this),
+      # never-started cancels, malformed bodies failing safe, and the
+      # GITHUB_OUTPUT contract — so the release path's degraded-runner
+      # retrigger cannot rot silently before the next red tag (#1100
+      # pattern).
+      - name: Watchdog trip self-test (gh-2290)
+        run: bash scripts/watchdog_trip_selftest.sh
+
       # #1431: the size-budget gate's own red exits are fixture-tested
       # (#1100 pattern) — an engine rev-hash rename must UPDATE not NEW,
       # vendored engine churn warns instead of reddening, first-party
@@ -4019,10 +4033,24 @@ jobs:
   # Issue #194 (point 4): >2x-baseline watchdog. The timeout-minutes above
   # are ≈2x the healthy job durations observed on main (shards 3-5 min,
   # flutter-tests ~6 min + fa_ui shards ~5 min since issue #283). A timeout means this run landed on a degraded
-  # runner allocation; the remedy is a fresh EMPTY-COMMIT push — a new run
-  # gets a fresh allocation and the push cancels this stale run via the PR
-  # concurrency group. NEVER `gh run rerun`: it reallocates into the same
-  # degraded pool. One retrigger max per head commit (loop guard below).
+  # runner allocation; the remedy is a fresh allocation. NEVER `gh run
+  # rerun`: it reallocates into the same degraded pool. One retrigger max
+  # per head commit / per tag (loop guards below).
+  # gh-2290: this used to be pull_request-ONLY — but since gh-1537
+  # retired the main-push CI run, v* tag pushes are the ONLY push arm
+  # this workflow receives, i.e. the release gate had NO watchdog at all.
+  # The v1.0.745 tag run 4424840840 hung a PTY shard on the pty2
+  # blocking-waitpid wedge (`Attempt:N waiting for isolate
+  # _waitForExitCode to check in`, vendor/pty2 VENDORED class), burned
+  # its 40-minute budget and was concluded `cancelled` — the aggregate
+  # gate reddened and ci-red-report filed the ticket with nothing to
+  # self-heal it. The tag arm retriggers via a `gh workflow run ci.yml
+  # --ref <tag>` dispatch (a fresh allocation; tags cannot take an
+  # empty-commit push — moving a v* tag would re-fire the release flow —
+  # and GITHUB_TOKEN MAY trigger workflow_dispatch, 2022-09-08
+  # changelog). The dispatch arm runs the full gate on the tag's exact
+  # tree: release-pending never blocks dispatch arms (gh-1551) and
+  # release-dedupe is false for non-release events (gh-1625 AC3).
   watchdog:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
@@ -4031,15 +4059,37 @@ jobs:
     # gh-1005 retired the mac shards): the longest legs. They must be in
     # `needs` or the watchdog fires before they settle — a degraded-runner
     # timeout there would land after the scan and never get its one-shot
-    # empty-commit retrigger. Cost: the watchdog waits for them.
+    # retrigger. Cost: the watchdog waits for them.
     needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration-linux, pty-visual]
-    # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
-    # which this token cannot do for a fork's ref.
-    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    # Same-repo PRs: the empty-commit retrigger pushes to the PR branch,
+    # which this token cannot do for a fork's ref. Tag pushes: the
+    # release gate (gh-2290).
+    if: always() && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
     permissions:
-      actions: read
+      actions: write # gh workflow run — the tag-arm retrigger (gh-2290)
       contents: write
     steps:
+      # gh-2290: the trip decision runs a REPO script — a hosted runner's
+      # empty workspace has no scripts/ (the exit-127 class reddened the
+      # dedupe pre-check on every arm, runs 38696670029/38696668627). The
+      # checkout must be UNCONDITIONAL — the trip step runs on every arm
+      # this job reaches, and a skipped checkout would empty the trip
+      # output. Shallow: the script never reads history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      # One jobs call in a SINGLE valid document (steps arrays are
+      # embedded per job — no per-job follow-ups; `gh api --paginate`
+      # concatenates page bodies and jq then reads only the first page —
+      # verified against a 69-job run), then the extracted,
+      # fixture-self-tested trip decision (scripts/watchdog_trip_check.sh;
+      # static-gate selftest: scripts/watchdog_trip_selftest.sh). It trips
+      # ONLY on the timeout-kill signature — job conclusion `failure` OR
+      # `cancelled` (the v1.0.745 kill landed as plain `cancelled`) with
+      # at least one `cancelled` step and NO `failed` step — and never on
+      # a real test failure (a step failed, regardless of which step is
+      # last), a skip, or a cancelled never-started job.
       - name: Detect a timeout-type failure
         id: trip
         env:
@@ -4047,20 +4097,13 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          trip=false
-          for id in $(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
-              --jq '.jobs[] | select(.conclusion=="failure") | .id'); do
-            # A job-level timeout cancels the running step: the job is
-            # 'failure' but its LAST step is 'cancelled'. A real test
-            # failure ends with a failed step.
-            last=$(gh api "repos/$REPO/actions/jobs/$id" --jq '.steps[-1].conclusion // ""')
-            echo "job $id last step: $last"
-            if [ "$last" = "cancelled" ]; then trip=true; fi
-          done
-          echo "trip=$trip" >> "$GITHUB_OUTPUT"
+          gh run view "$RUN_ID" --repo "$REPO" --json jobs > watchdog-jobs.json
+          bash scripts/watchdog_trip_check.sh watchdog-jobs.json
+          bash scripts/watchdog_trip_check.sh watchdog-jobs.json
 
+      # ── PR arm: empty-commit push (unchanged remedy) ──────────────────
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.trip.outputs.trip == 'true'
+        if: steps.trip.outputs.trip == 'true' && github.event_name == 'pull_request'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           # GITHUB_TOKEN pushes never trigger workflows — the retrigger must
@@ -4068,7 +4111,7 @@ jobs:
           token: ${{ secrets.RELEASE_PAT }}
 
       - name: Retrigger with an empty commit (fresh runner allocation)
-        if: steps.trip.outputs.trip == 'true'
+        if: steps.trip.outputs.trip == 'true' && github.event_name == 'pull_request'
         env:
           HAS_PAT: ${{ secrets.RELEASE_PAT != '' }}
         run: |
@@ -4085,6 +4128,27 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit --allow-empty -m "$msg"
           git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
+
+      # ── Tag arm (gh-2290): dispatch a fresh gate run on the tag ref ────
+      # ONE retrigger max per tag (issue #194 loop-guard rule): a prior
+      # workflow_dispatch run for this tag ref means the retrigger already
+      # fired for this kill — never chain dispatches on a stuck pool.
+      - name: Retrigger the tag gate (dispatch, fresh runner allocation)
+        if: steps.trip.outputs.trip == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+        run: |
+          prior=$(gh run list --workflow ci.yml --branch "$REF" \
+            --event workflow_dispatch \
+            --json databaseId --jq 'length' 2>/dev/null || echo 0)
+          if [ "${prior:-0}" -gt 0 ]; then
+            echo "::notice::a workflow_dispatch gate run already exists for $REF — not re-firing (one retrigger max per tag, gh-2290)"
+            exit 0
+          fi
+          gh workflow run ci.yml --ref "$REF"
+          echo "::notice::dispatched a fresh ci.yml gate run on $REF (watchdog degraded-runner retrigger, gh-2290)"
   integration:
     name: Provider smoke (LLM, tag-only)
     runs-on: ubuntu-latest
