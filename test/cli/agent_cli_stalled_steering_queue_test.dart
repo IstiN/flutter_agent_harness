@@ -182,11 +182,18 @@ void main() {
       cli.steerForTest('second');
 
       // The saved-while-dead face must say HOW MUCH is queued — a bare
-      // per-message warning hides the queue from the owner.
+      // per-message warning hides the queue from the owner. Issue #2249
+      // AC1: at accept time the appends have not resolved, so the banner
+      // names the delivery truth and never claims a save.
       expect(
         io.out.toString(),
-        contains('2 steering messages saved'),
+        contains('2 steering messages queued'),
         reason: 'the warning carries the queued count',
+      );
+      expect(
+        io.out.toString(),
+        isNot(contains('saved')),
+        reason: 'no persistence claim before the appends resolved',
       );
 
       stream.gate.complete();
