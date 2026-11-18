@@ -546,6 +546,30 @@ void main() {
       return (store, (await session.getMetadata()).path, gate);
     }
 
+    /// The E5 shape (no atomic rename): acquire never publishes, so the
+    /// sidecar is seeded by hand like the #2262 legacy-publisher test.
+    Future<(FileSessionLeaseStore, String, _TornEnv)> e5rig() async {
+      final torn = _TornEnv();
+      final store = FileSessionLeaseStore(env: torn, now: () => base);
+      final repo = JsonlSessionRepo(fs: torn, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final path = (await session.getMetadata()).path;
+      await torn.writeFile(
+        store.sidecarPath(path),
+        const JsonEncoder.withIndent('  ').convert({
+          'host': 'cli',
+          'sessionId': 'sess-1',
+          'pid': 1000,
+          'bootId': 'owner-a',
+          'heartbeatAt': base.toIso8601String(),
+          'acquiredAt': base.toIso8601String(),
+        }),
+      );
+      return (store, path, torn);
+    }
+
     Future<void> own(FileSessionLeaseStore store, String path) async {
       final acquire = await store.acquire(
         sessionFilePath: path,
@@ -647,6 +671,89 @@ void main() {
         reason: 'nothing readable on disk — the loss is a bare verdict',
       );
     });
+
+    test('a torn/corrupt body is an IO hiccup, not a loss', () async {
+      final (store, path, gate) = await rig();
+      await own(store, path);
+      await gate.writeFile(store.sidecarPath(path), '{"bootId": "mine", torn');
+      final beat = await store.heartbeat(path, 'mine');
+      expect(
+        beat,
+        isA<LeaseBeatIoFailed>(),
+        reason: 'an unreadable body names no owner — it cannot refute ours',
+      );
+    });
+
+    test(
+      'a failed tmp publish with our sidecar intact keeps ownership',
+      () async {
+        final (store, path, gate) = await rig();
+        await own(store, path);
+        gate.failingSidecarWrites = 1;
+        final beat = await store.heartbeat(path, 'mine');
+        expect(beat, isA<LeaseBeatIoFailed>());
+        expect(
+          jsonDecode(
+            (await gate.readTextFile(store.sidecarPath(path))).valueOrNull!,
+          )['bootId'],
+          'mine',
+          reason: 'the publish never landed — the sidecar still names us',
+        );
+      },
+    );
+
+    test(
+      'a failed publish with the sidecar vanished re-reads → demote',
+      () async {
+        final (store, path, gate) = await rig();
+        await own(store, path);
+        gate.onRenameFailure = () async {
+          await gate.remove(store.sidecarPath(path), force: true);
+        };
+        gate.failRenames = true;
+        final beat = await store.heartbeat(path, 'mine');
+        expect(beat, isA<LeaseBeatLost>());
+        expect((beat as LeaseBeatLost).lease, isNull);
+      },
+    );
+
+    test(
+      'a failed publish whose re-read also hiccups keeps ownership',
+      () async {
+        final (store, path, gate) = await rig();
+        await own(store, path);
+        gate.onRenameFailure = () async {
+          gate.failingSidecarReads = 1;
+        };
+        gate.failRenames = true;
+        final beat = await store.heartbeat(path, 'mine');
+        expect(beat, isA<LeaseBeatIoFailed>());
+        expect(
+          (beat as LeaseBeatIoFailed).error.message,
+          'sidecar read hiccup',
+          reason: 'the re-read failure rides the beat, ownership stands',
+        );
+      },
+    );
+
+    test(
+      'E5: a failed single-write refresh keeps ownership (IoFailed)',
+      () async {
+        final (store, path, torn) = await e5rig();
+        torn.failingSidecarWrites = 1;
+        final beat = await store.heartbeat(path, 'owner-a');
+        expect(beat, isA<LeaseBeatIoFailed>());
+      },
+    );
+
+    test('E5: a written-but-unprovable refresh is an IO anomaly', () async {
+      final (store, path, torn) = await e5rig();
+      torn.onMidWrite = (_) async {
+        torn.tornReads = 1; // the post-write verify read comes back torn
+      };
+      final beat = await store.heartbeat(path, 'owner-a');
+      expect(beat, isA<LeaseBeatIoFailed>());
+    });
   });
 }
 
@@ -663,9 +770,18 @@ final class _GateLeaseEnv implements ExecutionEnv, RenamableFileSystem {
   bool failRenames = false;
   int failingSidecarReads = 0;
 
+  /// The next N sidecar-family WRITES (sidecar or its publish tmps) fail
+  /// (the #2257 rig).
+  int failingSidecarWrites = 0;
+
+  /// Fires (awaited) inside an injected rename failure — lets a test
+  /// mutate the world between the failed publish and the re-read.
+  Future<void> Function()? onRenameFailure;
+
   @override
   Future<Result<void, FileError>> renamePath(String from, String to) async {
     if (failRenames) {
+      if (onRenameFailure != null) await onRenameFailure!();
       return Err(const FileError(FileErrorCode.unknown, 'rename exploded'));
     }
     return _delegate.renamePath(from, to);
@@ -678,6 +794,17 @@ final class _GateLeaseEnv implements ExecutionEnv, RenamableFileSystem {
       return Err(const FileError(FileErrorCode.unknown, 'sidecar read hiccup'));
     }
     return _delegate.readTextFile(path);
+  }
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) async {
+    if (failingSidecarWrites > 0 && path.contains('.owner.json')) {
+      failingSidecarWrites--;
+      return Err(
+        const FileError(FileErrorCode.unknown, 'sidecar write hiccup'),
+      );
+    }
+    return _delegate.writeFile(path, content);
   }
 
   @override
@@ -706,10 +833,6 @@ final class _GateLeaseEnv implements ExecutionEnv, RenamableFileSystem {
     String path,
     Uint8List content,
   ) => _delegate.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(path, content);
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) =>
@@ -764,6 +887,9 @@ class _TornEnv implements ExecutionEnv {
   /// `.owner.json` file or its publish tmp). Awaited.
   Future<void> Function(String path)? onMidWrite;
 
+  /// The next N sidecar-family WRITES fail (the #2257 E5 rig).
+  int failingSidecarWrites = 0;
+
   /// The next N sidecar READS return the first half of the file's bytes
   /// (a read caught mid-write). 0 = reads pass through.
   int tornReads = 0;
@@ -779,6 +905,12 @@ class _TornEnv implements ExecutionEnv {
     if (onMidWrite != null && _isSidecarFamily(path)) {
       await _delegate.writeFile(path, ''); // the torn state
       await onMidWrite!(path);
+    }
+    if (failingSidecarWrites > 0 && _isSidecarFamily(path)) {
+      failingSidecarWrites--;
+      return Err(
+        const FileError(FileErrorCode.unknown, 'sidecar write hiccup'),
+      );
     }
     return _delegate.writeFile(path, content);
   }
