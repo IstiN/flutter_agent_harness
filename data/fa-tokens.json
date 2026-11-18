@@ -1,15 +1,6 @@
 {
   "issue-2054": [
     {
-      "leg": "rework",
-      "at": "2026-11-04T08:26:47Z",
-      "prompt": 190470,
-      "completion": 42832,
-      "total": 233302,
-      "cacheRead": 5123584,
-      "model": "glm-5.3-flash"
-    },
-    {
       "leg": "review",
       "at": "2026-11-04T09:37:44Z",
       "prompt": 107376,
@@ -4554,6 +4545,17 @@
       "completion": 25433,
       "total": 88091,
       "cacheRead": 693632,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2293": [
+    {
+      "leg": "rework",
+      "at": "2026-11-18T08:36:17Z",
+      "prompt": 104080,
+      "completion": 47274,
+      "total": 151354,
+      "cacheRead": 6378816,
       "model": "glm-5.3-flash"
     }
   ]
