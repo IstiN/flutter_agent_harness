@@ -17,6 +17,7 @@ final class WaiterSnapshot {
     required this.jobs,
     required this.timers,
     this.lostJobs = 0,
+    this.registryNotice,
   });
 
   /// Running background shell jobs, one purpose per job (command + id).
@@ -27,6 +28,11 @@ final class WaiterSnapshot {
 
   /// Background jobs the previous run of this session left running.
   final int lostJobs;
+
+  /// The surfaced registry-lock failure (issue #2266 AC2): a manifest
+  /// mutation skipped at the queued-wait bound, named — never an unlocked
+  /// write. Cleared by the next mutation that runs under the lock.
+  final String? registryNotice;
 
   /// True when nothing live is awaited (lost jobs are history, not waits).
   bool get isEmpty => jobs.isEmpty && timers.isEmpty;
@@ -86,6 +92,26 @@ final class _ManifestEntry {
   };
 }
 
+/// The NAMED failure a registry mutation carries when the cross-run
+/// manifest lock stays held past the queued-wait bound (issue #2266
+/// AC2): the mutation is skipped — never raced unlocked over a rival's
+/// entry — and this name surfaces at the waiting row and the warning
+/// channel instead of vanishing. The old 300ms bound treated giving up
+/// as a license to write unlocked, and the resulting lost update erased
+/// a live job's running.json entry: never re-adopted, never reaped,
+/// invisible across runs.
+final class ManifestLockTimeout implements Exception {
+  const ManifestLockTimeout(this.bound);
+
+  /// The queued-wait bound that expired.
+  final Duration bound;
+
+  @override
+  String toString() =>
+      'manifest lock still held after ${bound.inMilliseconds}ms — '
+      'registry update skipped to avoid an unlocked write (#2266)';
+}
+
 /// Owns the visible-waiting state and its event pushes. All mutations are
 /// best-effort: a snapshot (disk scan) or manifest write failure must
 /// never take a run down.
@@ -98,6 +124,25 @@ final class _WaitingCoordinator {
   /// dead or recycled pid, no pid at all, or past the `jobs.staleHours`
   /// age belt. Live detached jobs are kept — they are not lost.
   int lostJobs = 0;
+
+  /// The surfaced registry-lock failure (issue #2266 AC2): the named
+  /// text of the last mutation skipped at the queued-wait bound, null
+  /// once a mutation ran under the lock again. The waiting row carries
+  /// it so a skipped update never vanishes silently.
+  String? registryNotice;
+
+  /// Whether the registry lock's exclusive-create capability is PROVEN:
+  /// true only after a real refusal from `createFileExclusive` (a
+  /// decorator can advertise the capability over a delegate that lacks
+  /// it and answer `notSupported` — that verdict is incapability, the
+  /// degraded mode). Evidence, never a timeout guess (issue #2266 AC3).
+  bool _lockExclusiveProven = false;
+
+  /// The queued-wait bound. Sits ABOVE the stale-steal threshold so a
+  /// crashed holder's lock is always stolen before this fires; only a
+  /// genuinely stuck backend reaches the bound, and that fails loudly
+  /// ([ManifestLockTimeout]) — it never degrades into an unlocked write.
+  Duration _lockWaitBound = _defaultLockWaitBound;
 
   /// When the current waiting stretch began — the heartbeat's elapsed base.
   DateTime? waitingSince;
@@ -372,7 +417,9 @@ final class _WaitingCoordinator {
   String get _badManifestPath => '$_manifestPath.bad';
 
   /// The per-root lock guarding registry mutations: parent + subagent fa
-  /// processes share `.fah/bash_jobs/` (issue #478).
+  /// processes share `.fah/bash_jobs/` (issue #478). An exclusive-created
+  /// FILE — `createDir` is a no-op over an existing dir on Dart's local
+  /// fs, so a directory lock never actually contends (issue #2266).
   String get _manifestLockPath => '$_manifestPath.lock';
 
   /// Boot reconcile (issue #478). Entries survive their owner's death
@@ -398,7 +445,25 @@ final class _WaitingCoordinator {
   /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
-    final reconcile = await _reconcileRegistry();
+    final ({
+      List<int> pids,
+      bool quarantined,
+      int dropped,
+      int aged,
+      List<_ManifestEntry> kept,
+      bool probed,
+    })
+    reconcile;
+    try {
+      reconcile = await _reconcileRegistry();
+    } on ManifestLockTimeout catch (error) {
+      // The boot reconcile itself is skipped — never raced unlocked over
+      // a rival's registry (issue #2266): surface the named failure and
+      // keep the honest "reconcile unavailable" state instead of a
+      // silently partial boot. A later boot retries.
+      _noteRegistryLockFailure('boot reconcile skipped: $error');
+      return;
+    }
     lostJobs = reconcile.dropped;
     // Issue #2201 AC5: manifest entries whose pid is ALIVE at boot are
     // RE-ADOPTED as real registry jobs — the waiting row shows them,
@@ -545,14 +610,28 @@ final class _WaitingCoordinator {
   }
 
   /// Reads the registry under the lock, mutates, writes back ATOMICALLY.
-  /// A failure anywhere is swallowed — the registry is best-effort
-  /// bookkeeping and the job itself is unaffected.
+  /// The registry is best-effort bookkeeping and the job itself is
+  /// unaffected by a failure — but a lock-bound timeout (issue #2266) is
+  /// never silent: the mutation is SKIPPED and the named failure
+  /// surfaces, rather than racing the winner unlocked.
   Future<void> _mutateRegistry(
     List<_ManifestEntry> Function(List<_ManifestEntry>) mutate,
   ) async {
-    await _withRegistryLock(() async {
-      await _writeRegistryEntries(mutate(await _readRegistryEntries()));
-    });
+    try {
+      await _withRegistryLock(() async {
+        await _writeRegistryEntries(mutate(await _readRegistryEntries()));
+      });
+    } on ManifestLockTimeout catch (error) {
+      _noteRegistryLockFailure(error);
+    }
+  }
+
+  /// The loud half of the #2266 contract: a skipped mutation rides the
+  /// warning channel here and the waiting row's registry notice until
+  /// the next successful mutation clears it.
+  void _noteRegistryLockFailure(Object error) {
+    registryNotice = '$error';
+    _cli.io.writeln(tuiWarning('⚠ bash_jobs: $error'));
   }
 
   /// Reads + parses the registry: missing → empty; a structurally broken
@@ -620,21 +699,42 @@ final class _WaitingCoordinator {
     }
   }
 
-  /// The per-root registry lock: `createDir` is an atomic
-  /// exclusive-create on the local filesystem — the loser's call fails.
-  /// Bounded wait; a stale lock (no mutation runs this long — the holder
-  /// crashed) is stolen. Backends without exclusive create (memory, web)
-  /// degrade to unlocked single writes, like the session lease degrades
-  /// without rename.
+  /// The per-root registry lock: an exclusive-created lock FILE
+  /// (`createFileExclusive` — O_EXCL; a loser's call fails) on the local
+  /// filesystem, and the loser QUEUES (issue #2266): a mutation either
+  /// lands under the lock or is skipped with a named, surfaced failure
+  /// ([ManifestLockTimeout]). It never degrades to an unlocked
+  /// read-modify-write over a rival's entry — that race once erased a
+  /// live job's running.json record, and a ghosted entry is never
+  /// re-adopted or reaped. The wait bound exists only as the
+  /// no-infinite-wait guarantee and sits above the stale threshold, so a
+  /// crashed holder's lock is always stolen first. Backends without the
+  /// exclusive-create capability (memory, web) can never even contend —
+  /// their lock degrades to a claim that always succeeds, the documented
+  /// unlocked mode, decided by the backend's declared CAPABILITY, never
+  /// by a timeout (issue #2266 AC3).
   static const _lockStaleAfter = Duration(seconds: 60);
-  static const _lockWaitBound = Duration(milliseconds: 300);
+  static const _defaultLockWaitBound = Duration(seconds: 70);
 
   Future<void> _withRegistryLock(Future<void> Function() body) async {
-    // The lock dir lives under the job bookkeeping dir — make sure the
-    // parent exists or the exclusive create fails for the wrong reason and
-    // every mutation pays the full contention wait.
+    // The lock file lives under the job bookkeeping dir — make sure the
+    // parent exists or the exclusive create fails for the wrong reason
+    // and every mutation pays the full contention wait.
     await _cli._env.createDir(_jobBookkeepingDir);
-    if (!await _acquireRegistryLock()) return body();
+    if (!await _acquireRegistryLock()) {
+      if (!_lockExclusiveProven) {
+        // Capability-decided degraded mode (AC3): this backend never
+        // proven to exclusive-create (memory, web, or a decorator
+        // answering notSupported) — unlocked single writes are the
+        // documented behavior here, not a lost update racing a winner
+        // that does not exist.
+        return body();
+      }
+      // A proven exclusive-create backend must never run the body
+      // unlocked: skip the mutation and name the failure.
+      throw ManifestLockTimeout(_lockWaitBound);
+    }
+    registryNotice = null;
     try {
       await body();
     } finally {
@@ -645,12 +745,7 @@ final class _WaitingCoordinator {
   Future<bool> _acquireRegistryLock() async {
     final deadline = _clock().add(_lockWaitBound);
     for (;;) {
-      if ((await _cli._env.createDir(
-        _manifestLockPath,
-        recursive: false,
-      )).isOk) {
-        return true;
-      }
+      if (await _claimRegistryLock()) return true;
       final info = await _cli._env.fileInfo(_manifestLockPath);
       final stale =
           info.isOk &&
@@ -664,6 +759,30 @@ final class _WaitingCoordinator {
       if (_clock().isAfter(deadline)) return false;
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
+  }
+
+  /// One atomic claim attempt of the lock path: an exclusive file create
+  /// where the capability is advertised (only one contender's call can
+  /// succeed), the plain create elsewhere (memory's never fails — the
+  /// no-op claim of the degraded mode). A `notSupported` answer is a
+  /// decorator advertising over an incapable delegate: that verdict
+  /// resolves to incapability and falls through to the plain create.
+  Future<bool> _claimRegistryLock() async {
+    final env = _cli._env;
+    if (env case final ExclusiveCreateFileSystem exclusive) {
+      final claimed = await exclusive.createFileExclusive(_manifestLockPath);
+      if (claimed.isOk) return true;
+      if (claimed.errorOrNull?.code != FileErrorCode.notSupported) {
+        // A real refusal: the path is occupied by a rival's lock — the
+        // capability is proven exclusive-create.
+        _lockExclusiveProven = true;
+        return false;
+      }
+      // A decorator advertising the capability over an incapable
+      // delegate answers notSupported: fall through to the plain
+      // create, the degraded mode's claim.
+    }
+    return (await env.createDir(_manifestLockPath, recursive: false)).isOk;
   }
 
   /// Test seam: replaces the boot process probe. Null (default) reads
@@ -793,7 +912,12 @@ final class _WaitingCoordinator {
             preview: record.text.replaceAll('\n', ' ').trim(),
           ),
     ];
-    return WaiterSnapshot(jobs: jobs, timers: timers, lostJobs: lostJobs);
+    return WaiterSnapshot(
+      jobs: jobs,
+      timers: timers,
+      lostJobs: lostJobs,
+      registryNotice: registryNotice,
+    );
   }
 
   String _jobPurpose(ShellJobEntry job) {
@@ -831,6 +955,7 @@ final class _WaitingCoordinator {
       jobs: snap.jobs,
       timers: snap.timers,
       lostJobs: snap.lostJobs,
+      registryNotice: snap.registryNotice,
     );
   }
 
@@ -1237,6 +1362,25 @@ extension AgentCliWaitingSeams on AgentCli {
   /// Test seam: the current restart-honesty count.
   @visibleForTesting
   int get waitingLostJobsForTest => _waiting.lostJobs;
+
+  /// Test seam: records a started background job in the cross-run
+  /// manifest (issue #2266 contention tests drive the lock from the
+  /// contender side without spawning processes).
+  @visibleForTesting
+  Future<void> waitingJobStartedForTest(ShellJobEntry job) =>
+      _waiting.jobStarted(job);
+
+  /// Test seam: shrinks the registry lock's queued-wait bound (issue
+  /// #2266 AC2) — the real default sits above the stale-steal threshold
+  /// so only a stuck backend ever reaches it.
+  @visibleForTesting
+  set waitingLockWaitBoundForTest(Duration bound) =>
+      _waiting._lockWaitBound = bound;
+
+  /// Test seam: the surfaced registry-lock failure (issue #2266 AC2) —
+  /// null once a mutation ran under the lock again.
+  @visibleForTesting
+  String? get waitingRegistryNoticeForTest => _waiting.registryNotice;
 
   /// Test seam: replaces the boot process probe (issue #478 reconcile).
   /// Null restores the real `ps` probe.

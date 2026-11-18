@@ -242,6 +242,7 @@ final class FaTuiModel extends Model {
     this.waitingJobs = const [],
     this.waitingTimers = const [],
     this.waitingLostJobs = 0,
+    this.waitingRegistryNotice,
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     this.hub,
@@ -416,6 +417,11 @@ final class FaTuiModel extends Model {
   /// Background jobs the previous run of this session left running — the
   /// honesty note under the waiting row after a restart.
   final int waitingLostJobs;
+
+  /// The surfaced registry-lock failure (issue #2266 AC2): the named
+  /// text of a manifest mutation skipped at the queued-wait bound,
+  /// rendered as a dim note under the waiting rows until cleared.
+  final String? waitingRegistryNotice;
 
   /// Whether a [ScheduledTickMsg] timer is outstanding (issue #213) — the
   /// guard that keeps the countdown chain at one pending timer max.
@@ -702,6 +708,7 @@ final class FaTuiModel extends Model {
     List<String>? waitingJobs,
     List<WaitingTimer>? waitingTimers,
     int? waitingLostJobs,
+    Object? waitingRegistryNotice = _unset,
     bool? scheduledTickPending,
     bool? runStalled,
     Object? historyDraft = _unset,
@@ -768,6 +775,11 @@ final class FaTuiModel extends Model {
       waitingJobs: waitingJobs ?? this.waitingJobs,
       waitingTimers: waitingTimers ?? this.waitingTimers,
       waitingLostJobs: waitingLostJobs ?? this.waitingLostJobs,
+      // Sentinel, not `??`: a successful push must be able to CLEAR the
+      // surfaced lock failure (issue #2266), not re-supply the old text.
+      waitingRegistryNotice: waitingRegistryNotice == _unset
+          ? this.waitingRegistryNotice
+          : waitingRegistryNotice as String?,
       scheduledTickPending: scheduledTickPending ?? this.scheduledTickPending,
       now: nowFn,
       historyDraft: historyDraft == _unset
@@ -2634,8 +2646,16 @@ final class FaTuiController {
     required List<String> jobs,
     required List<WaitingTimer> timers,
     int lostJobs = 0,
+    String? registryNotice,
   }) {
-    _send(WaitingStatusMsg(jobs: jobs, timers: timers, lostJobs: lostJobs));
+    _send(
+      WaitingStatusMsg(
+        jobs: jobs,
+        timers: timers,
+        lostJobs: lostJobs,
+        registryNotice: registryNotice,
+      ),
+    );
   }
 
   /// Pushes the run-liveness state (issue #514): `true` flips the busy row
