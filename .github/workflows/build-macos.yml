@@ -497,6 +497,20 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "No cache, no local copy — downloading from upstream release..."
+            # fa-m5 host warm cache (owner-provisioned): persistent
+            # CI-authentic zips live in ~/vendor-cache/ (per-arch names
+            # matching $ZIP's basename), a launchd refresher keeps /tmp
+            # stocked. If this run's per-arch partial is absent, seed it
+            # from the persistent copy — read-only cp, digest re-verified
+            # after, so a mid-refresh partial read degrades to the resume
+            # loop instead of a bad unzip.
+            SEED="$HOME/vendor-cache/$(basename "$ZIP")"
+            if [ ! -f "$ZIP" ] && [ -f "$SEED" ]; then
+              cp "$SEED" "$ZIP" 2>/dev/null || true
+              if ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null 2>&1; then
+                rm -f "$ZIP" # bad/partial seed — the resume loop below handles it
+              fi
+            fi
             # The partial is deliberately NOT deleted between runs
             # (gh-1759): it is exactly what -C - is for. If the persisted
             # zip is already complete AND digest-valid, skip the download
