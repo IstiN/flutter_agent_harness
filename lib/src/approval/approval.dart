@@ -187,10 +187,14 @@ final class ApprovalManager {
 
   /// Turn-scoped skill grants (`allowed-tools`) / revocations
   /// (`disallowed-tools`) from an invoked skill's frontmatter. They apply to
-  /// the current turn only and are cleared by [clearTurnGrants] when the
-  /// user sends the next message (Claude semantics). A turn DENY outranks
-  /// mode and grants but never an explicit per-tool `deny`; the critical
-  /// `bash` interceptor still outranks a turn grant.
+  /// the skill's own run and are cleared at every run-start boundary
+  /// (issue #2268): the CLI's shared `_startRun` funnel clears them unless
+  /// the run IS the skill invocation that just armed them. A machine-started
+  /// run (job notice, task completion, fork result, inbox wake) therefore
+  /// starts clean — a stale skill policy can never govern a run the user
+  /// never initiated. A turn DENY outranks mode and grants but never an
+  /// explicit per-tool `deny`; the critical `bash` interceptor still
+  /// outranks a turn grant.
   final Set<String> _turnAllow = {};
   final Set<String> _turnDeny = {};
 
@@ -204,8 +208,9 @@ final class ApprovalManager {
     _turnDeny.addAll(deny);
   }
 
-  /// Clears the turn-scoped grants (called when the user sends a new
-  /// message).
+  /// Clears the turn-scoped grants (called at every run-start boundary —
+  /// the CLI's `_startRun` funnel — unless the run is the skill invocation
+  /// that just armed them; issue #2268).
   void clearTurnGrants() {
     _turnAllow.clear();
     _turnDeny.clear();

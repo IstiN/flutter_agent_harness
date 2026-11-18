@@ -113,9 +113,15 @@ final class DeviceDmCodec {
     if (!isDmChannel(channel)) return DecodedMail(payload: ciphertext);
     final address = envelope.to ?? '';
     final at = address.lastIndexOf('@');
-    if (at <= 0 ||
-        address.substring(at + 1) != deviceId ||
-        envelope.from == address) {
+    if (envelope.from == address) {
+      // Own-reply-echo SHAPE (sender == addressed agent): our fanned-back
+      // replies are sealed to the user, so there is nothing to decrypt.
+      // Flag it for the connector belt, which classifies by frame id —
+      // a minted id drops quietly, a foreign id raises the incident
+      // 8ff48b96 'non-echo frame with rewritten sender' warning.
+      return const DecodedMail(payload: '', ownEcho: true);
+    }
+    if (at <= 0 || address.substring(at + 1) != deviceId) {
       return const DecodedMail(payload: '');
     }
 

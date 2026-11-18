@@ -882,7 +882,7 @@ extension ApprovalCommands on AgentCli {
     }
   }
 
-  void _printStats() {
+  Future<void> _printStats() async {
     final total = _usage.total;
     io.writeln('turns: ${_usage.turns}');
     io.writeln('input tokens: ${total.input}');
@@ -891,6 +891,61 @@ extension ApprovalCommands on AgentCli {
     io.writeln('cache write tokens: ${total.cacheWrite}');
     io.writeln('total tokens: ${total.totalTokens}');
     io.writeln('cost: \$${total.cost.total.toStringAsFixed(4)}');
+    // Issue #2248 AC6: the IO gauges — the wedge incident's standing
+    // suspicion (fd pressure, wholesale fs failures, a 77GB container)
+    // was invisible to the operator. The container walk was started at
+    // boot (memoized); /stats serves that snapshot.
+    io.writeln('open fds: ${fdGaugeLabel(await openFdCount(_env))}');
+    io.writeln(
+      'fs-op failures (1m): ${SessionIoHealth.failuresInLastMinute()}',
+    );
+    final container = _ioState.containerSizeFuture == null
+        ? null
+        : await _ioState.containerSizeFuture;
+    io.writeln(
+      container == null
+          ? 'sessions container: not computed yet'
+          : 'sessions container: ${container.sizeLabel} in '
+                '${container.files} files'
+                '${container.truncated ? ' (walk truncated)' : ''}',
+    );
+  }
+
+  /// The boot fa.log line (issue #2248 AC6): version + sid, plus the IO
+  /// gauges — the fd count (the EMFILE candidate) and the per-minute
+  /// fs-failure counter — and the container walk STARTS out-of-band
+  /// (unawaited: a 77GB cold stat walk must never gate boot — RC round-1
+  /// blocking finding).
+  Future<void> _logBootLine() async {
+    _logDiagnostic(
+      'fa boot sid=$_logSid version=$_version '
+      'fds=${fdGaugeLabel(await openFdCount(_env))} '
+      'fs_fail_1m=${SessionIoHealth.failuresInLastMinute()}',
+    );
+    unawaited(_startSessionsContainerGauge());
+  }
+
+  /// Issue #2248 AC6: starts the sessions-container walk at boot
+  /// (unawaited — the walk must never gate boot) and logs the
+  /// `sessions_container` line into fa.log when it lands. /stats serves
+  /// the same memoized snapshot.
+  Future<void> _startSessionsContainerGauge() async {
+    final future = _ioState.containerSizeFuture ??= sessionsContainerSize(
+      _env,
+      config.sessionRoot,
+    );
+    final stats = await future;
+    if (stats == null) {
+      _logDiagnostic(
+        'sessions_container unreadable root=${config.sessionRoot}',
+      );
+      return;
+    }
+    _logDiagnostic(
+      'sessions_container bytes=${stats.bytes} files=${stats.files} '
+      'dirs=${stats.dirs} ms=${stats.elapsed.inMilliseconds}'
+      '${stats.truncated ? ' truncated=true' : ''}',
+    );
   }
 
   /// Called when a background `task` job settles (omp's async-result flow):

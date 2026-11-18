@@ -33,7 +33,10 @@ extension AgentCliPersist on AgentCli {
       );
       if (index >= 0) {
         final entry = _pendingSteering.removeAt(index);
-        await _steeringDelivered(message, entry.recordId, entry.panel);
+        // Bounded persist re-attempt (issue #2249 AC1): a failed accept
+        // append gets exactly one fresh append per delivery attempt.
+        final recordId = await _retrySteeringPersist(entry);
+        await _steeringDelivered(message, recordId, entry.panel);
       }
     }
     final messages = _agent.state.messages;

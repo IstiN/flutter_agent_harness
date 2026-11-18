@@ -29,7 +29,6 @@ import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
 import '../compaction/structured/markers.dart' show localTrimMarkerPrefix;
 import '../compaction/structured/judge.dart';
-import '../exceptions.dart' show CompactionErrorCode, CompactionException;
 import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
@@ -42,6 +41,7 @@ import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
 import 'tool_pairing.dart' show repairToolPairing;
+import '../exceptions.dart' show CompactionErrorCode, CompactionException;
 import '../session/session_record.dart' show CompactionRecord, MessageRecord;
 
 /// Per-pass outcome surfaced through [AutoCompactorHooks.onPass].
@@ -714,6 +714,17 @@ final class AutoCompactor {
     );
   }
 
+  /// The empty-foldable-region refusal: `CompactionErrorCode.invalidSession`
+  /// is today thrown only by compactSession's guard when the branch has
+  /// NOTHING to summarize above the keep-recent cut. It is the no-work
+  /// terminal, not a summarizer failure — reading it as one routed the pass
+  /// to the local-trim valve, which dropped the unsuppressible newest tail
+  /// (gh-2246-era data-loss shape; see the failing-first test in
+  /// test/agent/auto_compactor_test.dart).
+  bool _isEmptyFoldableRegionRefusal(Object error) =>
+      error is CompactionException &&
+      error.code == CompactionErrorCode.invalidSession;
+
   /// Runs one pass with up to [maxAttempts] retries on transient errors.
   /// Returns the outcome plus, on success, the compaction record's summary
   /// and the hidden/summarized counts (computed from the branch up to
@@ -814,18 +825,16 @@ final class AutoCompactor {
           summarizedMessages: summarized,
         );
       } catch (error) {
-        // gh-2237 (AC5): the gh-2044 empty-region refusal is a NO-WORK
-        // outcome, not a summarizer failure — the endpoint is healthy,
-        // there is simply nothing above the keep-recent cut to fold. It is
-        // deterministic (never retried) and must NOT arm the mechanical
-        // trim valve: the valve is the both-summarizers-DOWN rescue, and
-        // routing a healthy-endpoint no-region pass into it silently
-        // dropped the newest turn whenever projected checkpoint markers
-        // trailed it in the live context. The no-work terminal reports the
-        // honest no-op receipt instead; the host's settled verdict (passes
-        // ran + still over the trigger) surfaces the exhaustion story.
-        if (error is CompactionException &&
-            error.code == CompactionErrorCode.invalidSession) {
+        // gh-2103/AC5 re-fire regression: compactSession's gh-204 refusal
+        // (CompactionErrorCode.invalidSession — today thrown only by the
+        // empty-foldable-region guard) means the branch has NOTHING to
+        // summarize above the keep-recent cut, not that the summarizer
+        // is down. Reading it as a failure here routed the pass to the
+        // local-trim valve, which mechanically DROPPED the unsuppressible
+        // newest tail (a trim receipt over content no pass may fold) and
+        // cost the host ladder its honest exhaustion verdict. It is the
+        // no-work terminal, identical to a null preparation.
+        if (_isEmptyFoldableRegionRefusal(error)) {
           return _AttemptOutcome(
             ok: true,
             error: null,

@@ -238,10 +238,28 @@ final class FileSessionLeaseStore {
   /// How old a lease's last heartbeat may be before its owner is dead.
   final Duration staleAfter;
 
+  /// The atomic-publish capability of the backend, or null when the env
+  /// cannot rename (E5, pure web): every sidecar write routes through
+  /// tmp + rename when non-null (#2262).
+  RenamableFileSystem? get _renamable =>
+      _env is RenamableFileSystem ? _env as RenamableFileSystem : null;
+
   /// How many times the post-publish verify re-read may fail before the
   /// acquire is refused (#2138): a transient read hiccup heals inside the
   /// bound, a persistent outage cannot prove ownership.
   static const _verifyReadAttempts = 3;
+
+  /// How many times [FileSessionLeaseStore.inspect] re-reads an
+  /// undecodable sidecar before the documented E4 fail-open applies
+  /// (#2262): a read caught mid-write of a non-atomic writer holds torn
+  /// bytes for milliseconds only, while a genuinely corrupt file stays
+  /// undecodable through the bound.
+  static const _tornReadAttempts = 3;
+
+  /// Pause between [FileSessionLeaseStore.inspect] torn-read retries: the
+  /// tear window of a real writer is far below one heartbeat, so even the
+  /// corrupt-forever worst case keeps inspect latency negligible.
+  static const _tornReadDelay = Duration(milliseconds: 2);
 
   /// The sidecar path for a session JSONL path:
   /// `<timestamp>_<sessionId>.jsonl` → `<timestamp>_<sessionId>.owner.json`.
@@ -258,22 +276,22 @@ final class FileSessionLeaseStore {
   }
 
   /// Reads and classifies the current lease for [sessionFilePath].
-  /// Corrupt/unreadable sidecar → free (E4, with the file simply
-  /// overwritten by the next acquire).
+  /// A sidecar caught TORN mid-write (a non-atomic writer rewriting it)
+  /// is retried briefly instead of failing open — an instant `free` on a
+  /// live owner publishes a second owner (#2262). Still undecodable after
+  /// the bound → corrupt → free (E4, with the file simply overwritten by
+  /// the next acquire).
   Future<LeaseInspect> inspect(String sessionFilePath) async {
-    final raw = (await _env.readTextFile(
-      sidecarPath(sessionFilePath),
-    )).valueOrNull;
-    if (raw == null) return LeaseInspect.free();
-    final SessionLease lease;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic>) return LeaseInspect.free();
-      lease = SessionLease.fromJson(decoded);
-    } on Object {
-      // Malformed JSON or anything else — a corrupt sidecar is no lease.
-      return LeaseInspect.free();
+    final path = sidecarPath(sessionFilePath);
+    SessionLease? lease;
+    for (var attempt = 0; attempt < _tornReadAttempts; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_tornReadDelay);
+      final raw = (await _env.readTextFile(path)).valueOrNull;
+      if (raw == null) return LeaseInspect.free();
+      lease = _parseLease(raw);
+      if (lease != null) break;
     }
+    if (lease == null) return LeaseInspect.free();
     // Staleness on the sidecar's mtime vs the reader clock (E1): the
     // filesystem's write clock is the one clock every host on the fabric
     // shares. The injectable [now] stands in for it in tests
@@ -319,9 +337,7 @@ final class FileSessionLeaseStore {
       acquiredAt: nowIso,
     );
     final path = sidecarPath(sessionFilePath);
-    final renamable = _env is RenamableFileSystem
-        ? _env as RenamableFileSystem
-        : null;
+    final renamable = _renamable;
     if (renamable == null) {
       // No atomic rename on this backend (pure web stores): ownership
       // cannot be enforced safely — drive unleased rather than publish a
@@ -334,7 +350,7 @@ final class FileSessionLeaseStore {
     // 15s staleness make it self-healing — a real fight shows up as both
     // sides heartbeating and needs a compare-and-swap primitive in
     // ExecutionEnv first.
-    final tmp = '$path.${bootId.hashCode.toRadixString(36)}.tmp';
+    final tmp = _tmpPath(path, bootId);
     final encoded = const JsonEncoder.withIndent('  ').convert(lease.toJson());
     final write = await _env.writeFile(tmp, encoded);
     final renamed = write.isOk ? await renamable.renamePath(tmp, path) : write;
@@ -358,11 +374,23 @@ final class FileSessionLeaseStore {
     }
     if (verify == null) return LeaseRefused(LeaseRefuseReason.verifyFailed);
     if (verify.bootId != bootId) return LeaseBlocked(verify);
+    // We own it: sweep orphan temps of dead publishers (a crash between
+    // tmp write and rename leaves one behind — cleaned on next boot,
+    // #2262). Best-effort, after ownership is proven.
+    await _sweepOrphanTmps(path);
     return LeaseAcquired(verify, replaced: found.lease);
   }
 
   /// Refreshes the heartbeat of OUR lease: a no-op (returning false) when
   /// the sidecar moved on — the caller lost the lease and must demote.
+  ///
+  /// The rewrite is ATOMIC (tmp + rename, same as acquire, #2262): the
+  /// beat fires every ~4s — a far larger reader-exposure window than
+  /// acquire — and a torn read of the sidecar fail-opens inspect to
+  /// `free`, publishing a second owner. On a backend without rename the
+  /// beat degrades to a single write + post-write verify (documented,
+  /// E5): acquire never publishes a sidecar on such backends
+  /// ([LeaseUnenforced]), so there is nothing to tear in normal flow.
   Future<bool> heartbeat(String sessionFilePath, String bootId) async {
     final path = sidecarPath(sessionFilePath);
     final lease = await _readLease(path);
@@ -377,11 +405,26 @@ final class FileSessionLeaseStore {
       acquiredAt: lease.acquiredAt,
       unknownFieldNotes: lease.unknownFieldNotes,
     );
-    final write = await _env.writeFile(
-      path,
-      const JsonEncoder.withIndent('  ').convert(refreshed.toJson()),
-    );
-    return write.isOk;
+    final encoded = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(refreshed.toJson());
+    final renamable = _renamable;
+    if (renamable == null) {
+      // No atomic rename (E5): single write, then prove it landed by
+      // re-reading — never report a beat we cannot verify on disk.
+      final write = await _env.writeFile(path, encoded);
+      if (write.isErr) return false;
+      final verify = await _readLease(path);
+      return verify != null && verify.bootId == bootId;
+    }
+    final tmp = _tmpPath(path, bootId);
+    final write = await _env.writeFile(tmp, encoded);
+    final renamed = write.isOk ? await renamable.renamePath(tmp, path) : write;
+    if (renamed.isErr) {
+      await _env.remove(tmp, force: true);
+      return false;
+    }
+    return true;
   }
 
   /// Graceful release: the sidecar is deleted — only when it is still
@@ -393,9 +436,47 @@ final class FileSessionLeaseStore {
     await _env.remove(path, force: true);
   }
 
+  /// The per-boot temp file an atomic sidecar publish goes through
+  /// (write tmp → one rename): the bootId hash namespaces concurrent
+  /// publishers and marks orphans for [_sweepOrphanTmps].
+  String _tmpPath(String path, String bootId) =>
+      '$path.${bootId.hashCode.toRadixString(36)}.tmp';
+
+  /// Best-effort sweep of orphan publish temps of DEAD publishers
+  /// (#2262 border case): a process crashed between tmp write and rename
+  /// leaves `<sidecar>.<bootIdHash>.tmp` behind. The name carries the
+  /// creator's bootId hash, so any such temp older than [staleAfter]
+  /// belonged to a dead process — an in-flight acquirer's temp is
+  /// milliseconds old and survives.
+  Future<void> _sweepOrphanTmps(String path) async {
+    final slash = path.lastIndexOf('/');
+    final dir = slash < 0
+        ? '.'
+        : slash == 0
+        ? '/'
+        : path.substring(0, slash);
+    final base = slash < 0 ? path : path.substring(slash + 1);
+    final listing = (await _env.listDir(dir)).valueOrNull;
+    if (listing == null) return;
+    final cutoff = _now().millisecondsSinceEpoch - staleAfter.inMilliseconds;
+    for (final entry in listing) {
+      if (!entry.name.startsWith('$base.') || !entry.name.endsWith('.tmp')) {
+        continue;
+      }
+      if (entry.mtimeMs < cutoff) {
+        await _env.remove(entry.path, force: true);
+      }
+    }
+  }
+
   Future<SessionLease?> _readLease(String path) async {
     final raw = (await _env.readTextFile(path)).valueOrNull;
     if (raw == null) return null;
+    return _parseLease(raw);
+  }
+
+  /// Decodes a sidecar body; null when torn/corrupt (no lease).
+  SessionLease? _parseLease(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return null;

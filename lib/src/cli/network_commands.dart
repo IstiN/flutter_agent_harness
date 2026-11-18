@@ -13,6 +13,7 @@ import '../network/connector/device_api.dart';
 import '../network/network_account.dart';
 import '../network/network_account_client.dart';
 import '../network/network_roster.dart';
+import '../network/secret_redaction.dart';
 import 'network_store.dart';
 
 /// One bound OAuth callback endpoint. The redirect URI exists before
@@ -91,6 +92,64 @@ final class NetworkOAuthFlow {
       await receiver.close();
     }
   }
+}
+
+/// Refreshes [account] for use by an authenticated network call. This is
+/// the auto-refresh seam shared by every account-JWT REST call, `fa network
+/// status` and the connector restore path:
+/// - proactive: [account] is refreshed when its access-token expiry is
+///   missing, past, or within [networkAccessRefreshMargin] of now;
+/// - reactive (`forceRefresh: true`, after a device-REST 401): the token is
+///   refreshed regardless of the local expiry clock.
+///
+/// The refreshed account is merged with the stored one (a refresh response
+/// may omit the label claims or rotate only the access token) and persisted
+/// through [persist] BEFORE the caller uses it, so a crash never loses the
+/// newer credential. Device identity lives in its own store document and is
+/// never touched here. [onRefreshed] fires once per successful refresh for
+/// the single info line. Throws [NetworkAuthException] naming the login
+/// fallback when no refresh token exists (and the token is unusable) or the
+/// refresh itself fails; reasons are redacted and never contain tokens.
+Future<NetworkAccount> refreshNetworkAccountForUse({
+  required NetworkAccount account,
+  required NetworkAccountClient client,
+  required Future<void> Function(NetworkAccount account) persist,
+  DateTime Function()? clock,
+  bool forceRefresh = false,
+  void Function(NetworkAccount refreshed)? onRefreshed,
+}) async {
+  final now = (clock ?? DateTime.now)();
+  if (!forceRefresh && !account.needsAccessRefresh(now)) return account;
+  final refresh = account.refreshToken;
+  if (refresh == null || refresh.isEmpty) {
+    // Without a refresh credential a not-yet-expired token stays in use;
+    // the server (401 path) or a past expiry decides when login is needed.
+    if (!forceRefresh && !account.isExpired(now)) return account;
+    throw const NetworkAuthException(
+      'access token expired; run fa network login --jwt <token>',
+    );
+  }
+  final NetworkAccount response;
+  try {
+    response = await client.refresh(refresh);
+  } on Object catch (error) {
+    throw NetworkAuthException(
+      'access token refresh failed: ${redactNetworkSecretText('$error')}; '
+      'run fa network login --jwt <token>',
+    );
+  }
+  final refreshed = NetworkAccount(
+    accessToken: response.accessToken,
+    refreshToken: response.refreshToken ?? refresh,
+    expiresAt: response.expiresAt,
+    refreshExpiresAt: response.refreshExpiresAt ?? account.refreshExpiresAt,
+    subject: response.subject ?? account.subject,
+    email: response.email ?? account.email,
+    displayName: response.displayName ?? account.displayName,
+  );
+  await persist(refreshed);
+  onRefreshed?.call(refreshed);
+  return refreshed;
 }
 
 /// Command-line controller. Secret values are accepted as inputs but never
@@ -309,13 +368,14 @@ fa network rename --clear               Clear THIS device's friendly name''';
     if (!_validEnrollDeviceName(name)) {
       return _usageError('device name must contain 1–128 characters');
     }
-    final fresh = await _freshAccount(account);
-    final enrollment = await deviceClient.enrollDevice(
-      baseUrl: relayBaseUrl,
-      jwt: fresh.accessToken,
-      name: name.trim(),
-      platform: platform,
-    );
+    final enrollment = await _deviceCall(account, (jwt) {
+      return deviceClient.enrollDevice(
+        baseUrl: relayBaseUrl,
+        jwt: jwt,
+        name: name.trim(),
+        platform: platform,
+      );
+    });
     final device = NetworkDeviceCredentials(
       deviceId: enrollment.deviceId,
       deviceToken: enrollment.deviceToken,
@@ -372,8 +432,19 @@ fa network rename --clear               Clear THIS device's friendly name''';
 
   Future<int> _status(List<String> args) async {
     if (args.isNotEmpty) return _usageError('status takes no arguments');
-    final account = await store.readAccount();
+    var account = await store.readAccount();
     final device = await store.readDevice();
+    // Auto-refresh before reporting, so the owner no longer sees a stale
+    // "(expired)" row that the next call would have to recover from. A
+    // failed refresh keeps the local view and surfaces the login fallback.
+    Object? refreshFailure;
+    if (account != null) {
+      try {
+        account = await _freshAccount(account);
+      } on Object catch (error) {
+        refreshFailure = error;
+      }
+    }
     _out('account: ${account?.label ?? 'signed out'}');
     if (account?.expiresAt case final expiry?) {
       _out(
@@ -395,6 +466,10 @@ fa network rename --clear               Clear THIS device's friendly name''';
           ? 'signed_in'
           : 'enrolled'}',
     );
+    if (refreshFailure != null) {
+      _error('fa network: $refreshFailure');
+      return 1;
+    }
     return 0;
   }
 
@@ -416,10 +491,9 @@ fa network rename --clear               Clear THIS device's friendly name''';
       return _usageError('devices accepts only --roster');
     }
     final account = await _requireAccount();
-    final fresh = await _freshAccount(account);
-    final devices = await deviceClient.listDevices(
-      baseUrl: relayBaseUrl,
-      jwt: fresh.accessToken,
+    final devices = await _deviceCall(
+      account,
+      (jwt) => deviceClient.listDevices(baseUrl: relayBaseUrl, jwt: jwt),
     );
     _out('devices: ${devices.length}');
     for (final device in devices) {
@@ -439,12 +513,14 @@ fa network rename --clear               Clear THIS device's friendly name''';
     final device = await store.readDevice();
     if (device == null) return _usageError('not enrolled; run enroll first');
     final account = await _requireAccount();
-    final fresh = await _freshAccount(account);
-    final friendly = await deviceClient.renameDevice(
-      baseUrl: relayBaseUrl,
-      jwt: fresh.accessToken,
-      deviceId: device.deviceId,
-      name: name,
+    final friendly = await _deviceCall<String>(
+      account,
+      (jwt) => deviceClient.renameDevice(
+        baseUrl: relayBaseUrl,
+        jwt: jwt,
+        deviceId: device.deviceId,
+        name: name,
+      ),
     );
     await store.writeDevice(
       NetworkDeviceCredentials(
@@ -509,17 +585,50 @@ fa network rename --clear               Clear THIS device's friendly name''';
     return account;
   }
 
-  Future<NetworkAccount> _freshAccount(NetworkAccount account) async {
-    if (!account.isExpired(_clock())) return account;
-    final refresh = account.refreshToken;
-    if (refresh == null || refresh.isEmpty) {
-      throw const NetworkAuthException(
-        'access token expired; run fa network login --jwt <token>',
+  Future<NetworkAccount> _freshAccount(NetworkAccount account) =>
+      refreshNetworkAccountForUse(
+        account: account,
+        client: accountClient,
+        persist: store.writeAccount,
+        clock: _clock,
+        onRefreshed: _announceRefresh,
       );
+
+  /// Refreshes [account] after the server rejected its bearer (device REST
+  /// 401): the local expiry clock is overridden and a missing/failed refresh
+  /// surfaces the login fallback.
+  Future<NetworkAccount> _refreshRejectedAccount(NetworkAccount account) =>
+      refreshNetworkAccountForUse(
+        account: account,
+        client: accountClient,
+        persist: store.writeAccount,
+        clock: _clock,
+        forceRefresh: true,
+        onRefreshed: _announceRefresh,
+      );
+
+  void _announceRefresh(NetworkAccount refreshed) {
+    _out(
+      'access token refreshed (expires '
+      '${refreshed.expiresAt?.toUtc().toIso8601String() ?? 'unknown'})',
+    );
+  }
+
+  /// Runs one account-authenticated device REST call behind the token
+  /// lifecycle: proactive refresh before the call, then a single
+  /// refresh-and-retry when the server answers 401.
+  Future<T> _deviceCall<T>(
+    NetworkAccount account,
+    Future<T> Function(String jwt) call,
+  ) async {
+    var fresh = await _freshAccount(account);
+    try {
+      return await call(fresh.accessToken);
+    } on DeviceEnrollmentException catch (error) {
+      if (!error.isUnauthorized) rethrow;
+      fresh = await _refreshRejectedAccount(fresh);
+      return await call(fresh.accessToken);
     }
-    final refreshed = await accountClient.refresh(refresh);
-    await store.writeAccount(refreshed);
-    return refreshed;
   }
 
   int _usageError(String message) {

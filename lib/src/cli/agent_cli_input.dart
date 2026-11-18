@@ -123,8 +123,8 @@ extension AgentCliInput on AgentCli {
     }
     // Chat that merely starts with a path-shaped token (issue #1152) is
     // never a command: it skips the dispatcher entirely and falls through
-    // to the shared message tail below (viewer routing, per-turn grant
-    // reset, clipboard-image passthrough).
+    // to the shared message tail below (viewer routing, run start with the
+    // #2268 grant expiry, clipboard-image passthrough).
     if (trimmed.startsWith('/') && !_isPathLedChat(trimmed)) {
       await _handleCommand(trimmed, images: images);
       return;
@@ -137,8 +137,9 @@ extension AgentCliInput on AgentCli {
 
   /// The shared pre-run message tail of [_dispatchInput]: viewer mode
   /// routes composer mail to the driving agent (#428 — zero local bytes),
-  /// a new user message ends the previous turn's per-turn skill tool
-  /// grants, then the run starts with any clipboard images riding along.
+  /// then the run starts with any clipboard images riding along. Leftover
+  /// per-turn skill grants expire inside [_startRun] at the run-start
+  /// boundary — this path needs no separate bookkeeping (issue #2268).
   /// The path-guard's multi-word fallback arm reuses it so every message
   /// path gets the same bookkeeping (issue #1152 round-1).
   Future<void> _sendUserMessage(
@@ -149,11 +150,24 @@ extension AgentCliInput on AgentCli {
       await _viewerSend(text);
       return;
     }
-    _approval.clearTurnGrants();
     _startRun(text, images: images);
   }
 
-  void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
+  /// Starts one streaming run. Every entry point funnels here — user
+  /// messages, `/skill:` bodies, and the machine-started runs (job-notice,
+  /// task-completion, fork-result, inbox-wake, heartbeat, replay) — so the
+  /// run-start boundary is where leftover per-turn skill grants expire
+  /// (issue #2268): a skill's `allowed-tools`/`disallowed-tools` policy
+  /// must never silently govern a run the user never initiated. Only the
+  /// `/skill:` invocation itself passes [carryTurnGrants] — the grants it
+  /// armed a few lines earlier ARE the new run's policy (they then expire
+  /// at the NEXT run boundary, so a reaction run the skill itself triggers
+  /// starts clean).
+  void _startRun(
+    String text, {
+    List<TuiImageAttachment> images = const [],
+    bool carryTurnGrants = false,
+  }) {
     // One streaming run at a time: a run-starting command typed mid-stream
     // (/skill:, a command alias) lands here while isBusy — refuse it with
     // a visible note instead of interleaving a second run into the same
@@ -166,6 +180,13 @@ extension AgentCliInput on AgentCli {
         ),
       );
       return;
+    }
+    // The run committed: expire whatever the previous run left behind
+    // unless this run IS the skill invocation that just armed fresh grants
+    // (issue #2268). A busy-refused start clears nothing — the active run's
+    // grants stay intact.
+    if (!carryTurnGrants) {
+      _approval.clearTurnGrants();
     }
     // Mark the run in flight SYNCHRONOUSLY: pre-flight compaction awaits
     // before the first streamed byte, and isBusy readers (inbox watcher,
@@ -214,7 +235,7 @@ extension AgentCliInput on AgentCli {
         // The fold badge clears at settle whatever the outcome (issue
         // #438 AC3 «until the turn settles»; #653 — error settles too).
         _autoFoldCount = 0;
-        _settleLeftoverSteering();
+        unawaited(_settleLeftoverSteering());
         // Waiting-row refresh (issue #450): the busy→idle edge is where
         // the waiting row takes over from the busy row (E3/E4).
         unawaited(_waiting.push());

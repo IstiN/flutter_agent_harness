@@ -9,6 +9,11 @@ library;
 
 import 'dart:convert';
 
+/// Safety margin before access-token expiry at which a proactive refresh
+/// happens: a token this close to expiry is treated as needing refresh so a
+/// slow request never signs with a token that dies mid-flight.
+const networkAccessRefreshMargin = Duration(minutes: 2);
+
 /// The signed-in ai-native account. [expiresAt] and [refreshToken] are
 /// nullable because the headless `--jwt` flow receives only an access token.
 final class NetworkAccount {
@@ -92,6 +97,19 @@ final class NetworkAccount {
   /// Whether the access token is expired at [now]. Unknown expiry is usable.
   bool isExpired(DateTime now) =>
       expiresAt != null && !expiresAt!.isAfter(now.toUtc());
+
+  /// Whether the access token should be refreshed before use at [now]:
+  /// expiry is missing (unknown — refresh when a credential exists),
+  /// already past, or within [margin] of [now]. Accounts without a refresh
+  /// credential stay usable this way until the server rejects them.
+  bool needsAccessRefresh(
+    DateTime now, {
+    Duration margin = networkAccessRefreshMargin,
+  }) {
+    final expiry = expiresAt;
+    if (expiry == null) return true;
+    return !expiry.isAfter(now.toUtc().add(margin));
+  }
 
   /// Best non-secret label for status output.
   String get label => displayName ?? email ?? subject ?? 'signed in';

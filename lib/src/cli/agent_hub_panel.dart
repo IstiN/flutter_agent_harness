@@ -71,6 +71,78 @@ String deferredPanelKindLabel(DeferredPanelKind kind) => switch (kind) {
 String deferredPanelStateLabel(DeferredPanelState state) =>
     state == DeferredPanelState.dead ? 'queued (agent stalled)' : state.name;
 
+/// The ONE persistence clause for steering copy (issue #2249 AC4): the
+/// watchdog warning and every other steering surface derive their
+/// saved/not-saved wording through this — the phrases cannot disagree
+/// about persistence because no surface builds its own. [unsaved] counts
+/// the steering messages whose accept-append has not landed in the
+/// session (failed, or still in flight); [error] is the first raw persist
+/// error, surfaced verbatim (#2248's raw-OSError discipline).
+String steeringSaveClause({
+  required int saved,
+  required int unsaved,
+  Object? error,
+}) {
+  if (unsaved == 0) {
+    return saved == 1
+        ? '1 steering message saved to session'
+        : '$saved steering messages saved to session';
+  }
+  final why = error == null ? 'save still in flight' : 'fs error: $error';
+  if (saved == 0) {
+    return unsaved == 1
+        ? '1 steering message NOT saved to session ($why)'
+        : '$unsaved steering messages NOT saved to session ($why)';
+  }
+  return '$unsaved of ${saved + unsaved} steering messages NOT saved to '
+      'session ($why)';
+}
+
+/// Counts the persistence truth over pending steering entries (issue
+/// #2249 AC4): how many accept-appends landed ([saved]), how many have
+/// not ([unsaved] — failed, or still in flight), and the first raw
+/// persist error ([firstError]). Pure — the ONE feed both the stall
+/// banner and the watchdog warning derive their [steeringSaveClause]
+/// inputs from, so the counting lives in exactly one place.
+({int saved, int unsaved, Object? firstError}) steeringSaveCounts(
+  Iterable<({String? recordId, Object? persistError})> entries,
+) {
+  var saved = 0;
+  var unsaved = 0;
+  Object? firstError;
+  for (final entry in entries) {
+    if (entry.recordId != null) {
+      saved++;
+    } else {
+      unsaved++;
+      firstError ??= entry.persistError;
+    }
+  }
+  return (saved: saved, unsaved: unsaved, firstError: firstError);
+}
+
+/// The watchdog's per-episode stall warning (issue #514 + #2249 AC1/AC4):
+/// names the queue, then the ONE persistence truth from
+/// [steeringSaveClause] — when every accept-append landed, the #437 copy
+/// stays byte-identical; when any did not, the line says so loudly
+/// instead of promising a save the fs refused. Pure: the caller wraps it
+/// in `tuiWarning`.
+String steeringStallWarningLine({
+  required int saved,
+  required int unsaved,
+  Object? error,
+}) {
+  final clause = steeringSaveClause(
+    saved: saved,
+    unsaved: unsaved,
+    error: error,
+  );
+  final tail = unsaved == 0
+      ? ', will deliver if the run wakes'
+      : ' — esc aborts and the unsaved text is lost';
+  return '⚠ agent not responding — $clause$tail';
+}
+
 /// One deferred (btw-style) message panel.
 final class DeferredPanel {
   DeferredPanel({

@@ -335,6 +335,187 @@ void main() {
       },
     );
   });
+
+  group('torn-write atomicity (#2262)', () {
+    Future<(FileSessionLeaseStore, String, T)> rig<T extends _TornEnv>(
+      T env,
+    ) async {
+      final store = FileSessionLeaseStore(env: env, now: () => base);
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final path = (await session.getMetadata()).path;
+      return (store, path, env);
+    }
+
+    test('AC1: a second store inspecting DURING the heartbeat write window '
+        'never fail-opens a live owner to free', () async {
+      final (owner, sessionPath, torn) = await rig(_RenamableTornEnv());
+      final watcher = FileSessionLeaseStore(env: torn, now: () => base);
+      await owner.acquire(
+        sessionFilePath: sessionPath,
+        sessionId: 'sess-1',
+        host: 'cli',
+        bootId: 'owner-a',
+        pid: 1000,
+      );
+      // The beat rewrites the sidecar every ~4s — a much larger reader
+      // window than acquire. Pre-fix it truncate+writes the SIDECAR, so
+      // the mid-write observer reads torn bytes and the watcher
+      // fail-opens to free → dual ownership. Post-fix the beat goes
+      // through a tmp; the sidecar is whole at every instant.
+      final seen = <LeaseState>[];
+      torn.onMidWrite = (_) async {
+        seen.add((await watcher.inspect(sessionPath)).state);
+      };
+      expect(await owner.heartbeat(sessionPath, 'owner-a'), isTrue);
+      expect(seen, isNotEmpty, reason: 'the mid-write hook must fire');
+      expect(
+        seen,
+        everyElement(isNot(LeaseState.free)),
+        reason: 'a torn read of a live owner must never report free',
+      );
+    });
+
+    test('AC2: a concurrent reader sampling through 25 heartbeats never '
+        'observes a partial sidecar (property)', () async {
+      final (owner, sessionPath, torn) = await rig(_RenamableTornEnv());
+      const bootId = 'owner-a';
+      await owner.acquire(
+        sessionFilePath: sessionPath,
+        sessionId: 'sess-1',
+        host: 'cli',
+        bootId: bootId,
+        pid: 1000,
+      );
+      final sidecar = owner.sidecarPath(sessionPath);
+      // Sessions live at <root>/<encoded-cwd>/<file>: list the
+      // sidecar's own directory, not the sessions root.
+      final dir = sidecar.substring(0, sidecar.lastIndexOf('/'));
+      // Park every write inside its tear window so the reader loop
+      // samples mid-write.
+      torn.onMidWrite = (_) =>
+          Future<void>.delayed(const Duration(milliseconds: 2));
+      final samples = <String>[];
+      var reading = true;
+      final reader = () async {
+        while (reading) {
+          final raw = (await torn.readTextFile(sidecar)).valueOrNull;
+          if (raw != null) samples.add(raw);
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+      }();
+      for (var i = 0; i < 25; i++) {
+        expect(await owner.heartbeat(sessionPath, bootId), isTrue);
+      }
+      reading = false;
+      await reader;
+      expect(samples, isNotEmpty, reason: 'the reader must have sampled');
+      for (final raw in samples) {
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(decoded['bootId'], bootId);
+      }
+      expect(
+        (await torn.listDir(
+          dir,
+        )).valueOrNull!.where((f) => f.name.endsWith('.tmp')),
+        isEmpty,
+        reason: 'a completed beat leaves no tmp behind',
+      );
+    });
+
+    test('AC1: a torn READ (truncated bytes) retries within the bound '
+        'instead of failing open to free', () async {
+      final (store, sessionPath, torn) = await rig(_RenamableTornEnv());
+      await store.acquire(
+        sessionFilePath: sessionPath,
+        sessionId: 'sess-1',
+        host: 'cli',
+        bootId: 'owner-a',
+        pid: 1000,
+      );
+      torn.tornReads = 1; // next sidecar read returns half the bytes
+      final found = await store.inspect(sessionPath);
+      expect(found.state, LeaseState.live);
+      expect(found.lease!.bootId, 'owner-a');
+    });
+
+    test('border: an orphan publish tmp of a DEAD publisher is swept on the '
+        'next acquire; a fresh (in-flight) tmp survives', () async {
+      final (store, sessionPath, env) = await rig(_RenamableTornEnv());
+      final sidecar = store.sidecarPath(sessionPath);
+      final dead = '$sidecar.deadboot.tmp';
+      final fresh = '$sidecar.liveboot.tmp';
+      await env.writeFile(dead, 'garbage');
+      await env.writeFile(fresh, 'garbage');
+      // Fixed clock: 20s ago is past staleAfter (dead publisher), now
+      // is not (an in-flight acquirer's tmp).
+      env.setMtime(
+        dead,
+        base.millisecondsSinceEpoch -
+            const Duration(seconds: 20).inMilliseconds,
+      );
+      env.setMtime(fresh, base.millisecondsSinceEpoch);
+
+      final result = await store.acquire(
+        sessionFilePath: sessionPath,
+        sessionId: 'sess-1',
+        host: 'cli',
+        bootId: 'mine',
+        pid: 1000,
+      );
+      expect(result, isA<LeaseAcquired>());
+
+      final dir = sidecar.substring(0, sidecar.lastIndexOf('/'));
+      final names = (await env.listDir(dir)).valueOrNull!.map((f) => f.name);
+      expect(names.where((n) => n.endsWith('.tmp')), {
+        fresh.split('/').last,
+      }, reason: 'only the dead publisher orphan is swept');
+    });
+
+    test('AC3: on a backend WITHOUT rename the heartbeat falls back to a '
+        'single write + post-write verify (documented E5)', () async {
+      final (store, sessionPath, plain) = await rig(_TornEnv());
+      // No rename capability → acquire cannot enforce: no sidecar.
+      expect(
+        await store.acquire(
+          sessionFilePath: sessionPath,
+          sessionId: 'sess-1',
+          host: 'cli',
+          bootId: 'owner-a',
+          pid: 1000,
+        ),
+        isA<LeaseUnenforced>(),
+      );
+      // A legacy/foreign publisher left our sidecar; the beat must land
+      // and be verifiable on disk.
+      await plain.writeFile(
+        store.sidecarPath(sessionPath),
+        const JsonEncoder.withIndent('  ').convert({
+          'host': 'cli',
+          'sessionId': 'sess-1',
+          'pid': 1000,
+          'bootId': 'owner-a',
+          'heartbeatAt': base
+              .subtract(const Duration(seconds: 3))
+              .toIso8601String(),
+          'acquiredAt': base.toIso8601String(),
+        }),
+      );
+      expect(await store.heartbeat(sessionPath, 'owner-a'), isTrue);
+      final json =
+          jsonDecode(
+                (await plain.readTextFile(
+                  store.sidecarPath(sessionPath),
+                )).valueOrNull!,
+              )
+              as Map<String, dynamic>;
+      expect(json['heartbeatAt'], base.toIso8601String());
+      // A foreign bootId never refreshes (E3) — unchanged.
+      expect(await store.heartbeat(sessionPath, 'someone-else'), isFalse);
+    });
+  });
 }
 
 /// A renamable env with injected publish/verify failures: [failRenames]
@@ -432,3 +613,125 @@ final class _GateLeaseEnv implements ExecutionEnv, RenamableFileSystem {
     ShellExecOptions? options,
   }) => _delegate.exec(command, options: options);
 }
+
+/// Delegates everything to a [MemoryExecutionEnv] while advertising NO
+/// capability interfaces — the E5 (non-renamable, pure-web) backend
+/// shape. Subclasses that mix in [_TornRename] become enforceable.
+///
+/// The #2262 rig: sidecar-family WRITES are observable mid-write
+/// ([onMidWrite] fires between truncating the target and writing the
+/// body — awaited, so an interleaved inspect runs inside the tear
+/// window), and sidecar READS can return torn bytes ([tornReads] makes
+/// the next N reads return half the file).
+class _TornEnv implements ExecutionEnv {
+  _TornEnv() : _delegate = MemoryExecutionEnv(cwd: '/work');
+
+  final MemoryExecutionEnv _delegate;
+
+  /// Fires inside the tear window of every sidecar-family write (the
+  /// `.owner.json` file or its publish tmp). Awaited.
+  Future<void> Function(String path)? onMidWrite;
+
+  /// The next N sidecar READS return the first half of the file's bytes
+  /// (a read caught mid-write). 0 = reads pass through.
+  int tornReads = 0;
+
+  /// Test-only mtime pin (the staleness clock), forwarded to the
+  /// delegate's [MemoryExecutionEnv.setMtime].
+  void setMtime(String path, int mtimeMs) => _delegate.setMtime(path, mtimeMs);
+
+  static bool _isSidecarFamily(String path) => path.contains('.owner.json');
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) async {
+    if (onMidWrite != null && _isSidecarFamily(path)) {
+      await _delegate.writeFile(path, ''); // the torn state
+      await onMidWrite!(path);
+    }
+    return _delegate.writeFile(path, content);
+  }
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    final raw = await _delegate.readTextFile(path);
+    if (tornReads > 0 && _isSidecarFamily(path)) {
+      tornReads--;
+      final value = raw.valueOrNull;
+      if (value != null && value.length > 1) {
+        return Ok(value.substring(0, value.length ~/ 2));
+      }
+    }
+    return raw;
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
+}
+
+/// Atomic-rename capability over [_TornEnv]: mixing it in makes the
+/// backend enforceable (the store probes `is RenamableFileSystem`).
+mixin _TornRename on _TornEnv implements RenamableFileSystem {
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _delegate.renamePath(from, to);
+}
+
+final class _RenamableTornEnv extends _TornEnv with _TornRename {}

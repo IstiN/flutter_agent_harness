@@ -177,6 +177,11 @@ final class WindowedSessionStorage
   int get residentCount => _entries.length;
   int get residentWindowBytes => _residentWindowBytes;
 
+  /// Append-cursor instrumentation (issue #2255 AC1/AC2: cursor truth is
+  /// asserted against [SessionChunkReader.stat] size, not inferred from
+  /// the banner state).
+  int get knownFileBytes => _knownFileBytes;
+
   @override
   SessionMetadata get cachedMetadata => _metadata;
 
@@ -1168,44 +1173,59 @@ final class WindowedSessionStorage
     // round-4 review): concurrent bursts must never interleave bytes
     // mid-record. Same contract as [JsonlSessionStorage].
     final line = jsonEncode(record.toJson());
-    await withSessionFileLock(_filePath, () async {
-      // Issue #427: the app-chat submit path appends here; a transient
-      // ENOENT rides the capped retry instead of killing the submit.
-      _fsOrThrow(
-        await retryTransientSessionFileIo(
-          () => _fs.appendFile(_filePath, '$line\n'),
-          op: 'append',
-          path: _filePath,
-          config: _ioRetry,
-        ),
-        'Failed to append session entry ${record.id}',
-      );
-      final info = await _reader.stat();
-      final start = info == null
-          ? _knownFileBytes
-          : info.size - line.length - 1;
-      _fileSize = start + line.length + 1;
-      _fileMtimeMs = info?.mtimeMs ?? _fileMtimeMs;
-      _offsetById[record.id] = start;
-      final leaf = leafIdAfterSessionRecord(record);
-      if (_knownFileBytes == start) {
-        // Window bottom is the file tail: the record extends it. The
-        // LeafRecord conjunct was absorbed: its parentId check is the
-        // same comparison (absorption, identical-branches audit #1998).
-        final chained = record.parentId == _branchBottomId;
-        _indexEntry(record, start: start, end: _fileSize);
-        _knownFileBytes = _fileSize;
-        if (chained) _branchBottomId = leaf;
-      } else {
-        // Deep-paged: the record lands below the window and pages in later.
-        final below = _belowCount;
-        if (below != null) {
-          _belowCount = below + 1;
-          _appendedBelow[record.id] = record;
+    await withSessionFileLock(
+      _filePath,
+      () async {
+        // Issue #427: the app-chat submit path appends here; a transient
+        // ENOENT rides the capped retry instead of killing the submit.
+        // Issue #2248: the locked envelope is bounded by ioTimeout — a
+        // hung open/write fails the append named (AC2), never wedging
+        // the turn.
+        _fsOrThrow(
+          await retryTransientSessionFileIo(
+            () => _fs.appendFile(_filePath, '$line\n'),
+            op: 'append',
+            path: _filePath,
+            config: _ioRetry,
+          ),
+          'Failed to append session entry ${record.id}',
+          sessionId: _metadata.id,
+        );
+        // Byte math, not code units: info.size/_knownFileBytes count
+        // UTF-8 file bytes (appendFile writes UTF-8) while line.length
+        // counts UTF-16 code units — one non-ASCII record (é/emoji/CJK)
+        // overcounted `start`, missed the tail-extend guard below, and
+        // froze the residency cursor for the whole open (issue #2255).
+        final lineBytes = utf8.encode(line).length;
+        final info = await _reader.stat();
+        final start = info == null
+            ? _knownFileBytes
+            : info.size - lineBytes - 1;
+        _fileSize = start + lineBytes + 1;
+        _fileMtimeMs = info?.mtimeMs ?? _fileMtimeMs;
+        _offsetById[record.id] = start;
+        final leaf = leafIdAfterSessionRecord(record);
+        if (_knownFileBytes == start) {
+          // Window bottom is the file tail: the record extends it. The
+          // LeafRecord conjunct was absorbed: its parentId check is the
+          // same comparison (absorption, identical-branches audit #1998).
+          final chained = record.parentId == _branchBottomId;
+          _indexEntry(record, start: start, end: _fileSize);
+          _knownFileBytes = _fileSize;
+          if (chained) _branchBottomId = leaf;
+        } else {
+          // Deep-paged: the record lands below the window and pages in later.
+          final below = _belowCount;
+          if (below != null) {
+            _belowCount = below + 1;
+            _appendedBelow[record.id] = record;
+          }
         }
-      }
-      _currentLeafId = leaf;
-    });
+        _currentLeafId = leaf;
+      },
+      timeout: _ioRetry.ioTimeout,
+      sessionId: _metadata.id,
+    );
     _evictToBound(newestSide: false);
   }
 
@@ -1274,15 +1294,16 @@ final class WindowedSessionStorage
   Future<List<SessionRecord>> getEntries() async => [..._entries];
 }
 
-void _fsOrThrow(Result<void, FileError> result, String message) {
+void _fsOrThrow(
+  Result<void, FileError> result,
+  String message, {
+  String? sessionId,
+}) {
   if (result is Err<void, FileError>) {
-    final error = result.error;
-    throw SessionException(
-      '$message: ${error.message}',
-      code: error.code == FileErrorCode.notFound
-          ? SessionErrorCode.notFound
-          : SessionErrorCode.storage,
-      cause: error,
+    throw sessionFsException(
+      result.error,
+      message: message,
+      sessionId: sessionId,
     );
   }
 }

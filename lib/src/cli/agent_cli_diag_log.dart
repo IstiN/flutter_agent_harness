@@ -49,8 +49,13 @@ extension AgentCliDiagLog on AgentCli {
   /// gh-2097: drains the diagnostic-append chain — every exit path
   /// awaits this so the process cannot die with pending lines in the
   /// chain (the last thing the process does must never be a pending
-  /// log write).
-  Future<void> flushDiagnosticLog() => _diagLogChain;
+  /// log write). Issue #2248 AC4: when the sink is failing, the drain
+  /// also dumps the in-memory ring to stderr, so exit never loses the
+  /// buffered post-mortem either.
+  Future<void> flushDiagnosticLog() async {
+    await _diagLogChain;
+    _dumpDiagRingToStderr(exitDrain: true);
+  }
 
   /// Test seam: emit one diagnostic line exactly as production callers
   /// do (gh-2097 burst/drop coverage; the level/category ride through
@@ -104,15 +109,144 @@ extension AgentCliDiagLog on AgentCli {
             LogEvent(time: DateTime.now(), elapsed: DateTime.now().difference(_loggingBoot), sid: _logSid, level: level, category: category, message: safe),
             timeFormat: settings.timeFormat,
           )}\n';
+    // Issue #2248 AC4: the append is BOUNDED (the same session-IO knob) —
+    // wedge #1's log went silent because the log appends themselves hung;
+    // a hung or failed append now trips the sink's failure mode instead
+    // of stalling the whole diagnostic chain behind it.
+    Result<void, FileError> result;
     try {
       if (!_diagnosticLogDirEnsured) {
         _diagnosticLogDirEnsured = true;
         await _env.createDir('${config.homeDir}/.fah/logs', recursive: true);
         await _rotateDiagnosticLogIfOversized(path);
       }
-      await _env.appendFile(path, line);
-    } catch (_) {
-      // Diagnostics must never break the CLI.
+      result = await _boundedLogAppend(path, line);
+    } on Object catch (error) {
+      result = Err(FileError(FileErrorCode.unknown, '$error'));
+    }
+    if (result.isOk) {
+      if (_ioState.diagFailing) await _recoverDiagSink(path);
+      return;
+    }
+    _noteDiagSinkFailure(path, result.errorOrNull!);
+    _emitDiagFallbackLine(line);
+    _bufferDiagLine(line);
+  }
+
+  /// One fa.log append under the session-IO bound (RC round-1: the
+  /// recovery flush ran unbounded inside the gh-2097 chain — a
+  /// fail→ok→hang fs would have wedged the chain and the exit drain,
+  /// the exact class this PR eliminates). A timeout surfaces as an Err
+  /// flush result instead of awaiting forever.
+  Future<Result<void, FileError>> _boundedLogAppend(String path, String line) =>
+      _env
+          .appendFile(path, line)
+          .timeout(
+            config.sessionIoTimeout,
+            onTimeout: () => Err(
+              FileError(
+                FileErrorCode.aborted,
+                'diagnostic log append timed out',
+              ),
+            ),
+          );
+
+  /// AC4: first-failure marker — `fa_log_sink=fail(errno=...)` rides the
+  /// stderr fallback (the file sink is the thing that is down); the boot
+  /// line family keeps the failure greppable.
+  void _noteDiagSinkFailure(String path, FileError error) {
+    final state = _ioState;
+    if (!state.diagFailing) {
+      state.diagFailing = true;
+      state.diagFirstErrno = diagSinkErrnoLabel(error);
+      _diagFallback(
+        'fa_log_sink=fail(${state.diagFirstErrno ?? 'unknown'}) '
+        'path=$path error=${error.message} — lines buffer in memory '
+        'and ride stderr until the file sink recovers',
+      );
+    }
+  }
+
+  /// AC4: while failing, every line also goes to stderr (the diagnostics
+  /// channel — headless hosts route writeln to stderr; the TUI transcript
+  /// shows it, which is the point: the log must never go blind silently).
+  void _emitDiagFallbackLine(String line) => _diagFallback(line.trimRight());
+
+  /// AC4: bounded in-memory ring (last [diagSinkRingCapacity] lines).
+  void _bufferDiagLine(String line) {
+    final ring = _ioState.diagRing;
+    ring.add(line);
+    if (ring.length > diagSinkRingCapacity) {
+      ring.removeAt(0);
+    }
+  }
+
+  /// AC4: first successful write after a failure — flush the ring into
+  /// the file (best-effort per line; a still-failing or TIMED-OUT flush
+  /// keeps the buffer and the failing state), then mark the recovery
+  /// with `log_sink_recovered buffered=N` so the post-mortem knows
+  /// exactly which lines were delayed. Every append runs under the
+  /// session-IO bound (RC round-1: an unbounded flush here could wedge
+  /// the append chain on a fail→ok→hang fs). Awaited inside the append
+  /// chain, so the flush lines never race the live appends that follow.
+  Future<void> _recoverDiagSink(String path) async {
+    final state = _ioState;
+    final buffered = List<String>.of(state.diagRing);
+    state.diagRing.clear();
+    var flushed = 0;
+    for (final bufferedLine in buffered) {
+      final landed = await _boundedLogAppend(path, bufferedLine);
+      if (landed.isOk) {
+        flushed++;
+      } else {
+        _bufferDiagLine(bufferedLine);
+      }
+    }
+    state.diagFailing = false;
+    final errno = state.diagFirstErrno;
+    state.diagFirstErrno = null;
+    final marker = await _boundedLogAppend(
+      path,
+      '${DateTime.now().toIso8601String()} info '
+      'log_sink_recovered buffered=$flushed '
+      'failed_as=${errno ?? 'unknown'}\n',
+    );
+    if (!marker.isOk) {
+      state.diagFailing = true;
+      state.diagFirstErrno = errno;
+      _diagFallback('log_sink_recovered buffered=$flushed (marker failed)');
+      return;
+    }
+    _diagFallback('fa_log_sink=recovered buffered=$flushed flushed to file');
+  }
+
+  /// AC4/exit: dumps the still-unflushed ring to stderr — called from
+  /// [flushDiagnosticLog] so a process that dies while the sink is down
+  /// prints what it buffered instead of losing it.
+  void _dumpDiagRingToStderr({required bool exitDrain}) {
+    final state = _ioState;
+    if (!state.diagFailing && state.diagRing.isEmpty) return;
+    for (final line in state.diagRing) {
+      _diagFallback(line.trimRight());
+    }
+    final count = state.diagRing.length;
+    state.diagRing.clear();
+    if (exitDrain && count > 0) {
+      _diagFallback(
+        'fa_log_sink=exit_drain buffered=$count dumped to stderr '
+        '(file sink never recovered)',
+      );
+    }
+  }
+
+  /// The stderr/route fallback writer. CliIO.writeln is the diagnostics
+  /// channel (stderr on headless hosts) — used instead of raw `stderr`
+  /// so lib/src stays dart:io-free and the app host can route it.
+  void _diagFallback(String text) {
+    try {
+      io.writeln(text);
+    } on Object {
+      // The fallback of the fallback must never throw either.
     }
   }
 
@@ -139,4 +273,48 @@ extension AgentCliDiagLog on AgentCli {
     if (home == null || home.isEmpty) return null;
     return '$home/.fah/logs/fa.log';
   }
+}
+
+/// Per-process state for the issue #2248 CLI surfaces. Extensions hold
+/// no fields, and `agent_cli.dart` rides the 2800-line gate — one object
+/// on the class carries the fa.log sink's self-failure state (AC4) and
+/// the sessions-container size memo (AC6).
+final class AgentCliIoState {
+  /// AC4: whether the fa.log sink is currently failing (stderr fallback
+  /// active, ring buffering).
+  bool diagFailing = false;
+
+  /// AC4: the errno label of the failure that opened the episode
+  /// (`errno=24: Too many open files` shape), echoed by the recovery
+  /// marker.
+  String? diagFirstErrno;
+
+  /// AC4: the in-memory ring of lines that failed to land — flushed to
+  /// the file on recovery, dumped to stderr on exit drain. Bounded at
+  /// [diagSinkRingCapacity]; the oldest line falls off beyond it.
+  final diagRing = <String>[];
+
+  /// AC6: the sessions-container size memo — boot starts the walk
+  /// unawaited; /stats awaits the same future (never recomputes).
+  Future<ContainerSizeStats?>? containerSizeFuture;
+}
+
+/// Ring capacity: the incident's log hole spanned ~100 lifecycle lines
+/// over minutes; 500 keeps a healthy post-mortem margin without
+/// unbounded memory. ponytail: fixed cap, configurable only if a real
+/// session ever needs more.
+const int diagSinkRingCapacity = 500;
+
+final _errnoInMessage = RegExp(r'\(errno (\d+): ([^)]*)\)');
+
+/// The errno label a FileError carries into the `fa_log_sink=fail(...)`
+/// marker. The env layer embeds the raw OS reason in the message
+/// (`... (errno 24: Too many open files)`, issue #2248 AC1) — that is
+/// the parse here, so lib/src stays dart:io-free (fake envs in tests
+/// inject the same shape).
+String diagSinkErrnoLabel(FileError error) {
+  final match = _errnoInMessage.firstMatch(error.message);
+  if (match != null) return 'errno=${match.group(1)}: ${match.group(2)}';
+  final message = error.message.trim();
+  return message.isEmpty ? 'unknown' : message;
 }

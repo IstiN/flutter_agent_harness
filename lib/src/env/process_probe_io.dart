@@ -25,9 +25,13 @@ Future<String?> processGroupTableSnapshot() =>
     _psOutput(['-ax', '-o', 'pid=,pgid=']);
 
 /// The raw `ps -o lstart= -p <pid>` stdout, or null when ps fails or
-/// prints nothing.
+/// prints nothing. TRIMMED (issue #2260 review): ps right-aligns the
+/// single-pid column, so the raw value carries leading whitespace —
+/// every consumer compares/parses start tags against trimmed values
+/// (`tryParseLstart`, the reconcile, the liveness table), and an
+/// untrimmed tag made every recorded entry read as recycled.
 Future<String?> pidStartSnapshot(int pid) async {
-  final out = await _psOutput(['-o', 'lstart=', '-p', '$pid']);
+  final out = (await _psOutput(['-o', 'lstart=', '-p', '$pid']))?.trim();
   if (out == null || out.isEmpty) return null;
   return out;
 }
@@ -170,18 +174,68 @@ List<ShellSurvivor> classifyShellSurvivors({
   return out;
 }
 
+/// Grace between the TERM and KILL rounds of [stopDetachedProcess].
+const _stopKillGrace = Duration(milliseconds: 400);
+
+/// Settle time after the KILL round before the survivor scan — orphans
+/// are reparented to init and reaped within moments; zombies (the
+/// already-dead, not-yet-reaped) must not count as survivors.
+const _stopSurvivorScanDelay = Duration(milliseconds: 250);
+
 /// Best-effort TERM-then-KILL of a detached foreign process (issue
 /// #2201: `bash_job stop` on an adopted job — we hold only the pid, no
-/// process handle). Never throws; true when a signal round ran.
-Future<bool> stopDetachedProcess(int pid) async {
+/// process handle), GROUP-AWARE (issue #2260): when the process table
+/// shows the pid leading its own process group (`pgid == pid` — the
+/// setsid contract), the whole GROUP is signaled `kill(-pid)` — a
+/// single-pid kill strands the group's members, which inherit the group
+/// and survive the leader burning CPU forever. Leadership evidence comes
+/// from the same table row that identifies the process, so a process
+/// that never led a group (non-ownGroup hosts) keeps the single-pid
+/// kill, and a stale/wrong pid degrades to it too.
+///
+/// Returns the group members verified STILL ALIVE after the kill rounds
+/// (empty = the whole group is gone, verified by a fresh table scan), or
+/// null when the group could not be verified: no group leadership ran,
+/// the leader refused the TERM (already gone), or the verification scan
+/// failed. Never throws.
+Future<List<ShellSurvivor>?> stopDetachedProcess(int pid) async {
   try {
-    final ok = Process.killPid(pid, ProcessSignal.sigterm);
-    if (ok != true) return false;
-    await Future<void>.delayed(const Duration(milliseconds: 400));
-    Process.killPid(pid, ProcessSignal.sigkill);
-    return true;
+    final detail = await processDetailTableSnapshot();
+    ProcessDetailRow? row;
+    if (detail != null) {
+      for (final candidate in detail) {
+        if (candidate.pid == pid) row = candidate;
+      }
+    }
+    if (row == null || row.pgid != pid) {
+      // No group leadership on this host (or no readable row): the
+      // single-pid kill, as before. The group is unverifiable — on
+      // orphan-window hosts its members sit in OUR group,
+      // indistinguishable from the harness's own processes.
+      final ok = Process.killPid(pid, ProcessSignal.sigterm);
+      if (ok != true) return null;
+      await Future<void>.delayed(_stopKillGrace);
+      Process.killPid(pid, ProcessSignal.sigkill);
+      return null;
+    }
+    Process.killPid(-pid, ProcessSignal.sigterm);
+    await Future<void>.delayed(_stopKillGrace);
+    Process.killPid(-pid, ProcessSignal.sigkill);
+    await Future<void>.delayed(_stopSurvivorScanDelay);
+    final after = await processDetailTableSnapshot();
+    if (after == null) return null;
+    return [
+      for (final member in after)
+        if (member.pgid == pid &&
+            !(member.command?.contains('defunct') ?? false))
+          ShellSurvivor(
+            pid: member.pid,
+            startTag: member.lstart,
+            command: member.command,
+          ),
+    ];
   } on Object {
-    return false;
+    return null;
   }
 }
 

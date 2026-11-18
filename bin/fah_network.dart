@@ -71,6 +71,24 @@ Future<CliNetworkPresence?> _restoreNetworkPresence({
     final baseUrl = _networkRelayBaseUrl();
     final httpClient = http.Client();
     final devices = DeviceEnrollmentClient(httpClient: httpClient);
+    // Connector start: proactively refresh the account token when its
+    // expiry is missing/past/near so management REST calls never sign with
+    // a dying token. Presence itself keeps riding the deviceToken (see the
+    // comment above); a failed refresh stays quiet here because `fa network
+    // status` and the next authenticated command surface the named login
+    // fallback with the reason.
+    try {
+      await refreshNetworkAccountForUse(
+        account: account,
+        client: NetworkAccountClient(
+          baseUrl: _networkAuthBaseUrl(),
+          httpClient: httpClient,
+        ),
+        persist: store.writeAccount,
+      );
+    } on Object {
+      // Best-effort: device presence does not depend on the account token.
+    }
     final env = LocalExecutionEnv(cwd: Directory.current.path);
     final repo = JsonlSessionRepo(
       fs: env,

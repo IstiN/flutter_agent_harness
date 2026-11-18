@@ -3,9 +3,10 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/env/process_probe_io.dart';
 import 'package:test/test.dart';
 
-void main() {
+void main() async {
   late Directory tempDir;
   late LocalExecutionEnv env;
 
@@ -17,6 +18,14 @@ void main() {
   tearDown(() {
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
+
+  // Whether the host lets this process run `ps` (hardened/sandboxed test
+  // hosts deny it; CI Linux runs the real process-table paths).
+  final psAvailable = await Process.run('ps', [
+    '-ax',
+    '-o',
+    'pid=',
+  ]).then((p) => p.exitCode == 0).catchError((Object _) => false);
 
   group('BackgroundShell (local)', () {
     test('a job runs detached, writes its log, and settles', () async {
@@ -492,17 +501,13 @@ void main() {
       // 37783963871: the original expectation was doubly wrong — it
       // assumed 'key ' had already been emitted AND 'done' included).
       expect(redactor.ingest('key AKIA'), isEmpty);
-      expect(
-        redactor.ingest('IOSFODNN7EXAMPLE\ndone'),
-        'key [REDACTED]\n',
-      );
+      expect(redactor.ingest('IOSFODNN7EXAMPLE\ndone'), 'key [REDACTED]\n');
       // The trailing partial line ('done') is not trapped: flush() emits
       // it sanitized at settle.
       expect(redactor.flush(), 'done');
     });
 
-    test('a token split at ANY chunk offset stays redacted (parametrized)',
-        () {
+    test('a token split at ANY chunk offset stays redacted (parametrized)', () {
       // The reviewer-facing invariant, pinned at every boundary offset —
       // not one lucky split: whatever the cut, no emitted byte sequence
       // ever contains the raw token, and the assembled log carries the
@@ -512,7 +517,8 @@ void main() {
         final redactor = JobLogRedactor(
           (text) => text.replaceAll(token, '[REDACTED]'),
         );
-        final rested = redactor.ingest('key ${token.substring(0, cut)}') +
+        final rested =
+            redactor.ingest('key ${token.substring(0, cut)}') +
             redactor.ingest('${token.substring(cut)} tail\n') +
             redactor.flush();
         expect(
@@ -548,8 +554,7 @@ void main() {
       expect(redactor.flush(), isEmpty);
     });
 
-    test('an oversized buffered partial line keeps best-effort redaction',
-        () {
+    test('an oversized buffered partial line keeps best-effort redaction', () {
       final redactor = JobLogRedactor(
         (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
       );
@@ -561,6 +566,136 @@ void main() {
       expect(out, contains('[REDACTED]'));
       expect(out, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
     });
+  });
+
+  group('stopDetachedProcess is group-aware (issue #2260)', () {
+    // The live row of [pid] in one detail snapshot, or null.
+    Future<ProcessDetailRow?> rowFor(int pid) async {
+      final rows = await processDetailTableSnapshot();
+      if (rows == null) return null;
+      for (final row in rows) {
+        if (row.pid == pid) return row;
+      }
+      return null;
+    }
+
+    test(
+      "a setsid group leader's stop kills the whole group "
+      'and verifies it gone (AC1)',
+      skip: psAvailable ? null : 'needs POSIX with ps access',
+      () async {
+        // python3 os.setsid() makes the child a REAL process group
+        // leader on every POSIX host (no util-linux `setsid` needed).
+        final python = await Process.run('python3', ['--version']);
+        if (python.exitCode != 0) {
+          markTestSkipped('python3 unavailable — no group leader spawn');
+          return;
+        }
+        const script = '''
+import os, subprocess
+os.setsid()
+a = subprocess.Popen(['sleep', '31'])
+b = subprocess.Popen(['sleep', '32'])
+print(os.getpid(), flush=True)
+a.wait(); b.wait()
+''';
+        final leader = await Process.start('python3', ['-c', script]);
+        addTearDown(() => Process.killPid(leader.pid, ProcessSignal.sigkill));
+        addTearDown(() => Process.run('pkill', ['-f', "sleep', '3"]));
+
+        // The group must be visible in the process table before the
+        // stop runs — that visibility IS the group-kill evidence.
+        var leaderVisible = false;
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (DateTime.now().isBefore(deadline)) {
+          final row = await rowFor(leader.pid);
+          if (row?.pgid == leader.pid) {
+            leaderVisible = true;
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(leaderVisible, isTrue, reason: 'setsid made pid == pgid');
+        final membersBefore = await processDetailTableSnapshot();
+        expect(
+          membersBefore!.where((r) => r.pgid == leader.pid).length,
+          greaterThanOrEqualTo(3),
+          reason: 'leader + two sleep pipeline members in one group',
+        );
+
+        final survivors = await stopDetachedProcess(leader.pid);
+
+        // The whole group verified gone: no live member remains.
+        expect(survivors, isEmpty);
+        final after = await processDetailTableSnapshot();
+        expect([
+          for (final row in after ?? const <ProcessDetailRow>[])
+            if (row.pgid == leader.pid &&
+                !(row.command?.contains('defunct') ?? false))
+              row.pid,
+        ], isEmpty);
+        expect(await _liveProcesses('sleep 31'), isEmpty);
+        expect(await _liveProcesses('sleep 32'), isEmpty);
+      },
+    );
+
+    test(
+      'a pid without group leadership keeps the single-pid kill and '
+      'reports the group unverified (AC2)',
+      skip: psAvailable ? null : 'needs POSIX with ps access',
+      () async {
+        final child = await Process.start('sleep', ['30']);
+        addTearDown(() => Process.killPid(child.pid, ProcessSignal.sigkill));
+        final row = await rowFor(child.pid);
+        // No setsid anywhere: the child sits in OUR group, never its own.
+        expect(row, isNotNull);
+        expect(row!.pgid, isNot(child.pid));
+
+        final survivors = await stopDetachedProcess(child.pid);
+
+        expect(survivors, isNull, reason: 'no group evidence — no claim');
+        await child.exitCode;
+      },
+    );
+
+    test(
+      'an already-dead pid reports unverified and never throws',
+      skip: psAvailable ? null : 'needs POSIX with ps access',
+      () async {
+        final child = await Process.start('sleep', ['30']);
+        child.kill();
+        await child.exitCode;
+
+        final survivors = await stopDetachedProcess(child.pid);
+
+        expect(survivors, isNull);
+      },
+    );
+
+    test(
+      'pidStartSnapshot is trimmed and byte-matches the table lstart '
+      '(issue #2260 review: an untrimmed tag reads as recycled at boot)',
+      skip: psAvailable ? null : 'needs POSIX with ps access',
+      () async {
+        final child = await Process.start('sleep', ['30']);
+        addTearDown(() => Process.killPid(child.pid, ProcessSignal.sigkill));
+
+        final tag = await pidStartSnapshot(child.pid);
+
+        expect(tag, isNotNull);
+        expect(tag, tag!.trim(), reason: 'no ps column padding may leak');
+        final row = await rowFor(child.pid);
+        expect(row, isNotNull);
+        expect(
+          tag,
+          row!.lstart,
+          reason:
+              'the producer must byte-match the table parser, or '
+              'every recorded entry compares as recycled at boot',
+        );
+        expect(tryParseLstart(tag), isNotNull);
+      },
+    );
   });
 }
 

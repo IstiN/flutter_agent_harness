@@ -1,7 +1,7 @@
+import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
-import 'package:flutter_agent_harness/src/session/windowed_session_storage.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 /// Issue #135 AC3 property test (review round 2): a SEEDED RANDOM
@@ -139,6 +139,69 @@ void main() {
       }
       expect(window.first, 'e0');
       expect(await storage.countAbove(), 0);
+    }
+  });
+
+  // Issue #2255 AC2: the append cursor is BYTE math. Random mixed-script
+  // appends (ASCII / Latin-1 accents / CJK / emoji, where UTF-16 code
+  // units and UTF-8 bytes diverge arbitrarily) must keep the cursor on
+  // the real file size and every offset byte-exact. Deterministic: same
+  // seed, same walk.
+  test('mixed-script appends keep the cursor byte-exact', () async {
+    const scripts = [
+      'plain ascii body',
+      'café naïve résumé — déjà vu',
+      '日本語のテキスト、汉字、한국어',
+      'emoji 🎉☕️ flags 🇯🇵 family 👨‍👩‍👧',
+      'русский текст українська мова',
+    ];
+    for (final seed in [1, 42, 90210]) {
+      const iso = '2026-01-01T00:00:00.000Z';
+      await fs.writeFile(
+        path,
+        '{"type":"session","version":3,"id":"walk","timestamp":"$iso",'
+        '"cwd":"/work"}\n',
+      );
+      final storage = await WindowedSessionStorage.open(fs, path);
+      final random = Random(seed);
+      final appended = <String>[];
+      for (var i = 0; i < 60; i++) {
+        final text =
+            '${scripts[random.nextInt(scripts.length)]} #$i '
+            '${scripts[random.nextInt(scripts.length)]}';
+        final record = MessageRecord(
+          id: 'm$i',
+          parentId: i == 0 ? null : 'm${i - 1}',
+          timestamp: DateTime.utc(2026, 1, 1).add(Duration(minutes: i)),
+          message: UserMessage.text(text),
+        );
+        await storage.appendEntry(record);
+        appended.add(record.id);
+        expect(
+          storage.knownFileBytes,
+          (await storage.reader.stat())!.size,
+          reason: 'seed $seed record $i: cursor diverged from file size',
+        );
+      }
+
+      // Ground truth: a raw newline scan of the file bytes. Every
+      // offset byte-exact, cursor on the real size.
+      final raw = (await fs.readBinaryFile(path)).getOrThrow();
+      final truth = <String, int>{};
+      var start = 0;
+      for (var i = 0; i <= raw.length; i++) {
+        if (i == raw.length || raw[i] == 0x0A) {
+          final id = RegExp(
+            '"id":"([^"]+)"',
+          ).firstMatch(utf8.decode(raw.sublist(start, i)))?.group(1);
+          if (id != null) truth[id] = start;
+          start = i + 1;
+        }
+      }
+      expect(storage.knownFileBytes, raw.length, reason: 'seed $seed');
+      for (final id in appended) {
+        expect(storage.offsetOf(id), truth[id], reason: 'seed $seed: $id');
+      }
     }
   });
 }

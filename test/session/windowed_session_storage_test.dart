@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -202,6 +203,25 @@ void main() {
   List<String> idsOf(List<SessionRecord> records) => [
     for (final record in records) record.id,
   ];
+
+  /// Byte-exact ground truth for [WindowedSessionStorage.offsetOf]: a
+  /// raw newline scan of the file mapping every record id to its true
+  /// start byte (issue #2255 — cursor math must match this, not UTF-16
+  /// code-unit math).
+  Future<Map<String, int>> trueOffsets() async {
+    final raw = (await fs.readBinaryFile(path)).getOrThrow();
+    final offsets = <String, int>{};
+    var start = 0;
+    for (var i = 0; i <= raw.length; i++) {
+      if (i == raw.length || raw[i] == 0x0A) {
+        final line = utf8.decode(raw.sublist(start, i));
+        final id = RegExp('"id":"([^"]+)"').firstMatch(line)?.group(1);
+        if (id != null) offsets[id] = start;
+        start = i + 1;
+      }
+    }
+    return offsets;
+  }
 
   group('WindowedSessionStorage.open', () {
     test('reads only the tail window, not the whole file', () async {
@@ -465,6 +485,109 @@ void main() {
       final entries = await windowed.getEntries();
       expect(idsOf(entries), isNot(contains(id)));
     });
+  });
+
+  group('WindowedSessionStorage.append cursor (issue #2255)', () {
+    test('non-ASCII appends keep the cursor byte-exact (é + emoji)', () async {
+      await seed(4);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 2,
+      );
+      await windowed.appendEntry(
+        MessageRecord(
+          id: 'n1',
+          parentId: 'e3',
+          timestamp: DateTime.utc(2026, 1, 2),
+          message: UserMessage.text('café ☕️ naïve résumé — déjà vu 🎉'),
+        ),
+      );
+      await windowed.appendEntry(
+        MessageRecord(
+          id: 'n2',
+          parentId: 'n1',
+          timestamp: DateTime.utc(2026, 1, 3),
+          message: UserMessage.text('ascii tail'),
+        ),
+      );
+
+      final size = (await windowed.reader.stat())!.size;
+      // The append cursor counts UTF-8 FILE BYTES, not UTF-16 code
+      // units: a non-ASCII record must not freeze it below file truth
+      // (issue #2255).
+      expect(windowed.knownFileBytes, size);
+      // No below-window accounting: both appends hit the tail-extend
+      // guard and stay resident.
+      expect(windowed.hasNewer, isFalse);
+      expect(idsOf(await windowed.currentBranch()), containsAll(['n1', 'n2']));
+      // Offsets byte-exact against the raw file.
+      final truth = await trueOffsets();
+      expect(windowed.offsetOf('n1'), truth['n1']);
+      expect(windowed.offsetOf('n2'), truth['n2']);
+    });
+
+    test('pure-ASCII appends stay byte-exact (REG)', () async {
+      await seed(4);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 2,
+      );
+      await windowed.appendEntry(
+        MessageRecord(
+          id: 'n1',
+          parentId: 'e3',
+          timestamp: DateTime.utc(2026, 1, 2),
+          message: UserMessage.text('plain ascii'),
+        ),
+      );
+      final size = (await windowed.reader.stat())!.size;
+      expect(windowed.knownFileBytes, size);
+      expect(windowed.hasNewer, isFalse);
+      final truth = await trueOffsets();
+      expect(windowed.offsetOf('n1'), truth['n1']);
+    });
+
+    test(
+      'deep-paged append after a jump re-anchor stays byte-exact (REG)',
+      () async {
+        await seedRaw(40);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 5,
+        );
+        // Re-anchor the window ABOVE the file tail (a jump into history
+        // bounded to 5 records — the tail stays below the window).
+        final anchor = await windowed.reader.locateRecord('e10');
+        await windowed.jumpToOffset(anchor!, maxRecords: 5);
+        expect(
+          windowed.knownFileBytes,
+          lessThan((await windowed.reader.stat())!.size),
+        );
+
+        // A legitimate below-window append: the record pages in later,
+        // but its offset is byte truth even while routed below-window.
+        await windowed.appendEntry(
+          MessageRecord(
+            id: 'n1',
+            parentId: 'e14',
+            timestamp: DateTime.utc(2026, 1, 2),
+            message: UserMessage.text('café ☕️ below the window 🎉'),
+          ),
+        );
+        final truth = await trueOffsets();
+        expect(windowed.offsetOf('n1'), truth['n1']);
+
+        // Page back down: the cursor re-anchors at the tail and the
+        // record is reachable.
+        await windowed.loadNewer();
+        expect(windowed.knownFileBytes, (await windowed.reader.stat())!.size);
+        expect(windowed.hasNewer, isFalse);
+        expect(await windowed.getEntry('n1'), isNotNull);
+      },
+    );
   });
 
   group('WindowedSessionStorage.live tail', () {

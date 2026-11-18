@@ -1204,22 +1204,49 @@ ToolExecutionResult? _refusedAdoptedStopResult(ShellJobEntry entry, String id) {
   );
 }
 
-Future<ToolExecutionResult> _bashJobStopResult(
-  ShellJobRegistry jobs,
-  String? id,
-) async {
-  if (id == null) throw StateError('bash_job stop requires an id');
-  final entry = jobs.job(id);
-  if (entry != null) {
-    final already = _alreadyFinishedStopResult(entry, id);
-    if (already != null) return already;
-    await entry.stop();
-    return _refusedAdoptedStopResult(entry, id) ??
-        ToolExecutionResult.text('Stopped $id');
+/// The post-stop result for a resolved entry (issue #2260): bare
+/// "Stopped" only when the whole process group verified gone. An adopted
+/// stop on a host without group leadership (or with a failed
+/// verification scan) killed only the leader; a partial kill names the
+/// surviving members; a leader that survived the kill rounds is never
+/// claimed stopped. All keep the manifest record (the boot sweep reaps
+/// the group through it — but only once the leader is gone; it skips
+/// live leaders). Kept a tiny flat ladder — each branch unit-pinned in
+/// adopted_shell_jobs_test (the CRAP ratchet reads their coverage).
+ToolExecutionResult _stoppedAdoptedResult(ShellJobEntry entry, String id) {
+  final survivors = entry.stopSurvivors;
+  if (survivors != null && survivors.isNotEmpty) {
+    final pids = stopSurvivorPidList(survivors);
+    if (stopLeaderSurvived(entry)) {
+      return ToolExecutionResult.text(
+        '$id is still running (pid ${entry.pid}) — the stop signals '
+        'did not take it down, and ${survivors.length} process group '
+        'member(s) remain alive: $pids. The job record is kept, but '
+        'the boot sweep skips live leaders — this group needs manual '
+        'cleanup (kill -9).',
+      );
+    }
+    return ToolExecutionResult.text(
+      'Stopped the leader $id — ${survivors.length} process group '
+      'member(s) still running: $pids. The job record is kept; the '
+      'next boot reaps the survivors.',
+    );
   }
-  // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —
-  // malformed ids keep the shortest error, GC'd ids are honestly done, and
-  // every other unknown id gets the closest-ids hint only.
+  if (survivors == null) {
+    return ToolExecutionResult.text(
+      'Stopped the leader $id (pid ${entry.pid}); its process group '
+      'could not be verified on this host — group members may remain. '
+      'The job record is kept; the next boot reaps any survivors.',
+    );
+  }
+  return ToolExecutionResult.text('Stopped $id');
+}
+
+/// The unknown-id stop ladder (gh-1438 AC5): the destructive action
+/// NEVER acts on a resolved guess — malformed ids keep the shortest
+/// error, GC'd ids are honestly done, and every other unknown id gets
+/// the closest-ids hint only.
+ToolExecutionResult _unknownJobStopResult(ShellJobRegistry jobs, String id) {
   if (parseShellJobIdParts(id) == null) {
     throw StateError('unknown background job: $id');
   }
@@ -1246,6 +1273,22 @@ Future<ToolExecutionResult> _bashJobStopResult(
     }
   }
   return ToolExecutionResult.text(buffer.toString());
+}
+
+Future<ToolExecutionResult> _bashJobStopResult(
+  ShellJobRegistry jobs,
+  String? id,
+) async {
+  if (id == null) throw StateError('bash_job stop requires an id');
+  final entry = jobs.job(id);
+  if (entry != null) {
+    final already = _alreadyFinishedStopResult(entry, id);
+    if (already != null) return already;
+    await entry.stop();
+    return _refusedAdoptedStopResult(entry, id) ??
+        _stoppedAdoptedResult(entry, id);
+  }
+  return _unknownJobStopResult(jobs, id);
 }
 
 /// "[Job id X] was not found — resolved to [Y] (same `sh-<n>-` prefix)."
