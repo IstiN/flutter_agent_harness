@@ -477,9 +477,12 @@ final class ShellExecResult {
 
   /// Live processes this call left behind, detected at the direct child's
   /// exit (issue #2201). Empty everywhere the platform cannot scan
-  /// (Windows, web, sandboxed shells); a normal-exit-only signal —
-  /// timeout/cancel kills reap the whole tree (gh-1053), so survivors
-  /// there are never reported.
+  /// (Windows, web, sandboxed shells). On stop exits (timeout/cancel) it
+  /// fills only on hosts without group leadership — there the tree kill
+  /// is a best-effort walk whose reparented TERM-trapping grandchildren
+  /// can survive it, and adoption re-tracks them (issue #2276); on
+  /// ownGroup hosts the group kill reaps the whole tree (gh-1053), so
+  /// survivors there are never reported.
   final List<ShellSurvivor> survivors;
 }
 
@@ -569,8 +572,11 @@ abstract interface class BackgroundShell {
 /// the same survivors the foreground exec path reports through
 /// [ShellExecResult.survivors], surfaced here because a detached job's
 /// completion reaches the registry, not a tool result. Jobs whose shells
-/// cannot scan (or that were stopped/timed out — gh-1053 reaps those
-/// trees) never implement this or return empty.
+/// cannot scan never implement this or return empty; a stopped/timed-out
+/// job reports only what the stop could not reap — on hosts without
+/// group leadership the kill walk can miss reparented TERM-trapping
+/// grandchildren (issue #2276), on ownGroup hosts the group kill reaped
+/// the whole tree (gh-1053).
 abstract interface class SurvivorReporting {
   /// The survivors observed at this job's exit, consuming the buffer
   /// (exactly-once). Empty when the exit path reported none.

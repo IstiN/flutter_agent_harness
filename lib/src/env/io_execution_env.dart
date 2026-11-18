@@ -491,6 +491,28 @@ final class LocalShell implements Shell, BackgroundShell {
   /// timeout + [_killGrace] + this grace.
   static const _drainGrace = Duration(seconds: 3);
 
+  /// Test seam (issue #2276): replaces the walk-kill rounds' `ps`
+  /// descendant walk. Receives the CURRENT round's root set — walk #1
+  /// roots at `{pid}`. Null = the real walk.
+  static Future<Set<int>> Function(Set<int> roots)? descendantsOfOverride;
+
+  /// Test seam (issue #2276): replaces the walk rounds' per-pid signal
+  /// ([Process.killPid]). Null = the real signal.
+  static void Function(int pid, ProcessSignal signal)? signalPidOverride;
+
+  /// Whether an exit should run the #2201 survivor scan (issue #2276): a
+  /// normal exit always — nothing was signaled, so anything left behind is
+  /// the caller's detached work to re-track. A stopped/timed-out exit only
+  /// on hosts without group leadership: there the tree kill is a
+  /// best-effort `ps` walk whose reparented TERM-trapping grandchildren
+  /// can survive it, and adoption must re-track them; on ownGroup hosts
+  /// the group kill owns every descendant (gh-1053) and the scan would
+  /// find nothing.
+  static bool shouldScanSurvivors({
+    required bool stopped,
+    required bool ownGroup,
+  }) => !stopped || !ownGroup;
+
   /// Stops a foreground process tree (gh-1053): [killTree] reaps the whole
   /// tree — one group signal when the child leads its own group, the live
   /// `ps` walk otherwise, `taskkill /T` on Windows — then a direct kill
@@ -507,8 +529,10 @@ final class LocalShell implements Shell, BackgroundShell {
   /// Terminates [pid]'s whole process tree (issue #517): the process group
   /// when the job is its own group leader (one signal — also covers
   /// children forked while the kill runs), otherwise a live `ps` descendant
-  /// walk; Windows delegates to `taskkill /T`. TERM first, a short grace,
-  /// then KILL. Best-effort: never throws.
+  /// walk whose KILL round re-roots at the TERM round's victim set so a
+  /// reaped leader cannot hide reparented survivors (issue #2276); Windows
+  /// delegates to `taskkill /T`. TERM first, a short grace, then KILL.
+  /// Best-effort: never throws.
   static Future<void> killTree(int pid, {required bool ownGroup}) async {
     try {
       if (Platform.isWindows) {
@@ -522,24 +546,36 @@ final class LocalShell implements Shell, BackgroundShell {
         return;
       }
       // No group leadership on this host (no setsid): walk the live tree.
-      var victims = await _descendantsOf(pid);
+      final walk = descendantsOfOverride ?? _descendantsOf;
+      var victims = await walk({pid});
       if (victims.isEmpty) return;
       await _signalAll(victims, ProcessSignal.sigterm);
       await Future<void>.delayed(_killGrace);
-      // Children may have been forked while the first round landed; the
-      // walk only roots at a still-observable pid, so a recycled root can
-      // never widen the victim set.
-      victims = await _descendantsOf(pid);
+      // The KILL round re-roots at the TERM round's own victim set, never
+      // at the bare pid (issue #2276): the leader is often already reaped
+      // by then — ps drops its row, a root-at-pid walk returns {} — and
+      // TERM-trapping grandchildren survive the stop while it answers
+      // "Stopped". The kept set reaches fully-orphaned survivors (their
+      // rows reparented to init); the re-walk widens for children forked
+      // during the grace. A walk-#1 pid recycled to a stranger within the
+      // grace would be signaled — the same scan-then-signal race the
+      // rounds already accept.
+      victims = await walk(victims);
       await _signalAll(victims, ProcessSignal.sigkill);
     } on Object {
       // Best-effort: stop() still backstops the direct child.
     }
   }
 
-  /// [root] plus every live descendant, via one `ps` ppid scan. Empty when
-  /// [root] is gone (its pid is recycled only after reaping, and the scan
-  /// roots at an observable row — never at a stranger).
-  static Future<Set<int>> _descendantsOf(int root) async {
+  /// [roots] still observable in the `ps` table, plus every live
+  /// descendant of those, via one `ps` ppid scan. Roots already reaped are
+  /// dropped; a walk-#1 pid recycled to a stranger within the kill grace
+  /// is indistinguishable from a survivor — the same scan-then-signal
+  /// race the kill rounds already accept (issue #2276 keeps the walk-#1
+  /// set precisely to reach survivors whose whole ancestor chain was
+  /// reaped, their rows reparented to init). Empty when no root is
+  /// observable.
+  static Future<Set<int>> _descendantsOf(Set<int> roots) async {
     final ps = await Process.run('ps', ['-ax', '-o', 'pid=,ppid=']);
     final parentOf = <int, int>{};
     for (final line in (ps.stdout as String).split('\n')) {
@@ -549,13 +585,14 @@ final class LocalShell implements Shell, BackgroundShell {
       final ppid = int.tryParse(cols[1]);
       if (pid != null && ppid != null) parentOf[pid] = ppid;
     }
-    if (!parentOf.containsKey(root)) return const {};
+    final live = roots.where(parentOf.containsKey).toSet();
+    if (live.isEmpty) return const {};
     final children = <int, List<int>>{};
     parentOf.forEach((pid, ppid) {
       children.putIfAbsent(ppid, () => <int>[]).add(pid);
     });
-    final out = <int>{root};
-    final queue = <int>[root];
+    final out = <int>{...live};
+    final queue = <int>[...live];
     while (queue.isNotEmpty) {
       for (final child in children[queue.removeAt(0)] ?? const <int>[]) {
         if (out.add(child)) queue.add(child);
@@ -565,9 +602,10 @@ final class LocalShell implements Shell, BackgroundShell {
   }
 
   static Future<void> _signalAll(Set<int> pids, ProcessSignal signal) async {
+    final killPid = signalPidOverride ?? Process.killPid;
     for (final pid in pids) {
       try {
-        Process.killPid(pid, signal);
+        killPid(pid, signal);
       } on Object {
         // Vanished between the scan and the signal.
       }
@@ -985,14 +1023,18 @@ final class LocalShell implements Shell, BackgroundShell {
     // the result (the flag used to be captured pre-drain and lost).
     final cancelled = token?.isCancelled ?? false;
 
-    // Issue #2201: survivors of a NORMAL exit only — timeout/cancel ran
-    // the gh-1053 tree kill, and adoption never resurrects what it
-    // reaped. Pure observation: one table read, no pipe is kept open,
-    // no timer armed — the exec contract (≤ timeout + grace) stands.
+    // Issue #2201: survivors of a normal exit; on a stopped/timed-out exit
+    // only where the tree kill was a best-effort walk, not a group reap —
+    // there the walk can miss reparented TERM-trapping grandchildren and
+    // adoption must re-track them (issue #2276). Pure observation: one
+    // table read, no pipe is kept open, no timer armed — the exec
+    // contract (≤ timeout + grace) stands.
     var survivors = const <ShellSurvivor>[];
     if (!Platform.isWindows &&
-        !timedOut &&
-        !cancelled &&
+        shouldScanSurvivors(
+          stopped: timedOut || cancelled,
+          ownGroup: ownGroup,
+        ) &&
         callbackError == null) {
       survivors = classifyShellSurvivors(
         childPid: process.pid,
@@ -1278,11 +1320,18 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
         } on Object {
           _logBroken = true;
         }
-        // Issue #2201: survivors of a NORMAL exit only — the stop paths
-        // (timeout/cancel/user stop) reaped the whole tree, and adoption
-        // never resurrects what a kill reaped. Buffered for the registry's
-        // settle listener; one `ps` round on POSIX, nothing on Windows.
-        if (_stopReason == null && !Platform.isWindows) {
+        // Issue #2201: survivors of a normal exit; after a stop only on
+        // hosts without group leadership — there the walk-based tree kill
+        // can miss reparented TERM-trapping grandchildren, and adoption
+        // re-tracks them instead of "Stopped" lying (issue #2276). On
+        // ownGroup hosts the group kill reaped everything (gh-1053).
+        // Buffered for the registry's settle listener; one `ps` round on
+        // POSIX, nothing on Windows.
+        if (!Platform.isWindows &&
+            LocalShell.shouldScanSurvivors(
+              stopped: _stopReason != null,
+              ownGroup: _ownGroup,
+            )) {
           _survivors = classifyShellSurvivors(
             childPid: _process.pid,
             ownGroup: _ownGroup,
