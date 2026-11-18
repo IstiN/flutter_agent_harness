@@ -329,9 +329,10 @@ class Agent {
 
   /// gh-1934: the session-scoped 413 image-payload recovery state — the
   /// loop's ladder halves the adaptive budget and latches the strip-all
-  /// here on a payload-size refusal; every later request build of the
-  /// session rides the recovered state (runtime-only, never persisted —
-  /// session-scoped v1 per the ticket's open question 1).
+  /// here on a payload-size refusal, keyed per (provider, model) like
+  /// [_imageCapLatches] (issue #2269 — a `/model` switch starts the new
+  /// pair clean); every later request build of the latched pair rides the
+  /// recovered state (runtime-only, never persisted).
   final ImagePayloadRecoveryState imageRecovery = ImagePayloadRecoveryState();
 
   /// Provider adapter used for every model call. See [StreamFunction].
