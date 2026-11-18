@@ -7,6 +7,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 import 'package:flutter_agent_harness/src/network/network_account.dart';
+import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 import 'package:test/test.dart';
 
 import '../network/connector/fake_device_server.dart';
@@ -41,6 +42,7 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           networkPresence: controller,
+          redactionPipeline: RedactionPipeline(registeredSecrets: const []),
         ),
         io: io,
         streamFunction: fake.call,
@@ -102,10 +104,6 @@ void main() {
         lessThan(steering.indexOf('second network instruction')),
       );
       expect(
-        steering,
-        contains('[reply with agent_message to: "$deviceDmReplyAddressPrefix'),
-      );
-      expect(
         'first network instruction'.allMatches(steering),
         hasLength(1),
         reason: 'redelivery was deduped before steering',
@@ -133,21 +131,38 @@ void main() {
         threaded: true,
       );
       final replyAddress = route.toAddress();
-      expect(steering, contains(replyAddress));
+      expect(
+        steering,
+        contains('[reply with agent_message to: "network-dm-1"]'),
+      );
+      expect(steering, isNot(contains('[REDACTED:')));
+      expect(steering, isNot(contains(replyAddress)));
+      fake.turns.add(
+        toolTurn([
+          ToolCall(
+            id: 'network-directory',
+            name: 'agent_directory',
+            arguments: const {},
+          ),
+        ]),
+      );
       fake.turns.add(
         toolTurn([
           ToolCall(
             id: 'network-reply-1',
             name: 'agent_message',
-            arguments: {'to': replyAddress, 'message': 'CLI encrypted reply'},
+            arguments: {
+              'to': 'network-dm-1',
+              'message': 'CLI encrypted reply',
+            },
           ),
         ]),
       );
       fake.turns.add(textTurn('reply sent'));
       io.sendLine('answer the network DM');
       await waitForIt(
-        () => fake.calls >= 3 && server.persistedMail.length >= 3,
-        reason: 'existing agent_message tool sends the encrypted DM reply',
+        () => fake.calls >= 4 && server.persistedMail.length >= 3,
+        reason: 'directory alias resolves to the encrypted DM reply route',
       );
       final reply = server.persistedMail.last;
       expect(reply.from, address);
@@ -156,6 +171,19 @@ void main() {
         'text': 'CLI encrypted reply',
         'sessionId': cli.subagentManager.mailboxPrefix,
       });
+      final directoryText = fake.contexts
+          .expand((context) => context.messages)
+          .whereType<ToolResultMessage>()
+          .where((message) => message.toolCallId == 'network-directory')
+          .expand(
+            (message) => message.content.whereType<TextContent>().map(
+              (content) => content.text,
+            ),
+          )
+          .join('\n');
+      expect(directoryText, contains('network user user-1 (network-dm-1)'));
+      expect(directoryText, contains('[network-dm]'));
+      expect(directoryText, isNot(contains(replyAddress)));
 
       fake.turns.add(
         toolTurn([
@@ -171,7 +199,7 @@ void main() {
       );
       fake.turns.add(textTurn('reported malformed route'));
       io.sendLine('try a malformed network route');
-      await waitForIt(() => fake.calls >= 5);
+      await waitForIt(() => fake.calls >= 6);
       final toolErrors = fake.contexts
           .expand((context) => context.messages)
           .whereType<ToolResultMessage>()

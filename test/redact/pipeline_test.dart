@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 import 'package:test/test.dart';
 
@@ -179,6 +180,37 @@ void main() {
       final out = pipe().redact('img $dataUrl password=hunter2');
       expect(out.contains(dataUrl), isTrue);
       expect(out.contains('[REDACTED:Sensitive-Value]'), isTrue);
+    });
+
+    test('a canonical network DM reply address survives and still validates', () {
+      final route = DeviceDmReplyRoute(
+        network: 'personal-1',
+        channel: 'dm:user:user-1:main@device-1',
+        replyRecipient: 'user:user-1',
+        agentAddress: 'main@device-1',
+        sessionId: 'session-1',
+        senderPubkey: base64Encode(List<int>.generate(32, (i) => i + 1)),
+        threaded: true,
+      );
+      final address = route.toAddress();
+      final prompt = '[reply with agent_message to: "$address"]';
+
+      final redacted = pipe().redact(prompt);
+
+      expect(redacted, prompt);
+      final redactedAddress = RegExp(
+        r'network-dm:v1:[A-Za-z0-9_-]+',
+      ).stringMatch(redacted);
+      expect(redactedAddress, address);
+      expect(DeviceDmReplyRoute.parse(redactedAddress!), route);
+      expect(pipe([address]).redact(prompt), isNot(contains(address)));
+    });
+
+    test('the network DM exemption does not cover other token versions', () {
+      const otherVersion =
+          'network-dm:v2:qZ3mK8vB2nR7xW4cJ9fT5gL0dP1sH6yUqZ3mK8vB2nR7xW4cJ9';
+
+      expect(pipe().redact(otherVersion), contains('[REDACTED:'));
     });
 
     test('E10: scan finds nothing inside a data URL', () {

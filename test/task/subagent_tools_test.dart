@@ -137,6 +137,61 @@ void main() {
     });
 
     test(
+      'agent_directory lists network DM peers and messages resolve name/id',
+      () async {
+        final sent = <({String address, String text})>[];
+        mgr.networkDmGateway = (address, message) async {
+          sent.add((address: address, text: message.text));
+        };
+        final peer = mgr.registerNetworkDmPeer(
+          name: 'Duo · main',
+          address: 'network-dm:v1:opaque-route-one',
+        );
+        final tools = subagentMonitoringTools(manager: mgr);
+        final directory = tools.firstWhere(
+          (tool) => tool.name == 'agent_directory',
+        );
+        final listing = await directory.execute(const {}, null, null);
+        final text = (listing.content.single as dynamic).text as String;
+        expect(text, contains('Duo · main (${peer.id})'));
+        expect(text, contains('[network-dm]'));
+        expect(text, isNot(contains('opaque-route-one')));
+
+        final message = tools.firstWhere(
+          (tool) => tool.name == 'agent_message',
+        );
+        for (final target in [peer.id, peer.name]) {
+          final result = await message.execute({
+            'to': target,
+            'message': 'hello via $target',
+          }, null, null);
+          expect(
+            (result.content.single as dynamic).text,
+            contains('message queued'),
+          );
+        }
+        expect(sent.map((reply) => reply.address), [
+          'network-dm:v1:opaque-route-one',
+          'network-dm:v1:opaque-route-one',
+        ]);
+
+        final duplicate = mgr.registerNetworkDmPeer(
+          name: peer.name,
+          address: 'network-dm:v1:opaque-route-two',
+        );
+        final ambiguous = await message.execute({
+          'to': peer.name,
+          'message': 'must choose an id',
+        }, null, null);
+        expect(
+          (ambiguous.content.single as dynamic).text,
+          contains('${peer.id}, ${duplicate.id}'),
+        );
+        expect(sent, hasLength(2));
+      },
+    );
+
+    test(
       'agent_directory hides stale zero-mail mailboxes unless all',
       () async {
         final env = MemoryExecutionEnv(cwd: '/work');

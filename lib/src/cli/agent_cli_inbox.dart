@@ -116,10 +116,21 @@ extension AgentCliMessagingFlow on AgentCli {
     // explicit hint agents tend to DM the sender (a dead end for app
     // members) instead of posting back into the channel (gh-1825).
     final isChannel = channel != null && channel.startsWith('#');
-    final isNetworkDm = fromId.startsWith(deviceDmReplyAddressPrefix);
+    // The fabric retains the canonical route for durability. Rendering
+    // registers/reuses its short alias so neither the provider context nor
+    // the model's next tool call needs to handle a high-entropy token.
+    final networkPeer = fromId.startsWith(deviceDmReplyAddressPrefix)
+        ? _subagentManager.registerNetworkDmPeer(
+            name: (fromName ?? '').replaceFirst('network DM · ', ''),
+            address: fromId,
+          )
+        : null;
+    final routedFromId = networkPeer?.id ?? fromId;
+    final isNetworkDm =
+        networkPeer != null || _subagentManager.isNetworkDmPeerId(fromId);
     final where = isChannel ? ' in $channel' : '';
     final hint = isNetworkDm
-        ? '\n[reply with agent_message to: "$fromId"]'
+        ? '\n[reply with agent_message to: "$routedFromId"]'
         : isChannel
         ? '\n[reply into this channel with agent_message to: "$channel"]'
         : '';
@@ -143,8 +154,8 @@ extension AgentCliMessagingFlow on AgentCli {
     // parenthesized — replies route by it.
     final trimmedFromName = fromName?.trim();
     final sender = trimmedFromName != null && trimmedFromName.isNotEmpty
-        ? '$trimmedFromName ($fromId)'
-        : fromId;
+        ? '$trimmedFromName ($routedFromId)'
+        : routedFromId;
     return userInput
         ? UserMessage.text('[from $sender$where] $body$mention$hint')
         : UserMessage.text('from $sender$where: $body$mention$hint');
