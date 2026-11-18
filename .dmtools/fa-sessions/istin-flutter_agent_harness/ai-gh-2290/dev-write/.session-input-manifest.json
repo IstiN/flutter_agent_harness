@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-18T10:24:24.355Z",
+  "ticketKey": "gh-2290",
+  "headSha": "25abcd44f3f483d0ad3af9273250d760a5dfeae5",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:73abed71ecc96d5c",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:f9512fe23f99cec2",
+      "size": 4909
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:84fefce97eab71d4",
+      "size": 1571
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1575276edf1527b0",
+      "size": 3409
+    },
+    "request.md": {
+      "hash": "fnv1a64:94d51a63a28c52ac",
+      "size": 695
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:cd13ca878f9ae82f",
+      "size": 706
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9d1a8c88c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7d88ae5aacb5ab04",
+      "size": 755
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:94d51a63a28c52ac",
+      "size": 695
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc644EjI",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/ci.yml:4102",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: The trip step invokes `watchdog_trip_check.sh` twice — `GITHUB_OUTPUT` receives two `trip=` lines**\n\nLines 4101–4102 run the identical command back-to-back:\n\n```yaml\nbash scripts/watchdog_trip_check.sh watchdog-jobs.json\nbash scripts/watchdog_trip_check.sh watchdog-jobs.json\n```\n\nThe script is deterministic (same input file), so this is benign **today** — the\nrunner's last-wins handling of duplicate output keys keeps `steps.trip.outputs.trip`\ncorrect — but it violates the contract this same PR pins in\n`scripts/watchdog_trip_selftest.sh` (RG3: \"exactly one `trip=` line lands in\n`GITHUB_OUTPUT`\") and in the script header (\"Prints exactly one `trip=` line\n(stdout + `GITHUB_OUTPUT`)\"). Verified: invoking the script twice against one\n`GITHUB_OUTPUT` produces two `trip=true` lines. It also doubles the\n`::notice::`/job-listing diagnostics in the watchdog log of every release run.\n\nIf the second call was meant as a retry, it isn't one: the script is pure (no\nnetwork, no state), so a re-run cannot change the verdict. Delete line 4102 —\nor, if a retry is genuinely wanted, re-run only on non-zero exit and let a\nsingle invocation own `GITHUB_OUTPUT`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:9e494b26",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: The trip step invokes `watchdog_trip_check.sh` twice — `GITHUB_OUTPUT` receives two `trip=` lines**\n\nLines 4101–4102 run the identical command back-to-back:\n\n```yaml\nbash scripts/watchdog_trip_check.sh watchdog-jobs.json\nbash scripts/watchdog_trip_check.sh watchdog-jobs.json\n```\n\nThe script is deterministic (same input file), so this is benign **today** — the\nrunner's last-wins handling of duplicate output keys keeps `steps.trip.outputs.trip`\ncorrect — but it violates the contract this same PR pins in\n`scripts/watchdog_trip_selftest.sh` (RG3: \"exactly one `trip=` line lands in\n`GITHUB_OUTPUT`\") and in the script header (\"Prints exactly one `trip=` line\n(stdout + `GITHUB_OUTPUT`)\"). Verified: invoking the script twice against one\n`GITHUB_OUTPUT` produces two `trip=true` lines. It also doubles the\n`::notice::`/job-listing diagnostics in the watchdog log of every release run.\n\nIf the second call was meant as a retry, it isn't one: the script is pure (no\nnetwork, no state), so a re-run cannot change the verdict. Delete line 4102 —\nor, if a retry is genuinely wanted, re-run only on non-zero exit and let a\nsingle invocation own `GITHUB_OUTPUT`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:3581738a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The fix is sound and well-tested (15/15 guard tests green, selftest 15/15, trip predicate verified fail-safe, and I confirmed the dispatch remedy is release-safe: `workflow_dispatch` exists in `on:`, a bare dispatch cannot re-fire publish — the release job requires explicit `releaseDryRun`/`releaseDispatch` inputs — and dispatch arms run the full gate). One important issue blocks: the trip step invokes `watchdog_trip_check.sh` twice, writing two `trip=` lines into `GITHUB_OUTPUT` and violating the one-line output contract the PR itself pins in its selftest.\n\n**Key Issues**:\n- ⚠️ `.github/workflows/ci.yml:4102` — duplicated `bash scripts/watchdog_trip_check.sh watchdog-jobs.json` invocation (benign today only because the script is deterministic and Actions takes last-wins; delete line 4102).\n\n**Ranked digest** (real but not thread-worthy):\n- `scripts/watchdog_trip_check.sh:84-85` — dead jq call: `$projection | .[]` computes `… | length | .[]`, which always errors (`Cannot iterate over number`), and its output is discarded to `/dev/null` with `|| true`; delete the two lines.\n- `scripts/watchdog_trip_selftest.sh` (RG2) — tautological assertion: `grep -vE '^trip='` already strips every `trip=`-prefixed line, so the second `grep -qE '^trip='` can never match and the check can never fail.\n- `test/ci_watchdog_tag_retrigger_guard_test.dart:64-65` — not `dart format`-clean (old-style trailing `.toList()`; sibling `ci_*` tests are clean); the pre-commit hook will silently rewrite it on the next touch.\n- Ticket letter vs. remedy: merging does not make the v1.0.745 ref itself green — that tag carries the old, watchdog-less `ci.yml`. Per ticket.md (\"Closes manually when the ref goes green\"), plan the follow-up: manually dispatch `gh workflow run ci.yml --ref v1.0.745` or let the next tag supersede.\n\n**Next Steps**:\n1. Delete the duplicated invocation at `ci.yml:4102` (and the dead jq lines at `watchdog_trip_check.sh:84-85` while there).\n2. Re-run `dart test test/ci_watchdog_tag_retrigger_guard_test.dart` + `bash scripts/watchdog_trip_selftest.sh`."
+    }
+  ]
+}
