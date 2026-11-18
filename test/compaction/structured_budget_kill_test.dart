@@ -22,6 +22,8 @@ import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
     show localTrimMarkerPrefix;
 import 'package:test/test.dart';
 
+import '../session/flaky_session_fs.dart';
+
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
@@ -345,7 +347,78 @@ void main() {
     });
   });
 
-  group('AC3 — grep-guard: every pass ladder checks the terminal gate', () {
+  group('AC3 — escalation stops after a mid-append verdict', () {
+    test(
+      'a kill inside the escalation append skips refresh and receipt',
+      () async {
+        final gate = FlakySessionFs(fs);
+        repo = JsonlSessionRepo(fs: gate, sessionsRoot: '/sessions');
+        final (session, state) = await pairSession(6);
+        final hooks = _Hooks();
+        final source = CancelTokenSource();
+        var summaries = 0;
+        var checkpointAppends = 0;
+        late StructuredCompactor compactor;
+
+        // Let the dead-judge deterministic fallback settle under the trigger.
+        // On the escalation's append, emulate the factory verdict + local trim
+        // while the write is in flight; the write itself still completes.
+        gate.beforeAppend = (path, content) async {
+          if (!content.contains('compact_checkpoint')) return;
+          checkpointAppends++;
+          state.messages = [
+            UserMessage.text('$localTrimMarkerPrefix\nolder turns omitted'),
+            _assistant('authoritative trimmed tail'),
+          ];
+          compactor.cancelBudget(
+            TimeoutException(
+              'structured compaction exceeded the 2s total budget',
+              const Duration(seconds: 2),
+            ),
+          );
+        };
+        compactor = StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          judge: (ledger, [cancelToken]) async => 'not json',
+          summarize: (request) async {
+            summaries++;
+            return SummarizationResult.success('checkpoint summary $summaries');
+          },
+          checkpointPrompt: 'P',
+          hooks: hooks,
+          budgetSource: source,
+          attemptBudget: const Duration(seconds: 30),
+        );
+
+        await compactor.run();
+        await _pump();
+
+        expect(summaries, 1, reason: 'only the escalation summarizes');
+        expect(checkpointAppends, 1, reason: 'the in-flight append completed');
+        expect(
+          (await session.getEntries()).whereType<CompactCheckpointRecord>(),
+          hasLength(1),
+          reason: 'written-but-unprojected is the race under test',
+        );
+        expect(state.messages, hasLength(2));
+        expect(
+          _isLocalTrimMarker(state.messages.first),
+          isTrue,
+          reason: 'no post-verdict refresh may discard the local trim marker',
+        );
+        expect(
+          hooks.passes.where((p) => p.kind == 'checkpoint-escalation'),
+          isEmpty,
+          reason: 'no success/failure escalation receipt after the verdict',
+        );
+      },
+    );
+  });
+
+  group('AC4 — grep-guard: every pass ladder checks the terminal gate', () {
     // The ladders' guards are the fix's load-bearing lines; a refactor
     // that drops one silently reopens the two-writer hole. Source-coupled
     // by design (same convention as the cli source-guard tests).

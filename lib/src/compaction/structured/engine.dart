@@ -1178,6 +1178,10 @@ final class StructuredCompactor {
       emit(after: before, ok: false, error: outcome.error);
       return true;
     }
+    // The verdict may have landed after the fold's last sample but before
+    // this continuation ran. Never rebuild state or emit a success receipt
+    // across that boundary; a user abort still surfaces as false.
+    if (_ladderTerminated) return _totalBudgetSpent;
     final after = await _refreshState();
     final (:summarizedCount, :visibleMessages) = _escalationCounts(range);
     emit(
@@ -1223,10 +1227,10 @@ final class StructuredCompactor {
       // outcome path owns it.
       rethrow;
     }
-    if (_totalBudgetSpent) {
+    if (_ladderTerminated) {
       return (
-        budgetSpent: true,
-        cancelled: false,
+        budgetSpent: _totalBudgetSpent,
+        cancelled: _runCancelled,
         error: null,
         text: null,
         summarizerCalls: summarizerCalls,
@@ -1253,6 +1257,19 @@ final class StructuredCompactor {
       );
     }
     final appended = await _appendEscalationCheckpoint(range, flattened, text);
+    // A kill can land while the append is in flight (or while an append
+    // error is being returned). The record is then written-but-unprojected:
+    // surface the terminal outcome so the caller performs no refresh and
+    // emits neither a success nor an ordinary failure receipt.
+    if (_ladderTerminated) {
+      return (
+        budgetSpent: _totalBudgetSpent,
+        cancelled: _runCancelled,
+        error: null,
+        text: null,
+        summarizerCalls: summarizerCalls,
+      );
+    }
     if (appended != null) {
       if (_runCancelled) {
         return (
