@@ -3118,7 +3118,14 @@ jobs:
     runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
-    timeout-minutes: 30
+    # gh-2314: raised 30 → 150 so the WasmRun restore step's worst case
+    # (a full slow-window download, see the restore step below) plus the
+    # healthy pub-get/pods/build tail still fits inside the job — the
+    # gh-2070 doctrine: a ceiling sized to the healthy wall turns one
+    # contention window into a release-kill (build-ios red'd twice on
+    # v1.0.748 under the old 30-min ceiling). Pinned by
+    # test/ci_build_ios_wasmrun_budget_guard_test.dart (AC5).
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:
@@ -3200,43 +3207,118 @@ jobs:
           restore-keys: |
             ios-pods-ci-v1-${{ hashFiles('flutter_app/ios/Podfile.lock') }}-
 
+      # gh-2314: the pinned framework is immutable (digest in the restore
+      # step below), so a cache hit skips the 97 MB wire transfer entirely
+      # — the same box fetched this asset at 6.4 MB/s at 05:25Z and at
+      # 16.3 KB/s at 18:00Z the same day (testflight run 44243620979 vs
+      # the two red build-ios legs of runs 4435156578/44360029870). Same
+      # pattern as this job's CocoaPods cache above and build-macos.yml's
+      # release-leg framework cache; the iOS-specific key never collides
+      # with build-macos.yml's wasmrun-xcframework-v0.1.0 entry (same key
+      # over a different path = save conflict).
+      - name: Cache vendored WasmRun iOS framework
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework
+          key: wasmrun-xcframework-ios-v0.1.0
+
       - name: Restore vendored WasmRun iOS framework
-        timeout-minutes: 15
+        # gh-2314: the single-shot curl this step carried (--retry 3,
+        # --max-time 600) under a 15-min step cap could never survive a
+        # slow-link window on the fa-m5 box this release gate runs on:
+        # the pinned 92.7 MB upstream asset delivered at 21.8 KB/s
+        # (run 4435156578, killed at 6%) and 16.3 KB/s (retrigger run
+        # 44360029870, killed again at 5% — a REPRODUCIBLE red, not a
+        # one-off), i.e. 74–101 min of wire time. The release path's iOS
+        # leg (build-mobile.yml) hardened this exact class (gh-1149 →
+        # gh-1759 → gh-2197/gh-223) and this leg never got the
+        # back-port — the old comment below even claimed "GitHub-hosted
+        # PR legs always take the pinned upstream fallback" while the
+        # job has ridden [self-hosted, macos-m5] since gh-1005.
+        # Back-ported, gh-1149 doctrine included: retries live in THIS
+        # bash loop, never curl --retry (which adds N MORE attempts and
+        # restarts+truncates instead of resuming — exactly one retry
+        # layer). Budget sized to the measured floor: 12 attempts ×
+        # 540s bank ≥ 6480s × 16 KB/s ≈ 103.7 MB ≥ the 97,238,501-byte
+        # asset; worst case 6535s + 60s reserve ≤ the 120-min step cap
+        # (job ceiling raised 30 → 150 so a converged-but-slow window
+        # plus the healthy pub-get/pods/build tail still fits — gh-2070:
+        # a ceiling sized to the healthy wall turns one contention
+        # window into a release-kill). The zip STAYS in $RUNNER_TEMP
+        # (gh-223: the fixed /tmp path races across the box's
+        # concurrent runner processes; pinned by
+        # test/wasmrun_restore_temp_race_test.dart) — cross-run
+        # persistence comes from the cache step above. Pinned by
+        # test/ci_build_ios_wasmrun_budget_guard_test.dart.
+        timeout-minutes: 120
         run: |
           set -euo pipefail
-          # The prebuilt XCFramework is excluded from git (the release path
-          # prefers the self-hosted runner's local copy; GitHub-hosted PR
-          # legs always take the pinned upstream fallback).
+          # The prebuilt XCFramework is excluded from git. Order of
+          # preference, same as build-mobile.yml's iOS leg: (1) the
+          # actions/cache hit above (or a valid leftover in place);
+          # (2) the local working copy on this self-hosted runner
+          # (usually absent — gh-2197: the fa-m5 runner is a DIFFERENT
+          # machine than the dev box — but live surface on dev-box
+          # legs); (3) the pinned upstream release asset through the
+          # resume loop.
           DEST="vendor/wasm_run_flutter/ios/Frameworks"
-          rm -rf "$DEST/WasmRun.xcframework"
-          mkdir -p "$DEST"
-          # --retry alone skips transient mid-transfer resets (curl 56).
-          # gh-2233: same hardening as build-mobile.yml's testflight step —
-          # the zip goes to $RUNNER_TEMP (job-private), NOT the arch-less
-          # fixed /tmp path that every WasmRun-downloading leg on the ONE
-          # fa-m5 box shares (multiple concurrent runner processes,
-          # gh-2134): overlapping downloads interleave two transfers into
-          # one file and unzip reads a patchwork (testflight leg run
-          # 44023345849: bad CRC at file #6, curl reported 100%). --fail +
-          # the pinned size+sha256 (same immutable asset build-macos.yml
-          # pins, gh-1759) keep unverified bytes out of the build tree.
+          LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework"
+          # gh-2233: job-private zip path — the fixed /tmp path is shared
+          # by every WasmRun-downloading leg on the ONE fa-m5 box
+          # (multiple concurrent runner processes, gh-2134): overlapping
+          # downloads interleave two transfers into one file and unzip
+          # reads a patchwork (testflight leg run 44023345849: bad CRC
+          # at file #6, curl reported 100%).
           ZIP="$RUNNER_TEMP/WasmRun.xcframework.zip"
+          # The release asset is immutable per tag — pin its digest so a
+          # wrong-content-but-valid-zip cannot slip past unzip CRC32
+          # into the build tree (gh-1759). The pinned byte size tells a
+          # truncated download apart from a complete-but-wrong one.
           ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
           ASSET_BYTES=97238501
-          curl --fail -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-            -o "$ZIP" \
-            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-          got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
-          if [ "$got" -ne "$ASSET_BYTES" ]; then
-            echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
-          elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
-            echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
+          # NO wipe of $DEST here: the cache-hit branch below is only
+          # reachable while the restored/leftover framework is still in
+          # place — build-macos.yml's release step sets the precedent
+          # (its unzip/cp overwrites members in place).
+          mkdir -p "$DEST"
+          if [ -f "$DEST/WasmRun.xcframework/Info.plist" ]; then
+            echo "Using framework already in place (actions/cache hit or valid leftover)"
+          elif [ -d "$LOCAL_SRC" ]; then
+            echo "Using local framework: $LOCAL_SRC"
+            cp -R "$LOCAL_SRC" "$DEST/"
+          else
+            echo "No cache, no local copy — downloading from upstream release..."
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              # --fail: without it curl exits 0 on HTTP 404/429/5xx and
+              # OVERWRITES the accumulated partial with the error page —
+              # destroying exactly the progress this loop exists to
+              # keep. -C - RESUMES the partial zip (Range requests), so
+              # a throttled link makes forward progress across the
+              # loop's attempts.
+              if curl --fail -L -C - --connect-timeout 30 --max-time 540 \
+                -o "$ZIP" \
+                https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                break
+              fi
+              if [ "$attempt" = "12" ]; then
+                echo "download attempt $attempt failed — out of loop attempts" >&2
+              else
+                echo "download attempt $attempt failed, resuming in 5s..."
+                sleep 5
+              fi
+            done
+            got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+            if [ "$got" -ne "$ASSET_BYTES" ]; then
+              echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2314)"
+              rm -f "$ZIP"
+              exit 1
+            elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+              echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2314)"
+              rm -f "$ZIP"
+              exit 1
+            fi
+            unzip -q "$ZIP" -d "$DEST"
           fi
-          unzip -q "$ZIP" -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
       - uses: ./.github/actions/flutter-pub-get
