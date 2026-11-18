@@ -13,6 +13,8 @@
 /// destroyed on missing evidence, and no survivors are ever detected.
 library;
 
+import 'execution_env.dart' show ShellSurvivor;
+
 /// The raw `ps -ax -o pid=,lstart=` table, or null when the platform
 /// cannot report one.
 Future<String?> processTableSnapshot() async => null;
@@ -37,4 +39,4 @@ typedef ProcessDetailRow = ({
 Future<List<ProcessDetailRow>?> processDetailTableSnapshot() async => null;
 
 /// No-op on web: there is no process to signal.
-Future<bool> stopDetachedProcess(int pid) async => false;
+Future<List<ShellSurvivor>?> stopDetachedProcess(int pid) async => null;
