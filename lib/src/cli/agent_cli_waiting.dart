@@ -752,9 +752,14 @@ final class _WaitingCoordinator {
   }
 
   /// A background job settled (event-driven waiting-row leave): drop it
-  /// from the manifest and refresh the row.
+  /// from the manifest and refresh the row. Settled jobs leave the
+  /// manifest — EXCEPT a stopped ADOPTED job whose process group did not
+  /// verify gone (issue #2260): the entry is the only record of the
+  /// leader pid, and the boot sweep (`reapOrphanJobGroups`) reaps the
+  /// surviving group members keyed by it. Verified-gone stops (and every
+  /// natural settle) remove as before.
   Future<void> jobSettled(ShellJobEntry job) async {
-    await _manifestRemove(job.id);
+    if (!adoptedStopKeepsManifestRecord(job)) await _manifestRemove(job.id);
     await push();
   }
 
@@ -1065,6 +1070,40 @@ String waitingDetachSummary(WaiterSnapshot snap) {
 int waitingMinutesElapsed(DateTime? since, DateTime now) =>
     since == null ? 0 : now.difference(since).inMinutes;
 
+/// The console dim line for an adopted job's settle (issue #450,
+/// survivor-aware per issue #2260): a stop whose process group did not
+/// verify gone admits it instead of the plain "no longer running"; a
+/// leader that survived the kill rounds is never called "stopped".
+/// Branch ladder kept flat and tiny — every branch is unit-pinned in
+/// adopted_shell_jobs_test (the CRAP ratchet reads their coverage).
+String adoptedJobSettleDimText(ShellJobEntry job) {
+  if (!job.stopAttempted) return _plainAdoptedSettleDim(job);
+  final survivors = job.stopSurvivors;
+  if (survivors == null) return _unverifiedStopDim(job);
+  if (survivors.isEmpty) return _plainAdoptedSettleDim(job);
+  return stopLeaderSurvived(job)
+      ? _leaderSurvivedStopDim(job)
+      : _membersAliveStopDim(job, survivors);
+}
+
+String _plainAdoptedSettleDim(ShellJobEntry job) =>
+    '${job.id} is no longer running (adopted pid ${job.pid}, '
+    'liveness-only)';
+
+String _unverifiedStopDim(ShellJobEntry job) =>
+    '${job.id} stopped (adopted pid ${job.pid}) — its process group is '
+    'unverified; survivors may remain';
+
+String _leaderSurvivedStopDim(ShellJobEntry job) =>
+    '${job.id} NOT stopped — pid ${job.pid} survived the kill signals; '
+    'group member(s) still alive: '
+    '${stopSurvivorPidList(job.stopSurvivors!)}';
+
+String _membersAliveStopDim(ShellJobEntry job, List<ShellSurvivor> survivors) =>
+    '${job.id} stopped (adopted pid ${job.pid}) — '
+    '${survivors.length} group member(s) still alive: '
+    '${stopSurvivorPidList(survivors)}';
+
 /// Settle notifications for session-scoped background shell jobs: the
 /// transcript/board note plus the model-facing system-notice (steered
 /// mid-run, a fresh run while idle). Lives here with the rest of the
@@ -1085,13 +1124,12 @@ extension AgentCliShellJobSettle on AgentCli {
     // runs, or the Running count never drains (issue #562).
     if (!job.notifyOnSettle) return;
     // Issue #2201: adopted jobs are liveness-only — no exit code, no log
-    // path; the honest line replaces the exited() shape.
+    // path; the honest line replaces the exited() shape. Issue #2260: a
+    // stop whose group did not verify gone never prints "no longer
+    // running" — it names the survivors or admits the unverified group.
     io.writeln(
       job.isAdopted
-          ? _style.dim(
-              '[bash] ${job.id} is no longer running '
-              '(adopted pid ${job.pid}, liveness-only)',
-            )
+          ? _style.dim(adoptedJobSettleDimText(job))
           : _style.dim(
               '[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}',
             ),
