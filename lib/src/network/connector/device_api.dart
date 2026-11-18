@@ -25,6 +25,10 @@ final class DeviceEnrollmentException implements Exception {
   /// Human-readable failure reason.
   final String message;
 
+  /// Whether the server rejected the bearer as unauthorized (HTTP 401) —
+  /// the caller's auto-refresh-and-retry-once seam.
+  bool get isUnauthorized => statusCode == 401;
+
   @override
   String toString() => statusCode == null
       ? 'DeviceEnrollmentException: $message'
