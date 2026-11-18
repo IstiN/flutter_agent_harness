@@ -1495,7 +1495,12 @@ class _JsAppViewState extends State<JsAppView> {
             'width': size.width,
             'height': size.height,
           }),
-          child: ClipRect(child: rendered),
+          // Explicitly sized JS roots are shrink-wrapped by the runtime's
+          // sizing shield. Anchor that shield to the top of the host canvas;
+          // otherwise its Center places the whole app in the vertical middle.
+          child: ClipRect(
+            child: Align(alignment: Alignment.topCenter, child: rendered),
+          ),
         );
       },
     );
