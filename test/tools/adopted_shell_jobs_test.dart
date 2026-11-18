@@ -762,6 +762,72 @@ void main() async {
       expect(text, contains('manual cleanup'));
     });
 
+    test('dim line: every stop-residue branch has a distinct honest shape '
+        '(issue #2260 — CRAP ratchet coverage)', () async {
+      Future<ShellJobEntry> entryWithResidue(
+        List<ShellSurvivor>? residue,
+      ) async {
+        final registry = _registry(
+          livenessTableOverride: () async => (pids: {42}, starts: {42: 'S1'}),
+          stopAdoptedOverride: (pid) async => residue,
+        );
+        final entry = (await registry.adoptSurvivors('make test', const [
+          ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+        ])).single;
+        await entry.stop();
+        return entry;
+      }
+
+      // Natural death — the plain liveness-only line.
+      final plainRegistry = _registry();
+      final plain = plainRegistry.adoptRunningEntry(
+        id: 'sh-7-plain',
+        command: 'watch.sh',
+        pid: 5,
+        pidStart: 'S',
+      );
+      expect(
+        adoptedJobSettleDimText(plain),
+        'sh-7-plain is no longer running (adopted pid 5, liveness-only)',
+      );
+
+      // Verified-gone stop — the same plain line.
+      expect(
+        adoptedJobSettleDimText(await entryWithResidue(const [])),
+        contains('no longer running'),
+      );
+
+      // Unverified group — the stop admits it.
+      final unverified = await entryWithResidue(null);
+      expect(
+        adoptedJobSettleDimText(unverified),
+        '${unverified.id} stopped (adopted pid 42) — its process group is '
+        'unverified; survivors may remain',
+      );
+
+      // Survivors, leader gone — members named.
+      final membersAlive = await entryWithResidue(const [
+        ShellSurvivor(pid: 7, startTag: 'S7'),
+        ShellSurvivor(pid: 8, startTag: 'S8'),
+      ]);
+      expect(
+        adoptedJobSettleDimText(membersAlive),
+        '${membersAlive.id} stopped (adopted pid 42) — 2 group member(s) '
+        'still alive: pid 7, pid 8',
+      );
+
+      // Leader itself survived — never called stopped.
+      final leaderAlive = await entryWithResidue(const [
+        ShellSurvivor(pid: 42, startTag: 'S1'),
+        ShellSurvivor(pid: 7, startTag: 'S7'),
+      ]);
+      expect(
+        adoptedJobSettleDimText(leaderAlive),
+        '${leaderAlive.id} NOT stopped — pid 42 survived the kill signals; '
+        'group member(s) still alive: pid 42, pid 7',
+      );
+    });
+
     test('liveness reminder names the elapsed minutes (AC4)', () {
       final registry = _registry();
       final entry = registry.adoptRunningEntry(

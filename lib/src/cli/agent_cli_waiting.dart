@@ -1074,26 +1074,35 @@ int waitingMinutesElapsed(DateTime? since, DateTime now) =>
 /// survivor-aware per issue #2260): a stop whose process group did not
 /// verify gone admits it instead of the plain "no longer running"; a
 /// leader that survived the kill rounds is never called "stopped".
-String _adoptedSettleDimLine(ShellJobEntry job) {
-  if (job.stopAttempted) {
-    final survivors = job.stopSurvivors;
-    if (survivors == null) {
-      return '${job.id} stopped (adopted pid ${job.pid}) — its process '
-          'group is unverified; survivors may remain';
-    }
-    if (survivors.isNotEmpty) {
-      final pids = stopSurvivorPidList(survivors);
-      if (stopLeaderSurvived(job)) {
-        return '${job.id} NOT stopped — pid ${job.pid} survived the kill '
-            'signals; group member(s) still alive: $pids';
-      }
-      return '${job.id} stopped (adopted pid ${job.pid}) — '
-          '${survivors.length} group member(s) still alive: $pids';
-    }
-  }
-  return '${job.id} is no longer running '
-      '(adopted pid ${job.pid}, liveness-only)';
+/// Branch ladder kept flat and tiny — every branch is unit-pinned in
+/// adopted_shell_jobs_test (the CRAP ratchet reads their coverage).
+String adoptedJobSettleDimText(ShellJobEntry job) {
+  if (!job.stopAttempted) return _plainAdoptedSettleDim(job);
+  final survivors = job.stopSurvivors;
+  if (survivors == null) return _unverifiedStopDim(job);
+  if (survivors.isEmpty) return _plainAdoptedSettleDim(job);
+  return stopLeaderSurvived(job)
+      ? _leaderSurvivedStopDim(job)
+      : _membersAliveStopDim(job, survivors);
 }
+
+String _plainAdoptedSettleDim(ShellJobEntry job) =>
+    '${job.id} is no longer running (adopted pid ${job.pid}, '
+    'liveness-only)';
+
+String _unverifiedStopDim(ShellJobEntry job) =>
+    '${job.id} stopped (adopted pid ${job.pid}) — its process group is '
+    'unverified; survivors may remain';
+
+String _leaderSurvivedStopDim(ShellJobEntry job) =>
+    '${job.id} NOT stopped — pid ${job.pid} survived the kill signals; '
+    'group member(s) still alive: '
+    '${stopSurvivorPidList(job.stopSurvivors!)}';
+
+String _membersAliveStopDim(ShellJobEntry job, List<ShellSurvivor> survivors) =>
+    '${job.id} stopped (adopted pid ${job.pid}) — '
+    '${survivors.length} group member(s) still alive: '
+    '${stopSurvivorPidList(survivors)}';
 
 /// Settle notifications for session-scoped background shell jobs: the
 /// transcript/board note plus the model-facing system-notice (steered
@@ -1120,7 +1129,7 @@ extension AgentCliShellJobSettle on AgentCli {
     // running" — it names the survivors or admits the unverified group.
     io.writeln(
       job.isAdopted
-          ? _style.dim(_adoptedSettleDimLine(job))
+          ? _style.dim(adoptedJobSettleDimText(job))
           : _style.dim(
               '[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}',
             ),
