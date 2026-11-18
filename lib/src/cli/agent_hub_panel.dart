@@ -98,6 +98,29 @@ String steeringSaveClause({
       'session ($why)';
 }
 
+/// Counts the persistence truth over pending steering entries (issue
+/// #2249 AC4): how many accept-appends landed ([saved]), how many have
+/// not ([unsaved] — failed, or still in flight), and the first raw
+/// persist error ([firstError]). Pure — the ONE feed both the stall
+/// banner and the watchdog warning derive their [steeringSaveClause]
+/// inputs from, so the counting lives in exactly one place.
+({int saved, int unsaved, Object? firstError}) steeringSaveCounts(
+  Iterable<({String? recordId, Object? persistError})> entries,
+) {
+  var saved = 0;
+  var unsaved = 0;
+  Object? firstError;
+  for (final entry in entries) {
+    if (entry.recordId != null) {
+      saved++;
+    } else {
+      unsaved++;
+      firstError ??= entry.persistError;
+    }
+  }
+  return (saved: saved, unsaved: unsaved, firstError: firstError);
+}
+
 /// The watchdog's per-episode stall warning (issue #514 + #2249 AC1/AC4):
 /// names the queue, then the ONE persistence truth from
 /// [steeringSaveClause] — when every accept-append landed, the #437 copy

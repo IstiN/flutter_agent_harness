@@ -543,6 +543,51 @@ void main() {
       expect(clause, contains('1 of 4 steering messages NOT saved'));
     });
 
+    test('steeringSaveCounts counts the queue once for every surface '
+        '(issue #2249 AC4)', () {
+      // Empty queue: nothing saved, nothing unsaved.
+      expect(steeringSaveCounts(const []), (
+        saved: 0,
+        unsaved: 0,
+        firstError: null,
+      ));
+      // All landed: saved counts up, no error.
+      expect(
+        steeringSaveCounts([
+          (recordId: 'r1', persistError: null),
+          (recordId: 'r2', persistError: null),
+        ]),
+        (saved: 2, unsaved: 0, firstError: null),
+      );
+      // All failed: unsaved counts up, the FIRST raw error surfaces.
+      final first = StateError('Cannot open file');
+      final second = StateError('Read-only fs');
+      expect(
+        steeringSaveCounts([
+          (recordId: null, persistError: first),
+          (recordId: null, persistError: second),
+        ]),
+        (saved: 0, unsaved: 2, firstError: first),
+      );
+      // In-flight (no error yet): unsaved without an error claim.
+      expect(
+        steeringSaveCounts([
+          (recordId: null, persistError: null),
+          (recordId: 'r9', persistError: null),
+        ]),
+        (saved: 1, unsaved: 1, firstError: null),
+      );
+      // Mixed queue: the first error among the UNSAVED entries wins —
+      // a landed record id never contributes one.
+      expect(
+        steeringSaveCounts([
+          (recordId: 'r1', persistError: second),
+          (recordId: null, persistError: first),
+        ]),
+        (saved: 1, unsaved: 1, firstError: first),
+      );
+    });
+
     test('run settle completes ride-along panels but never steering', () {
       final log = DeferredPanelLog();
       final mail = log.add(kind: DeferredPanelKind.mail, from: 'a1', body: 'm');

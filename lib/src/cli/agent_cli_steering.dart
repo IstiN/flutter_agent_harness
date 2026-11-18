@@ -569,24 +569,19 @@ extension AgentCliSteering on AgentCli {
     if (ioFailure) {
       final raw = SessionIoHealth.lastFailure(_session?.cachedId ?? '')!.error;
       // Issue #2249 AC4: even under a session-IO failure the banner must
-      // not claim a save the failing fs refused — the ONE clause builder
-      // states the queue's real persistence state (landed record ids are
-      // real; failed or in-flight appends read NOT saved, with the raw
-      // error when one is known).
-      var saved = 0;
-      var unsaved = 0;
-      Object? firstError;
-      for (final entry in _pendingSteering) {
-        if (entry.recordId != null) {
-          saved++;
-        } else {
-          unsaved++;
-          firstError ??= entry.persistError;
-        }
-      }
+      // not claim a save the failing fs refused — the ONE counting feed
+      // + clause builder state the queue's real persistence state
+      // (landed record ids are real; failed or in-flight appends read
+      // NOT saved, with the raw error when one is known).
+      final counts = steeringSaveCounts(
+        _pendingSteering.map(
+          (entry) =>
+              (recordId: entry.recordId, persistError: entry.persistError),
+        ),
+      );
       final savedNote = _pendingSteering.isEmpty
           ? ''
-          : '${steeringSaveClause(saved: saved, unsaved: unsaved, error: firstError)}; ';
+          : '${steeringSaveClause(saved: counts.saved, unsaved: counts.unsaved, error: counts.firstError)}; ';
       return '⚠ session IO failing: $raw — $savedNote'
           'session writes are failing; restart the host '
           '(check open fds / container access), esc aborts';
@@ -684,26 +679,22 @@ extension AgentCliSteering on AgentCli {
     if (flipped > 0) {
       // One warning per stall episode, with the full queued count — the
       // owner sees the queue size, not a per-message nudge (issue #488).
-      // The persistence truth rides the ONE clause builder (issue #2249
-      // AC4): saved keeps the #437 copy byte-identical, a failed or
-      // still-unresolved append reads NOT saved with the raw fs error.
-      var saved = 0;
-      var unsaved = 0;
-      Object? firstError;
-      for (final entry in _pendingSteering) {
-        if (entry.recordId != null) {
-          saved++;
-        } else {
-          unsaved++;
-          firstError ??= entry.persistError;
-        }
-      }
+      // The persistence truth rides the ONE counting feed + clause
+      // builder (issue #2249 AC4): saved keeps the #437 copy
+      // byte-identical, a failed or still-unresolved append reads NOT
+      // saved with the raw fs error.
+      final counts = steeringSaveCounts(
+        _pendingSteering.map(
+          (entry) =>
+              (recordId: entry.recordId, persistError: entry.persistError),
+        ),
+      );
       io.writeln(
         tuiWarning(
           steeringStallWarningLine(
-            saved: saved,
-            unsaved: unsaved,
-            error: firstError,
+            saved: counts.saved,
+            unsaved: counts.unsaved,
+            error: counts.firstError,
           ),
         ),
       );
