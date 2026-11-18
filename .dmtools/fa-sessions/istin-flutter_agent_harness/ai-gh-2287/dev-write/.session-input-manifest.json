@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-18T09:42:33.418Z",
+  "ticketKey": "gh-2287",
+  "headSha": "ae58bb6c6e282b87af1e4b69c3b17c27d0fe5a07",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:1fe8a3a2362a9690",
+      "size": 77255
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:e05fab6c3fa05050",
+      "size": 661545
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:31c7ed4d10154f0f",
+      "size": 521
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:141ee4a5e217ac7f",
+      "size": 11617
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:8df39cbb54742e99",
+      "size": 3298
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:c29455497479bfd1",
+      "size": 2549
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:80ae2d3c5d5f9d54",
+      "size": 2974
+    },
+    "request.md": {
+      "hash": "fnv1a64:d62854772ce61e6e",
+      "size": 1270
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:6fb7faee1184764e",
+      "size": 534
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:94eb3fcdc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e4b3d558b9bce59d",
+      "size": 1340
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:d62854772ce61e6e",
+      "size": 1270
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The fix correctly diagnoses gh-2287: machine-account drafts (`ai-gh-*`/`ai-pr-*`, User-typed, marker-less) bucketed as human and kept forever, so the sweep issue never auto-closed. The exact-login jq rule, the machine-account prose override (gh-2105 class), the `--assignee \"$assignee\"` dedup, and the explicit `DAILY_PUBLISH_ASSIGNEE` export are all consistent with the existing `daily_publish_report.sh` convention (`scripts/daily_publish_report.sh:25`).\n\n**Key Issues**: None. Verified locally: new AC2 test GREEN; full `test/release_hygiene_test.dart` 69/69 passed; `bash -n` + `shellcheck` clean; workflow YAML valid; branch diff matches the PR (+179/−6, 3 files). E1 is regression-tested — human drafts kept, fresh drafts untouched, look-alike login (`ai-teammate-bot`) NOT matched; the machine-account assumption is documented and confirmed against `ai-teammate.yml`.\n\n**Next Steps**:\n1. None required — merge as is."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 859fadb8c0bce9741b75f3652f744d94b21c0af4 — stale base at 2026-11-18T06:45:50.522Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "thread-3",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 19405a4e53f68d3f32edb444986a4f2117b5e165 — stale base at 2026-11-18T08:12:59.487Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-18:9534b979",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The fix correctly diagnoses gh-2287: machine-account drafts (`ai-gh-*`/`ai-pr-*`, User-typed, marker-less) bucketed as human and kept forever, so the sweep issue never auto-closed. The exact-login jq rule, the machine-account prose override (gh-2105 class), the `--assignee \"$assignee\"` dedup, and the explicit `DAILY_PUBLISH_ASSIGNEE` export are all consistent with the existing `daily_publish_report.sh` convention (`scripts/daily_publish_report.sh:25`).\n\n**Key Issues**: None. Verified locally: new AC2 test GREEN; full `test/release_hygiene_test.dart` 69/69 passed; `bash -n` + `shellcheck` clean; workflow YAML valid; branch diff matches the PR (+179/−6, 3 files). E1 is regression-tested — human drafts kept, fresh drafts untouched, look-alike login (`ai-teammate-bot`) NOT matched; the machine-account assumption is documented and confirmed against `ai-teammate.yml`.\n\n**Next Steps**:\n1. None required — merge as is."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:26fd5ec3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 859fadb8c0bce9741b75f3652f744d94b21c0af4 — stale base at 2026-11-18T06:45:50.522Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:5b723fed",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 19405a4e53f68d3f32edb444986a4f2117b5e165 — stale base at 2026-11-18T08:12:59.487Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
