@@ -235,7 +235,7 @@ extension AgentCliInput on AgentCli {
         // The fold badge clears at settle whatever the outcome (issue
         // #438 AC3 «until the turn settles»; #653 — error settles too).
         _autoFoldCount = 0;
-        _settleLeftoverSteering();
+        unawaited(_settleLeftoverSteering());
         // Waiting-row refresh (issue #450): the busy→idle edge is where
         // the waiting row takes over from the busy row (E3/E4).
         unawaited(_waiting.push());
