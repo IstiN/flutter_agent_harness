@@ -192,4 +192,61 @@ void main() {
     expect(find.textContaining('just sent in plaintext'), findsOneWidget);
     await session.close();
   });
+
+  testWidgets('DM session id fallback is short in the header and one-line hint', (
+    tester,
+  ) async {
+    const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
+    final session = await _sessionWithMessages();
+    addTearDown(session.close);
+    session.selectDmSession(
+      _dmChannel,
+      sessionId,
+      title: 'Duo · $sessionId',
+    );
+    final manager = NetworkSessionManager(
+      baseUrl: testBase,
+      wallet: await KeyWallet.load(MemoryWalletBackend()),
+      httpClient: FakeHttpClient(),
+      wsConnector: FakeWsConnector(),
+    );
+    manager.sessions['net1'] = session;
+    addTearDown(manager.disconnectAll);
+    final controller = NetworkModeController.inMemory(
+      mode: AppMode.network,
+      networkId: 'net1',
+      channelId: _dmChannel,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: NetworkChatPage(
+            controller: controller,
+            manager: manager,
+            showAppBar: true,
+            showChannelHeader: false,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+
+    expect(find.text('Duo · 01a15985…'), findsWidgets);
+    expect(find.textContaining(sessionId), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.hintText == 'Message Duo · 01a15985…',
+      ),
+      findsOneWidget,
+    );
+    await session.close();
+  });
 }

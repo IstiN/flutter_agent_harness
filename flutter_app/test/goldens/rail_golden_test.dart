@@ -20,13 +20,17 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
+import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
 import 'package:fa/ui/chats/networks_list_panel.dart';
+import 'package:fa/ui/network/device_roster_panel.dart';
 import 'package:fa/ui/network/devices_page.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa_ui/fa_ui.dart'
     show FahColors, FaVisualDirection, buildFaTheme;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+// ignore: implementation_imports
+import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import '../network/fakes.dart';
@@ -75,6 +79,7 @@ List<MessengerRailDestination> _railDestinations({
 ChatListEntry _session(
   String id,
   String? cwd, {
+  String? title,
   String? preview,
   int unread = 0,
   bool streaming = false,
@@ -82,7 +87,7 @@ ChatListEntry _session(
   id: ChatEntryId.local(id),
   kind: ChatListEntryKind.localAgent,
   folderPath: cwd,
-  title: id,
+  title: title ?? id,
   preview: preview ?? 'Preview of $id',
   createdAt: _stamp,
   lastActivity: _stamp,
@@ -97,6 +102,96 @@ Future<ChatListController> _controller(List<ChatListEntry> entries) async {
   );
   await controller.load();
   return controller;
+}
+
+const _unnamedDeviceId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
+const _folderSessionId = '123e4567-e89b-12d3-a456-426614174000';
+const _fallbackSessionId = '89abcdef-e89b-12d3-a456-426614174000';
+const _remoteFallbackSessionId = 'abcdef12-e89b-12d3-a456-426614174000';
+
+Future<void> _pumpAdaptiveDevices(WidgetTester tester, Size size) async {
+  final service = FakeDevicesService(
+    initialPhase: DeviceConnectorPhase.online,
+    deviceId: 'self',
+    ownDevice: const DeviceInfo(
+      deviceId: 'self',
+      name: 'workstation',
+      friendlyName: 'Workstation',
+    ),
+    rosterDevices: const [
+      DeviceInfo(deviceId: 'dev-mac', name: 'mymac', presence: 'online'),
+      DeviceInfo(deviceId: _unnamedDeviceId, name: '', presence: 'online'),
+    ],
+  );
+  // Replay a neighbor's roster before the page opens: both a cwd-named row
+  // and a metadata-free row must follow the same flat list as This device.
+  service.seededRoster.add(
+    NetworkEnvelope(
+      kind: NetworkEnvelopeKind.roster,
+      msgId: 'golden-remote-sessions',
+      ts: '2025-12-01T09:30:00.000Z',
+      payload: const {
+        'devices': [
+          {
+            'deviceId': 'dev-mac',
+            'name': 'mymac',
+            'presence': 'online',
+            'agents': [
+              {
+                'address': 'main@dev-mac',
+                'state': 'live',
+                'dmPub': 'cHViLW1hYw==',
+              },
+            ],
+            'sessions': [
+              {
+                'id': 'remote-folder',
+                'title': 'remote-folder',
+                'path': '/work/ops',
+                'state': 'wake_on_dm',
+                'lastActivity': '2025-12-01T09:30:00.000Z',
+              },
+              {
+                'id': _remoteFallbackSessionId,
+                'state': 'offline',
+                'lastActivity': '2025-12-01T09:30:00.000Z',
+              },
+            ],
+          },
+        ],
+      },
+    ),
+  );
+  final sessions = await _controller([
+    _session(
+      'named-local',
+      '/work/flutter_agent',
+      title: 'Release assistant',
+      preview: 'Ship the adaptive device roster',
+      streaming: true,
+    ),
+    _session(
+      _folderSessionId,
+      '/work/flutter_agent',
+      preview: 'This prompt must not replace the project folder',
+    ),
+    _session(_fallbackSessionId, null),
+  ]);
+  await pumpGolden(
+    tester,
+    DevicesPage(
+      service: service,
+      sessions: sessions,
+      compact: size.width < 640,
+      now: () => DateTime.utc(2025, 12, 2),
+    ),
+    size: size,
+    theme: buildFaTheme(
+      direction: FaVisualDirection.glass,
+      brightness: Brightness.dark,
+    ),
+    wrap: (child) => Scaffold(body: child),
+  );
 }
 
 Future<void> _pumpRail(
@@ -247,6 +342,61 @@ void main() {
     );
   });
 
+  testWidgets('Devices phone reuses the Networks list and drill-down', (
+    tester,
+  ) async {
+    await _pumpAdaptiveDevices(tester, goldenSizePhone);
+
+    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
+    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsNothing);
+    expect(find.text('mymac'), findsOneWidget);
+    expect(find.text('01a15985…'), findsOneWidget);
+    await expectGolden(tester, 'devices_phone_list');
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pumpAndSettle();
+    expect(find.text('Release assistant'), findsOneWidget);
+    expect(find.text('flutter_agent'), findsOneWidget);
+    expect(find.text('89abcdef…'), findsOneWidget);
+    expect(find.byType(MessengerPanelRow), findsWidgets);
+    expect(find.byType(DeviceSessionCard), findsWidgets);
+    await expectGolden(tester, 'devices_phone_sessions');
+
+    await tester.tap(find.byKey(const ValueKey('deviceBackButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+    await tester.pumpAndSettle();
+    expect(find.text('ops'), findsOneWidget);
+    expect(find.text('abcdef12…'), findsOneWidget);
+    expect(find.text(_remoteFallbackSessionId), findsNothing);
+    await expectGolden(tester, 'devices_phone_remote_sessions');
+  });
+
+  testWidgets('Devices desktop reuses the Networks list and mini-strip', (
+    tester,
+  ) async {
+    await _pumpAdaptiveDevices(tester, goldenSizeDesktop);
+
+    expect(find.byKey(const ValueKey('deviceList')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
+    expect(find.byType(VerticalDivider), findsNothing);
+    await expectGolden(tester, 'devices_desktop_list');
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+    expect(find.byType(VerticalDivider), findsNothing);
+    expect(find.text('Release assistant'), findsOneWidget);
+    expect(find.text('flutter_agent'), findsOneWidget);
+    await expectGolden(tester, 'devices_desktop');
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+    await tester.pumpAndSettle();
+    expect(find.text('ops'), findsOneWidget);
+    expect(find.text('abcdef12…'), findsOneWidget);
+    await expectGolden(tester, 'devices_desktop_remote_sessions');
+  });
+
   testWidgets('Devices glass keeps its title clear over the scrolled rail', (
     tester,
   ) async {
@@ -276,9 +426,10 @@ void main() {
       DevicesPage(
         service: service,
         sessions: sessions,
+        initialDeviceId: 'self',
         now: () => DateTime.utc(2025, 12, 2),
       ),
-      size: const Size(430, 760),
+      size: goldenSizeDesktop,
       theme: buildFaTheme(
         direction: FaVisualDirection.glass,
         brightness: Brightness.dark,

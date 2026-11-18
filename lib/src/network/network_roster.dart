@@ -31,8 +31,8 @@ final class NetworkSessionRow {
   final String? cwd;
   final DateTime? lastActivity;
 
-  /// Human title/snippet/cwd fallback; a UUID is never the primary label
-  /// when one of those fields is present.
+  /// Human title/cwd fallback; a UUID is never the primary label when one
+  /// of those fields is present. Snippets remain preview metadata.
   String get displayName => sessionCatalogDisplayName(
     SessionCatalogEntry(
       id: id,
