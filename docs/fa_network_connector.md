@@ -125,7 +125,13 @@ Rules:
   incremental roster/presence frames.
 - Reconnect: 1 s → 30 s backoff, resume by (deviceId, deviceToken);
   the server redelivers undelivered (unacked) mail in seq order after
-  the roster snapshot (AC5).
+  the roster snapshot (AC5). Redelivered/stored mail is forwarded
+  VERBATIM — `from` stays the sender id the frame arrived with
+  (`user:<uid>` since fa_network 2a5bf20; the codec also tolerates the
+  documented bare-`<uid>` legacy rewrite). The client never rebuilds a
+  stored envelope from the local agent registry: a `from` equal to the
+  ADDRESSED agent makes the recipient's codec treat the DM as an
+  own-reply echo (empty payload → ack/drop — incident 8ff48b96).
 - `ping`/`pong` every ~20 s; server drops half-open connections.
 
 ## 5. Presence (three levels, independent TTLs)
@@ -209,6 +215,19 @@ Rules:
   failures are permanent typed rejections: they are acked once to stop hostile
   redelivery, with a credential-free/plaintext-free notice. `dmMail` is a
   post-sink observation stream only; it is not an acknowledgement mechanism.
+- **Own-echo belt (8ff48b96 follow-up):** a frame whose sender id equals
+  the ADDRESSED agent (`from == to`, or `from` swapped into the agent
+  address while `to` points back at the user) decodes to an empty
+  payload — indistinguishable from the agent's own fanned-back replies.
+  The connector classifies it by the only honest local signal, the frame
+  id: an id this connector minted is a benign own-reply echo (quiet
+  ack/drop); anything else is a malformed inbound with a REWRITTEN
+  sender — still acked exactly once (the server caps redelivery at
+  32/device, so refusing the ack would only loop), but never silently:
+  a `::warning non-echo frame with rewritten sender` log line plus the
+  AC6 rejection surface name it in the field. Echo classification is
+  per-process: after a restart an old own echo re-classifies as
+  non-echo (still acked; the warning is the honest signal).
 - **Replies:** inbound steering includes `reply with agent_message to:
   "network-dm:v1:<base64url(route-json)>"`. The opaque route contains the
   network/channel, normalized sender address, sender x25519 public key,
