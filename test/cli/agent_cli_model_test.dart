@@ -405,10 +405,10 @@ void main() {
         final minimaxRow = items.where((i) => i.key == '@minimax').single;
         expect(minimaxRow.description, contains('4 model(s)'));
 
-        // The cross-provider candidates carry every catalog-known
-        // MiniMax id (and nothing more) — the union logic from
-        // `_registryEntryModels` only ever appends the entry's
-        // modelId when it isn't already in the catalog list.
+        // The live fetch answered EMPTY (no key → 401), so this is
+        // the empty-live branch of the #2297 contract: the row is the
+        // catalog seed list plus the entry's own modelId (already in
+        // the seed list here, so the seeds alone).
         final candidates = cli.crossProviderCandidatesForTest('');
         final minimaxIds = candidates
             .where((c) => c.$1 == 'minimax')
@@ -420,6 +420,131 @@ void main() {
           'MiniMax-M2',
           'MiniMax-M1',
         ]);
+
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test(
+      'a live /models answer leaves no catalog seed ids in the row (#2297)',
+      () async {
+        // Issue #2297: the catalog seed list was merged over EVERY
+        // saved entry's row, so an openai-kind entry (bedrock, codemie,
+        // ollama-local...) inherited the whole openai list — gemini ids
+        // under endpoints that proxy-400 on them. The live /models
+        // answer is the complete row; the seeds are the empty-live
+        // branch only.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final enrichment = RemoteCatalogEnrichment();
+        await enrichment.preload(
+          client: MockClient((req) async {
+            return http.Response(
+              '{"providers": {"openai-completions": {"contextWindows": '
+              '{"gemini-3.8-flash": 1000000, "gpt-5.7": 400000}}}}',
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }),
+        );
+        setRemoteCatalogEnrichmentForTesting(enrichment);
+
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'bedrock',
+            apiType: 'openai',
+            baseUrl: 'https://bedrock.proxy.example/v1',
+            modelId: 'bedrock-work-model',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [
+            'bedrock-claude-4',
+            'bedrock-claude-4-5',
+          ],
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        cli.buildModelMenuForTest('');
+        await waitForIt(
+          () => cli
+              .crossProviderCandidatesForTest('')
+              .any((c) => c.$1 == 'bedrock' && c.$2 == 'bedrock-claude-4-5'),
+          reason: 'the bedrock entry lists the live /models answer',
+        );
+        final ids = cli
+            .crossProviderCandidatesForTest('')
+            .where((c) => c.$1 == 'bedrock')
+            .map((c) => c.$2)
+            .toList();
+        // Exactly the live answer plus the entry's own modelId — no
+        // gemini-* catalog seed may leak in.
+        expect(ids.where((id) => id.startsWith('gemini-')), isEmpty);
+        expect(ids, <String>[
+          'bedrock-claude-4',
+          'bedrock-claude-4-5',
+          'bedrock-work-model',
+        ]);
+
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test(
+      'a saved entry with a dead endpoint still lists the catalog seeds (#2297)',
+      () async {
+        // The empty/failed branch of the same contract: when the
+        // endpoint won't talk to us, the catalog seed list (plus the
+        // entry's own modelId) keeps the row useful.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final enrichment = RemoteCatalogEnrichment();
+        await enrichment.preload(
+          client: MockClient((req) async {
+            return http.Response(
+              '{"providers": {"openai-completions": {"contextWindows": '
+              '{"gemini-3.8-flash": 1000000, "gpt-5.7": 400000}}}}',
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }),
+        );
+        setRemoteCatalogEnrichmentForTesting(enrichment);
+
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'bedrock',
+            apiType: 'openai',
+            baseUrl: 'https://bedrock.proxy.example/v1',
+            modelId: 'bedrock-work-model',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async =>
+              throw Exception('bedrock /models is down'),
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        cli.buildModelMenuForTest('');
+        await waitForIt(
+          () => cli
+              .crossProviderCandidatesForTest('')
+              .any((c) => c.$1 == 'bedrock' && c.$2 == 'gemini-3.8-flash'),
+          reason: 'the dead endpoint falls back to the catalog seeds',
+        );
+        final ids = cli
+            .crossProviderCandidatesForTest('')
+            .where((c) => c.$1 == 'bedrock')
+            .map((c) => c.$2)
+            .toList();
+        expect(ids, containsAll(['gemini-3.8-flash', 'gpt-5.7']));
+        expect(ids, contains('bedrock-work-model'));
 
         io.sendLine('/exit');
         await run;
