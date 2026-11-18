@@ -452,8 +452,13 @@ final class LocalShell implements Shell, BackgroundShell {
   /// non-ownGroup hosts (macOS) matches survivors against it. The harness
   /// process never changes groups, so this is read once; null when the
   /// platform cannot report it (the scan then finds nothing — honest).
-  static int? get ourPgid => _ourPgidCached ??= _probeOurPgid();
+  static int? get ourPgid =>
+      ourPgidOverride ?? (_ourPgidCached ??= _probeOurPgid());
   static int? _ourPgidCached;
+
+  /// Test seam (issue #2276): a non-null harness pgid for the non-ownGroup
+  /// survivor classifier, avoiding a real `ps` probe in call-site tests.
+  static int? ourPgidOverride;
 
   static int? _probeOurPgid() {
     if (Platform.isWindows) return null;
@@ -499,6 +504,11 @@ final class LocalShell implements Shell, BackgroundShell {
   /// Test seam (issue #2276): replaces the walk rounds' per-pid signal
   /// ([Process.killPid]). Null = the real signal.
   static void Function(int pid, ProcessSignal signal)? signalPidOverride;
+
+  /// Test seam (issue #2276): replaces the post-exit survivor table. Null =
+  /// the real `ps` probe; a null RETURN still means an unavailable table.
+  static Future<List<ProcessDetailRow>?> Function()?
+  processDetailTableSnapshotOverride;
 
   /// Whether an exit should run the #2201 survivor scan (issue #2276): a
   /// normal exit always — nothing was signaled, so anything left behind is
@@ -873,6 +883,7 @@ final class LocalShell implements Shell, BackgroundShell {
           'timeout: $timeout',
           stdout: _captureTail(stdout),
           stderr: _captureTail(stderr),
+          survivors: survivors,
         ),
       );
     }
@@ -883,6 +894,7 @@ final class LocalShell implements Shell, BackgroundShell {
           'aborted',
           stdout: _captureTail(stdout),
           stderr: _captureTail(stderr),
+          survivors: survivors,
         ),
       );
     }
@@ -1041,7 +1053,9 @@ final class LocalShell implements Shell, BackgroundShell {
         ownGroup: ownGroup,
         ourPgid: LocalShell.ourPgid,
         execStart: execStart,
-        table: await processDetailTableSnapshot(),
+        table:
+            await (processDetailTableSnapshotOverride ??
+                processDetailTableSnapshot)(),
       );
     }
 
@@ -1337,7 +1351,9 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
             ownGroup: _ownGroup,
             ourPgid: LocalShell.ourPgid,
             execStart: _execStart,
-            table: await processDetailTableSnapshot(),
+            table:
+                await (LocalShell.processDetailTableSnapshotOverride ??
+                    processDetailTableSnapshot)(),
           );
         }
         _settled.complete();

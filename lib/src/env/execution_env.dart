@@ -307,6 +307,7 @@ final class ExecutionError implements Exception {
     this.cause,
     this.stdout = '',
     this.stderr = '',
+    this.survivors = const [],
   });
 
   /// Backend-independent error code.
@@ -328,6 +329,13 @@ final class ExecutionError implements Exception {
   /// otherwise. Tail-capped at the source to the last 64 KiB — see
   /// [stdout].
   final String stderr;
+
+  /// Live processes a killed run left behind on hosts where the tree walk
+  /// is best-effort (issue #2276). Keeping these on the error is essential:
+  /// timeout/cancel results are errors, so putting them only on
+  /// [ShellExecResult] would discard them before the bash tool can adopt
+  /// and report the survivors.
+  final List<ShellSurvivor> survivors;
 
   @override
   String toString() => 'ExecutionError(${code.name}): $message';

@@ -4,15 +4,29 @@
 // io_execution_env_test.dart (CI-Linux).
 library;
 
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/env/process_probe_io.dart';
 import 'package:test/test.dart';
 
-void main() {
+void main() async {
+  final psAvailable = Platform.isWindows
+      ? false
+      : await Process.run('ps', [
+          '-ax',
+          '-o',
+          'pid=',
+        ]).then((p) => p.exitCode == 0).catchError((Object _) => false);
+
   tearDown(() {
+    LocalShell.ownProcessGroupOverride = null;
+    LocalShell.ourPgidOverride = null;
     LocalShell.descendantsOfOverride = null;
     LocalShell.signalPidOverride = null;
+    LocalShell.processDetailTableSnapshotOverride = null;
   });
 
   test('KILL round keeps the pre-reap root set: a TERM-trapping grandchild is '
@@ -110,6 +124,111 @@ void main() {
     expect(signals, isEmpty);
   });
 
+  test(
+    'a stopped non-ownGroup registry job buffers and adopts its survivors',
+    skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah2276-stop-');
+      addTearDown(() => workspace.delete(recursive: true));
+      LocalShell.ownProcessGroupOverride = false;
+      LocalShell.ourPgidOverride = 700;
+      LocalShell.descendantsOfOverride = (roots) async => Set.of(roots);
+      // Let stop()'s direct-child backstop reap the shell; the fake table
+      // supplies the reparented survivor without requiring real `ps`.
+      LocalShell.signalPidOverride = (_, _) {};
+      LocalShell.processDetailTableSnapshotOverride = () async => [
+        _survivorRow(990001),
+      ];
+
+      final adoptedBatch = Completer<List<ShellJobEntry>>();
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: workspace.path),
+        onAdopt: (adopted, {required source}) {
+          if (!adoptedBatch.isCompleted) adoptedBatch.complete(adopted);
+        },
+        livenessTableOverride: () async => null,
+        stopAdoptedOverride: (_) async => const [],
+      );
+      final entry = await registry.start('while :; do :; done');
+      await entry.stop();
+      await entry.settled;
+
+      final adopted = await adoptedBatch.future.timeout(
+        const Duration(seconds: 5),
+      );
+      expect(entry.stopReason, 'stopped');
+      expect(adopted, hasLength(1));
+      expect(adopted.single.isAdopted, isTrue);
+      expect(adopted.single.pid, 990001);
+      expect(adopted.single.command, 'sleep 606.2276');
+      expect(registry.jobs, contains(adopted.single));
+      await adopted.single.stop();
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
+
+  test(
+    'a timed-out non-ownGroup exec carries survivors on its error result',
+    skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+    () async {
+      LocalShell.ownProcessGroupOverride = false;
+      LocalShell.ourPgidOverride = 700;
+      LocalShell.descendantsOfOverride = (roots) async => Set.of(roots);
+      LocalShell.signalPidOverride = (_, _) {};
+      LocalShell.processDetailTableSnapshotOverride = () async => [
+        _survivorRow(990002),
+      ];
+
+      final result = await const LocalShell().exec(
+        'while :; do :; done',
+        options: const ShellExecOptions(timeout: Duration(milliseconds: 100)),
+      );
+
+      expect(result.isErr, isTrue);
+      final error = result.errorOrNull!;
+      expect(error.code, ExecutionErrorCode.timeout);
+      expect(error.survivors, hasLength(1));
+      expect(error.survivors.single.pid, 990002);
+      expect(error.survivors.single.command, 'sleep 606.2276');
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
+
+  test(
+    'AC1 real walk: stop kills a TERM-trapping grandchild after the leader '
+    'is reaped',
+    skip: Platform.isWindows || !psAvailable
+        ? 'needs POSIX with ps access'
+        : false,
+    () async {
+      const marker = 'sleep 606.2276';
+      addTearDown(() => Process.run('pkill', ['-f', marker]));
+      final workspace = await Directory.systemTemp.createTemp('fah2276-ac1-');
+      addTearDown(() => workspace.delete(recursive: true));
+      LocalShell.ownProcessGroupOverride = false;
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: workspace.path),
+      );
+
+      final entry = await registry.start('trap "" TERM; $marker & wait');
+      await entry.stop();
+      await entry.settled;
+
+      var survivors = <String>{};
+      for (var i = 0; i < 20; i++) {
+        survivors = await _liveMarkerProcesses(marker);
+        if (survivors.isEmpty) break;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(
+        survivors,
+        isEmpty,
+        reason: 'the pre-reap KILL round must reach the trapped grandchild',
+      );
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
+
   group('shouldScanSurvivors — the #2201 scan gate on stop exits (issue '
       '#2276: gate on group leadership truthfully)', () {
     test('a normal exit always scans', () {
@@ -141,4 +260,41 @@ void main() {
       );
     });
   });
+}
+
+ProcessDetailRow _survivorRow(int pid) => (
+  pid: pid,
+  ppid: 1,
+  pgid: 700,
+  lstart: _lstartOf(DateTime.now()),
+  command: 'sleep 606.2276',
+);
+
+Future<Set<String>> _liveMarkerProcesses(String marker) async {
+  final ps = await Process.run('ps', ['-ax', '-o', 'command=']);
+  return (ps.stdout as String)
+      .split('\n')
+      .where((line) => line.contains(marker))
+      .toSet();
+}
+
+String _lstartOf(DateTime at) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${days[at.weekday - 1]} ${months[at.month - 1]} ${at.day} '
+      '${two(at.hour)}:${two(at.minute)}:${two(at.second)} ${at.year}';
 }
