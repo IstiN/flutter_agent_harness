@@ -127,8 +127,12 @@
   (degenerate no-user-message payload degrades to the legacy standalone
   note), names tool/id/cut/kept-in-summary, and fires ONCE per orphan:
   `orphanReportKey` (canonical id + tool + timestamp) latches in
-  `Agent.reportedOrphanKeys`; hosts persist each first-time batch as the
-  hidden `orphan_report` custom record and seed the latch back at resume
+  `Agent.reportedOrphanKeys` at DELIVERY — the first stream event of the
+  request carrying the note (gh-2270: a terminal-refused (over-window) or
+  never-streamed build does not consume the one-shot; the audit event and
+  the host persist are delivery-gated with it); hosts persist each
+  first-time batch as the hidden `orphan_report` custom record and seed
+  the latch back at resume
   (CLI `_loadSession`, app `loadSession`).
   `agent_loop.dart` repairs before every request and retries once on a
   pairing-shaped provider 400 (`ToolPairingRepairEvent` is the audit

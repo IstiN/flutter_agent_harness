@@ -315,7 +315,8 @@ class Agent {
 
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s, mutable — the agent loop adds every key
-  /// it reports back into this same set). Hosts seed it from the
+  /// it reports back into this same set, at DELIVERY: the request carrying
+  /// the note must have streamed (gh-2270)). Hosts seed it from the
   /// persisted `orphan_report` custom records when a session resumes
   /// ([orphanReportKeysFromRecords]), so a restored session never
   /// re-reports an orphan it already reported (AC6).
