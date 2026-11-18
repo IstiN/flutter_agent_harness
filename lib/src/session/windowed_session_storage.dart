@@ -177,6 +177,11 @@ final class WindowedSessionStorage
   int get residentCount => _entries.length;
   int get residentWindowBytes => _residentWindowBytes;
 
+  /// Append-cursor instrumentation (issue #2255 AC1/AC2: cursor truth is
+  /// asserted against [SessionChunkReader.stat] size, not inferred from
+  /// the banner state).
+  int get knownFileBytes => _knownFileBytes;
+
   @override
   SessionMetadata get cachedMetadata => _metadata;
 
@@ -1186,11 +1191,17 @@ final class WindowedSessionStorage
           'Failed to append session entry ${record.id}',
           sessionId: _metadata.id,
         );
+        // Byte math, not code units: info.size/_knownFileBytes count
+        // UTF-8 file bytes (appendFile writes UTF-8) while line.length
+        // counts UTF-16 code units — one non-ASCII record (é/emoji/CJK)
+        // overcounted `start`, missed the tail-extend guard below, and
+        // froze the residency cursor for the whole open (issue #2255).
+        final lineBytes = utf8.encode(line).length;
         final info = await _reader.stat();
         final start = info == null
             ? _knownFileBytes
-            : info.size - line.length - 1;
-        _fileSize = start + line.length + 1;
+            : info.size - lineBytes - 1;
+        _fileSize = start + lineBytes + 1;
         _fileMtimeMs = info?.mtimeMs ?? _fileMtimeMs;
         _offsetById[record.id] = start;
         final leaf = leafIdAfterSessionRecord(record);
