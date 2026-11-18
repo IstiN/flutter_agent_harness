@@ -418,6 +418,12 @@ extension _AgentCliCompactionReportPrinter on AgentCli {
 }
 
 extension AgentCliCompactionRun on AgentCli {
+  /// Test seam: the compaction pass counter — a zero-pass run (issue
+  /// #2273) must leave it untouched so the funnel's `passesRan` trim
+  /// gate never counts runs that executed no pass.
+  @visibleForTesting
+  int get compactionPassesStartedForTest => _compactionPassesStarted;
+
   /// Runs the auto-compaction when the live transcript crosses the
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
@@ -802,9 +808,11 @@ extension AgentCliCompactionRun on AgentCli {
     // Backend agent mode (issue #155): bracket the run so the supervisor
     // sees why a turn stalled. Pre-flight runs carry the upcoming turn id
     // (the following agent_start reuses it). The end frame comes from
-    // [_AutoCompactorCliHooks.onDone] — every engine terminal path fires
-    // it, so even a zero-pass run closes the bracket (issue #2273); the
-    // pass counter increments per pass receipt in [onPass], not here.
+    // [_AutoCompactorCliHooks.onDone] — every structured-engine terminal
+    // path fires it, so even a zero-pass run closes the bracket (issue
+    // #2273). Classic-engine early returns and user cancellation can still
+    // bypass it. The pass counter increments per pass receipt in [onPass],
+    // not here.
     _hep?.compactionStart();
     // User-wired compaction cancellation (issue #1085 M3): a compaction
     // can run 15-30 min (pre-flight, mid-run relief, post-run) and the
