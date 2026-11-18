@@ -1471,6 +1471,12 @@ class AgentCli {
   /// cannot impersonate a dead owner because this differs.
   late final String _leaseBootId = FileSessionLeaseStore.newBootId();
 
+  /// Consecutive lease-heartbeat IO failures (#2257): the alarm counter —
+  /// a hiccup keeps ownership and retries; persistence re-alarms every
+  /// [_leaseBeatAlarmEvery] failed beats without demoting. Zeroed on
+  /// every renewed or lost beat.
+  int _leaseBeatFailures = 0;
+
   /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
   /// wake_attempted / turn_started / wake_refused lands here so a
   /// post-mortem can tell "timer never fired" from "wake refused". A

@@ -93,9 +93,15 @@ void main() {
 
     test('heartbeat refreshes liveness only for the owner (E3)', () async {
       await attempt(bootId: 'mine');
-      expect(await store.heartbeat(sessionPath, 'mine'), isTrue);
+      expect(
+        await store.heartbeat(sessionPath, 'mine'),
+        isA<LeaseBeatRenewed>(),
+      );
       // A recycled PID with a different bootId never refreshes.
-      expect(await store.heartbeat(sessionPath, 'someone-else'), isFalse);
+      expect(
+        await store.heartbeat(sessionPath, 'someone-else'),
+        isA<LeaseBeatLost>(),
+      );
     });
 
     test('graceful release frees the lease for immediate re-acquire', () async {
@@ -369,7 +375,10 @@ void main() {
       torn.onMidWrite = (_) async {
         seen.add((await watcher.inspect(sessionPath)).state);
       };
-      expect(await owner.heartbeat(sessionPath, 'owner-a'), isTrue);
+      expect(
+        await owner.heartbeat(sessionPath, 'owner-a'),
+        isA<LeaseBeatRenewed>(),
+      );
       expect(seen, isNotEmpty, reason: 'the mid-write hook must fire');
       expect(
         seen,
@@ -407,7 +416,10 @@ void main() {
         }
       }();
       for (var i = 0; i < 25; i++) {
-        expect(await owner.heartbeat(sessionPath, bootId), isTrue);
+        expect(
+          await owner.heartbeat(sessionPath, bootId),
+          isA<LeaseBeatRenewed>(),
+        );
       }
       reading = false;
       await reader;
@@ -503,7 +515,10 @@ void main() {
           'acquiredAt': base.toIso8601String(),
         }),
       );
-      expect(await store.heartbeat(sessionPath, 'owner-a'), isTrue);
+      expect(
+        await store.heartbeat(sessionPath, 'owner-a'),
+        isA<LeaseBeatRenewed>(),
+      );
       final json =
           jsonDecode(
                 (await plain.readTextFile(
@@ -513,7 +528,124 @@ void main() {
               as Map<String, dynamic>;
       expect(json['heartbeatAt'], base.toIso8601String());
       // A foreign bootId never refreshes (E3) — unchanged.
-      expect(await store.heartbeat(sessionPath, 'someone-else'), isFalse);
+      expect(
+        await store.heartbeat(sessionPath, 'someone-else'),
+        isA<LeaseBeatLost>(),
+      );
+    });
+  });
+
+  group('heartbeat separates IO failure from loss (#2257)', () {
+    Future<(FileSessionLeaseStore, String, _GateLeaseEnv)> rig() async {
+      final gate = _GateLeaseEnv();
+      final store = FileSessionLeaseStore(env: gate, now: () => base);
+      final repo = JsonlSessionRepo(fs: gate, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      return (store, (await session.getMetadata()).path, gate);
+    }
+
+    Future<void> own(FileSessionLeaseStore store, String path) async {
+      final acquire = await store.acquire(
+        sessionFilePath: path,
+        sessionId: 'sess-1',
+        host: 'cli',
+        bootId: 'mine',
+        pid: 1000,
+      );
+      expect(acquire, isA<LeaseAcquired>());
+    }
+
+    test('a one-beat read hiccup retries inside the beat and renews', () async {
+      final (store, path, gate) = await rig();
+      await own(store, path);
+      gate.failingSidecarReads = 1;
+      final beat = await store.heartbeat(path, 'mine');
+      expect(
+        beat,
+        isA<LeaseBeatRenewed>(),
+        reason: 'the bounded read retry heals the hiccup — no demote',
+      );
+      expect((await store.inspect(path)).lease!.bootId, 'mine');
+    });
+
+    test(
+      'a persistent read failure keeps ownership as IoFailed (AC2)',
+      () async {
+        final (store, path, gate) = await rig();
+        await own(store, path);
+        gate.failingSidecarReads = 1 << 30;
+        final beat = await store.heartbeat(path, 'mine');
+        expect(beat, isA<LeaseBeatIoFailed>());
+        expect(
+          (beat as LeaseBeatIoFailed).error.message,
+          'sidecar read hiccup',
+          reason: 'the raw fs error rides the beat for the caller alarm',
+        );
+        gate.failingSidecarReads = 0;
+        expect(
+          jsonDecode(
+            (await gate.readTextFile(store.sidecarPath(path))).valueOrNull!,
+          )['bootId'],
+          'mine',
+          reason: 'the sidecar was never refuted — the owner keeps driving',
+        );
+      },
+    );
+
+    test('a failed refresh re-reads: still ours keeps ownership, '
+        'the next beat retries', () async {
+      final (store, path, gate) = await rig();
+      await own(store, path);
+      gate.failRenames = true;
+      expect(
+        await store.heartbeat(path, 'mine'),
+        isA<LeaseBeatIoFailed>(),
+        reason: 'the publish failed but the on-disk sidecar still names us',
+      );
+      expect((await store.inspect(path)).lease!.bootId, 'mine');
+      gate.failRenames = false;
+      expect(
+        await store.heartbeat(path, 'mine'),
+        isA<LeaseBeatRenewed>(),
+        reason: 'the next beat retries the publish (AC1)',
+      );
+    });
+
+    test(
+      'a readable foreign sidecar demotes on the FIRST heartbeat (AC3)',
+      () async {
+        final (store, path, gate) = await rig();
+        await own(store, path);
+        await gate.writeFile(
+          store.sidecarPath(path),
+          const JsonEncoder.withIndent('  ').convert({
+            'host': 'cli',
+            'sessionId': 'sess-1',
+            'pid': 31337,
+            'bootId': 'rival',
+            'heartbeatAt': base.toIso8601String(),
+            'acquiredAt': base.toIso8601String(),
+          }),
+        );
+        final beat = await store.heartbeat(path, 'mine');
+        expect(beat, isA<LeaseBeatLost>());
+        expect((beat as LeaseBeatLost).lease!.bootId, 'rival');
+      },
+    );
+
+    test('a verified-absent sidecar demotes too (AC1)', () async {
+      final (store, path, gate) = await rig();
+      await own(store, path);
+      await gate.remove(store.sidecarPath(path), force: true);
+      final beat = await store.heartbeat(path, 'mine');
+      expect(beat, isA<LeaseBeatLost>());
+      expect(
+        (beat as LeaseBeatLost).lease,
+        isNull,
+        reason: 'nothing readable on disk — the loss is a bare verdict',
+      );
     });
   });
 }

@@ -55,8 +55,9 @@ extension AgentCliLifecycle on AgentCli {
         // instance as live even when no mail is pending.
         _touchFabricHeartbeat();
       } else {
-        // Our lease heartbeat (≈4s, inside the 15s window): a false
-        // return means the lease was lost — demote to viewer.
+        // Our lease heartbeat (≈4s, inside the 15s window): a
+        // LeaseBeatLost means the lease was lost — demote to viewer.
+        // An IO hiccup keeps ownership and retries (#2257).
         unawaited(_leaseHeartbeat());
       }
     });

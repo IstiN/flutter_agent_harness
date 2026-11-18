@@ -366,20 +366,43 @@ extension AgentCliLease on AgentCli {
   }
 
   /// Heartbeat for OUR lease (every other inbox tick ≈ 4s, inside the
-  /// 15s window): false means the lease was lost (expired + re-taken by
-  /// another host) — demote to viewer of the new owner.
+  /// 15s window): a [LeaseBeatLost] means the lease was lost (expired +
+  /// re-taken by another host, or the sidecar is verifiably gone) —
+  /// demote to viewer of the new owner. An IO hiccup ([LeaseBeatIoFailed],
+  /// #2257) NEVER demotes: ownership stands, the next tick retries, and
+  /// persistent failures alarm without touching the owner role.
   Future<void> _leaseHeartbeat() async {
     final path = _heldLeasePath;
     final store = config.leaseStore;
     if (path == null || store == null) return;
-    if (await store.heartbeat(path, _leaseBootId)) return;
+    final beat = await store.heartbeat(path, _leaseBootId);
+    switch (beat) {
+      case LeaseBeatRenewed():
+        _leaseBeatFailures = 0;
+        return;
+      case LeaseBeatIoFailed(:final error):
+        // #2257: a sidecar IO hiccup does not refute ownership — keep
+        // driving and retry on the next tick; alarm while it persists.
+        _leaseBeatFailures++;
+        if (_leaseBeatFailures % _leaseBeatAlarmEvery == 0) {
+          io.writeln(
+            tuiWarning(
+              'lease heartbeat failing — fs error: ${error.message} '
+              '(ownership kept; retrying)',
+            ),
+          );
+        }
+        return;
+      case LeaseBeatLost():
+        _leaseBeatFailures = 0;
+    }
     _heldLeasePath = null;
     final session = _session;
     if (session == null) return;
     final meta = await session.getMetadata();
     final inspect = await store.inspect(path);
     await _enterViewerMode(
-      lease: inspect.lease ?? _orphanLease(meta),
+      lease: inspect.lease ?? beat.lease ?? _orphanLease(meta),
       meta: meta,
     );
     io.writeln(
@@ -400,6 +423,11 @@ extension AgentCliLease on AgentCli {
     acquiredAt: '',
   );
 }
+
+/// How many consecutive lease-heartbeat IO failures between alarms
+/// (#2257): the failure is re-reported at every multiple so a sustained
+/// fs outage stays visible without spamming every ~4s tick.
+const _leaseBeatAlarmEvery = 3;
 
 /// Plain text of one transcript row as a viewer renders it (styles are
 /// applied by the caller; dimming and bolding are presentation).
