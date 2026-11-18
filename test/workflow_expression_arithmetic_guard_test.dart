@@ -85,27 +85,30 @@ void main() {
     );
   });
 
-  test('AC1b: guard catches unspaced/partially-spaced + variants (422 too)', () {
-    // gh-2288's defect family is spacing-agnostic: the server-side
-    // parser rejects every one of these exactly like the historical
-    // spaced form (PR #2293 review probe). The guard must not depend
-    // on operator spacing.
-    const defectVariants = <String>[
-      r'${{ github.run_number*10+1 }}', // fully unspaced
-      r'${{ github.run_number *10 +1 }}', // right-spaced only
-      r'${{ github.run_number*10+ 1 }}', // left-spaced only
-      r'${{ (matrix.arch == 1 || 0)+2 }}', // unspaced after a paren
-    ];
-    for (final variant in defectVariants) {
-      expect(
-        additivePlus.hasMatch(stripQuotes(variant)),
-        isTrue,
-        reason:
-            'guard must flag the dispatch-422 defect "$variant" — '
-            'any unquoted + is invalid, spacing must not matter',
-      );
-    }
-  });
+  test(
+    'AC1b: guard catches unspaced/partially-spaced + variants (422 too)',
+    () {
+      // gh-2288's defect family is spacing-agnostic: the server-side
+      // parser rejects every one of these exactly like the historical
+      // spaced form (PR #2293 review probe). The guard must not depend
+      // on operator spacing.
+      const defectVariants = <String>[
+        r'${{ github.run_number*10+1 }}', // fully unspaced
+        r'${{ github.run_number *10 +1 }}', // right-spaced only
+        r'${{ github.run_number*10+ 1 }}', // left-spaced only
+        r'${{ (matrix.arch == 1 || 0)+2 }}', // unspaced after a paren
+      ];
+      for (final variant in defectVariants) {
+        expect(
+          additivePlus.hasMatch(stripQuotes(variant)),
+          isTrue,
+          reason:
+              'guard must flag the dispatch-422 defect "$variant" — '
+              'any unquoted + is invalid, spacing must not matter',
+        );
+      }
+    },
+  );
 
   test('AC1c: legal +/− uses stay unflagged (no false positives)', () {
     // Negative pins for the tightened additivePlus and the deliberately
