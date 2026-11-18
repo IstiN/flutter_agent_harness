@@ -413,7 +413,7 @@ void main() {
       // through the wake path instead (issue #437 AC4), so the race is
       // injected at the queue level.
       cli.agent.steer(UserMessage.text('late steer'));
-      cli.settleLeftoverSteeringForTest();
+      await cli.settleLeftoverSteeringForTest();
       await waitForIt(
         () => contexts.length == 2 && !cli.isBusy,
         reason: 'the leftover steering runs a follow-up turn',
