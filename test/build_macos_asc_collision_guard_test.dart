@@ -82,34 +82,42 @@ void main() {
         'Build macOS release (\${{ matrix.arch }})',
       );
       final env = (buildStep.value)['env'] as Map;
-      final buildNumber = env['BUILD_NUMBER'];
+      // gh-2288: GitHub expressions have no additive '+' — the gh-2246
+      // inline sum made the whole workflow unparseable (dispatch API
+      // 422 "Unexpected symbol: '+'"). The raw operands ride as env
+      // scalars; the run block performs the sum in bash. Pinned by
+      // workflow_expression_arithmetic_guard_test.dart (AC1/AC2).
       expect(
-        buildNumber,
-        isA<String>(),
-        reason: 'BUILD_NUMBER must stay an env var',
+        env.keys,
+        isNot(contains('BUILD_NUMBER')),
+        reason: 'an env BUILD_NUMBER expression is what 422s the file',
       );
-      final expr = buildNumber as String;
       expect(
-        expr,
+        env['RUN_NUMBER'],
         contains('github.run_number'),
         reason: 'monotonic growth across dispatches',
       );
       expect(
-        expr,
+        env['RUN_ATTEMPT'],
         contains('github.run_attempt'),
         reason:
             'gh-2246: reruns reuse run_number — the attempt term is what '
             'makes re-uploads legal (altool -19232 fix)',
       );
+      final run = (buildStep.value)['run'] as String? ?? '';
       expect(
-        expr,
-        contains('matrix.arch'),
-        reason: 'gh-2246: sibling arch legs must not race one ASC build',
+        run,
+        contains(
+          r'BUILD_NUMBER=$(( RUN_NUMBER * 10 + RUN_ATTEMPT * 2 + ARCH_INDEX ))',
+        ),
+        reason:
+            'the gh-2246 formula must stay intact — only its computation '
+            'site moved into bash (gh-2288)',
       );
       expect(
-        expr,
-        isNot(equals(r'${{ github.run_number }}')),
-        reason: 'the bare form IS the collision',
+        run,
+        contains(r'[ "$ARCH" = "arm64" ]'),
+        reason: 'gh-2246: sibling arch legs must not race one ASC build',
       );
     },
   );
