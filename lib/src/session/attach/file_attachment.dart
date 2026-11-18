@@ -39,6 +39,7 @@ final class FileSessionEventSource implements SessionEventSource {
   final _controllers = <String, StreamController<AttachedSessionEvent>>{};
   final _watchers = <String, Future<void>>{};
   final _deliveredLines = <String, int>{};
+  final _lastRecordIds = <String, String?>{};
   final _disposed = false;
 
   @override
@@ -67,28 +68,83 @@ final class FileSessionEventSource implements SessionEventSource {
       final start = _deliveredLines[sessionId];
       if (start == null) {
         _deliveredLines[sessionId] = total;
+        _anchorId(sessionId, lines);
         if (lines != null) await _emit(sessionId, controller, lines, 0);
+      } else if (total < start) {
+        // The primary shrank under the watch — segment rotation seeds a
+        // header-only file, hard-cap truncation and quarantine heal drop
+        // lines. The line cursor is dead; re-anchor on record identity:
+        // resume after the last delivered record when it survived the
+        // rewrite, else treat the whole file as unseen (it is all
+        // post-rewrite content). Forward only — history comes from the
+        // normal open path.
+        final fresh = lines ?? const <String>[];
+        final resume = _resumeIndex(fresh, _lastRecordIds[sessionId]);
+        _deliveredLines[sessionId] = total;
+        _anchorId(sessionId, lines);
+        await _emit(sessionId, controller, fresh, resume, reanchored: true);
       } else if (total > start) {
         _deliveredLines[sessionId] = total;
+        _anchorId(sessionId, lines);
         await _emit(sessionId, controller, lines ?? const [], start);
       }
       await Future<void>.delayed(_pollInterval);
     }
   }
 
+  /// Remembers the anchor for shrink re-anchoring: the record id of the
+  /// last line. A torn tail line decodes to nothing and keeps the
+  /// previous anchor — identity is best-effort, never regresses.
+  void _anchorId(String sessionId, List<String>? lines) {
+    final id = _lastIdOf(lines);
+    if (id != null) _lastRecordIds[sessionId] = id;
+  }
+
+  /// Index right after the last delivered record in a rewritten file:
+  /// backward scan for the anchor id; 0 when it is gone (everything
+  /// surviving is unseen content).
+  static int _resumeIndex(List<String> lines, String? anchorId) {
+    if (anchorId == null) return 0;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (_recordIdOf(lines[i]) == anchorId) return i + 1;
+    }
+    return 0;
+  }
+
+  /// The top-level `id` of a JSONL line (session id on the header line,
+  /// record id on records), null for non-JSON / torn lines.
+  static String? _recordIdOf(String line) {
+    try {
+      final json = jsonDecode(line);
+      return json is Map<String, dynamic> ? json['id'] as String? : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// [._recordIdOf] of the last line, null when the file is empty or
+  /// unreadable.
+  static String? _lastIdOf(List<String>? lines) =>
+      lines == null || lines.isEmpty ? null : _recordIdOf(lines.last);
+
   Future<void> _emit(
     String sessionId,
     StreamController<AttachedSessionEvent> controller,
     List<String> lines,
-    int start,
-  ) async {
+    int start, {
+    bool reanchored = false,
+  }) async {
     final appended = <AttachedMessage>[];
     for (final line in lines.skip(start)) {
       final row = _rowFromLine(line);
       if (row != null) appended.add(row);
     }
-    if (appended.isEmpty || controller.isClosed) return;
-    controller.add(AttachedSessionEvent(appended: appended));
+    // A re-anchor emits even without rows: the transition itself is the
+    // message — a rewritten transcript is never silently frozen.
+    if ((appended.isEmpty && !reanchored) || controller.isClosed) return;
+    controller.add(
+      AttachedSessionEvent(appended: appended, reanchored: reanchored),
+    );
   }
 
   /// One JSONL line → render row; null for records the view skips
@@ -124,6 +180,7 @@ final class FileSessionEventSource implements SessionEventSource {
     _controllers.clear();
     _watchers.clear();
     _deliveredLines.clear();
+    _lastRecordIds.clear();
   }
 }
 

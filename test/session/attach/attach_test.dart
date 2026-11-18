@@ -274,6 +274,151 @@ void main() {
       await source.dispose();
     });
 
+    test('#2256: hard-cap shrink below the cursor re-anchors on record '
+        'identity — kept rows are not re-emitted, new rows are not '
+        'skipped', () async {
+      final created = await _seedSession(env, 'sess-cap', 12);
+      final path = (await created.getMetadata()).path;
+
+      final source = _zeroPollSource(env, 'sess-cap', path);
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-cap').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events, hasLength(1)); // backlog: m0..m11
+      expect(events.last.appended, hasLength(12));
+
+      // The owner writes 5 unseen records, then the hard-cap rewrite
+      // lands inside the same poll gap: header + the newest 5 of the
+      // already-delivered records + the 5 unseen ones. Indices shift;
+      // identity must not.
+      for (var i = 12; i < 17; i++) {
+        await created.appendMessage(_numberedMessage(i));
+      }
+      final lines = (await env.readTextLines(path)).valueOrNull!;
+      await env.writeFile(
+        path,
+        '${[lines.first, ...lines.sublist(8)].join('\n')}\n',
+      );
+      await pumpEventQueue(times: 40);
+
+      // One re-anchor event carrying EXACTLY the 5 unseen rows — the
+      // 5 kept rows are not duplicated, none of the new rows skipped
+      // (today the shrink matches no branch and the viewer freezes
+      // until the file regrows past the stale cursor).
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isTrue);
+      expect(events.last.appended.map((r) => r.text), [
+        'm12',
+        'm13',
+        'm14',
+        'm15',
+        'm16',
+      ]);
+
+      // The tail keeps streaming after the re-anchor.
+      await created.appendMessage(_numberedMessage(17));
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(3));
+      expect(events.last.reanchored, isFalse);
+      expect(events.last.appended.single.text, 'm17');
+
+      await sub.cancel();
+      await source.dispose();
+    });
+
+    test('#2256: rotation seeding a header-only primary re-anchors the '
+        'tail and streams the post-rotation records', () async {
+      final created = await _seedSession(env, 'sess-rot', 10);
+      final path = (await created.getMetadata()).path;
+
+      final source = _zeroPollSource(env, 'sess-rot', path);
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-rot').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events, hasLength(1)); // backlog: m0..m9
+      expect(events.last.appended, hasLength(10));
+
+      // Rotation: the primary is renamed away and a fresh one seeded
+      // with ONLY the header (the rotate shape in session_storage).
+      // A torn tail line (mid-append read) decodes to nothing and must
+      // not regress the anchor — the re-anchor still fires.
+      final lines = (await env.readTextLines(path)).valueOrNull!;
+      await env.writeFile(path, '${lines.first}\n{"type":"mess\n');
+      await pumpEventQueue(times: 40);
+
+      // The rewrite surfaces as a transition even with nothing to show.
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isTrue);
+      expect(events.last.appended, isEmpty);
+
+      // Post-rotation records stream again — today total (6) never
+      // passes the stale cursor (11), so the viewer stays blind
+      // forever over a dead transcript.
+      for (var i = 10; i < 15; i++) {
+        await created.appendMessage(_numberedMessage(i));
+      }
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(3));
+      expect(events.last.reanchored, isFalse);
+      expect(events.last.appended.map((r) => r.text), [
+        'm10',
+        'm11',
+        'm12',
+        'm13',
+        'm14',
+      ]);
+
+      await sub.cancel();
+      await source.dispose();
+    });
+
+    test('#2256: a shrink re-anchors only its own session — a sibling '
+        'watch keeps streaming untouched', () async {
+      final a = await _seedSession(env, 'sess-a2', 2);
+      final b = await _seedSession(env, 'sess-b2', 2);
+      final pathA = (await a.getMetadata()).path;
+      final pathB = (await b.getMetadata()).path;
+
+      final source = FileSessionEventSource(
+        env: env,
+        resolvePath: (id) => switch (id) {
+          'sess-a2' => Future.value(pathA),
+          'sess-b2' => Future.value(pathB),
+          _ => Future.value(null),
+        },
+        pollInterval: Duration.zero,
+      );
+      final eventsA = <AttachedSessionEvent>[];
+      final eventsB = <AttachedSessionEvent>[];
+      final subA = source.watch('sess-a2').listen(eventsA.add);
+      final subB = source.watch('sess-b2').listen(eventsB.add);
+      await pumpEventQueue(times: 40);
+      expect(eventsA, hasLength(1));
+      expect(eventsB, hasLength(1));
+
+      // Rewrite sess-b's primary to header-only (rotation shape); the
+      // per-session cursor map must re-anchor sess-b without touching
+      // sess-a's count.
+      final linesB = (await env.readTextLines(pathB)).valueOrNull!;
+      await env.writeFile(pathB, '${linesB.first}\n');
+      await pumpEventQueue(times: 40);
+      expect(eventsA, hasLength(1)); // untouched
+      expect(eventsB, hasLength(2));
+      expect(eventsB.last.reanchored, isTrue);
+      expect(eventsB.last.appended, isEmpty);
+
+      // sess-a keeps streaming normally afterwards.
+      await a.appendMessage(_numberedMessage(2));
+      await pumpEventQueue(times: 40);
+      expect(eventsA, hasLength(2));
+      expect(eventsA.last.appended.single.text, 'm2');
+      expect(eventsB, hasLength(2));
+
+      await subA.cancel();
+      await subB.cancel();
+      await source.dispose();
+    });
+
     test(
       'input channel delivers user-kind mail the CLI inbox drains',
       () async {
@@ -369,3 +514,45 @@ void _pidProbeGroup() {
     });
   });
 }
+
+/// A session at `/sessions/<id>` with [records] alternating user /
+/// assistant rows named `m0`, `m1`, …
+Future<Session> _seedSession(
+  MemoryExecutionEnv env,
+  String id,
+  int records,
+) async {
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+  final created = await repo.create(
+    JsonlSessionCreateOptions(cwd: '/work', id: id),
+  );
+  for (var i = 0; i < records; i++) {
+    await created.appendMessage(_numberedMessage(i));
+  }
+  return created;
+}
+
+/// The i-th seeded transcript record.
+Message _numberedMessage(int i) => i.isEven
+    ? UserMessage.text('m$i')
+    : AssistantMessage(
+        content: [TextContent(text: 'm$i')],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+
+/// A watcher on [path] whose zero poll interval lets the test drive each
+/// poll round with pumpEventQueue instead of wall-clock waits.
+FileSessionEventSource _zeroPollSource(
+  MemoryExecutionEnv env,
+  String sessionId,
+  String path,
+) => FileSessionEventSource(
+  env: env,
+  resolvePath: (id) async => id == sessionId ? path : null,
+  pollInterval: Duration.zero,
+);
