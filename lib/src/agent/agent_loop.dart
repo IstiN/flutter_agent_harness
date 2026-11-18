@@ -656,11 +656,8 @@ final class AgentLoopConfig {
   /// not remembered across turns.
   final Map<String, int>? imageCapLatches;
 
-  /// gh-1934: session-scoped 413 image-payload recovery state (learned
-  /// budget, strip-all latch, evicted-key latch — keyed per
-  /// (provider, model) since issue #2269, the same latch key as
-  /// [imageCapLatches]; full contract in `image_recovery.dart`). Hosts
-  /// own it (as [imageCapLatches]).
+  /// gh-1934: session-scoped 413 recovery state; latches are keyed per
+  /// (provider, model) (#2269). Hosts own it (as [imageCapLatches]).
   final ImagePayloadRecoveryState? imageRecovery;
 
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
