@@ -419,6 +419,115 @@ void main() {
       await source.dispose();
     });
 
+    test('#2256: count-neutral drop+append re-anchors and emits only the '
+        'unseen record', () async {
+      final created = await _seedSession(env, 'sess-neutral', 4);
+      final path = (await created.getMetadata()).path;
+      final source = _zeroPollSource(env, 'sess-neutral', path);
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-neutral').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events.single.appended, hasLength(4));
+
+      // The hard-cap steady state: m4 lands and the oldest record drops in
+      // the same poll gap, leaving header + four records exactly as before.
+      await created.appendMessage(_numberedMessage(4));
+      final lines = (await env.readTextLines(path)).valueOrNull!;
+      await env.writeFile(
+        path,
+        '${[lines.first, ...lines.skip(2)].join('\n')}\n',
+      );
+      await pumpEventQueue(times: 40);
+
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isTrue);
+      expect(events.last.appended.map((row) => row.text), ['m4']);
+      await created.appendMessage(_numberedMessage(5));
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(3));
+      expect(events.last.reanchored, isFalse);
+      expect(events.last.appended.single.text, 'm5');
+      await sub.cancel();
+      await source.dispose();
+    });
+
+    test('#2256: an unresolved poll preserves cursor and anchor — no '
+        're-anchor marker or full-backlog replay', () async {
+      final created = await _seedSession(env, 'sess-unreadable', 5);
+      final path = (await created.getMetadata()).path;
+      var available = true;
+      final source = FileSessionEventSource(
+        env: env,
+        resolvePath: (_) async => available ? path : null,
+        pollInterval: Duration.zero,
+      );
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-unreadable').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events.single.appended, hasLength(5));
+
+      available = false;
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(1));
+      available = true;
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(1));
+
+      await created.appendMessage(_numberedMessage(5));
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isFalse);
+      expect(events.last.appended.single.text, 'm5');
+      await sub.cancel();
+      await source.dispose();
+    });
+
+    test('#2256: a torn baseline tail still anchors the last delivered '
+        'record, so quarantine heal does not replay survivors', () async {
+      final created = await _seedSession(env, 'sess-torn-base', 2);
+      final path = (await created.getMetadata()).path;
+      final surviving = (await env.readTextLines(path)).valueOrNull!;
+      await env.writeFile(path, '${surviving.join('\n')}\n{"type":"mess\n');
+      final source = _zeroPollSource(env, 'sess-torn-base', path);
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-torn-base').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events.single.appended.map((row) => row.text), ['m0', 'm1']);
+
+      // Open-time quarantine drops only the torn line; m0 and m1 survive.
+      await env.writeFile(path, '${surviving.join('\n')}\n');
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isTrue);
+      expect(events.last.appended, isEmpty);
+      await sub.cancel();
+      await source.dispose();
+    });
+
+    test('#2256: a torn tail completed between polls is delivered once '
+        'despite the unchanged line count', () async {
+      final created = await _seedSession(env, 'sess-torn-complete', 2);
+      final path = (await created.getMetadata()).path;
+      final complete = (await env.readTextLines(path)).valueOrNull!;
+      await env.writeFile(
+        path,
+        '${complete.take(complete.length - 1).join('\n')}\n{"type":"mess\n',
+      );
+      final source = _zeroPollSource(env, 'sess-torn-complete', path);
+      final events = <AttachedSessionEvent>[];
+      final sub = source.watch('sess-torn-complete').listen(events.add);
+      await pumpEventQueue(times: 20);
+      expect(events.single.appended.single.text, 'm0');
+
+      await env.writeFile(path, '${complete.join('\n')}\n');
+      await pumpEventQueue(times: 40);
+      expect(events, hasLength(2));
+      expect(events.last.reanchored, isTrue);
+      expect(events.last.appended.single.text, 'm1');
+      await sub.cancel();
+      await source.dispose();
+    });
+
     test(
       'input channel delivers user-kind mail the CLI inbox drains',
       () async {

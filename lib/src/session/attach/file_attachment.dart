@@ -70,31 +70,37 @@ final class FileSessionEventSource implements SessionEventSource {
         _deliveredLines[sessionId] = total;
         _anchorId(sessionId, lines);
         if (lines != null) await _emit(sessionId, controller, lines, 0);
-      } else if (total < start) {
-        // The primary shrank under the watch — segment rotation seeds a
-        // header-only file, hard-cap truncation and quarantine heal drop
-        // lines. The line cursor is dead; re-anchor on record identity:
-        // resume after the last delivered record when it survived the
-        // rewrite, else treat the whole file as unseen (it is all
-        // post-rewrite content). Forward only — history comes from the
-        // normal open path.
-        final fresh = lines ?? const <String>[];
-        final resume = _resumeIndex(fresh, _lastRecordIds[sessionId]);
+      } else if (lines == null) {
+        // An unreadable/missing poll is not an empty-file rewrite. Keep
+        // both cursor and anchor so a transient failure cannot re-emit the
+        // whole transcript on the next successful read.
+      } else if (total < start ||
+          (total == start && _lastIdOf(lines) != _lastRecordIds[sessionId])) {
+        // The primary was rewritten under the watch — segment rotation
+        // seeds a header-only file, hard-cap truncation and quarantine heal
+        // drop lines, and a drop+append (or a torn line completed between
+        // polls) can leave the count unchanged. The line cursor is dead;
+        // re-anchor on record identity: resume after the last delivered
+        // record when it survived the rewrite, else treat the whole file as
+        // unseen (it is all post-rewrite content). Forward only — history
+        // comes from the normal open path.
+        final resume = _resumeIndex(lines, _lastRecordIds[sessionId]);
         _deliveredLines[sessionId] = total;
         _anchorId(sessionId, lines);
-        await _emit(sessionId, controller, fresh, resume, reanchored: true);
+        await _emit(sessionId, controller, lines, resume, reanchored: true);
       } else if (total > start) {
         _deliveredLines[sessionId] = total;
         _anchorId(sessionId, lines);
-        await _emit(sessionId, controller, lines ?? const [], start);
+        await _emit(sessionId, controller, lines, start);
       }
       await Future<void>.delayed(_pollInterval);
     }
   }
 
-  /// Remembers the anchor for shrink re-anchoring: the record id of the
-  /// last line. A torn tail line decodes to nothing and keeps the
-  /// previous anchor — identity is best-effort, never regresses.
+  /// Remembers the anchor for rewrite re-anchoring: the last parseable
+  /// record id. A torn tail line decodes to nothing and never regresses an
+  /// earlier anchor; on the first poll the backward scan still finds the
+  /// last actually-delivered record before that torn tail.
   void _anchorId(String sessionId, List<String>? lines) {
     final id = _lastIdOf(lines);
     if (id != null) _lastRecordIds[sessionId] = id;
@@ -122,10 +128,18 @@ final class FileSessionEventSource implements SessionEventSource {
     }
   }
 
-  /// [._recordIdOf] of the last line, null when the file is empty or
-  /// unreadable.
-  static String? _lastIdOf(List<String>? lines) =>
-      lines == null || lines.isEmpty ? null : _recordIdOf(lines.last);
+  /// The last parseable record id, scanning backward over torn/non-record
+  /// tail lines. Null when the file is unreadable or has no identifiable
+  /// line. In particular, a torn first-observed tail cannot leave the watch
+  /// without an anchor and cause a later heal to replay the whole backlog.
+  static String? _lastIdOf(List<String>? lines) {
+    if (lines == null) return null;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final id = _recordIdOf(lines[i]);
+      if (id != null) return id;
+    }
+    return null;
+  }
 
   Future<void> _emit(
     String sessionId,
