@@ -1,29 +1,46 @@
-// gh-1934 UT — the session-scoped 413 recovery state: adaptive budget
-// halving with the recovery floor, config-still-honored-when-lower (AC5),
-// the one-shot recovery note, and the canonical notice text.
+// gh-1934 UT — the 413 recovery state: per-(provider, model) latches
+// (adaptive budget halving with the recovery floor, config-still-honored-
+// when-lower (AC5), the strip-all + evicted-key latches — issue #2269
+// keying), the session-global one-shot recovery note, and the canonical
+// notice text.
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('ImagePayloadRecoveryState.effectiveByteBudget', () {
+  /// The latch slice of one (provider, model) pair.
+  ImagePayloadRecoveryLatch latch(ImagePayloadRecoveryState state) =>
+      state.latchFor('copilot', 'vision');
+
+  group('the per-model 413 latch budget', () {
     test('no learning — the configured budget rides verbatim', () {
       final state = ImagePayloadRecoveryState();
-      expect(state.effectiveByteBudget(8 * 1024 * 1024), 8 * 1024 * 1024);
-      expect(state.effectiveByteBudget(0), 0, reason: '0 = budget disabled');
+      expect(
+        latch(state).effectiveByteBudget(8 * 1024 * 1024),
+        8 * 1024 * 1024,
+      );
+      expect(
+        latch(state).effectiveByteBudget(0),
+        0,
+        reason: '0 = budget disabled',
+      );
     });
 
     test('a learned budget binds only when lower than configured (AC5)', () {
-      final state = ImagePayloadRecoveryState()..halveBudget(8 * 1024 * 1024);
-      expect(state.learnedByteBudget, 4 * 1024 * 1024);
-      expect(state.effectiveByteBudget(8 * 1024 * 1024), 4 * 1024 * 1024);
+      final state = ImagePayloadRecoveryState()
+        ..latchFor('copilot', 'vision').halveBudget(8 * 1024 * 1024);
+      expect(latch(state).learnedByteBudget, 4 * 1024 * 1024);
       expect(
-        state.effectiveByteBudget(1 * 1024 * 1024),
+        latch(state).effectiveByteBudget(8 * 1024 * 1024),
+        4 * 1024 * 1024,
+      );
+      expect(
+        latch(state).effectiveByteBudget(1 * 1024 * 1024),
         1 * 1024 * 1024,
         reason: 'config still honored when lower',
       );
       expect(
-        state.effectiveByteBudget(0),
+        latch(state).effectiveByteBudget(0),
         4 * 1024 * 1024,
         reason: 'a disabled config budget cannot raise the learned one',
       );
@@ -31,33 +48,61 @@ void main() {
 
     test('halving compounds — each 413 halves again (AC4)', () {
       final state = ImagePayloadRecoveryState();
-      state.halveBudget(8 * 1024 * 1024);
-      state.halveBudget(8 * 1024 * 1024);
-      expect(state.learnedByteBudget, 2 * 1024 * 1024);
+      latch(state).halveBudget(8 * 1024 * 1024);
+      latch(state).halveBudget(8 * 1024 * 1024);
+      expect(latch(state).learnedByteBudget, 2 * 1024 * 1024);
     });
 
     test('the learned budget never sinks below the recovery floor', () {
       final state = ImagePayloadRecoveryState();
-      state.halveBudget(8 * 1024 * 1024);
+      latch(state).halveBudget(8 * 1024 * 1024);
       for (var i = 0; i < 12; i++) {
-        state.halveBudget(8 * 1024 * 1024);
+        latch(state).halveBudget(8 * 1024 * 1024);
       }
-      expect(state.learnedByteBudget, imageRecoveryBudgetFloor);
+      expect(latch(state).learnedByteBudget, imageRecoveryBudgetFloor);
       expect(
-        state.effectiveByteBudget(8 * 1024 * 1024),
+        latch(state).effectiveByteBudget(8 * 1024 * 1024),
         imageRecoveryBudgetFloor,
       );
     });
 
     test('a disabled configured budget seeds halving from the default', () {
-      final state = ImagePayloadRecoveryState()..halveBudget(0);
+      final state = ImagePayloadRecoveryState()
+        ..latchFor('copilot', 'vision').halveBudget(0);
       expect(
-        state.learnedByteBudget,
+        latch(state).learnedByteBudget,
         defaultMaxImageBytesPerRequest ~/ 2,
         reason:
             'the provider proved a cap — the ladder learns from the '
             'default, not from a disabled budget',
       );
+    });
+  });
+
+  group('#2269 — the 413 latches key per (provider, model)', () {
+    test('a model switch resets the latches; the same pair remembers', () {
+      final state = ImagePayloadRecoveryState();
+      final latchA = state.latchFor('copilot', 'vision-a');
+      latchA
+        ..halveBudget(8 * 1024 * 1024)
+        ..halveBudget(8 * 1024 * 1024)
+        ..stripAll = true
+        ..evictedKeys.add('k0');
+
+      // Model B (same provider) never saw a 413: it starts at the
+      // configured budget, nothing stripped, nothing evicted.
+      final latchB = state.latchFor('copilot', 'vision-b');
+      expect(latchB.learnedByteBudget, isNull);
+      expect(latchB.effectiveByteBudget(8 * 1024 * 1024), 8 * 1024 * 1024);
+      expect(latchB.stripAll, isFalse);
+      expect(latchB.evictedKeys, isEmpty);
+      // A different provider with the same model id latches separately.
+      expect(state.latchFor('openai', 'vision-a').stripAll, isFalse);
+
+      // The same pair remembers (AC3: switching back never re-learns).
+      expect(latchA.learnedByteBudget, 2 * 1024 * 1024);
+      expect(latchA.stripAll, isTrue);
+      expect(latchA.evictedKeys, contains('k0'));
     });
   });
 
