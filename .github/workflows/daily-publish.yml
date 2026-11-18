@@ -671,6 +671,11 @@ jobs:
       issues: write # deduplicated self-closing sweep issue
     env:
       GH_TOKEN: ${{ github.token }}
+      # gh-2287: the machine-account identity — drafts authored by it are
+      # pipeline-created (stale ones swept), not human (kept, E1). Same
+      # env var + default as daily_publish_report.sh; the script works
+      # without it, the export keeps the wiring reviewable.
+      DAILY_PUBLISH_ASSIGNEE: ai-teammate
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

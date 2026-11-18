@@ -1449,6 +1449,153 @@ gh release create "v9.9.9" \
     );
 
     test(
+      'gh-2287: stale drafts authored by the machine account (ai-teammate, plain User login) are swept, not kept as human',
+      () {
+        // ai-teammate is the repo's machine account (ai-teammate.yml: the
+        // loop reacts only to artifacts authored by ai-teammate; every
+        // self-filed issue is --assignee ai-teammate), but its login is a
+        // plain User with no [bot] suffix and its drafts (ai-gh-<issue> /
+        // ai-pr-<pr>, created by the factory's own token) carry no
+        // release-draft-owner marker — the old authorship rule bucketed
+        // them as HUMAN, so they were listed-but-kept forever and the
+        // sweep issue could never auto-close (gh-2287: "Swept: 0" while 4
+        // stale machine drafts rotted). Multi-item: an ai-gh-* AND an
+        // ai-pr-* stale draft, a genuinely human draft (still kept, E1)
+        // and a fresh machine draft (still untouched — an in-flight leg
+        // may own it).
+        final freshDate = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String()
+            .substring(0, 19);
+        final run = runSweeper('machine-account', {
+          'releases.json': jsonEncode([
+            {
+              'tag_name': 'ai-gh-2208',
+              'id': 228701,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'ai-teammate', 'type': 'User'},
+              'body': '',
+            },
+            {
+              'tag_name': 'ai-pr-210',
+              'id': 228702,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'ai-teammate', 'type': 'User'},
+              'body': '',
+            },
+            {
+              'tag_name': 'v0.2.0',
+              'id': 228703,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'somehuman', 'type': 'User'},
+              'body': 'my WIP draft',
+            },
+            {
+              'tag_name': 'ai-gh-2219',
+              'id': 228704,
+              'draft': true,
+              'created_at': '${freshDate}Z',
+              'author': {'login': 'ai-teammate', 'type': 'User'},
+              'body': '',
+            },
+            {
+              // Negative: a login that merely CONTAINS the machine account
+              // is a different (possibly human) account — exact-match
+              // classification only; deleting it would be an E1 violation.
+              'tag_name': 'v0.3.0',
+              'id': 228705,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'ai-teammate-bot', 'type': 'User'},
+              'body': 'look-alike login, still human',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': '',
+        });
+        // Element-contains on the List is vacuous for isNot — match
+        // no-delete assertions against the JOINED log (gh-2008 precedent).
+        final logText = run.log.join('\n');
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/228701'),
+          reason:
+              'a stale ai-gh-* machine draft must be swept — the author is '
+              'the machine account, not a human (E1 protects humans only)',
+        );
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/228702'),
+          reason: 'the ai-pr-* sibling must be swept too (multi-item)',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/228703')),
+          reason:
+              'a stale GENUINELY human draft stays listed-not-deleted (E1)',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/228704')),
+          reason:
+              'a fresh machine draft is untouched — an in-flight leg may own it',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/228705')),
+          reason:
+              'login match must be EXACT — "ai-teammate-bot" is a different '
+              'account and its draft stays kept (E1)',
+        );
+        expect(run.body, isNotNull, reason: 'an issue body must have been filed');
+        expect(
+          run.body,
+          contains('ai-gh-2208'),
+          reason: 'the swept machine draft must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('ai-pr-210'),
+          reason: 'the swept machine draft must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('v0.2.0'),
+          reason: 'the kept human draft must still be listed in the issue (E1)',
+        );
+        expect(
+          run.body,
+          contains('v0.3.0'),
+          reason: 'the look-alike-login draft must be listed as kept (E1)',
+        );
+        expect(
+          run.body,
+          isNot(contains('ai-gh-2219')),
+          reason: 'fresh drafts are never named as swept or kept',
+        );
+        expect(
+          run.body,
+          contains('ai-teammate'),
+          reason:
+              'the swept machine drafts must name the machine account as '
+              'their creator in the issue',
+        );
+        expect(
+          run.body,
+          isNot(contains('died mid-run')),
+          reason:
+              'nothing died for a machine-account draft — the gh-2105 '
+              'misdirected-diagnosis class: the "dispatch-time draft" prose '
+              'must not fire when the creator is the automation account',
+        );
+      },
+    );
+
+    test(
       'idempotent re-run: comments on the open issue instead of duplicating',
       () {
         final run = runSweeper('two', {

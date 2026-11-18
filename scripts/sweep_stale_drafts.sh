@@ -3,8 +3,11 @@
 #
 #   - lists DRAFT releases older than $SWEEP_MAX_AGE_SECONDS (default 24h);
 #   - deletes stale drafts created by the pipeline (author.type == Bot, a
-#     *[bot] login, OR the body carries a well-formed
-#     `release-draft-owner: run/<id>/job/<job>` marker — the exact shape
+#     *[bot] login, the repo's machine account (DAILY_PUBLISH_ASSIGNEE,
+#     default ai-teammate — gh-2287: its drafts (ai-gh-*/ai-pr-*) are
+#     User-typed and marker-less but machine-created), OR the body
+#     carries a well-formed `release-draft-owner: run/<id>/job/<job>`
+#     marker — the exact shape
 #     release_lazy_draft.sh / release_attach_or_create.sh stamp and
 #     release_draft_guard.sh parses; since the drafts are created with
 #     GH_TOKEN=RELEASE_PAT the API author is the PAT's human owner, so
@@ -31,6 +34,12 @@ set -euo pipefail
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 max_age="${SWEEP_MAX_AGE_SECONDS:-86400}"
 label="${SWEEP_LABEL:-release-hygiene}"
+# The repo's machine-account identity (same env + default as
+# daily_publish_report.sh): drafts authored by it are pipeline-created —
+# gh-2287: the ai-teammate factory's drafts (ai-gh-*/ai-pr-*) are User-typed
+# and marker-less, so author-only Bot detection bucketed them as human and
+# they rotted forever while the sweep issue never auto-closed.
+assignee="${DAILY_PUBLISH_ASSIGNEE:-ai-teammate}"
 title="[daily-publish] stale release drafts swept"
 daily_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/${GITHUB_RUN_ID:-manual}"
 
@@ -41,17 +50,18 @@ gh label create "$label" --repo "$repo" --color B60205 \
 # gh api --paginate emits one JSON array per page; the jq stream filter
 # flattens them all. Bucketing happens in jq so the whole rule is
 # reviewable in one place:
-#   stale + pipeline (bot author or well-formed
+#   stale + pipeline (bot author, the machine account, or well-formed
 #                    release-draft-owner: run/<id>/job/<job>
 #                    marker in the body) -> delete, name the marker run
 #   stale + human (no marker)          -> keep, list
 #   fresh                              -> untouched
-drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" '
+drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" --arg assignee "$assignee" '
   [ .[] | select(.draft == true)
     | { bucket: (
           if ((now - (.created_at | fromdateiso8601)) > $maxage)
           then (if ((.author.type // "User") == "Bot"
                     or ((.author.login // "") | test("\\[bot\\]$"))
+                    or ((.author.login // "") == $assignee)
                     or ((.body // "") | test("release-draft-owner: run/[0-9]+/job/")))
                then "bot" else "human" end)
           else "fresh" end),
@@ -105,7 +115,18 @@ while IFS=$'\t' read -r bucket tag id created author marker_run; do
         run_url=$(gh run list --repo "$repo" --branch "$tag" --limit 1 \
           --json url --jq '.[0].url // empty' 2>/dev/null || true)
       fi
-      [ -n "$run_url" ] || run_url="no run on ref \`$tag\` (dispatch-time draft — the creating step died mid-run)"
+      if [ -z "$run_url" ]; then
+        if [ "$author" = "$assignee" ]; then
+          # gh-2287: a machine-account draft carries no marker (the
+          # automation created it with its own token, outside this repo's
+          # runners) — name the account as the creator; the dispatch-time
+          # "creating step died mid-run" prose below would misdirect the
+          # RCA (gh-2105 class) — nothing died.
+          run_url="the @$assignee automation loop (machine-account draft — created outside this repo's runners, no Actions run owns it)"
+        else
+          run_url="no run on ref \`$tag\` (dispatch-time draft — the creating step died mid-run)"
+        fi
+      fi
       # gh-2105: the staging draft's publish owner is the TAG TRAIN
       # (ci.yml's push run on the tag ref — release-provenance is the
       # sole publish point, gh-1801). When that train failed, the
@@ -182,7 +203,7 @@ if [ "$stale_count" -gt 0 ]; then
     issue_action="commented on #$existing (still finding stale drafts)"
   else
     created_issue=$(gh issue create --repo "$repo" --title "$title" \
-      --body-file "$body" --label bug --label "$label" --assignee ai-teammate 2>/dev/null || true)
+      --body-file "$body" --label bug --label "$label" --assignee "$assignee" 2>/dev/null || true)
     issue_action="filed ${created_issue:-<issue creation failed>}"
   fi
   rm -f "$body"
