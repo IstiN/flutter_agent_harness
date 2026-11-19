@@ -10,6 +10,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -55,6 +56,16 @@ AssistantMessage _assistant({
   );
 }
 
+/// A turn that ends with a provider cap refusal (gh-1680 shape): the
+/// error text classifies as a message-cap refusal (`too many messages`
+/// = cap-unknown, no parseable limit).
+List<AssistantMessageEvent> _capRefusalTurn(String error) {
+  final msg = _assistant(stopReason: StopReason.error, errorMessage: error);
+  return [
+    StartEvent(partial: msg),
+    ErrorEvent(reason: StopReason.error, error: msg),
+  ];
+}
 
 /// A turn that hangs until cancelled, then reports aborted.
 class _AbortableStreamFunction {
@@ -170,57 +181,60 @@ void main() {
     return session.getEntries();
   }
 
-  test('events run: header first, ordered frames, stdout stays empty', () async {
-    final fake = FakeStreamFunction([
-      toolTurn([
-        ToolCall(
-          id: 'c1',
-          name: 'read',
-          arguments: const {'path': 'notes.txt'},
-        ),
-      ]),
-      textTurn('done reading'),
-    ]);
-    final cli = cliFor(fake.call);
-    // The host wraps the IO for stdout purity (bin/fah.dart does the
-    // same in events mode): deltas ride frames, prose rides diagnostics.
-    io.eventsMode = true;
-    final frames = <String>[];
-    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+  test(
+    'events run: header first, ordered frames, stdout stays empty',
+    () async {
+      final fake = FakeStreamFunction([
+        toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'notes.txt'},
+          ),
+        ]),
+        textTurn('done reading'),
+      ]);
+      final cli = cliFor(fake.call);
+      // The host wraps the IO for stdout purity (bin/fah.dart does the
+      // same in events mode): deltas ride frames, prose rides diagnostics.
+      io.eventsMode = true;
+      final frames = <String>[];
+      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
-    final code = await cli.runHeadless(
-      'read notes.txt',
-      hep: hep,
-    );
+      final code = await cli.runHeadless('read notes.txt', hep: hep);
 
-    expect(code, 0);
-    // Stdout carries NOTHING but the HEP stream: the writer owns stdout;
-    // prose goes to the diagnostics channel only.
-    expect(io.out.toString(), isEmpty);
+      expect(code, 0);
+      // Stdout carries NOTHING but the HEP stream: the writer owns stdout;
+      // prose goes to the diagnostics channel only.
+      expect(io.out.toString(), isEmpty);
 
-    final parsed = [
-      for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
-    ];
-    expect(parsed.first['type'], 'hep_header');
-    expect(parsed.first['session'], isNotNull);
-    expect(parsed.first['hep'], 'v1');
-    expect(parsed.first['fah'], 'test');
-    expect(parsed.map((f) => f['type']), containsAllInOrder([
-      'hep_header',
-      'agent_start',
-      'message_start',
-      'tool_start',
-      'turn_done',
-      'turn_done',
-    ]));
-    // The last frame is the final turn_done with the assistant text.
-    final last = parsed.last;
-    expect(last['type'], 'turn_done');
-    expect(last['message'], 'done reading');
-    // The session persisted like any headless run.
-    final messages = (await sessionEntries()).whereType<MessageRecord>();
-    expect(messages, isNotEmpty);
-  });
+      final parsed = [
+        for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+      ];
+      expect(parsed.first['type'], 'hep_header');
+      expect(parsed.first['session'], isNotNull);
+      expect(parsed.first['hep'], 'v1');
+      expect(parsed.first['fah'], 'test');
+      expect(
+        parsed.map((f) => f['type']),
+        containsAllInOrder([
+          'hep_header',
+          'agent_start',
+          'message_start',
+          'tool_start',
+          'turn_done',
+          'turn_done',
+        ]),
+      );
+      // The last frame is the final turn_done with the assistant text.
+      final last = parsed.last;
+      expect(last['type'], 'turn_done');
+      expect(last['message'], 'done reading');
+      // The session persisted like any headless run.
+      final messages = (await sessionEntries()).whereType<MessageRecord>();
+      expect(messages, isNotEmpty);
+    },
+  );
 
   test('REG: without a HepWriter stdout stays prose (no frames)', () async {
     final fake = FakeStreamFunction([textTurn('plain answer')]);
@@ -251,9 +265,7 @@ void main() {
 
     final code = await cli.runHeadless(
       'what is in the photo',
-      images: const [
-        ImageContent(data: 'cGhvdG8=', mimeType: 'image/jpeg'),
-      ],
+      images: const [ImageContent(data: 'cGhvdG8=', mimeType: 'image/jpeg')],
     );
 
     expect(code, 0);
@@ -271,28 +283,29 @@ void main() {
     expect(texts[1].text, '[Image 0]');
   });
 
-  test('interrupt mid-run: cancelled frame, exit 130, partial persisted',
-      () async {
-    final fake = _AbortableStreamFunction();
-    final cli = cliFor(fake.call, persistAbortedPartials: true);
-    final frames = <String>[];
-    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+  test(
+    'interrupt mid-run: cancelled frame, exit 130, partial persisted',
+    () async {
+      final fake = _AbortableStreamFunction();
+      final cli = cliFor(fake.call, persistAbortedPartials: true);
+      final frames = <String>[];
+      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
-    final run = cli.runHeadless('hang', hep: hep);
-    await _waitFor(() => fake.started, reason: 'stream started');
-    io.interrupt();
+      final run = cli.runHeadless('hang', hep: hep);
+      await _waitFor(() => fake.started, reason: 'stream started');
+      io.interrupt();
 
-    expect(await run, 130);
-    expect(frames.last, contains('"type":"cancelled"'));
-    // The aborted partial assistant message persisted to the JSONL (the
-    // backend-mode cancel contract) — and the user message always does.
-    final messages = (await sessionEntries()).whereType<MessageRecord>();
-    expect(messages.first.message.role, 'user');
-    expect(messages.last.message.role, 'assistant');
-  });
+      expect(await run, 130);
+      expect(frames.last, contains('"type":"cancelled"'));
+      // The aborted partial assistant message persisted to the JSONL (the
+      // backend-mode cancel contract) — and the user message always does.
+      final messages = (await sessionEntries()).whereType<MessageRecord>();
+      expect(messages.first.message.role, 'user');
+      expect(messages.last.message.role, 'assistant');
+    },
+  );
 
-  test('compaction over threshold emits compaction_start/end frames',
-      () async {
+  test('compaction over threshold emits compaction_start/end frames', () async {
     final fake = FakeStreamFunction([
       textTurn('a' * 20000),
       textTurn('AUTO SUMMARY'),
@@ -320,8 +333,144 @@ void main() {
     );
   });
 
-  test('unknown session key on a clean root starts a fresh session',
-      () async {
+  test('one-pass compaction run counts passes, bracket balanced '
+      '(issue #2273)', () async {
+    // A pass-carrying run: every engine receipt counts toward the counter
+    // (the runs themselves must not — pinned at 0 by the zero-pass test
+    // below), and the bracket stays balanced with honest freed numbers.
+    final fake = FakeStreamFunction([
+      textTurn('a' * 20000),
+      textTurn('AUTO SUMMARY'),
+      textTurn('AUTO SUMMARY'),
+      textTurn('AUTO SUMMARY'),
+      textTurn('AUTO SUMMARY'),
+      textTurn('mem'),
+    ]);
+    final cli = cliFor(fake.call, model: _tinyWindow);
+    io.eventsMode = true;
+    final frames = <String>[];
+    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+
+    final code = await cli.runHeadless('q', hep: hep);
+
+    expect(code, 0);
+    expect(cli.compactionPassesStartedForTest, greaterThanOrEqualTo(1));
+    final parsed = [
+      for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+    ];
+    final types = [for (final f in parsed) f['type'] as String];
+    expect(types.where((t) => t == 'compaction_start'), hasLength(1));
+    final ends = parsed.where((f) => f['type'] == 'compaction_end').toList();
+    expect(ends, hasLength(1));
+    expect(ends.single['tokens_freed'] as int, greaterThanOrEqualTo(0));
+  });
+
+  test('zero-pass structured run closes its bracket without counting a run '
+      'as a pass (issue #2273)', () async {
+    // Drive the real pre-flight gate with an over-trigger transcript, then
+    // shrink the live state between that gate and the engine's own estimate.
+    // This is the documented gate/engine divergence window, not a synthetic
+    // hook call: compaction_start has opened the HEP bracket, but the
+    // structured engine now sees an under-trigger transcript and returns
+    // without a pass or provider call.
+    final fake = FakeStreamFunction([textTurn('healthy answer')]);
+    final cli = cliFor(fake.call, model: _tinyWindow);
+    io.eventsMode = true;
+    final frames = <String>[];
+    var compactionStarts = 0;
+    void emit(String line) {
+      frames.add(line);
+      final frame = jsonDecode(line) as Map<String, dynamic>;
+      switch (frame['type']) {
+        case 'hep_header':
+          // The header fires after session initialization and before the
+          // pre-flight gate. ~5000 transcript tokens plus overhead crosses
+          // the 16384-token model's 12288-token compaction trigger.
+          cli.agent.state.messages = [UserMessage.text('a' * 20000)];
+        case 'compaction_start':
+          compactionStarts++;
+          // The gate has committed to a run; the engine re-estimates after
+          // this mutation and takes its genuine zero-pass terminal path.
+          cli.agent.state.messages = [UserMessage.text('tiny')];
+      }
+    }
+
+    final hep = HepWriter(emit: emit, fahVersion: 'test');
+    expect(await cli.runHeadless('q', hep: hep), 0);
+
+    expect(compactionStarts, 1);
+    expect(
+      fake.calls,
+      1,
+      reason: 'only the user turn reached the provider; compaction ran no pass',
+    );
+    final compactionFrames = [
+      for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+    ].where((f) => (f['type'] as String).startsWith('compaction_')).toList();
+    expect(compactionFrames.map((f) => f['type']), [
+      'compaction_start',
+      'compaction_end',
+    ]);
+    expect(compactionFrames.last['tokens_freed'], 0);
+    expect(cli.compactionPassesStartedForTest, 0);
+  });
+
+  test('cap-unknown refusal post-run fold opens no compaction bracket '
+      '(gh-2259 REG; issue #2273 counter)', () async {
+    // The cap-unknown E1 channel (gh-1680): the turn's refusal arms the
+    // one-shot pre-emptive pass; the POST-RUN fold runs UNFORCED over an
+    // UNDER-TRIGGER transcript. gh-2259 (#2308) reworked this channel —
+    // the unforced fold no longer consumes the armed pass (it survives
+    // for the next forced pre-flight) — so the fold must not open a
+    // compaction bracket at all: no frames, and the receipt-counting
+    // pass counter (issue #2273) stays at zero. This is deliberately a
+    // NO-RUN pin after gh-2259; the zero-pass engine/HEP contract has its
+    // own direct test above, which also goes RED when #2273 is reverted.
+    final tempHome = Directory.systemTemp.createTempSync('fa_hep_2273_');
+    addTearDown(() => tempHome.deleteSync(recursive: true));
+    final capEnv = MemoryExecutionEnv(cwd: '/work');
+    await capEnv.writeFile('/work/.fah/memory/.last_maintenance', '');
+    final fake = FakeStreamFunction([
+      // Attempt 1: the cap-unknown refusal (no parseable limit — arms the
+      // E1 pass without learning a numeric cap, so the host's capTriggered
+      // stays false and the zero-pass short-circuit would be taken).
+      _capRefusalTurn('too many messages'),
+      // Attempt 2: the heal retry completes the turn.
+      textTurn('healed reply'),
+      // Spare: the gh-1636 memory-extraction call if one ever fires.
+      textTurn('mem'),
+    ]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: 'test-key',
+        env: capEnv,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        homeDir: tempHome.path,
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    io.eventsMode = true;
+    final frames = <String>[];
+    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+
+    final code = await cli.runHeadless('q', hep: hep);
+
+    expect(code, 0);
+    // The turn completed on the heal retry — and the unforced post-run
+    // fold ran NO compaction: no compaction frames at all, the armed
+    // pass survived, and the receipt-counting counter stayed clean.
+    final types = [
+      for (final line in frames)
+        (jsonDecode(line) as Map<String, dynamic>)['type'] as String,
+    ];
+    expect(types.where((t) => t.startsWith('compaction_')), isEmpty);
+    expect(cli.compactionPassesStartedForTest, 0);
+  });
+
+  test('unknown session key on a clean root starts a fresh session', () async {
     // First run seeds one session in the root.
     final seedFake = FakeStreamFunction([textTurn('seed')]);
     final seedCli = cliFor(seedFake.call);
@@ -352,9 +501,7 @@ void main() {
     final after = await repo.list(cwd: '/work');
     expect(after, hasLength(2));
     expect(after.map((s) => s.id), contains(seededId));
-    final named = await repo.open(
-      after.firstWhere((s) => s.id != seededId),
-    );
+    final named = await repo.open(after.firstWhere((s) => s.id != seededId));
     expect(await named.getSessionName(), 'u:42');
   });
 }
