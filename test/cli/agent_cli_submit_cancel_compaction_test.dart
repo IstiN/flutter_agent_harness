@@ -182,7 +182,16 @@ void main() {
       () async {
         await seedOverWindow('cancel-target');
         final stream = _CancelObservingStream([
-          textTurn('resumed context summary'),
+          textTurn('cancelled pre-flight summary'),
+          // Issue #2263: the aborted pre-flight no longer degrades to the
+          // local-trim valve, so the fresh turn's OWN pre-flight
+          // compaction runs (a new compaction for a new user turn — never
+          // a relaunch of the aborted one). Its successful pass kicks the
+          // memory-extraction side call synchronously (the hook is
+          // invoked before compactSession returns), so the call order is
+          // deterministic: 2 compaction summarizer, 3 extraction, 4 turn.
+          textTurn('pre-flight summary'),
+          textTurn('memory extraction side call'),
           textTurn('recovered answer'),
           textTurn('spare'),
         ], hangFromCall: 1);
@@ -240,15 +249,15 @@ void main() {
         expect(stream.calls, 1);
         expect(promptSent(stream, 'rescue-me'), isFalse);
 
-        // Session alive: the next prompt works. The cancel already left
-        // the funnel's local-trim recovery in place (the summarizer abort
-        // degrades to the mechanical valve, visible as `[context
-        // trimmed]`), so the fresh turn runs directly — no second pass.
+        // Session alive: the next prompt works. The fresh turn settles
+        // after its pre-flight compaction (call 2), the memory-extraction
+        // side call (call 3 or 4 — it races the turn), and the turn
+        // itself.
         stream.hangFromCall = 1 << 30;
         io.sendLine('again');
         await waitForIt(
-          () => stream.calls >= 2 && !cli.isBusy,
-          reason: 'the follow-up turn settles on the recovered context',
+          () => stream.calls >= 4 && !cli.isBusy,
+          reason: 'the follow-up turn settles after its pre-flight compaction',
         );
         expect(io.out.toString(), contains('recovered answer'));
 
