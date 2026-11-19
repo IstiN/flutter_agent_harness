@@ -212,6 +212,42 @@ final class LeaseRefused extends LeaseAcquire {
   final LeaseRefuseReason reason;
 }
 
+/// The verdict of one [FileSessionLeaseStore.heartbeat] beat (#2257).
+/// The beat distinguishes a refreshed lease from a LOST one and from an
+/// IO hiccup: a transient sidecar read/write failure never refutes
+/// ownership — only a readable foreign claim, or a verified-absent
+/// sidecar, does.
+sealed class LeaseBeat {
+  const LeaseBeat();
+}
+
+/// The sidecar was refreshed (and on the E5 fallback verified) ours:
+/// ownership stands.
+final class LeaseBeatRenewed extends LeaseBeat {
+  const LeaseBeatRenewed();
+}
+
+/// The sidecar could not be read or written this beat (#2257): an IO
+/// hiccup, not a loss — ownership is KEPT and the next beat retries.
+/// [error] carries the raw fs failure so the caller can alarm when the
+/// failure persists (AC2).
+final class LeaseBeatIoFailed extends LeaseBeat {
+  const LeaseBeatIoFailed(this.error);
+
+  /// The raw filesystem failure behind the hiccup.
+  final FileError error;
+}
+
+/// The sidecar is readable and names ANOTHER bootId, or is verifiably
+/// gone (a deletion is not transient — a rival may acquire at any
+/// moment): the lease is lost, the caller must demote (AC3).
+final class LeaseBeatLost extends LeaseBeat {
+  const LeaseBeatLost(this.lease);
+
+  /// The foreign lease that refuted us; null when the sidecar is absent.
+  final SessionLease? lease;
+}
+
 /// File-backed ownership lease over an [ExecutionEnv]: the `_owner.json`
 /// sidecar next to the session JSONL. READ-side failures stay fail-open
 /// (E4): a lease that cannot be read is no lease; nothing here ever
@@ -260,6 +296,13 @@ final class FileSessionLeaseStore {
   /// tear window of a real writer is far below one heartbeat, so even the
   /// corrupt-forever worst case keeps inspect latency negligible.
   static const _tornReadDelay = Duration(milliseconds: 2);
+
+  /// How many times [FileSessionLeaseStore.heartbeat] re-reads the
+  /// sidecar on a read hiccup before classifying the beat (#2257): a
+  /// transient fs error heals inside the bound and never refutes
+  /// ownership; `notFound` short-circuits — a missing sidecar is a
+  /// deletion, not a hiccup.
+  static const _heartbeatReadAttempts = 3;
 
   /// The sidecar path for a session JSONL path:
   /// `<timestamp>_<sessionId>.jsonl` → `<timestamp>_<sessionId>.owner.json`.
@@ -381,8 +424,11 @@ final class FileSessionLeaseStore {
     return LeaseAcquired(verify, replaced: found.lease);
   }
 
-  /// Refreshes the heartbeat of OUR lease: a no-op (returning false) when
-  /// the sidecar moved on — the caller lost the lease and must demote.
+  /// Refreshes the heartbeat of OUR lease (#2257): the verdict tells the
+  /// caller whether ownership STANDS. Only a readable foreign bootId — or
+  /// a verified-absent sidecar — is a [LeaseBeatLost] (the caller must
+  /// demote); a read/write IO hiccup is a [LeaseBeatIoFailed]: ownership
+  /// is kept and the next beat retries, never demoted on a fs hiccup.
   ///
   /// The rewrite is ATOMIC (tmp + rename, same as acquire, #2262): the
   /// beat fires every ~4s — a far larger reader-exposure window than
@@ -391,10 +437,11 @@ final class FileSessionLeaseStore {
   /// beat degrades to a single write + post-write verify (documented,
   /// E5): acquire never publishes a sidecar on such backends
   /// ([LeaseUnenforced]), so there is nothing to tear in normal flow.
-  Future<bool> heartbeat(String sessionFilePath, String bootId) async {
+  Future<LeaseBeat> heartbeat(String sessionFilePath, String bootId) async {
     final path = sidecarPath(sessionFilePath);
-    final lease = await _readLease(path);
-    if (lease == null || lease.bootId != bootId) return false;
+    final (lease, terminal) = await _readForBeat(path);
+    if (terminal != null) return terminal;
+    if (lease!.bootId != bootId) return LeaseBeatLost(lease);
     final refreshed = SessionLease(
       host: lease.host,
       sessionId: lease.sessionId,
@@ -409,22 +456,113 @@ final class FileSessionLeaseStore {
       '  ',
     ).convert(refreshed.toJson());
     final renamable = _renamable;
-    if (renamable == null) {
-      // No atomic rename (E5): single write, then prove it landed by
-      // re-reading — never report a beat we cannot verify on disk.
-      final write = await _env.writeFile(path, encoded);
-      if (write.isErr) return false;
-      final verify = await _readLease(path);
-      return verify != null && verify.bootId == bootId;
+    if (renamable == null) return _refreshUnenforced(path, bootId, encoded);
+    return _refreshAtomic(path, bootId, encoded, renamable);
+  }
+
+  /// The read half of a beat (#2257): returns the parsed sidecar record,
+  /// or a TERMINAL beat when the read itself decides the verdict — a
+  /// verified-absent sidecar is a loss (a deletion is not transient; a
+  /// rival may acquire at any moment), a persistent read failure is an
+  /// IO hiccup (ownership kept). A torn/corrupt body retries inside the
+  /// bound; a readable record returns early.
+  Future<(SessionLease?, LeaseBeat?)> _readForBeat(String path) async {
+    SessionLease? lease;
+    FileError? readError;
+    for (var attempt = 0; attempt < _heartbeatReadAttempts; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(_tornReadDelay);
+      final raw = await _env.readTextFile(path);
+      final error = raw.errorOrNull;
+      if (error != null) {
+        if (error.code == FileErrorCode.notFound) {
+          return (null, const LeaseBeatLost(null));
+        }
+        readError = error;
+        continue;
+      }
+      lease = _parseLease(raw.valueOrNull!);
+      if (lease != null) return (lease, null);
+      readError = FileError(
+        FileErrorCode.unknown,
+        'sidecar torn or corrupt',
+        path: path,
+      );
     }
+    return (null, LeaseBeatIoFailed(readError!));
+  }
+
+  /// The atomic-publish refresh (tmp + rename, #2262): the beat fires
+  /// every ~4s — a far larger reader-exposure window than acquire — and
+  /// a torn read of the sidecar fail-opens inspect to `free`, publishing
+  /// a second owner. A failed publish classifies by re-reading (#2257).
+  Future<LeaseBeat> _refreshAtomic(
+    String path,
+    String bootId,
+    String encoded,
+    RenamableFileSystem renamable,
+  ) async {
     final tmp = _tmpPath(path, bootId);
     final write = await _env.writeFile(tmp, encoded);
     final renamed = write.isOk ? await renamable.renamePath(tmp, path) : write;
     if (renamed.isErr) {
       await _env.remove(tmp, force: true);
-      return false;
+      return _lostOrHiccup(path, bootId, renamed.errorOrNull!);
     }
-    return true;
+    return const LeaseBeatRenewed();
+  }
+
+  /// The E5 fallback refresh (no atomic rename; documented): a single
+  /// write, then prove it landed by re-reading — never report a beat we
+  /// cannot verify on disk. Written-but-unprovable is an IO anomaly
+  /// (#2257), a readable foreign bootId a loss.
+  Future<LeaseBeat> _refreshUnenforced(
+    String path,
+    String bootId,
+    String encoded,
+  ) async {
+    final write = await _env.writeFile(path, encoded);
+    if (write.isErr) return _lostOrHiccup(path, bootId, write.errorOrNull!);
+    final (verified, verifyError) = await _readBeat(path);
+    if (verified != null) {
+      return verified.bootId == bootId
+          ? const LeaseBeatRenewed()
+          : LeaseBeatLost(verified);
+    }
+    return LeaseBeatIoFailed(
+      verifyError ??
+          FileError(FileErrorCode.unknown, 'sidecar unreadable', path: path),
+    );
+  }
+
+  /// Classifies a beat whose refresh did NOT land (write/rename failed):
+  /// the sidecar as it sits on disk decides — a readable foreign claim
+  /// (or a verified absence) is a loss; our own record (or unreadable
+  /// bytes) means ownership stands and only the refresh hiccupped.
+  Future<LeaseBeat> _lostOrHiccup(
+    String path,
+    String bootId,
+    FileError ioError,
+  ) async {
+    final (onDisk, readError) = await _readBeat(path);
+    if (onDisk != null) {
+      return onDisk.bootId == bootId
+          ? LeaseBeatIoFailed(ioError)
+          : LeaseBeatLost(onDisk);
+    }
+    if (readError?.code == FileErrorCode.notFound) {
+      return const LeaseBeatLost(null);
+    }
+    return LeaseBeatIoFailed(readError ?? ioError);
+  }
+
+  /// One sidecar read for beat classification: the parsed lease, or the
+  /// raw read error (null when the body was torn/corrupt).
+  Future<(SessionLease?, FileError?)> _readBeat(String path) async {
+    final raw = await _env.readTextFile(path);
+    return switch (raw) {
+      Ok(:final value) => (_parseLease(value), null),
+      Err(:final error) => (null, error),
+    };
   }
 
   /// Graceful release: the sidecar is deleted — only when it is still
