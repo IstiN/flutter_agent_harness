@@ -506,7 +506,26 @@ extension AgentCliCompactionRun on AgentCli {
     // tokens while the message count still trips the cap gate is not a
     // success; the caller retries relief and the funnel reports
     // exhaustion instead of silently re-arming a pass every turn.
-    return after <= _effectiveContextWindow && !overCap;
+    // Issue #2264: both dimensions are re-measured POST-RUN through the
+    // shared pure verdict — the pre-run `overCap` snapshot is stale by
+    // here (a relieved run used to fail this check on the stale flag,
+    // the funnel's second attempt no-oped, and the gh-1914 valve plus
+    // its false "still ~N vs W" verdict fired on a now-HEALTHY
+    // transcript). The re-check PEEKS the current count against the
+    // learned cap and never touches the one-shot E1 pass: the pre-run
+    // gate above already consumed it where it fired, and a measurement
+    // must not spend relief. `passesRan: 1` — this criterion is only
+    // evaluated after a pass actually ran.
+    return overWindowReliefVerdict(
+          afterTokens: after,
+          window: _effectiveContextWindow,
+          messageCapTriggered: messageCapTriggerReached(
+            _agent.state.messages.length,
+            _modelCaps.learnedCapFor(model),
+          ),
+          passesRan: 1,
+        ) ==
+        OverWindowReliefVerdict.success;
   }
 
   /// The gh-1680 message-count gate: the known-cap pre-emptive trigger,
@@ -1107,6 +1126,55 @@ const String _overWindowContinuationNotice =
     'reads (offset/limit or :A-B selectors) instead.\n'
     '</system-notice>';
 
+/// One post-compaction relief verdict (issue #2264): a PURE decision
+/// over the POST-RUN measurements, table-pinned in
+/// test/cli/agent_cli_over_window_continuation_retry_test.dart. The
+/// stale PRE-RUN overCap gate does NOT participate — issue #2264
+/// removed it from the criterion (a pass that relieved BOTH dimensions
+/// used to fail on the stale flag, the funnel's second attempt no-oped,
+/// and the gh-1914 valve plus its false "still ~N vs W" line fired on a
+/// now-HEALTHY transcript). The count dimension is the CURRENT message
+/// count vs the learned cap, re-read per attempt.
+enum OverWindowReliefVerdict {
+  /// Both dimensions relieved: the pass is a success — no second
+  /// attempt, no trim, the interrupted task resumes.
+  success,
+
+  /// The transcript fits the window but the learned-cap count trigger
+  /// still fires: the request is legal as-is — no valve, continue
+  /// truthfully (never trim a healthy transcript).
+  continueUnderWindow,
+
+  /// Tokens still over the window after a pass ran: the mechanical trim
+  /// valve applies with truthful numbers (its null outcome still ends
+  /// in the loud exhausted verdict — runtime, not a decision here).
+  trimValve,
+
+  /// No compaction pass ran: the honest zero-pass exhausted verdict
+  /// stands (a disabled or refused config).
+  exhausted,
+}
+
+/// Pure: maps one post-run measurement set to its [OverWindowReliefVerdict].
+/// `passesRan > 0` keeps the zero-pass honesty of a disabled/refused
+/// config; `afterTokens == window` FITS (the criterion is `<=`).
+OverWindowReliefVerdict overWindowReliefVerdict({
+  required int afterTokens,
+  required int window,
+  required bool messageCapTriggered,
+  required int passesRan,
+}) {
+  if (passesRan <= 0) return OverWindowReliefVerdict.exhausted;
+  if (afterTokens > window) return OverWindowReliefVerdict.trimValve;
+  return messageCapTriggered
+      ? OverWindowReliefVerdict.continueUnderWindow
+      : OverWindowReliefVerdict.success;
+}
+
+/// The compaction-pass plural for the funnel receipts.
+String compactionPassesLabel(int passesRan) =>
+    passesRan == 1 ? 'pass' : 'passes';
+
 extension OverWindowContinuation on AgentCli {
   /// The continuation prompt for an over-window resume, naming what the
   /// compaction hid — record kinds + turn spans — and how to recover it
@@ -1195,7 +1263,19 @@ extension OverWindowContinuation on AgentCli {
     // Only when nothing is droppable (or compaction never ran — a disabled
     // config keeps its honest zero-pass verdict) does the loud terminal
     // verdict stand.
-    if (passesRan > 0) {
+    // Issue #2264: the decision rides the shared pure verdict, measured
+    // POST-RUN — never trim a HEALTHY transcript: under the window the
+    // request is legal as-is (no valve, no false "still ~N vs W" claim).
+    final verdict = overWindowReliefVerdict(
+      afterTokens: _liveRequestTokens(),
+      window: _effectiveContextWindow,
+      messageCapTriggered: messageCapTriggerReached(
+        _agent.state.messages.length,
+        _modelCaps.learnedCapFor(_agent.state.model),
+      ),
+      passesRan: passesRan,
+    );
+    if (verdict == OverWindowReliefVerdict.trimValve) {
       final tokens = _liveRequestTokens();
       final trimmed = localTrimValve(
         messages: _agent.state.messages,
@@ -1222,7 +1302,7 @@ extension OverWindowContinuation on AgentCli {
           _style.dim(
             '[context trimmed] still ~$tokens tokens vs the '
             '$_effectiveContextWindow-token window after $passesRan '
-            'compaction ${passesRan == 1 ? 'pass' : 'passes'} — trimmed '
+            'compaction ${compactionPassesLabel(passesRan)} — trimmed '
             'locally to ~$after tokens; the full history stays in the '
             'session file',
           ),
@@ -1230,6 +1310,26 @@ extension OverWindowContinuation on AgentCli {
         await _runContinuationPromptSafe();
         return true;
       }
+      // The valve found nothing droppable: the loud exhausted verdict
+      // below.
+    } else if (verdict == OverWindowReliefVerdict.exhausted) {
+      // The honest zero-pass verdict (a disabled/refused config) stands.
+    } else {
+      // success / continueUnderWindow: the transcript FITS the window —
+      // the request is legal as-is. No valve, no trim, no false
+      // "still ~N vs W" claim: continue the interrupted task on the
+      // transcript that fits.
+      final tokens = _liveRequestTokens();
+      io.writeln(
+        _style.dim(
+          '[context fits] ~$tokens tokens vs the '
+          '$_effectiveContextWindow-token window after $passesRan '
+          'compaction ${compactionPassesLabel(passesRan)} — continuing '
+          'the interrupted task',
+        ),
+      );
+      await _runContinuationPromptSafe();
+      return true;
     }
     await _reportContinuationExhausted(passesRan, lastFailure);
     return true;
