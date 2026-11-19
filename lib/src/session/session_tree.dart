@@ -108,6 +108,13 @@ final class Session {
 
   final Message Function(Message message)? _persistTransform;
 
+  /// Entry ids appended through THIS instance since it was opened
+  /// (gh-2237 review). Anchors on these records are generation-vouched:
+  /// their request was built from this instance's own projection output.
+  /// Every other record arrived from the file — a load-time anchor whose
+  /// generation context a truncated resident tail cannot vouch for.
+  final Set<String> _appendedSinceOpen = {};
+
   /// gh-1589: the run-lifecycle seal (null while the session is open for
   /// writing). Set by the run teardown paths (`runHeadless`' finally, the
   /// REPL teardown) AFTER every deliberate close flush has landed; from
@@ -348,6 +355,7 @@ final class Session {
       await _storage.getLeafId(),
     );
     await _storage.appendEntry(record);
+    _appendedSinceOpen.add(record.id);
     return record.id;
   }
 
@@ -865,7 +873,7 @@ final class Session {
     );
   }
 
-  /// Entries whose assistant usage predates the latest compaction boundary.
+  /// Entries whose assistant usage the resident path cannot vouch for.
   ///
   /// Provider usage describes the request in which an assistant message was
   /// generated, not the smaller context reconstructed after a compaction.
@@ -882,7 +890,11 @@ final class Session {
   /// projection level, so the engine's `refreshAgentState` rebuild cannot
   /// re-arm what the resume deliberately zeroed: engine basis = gate
   /// basis, one measurement. A complete walk (parent chain reaches a
-  /// tree root) keeps its anchors — they are vouchable.
+  /// tree root) keeps its anchors — they are vouchable. Records appended
+  /// through THIS instance since open stay exempt — their generation
+  /// context is this projection's own output (vouchable), and zeroing
+  /// them would collapse the engine basis under the gate basis after
+  /// the first live turn (the zero-pass silent loop, in reverse).
   Set<String> _staleUsageAnchorEntryIds(List<SessionRecord> path) {
     var boundary = -1;
     for (var i = 0; i < path.length; i++) {
@@ -895,7 +907,10 @@ final class Session {
     }
     if (boundary < 0) {
       if (path.isNotEmpty && path.first.parentId != null) {
-        return {for (final entry in path) entry.id};
+        return {
+          for (final entry in path)
+            if (!_appendedSinceOpen.contains(entry.id)) entry.id,
+        };
       }
       return const {};
     }

@@ -398,6 +398,67 @@ void main() {
         reason: 'a vouchable anchor survives the projection curation',
       );
     });
+
+    test(
+      'a fresh post-resume anchor stays vouched — the truncation curation '
+      'spares anchors appended since the open (no reverse divergence)',
+      () async {
+        final (_, resumed) = await resumedTailSession();
+        expect(
+          await resumed.ensureCompactionBoundaryResident(maxPages: 1),
+          isFalse,
+        );
+
+        // The field sequence one turn later: the CLI resume zeroed the
+        // loaded anchors, then the first live turn lands a REAL anchor
+        // over the resident tail — the gate arms on IT (the last anchor
+        // prices the whole request). Zeroing it in the engine's refresh
+        // would collapse the engine basis under the gate basis: the
+        // zero-pass silent loop gh-2237 fixed, in reverse.
+        final state = AgentState(
+          model: _model,
+          messages: resetLoadedUsageAnchors(
+            await resumed.buildContextMessages(),
+          ),
+        );
+        final fresh = _assistant('fresh turn', anchorTokens: 640);
+        await resumed.appendMessage(fresh);
+        state.messages = [...state.messages, fresh];
+
+        int basis(List<Message> messages) => estimateRequestTokens(
+          messages,
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        );
+        final gateBasis = basis(state.messages);
+        expect(gateBasis, 640, reason: 'the gate measures the fresh anchor');
+
+        await refreshAgentState(resumed, state);
+
+        final assistants = state.messages
+            .whereType<AssistantMessage>()
+            .toList();
+        expect(
+          assistants.last.usage.totalTokens,
+          640,
+          reason:
+              'the fresh anchor is vouched by construction: its '
+              'request was built from this projection\'s own output',
+        );
+        expect(
+          assistants.first.usage.totalTokens,
+          0,
+          reason: 'the persisted pre-trim phantom stays reset',
+        );
+        expect(
+          basis(state.messages),
+          gateBasis,
+          reason:
+              'AC1 holds on the live-turn path too: the engine basis '
+              'is the gate basis after a boundary-less windowed resume',
+        );
+      },
+    );
   });
 }
 
