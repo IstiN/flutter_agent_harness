@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-19T22:33:49.972Z",
+  "ticketKey": "gh-2318",
+  "headSha": "2ca740abe3ce3e0e61e51c38e8932a5c70b2ea6a",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:c7600002fbdfc0a4",
+      "size": 66035
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:9f708e2eb4066c84",
+      "size": 95945
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:143f8f4832371f98",
+      "size": 799
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:f64e3cacde652ce6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b2992605ec7b17f6",
+      "size": 15109
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ce13a22bbe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:18ae4a568ab632e8",
+      "size": 2381
+    },
+    "request.md": {
+      "hash": "fnv1a64:8f045000d5621089",
+      "size": 4925
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:1e9e5a66c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:4e9f3fa5a57f74dd",
+      "size": 5013
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:8f045000d5621089",
+      "size": 4925
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:674b1bf9",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer c4d4950064605803c5d465117f8fa1a626e6f8a5 — run 44528812546 still queued at 2026-11-19T12:59:46.367Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:d1ee81c9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGESTION: wrong issue id — `gh-189` does not exist; the rerun-vessel convention is `gh-189`**\n\nThis PR introduces the cross-reference `gh-189` in five new places:\n\n- `scripts/sweep_stale_drafts.sh:29` (keep list in the header)\n- `scripts/sweep_stale_drafts.sh:67` (`train_diagnosis()` header)\n- `scripts/sweep_stale_drafts.sh:172` (fresh-bucket comment)\n- `docs/ci.md:239` (canonical CI doc)\n- `CHANGELOG.md:31` (the new Unreleased entry)\n\nThe convention being described — \"the staged draft stays as the `rerun --failed` recovery vessel\" — is **gh-189** (`scripts/release_draft_dedupe.sh`, `scripts/release_train_draft_guard.sh`, `.github/workflows/ci.yml`, issue #190 \"gh-189 [daily-publish] stale release drafts swept\"). The same PR's test reasons use the correct `gh-189`, so the prose and its own tests disagree. `gh-189` matches no issue or commit in this repo's history; this codebase leans on `gh-XXXX` ids as institutional memory (see AGENTS.md), so these five point future readers/agents at a dead reference.\n\nOne-character fix ×5. (The pre-existing one-off at `test/release_hygiene_test.dart:337` `(gh-189)` is untouched code here — worth fixing in a follow-up, not this PR.)"
+    },
+    {
+      "id": "pr_discussions.md:IstiN:2026-11-19:007f7b90",
+      "kind": "comment",
+      "author": "IstiN",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Fixed in `1a0eada60866cf55b8b7b6ec4911629a11bca880`.\n\nRoot cause: the five new cross-references dropped the final `9` from the rerun-vessel convention `gh-1899`, leaving the nonexistent `gh-189`. Corrected all five new citations: three in `scripts/sweep_stale_drafts.sh`, one in `docs/ci.md`, and one in `CHANGELOG.md`.\n\nEvidence: a scoped search for the old token across those files and the test now finds only the pre-existing `test/release_hygiene_test.dart:337` occurrence, which remains untouched as requested. All five new references are `gh-1899`; `git diff --check` is clean and the scoped release-hygiene selections are green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:41d0aa34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the gh-2318 pin pointers still name `test/release_hygiene_test.dart` — the group moved out this round**\n\nThis rework lap moved the gh-2318 group from `test/release_hygiene_test.dart` to the new `test/release_stale_draft_reclaim_test.dart` (commit `c4d4950`, the Loc-gate fix: `release_hygiene_test.dart` was 3019 lines > the 2800 ceiling), but two prose pointers still name the old home:\n\n- `scripts/sweep_stale_drafts.sh:75-76` — \"(pinned by test/release_hygiene_test.dart, gh-2318 group; update both together)\"\n- `CHANGELOG.md:36` — \"Pinned by `test/release_hygiene_test.dart` (`gh-2318` group)\"\n\nThe static pin itself (ci.yml `release-provenance` job name \"Sign release checksums\" ↔ this script's jq match) now lives at `test/release_stale_draft_reclaim_test.dart:338`. An agent honoring the \"update both together\" contract greps the named file for `gh-2318` and finds nothing — the same dead-pointer class as the `gh-189`→`gh-1899` cluster fixed earlier on this PR, created by this round's own move.\n\nTwo-line fix: retarget both pointers to `test/release_stale_draft_reclaim_test.dart` (`gh-2318` group)."
+    },
+    {
+      "id": "pr_discussions.md:IstiN:2026-11-19:550caecf",
+      "kind": "comment",
+      "author": "IstiN",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Fixed in 82796c86b5: both pin pointers (sweep_stale_drafts.sh:75-76 and CHANGELOG.md gh-2318 entry) now name test/release_stale_draft_reclaim_test.dart after the c4d495006 loc split. docs/ci.md gh-2318 paragraph carries no test-file pin — nothing else to move."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:11d3f6d8",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer f81e036fe01dc7de1b144534b81aff9e8437cf22 — run 44484900433 still queued at 2026-11-19T08:40:45.951Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:fb8a9b2a",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4288850b3f6d490cc6f3ec899fd72b7cb5f30f4c — stale base at 2026-11-19T09:59:19.079Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:4d8b7e71",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4288850b3f6d490cc6f3ec899fd72b7cb5f30f4c — stale base at 2026-11-19T10:00:08.421Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:0ddc70f1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2318 early reclaim is well-designed for the single-train shapes (empirically verified: intended reclaim on dead-train drafts, keeps on in-flight owner / rerunnable provenance / undiagnosable publish point, 6 new tests + 3 neighbor suites green), but its train diagnosis is blind to a newer **in-flight** train on the tag — in the mixed shape (older concluded failed train + newer in-flight train, e.g. a re-minted tag) it deletes a fresh draft the live train may still publish, failing the train's publish point. One suggestion-level issue-id typo cluster (`gh-189` → `gh-189`, 5 spots).\n\n**Key Issues**:\n- ⚠️ `scripts/sweep_stale_drafts.sh:184` — reclaim fires on the newest *concluded* failed train while a newer train is in flight; reproduced with the suite's stub (`reclaimed-early=v1.0.750` + `-X DELETE` with a `conclusion:null` run present). Fix: keep unless `train_diagnosis` proves no in-flight run on the tag.\n- 💡 `scripts/sweep_stale_drafts.sh:29` — wrong issue id `gh-189` in 5 new spots (script ×3, `docs/ci.md:239`, `CHANGELOG.md:31`); the convention is `gh-189` (as the PR's own tests cite).\n\n**Digest** (accurate but below thread threshold):\n- `scripts/sweep_stale_drafts.sh:189,255` — the ~260-char `train_line=\"  - tag train: …\"` prose is now byte-duplicated between the reclaim and stale paths; `scripts/` is not covered by the jscpd dup gate (core `lib/`/`flutter_app/lib/` only) — a `train_line` helper would stop the two deletion paths' issue prose from drifting.\n- `scripts/sweep_stale_drafts.sh:187` — `failed_trains` increments per reclaimed draft, so reclaimed twins sharing a tag report \"Failed tag trains named above: N\" for one train.\n- `test/release_hygiene_test.dart:337` — pre-existing `(gh-189)` typo (frozen line; follow-up material).\n\n**Next Steps**:\n1. Add the in-flight-train keep to the reclaim (6th TSV field from `train_diagnosis()`, or an explicit `conclusion == null` check) + a `[null, failure]` multi-train fixture test.\n2. Correct `gh-189` → `gh-189` in the 5 new spots.\n3. Optional: extract the shared `train_line` prose into a helper.\n\nVerified during review: full `git diff origin/main...HEAD` deep-read (4 files); 6 new gh-2318 tests green; `release_hygiene_test.dart` + `release_draft_dedupe_test.dart` + `release_empty_latest_guard_test.dart` = 113 tests green; `dart analyze` + `dart format` clean on touched files; `bash -n` + `shellcheck` clean; static pin matches ci.yml `release-provenance`/`Sign release checksums`; `sweep-drafts` already grants `contents: write` + `actions: read` (no workflow change needed — claim holds)."
+    },
+    {
+      "id": "pr_discussions.md:IstiN:2026-11-19:e1191969",
+      "kind": "comment",
+      "author": "IstiN",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "CI root cause was PR-local, not the renderer/CRAP: run 44519549010 job 135555007131 passed CRAP (Max CRAP 12.00, threshold 12.00) but failed **Loc scope gate**: `test/release_hygiene_test.dart: 3019 lines > max 2800`. The gh-2318 tests added 352 lines to a 2673-line main-side file. Fixed on this branch in c4d4950064605803c5d465117f8fa1a626e6f8a5 by moving the gh-2318 group unchanged to `test/release_stale_draft_reclaim_test.dart` (shared harness reused; no production change). Local evidence: pinned crap4dart 0.15.0 loc gate 3019>2800 before, now 1183/1183 files pass (release_hygiene 2676 lines, new suite 353); both suites + support analyze clean; 76 tests pass. Main run 44524439999's CRAP + duplication job 135572074703 is green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:86be1fc1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the fresh-draft reclaim can delete a draft a still-in-flight train is about to publish**\n\n`train_diagnosis()` selects the tag's newest **CONCLUDED** non-success ci.yml push run (`select(.conclusion != \"success\" and .conclusion != null)`) — in-flight runs (`conclusion: null`) are invisible to it. That is correct for the stale path, where the diagnosis only feeds issue prose (gh-2105: \"the diagnosis is never a precondition\"), but this PR makes the same output **gate a DELETE** in the `fresh` bucket, and a *newer in-flight train* on the tag changes which train owns the draft.\n\nReproduced against the suite's own stub (`run-status.json` = completed, fresh marked draft, `train-runs.json` = `[{\"conclusion\":null,…},{\"conclusion\":\"failure\", prov \"skipped\"}]`):\n\n```\nsweeper: deleted= reclaimed-early=v1.0.750 …        → -X DELETE fired\n```\n\nThe single-train shapes are safe (only-failed → intended reclaim; only-in-flight → keep, because the null conclusion alone empties the diagnosis), but the mixed shape deletes a fresh draft while a live train may still publish it. When that happens, `release-provenance` (\"Sign release checksums\", ci.yml \"Collect release assets\") starts with `gh release download \"${GITHUB_REF_NAME}\"`, fails on the now-missing release, and the reclaim converts a recoverable in-flight publish into a red train plus lost staged assets — the opposite of this PR's stated invariant (\"never delete blind\", \"an in-flight owner run keeps too\").\n\nThe new test group's \"train still in flight\" case only covers the single-train shape, so the blind window is untested.\n\nSuggested fix (small, mirrors the in-flight-owner keep): have `train_diagnosis()` also report whether **any** fetched run has `conclusion == null` (e.g. a 6th TSV field), and keep the draft unless it is explicitly `none` — plus a multi-train fixture (`[null, failure]`) in the gh-2318 group pinning the keep. The docs/CHANGELOG fail-safe keep lists would need the same one-line addition."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:8f7c74b7",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4e8da2085b86f9f3946a1f40514ec4d50558388d — stale base at 2026-11-19T15:42:59.877Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:3a6a7349",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel f7e02097ef1de1421bb4c5a90f1dbd70a1f091e8 — stale base at 2026-11-19T16:31:49.190Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:618bff24",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Both round-1 findings are fixed at head `c50a558a`: the ⚠️ in-flight-train blind window now keeps (`train_diagnosis()` gained a 6th `in_flight` TSV field from `any(.[]; .conclusion == null)` and the fresh-draft reclaim fires only on `\"none\"` — `scripts/sweep_stale_drafts.sh:85-102,196-198`, pinned by the new `[null, failure]` mixed-train fixture `test/release_stale_draft_reclaim_test.dart:186`), and the `gh-189`→`gh-1899` typo cluster is corrected in all five spots. One new suggestion from this round's own rework: the loc-gate suite split left two \"pinned by `test/release_hygiene_test.dart`\" pointers stale.\n\n**Key Issues**:\n- 💡 `scripts/sweep_stale_drafts.sh:75` — stale gh-2318 pin pointer after the suite split (`CHANGELOG.md:36` too); the pin now lives in `test/release_stale_draft_reclaim_test.dart:338`. Two-line fix.\n\n**Digest** (accurate, below thread threshold):\n- `scripts/sweep_stale_drafts.sh:203,265` — the ~260-char `train_line` prose is byte-duplicated between the reclaim and stale paths; `scripts/` is outside the jscpd dup gate — a helper would stop the two deletion paths' issue prose from drifting.\n- `scripts/sweep_stale_drafts.sh:199` — `failed_trains` increments per reclaimed draft, so reclaimed twins sharing one tag report \"Failed tag trains named above: 2\" for one train.\n- `test/release_hygiene_test.dart:337` — pre-existing `(gh-189)` typo, untouched code here (follow-up, as agreed last round).\n\n**Next Steps**:\n1. Retarget the two stale \"pinned by\" pointers to `test/release_stale_draft_reclaim_test.dart`; everything else is mergeable as-is.\n2. Verified this round: 7 gh-2318 tests green (including the exact round-1 regression shape, `[conclusion:null, conclusion:failure]` → no DELETE); `release_hygiene` + `release_draft_dedupe` + `release_empty_latest_guard` = 114 tests green; `dart analyze`/`dart format` clean on touched files; `bash -n` + `shellcheck` clean; ci.yml `release-provenance` name still \"Sign release checksums\"; `sweep-drafts` grants `contents: write` + `actions: read` (no workflow change needed); all merge-ins byte-identical to `origin/main` (true delta = 5 files, +525/−23)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:656673e1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 82796c86b55547ad9ed9e399d4ecc54b18bdd8d3 — run 44579379823 still queued at 2026-11-19T18:45:54.583Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    }
+  ]
+}

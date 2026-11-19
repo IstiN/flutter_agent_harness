@@ -1,0 +1,1 @@
+{"ts":"2026-11-19T13:50:25.543072Z","event":"scheduled","id":"1795096225542456_0000_1gyoenl","dueMs":1795096945542,"to":"01a1f300-f8cc-797f-a2ea-fc0ce68e0ab2/main","text":"gh-2318 lap-4 follow-up: CI validation run 44529990628 (head 1b2a276f6a) was in_progress with only \"Build iOS (debug, unsigned)\" still running and exactly one failure: Core tests (shard 3/4) — a trans"}
