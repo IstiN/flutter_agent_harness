@@ -629,7 +629,7 @@ class _DevicesPageState extends State<DevicesPage> {
                 _selectedDeviceIsOwn = false;
                 _selectedRemoteSessionId = null;
               }),
-              icon: const Icon(Icons.chevron_left_rounded),
+              icon: const FaIcon(FaSemanticIcon.back),
               iconSize: 26,
               color: colors.text,
               visualDensity: VisualDensity.compact,

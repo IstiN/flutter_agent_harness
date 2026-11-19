@@ -7,7 +7,6 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 import 'package:flutter_agent_harness/src/network/network_account.dart';
-import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 import 'package:test/test.dart';
 
 import '../network/connector/fake_device_server.dart';

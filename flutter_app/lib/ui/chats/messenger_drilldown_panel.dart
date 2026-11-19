@@ -364,8 +364,8 @@ final class MessengerPanelRow extends StatelessWidget {
                       ),
                       if (onTap != null) ...[
                         const SizedBox(width: 8),
-                        Icon(
-                          Icons.chevron_right_rounded,
+                        FaIcon(
+                          FaSemanticIcon.chevronRight,
                           size: 18,
                           color: subdued,
                         ),

@@ -1026,6 +1026,21 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
   return (named.single.address, null);
 }
 
+/// Last-resort network NAME lookup after every applicable local identity
+/// declined [to]. Unknown names retain the manager's own recipient error.
+(String, String?) _resolveNetworkPeerNameFallback(
+  SubagentManager manager,
+  String to,
+) {
+  final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
+    manager,
+    to,
+  );
+  if (networkError != null) return (to, networkError);
+  if (networkTarget != null) return (networkTarget, null);
+  return (to, null);
+}
+
 /// Resolves [to] against the fabric directory by session display NAME when
 /// the raw form does not already hit a deliverable address: a local
 /// sibling handle, `main`, or an exact absolute mailbox id. Returns the
@@ -1044,13 +1059,7 @@ Future<(String, String?)> _resolveFabricAddress(
   if (fabric == null) {
     // No local fabric identities to shadow — the network NAME space is
     // the only one available (legacy fabric-less hosts).
-    final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
-      manager,
-      to,
-    );
-    if (networkError != null) return (to, networkError);
-    if (networkTarget != null) return (networkTarget, null);
-    return (to, null);
+    return _resolveNetworkPeerNameFallback(manager, to);
   }
   final (stripped, suffixError) = _stripLocalMachineSuffix(manager, to);
   if (suffixError != null) return (stripped, suffixError);
@@ -1069,13 +1078,7 @@ Future<(String, String?)> _resolveFabricAddress(
   // sibling) can never hijack local mail (PR#2313 review).
   if (directoryError != null) return (to, directoryError);
   if (directoryTarget != null) return (directoryTarget, null);
-  final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
-    manager,
-    to,
-  );
-  if (networkError != null) return (to, networkError);
-  if (networkTarget != null) return (networkTarget, null);
-  return (to, null);
+  return _resolveNetworkPeerNameFallback(manager, to);
 }
 
 /// Session-local child-name resolution for [_resolveFabricAddress]

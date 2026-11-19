@@ -10,6 +10,24 @@ part of 'agent_cli.dart';
 /// the run's settle hostage.
 const Duration _hubDrainTimeout = Duration(seconds: 5);
 
+/// Mention decoration for channel mail, kept separate from sender/route
+/// formatting so the steering-line renderer stays a small linear pipeline.
+String _channelMention({
+  required bool isChannel,
+  required String body,
+  String? ownDapName,
+}) {
+  final name = ownDapName?.trim();
+  if (!isChannel || name == null || name.isEmpty) return '';
+  // The left check rejects email-shaped x@name; the right check keeps
+  // @name2 distinct. Punctuation and case variants remain mentions.
+  final pattern = RegExp(
+    '(?:^|[^A-Za-z0-9_])@${RegExp.escape(name)}(?![A-Za-z0-9_])',
+    caseSensitive: false,
+  );
+  return pattern.hasMatch(body) ? ' [mentions you — you are @$name]' : '';
+}
+
 extension AgentCliMessagingFlow on AgentCli {
   /// The main agent's inbox as steering messages: each pending fabric
   /// message becomes a user message attributed to its sender, so the
@@ -135,19 +153,11 @@ extension AgentCliMessagingFlow on AgentCli {
         ? '\n[reply into this channel with agent_message to: "$channel"]'
         : '';
     final body = text.trim();
-    var mention = '';
-    final name = ownDapName?.trim();
-    if (isChannel && name != null && name.isNotEmpty) {
-      // The left check rejects email-shaped x@name; the right check keeps
-      // @name2 distinct. Punctuation and case variants remain mentions.
-      final pattern = RegExp(
-        '(?:^|[^A-Za-z0-9_])@${RegExp.escape(name)}(?![A-Za-z0-9_])',
-        caseSensitive: false,
-      );
-      if (pattern.hasMatch(body)) {
-        mention = ' [mentions you — you are @$name]';
-      }
-    }
+    final mention = _channelMention(
+      isChannel: isChannel,
+      body: body,
+      ownDapName: ownDapName,
+    );
     // The human author first when the transport names them: app members
     // write through the fa_network relay, and a bare relay agent id makes
     // agents greet the relay ("Hello 3cfaee1aa054fe6e!"). The id stays
