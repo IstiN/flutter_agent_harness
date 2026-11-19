@@ -72,7 +72,7 @@ daily_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/${GITHUB_
 # keeps unless it is explicitly "none", because a live train may still
 # publish even when an older train failed. The publish-point job is matched
 # by its ci.yml `name:` —
-# "Sign release checksums" (pinned by test/release_hygiene_test.dart,
+# "Sign release checksums" (pinned by test/release_stale_draft_reclaim_test.dart,
 # gh-2318 group; update both together). Empty output = no failed train /
 # lookup failed; every consumer degrades fail-safe (keep), and nothing
 # here may gate the stale >24h delete (the diagnosis is never a

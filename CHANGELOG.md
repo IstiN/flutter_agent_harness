@@ -33,7 +33,7 @@ block a release again.
   vessel until stale, any lookup failure). The train diagnosis is a shared
   `train_diagnosis()` helper and
   the issue names reclaimed drafts + the failed train as before.
-  Pinned by `test/release_hygiene_test.dart` (`gh-2318` group)
+  Pinned by `test/release_stale_draft_reclaim_test.dart` (`gh-2318` group)
 - fix(gh-2103 fallout, unblocks #2217): the auto-compactor no longer
   reads compactSession's empty-foldable-region refusal (gh-204,
   `CompactionErrorCode.invalidSession`) as a summarizer outage. gh-2103's
