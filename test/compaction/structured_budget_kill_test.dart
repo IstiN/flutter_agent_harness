@@ -82,7 +82,7 @@ final class _CapturingAutoHooks extends AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) => doneCount++;
+  void onDone(int passes, int tokens, {String? reason}) => doneCount++;
 
   @override
   void onBothRolesFailed(Object lastError) {}

@@ -2117,7 +2117,7 @@ final class _SilentCompactionHooks extends AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {
+  void onDone(int passes, int tokens, {String? reason}) {
     if (passes > 0) attempted = true;
   }
 
