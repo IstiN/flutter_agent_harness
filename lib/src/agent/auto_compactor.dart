@@ -1270,6 +1270,15 @@ class AutoCompactorFactory {
       // fallback (issue #148 flowchart S7/D4) — its summary then renders
       // under structured projection as an opaque legacy-ckpt segment.
       // Its own run() closes the bracket.
+      //
+      // #2258: the structured ladders stop a cancelled run at their first
+      // gate boundary (no receipt, no append) and return a false verdict —
+      // possibly BEFORE the totalBudget watchdog fires, so the timed-out
+      // branch's own cancel parity never runs. The classic residual
+      // fallback must NOT rescue that run (issue #1085: never rescue a
+      // run the user stopped) — surface the abort here, the same contract
+      // classic run() enforces in its own finally.
+      runToken?.throwIfCancelled();
     }
     // Issue #2263: this fall-through starts a FRESH classic engine — on
     // an aborted run that is exactly the #1085 violation (the structured
