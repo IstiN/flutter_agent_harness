@@ -129,6 +129,20 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
         : 'margin=${pass.marginTokens} '
               'band=${pass.bandTokens} '
               'hideable-left=${pass.hideableRemaining ?? 0} ';
+    if (pass.fallback == 'structured·skipped-judge-latch') {
+      // Issue #2274: a DESIGNED judge-latch skip, not a failure — the
+      // judge contributes nothing this run by design and the
+      // deterministic hide's own receipt follows. Rendering the skip as
+      // FAILED made fa.log read as a persistent compaction failure for
+      // the whole probe window while sessions progressed fine.
+      cli._logDiagnostic(
+        'auto-compact pass ${pass.pass} judge-latch skip '
+        'sid=${cli._logSid} '
+        'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
+        'error=${pass.error ?? '-'}',
+      );
+      return;
+    }
     if (!pass.ok) {
       // The pass failed: onBothRolesFailed already prints the user-facing
       // hint. Printing the success-looking "auto-compacted" line here
