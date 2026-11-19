@@ -374,6 +374,7 @@ final class StructuredCompactor {
   /// markers stay in the session — so the lossless invariant (#148 AC2)
   /// is untouched.
   Future<void> _runLruRehidePasses(int trigger) async {
+    if (_ladderTerminated) return;
     final before = _requestTokens();
     final over = before - trigger;
     if (over <= 0) return;
@@ -391,6 +392,10 @@ final class StructuredCompactor {
     final watch = Stopwatch()..start();
     final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: evictions.toList()..sort());
+    // #2258: a kill landing while the append was in flight leaves the
+    // record written-but-unprojected — skip the refresh and the receipt;
+    // the factory's local trim stays the tail (resume replays the record).
+    if (_ladderTerminated) return;
     final after = await _refreshState();
     hooks?.onPass(
       StructuredCompactionPass(
@@ -539,6 +544,21 @@ final class StructuredCompactor {
         budget,
       );
 
+  /// #2258: the terminal write gate every pass ladder checks before it
+  /// appends, refreshes or reports. Both signals are terminal and first
+  /// wins: the factory's total-budget verdict (`cancelBudget` — the #515
+  /// kill) and a run cancellation (#1085). A ladder that lost the race to
+  /// the factory's verdict must not append session records, refresh
+  /// `state.messages` (the verdict's local trim stays the authoritative
+  /// tail) or report a pass — it stops silent and the run surfaces
+  /// abandoned.
+  bool get _ladderTerminated => _runCancelled || _totalBudgetSpent;
+
+  /// A missing projection and a projection with no hide candidates are both
+  /// successful terminal verdicts for the hide ladder.
+  _LedgerView? _viewWithHideableEntries(_LedgerView? view) =>
+      view == null || _hideableEntries(view.ledger).isEmpty ? null : view;
+
   Future<bool> _runHidePasses(int trigger) async {
     // gh-2096: the consecutive-failure counter is PERSISTED per session —
     // it seeds from the newest judge-health record instead of resetting
@@ -549,11 +569,12 @@ final class StructuredCompactor {
     _consecutiveJudgeFailures = health.consecutiveFailures;
     _judgeLatched = health.latched;
     for (var i = 0; i < maxHidePasses; i++) {
+      // #2258: the verdict may have landed between iterations.
+      if (_ladderTerminated) return false;
       final before = _requestTokens();
       if (before <= trigger) return true;
-      final view = await _buildView();
+      final view = _viewWithHideableEntries(await _buildView());
       if (view == null) return true;
-      if (_hideableEntries(view.ledger).isEmpty) break;
 
       // gh-2096: the cross-run latch gate — while latched the judge
       // contributes nothing unless the probe window elapsed (or the
@@ -568,56 +589,98 @@ final class StructuredCompactor {
       // and usage.
       final watch = Stopwatch()..start();
       final usageBefore = usage?.snapshot();
-      final call = await _callJudge(view);
-      // F1: a failed judge call hides nothing — but since #541 it is
-      // COUNTED, not fatal: one retry, then the deterministic
-      // judge-less hide, so a dead judge can no longer brick the run.
-      // A garbage answer decided nothing — a failure like any other.
-      final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
-      if (picks == null) {
-        if (!await _handleJudgeFailure(
-          trigger,
-          call.failure ??
-              const CompactionException(
-                'hide judge returned an unparseable answer',
-              ),
-          shape: call.shape,
-        )) {
-          return true;
-        }
-        continue;
-      }
-      _consecutiveJudgeFailures = 0;
-      // gh-2096: a parsed answer is a live judge — clear the persisted
-      // latch (additive unlatch record; a no-op write when the session
-      // was never unhealthy, keeping the legacy flow write-free).
-      await _recordJudgeSuccess();
-      if (picks.isEmpty) break;
-      final ids = validateHidePicks(
-        picks,
-        view.ledger,
-        protectLastN: protectLastN,
-        pinnedRecordIds: view.state.pinnedRecordIds,
+      final attempt = await _runHideAttempt(
+        trigger,
+        view,
+        before,
+        watch,
+        usageBefore,
       );
-      if (ids.isEmpty) break;
-      await session.appendHiddenRange(recordIds: ids.toList()..sort());
-      final after = await _refreshState();
-      hooks?.onPass(
-        StructuredCompactionPass(
-          kind: 'hide',
-          pass: ++_pass,
-          tokensBefore: before,
-          tokensAfter: after,
-          ok: true,
-          judgeCalls: 1,
-          hiddenCount: ids.length,
-          basisReadTokens: _basisFlip(before, after),
-          durationMs: watch.elapsedMilliseconds,
-          usage: _usageDelta(usageBefore),
-        ),
-      );
+      // #2258: the gate fired mid-attempt — the run surfaces abandoned.
+      if (attempt.killed) return false;
+      // A decided attempt (a counted judge failure, a latched skip, an
+      // empty or fully-vetoed pick list) ends the loop on the loop's own
+      // successful-verdict return — identical to the pre-extraction
+      // break/return-true exits.
+      if (attempt.decided) return true;
     }
     return true;
+  }
+
+  /// One judge hide attempt (gh-2101 pass window): the judge call, its
+  /// parse, the failure/fallback ladder and — on a hideable verdict — the
+  /// append, refresh and receipt. Extracted so [_runHidePasses] keeps its
+  /// iteration flow only (CRAP ratchet); behavior is byte-identical to
+  /// the inline loop body it replaced.
+  ///
+  /// Returns [killed] when the #2258 terminal gate fired mid-attempt (the
+  /// loop surfaces abandoned, `false`) and [decided] when the attempt
+  /// settled the run on the loop's own successful-verdict return (`true`
+  /// — the counted-failure and empty-pick exits). Neither flag: keep
+  /// iterating.
+  Future<({bool killed, bool decided})> _runHideAttempt(
+    int trigger,
+    _LedgerView view,
+    int before,
+    Stopwatch watch,
+    CompactionUsageTotals? usageBefore,
+  ) async {
+    final call = await _callJudge(view);
+    // #2258: the total-budget kill lands while the judge hangs — the
+    // factory's timeout verdict + local trim is authoritative, so this
+    // ladder must not count the kill as an ordinary judge failure
+    // (no receipt, no latch write, no deterministic hide), hide, or
+    // refresh after it.
+    if (_ladderTerminated) return (killed: true, decided: false);
+    // F1: a failed judge call hides nothing — but since #541 it is
+    // COUNTED, not fatal: one retry, then the deterministic
+    // judge-less hide, so a dead judge can no longer brick the run.
+    // A garbage answer decided nothing — a failure like any other.
+    final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
+    if (picks == null) {
+      final continues = await _handleJudgeFailure(
+        trigger,
+        call.failure ??
+            const CompactionException(
+              'hide judge returned an unparseable answer',
+            ),
+        shape: call.shape,
+      );
+      return (killed: false, decided: !continues);
+    }
+    _consecutiveJudgeFailures = 0;
+    // gh-2096: a parsed answer is a live judge — clear the persisted
+    // latch (additive unlatch record; a no-op write when the session
+    // was never unhealthy, keeping the legacy flow write-free).
+    await _recordJudgeSuccess();
+    if (picks.isEmpty) return (killed: false, decided: true);
+    final ids = validateHidePicks(
+      picks,
+      view.ledger,
+      protectLastN: protectLastN,
+      pinnedRecordIds: view.state.pinnedRecordIds,
+    );
+    if (ids.isEmpty) return (killed: false, decided: true);
+    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    // #2258: see _runLruRehidePasses — written-but-unprojected stops
+    // here; the verdict's local trim stays the tail.
+    if (_ladderTerminated) return (killed: true, decided: false);
+    final after = await _refreshState();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: after,
+        ok: true,
+        judgeCalls: 1,
+        hiddenCount: ids.length,
+        basisReadTokens: _basisFlip(before, after),
+        durationMs: watch.elapsedMilliseconds,
+        usage: _usageDelta(usageBefore),
+      ),
+    );
+    return (killed: false, decided: false);
   }
 
   /// gh-2096: the cross-run latch gate. While latched the judge
@@ -869,7 +932,10 @@ final class StructuredCompactor {
   /// trigger again. No LLM: the session always makes progress, even
   /// with every judge endpoint dark.
   Future<bool> _deterministicHide(int trigger) async {
-    if (cancelToken?.isCancelled ?? false) return false;
+    // #2258: the token-only guard could not see the total-budget kill
+    // (a budget token is the kill signal, not a suggestion) — the gate
+    // covers it and the run cancellation alike.
+    if (_ladderTerminated) return false;
     final view = await _buildView();
     if (view == null) return false;
     final ledger = view.ledger;
@@ -924,6 +990,9 @@ final class StructuredCompactor {
     final watch = Stopwatch()..start();
     final usageBefore = usage?.snapshot();
     await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    // #2258: see _runLruRehidePasses — written-but-unprojected stops
+    // here; the verdict's local trim stays the tail.
+    if (_ladderTerminated) return false;
     final after = await _refreshState();
     hooks?.onPass(
       StructuredCompactionPass(
@@ -978,6 +1047,8 @@ final class StructuredCompactor {
 
   Future<bool> _runCheckpointPasses(int trigger) async {
     for (var i = 0; i < maxCheckpointPasses; i++) {
+      // #2258: the verdict may have landed between iterations.
+      if (_ladderTerminated) return false;
       final before = _requestTokens();
       if (before <= trigger) return true;
       // gh-2101: the pass's measured window — the summarizer call(s), the
@@ -1003,6 +1074,10 @@ final class StructuredCompactor {
         // dissolve into the ordinary failure-safety null.
         rethrow;
       }
+      // #2258: the verdict may have landed while the summarizer ran — a
+      // killed run appends nothing (terminal outranks an ordinary
+      // empty-summary failure, as in _runEscalationFold).
+      if (_ladderTerminated) return false;
       if (text.isEmpty) return false;
 
       await session.appendCompactCheckpoint(
@@ -1012,6 +1087,9 @@ final class StructuredCompactor {
         coversRecordIds: range.coveredRecordIds,
         flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
       );
+      // #2258: see _runLruRehidePasses — written-but-unprojected stops
+      // here; the verdict's local trim stays the tail.
+      if (_ladderTerminated) return false;
       final after = await _refreshState();
       var summarizedCount = 0;
       for (final id in range.coveredRecordIds) {
@@ -1069,7 +1147,7 @@ final class StructuredCompactor {
   /// Returns whether the run's verdict stands (false only to surface a
   /// cancellation).
   Future<bool> _runCheckpointEscalationPass(int trigger, int margin) async {
-    if (_runCancelled || _totalBudgetSpent) return false;
+    if (_ladderTerminated) return false;
     final band = settings.reserveTokens;
     final before = _requestTokens();
     // gh-2101: the escalation's measured window — the watch and the usage
@@ -1137,6 +1215,10 @@ final class StructuredCompactor {
       emit(after: before, ok: false, error: outcome.error);
       return true;
     }
+    // The verdict may have landed after the fold's last sample but before
+    // this continuation ran. Never rebuild state or emit a success receipt
+    // across that boundary; a user abort still surfaces as false.
+    if (_ladderTerminated) return _totalBudgetSpent;
     final after = await _refreshState();
     final (:summarizedCount, :visibleMessages) = _escalationCounts(range);
     emit(
@@ -1182,10 +1264,10 @@ final class StructuredCompactor {
       // outcome path owns it.
       rethrow;
     }
-    if (_totalBudgetSpent) {
+    if (_ladderTerminated) {
       return (
-        budgetSpent: true,
-        cancelled: false,
+        budgetSpent: _totalBudgetSpent,
+        cancelled: _runCancelled,
         error: null,
         text: null,
         summarizerCalls: summarizerCalls,
@@ -1212,6 +1294,19 @@ final class StructuredCompactor {
       );
     }
     final appended = await _appendEscalationCheckpoint(range, flattened, text);
+    // A kill can land while the append is in flight (or while an append
+    // error is being returned). The record is then written-but-unprojected:
+    // surface the terminal outcome so the caller performs no refresh and
+    // emits neither a success nor an ordinary failure receipt.
+    if (_ladderTerminated) {
+      return (
+        budgetSpent: _totalBudgetSpent,
+        cancelled: _runCancelled,
+        error: null,
+        text: null,
+        summarizerCalls: summarizerCalls,
+      );
+    }
     if (appended != null) {
       if (_runCancelled) {
         return (
