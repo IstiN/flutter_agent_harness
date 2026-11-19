@@ -128,6 +128,29 @@ String silentlyTruncatedSse() =>
     }) +
     _doneChunk;
 
+/// A shared-client factory product that mimics `IOClient.close()`'s
+/// force-abort semantics (the http package's close kicks in-flight
+/// requests): records the close, and an in-flight send that resumes after
+/// a close fails the way an aborted connection would — the regression
+/// harness for the heal recycle's drain grace (#2327 review r2).
+final class _HealSpyClient extends http.BaseClient {
+  _HealSpyClient(this._inner);
+
+  final http.Client _inner;
+
+  var closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request);
+
+  @override
+  void close() {
+    closed = true;
+    _inner.close();
+  }
+}
+
 /// Case-insensitive header lookup (the mock keeps the keys we set; only
 /// real transports normalize case).
 String? hdr(http.BaseRequest request, String name) {
@@ -848,6 +871,107 @@ void main() {
       expect(builds, 2); // one rebuild — the production recycle
       expect(identical(before, after), isFalse);
     });
+
+    test(
+      'a concurrent stream mid-request survives the heal-triggered recycle',
+      () async {
+        // The recycle must not cut streams that already fetched the shared
+        // client (#2327 review r2): the heal swaps the shared reference
+        // atomically and the OLD pool force-closes only after a drain
+        // grace — stream A below is mid-request across the whole episode.
+        var builds = 0;
+        var chatCalls = 0;
+        var exchangeCalls = 0;
+        final spies = <_HealSpyClient>[];
+        final aInFlight = Completer<void>();
+        final aRelease = Completer<void>();
+        final mock = http_testing.MockClient.streaming((request, body) async {
+          if (request.url.host == 'api.github.com') {
+            exchangeCalls++;
+            return http.StreamedResponse(
+              Stream.value(
+                utf8.encode(
+                  exchangeJson(
+                    token: 'cop-$exchangeCalls',
+                    expiresAt: _baseNow.millisecondsSinceEpoch ~/ 1000 + 1800,
+                  ),
+                ),
+              ),
+              200,
+            );
+          }
+          chatCalls++;
+          if (chatCalls == 1) {
+            // Stream A: in-flight on the OLD client across the heal.
+            aInFlight.complete();
+            await aRelease.future;
+            if (spies.first.closed) {
+              throw StateError(
+                'connection aborted: shared client closed mid-request',
+              );
+            }
+            return sseResponse(chatSse());
+          }
+          // Streams B1-B3 truncate; the post-heal retry (5) streams clean.
+          return sseResponse(chatCalls <= 4 ? truncatingSse() : chatSse());
+        });
+        providerHttpClientFactory = () {
+          builds++;
+          final spy = _HealSpyClient(mock);
+          spies.add(spy);
+          return spy;
+        };
+        providerPoolRetireGrace = const Duration(milliseconds: 50);
+        addTearDown(() {
+          providerHttpClientFactory = null;
+          debugResetSharedProviderHttpClient();
+          providerPoolRetireGrace = const Duration(seconds: 90);
+        });
+
+        final before = sharedProviderHttpClient(); // build 1 — stream A's pool
+        // Stream A: starts, reaches its in-flight gate, then WAITS.
+        final aFuture = streamCopilot(
+          copilotModel,
+          simpleContext(),
+          CopilotOptions(githubToken: 'gh-heal-concurrent'),
+        ).toList();
+        await aInFlight.future;
+
+        // B1-B3: three consecutive truncations; the third fires the heal.
+        await streamCopilot(
+          copilotModel,
+          simpleContext(),
+          CopilotOptions(githubToken: 'gh-heal-concurrent'),
+        ).toList();
+        await streamCopilot(
+          copilotModel,
+          simpleContext(),
+          CopilotOptions(githubToken: 'gh-heal-concurrent'),
+        ).toList();
+        await streamCopilot(
+          copilotModel,
+          simpleContext(),
+          CopilotOptions(githubToken: 'gh-heal-concurrent'),
+        ).toList(); // B3 → its third consecutive end fires the heal
+
+        // The heal swapped the pool for the healed retry (AC4 observable):
+        // a fresh client exists and A's pool is NOT force-closed yet —
+        // A is still draining on it.
+        expect(builds, 2);
+        expect(identical(before, sharedProviderHttpClient()), isFalse);
+        expect(spies.first.closed, isFalse);
+
+        // A completes CLEANLY on the retired pool, then the grace lands
+        // the bounded force-close (the pool is actually reclaimed).
+        aRelease.complete();
+        final a = await aFuture;
+        expect(a.last, isA<DoneEvent>());
+        expect(a.whereType<ErrorEvent>(), isEmpty);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        expect(spies.first.closed, isTrue);
+        expect(spies[1].closed, isFalse); // the live pool stays untouched
+      },
+    );
 
     test('tolerated silent truncations count toward the heal too', () async {
       var chatCount = 0;
