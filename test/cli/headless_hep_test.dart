@@ -365,66 +365,61 @@ void main() {
     expect(ends.single['tokens_freed'] as int, greaterThanOrEqualTo(0));
   });
 
-  test(
-    'zero-pass compaction run still closes its bracket (issue #2273)',
-    () async {
-      // The cap-unknown E1 channel (gh-1680): the turn's refusal arms the
-      // one-shot pre-emptive pass; the POST-RUN fold consumes it with
-      // force=false over an UNDER-TRIGGER transcript, so the structured
-      // engine takes the zero-pass success short-circuit — a run that
-      // executes no pass at all. Its compaction_start must still get a
-      // compaction_end (freed 0), and the pass counter must stay untouched
-      // so the funnel's passesRan trim gate never counts non-runs.
-      final tempHome = Directory.systemTemp.createTempSync('fa_hep_2273_');
-      addTearDown(() => tempHome.deleteSync(recursive: true));
-      final capEnv = MemoryExecutionEnv(cwd: '/work');
-      await capEnv.writeFile('/work/.fah/memory/.last_maintenance', '');
-      final fake = FakeStreamFunction([
-        // Attempt 1: the cap-unknown refusal (no parseable limit — arms the
-        // E1 pass without learning a numeric cap, so the host's capTriggered
-        // stays false and the zero-pass short-circuit is taken).
-        _capRefusalTurn('too many messages'),
-        // Attempt 2: the heal retry completes the turn.
-        textTurn('healed reply'),
-        // Spare: the gh-1636 memory-extraction call if one ever fires.
-        textTurn('mem'),
-      ]);
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: _model,
-          apiKey: 'test-key',
-          env: capEnv,
-          sessionRoot: '/sessions',
-          providerKind: 'openai-completions',
-          homeDir: tempHome.path,
-        ),
-        io: io,
-        streamFunction: fake.call,
-      );
-      io.eventsMode = true;
-      final frames = <String>[];
-      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+  test('cap-unknown refusal post-run fold opens no compaction bracket '
+      '(gh-2259 REG; issue #2273 counter)', () async {
+    // The cap-unknown E1 channel (gh-1680): the turn's refusal arms the
+    // one-shot pre-emptive pass; the POST-RUN fold runs UNFORCED over an
+    // UNDER-TRIGGER transcript. gh-2259 (#2308) reworked this channel —
+    // the unforced fold no longer consumes the armed pass (it survives
+    // for the next forced pre-flight) — so the fold must not open a
+    // compaction bracket at all: no frames, and the receipt-counting
+    // pass counter (issue #2273) stays at zero. If the unforced consume
+    // ever returns, the fold fires a zero-pass run again — the #2273
+    // bracket fix keeps its frames balanced (start/end 1/1, freed 0),
+    // and the frame/counter assertions below catch the regression.
+    final tempHome = Directory.systemTemp.createTempSync('fa_hep_2273_');
+    addTearDown(() => tempHome.deleteSync(recursive: true));
+    final capEnv = MemoryExecutionEnv(cwd: '/work');
+    await capEnv.writeFile('/work/.fah/memory/.last_maintenance', '');
+    final fake = FakeStreamFunction([
+      // Attempt 1: the cap-unknown refusal (no parseable limit — arms the
+      // E1 pass without learning a numeric cap, so the host's capTriggered
+      // stays false and the zero-pass short-circuit would be taken).
+      _capRefusalTurn('too many messages'),
+      // Attempt 2: the heal retry completes the turn.
+      textTurn('healed reply'),
+      // Spare: the gh-1636 memory-extraction call if one ever fires.
+      textTurn('mem'),
+    ]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: _model,
+        apiKey: 'test-key',
+        env: capEnv,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        homeDir: tempHome.path,
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    io.eventsMode = true;
+    final frames = <String>[];
+    final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
-      final code = await cli.runHeadless('q', hep: hep);
+    final code = await cli.runHeadless('q', hep: hep);
 
-      expect(code, 0);
-      // The turn completed on the heal retry.
-      final types = [
-        for (final line in frames)
-          (jsonDecode(line) as Map<String, dynamic>)['type'] as String,
-      ];
-      expect(types.where((t) => t == 'compaction_start'), hasLength(1));
-      final ends = frames
-          .map((l) => jsonDecode(l) as Map<String, dynamic>)
-          .where((f) => f['type'] == 'compaction_end')
-          .toList();
-      // The bracket the zero-pass run opened must still close — freed 0.
-      expect(ends, hasLength(1));
-      expect(ends.single['tokens_freed'], 0);
-      // And the run must not count as a compaction pass.
-      expect(cli.compactionPassesStartedForTest, 0);
-    },
-  );
+    expect(code, 0);
+    // The turn completed on the heal retry — and the unforced post-run
+    // fold ran NO compaction: no compaction frames at all, the armed
+    // pass survived, and the receipt-counting counter stayed clean.
+    final types = [
+      for (final line in frames)
+        (jsonDecode(line) as Map<String, dynamic>)['type'] as String,
+    ];
+    expect(types.where((t) => t.startsWith('compaction_')), isEmpty);
+    expect(cli.compactionPassesStartedForTest, 0);
+  });
 
   test('unknown session key on a clean root starts a fresh session', () async {
     // First run seeds one session in the root.
