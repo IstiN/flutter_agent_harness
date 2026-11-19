@@ -22,11 +22,24 @@ abstract interface class SessionEventSource {
 /// One batch of appended session content.
 final class AttachedSessionEvent {
   /// Creates the event.
-  const AttachedSessionEvent({required this.appended});
+  const AttachedSessionEvent({required this.appended, this.reanchored = false});
 
   /// The messages appended since the previous event, in order.
   final List<AttachedMessage> appended;
+
+  /// Whether this event follows a rewrite of the primary session file
+  /// under the watch — the tail re-anchored to the new content instead
+  /// of freezing (see [sessionReanchorNotice]).
+  final bool reanchored;
 }
+
+/// The recovery notice for a watch whose primary session file was
+/// rewritten under it — segment rotation (80 MB), hard-cap truncation
+/// (95 MB) and quarantine heal all shrink the file below the tail's
+/// line cursor. The watcher re-anchors on record identity; consumers
+/// surface this so a rewritten transcript is never silently frozen.
+const String sessionReanchorNotice =
+    'session file rotated/truncated — re-anchored viewer';
 
 /// One rendered transcript row of an attached session: enough for a
 /// client to render 1:1 what the owning process (the CLI) shows.
