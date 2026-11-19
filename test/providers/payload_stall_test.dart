@@ -139,6 +139,13 @@ void main() {
     });
   });
 
+  // Issue #2324 determinization: every late arrival in this group is
+  // event-driven (a reaction to the stall notice or to the retry send),
+  // never a blind `Future.delayed` racing the watchdog on wall-clock
+  // margins — under runner load those margins invert (the CI red was
+  // the answer winning the happy path, red'ing on the missing adoption
+  // notice). The real 20ms watchdog / 50ms backoff stay: only the
+  // ORDERING is pinned by construction now.
   group('late-answer adoption in the connect-stall retry loop (#1916 AC3)', () {
     final savedSleeper = transientRetrySleeper;
     final savedNotice = transientRetryNotice;
@@ -171,24 +178,30 @@ void main() {
     test('an abandoned attempt answering during the backoff is ADOPTED — '
         'the identical payload is never re-uploaded', () async {
       final notices = <String>[];
-      transientRetryNotice = (a, m, d, r) => notices.add(r);
-      // First send answers 10ms in — AFTER the 20ms watchdog? No: the
-      // watchdog fires at 20ms, the answer at 10ms would WIN the race
-      // normally. Script it so the answer lands at 30ms: after the
-      // watchdog (20ms) but inside the 50ms backoff gap.
-      final sent = <int>[];
-      final client = _ScriptedClient((count) {
-        sent.add(count);
-        if (count == 1) {
-          return Future<http.StreamedResponse>.delayed(
-            const Duration(milliseconds: 30),
-            () => http.StreamedResponse(
+      // Issue #2324: the old script fired the answer at a blind 30ms — a
+      // 10ms wall-clock margin over the 20ms watchdog that inverts under
+      // runner load (the answer took the happy path, nothing adopted,
+      // and this assertion red on the missing notice). The answer is now
+      // a REACTION to the stall notice: the watchdog abandons the attempt
+      // first BY CONSTRUCTION and the generation completes inside the
+      // adoption gap via microtasks — no wall-clock ordering to lose.
+      final lateAnswer = Completer<http.StreamedResponse>();
+      transientRetryNotice = (a, m, d, r) {
+        notices.add(r);
+        if (r.contains('connect stall: no response bytes')) {
+          lateAnswer.complete(
+            http.StreamedResponse(
               Stream.value(utf8.encode('')),
               200,
               headers: {'content-type': 'text/event-stream'},
             ),
           );
         }
+      };
+      final sent = <int>[];
+      final client = _ScriptedClient((count) {
+        sent.add(count);
+        if (count == 1) return lateAnswer.future;
         return Future.value(
           http.StreamedResponse(
             Stream.value(utf8.encode('')),
@@ -219,23 +232,26 @@ void main() {
     test('a late answer after the adoption window is still detached', () async {
       final notices = <String>[];
       transientRetryNotice = (a, m, d, r) => notices.add(r);
-      // First send answers at 100ms — the 50ms backoff is long over, the
-      // retry owns the send, so the late response detaches as before.
-      // onListen fires when the detach janitor subscribes — the signal
-      // that the janitor took the body over.
+      // Issue #2324: the old script fired the answer at a blind 100ms,
+      // racing the 20ms-watchdog + 50ms-backoff schedule that widens
+      // under load (a widened window ADOPTED the answer instead). The
+      // answer now completes exactly when the retry send goes out — the
+      // window is provably closed then (the sleeper won the race), so
+      // detachment is the only reachable outcome, on any clock.
       final detached = Completer<void>();
       final body = StreamController<List<int>>(onListen: detached.complete);
+      final lateAnswer = Completer<http.StreamedResponse>();
       final client = _ScriptedClient((count) {
-        if (count == 1) {
-          return Future<http.StreamedResponse>.delayed(
-            const Duration(milliseconds: 100),
-            () => http.StreamedResponse(
+        if (count == 2) {
+          lateAnswer.complete(
+            http.StreamedResponse(
               body.stream,
               200,
               headers: {'content-type': 'text/event-stream'},
             ),
           );
         }
+        if (count == 1) return lateAnswer.future;
         return Future.value(
           http.StreamedResponse(
             Stream.value(utf8.encode('')),
@@ -291,17 +307,23 @@ void main() {
     test('a late ERROR from an abandoned attempt is classified and '
         'detached — never the turn verdict (review r1 blocking)', () async {
       final notices = <String>[];
-      transientRetryNotice = (a, m, d, r) => notices.add(r);
-      // First attempt ERRORS 30ms in — after the 20ms watchdog (the
-      // attempt is already abandoned) but inside the 50ms backoff gap.
-      // Before the fix this error escaped the race as the call's verdict.
-      final client = _ScriptedClient((count) {
-        if (count == 1) {
-          return Future<http.StreamedResponse>.delayed(
-            const Duration(milliseconds: 30),
-            () => throw http.ClientException('socket closed mid-handshake'),
+      // Issue #2324: the old script fired the error at a blind 30ms (a
+      // 10ms margin over the watchdog; an inversion made the error the
+      // call's verdict). The error now completes as a REACTION to the
+      // stall notice — the race consumes it within microtasks of arming,
+      // the classified-and-detached path is the only reachable outcome,
+      // and the retry still re-sends.
+      final lateError = Completer<http.StreamedResponse>();
+      transientRetryNotice = (a, m, d, r) {
+        notices.add(r);
+        if (r.contains('connect stall: no response bytes')) {
+          lateError.completeError(
+            http.ClientException('socket closed mid-handshake'),
           );
         }
+      };
+      final client = _ScriptedClient((count) {
+        if (count == 1) return lateError.future;
         return Future.value(
           http.StreamedResponse(
             Stream.value(utf8.encode('')),
@@ -329,14 +351,22 @@ void main() {
     test('a late error AFTER the adoption window is announced by the '
         'janitor, not propagated', () async {
       final notices = <String>[];
-      transientRetryNotice = (a, m, d, r) => notices.add(r);
+      // Issue #2324: the error used to fire at a blind 100ms and the test
+      // then waited a wall-clock 80ms for the janitor. The error now
+      // completes exactly when the retry send goes out (the window is
+      // provably closed), and the 80ms wait becomes an await on the
+      // announcement itself.
+      final announced = Completer<void>();
+      final lateError = Completer<http.StreamedResponse>();
+      transientRetryNotice = (a, m, d, r) {
+        notices.add(r);
+        if (r.contains('failed late')) announced.complete();
+      };
       final client = _ScriptedClient((count) {
-        if (count == 1) {
-          return Future<http.StreamedResponse>.delayed(
-            const Duration(milliseconds: 100),
-            () => throw http.ClientException('late transport death'),
-          );
+        if (count == 2) {
+          lateError.completeError(http.ClientException('late transport death'));
         }
+        if (count == 1) return lateError.future;
         return Future.value(
           http.StreamedResponse(
             Stream.value(utf8.encode('')),
@@ -348,7 +378,7 @@ void main() {
 
       final response = await sendWatchedProviderRequest(client, post(), null);
       expect(response.statusCode, 200);
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await announced.future;
       expect(
         notices.where(
           (n) =>
