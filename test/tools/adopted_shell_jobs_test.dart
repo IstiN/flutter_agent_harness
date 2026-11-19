@@ -25,6 +25,9 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   final MemoryExecutionEnv _delegate = MemoryExecutionEnv(cwd: '/w');
 
   @override
+  String get cwd => _delegate.cwd;
+
+  @override
   bool get backgroundJobsSupported => true;
 
   @override
@@ -34,6 +37,16 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   }) async => Err(ExecutionError(ExecutionErrorCode.shellUnavailable, 'fake'));
+
+  Result<ShellExecResult, ExecutionError>? execResult;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async =>
+      execResult ??
+      Err(ExecutionError(ExecutionErrorCode.shellUnavailable, 'fake'));
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -192,6 +205,46 @@ void main() async {
           ShellSurvivor(pid: 7, startTag: 'S'),
         ], notify: false);
         expect(adoptCalls, 0);
+      },
+    );
+
+    test(
+      'foreground timeout error survivors are adopted before the throw',
+      () async {
+        final env = _FakeBackgroundEnv();
+        env.execResult = Err(
+          ExecutionError(
+            ExecutionErrorCode.timeout,
+            'timeout: 0:00:01.000000',
+            survivors: const [
+              ShellSurvivor(pid: 42, startTag: 'S1', command: 'sleep 300'),
+            ],
+          ),
+        );
+        final registry = ShellJobRegistry(
+          env: env,
+          livenessTableOverride: () async => null,
+          stopAdoptedOverride: (_) async => const [],
+        );
+        final tool = shellTool(
+          env,
+          jobs: registry,
+          autoBackgroundAfter: Duration.zero,
+        );
+
+        Object? failure;
+        try {
+          await tool.execute({'command': 'make'}, null, null);
+        } on Object catch (error) {
+          failure = error;
+        }
+        expect(failure, isA<StateError>());
+        expect(failure.toString(), contains('Command timed out'));
+        expect(failure.toString(), contains('adopted as tracked jobs'));
+        expect(registry.jobs, hasLength(1));
+        expect(registry.jobs.single.isAdopted, isTrue);
+        expect(registry.jobs.single.pid, 42);
+        await registry.jobs.single.stop();
       },
     );
 
