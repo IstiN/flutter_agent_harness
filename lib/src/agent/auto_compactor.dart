@@ -1496,6 +1496,9 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
           'checkpoint-escalation' => 'structured·ckpt-escalation',
           'hide-fallback' => 'structured·hide-fallback',
           'hide-lru' => 'structured·hide-lru',
+          // Issue #2274: the designed judge-latch skip rides its own
+          // label — a skip is not a hide and not a failure.
+          'skipped:judge-latch' => 'structured·skipped-judge-latch',
           _ => 'structured·hide',
         },
         ok: pass.ok,

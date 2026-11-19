@@ -286,6 +286,114 @@ void main() {
       );
     });
 
+    test('#2274 AC: the latched skip receipt is a DESIGNED skip — its own '
+        'kind, never a failed hide receipt', () async {
+      // Seed the latched health: judgeLatchAfter consecutive failures
+      // persisted as an additive record (AC1's setup), probe window far.
+      final (session, state) = await pairSession(6);
+      await session.appendCustomEntry(
+        customType: judgeHealthRecordType,
+        data: judgeHealthPayload(
+          consecutiveFailures: judgeLatchAfter,
+          target: 'role=smol, model=flash-1 @ gate.example.ai',
+        ),
+      );
+
+      var judgeCalls = 0;
+      final (hooks, ok) = await runCompact(
+        session,
+        state,
+        judge: (ledger, [token]) {
+          judgeCalls++;
+          return _deadJudge(ledger, token);
+        },
+        judgeProbeAfter: const Duration(hours: 1),
+      );
+      expect(ok, isTrue);
+      expect(judgeCalls, 0, reason: 'the latch skips the judge entirely');
+
+      // The skip receipt carries its own kind, so the host hooks can
+      // tell a designed skip from a failure.
+      final skips = hooks.passes
+          .where((p) => p.kind == 'skipped:judge-latch')
+          .toList();
+      expect(skips, hasLength(1));
+      expect(skips.single.judgeLatched, isTrue);
+      expect(
+        skips.single.error.toString(),
+        contains('judge latched: budget unwinnable'),
+      );
+      // The skip must not mark any HIDE pass failed for a designed skip:
+      // the only hide-kind receipt of the run is the successful
+      // deterministic hide (other !ok receipts — e.g. the checkpoint
+      // summarizer — are separate machinery, not the skip).
+      expect(hooks.passes.where((p) => p.kind == 'hide' && !p.ok), isEmpty);
+      expect(
+        hooks.passes.where((p) => p.kind == 'hide-fallback' && p.ok),
+        isNotEmpty,
+      );
+    });
+
+    test('#2274 border: a latched run whose deterministic hide ALSO fails '
+        'keeps its real failed receipt', () async {
+      // One pair sized like the fallback suite's E1 fixture (~3k tok
+      // result): window 5000 → trigger 3000 < ~3100 estimated — real
+      // pressure; protectLastN 1 → the only hideable group straddles the
+      // protected tail, so the deterministic hide has nothing it may
+      // hide (E1).
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('fix the login crash'));
+      await session.appendMessage(
+        _assistant(
+          'probe',
+          calls: [ToolCall(id: 'c1', name: 'read', arguments: {})],
+        ),
+      );
+      await session.appendMessage(_result('c1', 'read', 'x' * 12000));
+      await session.appendCustomEntry(
+        customType: judgeHealthRecordType,
+        data: judgeHealthPayload(
+          consecutiveFailures: judgeLatchAfter,
+          target: 'role=smol, model=flash-1 @ gate.example.ai',
+        ),
+      );
+      final state = stateFor(await session.buildContextMessages());
+      final hooks = _Hooks();
+      await StructuredCompactor(
+        session: session,
+        state: state,
+        window: 5000,
+        settings: _settings,
+        judge: _deadJudge,
+        summarize: (request) async => SummarizationResult.failure('no ckpt'),
+        checkpointPrompt: 'P',
+        hooks: hooks,
+        protectLastN: 1,
+        attemptBudget: const Duration(milliseconds: 150),
+        judgeProbeAfter: const Duration(hours: 1),
+        judgeTarget: 'role=smol, model=flash-1 @ gate.example.ai',
+      ).run();
+
+      // The skip receipt still names the designed skip...
+      expect(
+        hooks.passes.where((p) => p.kind == 'skipped:judge-latch'),
+        hasLength(1),
+      );
+      // ...but the stuck deterministic hide is a REAL failure — it must
+      // keep rendering as a FAILED pass.
+      final stuck = hooks.passes
+          .where(
+            (p) =>
+                p.kind == 'hide' &&
+                !p.ok &&
+                p.error.toString().contains('deterministic'),
+          )
+          .toList();
+      expect(stuck, hasLength(1));
+    });
+
     test('gh-2096 AC: a due probe unlatches on success — its answer '
         'drives the hide, the unlatch persists', () async {
       final (session, state) = await pairSession(6);
@@ -738,6 +846,13 @@ void main() {
         hooks.passes.any((p) => p.judgeLatched),
         isTrue,
         reason: 'the latched skip is visible to the host',
+      );
+      expect(
+        hooks.passes.firstWhere((p) => p.judgeLatched).fallback,
+        'structured·skipped-judge-latch',
+        reason:
+            'the designed skip rides a distinguishable kind to the '
+            'host (#2274)',
       );
       expect(receivedTokens, isEmpty, reason: 'no judge call while latched');
     });

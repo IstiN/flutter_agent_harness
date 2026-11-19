@@ -76,7 +76,8 @@ final class StructuredCompactionPass {
     this.usage,
   });
 
-  /// `'hide'` or `'checkpoint'`.
+  /// `'hide'`, `'hide-fallback'`, `'hide-lru'`, `'checkpoint'`,
+  /// `'checkpoint-escalation'`, or `'skipped:judge-latch'`.
   final String kind;
 
   /// 1-based pass number within the run.
@@ -893,10 +894,13 @@ final class StructuredCompactor {
   /// gh-2096: the latched skip — the judge contributes nothing this run.
   /// The receipt names the consequence explicitly ("budget unwinnable
   /// for the configured class"), then the deterministic hide decides.
+  /// Issue #2274: the kind is distinguishable (`skipped:judge-latch`) —
+  /// a DESIGNED skip is not a failure, so the host hooks render it as a
+  /// non-failure line instead of a FAILED one.
   Future<bool> _latchedSkipHide(int trigger, int before) async {
     hooks?.onPass(
       StructuredCompactionPass(
-        kind: 'hide',
+        kind: 'skipped:judge-latch',
         pass: ++_pass,
         tokensBefore: before,
         tokensAfter: before,
