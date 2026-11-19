@@ -807,6 +807,12 @@ final class CellRenderer implements TeaRenderer {
     if (rows < 2 || rows != next.length || rows != _maxRows) {
       return (k: null, repaint: const [], edgeViolation: false);
     }
+    final unstableNext = [
+      for (var i = 0; i < rows; i++) _hasUnstableLayout(next[i]),
+    ];
+    final unstablePrev = [
+      for (var i = 0; i < rows; i++) _hasUnstableLayout(prev[i]),
+    ];
     const maxK = 40;
     ({int k, bool up, List<int> mismatches})? sole;
     var eligible = 0;
@@ -819,8 +825,8 @@ final class CellRenderer implements TeaRenderer {
         if (up) {
           for (var i = 0; i < rows - k; i++) {
             if (_rowsEqual(next[i], prev[i + k]) &&
-                !_hasUnstableLayout(next[i]) &&
-                !_hasUnstableLayout(prev[i + k])) {
+                !unstableNext[i] &&
+                !unstablePrev[i + k]) {
               trusted++;
             } else {
               mismatches.add(i);
@@ -829,8 +835,8 @@ final class CellRenderer implements TeaRenderer {
         } else {
           for (var i = k; i < rows; i++) {
             if (_rowsEqual(next[i], prev[i - k]) &&
-                !_hasUnstableLayout(next[i]) &&
-                !_hasUnstableLayout(prev[i - k])) {
+                !unstableNext[i] &&
+                !unstablePrev[i - k]) {
               trusted++;
             } else {
               mismatches.add(i);
@@ -839,6 +845,9 @@ final class CellRenderer implements TeaRenderer {
         }
         final overlap = rows - k;
         final budget = overlap > 16 ? overlap ~/ 8 : 2;
+        // One coincidental blank/border-equal row is not proof of a scroll:
+        // at k=rows-1 it would eject the whole screen on a full redraw.
+        if (trusted < 2) continue;
         // Cheapness gates: degenerate k (tiny overlap, all noise) or too
         // much noise means the plain diff writes fewer bytes anyway.
         if (mismatches.length > budget) continue;

@@ -37,6 +37,30 @@ void main() {
   }
 
   group('AC1: ambiguous shifts never emit a scroll op (#2311)', () {
+    test('one coincidental overlap row cannot prove a full redraw scrolled',
+        () {
+      // Exact review repro: only next[0] == prev[11] (both blank) matches
+      // for k=11. That single coincidence must not eject r0..r10 into the
+      // terminal scrollback when every other row is a distinct redraw.
+      final prev = [
+        ...[for (var i = 0; i <= 10; i++) 'r$i'],
+        ''
+      ].join('\n');
+      final next = ['', for (var i = 1; i <= 11; i++) 'n$i'].join('\n');
+      final buf = StringBuffer();
+      final renderer = rendererWith(buf, altScreen: false);
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      final out = buf.toString();
+      expect(hasScrollOp(out), isFalse,
+          reason: 'k=11 has only one blank-row coincidence: no scroll op');
+      expect(out, contains('n11'));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '');
+    });
+
     test('periodic transcript: >=2 viable k => plain diff, converged frame',
         () {
       // 12 rows, content period 3 (4x 'e', 4x 'f', 4x 'g' — the repeated
@@ -244,6 +268,29 @@ void main() {
   });
 
   group('AC5 REG: true scrolls keep the cheap op (#2311)', () {
+    test('near-full-height scroll with two trusted overlap rows keeps SU', () {
+      // k=10 in a 12-row grid leaves two byte-exact, stable overlap rows.
+      // Requiring a second trusted row must not disable this large scroll.
+      final prev = [for (var i = 0; i < 12; i++) 'r$i'].join('\n');
+      final next = [
+        'r10',
+        'r11',
+        for (var i = 2; i < 12; i++) 'n$i',
+      ].join('\n');
+      final buf = StringBuffer();
+      final renderer = rendererWith(buf, altScreen: false);
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      final out = buf.toString();
+      expect(out, startsWith('\x1b[10S'));
+      expect(RegExp(r'\x1b\[\d+;1H').allMatches(out).length, 10);
+      expect(out, contains('n11'));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '');
+    });
+
     for (final altScreen in [false, true]) {
       test(
           'non-repetitive scroll-by-1 emits SU + fresh row '
