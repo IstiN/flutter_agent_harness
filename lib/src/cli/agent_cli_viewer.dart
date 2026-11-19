@@ -261,9 +261,13 @@ extension AgentCliLease on AgentCli {
 
   /// Tail rows: the first event is the pre-open backlog (printed dimmed,
   /// capped — the transcript already lives in the session file); every
-  /// later event is live content from the driving host.
-  void _onViewerRows(AttachedSessionEvent event) =>
-      _renderViewerRows(_viewer, event.appended);
+  /// later event is live content from the driving host. A re-anchor
+  /// (the primary was rewritten under the watch) prints the recovery
+  /// notice before the fresh rows.
+  void _onViewerRows(AttachedSessionEvent event) {
+    if (event.reanchored) io.writeln(tuiWarning(sessionReanchorNotice));
+    _renderViewerRows(_viewer, event.appended);
+  }
 
   void _renderViewerRows(
     _ViewerAttachment? viewer,
