@@ -643,6 +643,43 @@ void main() {
     await run;
   });
 
+  test('#2256: the viewer surfaces the re-anchor when the primary is '
+      'rewritten under the watch, then keeps streaming', () async {
+    final meta = await namedSession('reanchor');
+    final owner = await repo.open(meta);
+    await owner.appendMessage(UserMessage.text('pre-rewrite row'));
+    await seedLiveLease(meta.path);
+    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'reanchor');
+    final run = cli.run();
+    await waitForIt(
+      () => out().contains('you are viewing'),
+      reason: 'viewer boot',
+    );
+    await waitForIt(
+      () => out().contains('pre-rewrite row'),
+      reason: 'the backlog tail',
+    );
+
+    // Rotation: the primary is renamed away and a fresh one seeded with
+    // ONLY the header — the watcher must re-anchor, print the recovery
+    // notice, and stream the post-rewrite rows (today it freezes over
+    // the dead cursor forever).
+    final lines = await env.readTextLines(meta.path);
+    await env.writeFile(meta.path, '${lines.valueOrNull!.first}\n');
+    await owner.appendMessage(UserMessage.text('post-rewrite row'));
+    await waitForIt(
+      () => out().contains(sessionReanchorNotice),
+      reason: 'the re-anchor recovery notice',
+    );
+    await waitForIt(
+      () => out().contains('post-rewrite row'),
+      reason: 'streaming resumed after the re-anchor',
+    );
+
+    io.sendLine('/exit');
+    await run;
+  });
+
   test('heartbeat: losing the lease mid-run demotes this CLI to a viewer '
       'of the new owner', () async {
     final meta = await namedSession('stolen');

@@ -10,8 +10,14 @@ import 'package:flutter_test/flutter_test.dart';
 class _FakeEventSource implements SessionEventSource {
   final _controllers = <String, StreamController<AttachedSessionEvent>>{};
 
-  void emit(String sessionId, List<AttachedMessage> appended) {
-    _controllers[sessionId]?.add(AttachedSessionEvent(appended: appended));
+  void emit(
+    String sessionId,
+    List<AttachedMessage> appended, {
+    bool reanchored = false,
+  }) {
+    _controllers[sessionId]?.add(
+      AttachedSessionEvent(appended: appended, reanchored: reanchored),
+    );
   }
 
   @override
@@ -111,6 +117,40 @@ void main() {
       // A later success clears the error again.
       await events.dispose();
       controller.dispose();
+    },
+  );
+
+  test(
+    'a re-anchor event surfaces the recovery notice without dropping rows',
+    () async {
+      final events = _FakeEventSource();
+      final controller = AttachedSessionController(
+        sessionId: 'sess-1',
+        title: 'Work session',
+        transport: SessionAttachTransport(
+          events: events,
+          input: _FakeInputChannel(),
+        ),
+      );
+
+      // The primary was rewritten under the watch (rotation / hard cap /
+      // quarantine heal): the notice lands and fresh rows still append.
+      expect(controller.reanchorNotice, isNull);
+      events.emit('sess-1', [
+        const AttachedMessage(role: AttachedMessageRole.user, text: 'new'),
+      ], reanchored: true);
+      await pumpEventQueue();
+      expect(controller.reanchorNotice, sessionReanchorNotice);
+      expect(controller.rows.single.text, 'new');
+
+      // A plain event afterwards does not clear it — the notice
+      // describes the last transition.
+      events.emit('sess-1', []);
+      await pumpEventQueue();
+      expect(controller.reanchorNotice, sessionReanchorNotice);
+
+      controller.dispose();
+      await events.dispose();
     },
   );
 
