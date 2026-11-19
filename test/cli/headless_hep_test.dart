@@ -365,6 +365,56 @@ void main() {
     expect(ends.single['tokens_freed'] as int, greaterThanOrEqualTo(0));
   });
 
+  test('zero-pass structured run closes its bracket without counting a run '
+      'as a pass (issue #2273)', () async {
+    // Drive the real pre-flight gate with an over-trigger transcript, then
+    // shrink the live state between that gate and the engine's own estimate.
+    // This is the documented gate/engine divergence window, not a synthetic
+    // hook call: compaction_start has opened the HEP bracket, but the
+    // structured engine now sees an under-trigger transcript and returns
+    // without a pass or provider call.
+    final fake = FakeStreamFunction([textTurn('healthy answer')]);
+    final cli = cliFor(fake.call, model: _tinyWindow);
+    io.eventsMode = true;
+    final frames = <String>[];
+    var compactionStarts = 0;
+    void emit(String line) {
+      frames.add(line);
+      final frame = jsonDecode(line) as Map<String, dynamic>;
+      switch (frame['type']) {
+        case 'hep_header':
+          // The header fires after session initialization and before the
+          // pre-flight gate. ~5000 transcript tokens plus overhead crosses
+          // the 16384-token model's 12288-token compaction trigger.
+          cli.agent.state.messages = [UserMessage.text('a' * 20000)];
+        case 'compaction_start':
+          compactionStarts++;
+          // The gate has committed to a run; the engine re-estimates after
+          // this mutation and takes its genuine zero-pass terminal path.
+          cli.agent.state.messages = [UserMessage.text('tiny')];
+      }
+    }
+
+    final hep = HepWriter(emit: emit, fahVersion: 'test');
+    expect(await cli.runHeadless('q', hep: hep), 0);
+
+    expect(compactionStarts, 1);
+    expect(
+      fake.calls,
+      1,
+      reason: 'only the user turn reached the provider; compaction ran no pass',
+    );
+    final compactionFrames = [
+      for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+    ].where((f) => (f['type'] as String).startsWith('compaction_')).toList();
+    expect(compactionFrames.map((f) => f['type']), [
+      'compaction_start',
+      'compaction_end',
+    ]);
+    expect(compactionFrames.last['tokens_freed'], 0);
+    expect(cli.compactionPassesStartedForTest, 0);
+  });
+
   test('cap-unknown refusal post-run fold opens no compaction bracket '
       '(gh-2259 REG; issue #2273 counter)', () async {
     // The cap-unknown E1 channel (gh-1680): the turn's refusal arms the
@@ -373,10 +423,9 @@ void main() {
     // the unforced fold no longer consumes the armed pass (it survives
     // for the next forced pre-flight) — so the fold must not open a
     // compaction bracket at all: no frames, and the receipt-counting
-    // pass counter (issue #2273) stays at zero. If the unforced consume
-    // ever returns, the fold fires a zero-pass run again — the #2273
-    // bracket fix keeps its frames balanced (start/end 1/1, freed 0),
-    // and the frame/counter assertions below catch the regression.
+    // pass counter (issue #2273) stays at zero. This is deliberately a
+    // NO-RUN pin after gh-2259; the zero-pass engine/HEP contract has its
+    // own direct test above, which also goes RED when #2273 is reverted.
     final tempHome = Directory.systemTemp.createTempSync('fa_hep_2273_');
     addTearDown(() => tempHome.deleteSync(recursive: true));
     final capEnv = MemoryExecutionEnv(cwd: '/work');
