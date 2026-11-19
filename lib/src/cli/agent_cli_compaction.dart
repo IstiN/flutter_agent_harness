@@ -441,7 +441,21 @@ extension AgentCliCompactionRun on AgentCli {
     final e1PassPending =
         forceE1Pass &&
         _modelCaps.isPremptivePassPending(model.provider, model.id);
-    final overCap = _messageCapGateReached();
+    // gh-2259: the CONSUMING gate is legal only where the armed pass
+    // will actually EXECUTE — a forced run (the pre-flight,
+    // `forceE1Pass`). The post-run and over-window folds run unforced:
+    // the gate's one-shot take consumed an armed pass there, the
+    // unforced run executed zero passes (the engine short-circuits under
+    // the token trigger), and the next request re-learned the refusal
+    // the hard way. Unforced folds consult the LEARNED-CAP dimension
+    // only — the armed pass stays armed for the next pre-flight, which
+    // consumes it with `force: true` (the gh-1729 peek discipline).
+    final overCap = e1PassPending
+        ? _messageCapGateReached()
+        : messageCapTriggerReached(
+            _agent.state.messages.length,
+            _modelCaps.learnedCapFor(model),
+          );
     if (!shouldCompact(
           tokens,
           _effectiveContextWindow,
@@ -484,12 +498,13 @@ extension AgentCliCompactionRun on AgentCli {
     return after <= _effectiveContextWindow && !overCap;
   }
 
-  /// The gh-1680 message-count gate shared by the loop and boot-cap
-  /// passes: the known-cap pre-emptive trigger, or the one-shot E1 pass a
-  /// cap-unknown refusal armed (consumed here so it fires exactly once
-  /// per refusal). CONSUMING — call only from a path that runs a
-  /// compaction when it returns true ([_maybeAutoCompact]); the boot-cap
-  /// decision uses the peeking [_messageCapGatePending] instead.
+  /// The gh-1680 message-count gate: the known-cap pre-emptive trigger,
+  /// or the one-shot E1 pass a cap-unknown refusal armed (consumed here
+  /// so it fires exactly once per refusal). CONSUMING — gh-2259: call
+  /// ONLY from a path that runs a FORCED compaction when it returns true
+  /// (the `e1PassPending` branch of [_maybeAutoCompact]). Unforced
+  /// post-run/funnel folds execute zero passes and must not touch the
+  /// pass; the boot-cap decision peeks with [_messageCapGatePending].
   bool _messageCapGateReached() {
     final model = _agent.state.model;
     return messageCapTriggerReached(
