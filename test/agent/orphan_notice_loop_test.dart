@@ -248,4 +248,136 @@ void main() {
       },
     );
   });
+
+  group(
+    'gh-2270: a refused or never-streamed request cannot consume the one-shot',
+    () {
+      test('AC1: an over-window refusal leaves the latch empty; the next '
+          'delivered request still carries the note', () async {
+        final tinyWindow = const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 100,
+          maxTokens: 4096,
+        );
+        final latch = <String>{};
+        final key = orphanReportKey(_orphanContext()[1] as ToolResultMessage);
+
+        // R1: the orphan rides a payload far over the 100-token window; no
+        // relief configured — the guard terminal-refuses BEFORE any
+        // provider call. The one-shot must survive the refusal.
+        final refused = _FakeStream();
+        final stream1 = agentLoop(
+          prompts: [UserMessage.text('x' * 800)],
+          context: Context(messages: _orphanContext()),
+          config: AgentLoopConfig(model: tinyWindow, reportedOrphanKeys: latch),
+          streamFunction: refused.call,
+          toolExecutor: _noTools,
+        );
+        final events1 = await stream1.toList();
+        final messages1 = await stream1.result as List<dynamic>;
+        expect(refused.contexts, isEmpty, reason: 'the guard refused pre-wire');
+        final assistant1 = messages1.whereType<AssistantMessage>().single;
+        expect(assistant1.errorMessage, contains(contextWindowExhaustedMarker));
+        // Nothing was reported: no latch consumption, no host-persist
+        // trigger (hosts persist the orphan_report batch from the event).
+        expect(latch, isEmpty);
+        expect(events1.whereType<ToolPairingRepairEvent>(), isEmpty);
+
+        // R2: the same session story (nothing was persisted), now within
+        // the window — the disclosure STILL rides the outbound payload.
+        final delivered = _FakeStream();
+        final stream2 = agentLoop(
+          prompts: [UserMessage.text('continue')],
+          context: Context(messages: _orphanContext()),
+          config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+          streamFunction: delivered.call,
+          toolExecutor: _noTools,
+        );
+        final events2 = await stream2.toList();
+        expect(delivered.contexts, hasLength(1));
+        expect(_noteCount(delivered.contexts.single), 1);
+        expect(latch, {key});
+        expect(events2.whereType<ToolPairingRepairEvent>(), hasLength(1));
+      });
+
+      test(
+        'AC2: a pre-wire provider throw does not consume the latch',
+        () async {
+          final latch = <String>{};
+          final key = orphanReportKey(_orphanContext()[1] as ToolResultMessage);
+          AssistantMessageEventStream throwing(
+            Model model,
+            Context context, {
+            CancelToken? cancelToken,
+          }) {
+            throw StateError('connection refused before any byte');
+          }
+
+          final stream1 = agentLoop(
+            prompts: [UserMessage.text('go')],
+            context: Context(messages: _orphanContext()),
+            config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+            streamFunction: throwing,
+            toolExecutor: _noTools,
+          );
+          final messages1 = await stream1.result as List<dynamic>;
+          final assistant1 = messages1.whereType<AssistantMessage>().single;
+          expect(assistant1.stopReason, StopReason.error);
+          expect(
+            latch,
+            isEmpty,
+            reason: 'nothing streamed — the one-shot stands',
+          );
+
+          // The next request still discloses.
+          final delivered = _FakeStream();
+          final stream2 = agentLoop(
+            prompts: [UserMessage.text('continue')],
+            context: Context(messages: _orphanContext()),
+            config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+            streamFunction: delivered.call,
+            toolExecutor: _noTools,
+          );
+          await stream2.result as List<dynamic>;
+          expect(_noteCount(delivered.contexts.single), 1);
+          expect(latch, {key});
+        },
+      );
+
+      test('border: a stream that STARTED (first byte) keeps the latch even '
+          'when the turn dies mid-stream', () async {
+        final latch = <String>{};
+        AssistantMessageEventStream diesAfterFirstByte(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: _assistant('partial…')));
+          stream.end(); // closes with no terminal event — provider bug.
+          return stream;
+        }
+
+        final stream1 = agentLoop(
+          prompts: [UserMessage.text('go')],
+          context: Context(messages: _orphanContext()),
+          config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+          streamFunction: diesAfterFirstByte,
+          toolExecutor: _noTools,
+        );
+        final messages1 = await stream1.result as List<dynamic>;
+        expect(
+          (messages1.last as AssistantMessage).stopReason,
+          StopReason.error,
+        );
+        // The model saw the note — the latch stands (first-byte rule).
+        expect(latch, {
+          orphanReportKey(_orphanContext()[1] as ToolResultMessage),
+        });
+      });
+    },
+  );
 }

@@ -2,7 +2,8 @@
 /// message-cap heal (learn the cap from the provider's refusal, compact +
 /// coalesce, retry once) and the issue #85 pairing heal's detection
 /// helper plus the [ToolPairingRepairEvent] it emits. Also hosts the
-/// loop's per-attempt body ([_streamAttempt]) and the retry/terminal
+/// loop's per-attempt body ([_streamAttempt]), its response-stream
+/// consumer ([_consumeResponseStream]), and the retry/terminal
 /// verdict types both heals resolve to ([_AttemptResult]) — splitting
 /// the attempt body out of `_streamAssistantResponse` keeps every unit
 /// under the CRAP ceiling, and this file keeps `agent_loop.dart` under
@@ -405,11 +406,9 @@ Future<_AttemptResult> _streamAttempt(
       ),
     );
   }
-  // Pairing repairs are always surfaced (issue #85): hosts see exactly
-  // what was dropped/synthesized/renamed before the request went out.
-  if (repairReport.isNotEmpty) {
-    await emit(ToolPairingRepairEvent(report: repairReport));
-  }
+  // Pairing repairs are surfaced at DELIVERY (gh-2270): the report rides
+  // the first stream event below, so a refused or never-streamed build
+  // neither emits the audit event nor consumes the one-shot orphan latch.
 
   // Mid-turn over-window guard (issue #387): tool outputs can balloon one
   // turn far past the model window. The cheap window check runs
@@ -462,11 +461,25 @@ Future<_AttemptResult> _streamAttempt(
     );
   }
 
+  // gh-2270: the repair report and the orphan-note latch fire at DELIVERY —
+  // the first stream event, not the compose (issue #85 surfacing + gh-1449
+  // one-shot). The over-window refusal above and a pre-wire provider throw
+  // both land before this callback, so a refused or never-streamed request
+  // cannot consume the one-shot disclosure: the next build re-repairs and
+  // the note still rides. Hosts persist the orphan_report batch from the
+  // same delivery-gated event. A stream that started and died mid-way IS
+  // delivered — the model saw the note, the latch stands (first-byte rule).
   final streamed = await _consumeResponseStream(
     response,
     context,
     emit,
-    progress,
+    progress: progress,
+    onDelivered: repairReport.isNotEmpty
+        ? () async {
+            await emit(ToolPairingRepairEvent(report: repairReport));
+            config.reportedOrphanKeys?.addAll(repairReport.notedOrphanKeys);
+          }
+        : null,
   );
   final finished = streamed.finished;
   if (finished != null) {
@@ -496,6 +509,79 @@ Future<_AttemptResult> _streamAttempt(
     ),
     context,
   ));
+}
+
+/// Consumes the provider [response] stream, emitting message lifecycle
+/// events and keeping the partial message in [context.messages] up to date
+/// (partial-first). On a terminal event the finished message is returned in
+/// `finished`; when the stream closes without one, `finished` is `null` and
+/// `partial`/`addedPartial` describe the last partial snapshot.
+///
+/// [onDelivered] fires exactly once, just before the FIRST stream event is
+/// processed — the first-byte boundary (gh-2270): one-shot payloads riding
+/// the request (the orphan drop note) count as delivered here, never at
+/// compose time. A stream that yields no event at all (pre-delivery
+/// cancellation, empty stream) never fires it. Lives beside the attempt
+/// body that calls it (and keeps `agent_loop.dart` under the 2800-line
+/// gate).
+Future<
+  ({AssistantMessage? finished, AssistantMessage? partial, bool addedPartial})
+>
+_consumeResponseStream(
+  AssistantMessageEventStream response,
+  Context context,
+  AgentEventSink emit, {
+  _StreamProgress? progress,
+  Future<void> Function()? onDelivered,
+}) async {
+  AssistantMessage? partialMessage;
+  var addedPartial = false;
+  var delivered = false;
+  // Ids are stamped as they STREAM, not just at finalization: every
+  // host-visible partial snapshot must carry the ids the finalized message
+  // will — a rename that lands only on MessageEnd leaves the host's
+  // partial snapshots correlating by an id that no longer exists (issue #85).
+  final used = _transcriptToolCallIds(
+    context.messages,
+    context.messages.length,
+  );
+
+  await for (final event in response) {
+    if (!delivered) {
+      delivered = true;
+      await onDelivered?.call();
+    }
+    // Issue #1923: every stream event is progress — the steering-interrupt
+    // watch reads this to tell a productive stream (never cancelled) from
+    // an unproductive one (zero bytes, or silent past the stall window).
+    progress?.mark();
+    switch (event) {
+      case StartEvent(:final partial):
+        partialMessage = _stampAgainstUsed(partial, used);
+        context.messages.add(partialMessage);
+        addedPartial = true;
+        await emit(MessageStartEvent(partialMessage));
+      case DoneEvent() || ErrorEvent():
+        return (
+          finished: await _finishStreamed(context, emit, addedPartial, event),
+          partial: partialMessage,
+          addedPartial: addedPartial,
+        );
+      default:
+        if (partialMessage != null) {
+          partialMessage = _stampAgainstUsed(event.partial, used);
+          context.messages[context.messages.length - 1] = partialMessage;
+          await emit(
+            MessageUpdateEvent(
+              message: partialMessage,
+              assistantMessageEvent: event,
+            ),
+          );
+        }
+    }
+  }
+
+  return (finished: null, partial: partialMessage, addedPartial: addedPartial);
 }
 
 /// gh-1680: applies the armed cap coalesce to the request payload, when a
