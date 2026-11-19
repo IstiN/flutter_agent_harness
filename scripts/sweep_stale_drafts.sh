@@ -18,7 +18,16 @@
 #     deletion is safe (issue #282 E2). The git tag is never touched;
 #   - stale HUMAN drafts are listed in the summary, never deleted (E1);
 #   - fresh drafts (<24h) are counted, never touched — an in-flight run
-#     may legitimately own them;
+#     may legitimately own them. EXCEPTION (gh-2318): a fresh draft with a
+#     well-formed release-draft-owner marker is RECLAIMED immediately when
+#     its owner run completed, no ci.yml push train on the tag is still
+#     queued/in-flight, and the tag's newest concluded ci.yml push train
+#     failed with release-provenance SKIPPED (the publish point is
+#     unreachable — rerun --failed cannot resurrect skipped jobs, so
+#     nobody will ever publish it; the same criterion as ci.yml's gh-2230
+#     train-draft-guard, which only sees drafts visible at train end).
+#     A rerunnable (FAILED) provenance keeps the draft as the rerun
+#     --failed recovery vessel (gh-1899) until it goes stale below;
 #   - files ONE deduplicated, self-closing issue (label release-hygiene)
 #     whenever anything stale was found — a comment on the open issue
 #     instead of a duplicate, auto-closed again once a sweep comes up
@@ -43,6 +52,57 @@ assignee="${DAILY_PUBLISH_ASSIGNEE:-ai-teammate}"
 title="[daily-publish] stale release drafts swept"
 daily_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/${GITHUB_RUN_ID:-manual}"
 
+# ── failed-train diagnosis (gh-2105 + gh-2318) ──────────────────────────────
+# The staged draft's publish owner is the TAG TRAIN (ci.yml's push run on
+# the tag ref — release-provenance is the sole publish point, gh-1801).
+# Diagnose <tag>'s newest CONCLUDED failed ci.yml push train; prints one
+# TSV row:
+#
+#   train_id <TAB> conclusion <TAB> url <TAB> failed_jobs <TAB> prov_conclusion <TAB> in_flight
+#
+# `failed_jobs` names the train's failure-concluded jobs (the gh-2105 issue
+# prose). `prov_conclusion` is the release-provenance job's OWN conclusion —
+# "skipped" means the publish point is UNREACHABLE (`rerun --failed` never
+# resurrects skipped jobs — the gh-2230 train-guard criterion), "failure"
+# means it is rerunnable (the staged draft is the `rerun --failed` recovery
+# vessel, gh-1899 — the stale 24h sweep reclaims it if the train is never
+# recovered). `in_flight` is "in_flight" when ANY fetched ci.yml push run
+# on the tag has a null conclusion (queued or in progress), "none" when all
+# have concluded, and "unknown" if that check fails; the fresh-draft reclaim
+# keeps unless it is explicitly "none", because a live train may still
+# publish even when an older train failed. The publish-point job is matched
+# by its ci.yml `name:` —
+# "Sign release checksums" (pinned by test/release_stale_draft_reclaim_test.dart,
+# gh-2318 group; update both together). Empty output = no failed train /
+# lookup failed; every consumer degrades fail-safe (keep), and nothing
+# here may gate the stale >24h delete (the diagnosis is never a
+# precondition — gh-2105).
+train_diagnosis() {
+  local tag="$1" train_json failed_train train_id jobs_json in_flight
+  train_json=$(gh run list --repo "$repo" --workflow ci.yml \
+    --branch "$tag" --event push --limit 5 \
+    --json databaseId,conclusion,url 2>/dev/null || echo "[]")
+  in_flight=$(printf '%s' "$train_json" | jq -r '
+    if any(.[]; .conclusion == null) then "in_flight" else "none" end
+  ' 2>/dev/null || echo "unknown")
+  failed_train=$(printf '%s' "$train_json" | jq -cr '
+    ([.[] | select(.conclusion != "success" and .conclusion != null)][0]
+      | if . == null then empty else
+          {c: .conclusion, u: (.url // ""), i: .databaseId}
+        end)' 2>/dev/null || echo "")
+  [ -n "$failed_train" ] || return 0
+  train_id=$(printf '%s' "$failed_train" | jq -r '.i // ""' 2>/dev/null || echo "")
+  jobs_json=$(gh run view "$train_id" --repo "$repo" --json jobs 2>/dev/null || echo "")
+  printf '%s\t%s\t%s\t%s\t%s\t%s' \
+    "$train_id" \
+    "$(printf '%s' "$failed_train" | jq -r '.c // "unknown"' 2>/dev/null || echo "unknown")" \
+    "$(printf '%s' "$failed_train" | jq -r '.u // ""' 2>/dev/null || echo "")" \
+    "$(printf '%s' "$jobs_json" | jq -r '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || echo "")" \
+    "$(printf '%s' "$jobs_json" | jq -r '([.jobs[] | select(.name == "Sign release checksums")][0].conclusion // "")' 2>/dev/null || echo "")" \
+    "$in_flight"
+}
+
+
 gh label create "$label" --repo "$repo" --color B60205 \
   --description "Auto-filed by the release-draft sweeper" >/dev/null 2>&1 || true
 
@@ -54,7 +114,10 @@ gh label create "$label" --repo "$repo" --color B60205 \
 #                    release-draft-owner: run/<id>/job/<job>
 #                    marker in the body) -> delete, name the marker run
 #   stale + human (no marker)          -> keep, list
-#   fresh                              -> untouched
+#   fresh                              -> untouched, EXCEPT the gh-2318
+#                    reclaim: a marked draft whose owner run completed and
+#                    whose tag's train failed with release-provenance
+#                    SKIPPED (publish point unreachable) is deleted NOW
 drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" --arg assignee "$assignee" '
   [ .[] | select(.draft == true)
     | { bucket: (
@@ -86,6 +149,12 @@ deleted=""
 deleted_tags=""
 deleted_count=0
 failed_trains=0
+# gh-2318: fresh (<24h) pipeline drafts reclaimed early — provably
+# never-publishable (completed owner, failed train with skipped
+# release-provenance). Tracked separately from the >24h sweep deletions.
+reclaimed=""
+reclaimed_tags=""
+reclaimed_count=0
 humans=""
 human_tags=""
 fresh_count=0
@@ -94,6 +163,51 @@ while IFS=$'\t' read -r bucket tag id created author marker_run; do
   [ -n "$bucket" ] || continue
   case "$bucket" in
     fresh)
+      # gh-2318: "fresh — untouched" is right while an in-flight run may
+      # own the draft, but a fresh draft can already be PROVABLY
+      # never-publishable: the v1.0.739 shape — a daily-child staging leg
+      # minted the tag (release_tag_mint.sh) and staged the draft, the
+      # freshly fired train failed upstream of release-provenance, and the
+      # gh-2230 train-draft-guard either ran before the draft existed (a
+      # long attach leg created it later) or kept it while its owner was
+      # still in-flight. Nothing re-examined such a draft with train
+      # knowledge, so it rotted the full 24h and re-filed the recurring
+      # sweep issue. Apply the train guard's EXACT criterion here —
+      # reclaim only a well-formed-marker draft whose owner run COMPLETED,
+      # whose tag has NO queued/in-flight ci.yml push train, and whose
+      # newest concluded ci.yml push train failed with release-provenance
+      # SKIPPED (rerun --failed cannot resurrect skipped jobs — nobody
+      # will ever publish it). Fail-safe keeps mirror the train guard:
+      # unmarked/human drafts (E1), an in-flight owner run (possibly
+      # mid-upload), ANY queued/in-flight tag train (it may still publish
+      # even when an older train failed), a rerunnable FAILED provenance
+      # (that draft stays the `rerun --failed` recovery vessel, gh-1899,
+      # until the stale sweep), any lookup failure (never delete blind),
+      # and untagged drafts (no train to diagnose).
+      if [ -n "$marker_run" ] && [ "$tag" != "(untagged)" ]; then
+        owner_status=$(gh run view "$marker_run" --repo "$repo" --json status 2>/dev/null \
+          | jq -r '.status // empty' 2>/dev/null || echo "")
+        if [ "$owner_status" = "completed" ]; then
+          diag=$(train_diagnosis "$tag")
+          train_url_found=$(printf '%s' "$diag" | cut -f3)
+          failed_jobs=$(printf '%s' "$diag" | cut -f4)
+          prov_conclusion=$(printf '%s' "$diag" | cut -f5)
+          train_conclusion=$(printf '%s' "$diag" | cut -f2)
+          train_in_flight=$(printf '%s' "$diag" | cut -f6)
+          if [ -n "$diag" ] && [ "$prov_conclusion" = "skipped" ] \
+            && [ "$train_in_flight" = "none" ]; then
+            gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
+            reclaimed_count=$((reclaimed_count + 1))
+            failed_trains=$((failed_trains + 1))
+            run_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/$marker_run"
+            train_line="  - tag train: ${train_url_found:-<url unavailable>} concluded ${train_conclusion:-unknown} — the staged draft was never published (release-provenance, the sole publish point, is gated behind the tag train; a superseded failed train is never rerun — verify_pubdev_release.sh heals the LATEST tag only)"
+            [ -n "$failed_jobs" ] && train_line="$train_line; failed jobs: $failed_jobs"
+            reclaimed="$reclaimed- \`$tag\` — created $created by @$author; creating run: $run_url\n  - reclaimed early: the draft is younger than $((max_age / 3600))h but its publish point is unreachable (failed train, skipped release-provenance — rerun --failed cannot resurrect skipped jobs), so no in-flight run can own it and nobody will ever publish it (gh-2318)\n$train_line\n"
+            reclaimed_tags="$reclaimed_tags $tag"
+            continue
+          fi
+        fi
+      fi
       fresh_count=$((fresh_count + 1))
       ;;
     human)
@@ -139,20 +253,11 @@ while IFS=$'\t' read -r bucket tag id created author marker_run; do
       # the diagnosis.
       train_line=""
       if [ "$tag" != "(untagged)" ]; then
-        train_json=$(gh run list --repo "$repo" --workflow ci.yml \
-          --branch "$tag" --event push --limit 5 \
-          --json databaseId,conclusion,url 2>/dev/null || echo "[]")
-        failed_train=$(printf '%s' "$train_json" | jq -cr '
-          ([.[] | select(.conclusion != "success" and .conclusion != null)][0]
-            | if . == null then empty else
-                {c: .conclusion, u: (.url // ""), i: .databaseId}
-              end)' 2>/dev/null || echo "")
-        if [ -n "$failed_train" ]; then
-          train_conclusion=$(printf '%s' "$failed_train" | jq -r '.c // "unknown"' 2>/dev/null || echo "unknown")
-          train_url_found=$(printf '%s' "$failed_train" | jq -r '.u // ""' 2>/dev/null || echo "")
-          train_id=$(printf '%s' "$failed_train" | jq -r '.i // ""' 2>/dev/null || echo "")
-          failed_jobs=$(gh run view "$train_id" --repo "$repo" --json jobs 2>/dev/null \
-            | jq -r '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || echo "")
+        diag=$(train_diagnosis "$tag")
+        if [ -n "$diag" ]; then
+          train_conclusion=$(printf '%s' "$diag" | cut -f2)
+          train_url_found=$(printf '%s' "$diag" | cut -f3)
+          failed_jobs=$(printf '%s' "$diag" | cut -f4)
           failed_trains=$((failed_trains + 1))
           train_line="  - tag train: ${train_url_found:-<url unavailable>} concluded ${train_conclusion:-unknown} — the staged draft was never published (release-provenance, the sole publish point, is gated behind the tag train; a superseded failed train is never rerun — verify_pubdev_release.sh heals the LATEST tag only)"
           [ -n "$failed_jobs" ] && train_line="$train_line; failed jobs: $failed_jobs"
@@ -174,7 +279,7 @@ find_open_issue() { # echoes the issue number of the open sweep issue, or nothin
       done | head -1
 }
 
-stale_count=$((deleted_count + $(printf '%s' "$humans" | grep -c . || true) ))
+stale_count=$((deleted_count + reclaimed_count + $(printf '%s' "$humans" | grep -c . || true) ))
 
 if [ "$stale_count" -gt 0 ]; then
   body=$(mktemp)
@@ -182,6 +287,15 @@ if [ "$stale_count" -gt 0 ]; then
     echo "**Sweep run:** $daily_url"
     echo "**Swept:** $deleted_count stale pipeline-created draft(s) older than $((max_age / 3600))h"
     printf '%b' "$deleted"
+    # gh-2318: fresh drafts reclaimed early — their publish point is
+    # unreachable, so the 24h wait would only delay the inevitable and
+    # keep the sweep issue recurring (see the branch comment for the
+    # full fail-safe keep list).
+    if [ "$reclaimed_count" -gt 0 ]; then
+      echo
+      echo "**Reclaimed early (<$((max_age / 3600))h):** $reclaimed_count fresh pipeline draft(s) whose publish point is unreachable (gh-2318)"
+      printf '%b' "$reclaimed"
+    fi
     [ -n "$humans" ] && { echo; echo "**Kept (human drafts, listed not deleted — E1):**"; printf '%b' "$humans"; }
     echo
     echo "**Fresh drafts (<$((max_age / 3600))h):** $fresh_count — untouched (an in-flight run may own them)"
@@ -221,7 +335,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • reclaimed early: **$reclaimed_count** • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
-echo "sweeper: deleted=${deleted_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"
+echo "sweeper: deleted=${deleted_tags# } reclaimed-early=${reclaimed_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"

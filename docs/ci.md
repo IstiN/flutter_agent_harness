@@ -228,7 +228,18 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   PRRT_kwDOTXdlLc6yOzIh; id-based API
   delete, tag and git history untouched — draft assets are unpublished by
   definition, E2), human drafts (no marker) are listed but kept (E1),
-  fresh (<24h) drafts are left for their in-flight run. The job grants
+  fresh (<24h) drafts are left for their in-flight run — EXCEPT the
+  gh-2318 early reclaim: a fresh draft whose well-formed marker names a
+  COMPLETED run is deleted immediately when no ci.yml push train on the
+  tag is queued/in-flight and the tag's newest concluded ci.yml push train
+  failed with release-provenance SKIPPED (the publish point is unreachable
+  — `rerun --failed` cannot resurrect skipped jobs, so nobody will ever
+  publish it; the same criterion as the gh-2230 train-draft-guard, which
+  only sees drafts visible at train end). A rerunnable (FAILED) provenance
+  keeps the draft as the `rerun --failed` recovery vessel (gh-1899) until
+  it goes stale; an in-flight owner run, ANY queued/in-flight tag train
+  (even with an older failed train), and any lookup failure keep too
+  (never delete blind). The job grants
   `actions: read` — unmarked swept drafts name their creating run via
   `gh run list`, which 403s without it; marker drafts name the marker's
   run id directly. Anything

@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2318): the daily draft sweeper now reclaims a fresh (<24h)
+  pipeline draft whose publish point is provably unreachable, instead of
+  letting it rot to the 24h sweep and re-file the recurring
+  `[daily-publish] stale release drafts swept` issue. The v1.0.739 shape:
+  a daily-child staging leg minted the tag (`release_tag_mint.sh`) and
+  staged the draft, the freshly fired train failed upstream of
+  release-provenance, and the gh-2230 train-draft-guard either ran before
+  the draft existed (long attach legs create drafts after train end) or
+  kept it while its owner run was in-flight — after which nothing
+  re-examined it with train knowledge. The sweeper applies the train
+  guard's exact criterion (well-formed `release-draft-owner` marker naming
+  a COMPLETED run + no queued/in-flight ci.yml push train on the tag + the
+  tag's newest concluded ci.yml push train failed with release-provenance
+  SKIPPED — `rerun --failed` cannot resurrect skipped jobs); fail-safe
+  keeps mirror the train guard (unmarked/human E1 drafts, in-flight owner,
+  ANY queued/in-flight tag train even alongside an older failed train,
+  rerunnable FAILED provenance = the gh-1899 `rerun --failed` recovery
+  vessel until stale, any lookup failure). The train diagnosis is a shared
+  `train_diagnosis()` helper and
+  the issue names reclaimed drafts + the failed train as before.
+  Pinned by `test/release_stale_draft_reclaim_test.dart` (`gh-2318` group)
 - fix(gh-2237): the auto-compact trigger gate and the structured engine now measure ONE basis, and a started compaction can never end in silence. The field loop (six `auto-compact start` receipts over 21 minutes with tokens growing, zero pass receipts): the gate armed on a usage-anchored over-trigger basis, then the engine's state refresh blanket-zeroed every assistant usage anchor (`refreshAgentState`), re-derived a collapsed chars/4 basis under the trigger, and exited with zero passes and zero receipts — the gate re-fired every turn. Anchors now travel with the data: the projection's boundary-keyed stale-anchor reset (`_resetStaleUsageAnchors`) is the single anchor authority, and `refreshAgentState` stops the blanket zeroing (gh-2097's re-anchor contract preserved — anchors behind a compaction boundary stay reset, fresh post-boundary usage survives). The engine's under-trigger exits (trigger gate, hide-pass gate, checkpoint gate) thread an exit reason (deciding gate + basis/trigger numbers) through the wrapper into `onDone`, and the CLI renders the zero-pass terminal receipt on both surfaces — the diagnostic lane AND a dim user-facing row (boot-cap defer precedent): `auto-compact done passes=0 (no-op: basis N below trigger M (trigger gate))`. The `passes > 0` receipt suppression is gone; pass-carrying receipts stay byte-identical, `/compact` forced passes unchanged.
   Pinned by `test/compaction/compaction_basis_anchor_test.dart` (UT-1 anchor preservation / UT-2 boundary twin / UT-3 basis equality / AC6 no-new-under-compaction), `test/agent/auto_compactor_zero_pass_receipt_test.dart` (reason threading + zero observable provider calls), `test/cli/agent_cli_zero_pass_receipt_test.dart` (both receipt surfaces, legacy shape).
   Review rework: the AC1 "one basis" counterexample on boundary-less windowed resumes is closed — a head-truncated boundary-less tail (the `maxPages`/token-budget-exhausted walk) cannot vouch its persisted anchors, so the projection curation resets them all (`resetLoadedUsageAnchors` rationale at projection level); the engine refresh cannot re-arm the phantom pre-trim anchor (UT-5 + fully-paged twin).

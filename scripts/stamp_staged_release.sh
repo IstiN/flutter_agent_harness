@@ -72,14 +72,26 @@ if [ -z "$section" ]; then
   echo "::error::could not generate a changelog section for v$version"
   exit 1
 fi
-FA_SECTION="$section" FA_VERSION="$version" FA_CHANGELOG="$changelog" python3 - <<'PY'
+# gh-2318 CI: the generated section rides a TEMP FILE, never the exec
+# environment — Linux caps ONE arg/env string at MAX_ARG_STRLEN =
+# 32 pages = 131072 bytes, the curated `## Unreleased` window was already
+# ~130 KB on main, and a PR entry crossing the line E2BIG-killed the stamp
+# rehearsal ("Argument list too long", exit 126) long before pub.dev's own
+# 262144-byte cap could matter. The file lives OUTSIDE the stage so no
+# stray hand-off artifact can ever leak into the published package.
+# Pinned by publish_staging_test.dart (the >131072-byte Unreleased stamp
+# test); update both together.
+section_file="$(mktemp "${TMPDIR:-/tmp}/stamp-section.XXXXXX")"
+printf '%s' "$section" > "$section_file"
+stamp_rc=0
+FA_SECTION_FILE="$section_file" FA_VERSION="$version" FA_CHANGELOG="$changelog" python3 - <<'PY' || stamp_rc=$?
 import os
 import re
 
 cap = 262144
 path = os.environ["FA_CHANGELOG"]
 version = os.environ["FA_VERSION"]
-section = os.environ["FA_SECTION"].strip("\n")
+section = open(os.environ["FA_SECTION_FILE"], encoding="utf-8").read().strip("\n")
 
 text = open(path, encoding="utf-8").read()
 parts = re.split(r"(?=^## )", text, flags=re.M)
@@ -110,6 +122,8 @@ for s in versions:  # file order: newest first (the stamp prepends)
     size += b
 open(path, "w", encoding="utf-8").write(preamble + new + "".join(kept))
 PY
+rm -f "$section_file"
+[ "$stamp_rc" -eq 0 ] || exit "$stamp_rc"
 
 # gh-1452: pub.dev server-rejects an upload whose CHANGELOG.md exceeds its
 # hard 262144-byte content cap — the guard above already trims to fit, so a

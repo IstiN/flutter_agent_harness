@@ -1535,8 +1535,7 @@ gh release create "v9.9.9" \
         expect(
           logText,
           isNot(contains('releases/228703')),
-          reason:
-              'a stale GENUINELY human draft stays listed-not-deleted (E1)',
+          reason: 'a stale GENUINELY human draft stays listed-not-deleted (E1)',
         );
         expect(
           logText,
@@ -1551,7 +1550,11 @@ gh release create "v9.9.9" \
               'login match must be EXACT — "ai-teammate-bot" is a different '
               'account and its draft stays kept (E1)',
         );
-        expect(run.body, isNotNull, reason: 'an issue body must have been filed');
+        expect(
+          run.body,
+          isNotNull,
+          reason: 'an issue body must have been filed',
+        );
         expect(
           run.body,
           contains('ai-gh-2208'),
