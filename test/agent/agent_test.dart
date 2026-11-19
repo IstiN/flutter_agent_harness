@@ -728,7 +728,10 @@ void main() {
         // The blocked result goes back to the model, which answers next turn.
         expect(fake.calls, 2);
 
-        // A later unblocked run shows the hook receives the run's cancel token.
+        // A later unblocked run shows the hook receives the run's cancel
+        // token while the executor holds the supervisor's linked per-call
+        // token (issue #2271) — distinct instances, one cancellation chain:
+        // aborting the run cancels both.
         seen = null;
         final fake2 = _FakeStreamFunction([
           _toolTurn([_call('call-2', 'weather')]),
@@ -739,6 +742,7 @@ void main() {
           streamFunction: fake2.call,
           toolExecutor: (toolCall, cancelToken, onUpdate) async {
             executorToken = cancelToken;
+            await cancelToken!.onCancel;
             return ToolExecutionResult.text('ok');
           },
           beforeToolCall: (context, cancelToken) {
@@ -747,8 +751,23 @@ void main() {
           },
         );
         agent2.state.tools = [_tool('weather')];
-        await agent2.prompt('go');
-        expect(seenToken, same(executorToken));
+        final run = agent2.prompt('go');
+        await waitForIt(
+          () => executorToken != null,
+          reason: 'executor started',
+        );
+        agent2.abort();
+        await run;
+        expect(
+          seenToken!.isCancelled,
+          isTrue,
+          reason: 'the hook holds the run token',
+        );
+        expect(
+          executorToken!.isCancelled,
+          isTrue,
+          reason: 'the executor token is linked to the run token',
+        );
       },
     );
 
@@ -1279,4 +1298,16 @@ void main() {
       expect(agent.hasQueuedMessages(), isFalse);
     });
   });
+}
+
+/// Polls an async [condition] like the stuck suite's [waitForIt].
+Future<void> waitForIt(
+  FutureOr<bool> Function() condition, {
+  String? reason,
+}) async {
+  for (var i = 0; i < 5000; i++) {
+    if (await condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('timed out waiting: ${reason ?? 'condition'}');
 }
