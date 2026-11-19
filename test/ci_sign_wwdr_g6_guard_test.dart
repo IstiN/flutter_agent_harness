@@ -53,8 +53,15 @@ void main() {
             '"Apple Worldwide Developer Relations"'),
         reason: 'guard must list matches with -Z (SHA-1 per cert)',
       );
-      expect(script, contains('| tr -d \' :\' | grep -qi "\$WWDR_G6_SHA1"'),
-          reason: 'guard must compare the normalized hash against the pin');
+      // PR#2295 review: plain `grep -i >/dev/null`, NOT `grep -q` —
+      // under pipefail an early-exiting grep SIGPIPEs the producer and
+      // flips the guard to a false-negative (duplicate import + WARN).
+      expect(
+          script,
+          contains(
+              '| tr -d \' :\' | grep -i "\$WWDR_G6_SHA1" >/dev/null'),
+          reason: 'guard must compare the normalized hash against the '
+              'pin, draining the full listing (no grep -q SIGPIPE)');
     });
   });
 }
