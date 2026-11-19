@@ -1059,6 +1059,22 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
+            # fa-m5 host warm cache (owner-provisioned): persistent
+            # CI-authentic zip in ~/vendor-cache/ (launchd-refreshed).
+            # Seed the job-private zip from a digest-verified candidate —
+            # read-only cp, gh-2233 posture: the arch-less /tmp path is
+            # never referenced, and a mid-refresh partial candidate is
+            # discarded (never unzipped, never resumed into "$ZIP").
+            SEED="$HOME/vendor-cache/WasmRun.xcframework.zip"
+            if [ ! -f "$ZIP" ] && [ -f "$SEED" ]; then
+              SEED_CANDIDATE="$ZIP.host-seed"
+              cp "$SEED" "$SEED_CANDIDATE" 2>/dev/null || true
+              if echo "$ASSET_DIGEST  $SEED_CANDIDATE" | shasum -a 256 -c - >/dev/null 2>&1; then
+                mv "$SEED_CANDIDATE" "$ZIP"
+              else
+                rm -f "$SEED_CANDIDATE"
+              fi
+            fi
             # --retry alone skips transient mid-transfer resets (curl 56) —
             # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
             # The partial is deliberately NOT deleted between attempts:
