@@ -96,6 +96,22 @@ Future<SummarizationResult> _hangingSummarizer(
   return done.future;
 }
 
+/// The last prompt's text — distinguishes judge calls (a ledger render)
+/// from conversation-bearing checkpoint/summarizer calls.
+String promptText(Context context) {
+  final last = context.messages.last;
+  return switch (last) {
+    UserMessage() =>
+      last.content is String
+          ? last.content as String
+          : (last.content as List<Object>)
+                .whereType<TextContent>()
+                .map((b) => b.text)
+                .join(),
+    _ => '',
+  };
+}
+
 void main() {
   late MemoryFileSystem fs;
   late JsonlSessionRepo repo;
@@ -656,4 +672,171 @@ void main() {
       isNot(contains('[context trimmed locally')),
     );
   });
+
+  test(
+    '#2263: a user abort during the structured checkpoint summarizer '
+    'surfaces as cancelled — no fresh classic engine, no local trim',
+    () async {
+      // Same session shape as the dead-judge test: hideable entries past
+      // the protected tail, over the 1000-token window, so the checkpoint
+      // summarizer actually goes in flight.
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      await session.appendMessage(UserMessage.text('fix the login crash'));
+      await session.appendMessage(
+        AssistantMessage(
+          content: [
+            const TextContent(text: 'looking'),
+            ToolCall(id: 'c1', name: 'read', arguments: const {}),
+          ],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+      await session.appendMessage(
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'read',
+          content: [TextContent(text: 'x' * 16000)],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+      for (var i = 0; i < 11; i++) {
+        await session.appendMessage(
+          AssistantMessage(
+            content: [TextContent(text: 'filler $i')],
+            api: 'test-api',
+            provider: 'test-provider',
+            model: 'test-model',
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        );
+      }
+      final state = AgentState(
+        model: _model,
+        messages: await session.buildContextMessages(),
+      );
+      final messagesBefore = [...state.messages];
+
+      final runSource = CancelTokenSource();
+      final checkpointStarted = Completer<void>();
+      var judgeCalls = 0;
+      var conversationCalls = 0;
+      AssistantMessageEventStream streamFn(
+        Model m,
+        Context c, {
+        CancelToken? cancelToken,
+      }) {
+        if (promptText(c).contains('<conversation>')) {
+          conversationCalls++;
+          checkpointStarted.complete();
+          // The checkpoint summarizer pends until its cancel token fires,
+          // like a real adapter's abort path.
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: _message(StopReason.stop)));
+          unawaited(
+            (cancelToken?.onCancel ?? Future<void>.value()).then((_) {
+              stream.push(
+                DoneEvent(
+                  reason: StopReason.aborted,
+                  message: _message(StopReason.aborted),
+                ),
+              );
+              stream.end();
+            }),
+          );
+          return stream;
+        }
+        judgeCalls++;
+        // A valid EMPTY hide-pick verdict: the judge stage completes as a
+        // no-op (no deterministic fallback hide) and the run proceeds to
+        // the checkpoint summarizer with the context still over window.
+        final message = AssistantMessage(
+          content: const [TextContent(text: '[]')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+        final stream = AssistantMessageEventStream();
+        stream.push(StartEvent(partial: message));
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        return stream;
+      }
+
+      final hooks = _CapturingHooks();
+      final run = AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 1000,
+        settings: settings,
+        sources: AutoCompactorSources(
+          smolStream: null,
+          smolModel: null,
+          mainStream: streamFn,
+          mainModel: _model,
+        ),
+        hooks: hooks,
+        runToken: runSource.token,
+        attemptBudget: const Duration(seconds: 30),
+        totalBudget: const Duration(seconds: 30),
+      ).run();
+      await checkpointStarted.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () =>
+            fail('checkpoint summarizer never started — fixture broken'),
+      );
+      runSource.cancel('user abort');
+
+      await expectLater(
+        run,
+        throwsA(isA<CancelledException>()),
+      ).timeout(const Duration(seconds: 10));
+
+      // No fresh classic engine: the aborted run never makes a second
+      // conversation-bearing LM call (the fall-through's summarizer would).
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(judgeCalls, 1);
+      expect(
+        conversationCalls,
+        1,
+        reason: 'no fresh classic engine starts on an aborted run',
+      );
+      // No local trim on the aborted run: the trim's signature is the
+      // transcript collapsed to the kept tail plus a '[context trimmed]'
+      // marker — same length, no marker. (The engine's gh-2097 projection
+      // re-anchor legitimately rebuilds message objects at every structured
+      // run start, even a failed one — element identity would false-fail;
+      // assert the trim shape instead.)
+      expect(state.messages.length, messagesBefore.length);
+      expect(
+        state.messages.any(
+          (m) =>
+              m is UserMessage &&
+              m.content.toString().contains('context trimmed'),
+        ),
+        isFalse,
+        reason: 'a cancelled run is never answered with the local trim',
+      );
+      expect(
+        hooks.passes.any((p) => p.fallback == 'local-trim'),
+        isFalse,
+        reason: 'a cancelled run is never answered with the local trim',
+      );
+      expect(hooks.bothRolesError, isNull);
+      expect(
+        hooks.doneCount,
+        0,
+        reason: 'no onDone bracket closes on an aborted run',
+      );
+    },
+  );
 }
