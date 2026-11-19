@@ -600,6 +600,11 @@ final class JsonlSessionRepo implements SessionRepo {
   /// (the last run crashed) and has no presence row yet, so without the
   /// exemption the fire-and-forget boot sweep could soft-delete the exact
   /// file the process is about to open, mid-load (issue #2083).
+  ///
+  /// #2320: a header-only primary is not proof of emptiness on its own —
+  /// a session with a known name (the persisted session-names sidecar)
+  /// or `.part-NN` segment siblings (the records — and often the name —
+  /// rotated into an older segment) is deliberate state, never litter.
   Future<int> cleanupEmptySessions({
     Duration? olderThan,
     String? exemptSessionId,
@@ -612,9 +617,11 @@ final class JsonlSessionRepo implements SessionRepo {
     );
     if (!rootExists) return 0;
     final live = (await presenceStore?.list()) ?? const {};
+    final namedIds = (await knownSessionNames()).keys.toSet();
     final cutoff = olderThan == null ? null : now().subtract(olderThan);
-    final files = await _collectJsonlFileInfos(root);
-    for (final entry in files) {
+    final collected = await _collectJsonlFileInfos(root);
+    final partPrimaries = collected.partPrimaries;
+    for (final entry in collected.files) {
       final path = entry.path;
       // Emptiness is decidable from the first two lines: line 1 is the
       // header, and any transcript content means a second line. The read
@@ -628,9 +635,16 @@ final class JsonlSessionRepo implements SessionRepo {
       );
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
+      // Rotated (#2320): the primary was reseeded after archiving its
+      // records into `.part-NN` segments — the chain is the session.
+      if (partPrimaries.contains(path)) continue;
       final id = _sessionIdFromPath(path);
       if (id != null && live.containsKey(id)) continue;
       if (id == exemptSessionId) continue;
+      // Named (#2320): `session_info.name` is a deliberate anchor
+      // (`fa --session <name>` semantics) — a named session is never
+      // litter, whatever its age.
+      if (id != null && namedIds.contains(id)) continue;
       if (cutoff != null &&
           !DateTime.fromMillisecondsSinceEpoch(
             entry.mtimeMs,
@@ -893,24 +907,36 @@ final class JsonlSessionRepo implements SessionRepo {
   String? _sessionIdFromPath(String path) => sessionIdFromSessionPath(path);
 
   /// The session sweep's file walk (gh-1660 age guard reads the mtime):
-  /// every `.jsonl` under [dirPath], carrying each file's [FileInfo].
-  Future<List<FileInfo>> _collectJsonlFileInfos(String dirPath) async {
+  /// every `.jsonl` under [dirPath], carrying each file's [FileInfo],
+  /// plus the primary paths that have `.part-NN` segment siblings — the
+  /// same directory listings, zero extra IO (#2320: a rotated session's
+  /// header-only primary is never "empty", its chain holds the records).
+  Future<({List<FileInfo> files, Set<String> partPrimaries})>
+  _collectJsonlFileInfos(String dirPath) async {
     final entries = _fsOrThrow(
       await _fs.listDir(dirPath),
       'Failed to list session directory $dirPath',
     );
     final files = <FileInfo>[];
+    final partPrimaries = <String>{};
     for (final entry in entries) {
       if (entry.kind == FileKind.directory) {
         // The trash (issue #522) is recoverable storage, not a session
         // folder — its files must never re-enter list()/cleanup sweeps.
         if (entry.name == trashDirName) continue;
-        files.addAll(await _collectJsonlFileInfos(entry.path));
+        final nested = await _collectJsonlFileInfos(entry.path);
+        files.addAll(nested.files);
+        partPrimaries.addAll(nested.partPrimaries);
         continue;
       }
-      if (entry.name.endsWith('.jsonl')) files.add(entry);
+      if (entry.name.endsWith('.jsonl')) {
+        files.add(entry);
+      } else {
+        final primary = _primaryOfPartName(entry.name);
+        if (primary != null) partPrimaries.add('$dirPath/$primary');
+      }
     }
-    return files;
+    return (files: files, partPrimaries: partPrimaries);
   }
 
   @override

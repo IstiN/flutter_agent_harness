@@ -416,10 +416,17 @@ extension on AgentCli {
     final session = _session;
     if (session == null) return;
     try {
-      await _repo.delete(
-        await session.getMetadata(),
-        actor: 'cli:empty-cleanup',
-      );
+      final metadata = await session.getMetadata();
+      // #2320: a NAMED session is a deliberate anchor (`fa --session X`
+      // semantics) — never litter, even when this process persisted no
+      // record (the name may predate this process or live in a rotated
+      // segment). Best-effort probe: a failed read keeps the file.
+      final repo = _repo;
+      if (repo is JsonlSessionRepo &&
+          await repo.sessionNameQuick(metadata) != null) {
+        return;
+      }
+      await _repo.delete(metadata, actor: 'cli:empty-cleanup');
       _session = null;
       // The session scope is gone — drop it from the resolution.
       unawaited(AgentCliTools(this).rebuildToolAvailability());
