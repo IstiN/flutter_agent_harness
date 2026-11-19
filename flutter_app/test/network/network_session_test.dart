@@ -291,6 +291,102 @@ void main() {
       expect(session.channelStates['c1']!.historyAboveCount, 0);
     });
 
+    test(
+      'history pagination collapses queued receipts within pages and against '
+      'the existing store',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'original-1',
+                  'channelId': 'c1',
+                  'senderId': 'me-1',
+                  'payload': 'opaque',
+                },
+                {
+                  'id': 'queued-new-1',
+                  'channelId': 'c1',
+                  'senderId': 'peer-1',
+                  'payload': 'opaque',
+                },
+                {
+                  'id': 'queued-new-2',
+                  'channelId': 'c1',
+                  'senderId': 'peer-1',
+                  'payload': 'opaque',
+                },
+              ],
+              'nextCursor': 'older',
+            }),
+          )
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'queued-old-1',
+                  'channelId': 'c1',
+                  'senderId': 'peer-1',
+                  'payload': 'opaque',
+                },
+                {
+                  'id': 'queued-old-2',
+                  'channelId': 'c1',
+                  'senderId': 'peer-1',
+                  'payload': 'opaque',
+                },
+              ],
+              'nextCursor': '',
+            }),
+          );
+        final session = _buildDecodingSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          decoder: (envelope) {
+            final isOwn = envelope.senderId == 'me-1';
+            return Future.value(
+              ChannelMessage(
+                envelopeId: envelope.id,
+                senderId: envelope.senderId,
+                senderPub: '',
+                text: isOwn ? 'сделал' : 'queued / not listening',
+                isOwn: isOwn,
+                sessionId: 'session-1',
+                // New-page receipts exercise the legacy fallback; old-page
+                // receipts carry the explicit stable correlation.
+                replyTo: envelope.id.startsWith('queued-old-')
+                    ? 'original-1'
+                    : null,
+              ),
+            );
+          },
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+
+        // This second page goes through _loadHistoryPage, not ChannelState.add.
+        await session.loadOlder('c1');
+
+        final state = session.channelStates['c1']!;
+        expect(state.messages.map((message) => message.envelopeId), [
+          'original-1',
+          'queued-new-1',
+        ]);
+        expect(state.messages.last.replyTo, 'original-1');
+        expect(state.nextCursor, isNull);
+      },
+    );
+
     test('undecryptable history yields a null-text placeholder', () async {
       final wallet = await walletWithChannel(
         channelPub: channelKeys.pub,
