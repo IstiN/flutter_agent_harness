@@ -271,10 +271,38 @@ case "$CMD" in
       security delete-keychain "$KC" 2>/dev/null || rm -f "$KC"
     fi
     ensure_keychain
+
     TMP="$(mktemp -d)"
     # One consolidated EXIT trap (a second `trap ... EXIT` would REPLACE
     # the lock-release trap above, leaking the lock dir).
     trap 'rm -rf "$TMP"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+    # WWDR G6 (public Apple intermediate, no secret): host-level
+    # infrastructure for every codesign verification chain on this pool.
+    # Import ONCE into the persistent keychain — per-job workflow lines
+    # must not write to the host keychain (the per-job build.keychain
+    # model died with gh-1865; the yoclip workflow leftover was the last
+    # straggler — coordinated with yoclip 92b45fc).
+    # PR#2295 review: this block must live BELOW the TMP assignment (the
+    # original position crashed `install` under `set -u` on the very first
+    # run — TMP unbound at "$TMP/wwdr.pem" — and escaped the EXIT cleanup),
+    # and the idempotency guard must match the G6 generation specifically:
+    # find-certificate -c matches ANY WWDR generation by shared CN
+    # (G3/G4/G5, even expired), permanently suppressing the G6 import.
+    # -Z prints each match's SHA-1; pin the Apple-published G6 fingerprint
+    # (AppleWDRCAG6.cer, OU=G6, 2021-03-17 → 2036-03-19). No `grep -q`
+    # here: under pipefail an early-exiting grep SIGPIPEs the producer
+    # (tr exit 141) and flips the guard to a false-negative "G6 absent"
+    # → duplicate import + false WARN; plain `grep -i >/dev/null` drains
+    # the whole listing instead.
+    WWDR_G6_SHA1="0BE38BFE21FD434D8CC51CBE0E2BC7758DBF97B"
+    if ! security find-certificate -a -Z -c "Apple Worldwide Developer Relations" "$KC" 2>/dev/null \
+        | tr -d ' :' | grep -i "$WWDR_G6_SHA1" >/dev/null; then
+      WWDR_G6_URL="https://www.apple.com/certificateauthority/AppleWWDRCAG6.cer"
+      curl -fsSL "$WWDR_G6_URL" -o "$TMP/wwdr.pem" || die "cannot fetch WWDR G6 from $WWDR_G6_URL"
+      security import "$TMP/wwdr.pem" -k "$KC" >/dev/null 2>&1 \
+        || err "WARN: WWDR G6 import failed — codesign chains may not verify; re-run install"
+    fi
     printf '%s' "$P12_B64" | base64 --decode > "$TMP/cert.p12" 2>/dev/null || die "P12 payload for '$LABEL' is not valid base64"
 
     NEW_FP="$(import_fingerprint "$TMP/cert.p12" "$P12_PW")" || die "cannot read P12 for '$LABEL' (wrong password or corrupt payload?)"
