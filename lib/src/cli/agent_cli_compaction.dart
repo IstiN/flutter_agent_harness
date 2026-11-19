@@ -120,6 +120,11 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   void onPass(AutoCompactorPass pass) {
     _closeDeltaStreamLine();
     _runTokensBefore ??= pass.tokensBefore;
+    // Honest pass accounting for the funnel's `passesRan` trim gate
+    // (issue #2273): only pass receipts count — a zero-pass run (the
+    // under-trigger short-circuit) leaves the counter untouched, so the
+    // gate never reads non-runs as passes.
+    cli._compactionPassesStarted++;
     // gh-2044: the escalation's numeric reason rides the diagnostic line
     // — counts only (settled tokens, margin, band, hideables left), never
     // rendered ledger/message content. Absent on every other pass kind,
@@ -230,13 +235,13 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     // Backend agent mode (issue #155): close the compaction bracket once
     // per run with the net freed delta (clamped — a restamped estimator
     // can report a slightly larger after-count than the usage-anchored
-    // before-count).
+    // before-count). Zero-pass runs (issue #2273): no pass receipt means
+    // no before-count — the bracket still closes with freed 0, or the
+    // next turn's time is attributed to a compaction that never ran.
     final before = _runTokensBefore;
-    if (before != null) {
-      final freed = before - tokens;
-      cli._hep?.compactionEnd(freed < 0 ? 0 : freed);
-      _runTokensBefore = null;
-    }
+    final freed = before == null ? 0 : before - tokens;
+    cli._hep?.compactionEnd(freed < 0 ? 0 : freed);
+    _runTokensBefore = null;
   }
 
   /// Returns a user-facing hint for a compaction failure, pointing at the
@@ -427,6 +432,12 @@ extension _AgentCliCompactionReportPrinter on AgentCli {
 }
 
 extension AgentCliCompactionRun on AgentCli {
+  /// Test seam: the compaction pass counter — a zero-pass run (issue
+  /// #2273) must leave it untouched so the funnel's `passesRan` trim
+  /// gate never counts runs that executed no pass.
+  @visibleForTesting
+  int get compactionPassesStartedForTest => _compactionPassesStarted;
+
   /// Runs the auto-compaction when the live transcript crosses the
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
@@ -842,13 +853,14 @@ extension AgentCliCompactionRun on AgentCli {
     // report cancelled summarizers as failed passes, so the funnel cannot
     // see this off the return value; the sticky flag can.
     _throwIfUserAborted();
-    // Honest attempt accounting for the funnel's exhaustion verdict
-    // (issue #1085 round-1): only passes that actually started count.
-    _compactionPassesStarted++;
     // Backend agent mode (issue #155): bracket the run so the supervisor
     // sees why a turn stalled. Pre-flight runs carry the upcoming turn id
-    // (the following agent_start reuses it). The end frame comes from the
-    // pass result in [_AutoCompactorCliHooks.onPass] — the honest numbers.
+    // (the following agent_start reuses it). The end frame comes from
+    // [_AutoCompactorCliHooks.onDone] — every structured-engine terminal
+    // path fires it, so even a zero-pass run closes the bracket (issue
+    // #2273). Classic-engine early returns and user cancellation can still
+    // bypass it. The pass counter increments per pass receipt in [onPass],
+    // not here.
     _hep?.compactionStart();
     // User-wired compaction cancellation (issue #1085 M3): a compaction
     // can run 15-30 min (pre-flight, mid-run relief, post-run) and the
