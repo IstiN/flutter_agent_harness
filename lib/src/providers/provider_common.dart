@@ -1148,6 +1148,19 @@ http.Client? _sharedProviderClient;
 /// factory swaps in tests, issue #1392).
 void debugResetSharedProviderHttpClient() => _sharedProviderClient = null;
 
+/// Production pool recycle (issue #2327 AC4): after a Copilot truncation
+/// self-heal fires, the shared client is closed and dropped ONCE so the
+/// next stream opens on a fresh pool — a degraded/poisoned pool episode
+/// (DNS storm, accept-then-truncate gateway enforcement) does not survive
+/// the heal. Guarded by the heal's own rate bound (one cycle per window)
+/// and only meaningful on the shared client (an injected test client is
+/// owned by its caller — the wrapper recycles only when it used the
+/// shared one). Not flag-gated: unlike the `FA_POOL_EVICTION` hygiene
+/// ([maybeEvictProviderPool] → [resetSharedProviderHttpClient]) this is
+/// part of the heal itself, and the same close-and-drop primitive keeps
+/// the pool semantics coherent.
+void recycleProviderHttpClientAfterHeal() => resetSharedProviderHttpClient();
+
 /// The shared keep-alive HTTP client for provider streams.
 ///
 /// Streaming adapters use it when the caller injects no client: a fresh

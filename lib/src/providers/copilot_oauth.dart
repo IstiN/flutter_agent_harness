@@ -60,6 +60,43 @@ final class CopilotAuthException implements Exception {
   String toString() => message;
 }
 
+/// What a truncation-class stream end triggers (issue #2327): [none] keeps
+/// today's semantics (below the consecutive threshold, or PAT mode — no
+/// exchange path), [fire] runs the heal (invalidate + fresh exchange +
+/// one retry on the new token), [throttled] means the threshold is reached
+/// but the rate window already served a heal — the wrapper surfaces the
+/// class-named terminal instead of churning exchanges (the
+/// oversized-context border case).
+enum CopilotTruncationHeal { none, fire, throttled }
+
+/// The host-visible loud provider-failure card (issue #2327 AC3): fired
+/// when the token exchange hits GitHub's geo-restriction family (HTTP 403
+/// trade_restricted_country). The CLI prints it prominently and logs to
+/// fa.log; null keeps the card on the error-event surface only. Global
+/// like the transient-retry notice: the exchange runs deep inside the
+/// token manager, far from any host io.
+void Function(String card)? copilotProviderCardNotice;
+
+/// Whether [error] is GitHub's geo-restriction family: the exchange was
+/// refused because of the account's network location (the 2026-11-19
+/// incident payload: "Copilot is not available in your location",
+/// `notification_id=trade_restricted_country`).
+bool _isGeoRestrictedExchange(CopilotAuthException error) {
+  if (error.statusCode != 403) return false;
+  final text = error.message.toLowerCase();
+  return text.contains('trade_restricted') || text.contains('location');
+}
+
+/// The loud card for a geo-restricted exchange: names the cause, the
+/// remedies (VPN/region), and the fallback-chain continuation (the border
+/// case: a persistent block must not dead-end the run). The raw exchange
+/// body stays on the error-event surface and in fa.log.
+const String copilotGeoRestrictionCard =
+    'Copilot is blocked by location (token exchange HTTP 403, '
+    'trade_restricted_country family): GitHub refuses the Copilot token '
+    'exchange from this network region. Check your VPN/region or switch '
+    'networks; the provider chain continues on the next model.';
+
 /// A short-lived Copilot API token (lifetime ~30 min).
 final class CopilotApiToken {
   /// Creates a token.
@@ -370,10 +407,26 @@ final class CopilotTokenManager {
   /// Lower bound between two token exchanges.
   final Duration minSpacing;
 
+  /// Consecutive truncation-class stream ends that fire the self-heal
+  /// (issue #2327 AC1): 3, matching the transient retry chain's cadence —
+  /// the ladder spends its 3 attempts on the dead token, then the wrapper
+  /// heals instead of watching a 4th identical attempt.
+  static const truncationHealThreshold = 3;
+
+  /// One heal cycle at most per this window (issue #2327 AC5, the
+  /// oversized-context border case): a truncation loop must not churn
+  /// exchanges, and a persistent geo-block must not re-heal per attempt.
+  /// Longer than [minSpacing] — the heal is a storm-time measure, not a
+  /// refresh cadence.
+  static const healMinInterval = Duration(minutes: 5);
+
   final DateTime Function() _now;
   CopilotApiToken? _cached;
   DateTime? _lastExchangeAt;
   Future<String>? _inFlight;
+  int _truncationStreak = 0;
+  DateTime? _lastHealAt;
+  DateTime? _lastRestrictionCardAt;
 
   /// Per-GitHub-token registry: the cache lives as long as the process so
   /// consecutive turns reuse the ~30 min token instead of re-exchanging
@@ -394,6 +447,33 @@ final class CopilotTokenManager {
   void invalidate() {
     _cached = null;
     _lastExchangeAt = null;
+  }
+
+  /// The self-heal ledger (issue #2327): registers one stream end and
+  /// answers what it triggers. A truncation-class end increments the
+  /// consecutive streak — at [truncationHealThreshold] the heal fires,
+  /// rate-bounded to one cycle per [healMinInterval]; any other ending
+  /// resets the streak (the heal arms on CONSECUTIVE truncations only).
+  /// PAT mode never heals: no exchange path exists.
+  CopilotTruncationHeal registerStreamEnd({required bool truncationClass}) {
+    if (!truncationClass) {
+      _truncationStreak = 0;
+      return CopilotTruncationHeal.none;
+    }
+    if (isFineGrainedGitHubPat(githubToken)) {
+      return CopilotTruncationHeal.none;
+    }
+    _truncationStreak++;
+    if (_truncationStreak < truncationHealThreshold) {
+      return CopilotTruncationHeal.none;
+    }
+    final now = _now();
+    final last = _lastHealAt;
+    if (last != null && now.difference(last) < healMinInterval) {
+      return CopilotTruncationHeal.throttled;
+    }
+    _lastHealAt = now;
+    return CopilotTruncationHeal.fire;
   }
 
   /// A Copilot API token valid at call time, exchanging/refreshing as
@@ -425,11 +505,30 @@ final class CopilotTokenManager {
 
   Future<String> _exchange() async {
     _lastExchangeAt = _now();
-    final token = await fetchCopilotApiToken(
-      githubToken: githubToken,
-      client: client,
-    );
+    final CopilotApiToken token;
+    try {
+      token = await fetchCopilotApiToken(
+        githubToken: githubToken,
+        client: client,
+      );
+    } on CopilotAuthException catch (error) {
+      _maybeEmitGeoCard(error);
+      rethrow;
+    }
     _cached = token;
     return token.token;
+  }
+
+  /// The loud geo card (issue #2327 AC3): a location-restricted exchange
+  /// fires [copilotProviderCardNotice] once per [healMinInterval] — a
+  /// persistent block cards once per episode, not once per attempt (every
+  /// attempt re-exchanges while no token is cached).
+  void _maybeEmitGeoCard(CopilotAuthException error) {
+    if (!_isGeoRestrictedExchange(error)) return;
+    final now = _now();
+    final last = _lastRestrictionCardAt;
+    if (last != null && now.difference(last) < healMinInterval) return;
+    _lastRestrictionCardAt = now;
+    copilotProviderCardNotice?.call(copilotGeoRestrictionCard);
   }
 }

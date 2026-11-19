@@ -8,7 +8,12 @@
 /// Errors-as-events invariant (non-negotiable): never throws. A 401/403
 /// from the API means the short-lived token died mid-flight → invalidate +
 /// exactly one refresh + one retry (proxy semantics); everything else
-/// surfaces as an [ErrorEvent].
+/// surfaces as an [ErrorEvent]. A stream that is ACCEPTED then truncated
+/// (200 + SSE ending before `finish_reason`) is not a status the wrapper
+/// can see — issue #2327: 3 consecutive truncation-class ends per token
+/// fire the self-heal (invalidate + fresh exchange + one retry on the new
+/// token, rate-bounded, shared-client recycle); a heal that still
+/// truncates surfaces the class-named terminal instead of the raw error.
 library;
 
 import 'dart:async';
@@ -23,6 +28,7 @@ import '../providers/provider_common.dart';
 import '../types.dart';
 import 'copilot_oauth.dart';
 import 'openai_completions.dart';
+import 'transient_retry_stream.dart';
 
 /// Options for [streamCopilot].
 final class CopilotOptions {
@@ -120,11 +126,19 @@ Future<void> _runCopilotStream(
       // Hold the terminal error back until we know whether it is an auth
       // failure worth one refresh+retry: on a 401/403 the completions
       // adapter emits ONLY the error event (no start, no deltas — the
-      // request is rejected before the SSE body exists).
+      // request is rejected before the SSE body exists). The terminal
+      // DoneEvent is held too: the truncation self-heal (#2327) may
+      // replace it with the class-named terminal — one terminal event
+      // leaves this wrapper either way.
       ErrorEvent? error;
+      DoneEvent? done;
       await for (final event in inner) {
         if (event is ErrorEvent) {
           error = event;
+          break;
+        }
+        if (event is DoneEvent) {
+          done = event;
           break;
         }
         events.push(event);
@@ -137,12 +151,73 @@ Future<void> _runCopilotStream(
         manager.invalidate();
         continue;
       }
-      if (error != null) events.push(error);
+      // The accept-then-truncate shape (issue #2327): 200 + an SSE that
+      // died before the finish_reason — no status the wrapper could have
+      // watched, so the ends themselves are the signal. Both shapes count:
+      // the empty cut transport (ErrorEvent) and the tolerated silent
+      // truncation (flagged DoneEvent).
+      final truncationEnd =
+          (error != null &&
+              isTruncationClassStreamEnd(error.error.errorMessage)) ||
+          (done != null &&
+              isTruncationClassStreamEnd(done.message.errorMessage));
+      if (truncationEnd) {
+        switch (manager.registerStreamEnd(truncationClass: true)) {
+          case CopilotTruncationHeal.fire:
+            // A dead token served as accept-then-truncate: invalidate +
+            // fresh exchange (the loop's next `get`) + one retry on the
+            // new token. The heal window (one cycle per interval) keeps
+            // this a single retry per episode.
+            manager.invalidate();
+            // The pool may carry the episode's damage (DNS storm,
+            // gateway enforcement): recycle the shared client once —
+            // production path only, an injected client is owned by its
+            // caller (issue #2327 AC4).
+            if (client == null) recycleProviderHttpClientAfterHeal();
+            continue;
+          case CopilotTruncationHeal.throttled:
+            // Threshold reached inside the heal window: the token was
+            // refreshed moments ago — re-exchanging again would loop.
+            // Surface the class-named terminal (AC2); its wording dodges
+            // the ladder's transient patterns on purpose — a consumed
+            // heal must not be replayed.
+            events.push(_truncationHealTerminal(state));
+            return;
+          case CopilotTruncationHeal.none:
+            // One-off truncation (or PAT mode): today's semantics.
+            if (error != null) events.push(error);
+            if (done != null) events.push(done);
+            return;
+        }
+      }
+      manager.registerStreamEnd(truncationClass: false);
+      if (error != null) {
+        events.push(error);
+      } else if (done != null) {
+        events.push(done);
+      }
       return;
     }
   } finally {
     events.end();
   }
+}
+
+/// The class-named truncation terminal (issue #2327 AC2): replaces the raw
+/// cut-transport error once the self-heal has consumed its cycle — the
+/// user sees the class, the action taken, and both remedies instead of a
+/// generic endpoint failure.
+ErrorEvent _truncationHealTerminal(ProviderStreamState state) {
+  state.stopReason = StopReason.error;
+  state.errorMessage =
+      'copilot stream truncated '
+      '×${CopilotTokenManager.truncationHealThreshold} — token refreshed; '
+      'if it persists: auth/geo/revocation suspected — check VPN/region '
+      'or re-authorize Copilot (/provider copilot).';
+  return ErrorEvent(
+    reason: StopReason.error,
+    error: state.snapshot(finalize: true),
+  );
 }
 
 OpenAICompletionsOptions _completionsOptions(

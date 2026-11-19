@@ -88,6 +88,19 @@ const String zeroByteStallTag = '(zero-byte stall)';
 /// every other failure class.
 const int maxZeroByteWatchdogAttempts = 2;
 
+/// The truncation-class signature (issue #312): an SSE that closed without
+/// a finish_reason. The ladder replays it ([_transientNetworkPatterns]) and
+/// the copilot wrapper counts consecutive occurrences per token to fire
+/// the self-heal (issue #2327) — one vocabulary, two consumers.
+final _truncationStreamEndPattern = RegExp(
+  r'stream ended without finish_reason',
+);
+
+/// Whether [text] is a truncation-class stream end (the signature above):
+/// the SSE closed before the finish_reason chunk.
+bool isTruncationClassStreamEnd(String? text) =>
+    text != null && _truncationStreamEndPattern.hasMatch(text);
+
 final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
@@ -122,7 +135,7 @@ final _transientNetworkPatterns = [
   RegExp(RegExp.escape(zeroByteStallTag)),
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without content is a cut transport.
-  RegExp(r'stream ended without finish_reason'),
+  _truncationStreamEndPattern,
   RegExp(r'\b50[0234]\b'),
   RegExp(r'bad gateway', caseSensitive: false),
   RegExp(r'service unavailable', caseSensitive: false),

@@ -24,6 +24,34 @@ void main() {
     imageDropReportNotice = null;
     deliverySloSink = null;
     deliverableDurabilityLog = null;
+    copilotProviderCardNotice = null;
+  });
+
+  test('the copilot provider card surfaces LOUD (#2327 AC3)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+    expect(
+      copilotProviderCardNotice,
+      isNotNull,
+      reason: 'the boot wires the card notice',
+    );
+
+    copilotProviderCardNotice?.call(copilotGeoRestrictionCard);
+
+    // The geo card is a transcript line (stderr in headless), prominent —
+    // the 2026-11-19 incident's 403 existed only as a raw fa.log line.
+    expect(io.out.toString(), contains('[copilot] '));
+    expect(io.out.toString(), contains('blocked by location'));
+    expect(io.out.toString(), contains('VPN'));
   });
 
   test('the transient retry notice prints a dim transcript line', () {

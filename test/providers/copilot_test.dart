@@ -91,6 +91,43 @@ String chatSse({String text = 'Hel lo'}) =>
     }) +
     _doneChunk;
 
+/// An accept-then-truncate SSE (issue #2327): a 200 stream that carries a
+/// data chunk but closes BEFORE the finish_reason chunk — nothing
+/// observable streamed, so the adapter raises the cut-transport
+/// truncation error (`stream ended without finish_reason`, issue #312).
+String truncatingSse() =>
+    sseChunk({
+      'id': 'chatcmpl-1',
+      'choices': [
+        {
+          'delta': {'role': 'assistant'},
+        },
+      ],
+    }) +
+    _doneChunk;
+
+/// The tolerated silent-truncation shape: content deltas stream, then the
+/// SSE closes without a finish_reason — the adapter keeps the natural
+/// stop and flags the message via `errorMessage`.
+String silentlyTruncatedSse() =>
+    sseChunk({
+      'id': 'chatcmpl-1',
+      'choices': [
+        {
+          'delta': {'content': 'Hel'},
+        },
+      ],
+    }) +
+    sseChunk({
+      'id': 'chatcmpl-1',
+      'choices': [
+        {
+          'delta': {'content': ' lo'},
+        },
+      ],
+    }) +
+    _doneChunk;
+
 /// Case-insensitive header lookup (the mock keeps the keys we set; only
 /// real transports normalize case).
 String? hdr(http.BaseRequest request, String name) {
@@ -118,6 +155,7 @@ final class FakeCopilotBackend {
     this.expiresAt,
     this.chatHandler,
     this.exchangeStatus = 200,
+    this.exchangeBody = '{"message": "bad credentials"}',
   });
 
   /// Unix seconds for the exchanged token; defaults to now + 30 min.
@@ -125,6 +163,10 @@ final class FakeCopilotBackend {
 
   /// Non-200 exchange status (e.g. 401 = dead GitHub token).
   int exchangeStatus;
+
+  /// The response body for a non-200 exchange (the geo-restriction 403
+  /// tests embed GitHub's trade_restricted_country payload here).
+  String exchangeBody;
 
   /// Custom token strings per exchange call (default `cop-<n>`) — the
   /// proxy-ep derivation tests embed the tenant host here.
@@ -145,7 +187,7 @@ final class FakeCopilotBackend {
       exchangeCalls++;
       if (exchangeStatus != 200) {
         return http.StreamedResponse(
-          Stream.value(utf8.encode('{"message": "bad credentials"}')),
+          Stream.value(utf8.encode(exchangeBody)),
           exchangeStatus,
         );
       }
@@ -525,6 +567,353 @@ void main() {
       manager.invalidate();
       expect(await manager.get(), 'cop-2');
       expect(backend.exchangeCalls, 2);
+    });
+
+    test(
+      'registerStreamEnd arms on consecutive truncations and rate-bounds the heal',
+      () async {
+        var now = _baseNow;
+        final backend = FakeCopilotBackend()
+          ..chatHandler = (_) async => sseResponse('');
+        final manager = _manager(backend, now: () => now);
+
+        expect(await manager.get(), 'cop-1');
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.none,
+        );
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.none,
+        );
+        // A clean end resets the CONSECUTIVE streak.
+        expect(
+          manager.registerStreamEnd(truncationClass: false),
+          CopilotTruncationHeal.none,
+        );
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.none,
+        );
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.none,
+        );
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.fire,
+        );
+
+        // The heal happened moments ago: further truncations throttle
+        // (the oversized-context border case — no exchange loops).
+        now = now.add(const Duration(minutes: 1));
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.throttled,
+        );
+        // Past the window: the next threshold crossing fires again.
+        now = now.add(const Duration(minutes: 5));
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.fire,
+        );
+      },
+    );
+
+    test('PAT mode never arms the heal', () async {
+      final manager = CopilotTokenManager(
+        githubToken: 'github_pat_ARMED',
+        now: () => _baseNow,
+      );
+      for (var i = 0; i < 5; i++) {
+        expect(
+          manager.registerStreamEnd(truncationClass: true),
+          CopilotTruncationHeal.none,
+        );
+      }
+    });
+
+    test('the heal rides the single-flight exchange (no stampede)', () async {
+      var exchangeCalls = 0;
+      final client = http_testing.MockClient((request) async {
+        exchangeCalls++;
+        return http.Response(
+          exchangeJson(token: 'cop-healed', expiresAt: 1900000000),
+          200,
+        );
+      });
+      final manager = CopilotTokenManager(
+        githubToken: 'gh-heal-stampede',
+        client: client,
+        now: () => _baseNow,
+      );
+
+      await manager.get(); // the initial exchange
+      expect(
+        manager.registerStreamEnd(truncationClass: true),
+        CopilotTruncationHeal.none,
+      );
+      expect(
+        manager.registerStreamEnd(truncationClass: true),
+        CopilotTruncationHeal.none,
+      );
+      expect(
+        manager.registerStreamEnd(truncationClass: true),
+        CopilotTruncationHeal.fire,
+      );
+      manager.invalidate();
+
+      // Two concurrent streams heal together: ONE exchange, one token —
+      // both gets join the same in-flight future.
+      final healed = Future.wait(<Future<String>>[
+        manager.get(),
+        manager.get(),
+      ]);
+      expect(await healed, everyElement('cop-healed'));
+      expect(exchangeCalls, 2); // initial + the single heal exchange
+    });
+  });
+
+  group('truncation self-heal (#2327)', () {
+    // Accept-then-truncate enforcement: the API answers 200 with an SSE
+    // that closes before the finish_reason chunk. The wrapper counts
+    // CONSECUTIVE truncation-class stream ends per token — across the
+    // retry ladder's separate attempts — and heals at 3: invalidate +
+    // fresh exchange + one retry on the new token, rate-bounded to one
+    // heal cycle per window.
+    Future<List<AssistantMessageEvent>> turn(
+      FakeCopilotBackend backend,
+      String githubToken,
+    ) => streamCopilot(
+      copilotModel,
+      simpleContext(),
+      CopilotOptions(githubToken: githubToken),
+      backend.client(),
+    ).toList();
+
+    test(
+      '3 consecutive truncated streams heal: re-exchange + one retry on the fresh token',
+      () async {
+        var chatCount = 0;
+        final backend = FakeCopilotBackend()
+          ..chatHandler = (_) async {
+            chatCount++;
+            return sseResponse(chatCount <= 3 ? truncatingSse() : chatSse());
+          };
+
+        // Attempts 1 and 2 are one-off truncations: today's semantics —
+        // the raw cut-transport error, no second exchange.
+        final first = await turn(backend, 'gh-trunc-heal');
+        expect(backend.chatCalls, 1);
+        expect(backend.exchangeCalls, 1);
+        expect(first.last, isA<ErrorEvent>());
+        expect(
+          (first.last as ErrorEvent).error.errorMessage,
+          contains('stream ended without finish_reason'),
+        );
+
+        final second = await turn(backend, 'gh-trunc-heal');
+        expect(backend.chatCalls, 2);
+        expect(backend.exchangeCalls, 1);
+
+        // The third consecutive end fires the heal: a SECOND exchange,
+        // then exactly one retry on the fresh token — served clean here.
+        final third = await turn(backend, 'gh-trunc-heal');
+        expect(backend.exchangeCalls, 2);
+        expect(backend.chatCalls, 4);
+        expect(
+          hdr(backend.chatRequests.last, 'authorization'),
+          contains('cop-2'),
+        );
+        expect(third.last, isA<DoneEvent>());
+        expect(third.whereType<ErrorEvent>(), isEmpty);
+      },
+    );
+
+    test(
+      'healed but still truncating surfaces the class-named terminal',
+      () async {
+        final backend = FakeCopilotBackend()
+          ..chatHandler = (_) async => sseResponse(truncatingSse());
+
+        await turn(backend, 'gh-trunc-terminal');
+        await turn(backend, 'gh-trunc-terminal');
+        final third = await turn(backend, 'gh-trunc-terminal');
+
+        // The heal fired (second exchange) and the retried attempt ALSO
+        // truncated: the user-facing error names the class and the remedy.
+        expect(backend.exchangeCalls, 2);
+        expect(backend.chatCalls, 4);
+        final error = third.whereType<ErrorEvent>().single;
+        expect(error.reason, StopReason.error);
+        expect(
+          error.error.errorMessage,
+          contains('copilot stream truncated ×3'),
+        );
+        expect(error.error.errorMessage, contains('token refreshed'));
+        expect(error.error.errorMessage, contains('auth/geo/revocation'));
+      },
+    );
+
+    test(
+      'a clean stream end resets the streak (two more truncations stay one-offs)',
+      () async {
+        var chatCount = 0;
+        final backend = FakeCopilotBackend()
+          ..chatHandler = (_) async {
+            chatCount++;
+            return sseResponse(chatCount == 3 ? chatSse() : truncatingSse());
+          };
+
+        await turn(backend, 'gh-trunc-reset'); // truncation 1
+        await turn(backend, 'gh-trunc-reset'); // truncation 2
+        await turn(backend, 'gh-trunc-reset'); // clean — the streak resets
+        await turn(backend, 'gh-trunc-reset'); // truncation 1 again
+        final fifth = await turn(backend, 'gh-trunc-reset'); // truncation 2
+
+        expect(backend.exchangeCalls, 1); // never healed
+        expect(backend.chatCalls, 5);
+        expect(
+          (fifth.last as ErrorEvent).error.errorMessage,
+          contains('stream ended without finish_reason'),
+        );
+      },
+    );
+
+    test('one heal cycle per window: the cap stops exchange loops', () async {
+      final backend = FakeCopilotBackend()
+        ..chatHandler = (_) async => sseResponse(truncatingSse());
+
+      for (var i = 0; i < 3; i++) {
+        await turn(backend, 'gh-trunc-capped'); // heals inside the 3rd
+      }
+      expect(backend.exchangeCalls, 2); // initial + the one heal
+
+      // Still inside the heal window: three FURTHER consecutive ends
+      // must not churn exchanges (the oversized-context border case).
+      for (var i = 0; i < 3; i++) {
+        final events = await turn(backend, 'gh-trunc-capped');
+        expect(events.whereType<ErrorEvent>(), isNotEmpty);
+      }
+      expect(backend.exchangeCalls, 2);
+    });
+
+    test('PAT mode never heals', () async {
+      final backend = FakeCopilotBackend()
+        ..chatHandler = (_) async => sseResponse(truncatingSse());
+
+      for (var i = 0; i < 3; i++) {
+        final events = await turn(backend, 'github_pat_TRUNC_PAT');
+        expect(
+          (events.last as ErrorEvent).error.errorMessage,
+          contains('stream ended without finish_reason'),
+        );
+      }
+      expect(backend.chatCalls, 3);
+      expect(backend.exchangeCalls, 0); // no exchange path exists
+    });
+
+    test('the heal recycles the shared provider client once', () async {
+      var chatCount = 0;
+      final backend = FakeCopilotBackend()
+        ..chatHandler = (_) async {
+          chatCount++;
+          return sseResponse(chatCount <= 3 ? truncatingSse() : chatSse());
+        };
+      var builds = 0;
+      providerHttpClientFactory = () {
+        builds++;
+        return backend.client();
+      };
+      addTearDown(() {
+        providerHttpClientFactory = null;
+        debugResetSharedProviderHttpClient();
+      });
+
+      // No injected client: the wrapper rides the SHARED keep-alive
+      // client — the only path where the heal recycles the pool.
+      Future<List<AssistantMessageEvent>> sharedTurn() => streamCopilot(
+        copilotModel,
+        simpleContext(),
+        CopilotOptions(githubToken: 'gh-trunc-recycle'),
+      ).toList();
+
+      final before = sharedProviderHttpClient();
+      await sharedTurn(); // truncation 1
+      await sharedTurn(); // truncation 2
+      await sharedTurn(); // truncation 3 → heal + retry
+
+      expect(backend.exchangeCalls, 2);
+      final after = sharedProviderHttpClient();
+      expect(builds, 2); // one rebuild — the production recycle
+      expect(identical(before, after), isFalse);
+    });
+
+    test('tolerated silent truncations count toward the heal too', () async {
+      var chatCount = 0;
+      final backend = FakeCopilotBackend()
+        ..chatHandler = (_) async {
+          chatCount++;
+          return sseResponse(
+            chatCount <= 3 ? silentlyTruncatedSse() : chatSse(),
+          );
+        };
+
+      // The flagged shape (deltas streamed, no finish_reason) is NOT an
+      // error event — but the ends still count: the first two come back
+      // flagged, the third fires the heal and its retry streams clean.
+      for (var i = 0; i < 2; i++) {
+        final events = await turn(backend, 'gh-trunc-flagged');
+        final done = events.last as DoneEvent;
+        expect(done.reason, StopReason.stop);
+        expect(
+          done.message.errorMessage,
+          contains('stream ended without finish_reason'),
+        );
+      }
+      final third = await turn(backend, 'gh-trunc-flagged');
+      expect(backend.exchangeCalls, 2);
+      expect(backend.chatCalls, 4); // 3 flagged ends + the healed retry
+      expect(third.last, isA<DoneEvent>());
+      expect((third.last as DoneEvent).message.errorMessage, isNull);
+    });
+
+    test(
+      'geo-restricted exchange surfaces the loud card once per episode',
+      () async {
+        final cards = <String>[];
+        copilotProviderCardNotice = cards.add;
+        addTearDown(() => copilotProviderCardNotice = null);
+        final backend = FakeCopilotBackend(
+          exchangeStatus: 403,
+          exchangeBody:
+              '{"message":"At this time, Copilot is not available in your '
+              'location. You are currently logged in as example_epam.",'
+              '"notification_id":"trade_restricted_country"}',
+        )..chatHandler = (_) async => sseResponse(chatSse());
+
+        final events = await turn(backend, 'gh-geo-card');
+        expect(events.whereType<ErrorEvent>(), isNotEmpty); // chain proceeds
+        expect(cards, hasLength(1));
+        expect(cards.single, contains('blocked by location'));
+        expect(cards.single, contains('VPN'));
+
+        // Still geo-blocked (no cached token — every get re-exchanges): the
+        // card fires once per EPISODE, not once per attempt.
+        await turn(backend, 'gh-geo-card');
+        expect(cards, hasLength(1));
+      },
+    );
+
+    test('a plain 403 exchange never cards', () async {
+      final cards = <String>[];
+      copilotProviderCardNotice = cards.add;
+      addTearDown(() => copilotProviderCardNotice = null);
+      final backend = FakeCopilotBackend(exchangeStatus: 403);
+
+      final events = await turn(backend, 'gh-plain-403');
+      expect(cards, isEmpty);
+      expect(events.whereType<ErrorEvent>(), isNotEmpty);
     });
   });
 
