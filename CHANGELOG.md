@@ -24,12 +24,14 @@ block a release again.
   kept it while its owner run was in-flight — after which nothing
   re-examined it with train knowledge. The sweeper applies the train
   guard's exact criterion (well-formed `release-draft-owner` marker naming
-  a COMPLETED run + the tag's newest concluded ci.yml push train failed
-  with release-provenance SKIPPED — `rerun --failed` cannot resurrect
-  skipped jobs); fail-safe keeps mirror the train guard (unmarked/human
-  E1 drafts, in-flight owner, rerunnable FAILED provenance = the
-  gh-189 `rerun --failed` recovery vessel until stale, any lookup
-  failure). The train diagnosis is a shared `train_diagnosis()` helper and
+  a COMPLETED run + no queued/in-flight ci.yml push train on the tag + the
+  tag's newest concluded ci.yml push train failed with release-provenance
+  SKIPPED — `rerun --failed` cannot resurrect skipped jobs); fail-safe
+  keeps mirror the train guard (unmarked/human E1 drafts, in-flight owner,
+  ANY queued/in-flight tag train even alongside an older failed train,
+  rerunnable FAILED provenance = the gh-1899 `rerun --failed` recovery
+  vessel until stale, any lookup failure). The train diagnosis is a shared
+  `train_diagnosis()` helper and
   the issue names reclaimed drafts + the failed train as before.
   Pinned by `test/release_hygiene_test.dart` (`gh-2318` group)
 - fix(gh-2103 fallout, unblocks #2217): the auto-compactor no longer

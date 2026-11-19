@@ -2024,6 +2024,40 @@ gh release create "v9.9.9" \
         expect(run.log.where((l) => l.contains('--workflow')), isEmpty);
       });
 
+      test('a fresh marker draft whose tag has an in-flight train newer than '
+          'a failed train is kept — the live train may still publish it', () {
+        final run = runSweeper(
+          'reclaim-newer-train-inflight',
+          fixtures(
+              trainRuns: jsonEncode([
+                {
+                  'databaseId': 44024131631,
+                  'conclusion': null,
+                  'url': trainUrl,
+                },
+                {
+                  'databaseId': 44024131629,
+                  'conclusion': 'failure',
+                  'url': trainUrl,
+                },
+              ]),
+              trainJobs: jsonEncode(deadTrainJobs),
+            )
+            ..['releases.json'] = jsonEncode([
+              freshMarkerDraft('v1.0.739', 739008),
+            ]),
+        );
+        expect(
+          run.log.join('\n'),
+          isNot(contains('-X DELETE')),
+          reason:
+              'the older failed train does not own the draft exclusively — '
+              'the newer in-flight train may still publish it, so the fresh '
+              'reclaim must keep it regardless of the skipped provenance '
+              'diagnosis from the older run',
+        );
+      });
+
       test('a fresh marker draft whose train failed but provenance FAILED '
           '(rerunnable) is kept — it is the rerun --failed recovery vessel '
           '(gh-1899 convention)', () {
