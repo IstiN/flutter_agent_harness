@@ -263,6 +263,54 @@ void main() {
     repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
   });
 
+  group('primaryOfPartName (issue #2321 AC1)', () {
+    test('strips only a numeric part suffix and preserves .jsonl', () {
+      expect(
+        JsonlSessionRepo.primaryOfPartName('foo.jsonl.part-0001'),
+        'foo.jsonl',
+      );
+      expect(JsonlSessionRepo.primaryOfPartName('foo.jsonl'), isNull);
+      expect(JsonlSessionRepo.primaryOfPartName('foo.jsonl.part-'), isNull);
+      expect(JsonlSessionRepo.primaryOfPartName('notes.txt.part-3'), isNull);
+    });
+
+    test('property: every returned primary ends with .jsonl', () {
+      const stems = [
+        '',
+        'foo',
+        'foo.jsonl',
+        'foo.jsonl.jsonl',
+        'notes.txt',
+        '.jsonl',
+        '.txt',
+        r'dir\foo.jsonl',
+        'foo.jsonl.part-0001',
+      ];
+      const suffixes = [
+        '',
+        '.part-0',
+        '.part-0001',
+        '.part-123456789',
+        '.part-',
+        '.part-x',
+        '.part-1x',
+        '.part-1.extra',
+        '.jsonl.part-2',
+      ];
+      for (final stem in stems) {
+        for (final suffix in suffixes) {
+          final name = '$stem$suffix';
+          final primary = JsonlSessionRepo.primaryOfPartName(name);
+          expect(
+            primary == null || primary.endsWith('.jsonl'),
+            isTrue,
+            reason: 'non-JSONL primary $primary returned for $name',
+          );
+        }
+      }
+    });
+  });
+
   group('encodeSessionCwd / decodeSessionCwd', () {
     test('decodes a slug back to its absolute path', () {
       expect(
