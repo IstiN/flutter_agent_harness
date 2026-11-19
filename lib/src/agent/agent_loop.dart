@@ -2500,7 +2500,7 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   // Issue #1786: the foreground budget supervises every call the stuck
   // supervisor's exclusion list does not exempt (human-blocking tools,
   // subagents) — it is the unconditional outer bound, on by default.
-  final budgetApplies = _budgetAppliesTo(toolCall.name);
+  final budgetApplies = _budgetAppliesTo(toolCall.name, stuckTool);
   final execution = supervised || budgetApplies
       ? _superviseToolExecution(
           toolCall: toolCall,
