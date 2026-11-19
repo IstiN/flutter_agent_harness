@@ -11,21 +11,28 @@ String? deviceSessionPreviewTitle(String? preview) {
   return '${String.fromCharCodes(runes.take(59))}…';
 }
 
-/// Resolves a session row title without exposing a hash when a human hint
-/// exists: real title, preview snippet, path basename, then short id.
+/// An identifier suitable for a compact row or composer hint.
+String shortDeviceId(String id) =>
+    id.length > 8 ? '${id.substring(0, 8)}…' : id;
+
+/// Resolves a session row title like the Local tab: the registry display
+/// name, then the project folder basename, then a short id. First-prompt
+/// snippets stay previews; they never stand in for the session name.
+///
+/// Legacy DM titles sometimes prefixed the raw id with a device label. Keep
+/// that useful prefix while replacing only the id with the same fallback.
 String deviceSessionDisplayTitle({
   required String id,
   String? title,
-  String? preview,
   String? path,
 }) {
-  final named = title?.trim();
-  if (named != null && named.isNotEmpty && named != id) return named;
-  final snippet = deviceSessionPreviewTitle(preview);
-  if (snippet != null) return snippet;
-  final basename = _pathBasename(path);
-  if (basename != null) return basename;
-  return id.length > 8 ? id.substring(0, 8) : id;
+  final named = title?.trim() ?? '';
+  if (named.isNotEmpty && named != id && !named.contains(id)) return named;
+  final fallback = _pathBasename(path) ?? shortDeviceId(id);
+  if (named.isNotEmpty && named != id) {
+    return named.replaceAll(id, fallback);
+  }
+  return fallback;
 }
 
 String? _pathBasename(String? path) {

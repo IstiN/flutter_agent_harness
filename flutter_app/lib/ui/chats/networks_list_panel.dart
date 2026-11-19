@@ -13,7 +13,7 @@ import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_sessions_panel.dart' show LocalSessionsPanel;
-import 'package:fa/ui/chats/messenger_list_row_style.dart';
+import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart' show showSignInDialog;
 import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
@@ -49,13 +49,13 @@ class ChatNetworksPanel extends StatefulWidget {
 
   /// The compact strip's geometry (the Local folder strip's contract):
   /// ~70pt avatar-only column (level 2), Ø~50 avatars on a ~70pt pitch,
-  /// accent capsule ~6x51 flush to the strip's left edge. Level 1 (no
+  /// accent capsule ~6x51 inset inside the strip's left edge. Level 1 (no
   /// network open) is the standard [logo][name] list.
-  static const double stripWidth = 70;
-  static const double stripItemPitch = 70;
-  static const double stripAvatarSize = 50;
-  static const double capsuleWidth = 6;
-  static const double capsuleHeight = 51;
+  static const double stripWidth = MessengerDrilldownMetrics.stripWidth;
+  static const double stripItemPitch = MessengerDrilldownMetrics.itemPitch;
+  static const double stripAvatarSize = MessengerDrilldownMetrics.avatarSize;
+  static const double capsuleWidth = MessengerDrilldownMetrics.capsuleWidth;
+  static const double capsuleHeight = MessengerDrilldownMetrics.capsuleHeight;
 
   /// The session manager (wallet memberships + live sessions). Null (no
   /// network wiring) renders the empty state, like the old menu's guest
@@ -263,87 +263,51 @@ class _ChatNetworksPanelState extends State<ChatNetworksPanel> {
           compact: widget.compact,
           underlayKey: const ValueKey('networksChromeUnderlay'),
           header: _buildHeader(openId, openName, colors, tokens),
-          body: Row(
+          body: MessengerDrilldownBody(
             key: const ValueKey('chatNetworksList'),
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // The strip is NOT animated (owner pass): switching
-              // networks must not jitter the logos — only the
-              // content pane slides/fades.
-              if (openId != null)
-                _NetworksStrip(
-                  networks: networks,
-                  selectedNetworkId: openId,
-                  onOpen: _openNetwork,
-                ),
-              Expanded(
-                // Only the content pane animates (200ms
-                // easeInOutCubic slide+fade; instant under
-                // reduce-motion). Keys stay stable after settle.
-                child: AnimatedSwitcher(
-                  duration: FaMotion.duration(
-                    context,
-                    const Duration(milliseconds: 200),
+            drilledIn: openId != null,
+            strip: _NetworksStrip(
+              networks: networks,
+              selectedNetworkId: openId,
+              onOpen: _openNetwork,
+            ),
+            contentKey: ValueKey('networksContent-${openId ?? 'list'}'),
+            content: openId == null
+                ? (allNetworks.isEmpty
+                      ? _NetworksEmptyState(
+                          manager: manager,
+                          onManage: widget.onManageNetworks,
+                        )
+                      : networks.isEmpty
+                      ? sessionSearchEmptyState(
+                          context,
+                          colors,
+                          _query,
+                          _clearSearch,
+                          noMatches: context.l10n.listSearchNoMatches(_query),
+                        )
+                      : _NetworksList(
+                          networks: networks,
+                          onOpen: _openNetwork,
+                          bottomReserve: widget.compact
+                              ? MessengerFloatingDockInsets.bottomOf(context)
+                              : 0,
+                        ))
+                : _ChannelsList(
+                    networkId: openId,
+                    entries: entryChannels,
+                    sessionChannels: session?.channels ?? const <Channel>[],
+                    selectedChannelId: widget.mode?.networkId == openId
+                        ? widget.mode?.channelId
+                        : null,
+                    query: _query,
+                    bottomReserve: widget.compact
+                        ? MessengerFloatingDockInsets.bottomOf(context)
+                        : 0,
+                    onClearSearch: _clearSearch,
+                    onOpenChannel: (channel) =>
+                        widget.onOpenChannel(openId, channel),
                   ),
-                  switchInCurve: Curves.easeInOutCubic,
-                  switchOutCurve: Curves.easeInOutCubic,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween(
-                        begin: const Offset(0.08, 0),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
-                    ),
-                  ),
-                  child: KeyedSubtree(
-                    key: ValueKey('networksContent-${openId ?? 'list'}'),
-                    child: openId == null
-                        ? (allNetworks.isEmpty
-                              ? _NetworksEmptyState(
-                                  manager: manager,
-                                  onManage: widget.onManageNetworks,
-                                )
-                              : networks.isEmpty
-                              ? sessionSearchEmptyState(
-                                  context,
-                                  colors,
-                                  _query,
-                                  _clearSearch,
-                                  noMatches: context.l10n.listSearchNoMatches(
-                                    _query,
-                                  ),
-                                )
-                              : _NetworksList(
-                                  networks: networks,
-                                  onOpen: _openNetwork,
-                                  bottomReserve: widget.compact
-                                      ? MessengerFloatingDockInsets.bottomOf(
-                                          context,
-                                        )
-                                      : 0,
-                                ))
-                        : _ChannelsList(
-                            networkId: openId,
-                            entries: entryChannels,
-                            sessionChannels:
-                                session?.channels ?? const <Channel>[],
-                            selectedChannelId: widget.mode?.networkId == openId
-                                ? widget.mode?.channelId
-                                : null,
-                            query: _query,
-                            bottomReserve: widget.compact
-                                ? MessengerFloatingDockInsets.bottomOf(context)
-                                : 0,
-                            onClearSearch: _clearSearch,
-                            onOpenChannel: (channel) =>
-                                widget.onOpenChannel(openId, channel),
-                          ),
-                  ),
-                ),
-              ),
-            ],
           ),
         );
       },
@@ -424,62 +388,31 @@ class _NetworksList extends StatelessWidget {
   final double bottomReserve;
 
   @override
-  Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    return ListView.builder(
-      key: const ValueKey('networksList'),
-      padding: EdgeInsets.only(
-        top: MessengerGlassBodyInsets.topOf(context) + 4,
-        bottom: 4 + bottomReserve,
-      ),
-      itemCount: networks.length,
-      itemBuilder: (context, index) {
-        final entry = networks.entries.elementAt(index);
-        return SizedBox(
+  Widget build(BuildContext context) => MessengerAvatarList(
+    listKey: const ValueKey('networksList'),
+    bottomReserve: bottomReserve,
+    onOpen: onOpen,
+    items: [
+      for (final entry in networks.entries)
+        MessengerAvatarItem(
           key: ValueKey('networkRow-${entry.key}'),
-          height: ChatNetworksPanel.stripItemPitch,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => onOpen(entry.key),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(
-                  children: [
-                    FolderAvatar(
-                      seed: entry.key,
-                      label: entry.value.name,
-                      size: ChatNetworksPanel.stripAvatarSize,
-                      circle: true,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        entry.value.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: tokens.ink1,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          id: entry.key,
+          label: entry.value.name,
+          avatar: (_) => FolderAvatar(
+            seed: entry.key,
+            label: entry.value.name,
+            size: ChatNetworksPanel.stripAvatarSize,
+            circle: true,
           ),
-        );
-      },
-    );
-  }
+        ),
+    ],
+  );
 }
 
 /// Level 2: the compact avatar-only networks strip — one Ø50
 /// letter-gradient avatar per [ChatNetworksPanel.stripItemPitch] cell,
 /// no labels or status meta. The drilled network paints the accent capsule
-/// flush to the strip's left edge and squares its avatar (radius ~25%);
+/// inside the strip's left edge and squares its avatar (radius ~25%);
 /// a tap opens its channel list beside the strip.
 class _NetworksStrip extends StatelessWidget {
   const _NetworksStrip({
@@ -493,76 +426,27 @@ class _NetworksStrip extends StatelessWidget {
   final ValueChanged<String> onOpen;
 
   @override
-  Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    return SizedBox(
-      key: const ValueKey('networksStrip'),
-      width: ChatNetworksPanel.stripWidth,
-      child: networks.isEmpty
-          ? const SizedBox.shrink()
-          // The owner clip: the strip never paints a scrollbar thumb —
-          // scrolling stays on wheel/drag (scrollbars disabled, everything
-          // else from the ambient behavior).
-          : ScrollConfiguration(
-              behavior: ScrollConfiguration.of(
-                context,
-              ).copyWith(scrollbars: false),
-              child: ListView.builder(
-                padding: EdgeInsets.only(
-                  top: MessengerGlassBodyInsets.topOf(context) + 4,
-                  bottom: 4,
-                ),
-                itemCount: networks.length,
-                itemBuilder: (context, index) {
-                  final entry = networks.entries.elementAt(index);
-                  final selected = entry.key == selectedNetworkId;
-                  return SizedBox(
-                    key: ValueKey('chatNetworkRow-${entry.key}'),
-                    width: ChatNetworksPanel.stripWidth,
-                    height: ChatNetworksPanel.stripItemPitch,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => onOpen(entry.key),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            FolderAvatar(
-                              seed: entry.key,
-                              label: entry.value.name,
-                              size: ChatNetworksPanel.stripAvatarSize,
-                              circle: !selected,
-                              radiusFactor: selected ? 0.25 : 0.28,
-                            ),
-                            if (selected)
-                              Positioned(
-                                left: 0,
-                                top:
-                                    (ChatNetworksPanel.stripItemPitch -
-                                        ChatNetworksPanel.capsuleHeight) /
-                                    2,
-                                child: Container(
-                                  key: const ValueKey('networkSelectedCapsule'),
-                                  width: ChatNetworksPanel.capsuleWidth,
-                                  height: ChatNetworksPanel.capsuleHeight,
-                                  decoration: BoxDecoration(
-                                    color: tokens.accent,
-                                    borderRadius: BorderRadius.circular(
-                                      ChatNetworksPanel.capsuleWidth / 2,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-    );
-  }
+  Widget build(BuildContext context) => MessengerAvatarStrip(
+    stripKey: const ValueKey('networksStrip'),
+    selectedCapsuleKey: const ValueKey('networkSelectedCapsule'),
+    selectedId: selectedNetworkId ?? '',
+    onOpen: onOpen,
+    items: [
+      for (final entry in networks.entries)
+        MessengerAvatarItem(
+          key: ValueKey('chatNetworkRow-${entry.key}'),
+          id: entry.key,
+          label: entry.value.name,
+          avatar: (selected) => FolderAvatar(
+            seed: entry.key,
+            label: entry.value.name,
+            size: ChatNetworksPanel.stripAvatarSize,
+            circle: !selected,
+            radiusFactor: selected ? 0.25 : 0.28,
+          ),
+        ),
+    ],
+  );
 }
 
 /// Level 2: the drilled-into network's channels — the SAME row anatomy
@@ -713,86 +597,15 @@ class _PanelRow extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
-    final foreground = selected ? tokens.accentInk : colors.text;
-    final subdued = selected
-        ? tokens.accentInk.withValues(alpha: .82)
-        : colors.dim;
-    return Material(
-      color: messengerListRowColor(selected: selected, accent: tokens.accent),
-      shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: LocalSessionsPanel.sessionRowPitch,
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      const NeutralGlyphAvatar(
-                        size: LocalSessionsPanel.avatarSize,
-                        icon: Icons.tag_rounded,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: foreground,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                height: 1.2,
-                              ),
-                            ),
-                            if (meta case final metaText?
-                                when metaText.isNotEmpty) ...[
-                              const SizedBox(height: 3),
-                              Text(
-                                metaText,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: subdued,
-                                  fontSize: 12.5,
-                                  height: 1.2,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 18,
-                        color: subdued,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (hairline)
-                Container(
-                  height: 1,
-                  margin: const EdgeInsets.only(left: 66, right: 8),
-                  color: colors.border.withValues(alpha: .45),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MessengerPanelRow(
+    title: title,
+    meta: meta,
+    selected: selected,
+    hairline: hairline,
+    onTap: onTap,
+    leading: const NeutralGlyphAvatar(
+      size: LocalSessionsPanel.avatarSize,
+      icon: Icons.tag_rounded,
+    ),
+  );
 }

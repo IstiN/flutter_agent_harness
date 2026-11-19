@@ -247,6 +247,7 @@ void main() {
     bool denseTranscript = false,
     bool settingsFixtures = false,
     bool networkFixtures = false,
+    bool persistedNetworkAccount = false,
     FaVisualDirection direction = FaVisualDirection.glass,
   }) async {
     final env = MemoryExecutionEnv(cwd: '/work/fa_network');
@@ -373,6 +374,22 @@ void main() {
     if (networkFixtures) {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       await wallet.createIfMissing(displayName: 'Golden User');
+      if (persistedNetworkAccount) {
+        // Model the first shell frame of a signed-in cold start: the wallet
+        // is already loaded, while the async access-token restore has not
+        // populated the manager's in-memory JWT yet.
+        await wallet.saveAccount(
+          WalletAccount(
+            provider: 'google',
+            login: 'owner@example.com',
+            displayName: 'Golden Owner',
+            accessToken: 'persisted-access',
+            refreshToken: 'persisted-refresh',
+            accessExpiresAt: DateTime.utc(2099),
+            refreshExpiresAt: DateTime.utc(2099, 2),
+          ),
+        );
+      }
       await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
       await wallet.addNetwork(networkId: 'net2', name: 'quiet-net');
       for (var index = 3; index <= 14; index++) {
@@ -1408,6 +1425,60 @@ void main() {
     await expectGolden(tester, 'wide_layout_shell_apps_collapsed');
     debugDefaultTargetPlatformOverride = null;
   });
+
+  for (final size in [goldenSizePhone, goldenSizeDesktop]) {
+    final phone = size == goldenSizePhone;
+    final frame = phone ? 'narrow_layout_shell' : 'wide_layout_shell';
+    testWidgets('Devices destination survives cold-start JWT restore '
+        '(${phone ? 'phone' : 'desktop'})', (tester) async {
+      if (phone) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      }
+      try {
+        await pumpShell(
+          tester,
+          size: size,
+          networkFixtures: true,
+          persistedNetworkAccount: true,
+        );
+
+        // The persisted account is present but its async JWT restore has not
+        // completed. Devices must not depend on that transient hasJwt=false.
+        expect(
+          find.byKey(const ValueKey('messengerPrimaryNav-devices')),
+          findsOneWidget,
+        );
+        expect(find.text('Devices'), findsOneWidget);
+        await expectGolden(tester, '${frame}_devices_signed_in');
+      } finally {
+        // testWidgets checks foundation vars before test-scoped teardown, so
+        // restore the platform override inline as well as through the safety
+        // addTearDown above.
+        if (phone) debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('Devices destination stays hidden for a guest '
+        '(${phone ? 'phone' : 'desktop'})', (tester) async {
+      if (phone) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      }
+      try {
+        await pumpShell(tester, size: size, networkFixtures: true);
+
+        expect(
+          find.byKey(const ValueKey('messengerPrimaryNav-devices')),
+          findsNothing,
+        );
+        expect(find.text('Devices'), findsNothing);
+        await expectGolden(tester, '${frame}_devices_guest');
+      } finally {
+        if (phone) debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
 
   // Mid-collapse regression guard: the shrinking sidebar must CLIP its
   // rows — a live capture once caught the selected row painting ~40pt

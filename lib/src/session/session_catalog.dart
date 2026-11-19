@@ -59,9 +59,9 @@ final class SessionCatalogEntry {
   final String cwd;
   final DateTime lastActiveAt;
 
-  /// Human label: explicit/derived title, then first-prompt snippet, then
-  /// cwd basename. A UUID is only the final short-id fallback, never the
-  /// primary label when any human metadata exists.
+  /// Human label: explicit/derived title, then cwd basename. A UUID is only
+  /// the final short-id fallback; a first-prompt snippet remains preview
+  /// metadata and never replaces the project name.
   String get displayName => sessionCatalogDisplayName(this);
 
   /// Project directory basename, accepting both POSIX and Windows paths.
@@ -231,14 +231,12 @@ SessionCatalogProjection projectSessionCatalog({
 String sessionCatalogDisplayName(SessionCatalogEntry row) {
   final title = _displayText(row.title, sessionCatalogTitleMaxRunes);
   if (title != null && title != row.id) return title;
-  final snippet = _displayText(row.snippet, sessionCatalogSnippetMaxRunes);
-  if (snippet != null && snippet != row.id) return snippet;
   final slug = row.cwdSlug;
   if (slug != null && slug.isNotEmpty) return slug;
-  final shortId = _looksLikeUuid(row.id) && row.id.length > 8
-      ? row.id.substring(0, 8)
-      : row.id;
-  return 'Session $shortId';
+  if (_looksLikeUuid(row.id) && row.id.length > 8) {
+    return '${row.id.substring(0, 8)}…';
+  }
+  return 'Session ${row.id}';
 }
 
 /// Basename used as the compact cwd label.
