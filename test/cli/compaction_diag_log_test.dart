@@ -5,7 +5,10 @@
 // by unawaited fire-and-forget appends racing the process exit.
 library;
 
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -160,6 +163,128 @@ void main() {
           contains(RegExp(r'sid=[0-9a-f]{8}')),
           reason: 'compaction line without a session id: $line',
         );
+      }
+    },
+  );
+
+  test(
+    '#2274 AC1: a latched judge skip renders as a non-failure line — '
+    'no FAILED pass for the designed skip',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      final taskDir = await Directory.systemTemp.createTemp('fa_2274_skip');
+      addTearDown(() => taskDir.delete(recursive: true));
+      final home = '${taskDir.path}/home';
+      // Content-routed fake: the hide judge (the `context-hygiene judge`
+      // system prompt) answers garbage — two unparseable answers engage
+      // the cross-run latch (gh-2096) — and the checkpoint summarizer
+      // answers its canned text. Real turns run EIGHT bash tool rounds
+      // (two calls each): every round lands hideable tool-call pairs
+      // past the protected tail, so the relief compactions first pay
+      // the judge ladder honestly (and latch), then — judge
+      // healthy-latched — take the designed skip.
+      final realTurns = <List<AssistantMessageEvent>>[
+        for (var round = 0; round < 8; round++)
+          toolTurn([
+            ToolCall(
+              id: 'c${round}a',
+              name: 'bash',
+              arguments: {'command': 'seq 1 2000'},
+            ),
+            ToolCall(
+              id: 'c${round}b',
+              name: 'bash',
+              arguments: {'command': 'seq 1 2000'},
+            ),
+          ]),
+        textTurn('all reads done'),
+      ];
+      AssistantMessageEventStream routed(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final system = context.systemPrompt ?? '';
+        String? reply;
+        if (system.contains('context-hygiene judge')) {
+          reply = 'the judge endpoint is speaking gibberish, not json';
+        } else if (system.contains('Write a checkpoint')) {
+          reply = 'DIAG CHECKPOINT: the probe task summary.';
+        }
+        final List<AssistantMessageEvent> events;
+        if (reply != null) {
+          events = textTurn(reply);
+        } else if (realTurns.isNotEmpty) {
+          events = realTurns.removeAt(0);
+        } else {
+          // An unscripted LM call (a residual summarizer): answer with a
+          // canned summary so the run still settles.
+          events = textTurn('FA-2274 fallback summary.');
+        }
+        final stream = AssistantMessageEventStream();
+        for (final event in events) {
+          stream.push(event);
+        }
+        stream.end();
+        return stream;
+      }
+
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: LocalExecutionEnv(cwd: taskDir.path),
+          sessionRoot: '${taskDir.path}/sessions',
+          homeDir: home,
+          providerKind: 'openai-completions',
+          approvalMode: ApprovalMode.yolo,
+        ),
+        io: FakeCliIO(),
+        environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '800'},
+        streamFunction: routed,
+      );
+      final exit = await cli.runHeadless('read two big files');
+      expect(exit, 0, reason: 'the headless run must complete cleanly');
+
+      final log = await File('$home/.fah/logs/fa.log').readAsString();
+      final compactLines = log
+          .split('\n')
+          .where((line) => line.contains('auto-compact'))
+          .toList();
+      expect(compactLines, isNotEmpty, reason: 'the fixture must compact');
+      // The latch engaged organically: an honest judge failure (the
+      // garbage endpoint) rendered FAILED before any skip existed.
+      expect(
+        compactLines.any(
+          (line) => line.contains('FAILED') && line.contains('unparseable'),
+        ),
+        isTrue,
+        reason:
+            'the judge failures that engage the latch are real '
+            'failures and must keep rendering as FAILED: '
+            '${compactLines.join(" | ")}',
+      );
+      // AC1: the designed skip renders as a NON-FAILURE line. Its
+      // diagnostic line carries the reason, but never the FAILED verdict.
+      final skipLines = compactLines
+          .where((line) => line.contains('judge-latch skip'))
+          .toList();
+      expect(
+        skipLines,
+        isNotEmpty,
+        reason:
+            'the latch must skip the judge on a later hide-ladder '
+            'pass: ${compactLines.join(" | ")}',
+      );
+      for (final line in skipLines) {
+        expect(
+          line.contains('FAILED'),
+          isFalse,
+          reason:
+              'a designed judge-latch skip must never log as FAILED: '
+              '$line',
+        );
+        expect(line, contains('sid='), reason: 'gh-2097 invariant kept');
       }
     },
   );
