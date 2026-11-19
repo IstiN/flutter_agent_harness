@@ -1011,4 +1011,46 @@ void main() {
       }
     },
   );
+
+  group('overWindowReliefVerdict decision table (issue #2264)', () {
+    // (afterTokens, window, capTriggered, passesRan, expected)
+    const cases = <(int, int, bool, int, OverWindowReliefVerdict)>[
+      // Relieved BOTH dimensions: a success — no second pass, no trim.
+      (11000, 20000, false, 1, OverWindowReliefVerdict.success),
+      // `window` itself FITS (the criterion is `<=`).
+      (20000, 20000, false, 1, OverWindowReliefVerdict.success),
+      // Fits the window but the learned-cap trigger still fires: legal
+      // request, no valve, continue truthfully.
+      (11000, 20000, true, 1, OverWindowReliefVerdict.continueUnderWindow),
+      // Still over the window after a pass: the trim valve applies —
+      // whatever the count dimension says.
+      (25000, 20000, false, 1, OverWindowReliefVerdict.trimValve),
+      (25000, 20000, true, 1, OverWindowReliefVerdict.trimValve),
+      // Zero passes: the honest exhausted verdict stands, regardless of
+      // the measurements (a disabled/refused config).
+      (25000, 20000, false, 0, OverWindowReliefVerdict.exhausted),
+      (11000, 20000, false, 0, OverWindowReliefVerdict.exhausted),
+      (11000, 20000, true, 0, OverWindowReliefVerdict.exhausted),
+    ];
+    for (final (tokens, window, triggered, passes, expected) in cases) {
+      test('tokens=$tokens window=$window capTriggered=$triggered '
+          'passes=$passes -> ${expected.name}', () {
+        expect(
+          overWindowReliefVerdict(
+            afterTokens: tokens,
+            window: window,
+            messageCapTriggered: triggered,
+            passesRan: passes,
+          ),
+          expected,
+        );
+      });
+    }
+
+    test('the funnel receipts pluralize honestly', () {
+      expect(compactionPassesLabel(1), 'pass');
+      expect(compactionPassesLabel(2), 'passes');
+      expect(compactionPassesLabel(0), 'passes');
+    });
+  });
 }
