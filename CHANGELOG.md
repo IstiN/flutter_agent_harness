@@ -13,6 +13,25 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2318): the daily draft sweeper now reclaims a fresh (<24h)
+  pipeline draft whose publish point is provably unreachable, instead of
+  letting it rot to the 24h sweep and re-file the recurring
+  `[daily-publish] stale release drafts swept` issue. The v1.0.739 shape:
+  a daily-child staging leg minted the tag (`release_tag_mint.sh`) and
+  staged the draft, the freshly fired train failed upstream of
+  release-provenance, and the gh-2230 train-draft-guard either ran before
+  the draft existed (long attach legs create drafts after train end) or
+  kept it while its owner run was in-flight — after which nothing
+  re-examined it with train knowledge. The sweeper applies the train
+  guard's exact criterion (well-formed `release-draft-owner` marker naming
+  a COMPLETED run + the tag's newest concluded ci.yml push train failed
+  with release-provenance SKIPPED — `rerun --failed` cannot resurrect
+  skipped jobs); fail-safe keeps mirror the train guard (unmarked/human
+  E1 drafts, in-flight owner, rerunnable FAILED provenance = the
+  gh-189 `rerun --failed` recovery vessel until stale, any lookup
+  failure). The train diagnosis is a shared `train_diagnosis()` helper and
+  the issue names reclaimed drafts + the failed train as before.
+  Pinned by `test/release_hygiene_test.dart` (`gh-2318` group)
 - fix(gh-2103 fallout, unblocks #2217): the auto-compactor no longer
   reads compactSession's empty-foldable-region refusal (gh-204,
   `CompactionErrorCode.invalidSession`) as a summarizer outage. gh-2103's
