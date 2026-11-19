@@ -712,7 +712,7 @@ void main() {
           contains('stream ended without finish_reason'),
         );
 
-        final second = await turn(backend, 'gh-trunc-heal');
+        await turn(backend, 'gh-trunc-heal');
         expect(backend.chatCalls, 2);
         expect(backend.exchangeCalls, 1);
 
