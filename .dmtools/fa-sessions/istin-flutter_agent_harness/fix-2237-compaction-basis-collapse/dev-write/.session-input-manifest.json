@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-19T08:51:43.878Z",
+  "ticketKey": "pr-2240",
+  "headSha": "aabd024efddf971a6de68539ecb818c0ff046fdc",
+  "baseBranch": "main",
+  "reviewDecision": "CHANGES_REQUESTED",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:6bf134d0f9800cc6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:85e9f7f4b99c0b13",
+      "size": 17493
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:1bb7ef9023335ba3",
+      "size": 3229
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:2a1eb4ddc0f62612",
+      "size": 3928
+    },
+    "request.md": {
+      "hash": "fnv1a64:67d096c7e288b6fb",
+      "size": 3568
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:09195065a3675792",
+      "size": 957
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0860b57dc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:fcfd7e5881f3bca9",
+      "size": 3653
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:67d096c7e288b6fb",
+      "size": 3568
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc65Ycud",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/structured/engine.dart:175",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: AC1 \"one basis\" invariant has a reachable counterexample — boundary-less windowed resumes re-arm phantom anchors through `refreshAgentState`**\n\nThe fix makes the projection the single anchor authority, and `_resetStaleUsageAnchors` (session_tree.dart:874-886) resets only entries **before the last boundary record** (`CompactionRecord` / `HiddenRangeRecord` / `CompactCheckpointRecord`). A resident tail that contains **no** boundary record returns `staleEntryIds = const {}`, so the rebuild at this line re-arms every persisted generation-time usage anchor — exactly the anchors the CLI's resume path deliberately zeroed one line after loading:\n\n- `lib/src/cli/session_commands.dart:962` — `_agent.state.messages = resetLoadedUsageAnchors(messages)` with the comment: *\"Loaded usage anchors are generation-time: post-compaction they phantom-report the pre-compaction size (183k on a 27k branch) and fire a no-op compaction on every resume. Re-anchor at chars/4.\"*\n\n**The divergent sequence**: a windowed resume whose boundary-walk exhausts `maxPages` (session_commands.dart logs *\"boundary-walk exhausted maxPages; proceeding with the tail window\"*) leaves a boundary-less giant tail; the resume zeroes anchors → the gate arms on the chars/4 basis; the engine's refresh at this line then re-arms the persisted phantom anchor → `estimateRequestTokens` anchors at the pre-trim size (`token_estimation.dart:489-493` — any anchor suppresses the overhead addend and prices the whole request). Engine basis ≠ gate basis — the gh-2237 divergence class, opposite direction: the engine chases the phantom number, folds/hides far past the real over-amount, and burns hide/checkpoint provider passes until a fold's own `HiddenRangeRecord` lands a boundary and re-collapses the basis. Cost is bounded (one over-aggressive fold, self-healing, hides are expandable) — that is why this is ⚠️, not 🚨 — but the PR's headline claim (\"the engine cannot re-derive a different basis than the gate that armed it\", PR description AC1) is falsified on this path, and no test pins it: UT-2 requires a boundary, E2 requires no anchors at all; the boundary-less windowed-resume case is exactly the gap between them.\n\n**Ask**: either extend the stale-anchor curation to cover load-time anchors whose generation context the resident tail cannot vouch for (the `resetLoadedUsageAnchors` rationale, applied at projection level for boundary-less tails), or state in `refreshAgentState`'s contract why the boundary-less resume basis is acceptable and pin the decision with a UT (gate basis vs engine basis after a `maxPages`-exhausted resume, no boundary records). Pre-fix, the blanket zero made this specific path correct (engine basis = gate basis = chars/4); please confirm the regression is intended or covered elsewhere before merge."
+    },
+    {
+      "id": "pr_discussions.md:ajaxspace:2026-11-17:8aa778be",
+      "kind": "comment",
+      "author": "ajaxspace",
+      "createdAt": "2026-11-17",
+      "updatedAt": "2026-11-17",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**CI red classification — not caused by this branch (evidence below).** The branch's own changes are untouched; no fix push needed.\n\n**1. `Browser extension / Headless Chrome suite` — fail (runs 44058139073, 440593232 on this PR).**\nFailing test: `browser_ext/dart/test/host_compaction_test.dart` — 'AC5 — the re-fire ladder: a still-over pass re-fires exactly once, then the exhaustion notice' (`expect(outcome.exhausted, isTrue)` at :519 returns false).\n\nPre-existing on main, proven three ways:\n- The same suite fails on the `.github`-only dependabot PR (github-actions bump, zero browser_ext/lib changes) in 6 consecutive runs: 44059070858, 44048233590, 44040428125, 4393928723, 43933360318, 43913343460 (2026-11-16 16:58 → 2026-11-17 09:49) — the identical test, identical assertion.\n- Local reproduction on **pristine `origin/main` @8f526c0a85** (this branch's changes stashed): `dart test test/host_compaction_test.dart` in browser_ext/dart fails the same test; with the branch applied it fails identically (deterministic, 4+ local runs, also in isolation).\n- The failure is deterministic (not flaky): 8/8 CI runs red. `scripts/test_quarantine.json` does not apply — its scope is the core Quality-gate integration legs (pty-integration / integration-mock), not the browser-ext workflow, and entries require a flake-tracker issue; this needs a direct fix (the rig's second ladder run now relieves instead of still being over — `exhausted` false — worth its own RCA: the fixture is 3 messages, window 512/reserve 128/keep 256, Usage.zero seeds, so gh-2237's anchor work cannot reach it).\n\nSuggest filing a dedicated ci-red issue for `browser-ext.yml` — it blocks every PR touching browser_ext paths since 2026-11-16 16:58.\n\n**2. Main's own ci.yml red (run 44046925560, Quality gate + Hostile ambient env) — unrelated to this PR.**\nFailing test: `test/providers/payload_stall_test.dart` — 'late-answer adoption in the connect-stall retry loop (#1916 AC3): an abandoned attempt answering during the backoff is ADOPTED — the identical payload is never re-uploaded' — failed ONLY in the Hostile-ambient matrix (artificially degraded env). Local re-run on this branch: the full file passes 13/13, including that exact test (`dart test test/providers/payload_stall_test.dart` — All tests passed). This PR is not merged and shares only the base; the run is main code. Timing-sensitive under the hostile matrix → candidate for the red-in-2-distinct-runs quarantine watch if it recurs.\n\n**Branch's own gates:** dart analyze full (CI-equivalent local), core compaction/agent/session/task/hosts 2157 ✓, test/cli 4591 ✓, browser_ext compaction host tests ✓ (only the pre-existing AC5 red), CodeQL ✓, merge gate ✓."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:eb8c4b8d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: AC1 \"one basis\" invariant has a reachable counterexample — boundary-less windowed resumes re-arm phantom anchors through `refreshAgentState`**\n\nThe fix makes the projection the single anchor authority, and `_resetStaleUsageAnchors` (session_tree.dart:874-886) resets only entries **before the last boundary record** (`CompactionRecord` / `HiddenRangeRecord` / `CompactCheckpointRecord`). A resident tail that contains **no** boundary record returns `staleEntryIds = const {}`, so the rebuild at this line re-arms every persisted generation-time usage anchor — exactly the anchors the CLI's resume path deliberately zeroed one line after loading:\n\n- `lib/src/cli/session_commands.dart:962` — `_agent.state.messages = resetLoadedUsageAnchors(messages)` with the comment: *\"Loaded usage anchors are generation-time: post-compaction they phantom-report the pre-compaction size (183k on a 27k branch) and fire a no-op compaction on every resume. Re-anchor at chars/4.\"*\n\n**The divergent sequence**: a windowed resume whose boundary-walk exhausts `maxPages` (session_commands.dart logs *\"boundary-walk exhausted maxPages; proceeding with the tail window\"*) leaves a boundary-less giant tail; the resume zeroes anchors → the gate arms on the chars/4 basis; the engine's refresh at this line then re-arms the persisted phantom anchor → `estimateRequestTokens` anchors at the pre-trim size (`token_estimation.dart:489-493` — any anchor suppresses the overhead addend and prices the whole request). Engine basis ≠ gate basis — the gh-2237 divergence class, opposite direction: the engine chases the phantom number, folds/hides far past the real over-amount, and burns hide/checkpoint provider passes until a fold's own `HiddenRangeRecord` lands a boundary and re-collapses the basis. Cost is bounded (one over-aggressive fold, self-healing, hides are expandable) — that is why this is ⚠️, not 🚨 — but the PR's headline claim (\"the engine cannot re-derive a different basis than the gate that armed it\", PR description AC1) is falsified on this path, and no test pins it: UT-2 requires a boundary, E2 requires no anchors at all; the boundary-less windowed-resume case is exactly the gap between them.\n\n**Ask**: either extend the stale-anchor curation to cover load-time anchors whose generation context the resident tail cannot vouch for (the `resetLoadedUsageAnchors` rationale, applied at projection level for boundary-less tails), or state in `refreshAgentState`'s contract why the boundary-less resume basis is acceptable and pin the decision with a UT (gate basis vs engine basis after a `maxPages`-exhausted resume, no boundary records). Pre-fix, the blanket zero made this specific path correct (engine basis = gate basis = chars/4); please confirm the regression is intended or covered elsewhere before merge."
+    },
+    {
+      "id": "pr_discussions.md:IstiN:2026-11-18:994a2350",
+      "kind": "comment",
+      "author": "IstiN",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Synced with current main by merge; Chrome red is resolved.** Head `4561dcad76` is `MERGEABLE` with main `361957412d`.\n\n- The only textual conflict was `CHANGELOG.md`; retained both gh-2237 and gh-2103/#2283 entries. #2283's empty-foldable-region no-work fix and its AC5 regression test remain intact. Adapted #2283's new `_LadderHooks` to gh-2237's `onDone(..., {reason})` signature (`4561dcad76`).\n- The old Headless Chrome failure was `host_compaction_test.dart` AC5 (`exhausted`: expected true, actual false), the main regression ajaxspace classified. Current main contains #2283's fix, and the fresh **Browser extension run 44366481815 is green** (Headless Chrome, integration, and real-Chrome Playwright legs). Local `browser_ext/dart/test/host_compaction_test.dart`: **25/25 passed**, including AC5.\n- Scoped root tests (all 13 changed test files): **118 passed**. `dart analyze` on every changed root Dart file: **No issues found** (browser host analysis has only its existing `implementation_imports` infos).\n\nFresh PR checks are green: Headless Chrome, CodeQL/analyzers, merge gate, and SM kicker."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:fb64db5b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 4561dcad7638e60a9bb0fec99beb8a51d2ea5b5d — stale base at 2026-11-18T18:31:38.008Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-18:71026aec",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-18",
+      "updatedAt": "2026-11-18",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔁 Ghost-cancelled validation re-dispatched: the newest dispatched validation run (44390199481) concluded CANCELLED before its check runs materialized — no required check will ever re-report on its own (gh-1000 ghost-cancel class, live gh-757). CANCELLED is never a verdict: fresh CI re-dispatched on the same head, merging resumes automatically. (head `f68c8ef9b2a1776960a04b5fa802e1e3ab210746`)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:9f6aa95f",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer e791bfba72f4cd4b6dc9fc055bfa533a3a34720b — run 44433882279 still queued at 2026-11-19T01:53:15.799Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:c5cc366e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel cc33b8a76eada287c19ea90aaf3c20a8e5ba15d4 — stale base at 2026-11-19T02:41:01.155Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:2811741d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel c480ba7e514e6ba4fcb70efb932028e7e719daee — stale base at 2026-11-19T04:12:43.695Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:95c909a5",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer dddf30d7462a9d7a7fda5dc8597b07247ba6433c — run 44458861234 still queued at 2026-11-19T04:59:29.747Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:c825c987",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 1322b308dd861b4d56a430636697d626bbca2362 — stale base at 2026-11-19T06:25:01.669Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:c3aaac62",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer cd63400699dfff982dd7412be9ee8dec120f3195 — run 44472467683 still queued at 2026-11-19T07:23:47.631Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:bb45f3c2",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel cd63400699dfff982dd7412be9ee8dec120f3195 — stale base at 2026-11-19T07:27:37.993Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:44e8348c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One 🚨 CI red on head `34629911` must go green (or be quarantined per red-in-2-distinct-SHA-runs) before merge, and one ⚠️ code finding: the AC1 \"one basis\" invariant still has a reachable counterexample on boundary-less windowed resumes, where `refreshAgentState` re-arms the phantom anchors the resume path deliberately zeroed. The core fix itself is sound — projection-trust anchors, honest zero-pass receipts on both surfaces, reason threading, and the gh-2097/gh-1742 guards all verify (analyze clean; 8/8 new tests, 1332 scoped compaction/agent/hosts tests green locally; the CI-failing test passes 9/9 on this branch).\n\n**Key Issues**:\n- 🚨 **CI red — `Hostile ambient env` (commit `34629911`)**: `test/cli/agent_cli_single_render_test.dart` — \"E2: a backgrounded bash call keeps its distinct settle event next to the single end row\" — `FileSystemException: Deletion failed, path = '/tmp/fa_single_render_artWPCIUT' (errno = 39)`; 14664 passed / 1 failed (full log: `ci_failures_full.log`). The file is untouched by this branch (0 of 20 changed files) and passes 9/9 locally on the branch head — the hostile-matrix temp-dir cleanup race, same classification precedent as Thread 1's `payload_stall_test`. Still a required-check red: re-run to green or file the quarantine watch.\n- ⚠️ **`lib/src/compaction/structured/engine.dart:175` — phantom-anchor basis divergence on boundary-less windowed resumes** (details in the inline thread): gate arms on chars/4, the engine's refresh re-arms the persisted pre-trim anchor, over-fold + wasted provider passes until the first boundary lands. Uncovered by UT-2/E2.\n- 💡 Digest — `lib/src/compaction/structured/engine.dart:332`: `run()`'s docstring first sentence (\"returns whether the context ended under pressure\") reads inverted against the code (`true` = settled **below** the trigger); the PR edits this doc block — worth clarifying while here.\n- 💡 Digest — `lib/src/cli/agent_cli_compaction.dart:240`: on zero-pass runs `_runTokensBefore` is null, so the HEP `compaction_end` frame is still skipped — the supervisor lane stays start-without-end for no-op runs (pre-existing; the ticket's OQ2 surfaces are covered, this is the third lane).\n- 🪶 Digest — `lib/src/compaction/structured/engine.dart:357-358`: the trigger-gate reason evaluates `_requestTokens()` a second time just to render the number — one extra O(context) estimate per armed compaction; bind once into a local.\n\n**Next Steps**:\n1. Re-run the `Hostile ambient env` check to green (or quarantine the flake with a tracker issue) — the merge gate stays closed on red.\n2. Answer the ⚠️: extend the stale-anchor curation to boundary-less resume tails, or document why that basis is acceptable and add the pinning UT.\n3. Optionally pick up the three digest items in the same lap."
+    }
+  ]
+}
