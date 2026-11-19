@@ -43,6 +43,7 @@ final class ChannelMessage {
     this.senderName,
     this.createdAt,
     this.sessionId,
+    this.replyTo,
   });
 
   /// The envelope id — the at-least-once dedupe key.
@@ -71,6 +72,11 @@ final class ChannelMessage {
   /// DM thread target decrypted from the plaintext wrapper. Null identifies
   /// the device-general bucket used by legacy/session-less rows.
   final String? sessionId;
+
+  /// Original user envelope id for a threaded agent reply/delivery receipt.
+  /// Unlike [envelopeId], this stays stable when an unacked original is
+  /// retried and the peer mints another receipt envelope.
+  final String? replyTo;
 }
 
 /// The live message store of one channel: deduped, decrypted, paged.
@@ -100,8 +106,50 @@ final class ChannelState {
 
   bool add(ChannelMessage message) {
     if (!seen.add(message.envelopeId)) return false;
-    messages.add(message);
+    var candidate = message;
+    if (!message.isOwn && message.text == deviceDmQueuedReceipt) {
+      // Queue notices are delivery STATE, not three agent answers. A peer
+      // pre-restart retry can mint a fresh envelope id for the same original,
+      // so id-dedup alone cannot collapse them. New peers carry replyTo;
+      // infer it from the preceding own row for 1.0.751 legacy receipts.
+      final correlation =
+          message.replyTo ??
+          _latestOwnEnvelopeId(message.sessionId) ??
+          'session:${message.senderId}:${message.sessionId ?? ''}';
+      final duplicate = messages.any(
+        (existing) =>
+            !existing.isOwn &&
+            existing.text == deviceDmQueuedReceipt &&
+            existing.senderId == message.senderId &&
+            existing.sessionId == message.sessionId &&
+            existing.replyTo == correlation,
+      );
+      if (duplicate) return false;
+      if (message.replyTo == null) {
+        candidate = ChannelMessage(
+          envelopeId: message.envelopeId,
+          senderId: message.senderId,
+          senderPub: message.senderPub,
+          senderName: message.senderName,
+          text: message.text,
+          isOwn: message.isOwn,
+          createdAt: message.createdAt,
+          sessionId: message.sessionId,
+          replyTo: correlation,
+        );
+      }
+    }
+    messages.add(candidate);
     return true;
+  }
+
+  String? _latestOwnEnvelopeId(String? sessionId) {
+    for (final message in messages.reversed) {
+      if (message.isOwn && message.sessionId == sessionId) {
+        return message.envelopeId;
+      }
+    }
+    return null;
   }
 }
 

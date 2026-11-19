@@ -15,7 +15,12 @@ typedef DmChannelParts = ({String userId, String agentName, String deviceId});
 /// One successfully decrypted DM plaintext: the unwrapped text, its
 /// routed session, and the base64 key that opened it (what the row's
 /// `senderPub` carries — the KEY USED, not a sender identity).
-typedef _DmDecoded = ({String? text, String? sessionId, String senderPubB64});
+typedef _DmDecoded = ({
+  String? text,
+  String? sessionId,
+  String senderPubB64,
+  String? replyTo,
+});
 
 /// Parses a DM channel id; null on any shape violation.
 DmChannelParts? parseDmChannelId(String channelId) =>
@@ -256,6 +261,7 @@ extension NetworkSessionDm on NetworkSession {
       isOwn: isOwn,
       createdAt: envelope.createdAt,
       sessionId: ownDecoded?.sessionId ?? decoded?.sessionId,
+      replyTo: ownDecoded?.replyTo ?? decoded?.replyTo,
     );
   }
 
@@ -302,6 +308,7 @@ extension NetworkSessionDm on NetworkSession {
         text: decoded.text,
         sessionId: decoded.sessionId,
         senderPubB64: base64Encode(frame.senderPubkey.bytes),
+        replyTo: decoded.replyTo,
       );
     } on Object {
       return null;
@@ -332,6 +339,7 @@ extension NetworkSessionDm on NetworkSession {
         text: decoded.text,
         sessionId: decoded.sessionId,
         senderPubB64: base64Encode(peerPub.bytes),
+        replyTo: decoded.replyTo,
       );
     } on Object {
       return null;
@@ -359,9 +367,15 @@ extension NetworkSessionDm on NetworkSession {
   /// Thread-aware DM plaintext is `{"text": …, "sessionId"?}` in both
   /// directions. Legacy raw assistant text and malformed wrappers pass
   /// through unchanged and therefore land in the device-general bucket.
-  ({String text, String? sessionId}) _unwrapDmText(String plaintext) {
+  ({String text, String? sessionId, String? replyTo}) _unwrapDmText(
+    String plaintext,
+  ) {
     final decoded = unwrapDeviceDmText(plaintext);
-    return (text: decoded.text, sessionId: decoded.sessionId);
+    return (
+      text: decoded.text,
+      sessionId: decoded.sessionId,
+      replyTo: decoded.replyTo,
+    );
   }
 
   void _onDmMail(NetworkEnvelope envelope) {

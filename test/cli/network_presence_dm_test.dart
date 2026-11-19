@@ -116,10 +116,11 @@ void main() {
         hasLength(2),
         reason: 'redelivery sends no second receipt',
       );
-      for (final receipt in receipts) {
+      for (final (index, receipt) in receipts.indexed) {
         expect(await _decryptReply(receipt, user), {
           'text': deviceDmAcceptedReceipt,
           'sessionId': 'session-1',
+          'replyTo': 'dm-${index + 1}',
         });
       }
       expect(
@@ -184,6 +185,7 @@ void main() {
       expect(await _decryptReply(server.persistedMail.single, user), {
         'text': deviceDmQueuedReceipt,
         'sessionId': 'session-other',
+        'replyTo': 'dm-other-session',
       });
     },
   );
@@ -261,7 +263,7 @@ void main() {
       expect(wakes.single, (
         cwd: '/work/asleep',
         sessionId: 'session-other',
-        sessionName: 'asleep-name',
+        sessionName: null,
       ));
       expect(delivered, isEmpty);
       expect(
@@ -276,6 +278,7 @@ void main() {
       expect(await _decryptReply(server.persistedMail.single, user), {
         'text': deviceDmQueuedReceipt,
         'sessionId': 'session-other',
+        'replyTo': 'dm-wake-session',
       });
 
       // The launched headless process opens the target with the SAME device
@@ -327,12 +330,17 @@ void main() {
       expect(
         plaintexts,
         anyElement(
-          equals({'text': 'awake answer', 'sessionId': 'session-other'}),
+          equals({
+            'text': 'awake answer',
+            'sessionId': 'session-other',
+            'replyTo': 'dm-wake-session',
+          }),
         ),
       );
       expect(plaintexts.last, {
         'text': deviceDmAcceptedReceipt,
         'sessionId': 'session-other',
+        'replyTo': 'dm-wake-session',
       });
     },
   );

@@ -20,23 +20,24 @@ void main() {
       expect(c, contains('& echo woken'));
     });
 
-    test('prefers the configured executable and the session name', () {
+    test('prefers the configured executable and always uses the stable id', () {
       final c = mailboxWakeCommand(
         wakeExecutable: '/usr/local/bin/fa',
         sessionId: '01a06102',
         sessionName: 'jsr',
       );
-      expect(c, contains("nohup '/usr/local/bin/fa' --session 'jsr'"));
+      expect(c, contains("nohup '/usr/local/bin/fa' --session '01a06102'"));
+      expect(c, isNot(contains("--session 'jsr'")));
     });
 
     test('single-quotes embedded apostrophes', () {
       final c = mailboxWakeCommand(
         wakeExecutable: "o'brien",
-        sessionId: 's',
+        sessionId: "s'1",
         sessionName: "jo'an",
       );
       expect(c, contains("nohup 'o'\\''brien'"));
-      expect(c, contains("--session 'jo'\\''an'"));
+      expect(c, contains("--session 's'\\''1'"));
     });
 
     test('embeds the wake prompt text', () {
@@ -77,8 +78,10 @@ void main() {
     test('spawns in the existing cwd', () async {
       final shell = _RecordingShell();
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      (await env.createDir('/Users/y/_w/postal-nl', recursive: true))
-          .getOrThrow();
+      (await env.createDir(
+        '/Users/y/_w/postal-nl',
+        recursive: true,
+      )).getOrThrow();
       final error = await launchMailboxWake(
         env: env,
         wakeExecutable: '/usr/local/bin/fa',
@@ -91,7 +94,7 @@ void main() {
       final record = shell.commands.single;
       expect(
         record.$1,
-        contains("nohup '/usr/local/bin/fa' --session 'postal-nl'"),
+        contains("nohup '/usr/local/bin/fa' --session 'sess-1'"),
       );
       expect(record.$2?.cwd, '/Users/y/_w/postal-nl');
     });
@@ -107,8 +110,10 @@ void main() {
         MemoryExecutionEnv(cwd: '/work', shell: shell),
         symlinkPath: '/Users/y/_w/postal-nl',
       );
-      (await target.inner.createDir('/Users/y/_w/postal-nl', recursive: true))
-          .getOrThrow();
+      (await target.inner.createDir(
+        '/Users/y/_w/postal-nl',
+        recursive: true,
+      )).getOrThrow();
       final error = await launchMailboxWake(
         env: target,
         wakeExecutable: '/usr/local/bin/fa',

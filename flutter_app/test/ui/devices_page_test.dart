@@ -56,9 +56,10 @@ final class FakeDevicesService implements DeviceConnectorService {
   var rosterFetchCalls = 0;
   var ownRefreshCalls = 0;
 
-  /// The enrolled device id the page filters its own frames by.
+  /// The enrolled device id the page filters its own frames by. Mutable so
+  /// the cached-roster-before-enrollment race can be reproduced directly.
   @override
-  final String? deviceId;
+  String? deviceId;
 
   @override
   final String? personalNetworkId;
@@ -954,6 +955,60 @@ void main() {
     expect(find.text('This device'), findsWidgets);
   });
 
+  testWidgets('late enrollment retracts an own echo cached before the id was '
+      'available and every mini-strip tile keeps its label', (tester) async {
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      personalNetworkId: 'net-personal',
+    );
+    service.seededRoster.add(
+      _devicesEnvelope(
+        network: 'net-personal',
+        devices: const [
+          {'deviceId': 'dev-own', 'name': 'mymac', 'presence': 'online'},
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(DevicesPage(service: service)));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('deviceRow:dev-own')), findsOneWidget);
+
+    service.deviceId = 'dev-own';
+    service.setOwnDevice(
+      const DeviceInfo(
+        deviceId: 'dev-own',
+        name: 'mymac',
+        friendlyName: 'mymac',
+      ),
+    );
+    service.emitRoster(
+      _devicesEnvelope(
+        network: 'net-personal',
+        devices: const [
+          {'deviceId': 'dev-own', 'name': 'mymac', 'presence': 'online'},
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceRow:dev-own')), findsNothing);
+    expect(find.text('mymac'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pumpAndSettle();
+    final tile = find.descendant(
+      of: find.byKey(const ValueKey('deviceRail')),
+      matching: find.byType(Tooltip),
+    );
+    expect(tile, findsWidgets);
+    expect(
+      tester.widgetList<Tooltip>(tile).map((tooltip) => tooltip.message),
+      contains('mymac'),
+    );
+  });
+
   testWidgets('server roster devices[] populates remote identity, exposed '
       'agents, and only sessions visible on the personal network', (
     tester,
@@ -1747,7 +1802,8 @@ void main() {
       );
       expect(
         find.byWidgetPredicate(
-          (widget) => widget.key is ValueKey<String> &&
+          (widget) =>
+              widget.key is ValueKey<String> &&
               (widget.key! as ValueKey<String>).value.startsWith(
                 'remoteFolderHeader:',
               ),
