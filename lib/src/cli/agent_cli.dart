@@ -2596,10 +2596,10 @@ class AgentCli {
   /// read it.
   bool _submissionCancelRestorePending = false;
 
-  /// Every compaction pass that actually STARTED (issue #1085 round-1):
-  /// the over-window funnel's exhaustion verdict names how many passes
-  /// ran — zero is possible (compaction disabled or nothing to
-  /// summarize) and must not read as "N attempts failed".
+  /// Every compaction pass that produced a RECEIPT (issue #1085 round-1;
+  /// #2273): the over-window funnel's exhaustion verdict names how many
+  /// passes ran — zero is possible (disabled, nothing to summarize, or a
+  /// zero-pass run) and must not read as "N attempts failed".
   int _compactionPassesStarted = 0;
 
   /// Empty-reply "continue" nudge budget per LOGICAL turn
