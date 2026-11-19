@@ -36,7 +36,16 @@ class AttachedSessionController extends ChangeNotifier {
   /// terminal, forever. The UI shows this instead.
   String? lastSendError;
 
+  /// Set when the watch saw the primary session file rewritten under it
+  /// (segment rotation, hard-cap truncation, quarantine heal) and the
+  /// tail re-anchored to the new content — rotation drops old history,
+  /// so rows above may describe records no longer in the file; reopening
+  /// shows the authoritative transcript. Sticky: it describes the last
+  /// transition, not the current row batch.
+  String? reanchorNotice;
+
   void _onEvent(AttachedSessionEvent event) {
+    if (event.reanchored) reanchorNotice = sessionReanchorNotice;
     rows.addAll(event.appended);
     notifyListeners();
   }
