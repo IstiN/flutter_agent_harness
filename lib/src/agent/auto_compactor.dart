@@ -843,12 +843,12 @@ final class AutoCompactor {
             summarizedMessages: 0,
           );
         }
-        // Issue #2263: a cancelled summarizer call is the user's abort,
-        // not a summarizer failure — classifying it as `ok: false` fed
-        // the local-trim valve below (and, through the factory's
-        // fall-through, a FRESH engine) on a run the user stopped
-        // (#1085: never answer an abort with a fresh pass).
-        if (error is CancelledException) rethrow;
+        // A cancelled summarizer call never reaches this catch as a raw
+        // CancelledException — compactSession converts every summarizer
+        // failure (issue #2263). Cancellation surfaces through the run
+        // token instead: the `_runPass` trim-valve guard below rethrows
+        // it off any `ok: false`, and `run()`'s finally belt catches the
+        // rest (#1085).
         final errorText = error.toString();
         final isTransient = _transient.hasMatch(errorText);
         // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —
