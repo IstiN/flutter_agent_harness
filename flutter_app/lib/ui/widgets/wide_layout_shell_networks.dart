@@ -58,7 +58,9 @@ extension _WideLayoutShellNetworks on _WideLayoutShellState {
   /// clone/relay. Remote devices' cards stay read-only.
   Widget _buildDevicesPanel({bool compact = false}) {
     final sessions = widget.networkSessions;
-    if (sessions == null || !sessions.hasJwt) return const SizedBox.shrink();
+    if (sessions == null || !sessions.hasAccount) {
+      return const SizedBox.shrink();
+    }
     return DevicesPage(
       service: _devicesConnector,
       compact: compact,

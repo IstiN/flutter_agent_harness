@@ -3,8 +3,9 @@
 // in the LICENSE file.
 
 /// The wide shell's DEVICES nav row (issue #2062 chunk 16): the rail
-/// destination exists only for signed-in accounts (a JWT on the network
-/// session manager), sits between the Networks and Channels rows, and
+/// destination exists only for signed-in accounts (a live JWT or persisted
+/// wallet account on the network session manager), sits between Networks and
+/// Channels, and
 /// selects the devices section. Fakes mirror
 /// `wide_layout_shell_sidebar_resize_test.dart`. Signed-out shells create
 /// no connector; the signed-in boot uses the scripted HTTP fake and never
@@ -75,14 +76,23 @@ AgentService _fakeService(ExecutionEnv env) {
   );
 }
 
-Future<NetworkSessionManager> _networkSessions({required bool jwt}) async =>
-    NetworkSessionManager(
-      baseUrl: Uri.parse('https://network.fa1.dev'),
-      wallet: await KeyWallet.load(MemoryWalletBackend()),
-      httpClient: FakeHttpClient(),
-      wsConnector: FakeWsConnector(),
-      jwtToken: jwt ? 'jwt-1' : null,
-    );
+Future<NetworkSessionManager> _networkSessions({
+  required bool jwt,
+  WalletAccount? account,
+  FakeHttpClient? httpClient,
+  DateTime Function()? clock,
+}) async {
+  final wallet = await KeyWallet.load(MemoryWalletBackend());
+  if (account != null) await wallet.saveAccount(account);
+  return NetworkSessionManager(
+    baseUrl: Uri.parse('https://network.fa1.dev'),
+    wallet: wallet,
+    httpClient: httpClient ?? FakeHttpClient(),
+    wsConnector: FakeWsConnector(),
+    jwtToken: jwt ? 'jwt-1' : null,
+    clock: clock,
+  );
+}
 
 Future<void> pumpShell(
   WidgetTester tester, {
@@ -353,5 +363,49 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('persisted account keeps phone Devices and its page after a '
+      'failed JWT refresh', (tester) async {
+    final httpClient = FakeHttpClient()
+      ..respond(
+        401,
+        body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+      );
+    final sessions = await _networkSessions(
+      jwt: false,
+      httpClient: httpClient,
+      clock: () => DateTime.utc(2026, 2, 1, 12),
+      account: WalletAccount(
+        provider: 'google',
+        login: 'owner@example.com',
+        displayName: 'Owner',
+        accessToken: 'expired-access',
+        refreshToken: 'refresh-token',
+        accessExpiresAt: DateTime.utc(2026, 2, 1, 11),
+        refreshExpiresAt: DateTime.utc(2026, 3, 1),
+      ),
+    );
+    addTearDown(sessions.disconnectAll);
+    await sessions.restoreAccount();
+    expect(sessions.hasJwt, isFalse);
+    expect(sessions.sessionExpired, isTrue);
+    expect(sessions.wallet.account, isNotNull);
+
+    await pumpShell(
+      tester,
+      networkSessions: sessions,
+      size: const Size(390, 844),
+    );
+
+    final devices = find.descendant(
+      of: find.byKey(const ValueKey('narrowShellNavigation')),
+      matching: find.byKey(const ValueKey('messengerPrimaryNav-devices')),
+    );
+    expect(devices, findsOneWidget);
+    await tester.tap(devices);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
+    expect(find.text('My devices'), findsOneWidget);
   });
 }

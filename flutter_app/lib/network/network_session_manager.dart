@@ -100,6 +100,13 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// network creation — guests never see those affordances).
   bool get hasJwt => _jwt != null && _jwt!.isNotEmpty;
 
+  /// Whether this manager has a signed-in account identity, even while its
+  /// access token is being restored or after a refresh failed. The wallet
+  /// account is loaded before the shell, unlike the asynchronous in-memory
+  /// JWT; dev/injected JWTs also count without a wallet account. Guests have
+  /// neither, and [signOut] clears both.
+  bool get hasAccount => hasJwt || _wallet.account != null;
+
   /// The login the JWT was minted for: the wallet account's email after
   /// an OAuth sign-in (the tokens persist in the wallet), else the dev
   /// login from [signIn] (in memory only; issue #955).
