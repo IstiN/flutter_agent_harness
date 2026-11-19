@@ -132,7 +132,7 @@ String silentlyTruncatedSse() =>
 /// force-abort semantics (the http package's close kicks in-flight
 /// requests): records the close, and an in-flight send that resumes after
 /// a close fails the way an aborted connection would — the regression
-/// harness for the heal recycle's drain grace (#2327 review r2).
+/// harness for the heal recycle's no-close generation swap (#2327 review r2).
 final class _HealSpyClient extends http.BaseClient {
   _HealSpyClient(this._inner);
 
@@ -877,8 +877,8 @@ void main() {
       () async {
         // The recycle must not cut streams that already fetched the shared
         // client (#2327 review r2): the heal swaps the shared reference
-        // atomically and the OLD pool force-closes only after a drain
-        // grace — stream A below is mid-request across the whole episode.
+        // atomically and never force-closes the OLD pool — stream A below
+        // stays mid-request beyond the old implementation's drain grace.
         var builds = 0;
         var chatCalls = 0;
         var exchangeCalls = 0;
@@ -921,11 +921,9 @@ void main() {
           spies.add(spy);
           return spy;
         };
-        providerPoolRetireGrace = const Duration(milliseconds: 50);
         addTearDown(() {
           providerHttpClientFactory = null;
           debugResetSharedProviderHttpClient();
-          providerPoolRetireGrace = const Duration(seconds: 90);
         });
 
         final before = sharedProviderHttpClient(); // build 1 — stream A's pool
@@ -961,14 +959,17 @@ void main() {
         expect(identical(before, sharedProviderHttpClient()), isFalse);
         expect(spies.first.closed, isFalse);
 
-        // A completes CLEANLY on the retired pool, then the grace lands
-        // the bounded force-close (the pool is actually reclaimed).
+        // Outlast the old implementation's grace while A is STILL
+        // in-flight. A timer is not drain awareness: closing here would
+        // abort A exactly like the original eager-close implementation.
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        final closedWhileInFlight = spies.first.closed;
         aRelease.complete();
         final a = await aFuture;
+        expect(closedWhileInFlight, isFalse);
         expect(a.last, isA<DoneEvent>());
         expect(a.whereType<ErrorEvent>(), isEmpty);
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-        expect(spies.first.closed, isTrue);
+        expect(spies.first.closed, isFalse);
         expect(spies[1].closed, isFalse); // the live pool stays untouched
       },
     );

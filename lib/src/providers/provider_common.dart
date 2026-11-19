@@ -1152,55 +1152,21 @@ void debugResetSharedProviderHttpClient() => _sharedProviderClient = null;
 /// self-heal fires, the shared client is replaced ONCE so the next stream
 /// opens on a fresh pool — a degraded/poisoned pool episode (DNS storm,
 /// accept-then-truncate gateway enforcement) does not survive the heal.
-/// Concurrency-safe (review r2): the swap is atomic — streams that already
-/// fetched the old client keep draining on it — and the old pool
-/// force-closes only after [providerPoolRetireGrace] (bounded grace +
-/// force-close; the drain itself is unobservable without per-adapter
-/// release hooks, and http's `IOClient.close()` aborts in-flight requests,
-/// so closing eagerly would cut concurrent streams mid-request). Guarded
-/// by the heal's own rate bound, and only meaningful on the shared client
-/// (an injected test client is owned by its caller — the wrapper recycles
-/// only when it used the shared one). Not flag-gated: unlike the
-/// `FA_POOL_EVICTION` hygiene ([maybeEvictProviderPool] →
-/// [resetSharedProviderHttpClient]) this is part of the heal itself, and
-/// the same swap-and-retire primitive keeps the pool semantics coherent.
+/// Concurrency-safe (review r2): this is a generation swap, NOT a close.
+/// Streams that already fetched the old client keep it referenced and
+/// drain without a time limit; new streams build a fresh generation.
+/// Dropping the cache reference lets the old client and its idle sockets
+/// be reclaimed after its remaining users finish. An eager or timer-based
+/// `IOClient.close()` aborts in-flight requests, including unrelated
+/// providers' streams, so neither belongs here. Guarded by the heal's own
+/// rate bound, and only meaningful on the shared client (an injected test
+/// client is owned by its caller — the wrapper recycles only when it used
+/// the shared one). Not flag-gated: unlike the `FA_POOL_EVICTION` hygiene
+/// ([maybeEvictProviderPool] → [resetSharedProviderHttpClient]) this is
+/// part of the heal itself.
 void recycleProviderHttpClientAfterHeal() {
-  final old = _sharedProviderClient;
   _sharedProviderClient = null;
-  if (old == null) return;
-  // The heal window (CopilotTokenManager.healMinInterval, 5 min) exceeds
-  // the grace (90 s), so a pending retiree here only happens across
-  // direct back-to-back calls in tests.
-  _retiredProviderPool?.forceClose();
-  _retiredProviderPool = _RetiredProviderPool(old)..schedule();
 }
-
-/// How long an evicted-by-heal shared pool drains before its sockets
-/// force-close. Long enough for a streaming attempt's tail (the incident's
-/// attempts ran 80–120 s), strictly shorter than the heal window — at most
-/// one retired pool pends at any time. Injectable for tests.
-Duration providerPoolRetireGrace = const Duration(seconds: 90);
-
-/// One evicted-by-heal pool awaiting its drain grace (issue #2327 r2).
-final class _RetiredProviderPool {
-  _RetiredProviderPool(this.client);
-
-  final http.Client client;
-  Timer? _timer;
-
-  /// Arms the bounded force-close.
-  void schedule() {
-    _timer = Timer(providerPoolRetireGrace, client.close);
-  }
-
-  /// Closes now (a newer retiree took the slot, or teardown).
-  void forceClose() {
-    _timer?.cancel();
-    client.close();
-  }
-}
-
-_RetiredProviderPool? _retiredProviderPool;
 
 /// The shared keep-alive HTTP client for provider streams.
 ///
