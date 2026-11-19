@@ -835,6 +835,123 @@ void main() {
     });
   });
 
+  group('token ownership (issue #2271)', () {
+    test('AC1: the budget-only force cancels the token the executor '
+        'actually holds — a token-obeying tool is never announced as an '
+        'ignoring zombie', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn(const [_c1Bash]),
+        _textTurn('done answering'),
+      ]);
+      CancelToken? heldToken;
+      final agent = Agent(
+        model: _model,
+        streamFunction: fake.call,
+        foregroundCall: const ForegroundCallBudgetConfig(
+          budget: Duration(milliseconds: 150),
+          cancelGrace: Duration(milliseconds: 250),
+        ),
+        toolExecutor: (toolCall, cancelToken, onUpdate) async {
+          heldToken = cancelToken;
+          // Obeys ONLY the token it was handed: completes when the ladder
+          // cancels it, never otherwise.
+          await cancelToken!.onCancel;
+          return ToolExecutionResult.text('obeyed its own token');
+        },
+      );
+      agent.state.tools = [_tool('bash')];
+      final run = agent.prompt('run the long thing');
+      await waitForIt(
+        () => heldToken != null,
+        reason: 'executor started with a call token',
+      );
+      await run;
+      expect(
+        heldToken!.isCancelled,
+        isTrue,
+        reason: 'the rung-2 force must reach the token the executor holds',
+      );
+      final text = _resultText(agent.state.messages);
+      expect(text, contains('the call completed as the budget fired'));
+      expect(text, isNot(contains('ignored cancellation')));
+    });
+
+    test('REG (#1786 E6): a genuinely token-ignoring tool is still '
+        'reported as ignoring cancellation', () async {
+      final run = _startBudgetLoop(
+        budget: const ForegroundCallBudgetConfig(
+          budget: Duration(milliseconds: 150),
+          cancelGrace: Duration(milliseconds: 60),
+        ),
+        executor: (attempt, onUpdate, cancelToken) async {
+          await Completer<void>().future;
+          throw StateError('zombie');
+        },
+      );
+      await run.done;
+      final events = _budgetEvents(run).toList();
+      expect(events, hasLength(1));
+      expect(events.single.action, ForegroundBudgetAction.abort);
+      expect(events.single.detail, contains('ignored cancellation'));
+    });
+  });
+
+  group('exclusion parity (issue #2271)', () {
+    test('AC2: the budget consults the CONFIGURED stuck excludes — a '
+        'configured-excluded tool gets no supervision at all', () async {
+      var executions = 0;
+      final outcome = await _runBudgetTurn(
+        budget: const ForegroundCallBudgetConfig(
+          budget: Duration(milliseconds: 150),
+          cancelGrace: Duration(milliseconds: 60),
+        ),
+        stuck: const StuckToolConfig(excludeTools: ['bash']),
+        executor: (attempt, onUpdate, cancelToken) async {
+          executions++;
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          return ToolExecutionResult.text('unsupervised clean result');
+        },
+      );
+      expect(outcome.budgetEvents, isEmpty);
+      expect(outcome.stuckEvents, isEmpty);
+      expect(executions, 1);
+      final result = outcome.agent.state.messages
+          .whereType<ToolResultMessage>()
+          .firstWhere((m) => m.toolCallId == 'c1');
+      expect(result.isError, isFalse);
+      expect(_resultText(outcome.agent.state.messages), contains('clean'));
+    });
+
+    test('REG: a disabled stuck section cannot exclude bash from the '
+        'independent budget outer bound', () async {
+      CancelToken? heldToken;
+      final outcome = await _runBudgetTurn(
+        budget: const ForegroundCallBudgetConfig(
+          budget: Duration(milliseconds: 150),
+          cancelGrace: Duration(milliseconds: 250),
+        ),
+        stuck: const StuckToolConfig(enabled: false, excludeTools: ['bash']),
+        executor: (attempt, onUpdate, cancelToken) async {
+          heldToken = cancelToken;
+          await Future.any<void>([
+            cancelToken!.onCancel,
+            Future<void>.delayed(const Duration(milliseconds: 400)),
+          ]);
+          return ToolExecutionResult.text('budget token observed');
+        },
+      );
+
+      expect(outcome.stuckEvents, isEmpty);
+      expect(heldToken!.isCancelled, isTrue);
+      // A token-obeying completion is marked, not announced as forced.
+      expect(outcome.budgetEvents, isEmpty);
+      expect(
+        _resultText(outcome.agent.state.messages),
+        contains('the call completed as the budget fired'),
+      );
+    });
+  });
+
   group('announcement formatter (UT-6)', () {
     test('rung numbers are 1 / 2 / 3', () {
       expect(foregroundBudgetRungNumber(ForegroundBudgetRung.offer), '1');
