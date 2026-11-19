@@ -57,12 +57,12 @@ void main() {
       uuid,
       'offline-id',
     ]);
-    expect(device.sessionRows[1].displayName, 'Fix the roster projection');
+    expect(device.sessionRows[1].displayName, 'flutter_agent');
     final lines = device.formatSessions(now: DateTime.utc(2026, 11, 12, 12));
     expect(lines[0], contains('Current plan'));
     expect(lines[0], contains('live'));
     expect(lines[0], contains('now'));
-    expect(lines[1], contains('Fix the roster projection'));
+    expect(lines[1], contains('flutter_agent'));
     expect(lines[1], contains('wake_on_dm'));
     expect(lines[1], contains('4m ago'));
     expect(lines[1], contains('cwd=flutter_agent'));

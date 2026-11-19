@@ -524,8 +524,8 @@ final class NetworkPresenceController
           state ??
           (normalized.id == _session?.sessionId ? 'live' : 'wake_on_dm'),
       networks: expose ? _sessionNetworks : const [],
-      // fa_network already persists title/path/lastActivity. Fold the
-      // snippet/cwd fallback into title so current servers render the row;
+      // fa_network already persists title/path/lastActivity. Fold the cwd
+      // fallback into title so current servers render the project name;
       // additive snippet/cwd keys preserve the structured form for peers.
       title: normalized.displayName,
       snippet: metadata['snippet'] as String?,

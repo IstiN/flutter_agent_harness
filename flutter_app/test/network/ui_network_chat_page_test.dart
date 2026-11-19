@@ -815,6 +815,12 @@ void main() {
     ) async {
       final rig = await pumpChat(tester);
       expect(find.textContaining('Reconnecting'), findsNothing);
+      final chatFinder = find.byKey(const ValueKey('channelChat:c1'));
+      final transcriptFinder = find.byKey(
+        const ValueKey('faChatTranscriptList'),
+      );
+      final connectedChatRect = tester.getRect(chatFinder);
+      final connectedTranscriptRect = tester.getRect(transcriptFinder);
 
       rig.channel.serverEvent('network.offline', {'reason': 'hub down'});
       for (var i = 0; i < 6; i++) {
@@ -824,6 +830,16 @@ void main() {
       expect(
         find.textContaining('Reconnecting — messages will send when back'),
         findsOneWidget,
+      );
+      expect(tester.getRect(chatFinder), connectedChatRect);
+      expect(tester.getRect(transcriptFinder), connectedTranscriptRect);
+      // Without the floating app bar the banner starts immediately inside
+      // the chat; the shared notice slot must not invent a header-sized gap.
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('networkReconnectingBanner')))
+            .top,
+        connectedChatRect.top + 4,
       );
 
       // The banner offers manual recovery: it restarts the socket and
@@ -840,6 +856,8 @@ void main() {
       // A healthy fresh socket clears the sticky flag even though the
       // server replays no historical drain to this new connection.
       expect(find.textContaining('Reconnecting'), findsNothing);
+      expect(tester.getRect(chatFinder), connectedChatRect);
+      expect(tester.getRect(transcriptFinder), connectedTranscriptRect);
       await rig.session.close();
     });
 
