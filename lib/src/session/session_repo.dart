@@ -119,6 +119,14 @@ abstract interface class SessionRepo {
   });
 }
 
+/// Both separators, aligned with `JsonlSessionStorage`: Windows listings
+/// use backslashes while path joins in this repository use '/'. These keys
+/// are comparison-only; filesystem operations keep the backend's own paths.
+final _sessionPathSeparators = RegExp(r'[/\\]');
+
+String _sessionPathKey(String path) =>
+    path.replaceAll(_sessionPathSeparators, '/');
+
 String _encodeCwd(String cwd) {
   final normalized = cwd.replaceAll(RegExp(r'[/\\]+$'), '');
   final bare = normalized.replaceFirst(RegExp(r'^[/\\]'), '');
@@ -637,7 +645,7 @@ final class JsonlSessionRepo implements SessionRepo {
       if (nonEmpty > 1) continue;
       // Rotated (#2320): the primary was reseeded after archiving its
       // records into `.part-NN` segments — the chain is the session.
-      if (partPrimaries.contains(path)) continue;
+      if (partPrimaries.contains(_sessionPathKey(path))) continue;
       final id = _sessionIdFromPath(path);
       if (id != null && live.containsKey(id)) continue;
       if (id == exemptSessionId) continue;
@@ -933,7 +941,9 @@ final class JsonlSessionRepo implements SessionRepo {
         files.add(entry);
       } else {
         final primary = _primaryOfPartName(entry.name);
-        if (primary != null) partPrimaries.add('$dirPath/$primary');
+        if (primary != null) {
+          partPrimaries.add(_sessionPathKey('$dirPath/$primary'));
+        }
       }
     }
     return (files: files, partPrimaries: partPrimaries);
@@ -1375,7 +1385,9 @@ final class JsonlSessionRepo implements SessionRepo {
             // name resolution and consumers skip re-listing this
             // directory per session.
             final primary = _primaryOfPartName(entry.name);
-            if (primary != null) partPrimaries.add('$dir/$primary');
+            if (primary != null) {
+              partPrimaries.add(_sessionPathKey('$dir/$primary'));
+            }
           }
         }
       }
@@ -1418,7 +1430,7 @@ final class JsonlSessionRepo implements SessionRepo {
     final walk = await _walkRoot(root);
     _lastListingParts = {
       for (final file in walk.files)
-        file.path: walk.partPrimaries.contains(file.path),
+        file.path: walk.partPrimaries.contains(_sessionPathKey(file.path)),
     };
     final index = await _listingIndexStore.read(_fs, root);
     if (index == null) {
@@ -1482,7 +1494,7 @@ final class JsonlSessionRepo implements SessionRepo {
     var mutated = false;
     for (final file in walk.files) {
       final entry = byPath[file.path];
-      final hasParts = walk.partPrimaries.contains(file.path);
+      final hasParts = walk.partPrimaries.contains(_sessionPathKey(file.path));
       if (entry != null && _reusableListingEntry(entry, file)) {
         final settled = entry.hasParts == hasParts
             ? entry
@@ -1526,7 +1538,7 @@ final class JsonlSessionRepo implements SessionRepo {
     final walk = await _walkRoot(dirPath);
     _lastListingParts = {
       for (final file in walk.files)
-        file.path: walk.partPrimaries.contains(file.path),
+        file.path: walk.partPrimaries.contains(_sessionPathKey(file.path)),
     };
     return _loadSessionMetadataBatch(walk.files);
   }

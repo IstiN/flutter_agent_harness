@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/session_listing_index.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -393,6 +394,52 @@ void main() {
         );
       },
     );
+
+    test(
+      'Windows-style listing paths keep rotated primaries and index their parts',
+      () async {
+        // The real Windows backend returns backslash-separated FileInfo
+        // paths. The in-memory backend normally hides that distinction by
+        // normalizing every path to '/', so make the listing boundary
+        // faithfully Windows-shaped while keeping the delegate portable.
+        final base = MemoryFileSystem();
+        final windowsRepo = JsonlSessionRepo(
+          fs: _BackslashListingFs(base),
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        const id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa0023';
+        final session = await windowsRepo.create(
+          const JsonlSessionCreateOptions(id: id, cwd: '/proj'),
+        );
+        final path = (await session.getMetadata()).path;
+        final content = (await base.readTextFile(path)).valueOrNull!;
+        final header = content.trim().split('\n').first;
+        await base.writeFile('$path.part-0001', content);
+        await base.writeFile(path, '$header\n');
+        base.setMtime(
+          path,
+          clock.subtract(const Duration(minutes: 30)).millisecondsSinceEpoch,
+        );
+
+        final removed = await windowsRepo.cleanupEmptySessions(
+          olderThan: const Duration(minutes: 10),
+        );
+
+        expect(removed, 0);
+        expect((await base.exists(path)).valueOrNull, isTrue);
+
+        // The sibling _walkRoot map feeds the born-truthful #2321 row; it
+        // must use the same separator-safe part→primary matching.
+        await windowsRepo.list();
+        final raw = await base.readTextFile('/sessions/.listing-index.json');
+        final index = SessionListingIndex.fromJson(
+          jsonDecode(raw.valueOrNull!),
+        )!;
+        expect(index.entryById(id)!.hasParts, isTrue);
+      },
+    );
   });
 
   group('no raw unlink on session files (AC3 grep-test)', () {
@@ -453,6 +500,87 @@ void main() {
       );
     });
   });
+}
+
+/// Presents Windows-style paths at the listing boundary while delegating
+/// storage to the portable in-memory filesystem. Incoming paths are mapped
+/// back to the delegate's POSIX spelling, just as the real backend resolves
+/// its own native paths.
+final class _BackslashListingFs implements FileSystem, RenamableFileSystem {
+  _BackslashListingFs(this._base);
+
+  final MemoryFileSystem _base;
+
+  String _native(String path) => path.replaceAll('\\', '/');
+  String _windows(String path) => path.replaceAll('/', '\\');
+
+  @override
+  String get cwd => _base.cwd;
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _base.absolutePath(_native(path));
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _base.joinPath([for (final part in parts) _native(part)]);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _base.readTextFile(_native(path));
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _base.readBinaryFile(_native(path));
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _base.readTextLines(_native(path), maxLines: maxLines);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _base.writeFile(_native(path), content);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _base.writeBinaryFile(_native(path), content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _base.appendFile(_native(path), content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _base.fileInfo(_native(path));
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    final result = await _base.listDir(_native(path));
+    final entries = result.valueOrNull;
+    if (entries == null) return result;
+    return Ok([
+      for (final entry in entries)
+        FileInfo(
+          name: entry.name,
+          path: _windows(entry.path),
+          kind: entry.kind,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+        ),
+    ]);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _base.exists(_native(path));
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(_native(path), recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _base.remove(_native(path), recursive: recursive, force: force);
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _base.renamePath(_native(from), _native(to));
 }
 
 /// A base that declares the rename capability but fails the operation as
