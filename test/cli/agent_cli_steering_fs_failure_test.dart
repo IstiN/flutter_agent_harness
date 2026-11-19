@@ -642,4 +642,118 @@ void main() {
       await run2;
     },
   );
+
+  test(
+    'settle: a competing composer submit inside the persist-retry window '
+    'cannot lose the consumed leftovers — the follow-up run claims busy '
+    'before the retries (issue #2291, #2253 review debt)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      const text = 'settle must not lose me';
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('follow-up answer'),
+        textTurn('competing answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream, sessionName: 'settle-race-2291');
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      // The steer's accept-append fails: the settle will owe this entry
+      // one bounded persist re-attempt (#2249 AC1).
+      env.failSessionWrites = true;
+      cli.steerForTest(text);
+      await io.out.waitUntilContains('NOT saved to session');
+
+      // Heal the fs and park every steering write: the settle's bounded
+      // re-attempt becomes a deterministic pending window.
+      env.failSessionWrites = false;
+      env.holdSessionWrites = const Duration(milliseconds: 500);
+
+      // Abort WITHOUT the drop flag — the settle re-runs the leftover.
+      cli.restartRunForTest();
+      stream.gate.complete();
+      await io.out.waitUntilContains(
+        'steering arrived after the last checkpoint',
+      );
+      expect(
+        io.out.toString(),
+        contains('running 1 message(s) now'),
+        reason: 'the announce is truthful — exactly one leftover runs',
+      );
+
+      // A competing composer submit fires INSIDE the parked retry window.
+      // Contract (issue #2291): the settle started its run BEFORE any
+      // persist await, so the busy slot is already claimed — this submit
+      // steers INTO the streaming settle run (its texts share the claimed
+      // carrier) instead of starting a competing run that would leave the
+      // consumed leftovers carrierless behind a lying "running now" line.
+      unawaited(cli.tuiSubmitForTest('competing submit', const []));
+
+      await waitForIt(() => !cli.isBusy, reason: 'the settle run settles');
+      expect(
+        stream.calls,
+        2,
+        reason:
+            'run 1 + the settle run — the competing submit must never '
+            'become a second follow-up run',
+      );
+
+      String promptOf(Context context) => [
+        for (final message in context.messages)
+          if (message is UserMessage) messageText(message),
+      ].join('\n');
+      // The settle run is model call 2: the consumed leftover rode IT —
+      // not a refused-after-consume ghost run. THE discriminator: on the
+      // retry-before-run ordering the competing submit starts call 2
+      // itself and the leftover is lost with its marker already written.
+      expect(
+        '[steering from user] $text'
+            .allMatches(promptOf(stream.contexts[1]))
+            .length,
+        1,
+        reason: 'the settle run carries the consumed text exactly once',
+      );
+      expect(
+        promptOf(stream.contexts[1]),
+        contains('[steering from user] competing submit'),
+        reason: 'the competing submit steered into the claimed carrier',
+      );
+      expect(
+        io.out.toString(),
+        isNot(contains('a run is already streaming')),
+        reason: 'no busy refusal — nothing raced the claimed carrier',
+      );
+
+      // Persisted exactly once, closed exactly once — the settle's retry
+      // append and the competing accept-append raced the same parked fs
+      // without duplicating records or markers.
+      final records = await steeringRecords(env);
+      expect(records, hasLength(2), reason: 'one append per steer, no dupe');
+      final settleRecords = records
+          .where(
+            (record) => steeringText(record) == '[steering from user] $text',
+          )
+          .toList();
+      expect(settleRecords, hasLength(1));
+      final competingRecords = records
+          .where(
+            (record) =>
+                steeringText(record) == '[steering from user] competing submit',
+          )
+          .toList();
+      expect(competingRecords, hasLength(1));
+      final markers = await consumedMarkers(env);
+      expect(markers, hasLength(2), reason: 'each steer closed exactly once');
+      expect(markers.map((marker) => (marker.data as Map)['id']).toSet(), {
+        settleRecords.single.id,
+        competingRecords.single.id,
+      }, reason: 'one consumed marker per record — no lost, no duplicate');
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }
