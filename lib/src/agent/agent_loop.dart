@@ -640,11 +640,13 @@ final class AgentLoopConfig {
 
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s). The loop adds every key it reports in
-  /// [ToolPairingRepairReport.notedOrphanKeys] back into the set, so the
-  /// SAME orphan never re-emits its note on a later request. Hosts seed
-  /// the set from the persisted `orphan_report` records at resume
-  /// (IT-RESUME); `null` (a loop built without an owner set) keeps the
-  /// legacy always-note behavior.
+  /// [ToolPairingRepairReport.notedOrphanKeys] back into the set once the
+  /// request carrying its note actually STREAMED (first stream event;
+  /// gh-2270 — a terminal-refused or never-streamed build does not consume
+  /// the one-shot), so the SAME orphan never re-emits its note on a later
+  /// request. Hosts seed the set from the persisted `orphan_report` records
+  /// at resume (IT-RESUME); `null` (a loop built without an owner set)
+  /// keeps the legacy always-note behavior.
   final Set<String>? reportedOrphanKeys;
 
   /// Issue #1750: the run-lifetime latch of learned per-model image caps,
@@ -1804,17 +1806,15 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // Broken tool pairing (orphan results at any position, displaced results,
   // duplicate ids, unanswered calls) makes providers hard-400 EVERY
   // subsequent request; repair the payload, never the transcript.
-  // gh-1449: the session's reported-orphan latch rides the repair — an
-  // orphan is noted once, then dropped silently; the new keys merge back
-  // into the owner set so the next request (and the pairing-heal retry)
-  // sees them.
+  // gh-1449: already-reported orphans drop silently; fresh ones are noted
+  // once. gh-2270: the latch does NOT fire here — a built request can
+  // still be terminal-refused (over-window) or thrown away pre-wire, and a
+  // request that never streamed must not consume the one-shot. The keys
+  // latch at delivery — the first stream event, in [_streamAttempt].
   final repaired = repairToolPairing(
     requestContext.messages,
     reportedOrphanKeys: config.reportedOrphanKeys ?? const <String>{},
   );
-  if (repaired.report.notedOrphanKeys.isNotEmpty) {
-    config.reportedOrphanKeys?.addAll(repaired.report.notedOrphanKeys);
-  }
   if (!identical(repaired.messages, requestContext.messages)) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
@@ -1936,65 +1936,6 @@ String _requestPreview(Message message) {
   return text.length <= requestPreviewChars
       ? text
       : '${text.substring(0, requestPreviewChars)}…';
-}
-
-/// Consumes the provider [response] stream, emitting message lifecycle
-/// events and keeping the partial message in [context.messages] up to date
-/// (partial-first). On a terminal event the finished message is returned in
-/// `finished`; when the stream closes without one, `finished` is `null` and
-/// `partial`/`addedPartial` describe the last partial snapshot.
-Future<
-  ({AssistantMessage? finished, AssistantMessage? partial, bool addedPartial})
->
-_consumeResponseStream(
-  AssistantMessageEventStream response,
-  Context context,
-  AgentEventSink emit, [
-  _StreamProgress? progress,
-]) async {
-  AssistantMessage? partialMessage;
-  var addedPartial = false;
-  // Ids are stamped as they STREAM, not just at finalization: every
-  // host-visible partial snapshot must carry the ids the finalized message
-  // will — a rename that lands only on MessageEnd leaves the host's
-  // partial snapshots correlating by an id that no longer exists (issue #85).
-  final used = _transcriptToolCallIds(
-    context.messages,
-    context.messages.length,
-  );
-
-  await for (final event in response) {
-    // Issue #1923: every stream event is progress — the steering-interrupt
-    // watch reads this to tell a productive stream (never cancelled) from
-    // an unproductive one (zero bytes, or silent past the stall window).
-    progress?.mark();
-    switch (event) {
-      case StartEvent(:final partial):
-        partialMessage = _stampAgainstUsed(partial, used);
-        context.messages.add(partialMessage);
-        addedPartial = true;
-        await emit(MessageStartEvent(partialMessage));
-      case DoneEvent() || ErrorEvent():
-        return (
-          finished: await _finishStreamed(context, emit, addedPartial, event),
-          partial: partialMessage,
-          addedPartial: addedPartial,
-        );
-      default:
-        if (partialMessage != null) {
-          partialMessage = _stampAgainstUsed(event.partial, used);
-          context.messages[context.messages.length - 1] = partialMessage;
-          await emit(
-            MessageUpdateEvent(
-              message: partialMessage,
-              assistantMessageEvent: event,
-            ),
-          );
-        }
-    }
-  }
-
-  return (finished: null, partial: partialMessage, addedPartial: addedPartial);
 }
 
 /// Finalizes the streamed terminal event into the context. The finished
