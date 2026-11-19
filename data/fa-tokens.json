@@ -39,15 +39,6 @@
   ],
   "issue-2059": [
     {
-      "leg": "rework",
-      "at": "2026-11-05T21:24:26Z",
-      "prompt": 774026,
-      "completion": 47851,
-      "total": 821877,
-      "cacheRead": 13856576,
-      "model": "kimi-for-coding"
-    },
-    {
       "leg": "review",
       "at": "2026-11-05T21:35:00Z",
       "prompt": 8697,
@@ -4977,6 +4968,15 @@
       "completion": 6683,
       "total": 39851,
       "cacheRead": 1901184,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-19T21:25:08Z",
+      "prompt": 2846575,
+      "completion": 22054,
+      "total": 2868629,
+      "cacheRead": 1156992,
       "model": "glm-5.3-flash"
     }
   ],
