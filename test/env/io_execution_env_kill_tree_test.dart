@@ -112,16 +112,35 @@ void main() async {
     );
   }, timeout: const Timeout(Duration(seconds: 10)));
 
-  test('a vanished tree stops at walk #1: no signals fired', () async {
+  test(
+    'a vanished tree stops at walk #1 and resumes the leader probe',
+    () async {
+      final signals = <ProcessSignal>[];
+      LocalShell.descendantsOfOverride = (_) async => const <int>{};
+      LocalShell.signalPidOverride = (_, signal) {
+        signals.add(signal);
+      };
+
+      await LocalShell.killTree(100, ownGroup: false);
+
+      expect(signals, [
+        ProcessSignal.sigstop,
+        ProcessSignal.sigcont,
+      ], reason: 'the pre-walk freeze is always paired; no TERM/KILL is sent');
+    },
+  );
+
+  test('a failed walk resumes the frozen leader', () async {
     final signals = <ProcessSignal>[];
-    LocalShell.descendantsOfOverride = (_) async => const <int>{};
+    LocalShell.descendantsOfOverride = (_) async =>
+        throw StateError('ps unavailable');
     LocalShell.signalPidOverride = (_, signal) {
       signals.add(signal);
     };
 
     await LocalShell.killTree(100, ownGroup: false);
 
-    expect(signals, isEmpty);
+    expect(signals, [ProcessSignal.sigstop, ProcessSignal.sigcont]);
   });
 
   test(
@@ -210,7 +229,17 @@ void main() async {
         env: LocalExecutionEnv(cwd: workspace.path),
       );
 
-      final entry = await registry.start('trap "" TERM; $marker & wait');
+      // PR#2301 review: the trap must live in a SUBSHELL around the
+      // grandchild only. With the old shape `trap "" TERM; $marker &
+      // wait` the trap was set before the background fork, so TERM was
+      // SIG_IGN in BOTH the job shell and the sleep — the leader
+      // survived the TERM round and was still observable at walk #2,
+      // making the old bare-leader re-root and the new pre-reap re-root
+      // return the same KILL set (this leg could not red-fail a
+      // regression). Now the leader keeps default TERM handling and is
+      // reaped by the TERM round, while the grandchild execs with TERM
+      // ignored — exactly the shape only the pre-reap victim set kills.
+      final entry = await registry.start('(trap "" TERM; exec $marker) & wait');
       await entry.stop();
       await entry.settled;
 

@@ -541,8 +541,9 @@ final class LocalShell implements Shell, BackgroundShell {
   /// children forked while the kill runs), otherwise a live `ps` descendant
   /// walk whose KILL round re-roots at the TERM round's victim set so a
   /// reaped leader cannot hide reparented survivors (issue #2276); Windows
-  /// delegates to `taskkill /T`. TERM first, a short grace, then KILL.
-  /// Best-effort: never throws.
+  /// delegates to `taskkill /T`. The walk path freezes the leader for its
+  /// first snapshot, then sends TERM, resumes it, allows a short grace, and
+  /// sends KILL. Best-effort: never throws.
   static Future<void> killTree(int pid, {required bool ownGroup}) async {
     try {
       if (Platform.isWindows) {
@@ -556,22 +557,35 @@ final class LocalShell implements Shell, BackgroundShell {
         return;
       }
       // No group leadership on this host (no setsid): walk the live tree.
-      final walk = descendantsOfOverride ?? _descendantsOf;
-      var victims = await walk({pid});
-      if (victims.isEmpty) return;
-      await _signalAll(victims, ProcessSignal.sigterm);
-      await Future<void>.delayed(_killGrace);
-      // The KILL round re-roots at the TERM round's own victim set, never
-      // at the bare pid (issue #2276): the leader is often already reaped
-      // by then — ps drops its row, a root-at-pid walk returns {} — and
-      // TERM-trapping grandchildren survive the stop while it answers
-      // "Stopped". The kept set reaches fully-orphaned survivors (their
-      // rows reparented to init); the re-walk widens for children forked
-      // during the grace. A walk-#1 pid recycled to a stranger within the
-      // grace would be signaled — the same scan-then-signal race the
-      // rounds already accept.
-      victims = await walk(victims);
-      await _signalAll(victims, ProcessSignal.sigkill);
+      // Process.start can return before sh has parsed the command and forked
+      // its children. Freeze the leader across walk #1 so an immediate stop
+      // cannot snapshot the leader alone, TERM it, and lose a child forked
+      // after that snapshot when the whole retained root set is reaped.
+      await _signalAll({pid}, ProcessSignal.sigstop);
+      var resumeLeader = true;
+      try {
+        final walk = descendantsOfOverride ?? _descendantsOf;
+        var victims = await walk({pid});
+        if (victims.isEmpty) return;
+        await _signalAll(victims, ProcessSignal.sigterm);
+        await _signalAll(victims, ProcessSignal.sigcont);
+        resumeLeader = false;
+        await Future<void>.delayed(_killGrace);
+        // The KILL round re-roots at the TERM round's own victim set, never
+        // at the bare pid (issue #2276): the leader is often already reaped
+        // by then — ps drops its row, a root-at-pid walk returns {} — and
+        // TERM-trapping grandchildren survive the stop while it answers
+        // "Stopped". The kept set reaches fully-orphaned survivors (their
+        // rows reparented to init); the re-walk widens for children forked
+        // during the grace. A walk-#1 pid recycled to a stranger within the
+        // grace would be signaled — the same scan-then-signal race the
+        // rounds already accept.
+        victims = await walk(victims);
+        await _signalAll(victims, ProcessSignal.sigkill);
+      } finally {
+        // A failed/empty ps walk must not leave the job stopped forever.
+        if (resumeLeader) await _signalAll({pid}, ProcessSignal.sigcont);
+      }
     } on Object {
       // Best-effort: stop() still backstops the direct child.
     }
