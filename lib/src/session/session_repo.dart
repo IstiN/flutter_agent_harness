@@ -1369,7 +1369,7 @@ final class JsonlSessionRepo implements SessionRepo {
     return name.substring(0, name.length - match.group(0)!.length);
   }
 
-  static final RegExp _partSuffixPattern = RegExp(r'\.jsonl\.part-\d+$');
+  static final RegExp _partSuffixPattern = RegExp(r'\.part-\d+$');
 
   static bool _reusableListingEntry(
     SessionListingIndexEntry entry,
@@ -1519,6 +1519,9 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// Builds the listing-index entry of a freshly read session (no name —
   /// names are learned lazily and persisted by [rememberSessionNames]).
+  /// hasParts rides the walk's segment knowledge (#2321): the cold write
+  /// runs after `_lastListingParts` is populated, so a rotated session's
+  /// row is born truthful instead of healing one boot late.
   SessionListingIndexEntry _entryFromMetadata(SessionMetadata metadata) =>
       SessionListingIndexEntry(
         id: metadata.id,
@@ -1530,6 +1533,7 @@ final class JsonlSessionRepo implements SessionRepo {
         lastUpdatedAtMs: metadata.lastUpdatedAt?.millisecondsSinceEpoch,
         parentSessionPath: metadata.parentSessionPath,
         metadata: metadata.metadata,
+        hasParts: _lastListingParts?[metadata.path] ?? false,
       );
 
   /// Serves a session's listing metadata straight from an index entry —

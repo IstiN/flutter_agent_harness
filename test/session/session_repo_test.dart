@@ -196,9 +196,7 @@ class BrokenFs implements FileSystem {
     int? maxLines,
   }) async {
     if (unreadableFiles.contains(path)) {
-      return Err(
-        FileError(FileErrorCode.unknown, 'simulated unreadable file'),
-      );
+      return Err(FileError(FileErrorCode.unknown, 'simulated unreadable file'));
     }
     return _delegate.readTextLines(path, maxLines: maxLines);
   }
@@ -242,8 +240,7 @@ class BrokenFs implements FileSystem {
   Future<Result<FileInfo, FileError>> fileInfo(String path) =>
       _delegate.fileInfo(path);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<void, FileError>> createDir(
     String path, {
@@ -651,36 +648,37 @@ void main() {
   });
 
   group('listing resilience — one bad entry must not blank the list', () {
-    test('an unreadable session file is skipped and logged; the rest list',
-        () async {
-      final healthy = await repo.create(
-        JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
-      );
-      await healthy.appendMessage(UserMessage.text('hello'));
-      final broken = await repo.create(
-        JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
-      );
-      final brokenPath = (await broken.getMetadata()).path;
+    test(
+      'an unreadable session file is skipped and logged; the rest list',
+      () async {
+        final healthy = await repo.create(
+          JsonlSessionCreateOptions(id: 'healthy', cwd: '/work'),
+        );
+        await healthy.appendMessage(UserMessage.text('hello'));
+        final broken = await repo.create(
+          JsonlSessionCreateOptions(id: 'broken', cwd: '/work'),
+        );
+        final brokenPath = (await broken.getMetadata()).path;
 
-      final logged = <String>[];
-      final brokenRepo = JsonlSessionRepo(
-        fs: BrokenFs(fs)..unreadableFiles.add(brokenPath),
-        sessionsRoot: '/sessions',
-        ioRetry: SessionIoRetryConfig(logger: logged.add),
-      );
+        final logged = <String>[];
+        final brokenRepo = JsonlSessionRepo(
+          fs: BrokenFs(fs)..unreadableFiles.add(brokenPath),
+          sessionsRoot: '/sessions',
+          ioRetry: SessionIoRetryConfig(logger: logged.add),
+        );
 
-      expect((await brokenRepo.list()).map((m) => m.id), ['healthy']);
-      expect(logged, hasLength(1));
-      expect(logged.single, contains('session_list_skip'));
-      expect(logged.single, contains(brokenPath));
-    });
+        expect((await brokenRepo.list()).map((m) => m.id), ['healthy']);
+        expect(logged, hasLength(1));
+        expect(logged.single, contains('session_list_skip'));
+        expect(logged.single, contains(brokenPath));
+      },
+    );
 
     test('an unlistable session directory is skipped and logged; the rest '
         'lists', () async {
       await repo.create(JsonlSessionCreateOptions(id: 'keep', cwd: '/other'));
       await repo.create(JsonlSessionCreateOptions(id: 'gone', cwd: '/work'));
-      final goneDir = (await repo
-          .list())
+      final goneDir = (await repo.list())
           .singleWhere((m) => m.id == 'gone')
           .path
           .split('/')
@@ -877,6 +875,57 @@ void main() {
         '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
       );
       expect(await repo.sessionNameQuick(metadata), 'early');
+    });
+
+    test(
+      'archived name resolves through the listing walk knowledge (#2321)',
+      () async {
+        // #2321: the walk's part→primary mapping stripped `.jsonl` too,
+        // so every rotated session was recorded hasParts=false and the
+        // #2053 AC8 fast path probed ONLY the primary — the archived
+        // name resolved to null and `fa --session <name>` silently
+        // created an empty namesake.
+        final metadata = await namedSession('early');
+        final session = await repo.open(metadata);
+        await session.appendMessage(UserMessage.text('later'));
+        // Simulate a rotation: header + session_info archived, header +
+        // message stays primary.
+        final content = (await fs.readTextFile(metadata.path)).getOrThrow();
+        final lines = content.trim().split('\n');
+        await fs.writeFile(
+          '${metadata.path}.part-0001',
+          '${lines[0]}\n${lines[1]}\n',
+        );
+        await fs.writeFile(
+          metadata.path,
+          '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+        );
+
+        await repo.list(); // the walk records segment presence (AC8)
+        expect(await repo.sessionNameQuick(metadata), 'early');
+      },
+    );
+
+    test('a rename after rotation wins through the walk knowledge', () async {
+      // Newest-wins order (primary first, then parts) must survive the
+      // #2321 mapping fix: a session renamed AFTER rotation reports the
+      // newest name, not the archived one.
+      final metadata = await namedSession('early');
+      final session = await repo.open(metadata);
+      await session.appendSessionName('renamed');
+      final content = (await fs.readTextFile(metadata.path)).getOrThrow();
+      final lines = content.trim().split('\n');
+      await fs.writeFile(
+        '${metadata.path}.part-0001',
+        '${lines[0]}\n${lines[1]}\n',
+      );
+      await fs.writeFile(
+        metadata.path,
+        '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+      );
+
+      await repo.list();
+      expect(await repo.sessionNameQuick(metadata), 'renamed');
     });
 
     test(

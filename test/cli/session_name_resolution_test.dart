@@ -67,6 +67,40 @@ void main() {
     await run;
   });
 
+  test('a rotated session resolves by name (#2321 incident shape)', () async {
+    // The only session_info rotated into `.part-0001` (header+name),
+    // the primary keeps the post-rotation work records: `fa --session
+    // <name>` must boot the ORIGINAL, not silently create a namesake.
+    final original = await namedSession('network-redesign', '/work');
+    final session = await repo.open(original);
+    await session.appendMessage(UserMessage.text('real work'));
+    final metadata = await session.getMetadata();
+    final content = (await env.readTextFile(metadata.path)).valueOrNull!;
+    final lines = content.trim().split('\n');
+    await env.writeFile(
+      '${metadata.path}.part-0001',
+      '${lines[0]}\n${lines[1]}\n',
+    );
+    await env.writeFile(
+      metadata.path,
+      '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+    );
+
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call, sessionName: 'network-redesign');
+    final run = cli.run();
+    await io.out.waitUntilContains(
+      original.id,
+      reason: 'the rotated original boots — no empty namesake',
+    );
+    io.sendLine('/exit');
+    await run;
+    // The boot found the original: no empty namesake was created.
+    final sessions = await repo.list();
+    expect(sessions, hasLength(1));
+    expect(sessions.single.id, original.id);
+  });
+
   test('several in one folder: most recent + a note with the ids', () async {
     final older = await namedSession('widgets', '/work');
     // Distinct createdAt ordering for the most-recent rule.
