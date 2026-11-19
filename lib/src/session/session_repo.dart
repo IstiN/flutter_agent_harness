@@ -643,16 +643,19 @@ final class JsonlSessionRepo implements SessionRepo {
       );
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
-      // Rotated (#2320): the primary was reseeded after archiving its
-      // records into `.part-NN` segments — the chain is the session.
-      if (partPrimaries.contains(_sessionPathKey(path))) continue;
       final id = _sessionIdFromPath(path);
+      // #2320: knowledge the walk already collected can protect this
+      // header-only primary from the trash (see [_sweepKnowledgeProtects]).
+      if (_sweepKnowledgeProtects(
+        _sessionPathKey(path),
+        partPrimaries: partPrimaries,
+        id: id,
+        namedIds: namedIds,
+      )) {
+        continue;
+      }
       if (id != null && live.containsKey(id)) continue;
       if (id == exemptSessionId) continue;
-      // Named (#2320): `session_info.name` is a deliberate anchor
-      // (`fa --session <name>` semantics) — a named session is never
-      // litter, whatever its age.
-      if (id != null && namedIds.contains(id)) continue;
       if (cutoff != null &&
           !DateTime.fromMillisecondsSinceEpoch(
             entry.mtimeMs,
@@ -669,6 +672,22 @@ final class JsonlSessionRepo implements SessionRepo {
     }
     return removed;
   }
+
+  /// The #2320 knowledge guards for one header-only sweep candidate, split
+  /// out of [cleanupEmptySessions] for the CRAP ratchet (CC 3, fully
+  /// covered by the session_deletion suites). True — the file survives —
+  /// when a `.part-NN` sibling shows the chain holds the records (the
+  /// 623 MB class; [pathKey] is the separator-normalized primary path),
+  /// or when the persisted session-names sidecar knows a deliberate
+  /// `fa --session <name>` anchor for [id]: a named session is never
+  /// litter, whatever its age.
+  static bool _sweepKnowledgeProtects(
+    String pathKey, {
+    required Set<String> partPrimaries,
+    required String? id,
+    required Set<String> namedIds,
+  }) =>
+      partPrimaries.contains(pathKey) || (id != null && namedIds.contains(id));
 
   /// The `.trash` directory under the sessions root (issue #522): deleted
   /// session files land here — `<root>/.trash/<timestamp>_<name>` — and
