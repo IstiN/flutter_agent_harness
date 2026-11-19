@@ -431,6 +431,84 @@ void main() {
     expect(pass.tokensAfter, lessThan(pass.tokensBefore));
   });
 
+  test('#2263: a user abort mid-summarizer surfaces as cancelled — the '
+      'classic ladder never trims the aborted run', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // ~101 tokens per message (404 chars / 4); 12 of them ≈ 1212 — over
+    // the 1000-token window, so the trim valve has something to drop.
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final messagesBefore = [...state.messages];
+
+    final runSource = CancelTokenSource();
+    final inFlight = Completer<void>();
+    var summarizerCalls = 0;
+    Future<SummarizationResult> hanging(SummarizationRequest request) {
+      summarizerCalls++;
+      inFlight.complete();
+      final done = Completer<SummarizationResult>();
+      final token = request.cancelToken;
+      if (token != null) {
+        unawaited(
+          token.onCancel.then(
+            (_) => done.complete(
+              SummarizationResult.failure('aborted', aborted: true),
+            ),
+          ),
+        );
+      }
+      return done.future;
+    }
+
+    final hooks = _RecordingHooks();
+    final run = AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: hanging,
+      mainSummary: hanging,
+      smolModel: null,
+      hooks: hooks,
+      force: true,
+      runToken: runSource.token,
+    ).run();
+    await inFlight.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('summarizer never started — fixture broken'),
+    );
+    runSource.cancel('user abort');
+
+    await expectLater(
+      run,
+      throwsA(isA<CancelledException>()),
+    ).timeout(const Duration(seconds: 5));
+
+    // The abort surfaces BEFORE the trim valve: the live transcript is
+    // untouched (AgentState copies on assign, so pin element identity),
+    // no local-trim receipt, no host bracket.
+    expect(summarizerCalls, 1, reason: 'the abort ends the run, no retries');
+    expect(state.messages.length, messagesBefore.length);
+    for (var i = 0; i < messagesBefore.length; i++) {
+      expect(identical(state.messages[i], messagesBefore[i]), isTrue);
+    }
+    expect(
+      hooks.passes.any((p) => p.fallback == 'local-trim'),
+      isFalse,
+      reason: 'a cancelled run is never answered with the local trim',
+    );
+    expect(
+      hooks.donePasses,
+      isNull,
+      reason: 'no onDone bracket closes on an aborted run',
+    );
+  });
+
   test('gh-1425 clamp edge 1: the kept region reserves headroom for the '
       '[context trimmed] marker — the trim lands UNDER the trigger, so the '
       'next pre-flight does not re-fire a doomed pass', () async {

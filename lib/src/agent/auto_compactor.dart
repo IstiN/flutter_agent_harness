@@ -496,6 +496,11 @@ final class AutoCompactor {
     );
 
     if (!attempt.ok) {
+      // Issue #2263 (cancel parity with [applyLocalTrimFallback]): a run
+      // token cancelled around a classified failure — e.g. an aborted
+      // summarization surfacing as `ok: false` — must surface the abort,
+      // never be answered with the local trim.
+      runToken?.throwIfCancelled();
       // Both summarizers down: as a last resort, mechanically bound the
       // live context (see [_localTrimFallback]) so the agent can keep
       // working instead of being stuck over-window until the endpoint
@@ -843,6 +848,12 @@ final class AutoCompactor {
             summarizedMessages: 0,
           );
         }
+        // A cancelled summarizer call never reaches this catch as a raw
+        // CancelledException — compactSession converts every summarizer
+        // failure (issue #2263). Cancellation surfaces through the run
+        // token instead: the `_runPass` trim-valve guard below rethrows
+        // it off any `ok: false`, and `run()`'s finally belt catches the
+        // rest (#1085).
         final errorText = error.toString();
         final isTransient = _transient.hasMatch(errorText);
         // Issue #729 AC2: an overflow-classified failure is DETERMINISTIC —
@@ -1260,6 +1271,11 @@ class AutoCompactorFactory {
       // under structured projection as an opaque legacy-ckpt segment.
       // Its own run() closes the bracket.
     }
+    // Issue #2263: this fall-through starts a FRESH classic engine — on
+    // an aborted run that is exactly the #1085 violation (the structured
+    // engine's failure-safety catch-alls report a swallowed cancel as a
+    // plain `ok: false`). Surface the abort instead.
+    runToken?.throwIfCancelled();
     return build().run();
   }
 
