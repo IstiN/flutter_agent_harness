@@ -557,6 +557,10 @@ Future<ToolExecutionResult> _runForegroundBash(
 
     if (result.isErr) {
       final error = result.errorOrNull!;
+      // A timeout/cancel is an Err, not a ShellExecResult. Adopt its
+      // survivors here too, before a retry or failure throw can discard
+      // the process evidence (issue #2276).
+      await _adoptExecSurvivors(jobs, command, error.survivors, notices);
       // gh-1444 C5: a timeout the MODEL passed is a transient-failure
       // candidate (a hung network call under a deliberate bail cap) and is
       // retried; a SHELL-default timeout (no timeout argument) is the
@@ -582,7 +586,7 @@ Future<ToolExecutionResult> _runForegroundBash(
     // script may leave live children behind a failing exit too. The
     // notice joins the retry notices so it rides both the success text
     // and any failure throw below.
-    await _adoptExecSurvivors(jobs, command, execResult, notices);
+    await _adoptExecSurvivors(jobs, command, execResult.survivors, notices);
     final rawOutput = _bashOutput(execResult);
     if (execResult.exitCode != 0) {
       throw StateError(
@@ -635,17 +639,11 @@ StateError _bashFailureError(
 Future<void> _adoptExecSurvivors(
   ShellJobRegistry? jobs,
   String command,
-  ShellExecResult execResult,
+  List<ShellSurvivor> survivors,
   List<String> notices,
 ) async {
-  if (jobs == null || !jobs.isSupported || execResult.survivors.isEmpty) {
-    return;
-  }
-  final adopted = await jobs.adoptSurvivors(
-    command,
-    execResult.survivors,
-    notify: false,
-  );
+  if (jobs == null || !jobs.isSupported || survivors.isEmpty) return;
+  final adopted = await jobs.adoptSurvivors(command, survivors, notify: false);
   if (adopted.isNotEmpty) {
     notices.add(adoptedSurvivorsNoticeText(adopted, source: command));
   }
