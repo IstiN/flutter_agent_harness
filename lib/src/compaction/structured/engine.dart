@@ -554,6 +554,11 @@ final class StructuredCompactor {
   /// abandoned.
   bool get _ladderTerminated => _runCancelled || _totalBudgetSpent;
 
+  /// A missing projection and a projection with no hide candidates are both
+  /// successful terminal verdicts for the hide ladder.
+  _LedgerView? _viewWithHideableEntries(_LedgerView? view) =>
+      view == null || _hideableEntries(view.ledger).isEmpty ? null : view;
+
   Future<bool> _runHidePasses(int trigger) async {
     // gh-2096: the consecutive-failure counter is PERSISTED per session —
     // it seeds from the newest judge-health record instead of resetting
@@ -568,9 +573,8 @@ final class StructuredCompactor {
       if (_ladderTerminated) return false;
       final before = _requestTokens();
       if (before <= trigger) return true;
-      final view = await _buildView();
+      final view = _viewWithHideableEntries(await _buildView());
       if (view == null) return true;
-      if (_hideableEntries(view.ledger).isEmpty) break;
 
       // gh-2096: the cross-run latch gate — while latched the judge
       // contributes nothing unless the probe window elapsed (or the
@@ -615,7 +619,6 @@ final class StructuredCompactor {
       // latch (additive unlatch record; a no-op write when the session
       // was never unhealthy, keeping the legacy flow write-free).
       await _recordJudgeSuccess();
-      if (picks.isEmpty) break;
       final ids = validateHidePicks(
         picks,
         view.ledger,
