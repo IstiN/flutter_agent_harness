@@ -11,6 +11,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/channel_chat_service.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_display.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/models.dart';
 import 'package:fa/network/network_mode.dart';
@@ -141,6 +142,13 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     final name = _channel(session, channelId)?.name;
     if (isDmChannel(channelId)) {
       final sessionTitle = session.dmSessionTitle(channelId)?.trim();
+      final sessionId = session.dmSessionTargets[channelId];
+      if (sessionId != null && sessionId.isNotEmpty) {
+        // The same display-name → project-folder → short-id title opened
+        // from Devices drives both the header pill and the composer hint.
+        // Legacy raw/compound UUID titles are sanitized here as well.
+        return deviceSessionDisplayTitle(id: sessionId, title: sessionTitle);
+      }
       if (sessionTitle != null && sessionTitle.isNotEmpty) {
         return sessionTitle;
       }
@@ -335,7 +343,6 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                 label: label,
                 manager: widget.manager,
               ),
-            if (session.networkOffline) _OfflineBanner(session: session),
             if (isDmChannel(chatFor.$2))
               _DmAgentStatusBanner(session: session, channelId: chatFor.$2),
             Expanded(
@@ -364,6 +371,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   ),
                   title: label,
                   showAppBar: widget.showAppBar,
+                  // The shared notice slot floats over the transcript, so
+                  // reconnecting never changes the chat's layout geometry.
+                  noticeBanner: session.networkOffline
+                      ? _OfflineBanner(session: session)
+                      : null,
                   // Network channels are the same transparent chat surface
                   // as Local sessions, never an opaque black Scaffold.
                   wallpaperBuilder: (_) => const FahWallpaper(),
@@ -513,6 +525,7 @@ class _OfflineBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
     return Container(
+      key: const ValueKey('networkReconnectingBanner'),
       width: double.infinity,
       color: colors.pending.withValues(alpha: 0.15),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

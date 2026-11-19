@@ -232,6 +232,13 @@ NetworkEnvelope _devicesEnvelope({
   payload: {'devices': devices},
 );
 
+Future<void> openDeviceRename(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('deviceOptionsMenu')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('deviceRenameMenuItem')));
+  await tester.pumpAndSettle();
+}
+
 Color dotColor(WidgetTester tester, Key key) {
   final container = tester.widget<Container>(find.byKey(key));
   final decoration = container.decoration;
@@ -302,6 +309,7 @@ Widget devicesPage(
   void Function(ChatListEntry)? onOpen,
   String? selected,
   DateTime Function()? now,
+  bool startAtRoot = false,
   void Function({
     required String deviceId,
     required String deviceLabel,
@@ -317,6 +325,9 @@ Widget devicesPage(
   selectedSessionId: selected,
   onOpenSession: onOpen == null ? null : (entry) => onOpen(entry),
   onOpenRemoteConversation: onOpenRemoteConversation,
+  // Legacy pane assertions start drilled in; navigation tests opt into the
+  // production root explicitly. Goldens construct DevicesPage directly.
+  initialDeviceId: startAtRoot ? null : service.deviceId,
 );
 
 /// The palette resolved from the page's own context — tests assert
@@ -325,8 +336,9 @@ FahColors paletteOf(WidgetTester tester) =>
     FahColors.of(tester.element(find.byKey(const ValueKey('devicesPage'))));
 
 void main() {
-  testWidgets('master-rail split: the networks rail geometry beside the '
-      'pane (SizedBox rail + VerticalDivider + Expanded)', (tester) async {
+  testWidgets('drill-down reuses the Networks mini-strip beside the pane', (
+    tester,
+  ) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -335,19 +347,25 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    // The network_center Row anatomy: fixed rail column, hairline
-    // divider, expanded pane.
+    // Exact Networks anatomy: fixed 70pt mini-strip, no divider, and the
+    // current-device name in the shared section header.
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
-    expect(find.text('My devices'), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
     expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
     expect(
       tester.getSize(find.byKey(const ValueKey('deviceRail'))).width,
       DevicesPage.railWidth,
     );
-    expect(find.byType(VerticalDivider), findsOneWidget);
-    // The rail is a COLUMN of avatar-only cells: no inline full-width
-    // device rows anywhere (no disclosure chevrons, no status words).
-    expect(find.byType(VerticalDivider), findsOneWidget);
+    expect(find.byType(VerticalDivider), findsNothing);
+    expect(find.byKey(const ValueKey('deviceDrilldownBody')), findsOneWidget);
+    final railRect = tester.getRect(find.byKey(const ValueKey('deviceRail')));
+    final capsuleRect = tester.getRect(
+      find.byKey(const ValueKey('deviceSelectedCapsule')),
+    );
+    // The accent must be fully inside the strip, not a screen-edge sliver.
+    expect(capsuleRect.left, greaterThan(railRect.left));
+    expect(capsuleRect.right, lessThanOrEqualTo(railRect.right));
+    // The mini-strip itself stays avatar-only; names live in the header.
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -371,9 +389,11 @@ void main() {
 
     expect(find.byKey(const ValueKey('devicesChromeUnderlay')), findsOneWidget);
     final railFinder = find.byKey(const ValueKey('deviceRail'));
-    final rail = tester.widget<ListView>(railFinder);
+    final rail = tester.widget<ListView>(
+      find.descendant(of: railFinder, matching: find.byType(ListView)),
+    );
     expect(tester.getRect(railFinder).top, 0);
-    expect(rail.padding, const EdgeInsets.only(top: 58, bottom: 6));
+    expect(rail.padding, const EdgeInsets.only(top: 56, bottom: 4));
     expect(
       tester.getRect(find.byKey(const ValueKey('devicePaneTitle'))).top,
       greaterThanOrEqualTo(52),
@@ -397,7 +417,7 @@ void main() {
       expect(find.text('My devices'), findsOneWidget);
       expect(find.byKey(const ValueKey('devicesNotRunning')), findsOneWidget);
       expect(find.text('Connector not running — tap to retry'), findsOneWidget);
-      expect(find.text('This device'), findsOneWidget);
+      expect(find.text('This device'), findsWidgets);
       // The own rail cell is ONLINE LOCALLY even while the connector is
       // down: the dot says "the app is running on this machine"; the
       // banner above tells the connector's story.
@@ -455,14 +475,14 @@ void main() {
       initialPhase: DeviceConnectorPhase.reconnecting,
     );
 
-    await tester.pumpWidget(_wrap(DevicesPage(service: service)));
+    await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
     expect(find.byKey(const ValueKey('devicesReconnecting')), findsOneWidget);
     expect(find.text('Reconnecting…'), findsOneWidget);
-    // The last-known rail stays mounted under the banner.
-    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
-    expect(find.text('This device'), findsOneWidget);
+    // The last-known root list stays mounted under the banner.
+    expect(find.byKey(const ValueKey('deviceList')), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
   });
 
   testWidgets('online → This device rail cell: teal dot WITHOUT a frame, '
@@ -508,7 +528,7 @@ void main() {
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.teal);
     // The default selection is the rail's first device: its pane header.
     expect(find.byKey(const ValueKey('devicePaneTitle')), findsOneWidget);
-    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
 
     // The frame does NOT drive this dot — a frame even claiming the
     // machine OFFLINE leaves it teal (the connector's link state stays
@@ -621,14 +641,15 @@ void main() {
 
     // The pane still shows the default (first) device — stream updates
     // never hijack the selection.
-    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
     expect(find.text('agent'), findsNothing);
 
     // Tap the remote rail cell → the pane switches to its children.
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
 
-    expect(find.text('dev-remote'), findsOneWidget);
+    expect(find.text('dev-remo…'), findsWidgets);
+    expect(find.text('dev-remote'), findsNothing);
     expect(find.text('agent'), findsOneWidget);
     expect(
       dotColor(tester, const ValueKey('agentDot:agent@dev-remote')),
@@ -650,7 +671,7 @@ void main() {
       dotColor(tester, const ValueKey('deviceDot:dev-remote')),
       palette.dim,
     );
-    expect(find.text('dev-remote'), findsOneWidget);
+    expect(find.text('dev-remo…'), findsWidgets);
   });
 
   testWidgets('selection persists while frames stream updates (a new '
@@ -667,7 +688,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-a')));
     await tester.pump();
-    expect(find.text('dev-a'), findsOneWidget);
+    expect(find.text('dev-a'), findsWidgets);
 
     // Another machine arrives: the pane stays on the selected device.
     service.emitEnvelope(
@@ -681,13 +702,13 @@ void main() {
 
     // The rail now carries three cells; the pane is untouched.
     expect(find.byKey(const ValueKey('deviceRow:dev-b')), findsOneWidget);
-    expect(find.text('dev-a'), findsOneWidget);
+    expect(find.text('dev-a'), findsWidgets);
     expect(find.text('x'), findsNothing);
 
     // …and tapping back returns to This device's pane.
     await tester.tap(find.byKey(const ValueKey('deviceRow')));
-    await tester.pump();
-    expect(find.text('This device'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('This device'), findsWidgets);
     expect(find.text('dev-a'), findsNothing);
   });
 
@@ -711,7 +732,7 @@ void main() {
     service.emitEnvelope(_envelope(deviceId: 'dev-empty', msgId: 'p-empty'));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-empty')));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('No sessions yet'), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceNoSessionsHint')), findsOneWidget);
   });
@@ -746,7 +767,7 @@ void main() {
     );
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     final remoteRow = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-remote')),
@@ -764,7 +785,7 @@ void main() {
         of: find.byKey(const ValueKey('sessionRow:sess-remote')),
         matching: find.byWidgetPredicate(
           (widget) =>
-              widget is FaIcon && widget.icon == FaSemanticIcon.chevronRight,
+              widget is Icon && widget.icon == Icons.chevron_right_rounded,
         ),
       ),
       findsNothing,
@@ -772,7 +793,7 @@ void main() {
 
     // Back on This device, the local card opens and carries the chevron.
     await tester.tap(find.byKey(const ValueKey('deviceRow')));
-    await tester.pump();
+    await tester.pumpAndSettle();
     final localRow = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:sess-main')),
     );
@@ -782,7 +803,7 @@ void main() {
         of: find.byKey(const ValueKey('sessionRow:sess-main')),
         matching: find.byWidgetPredicate(
           (widget) =>
-              widget is FaIcon && widget.icon == FaSemanticIcon.chevronRight,
+              widget is Icon && widget.icon == Icons.chevron_right_rounded,
         ),
       ),
       findsOneWidget,
@@ -906,7 +927,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
     expect(find.byKey(const ValueKey('deviceRow:dev-remote')), findsNothing);
-    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsNothing);
   });
 
   testWidgets("the own device's envelope (matching deviceId) never becomes "
@@ -930,7 +951,7 @@ void main() {
 
     expect(find.text('dev-1'), findsNothing);
     expect(find.byKey(const ValueKey('deviceRow:dev-1')), findsNothing);
-    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
   });
 
   testWidgets('server roster devices[] populates remote identity, exposed '
@@ -1004,7 +1025,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
 
-    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('Workstation'), findsWidgets);
     expect(find.text('thinkpad'), findsOneWidget);
     expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsOneWidget);
     expect(find.byKey(const ValueKey('agentRow:hidden')), findsNothing);
@@ -1190,8 +1211,9 @@ void main() {
     expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
   });
 
-  testWidgets('own friendly name drives tooltip, semantics and the L2 '
-      'host-name subtitle', (tester) async {
+  testWidgets('own friendly name drives header, root row and host subtitle', (
+    tester,
+  ) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -1205,23 +1227,16 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    expect(find.text('Studio'), findsOneWidget);
+    expect(find.text('Studio'), findsWidgets);
     expect(find.text('MacBook-Pro'), findsOneWidget);
     expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsOneWidget);
-    expect(find.text('This device'), findsNothing);
-    expect(
-      find.byWidgetPredicate(
-        (widget) => widget is Tooltip && widget.message == 'Studio',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.byWidgetPredicate(
-        (widget) => widget is Semantics && widget.properties.label == 'Studio',
-      ),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceOptionsMenu')), findsOneWidget);
+    expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('deviceBackButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('Studio'), findsOneWidget);
+    expect(find.text('This device · Online'), findsOneWidget);
   });
 
   testWidgets('REST roster adds an offline remote before presence and live '
@@ -1250,7 +1265,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
-    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('Workstation'), findsWidgets);
     expect(find.text('thinkpad'), findsOneWidget);
 
     service.emitEnvelope(
@@ -1262,7 +1277,7 @@ void main() {
       dotColor(tester, const ValueKey('deviceDot:dev-remote')),
       paletteOf(tester).teal,
     );
-    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('Workstation'), findsWidgets);
 
     service.rosterDevices = const [
       DeviceInfo(
@@ -1294,8 +1309,7 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    await tester.longPress(find.byKey(const ValueKey('deviceAvatar')));
-    await tester.pumpAndSettle();
+    await openDeviceRename(tester);
     expect(find.text('Rename device'), findsOneWidget);
     expect(find.byKey(const ValueKey('renameDeviceName')), findsOneWidget);
 
@@ -1341,15 +1355,14 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey('renameOwnDeviceButton')));
-    await tester.pumpAndSettle();
+    await openDeviceRename(tester);
     await tester.enterText(find.byKey(const ValueKey('renameDeviceName')), '');
     await tester.tap(find.byKey(const ValueKey('renameDeviceConfirm')));
     await tester.pumpAndSettle();
 
     expect(service.renameRequests, ['']);
     expect(service.ownFriendlyName, isNull);
-    expect(find.text('This device'), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
     expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsNothing);
   });
 
@@ -1363,8 +1376,7 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey('renameOwnDeviceButton')));
-    await tester.pumpAndSettle();
+    await openDeviceRename(tester);
     await tester.enterText(
       find.byKey(const ValueKey('renameDeviceName')),
       'New name',
@@ -1565,7 +1577,7 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('this device'), findsOneWidget);
-        expect(find.text('Mac'), findsOneWidget);
+        expect(find.text('Mac'), findsWidgets);
       },
     );
 
@@ -1717,22 +1729,31 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      // Two project folders → the remote rows collapse into folder groups
-      // (owner feedback: long home-dir histories flood the device pane).
+      // Networks' adapter is flat for every device: path and unknown-path
+      // rows are both immediately visible, with no conditional grouping.
       expect(
         find.byKey(
           const ValueKey('sessionRow:123e4567-e89b-12d3-a456-426614174000'),
         ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('sessionRow:abcdef12-0000-0000-0000-000000000000'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget.key is ValueKey<String> &&
+              (widget.key! as ValueKey<String>).value.startsWith(
+                'remoteFolderHeader:',
+              ),
+        ),
         findsNothing,
       );
-      await tester.tap(
-        find.byKey(const ValueKey('remoteFolderHeader:/work/flutter_agent')),
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('remoteFolderHeader:')));
-      await tester.pump();
 
       final titled = tester.widget<DeviceSessionCard>(
         find.byKey(
@@ -1744,7 +1765,8 @@ void main() {
       expect(titled.timestamp, isNotEmpty);
       expect(find.text('123e4567-e89b-12d3-a456-426614174000'), findsNothing);
       expect(find.text('Offline'), findsNothing);
-      expect(find.text('abcdef12'), findsOneWidget);
+      expect(find.text('abcdef12…'), findsOneWidget);
+      expect(find.text('abcdef12-0000-0000-0000-000000000000'), findsNothing);
 
       // A live-only/empty presence projection is a patch, not an instruction
       // to erase the REST roster's persisted sessions.
@@ -2000,7 +2022,7 @@ void main() {
     });
   });
 
-  testWidgets('folder hairlines survive repeated toggles (review #2196 r1)', (
+  testWidgets('flat session hairlines stay stable across device switches', (
     tester,
   ) async {
     final service = FakeDevicesService(
@@ -2039,31 +2061,19 @@ void main() {
     );
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     DeviceSessionCard card(String id) => tester.widget<DeviceSessionCard>(
       find.byKey(ValueKey('sessionRow:$id')),
     );
-    Future<void> tapFolder(String path) async {
-      await tester.tap(find.byKey(ValueKey('remoteFolderHeader:$path')));
-      await tester.pump();
-    }
-
-    await tapFolder('/work/a');
-    await tapFolder('/work/b');
-    expect(card('aaa').hairline, isTrue, reason: 'folder B follows');
+    expect(card('aaa').hairline, isTrue);
     expect(card('bbb').hairline, isFalse, reason: 'last visible row');
 
-    // Two full collapse/re-expand cycles: the pre-fix shared sessionIndex
-    // counter drifted on every section rebuild, dropping hairlines mid-list
-    // and leaving a dangling separator on the last row.
-    for (var cycle = 0; cycle < 2; cycle++) {
-      await tapFolder('/work/a');
-      await tapFolder('/work/b');
-      await tapFolder('/work/a');
-      await tapFolder('/work/b');
-      expect(card('aaa').hairline, isTrue, reason: 'cycle $cycle');
-      expect(card('bbb').hairline, isFalse, reason: 'cycle $cycle');
-    }
+    await tester.tap(find.byKey(const ValueKey('deviceRow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
+    await tester.pumpAndSettle();
+    expect(card('aaa').hairline, isTrue);
+    expect(card('bbb').hairline, isFalse);
   });
 }

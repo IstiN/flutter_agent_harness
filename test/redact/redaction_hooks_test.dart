@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/cancel_token.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 import 'package:flutter_agent_harness/src/redact/redaction_hooks.dart';
 import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -428,6 +431,36 @@ void main() {
           (persisted.content.single as ToolCall).arguments['command'] as String;
       expect(command, contains(redactionMarker('Registered Secret')));
       expect(command.contains(_ghp), isFalse);
+    });
+
+    test('network DM reply arguments stay usable while secrets still mask', () {
+      final route = DeviceDmReplyRoute(
+        network: 'personal-1',
+        channel: 'dm:user:user-1:main@device-1',
+        replyRecipient: 'user:user-1',
+        agentAddress: 'main@device-1',
+        sessionId: 'session-1',
+        senderPubkey: base64Encode(List<int>.generate(32, (i) => i + 1)),
+        threaded: true,
+      );
+      final address = route.toAddress();
+      final message = _assistant(
+        content: [
+          _call('agent_message', {
+            'to': address,
+            'message': 'reply with token=$_ghp',
+          }),
+        ],
+      );
+
+      final persisted =
+          persistRedactMessage(_pipeline(), message) as AssistantMessage;
+      final arguments =
+          (persisted.content.single as ToolCall).arguments;
+
+      expect(arguments['to'], address);
+      expect(DeviceDmReplyRoute.parse(arguments['to'] as String), route);
+      expect(arguments['message'], contains('[REDACTED:Registered-Secret]'));
     });
 
     test('leaves the LIVE message untouched — persist-path only', () {

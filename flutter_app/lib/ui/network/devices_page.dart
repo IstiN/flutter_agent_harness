@@ -17,6 +17,7 @@ import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart' show chatListRelativeTime;
 import 'package:fa/ui/chats/local_session_folders.dart'
     show folderAvatarGradient;
+import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 
 import 'package:fa_ui/fa_ui.dart';
@@ -26,27 +27,17 @@ import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
 
-/// The DEVICES section page (issue #2062 chunk 16, owner master-rail
-/// pass): the SAME split the network center uses for rail + pane
-/// ([Row] → `SizedBox(rail width)` + [VerticalDivider] + `Expanded`
-/// pane, scaled to the section column) over a NETWORKS-strip rail —
-/// a narrow left column of device AVATARS ONLY (the letter-gradient
-/// avatar with the vector device glyph, Ø50 on the ~70pt pitch, the
-/// accent selection capsule flush to the selected avatar's left edge,
-/// the §5 presence dot riding the avatar badge). No inline device
-/// rows, no trailing status text, no disclosure chevron: the selection
-/// capsule + squared-up avatar are the whole level-1 affordance, and
-/// status lives in the avatar dot (the OWN device is ONLINE LOCALLY —
-/// the app is running on this machine, connector-independent; remote
-/// machines read their latest [PresenceFrame]).
+/// The DEVICES section reuses the Networks navigation composition: level 1
+/// is a comfortable named device list; a tap opens the same 70pt avatar
+/// mini-strip beside the selected device's content with the shared slide /
+/// fade transition and a back + current-device header.
 ///
-/// The RIGHT pane shows the SELECTED device's children: agents in the
-/// roster-row form, this machine's LOCAL chat sessions as
-/// [DeviceSessionCard] channel cards (the channel-card anatomy, tap
-/// routes through the shell's open flow), a remote machine's exposed
-/// sessions as read-only cards — or the muted no-sessions hint. The
-/// first device is selected by default and the selection PERSISTS
-/// while presence frames stream updates.
+/// The content lists agents followed by one flat, avatarless session adapter
+/// for both local and remote devices. Project paths remain row metadata and
+/// never conditionally change the navigation shape. Local cards use the
+/// shell's open flow; remote cards open their exposed DM when available.
+/// Selection persists while presence frames stream updates. The own device
+/// is ONLINE LOCALLY; remote machines read their latest [PresenceFrame].
 ///
 /// Data: [DeviceConnectorService.presence] (the local machine's own
 /// heartbeat view) + roster/presence streams whose `payload.devices` rows
@@ -153,18 +144,16 @@ class DevicesPage extends StatefulWidget {
     this.onOpenSession,
     this.selectedSessionId,
     this.onOpenRemoteConversation,
+    this.initialDeviceId,
   });
 
-  /// The rail's geometry — the networks strip's contract scaled to the
-  /// section's rail+pane split (network_center's Row): Ø~50 avatars on a
-  /// ~70pt pitch, the ~6x51 accent capsule flush to the strip's left
-  /// edge. The rail column is ~100pt so the pane keeps a usable card
-  /// width inside the ~260pt sidebar.
-  static const double railWidth = 104;
-  static const double railItemPitch = 70;
-  static const double railAvatarSize = 50;
-  static const double capsuleWidth = 6;
-  static const double capsuleHeight = 51;
+  /// The exact shared Networks strip geometry: 70pt column and pitch,
+  /// Ø50 avatars, and the ~6x51 accent selection capsule.
+  static const double railWidth = MessengerDrilldownMetrics.stripWidth;
+  static const double railItemPitch = MessengerDrilldownMetrics.itemPitch;
+  static const double railAvatarSize = MessengerDrilldownMetrics.avatarSize;
+  static const double capsuleWidth = MessengerDrilldownMetrics.capsuleWidth;
+  static const double capsuleHeight = MessengerDrilldownMetrics.capsuleHeight;
 
   /// The app-scope device connector service (one upstream socket, AC1).
   final DeviceConnectorService service;
@@ -203,6 +192,10 @@ class DevicesPage extends StatefulWidget {
   })?
   onOpenRemoteConversation;
 
+  /// Optional restored drill-down target. Null opens the root device list,
+  /// exactly like Networks; legacy pane-oriented tests inject the own id.
+  final String? initialDeviceId;
+
   @override
   State<DevicesPage> createState() => _DevicesPageState();
 }
@@ -217,9 +210,10 @@ class _DevicesPageState extends State<DevicesPage> {
   /// same node instead of creating a duplicate rail cell.
   final _remote = <String, _RemoteDeviceNode>{};
 
-  /// The selected device id; null = the first device (This device, the
-  /// rail's constant first entry).
+  /// The drilled-in device id; null = the root list, like Networks.
   String? _selectedDeviceId;
+  String? _selectedDeviceLabel;
+  var _selectedDeviceIsOwn = false;
 
   /// The open DM conversation (a remote session/agent tap); null shows
   /// the selected device's pane. Switching devices clears it.
@@ -238,6 +232,11 @@ class _DevicesPageState extends State<DevicesPage> {
   @override
   void initState() {
     super.initState();
+    _selectedDeviceId = widget.initialDeviceId;
+    _selectedDeviceIsOwn =
+        widget.initialDeviceId != null &&
+        (widget.initialDeviceId == widget.service.deviceId ||
+            widget.initialDeviceId == _ownFallbackId);
     _subscribe();
   }
 
@@ -570,19 +569,73 @@ class _DevicesPageState extends State<DevicesPage> {
         onRename: widget.service.renameOwnDevice,
       ),
     );
+    if (!mounted || !_selectedDeviceIsOwn) return;
+    setState(() => _selectedDeviceLabel = widget.service.ownFriendlyName);
+  }
+
+  String _openDeviceTitle(BuildContext context) {
+    if (_selectedDeviceLabel case final label?) return label;
+    if (_selectedDeviceIsOwn) {
+      return widget.service.ownFriendlyName ??
+          context.l10n.networkDeviceThisDevice;
+    }
+    return shortDeviceId(_selectedDeviceId ?? '');
+  }
+
+  Widget? _deviceOptionsMenu(BuildContext context) {
+    if (_selectedDeviceId == null || !_selectedDeviceIsOwn) return null;
+    return PopupMenuButton<String>(
+      key: const ValueKey('deviceOptionsMenu'),
+      tooltip: context.l10n.networkDeviceRenameAction,
+      iconSize: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      icon: FaIcon(
+        FaSemanticIcon.more,
+        size: 20,
+        color: FahColors.of(context).dim,
+      ),
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          key: const ValueKey('deviceRenameMenuItem'),
+          value: 'rename',
+          child: Text(context.l10n.networkDeviceRenameAction),
+        ),
+      ],
+      onSelected: (_) => unawaited(_renameOwnDevice()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
+    final drilledIn = _selectedDeviceId != null;
     final header = MessengerSectionHeader(
-      title: context.l10n.networkDevicesTitle,
+      title: drilledIn
+          ? _openDeviceTitle(context)
+          : context.l10n.networkDevicesTitle,
       compact: widget.compact,
       searchController: null,
       searchCollapsed: true,
       searchHint: context.l10n.launcherSearchHint,
       onProfile: null,
       onNew: null,
+      leading: drilledIn
+          ? IconButton(
+              key: const ValueKey('deviceBackButton'),
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => setState(() {
+                _selectedDeviceId = null;
+                _selectedDeviceLabel = null;
+                _selectedDeviceIsOwn = false;
+                _selectedRemoteSessionId = null;
+              }),
+              icon: const FaIcon(FaSemanticIcon.back),
+              iconSize: 26,
+              color: colors.text,
+              visualDensity: VisualDensity.compact,
+            )
+          : null,
+      trailing: _deviceOptionsMenu(context),
     );
     return StreamBuilder<DeviceConnectorPhase>(
       stream: widget.service.phaseStream,
@@ -678,11 +731,8 @@ class _DevicesPageState extends State<DevicesPage> {
     ],
   );
 
-  /// The master-rail split (network_center's Row): the device-avatar
-  /// rail in a fixed [SizedBox], the border [VerticalDivider], and the
-  /// selected device's pane in the [Expanded] remainder. The own frame
-  /// stream + the local chat list rebuild BOTH sides together (the pane
-  /// projects the controller the same way the Local panel does).
+  /// The own frame stream + local chat list rebuild both projections. Every
+  /// width follows Networks: labeled root list → mini device strip + sessions.
   Widget _railBody(BuildContext context) {
     final controller = widget.sessions;
     Widget body = StreamBuilder<DeviceInfo?>(
@@ -698,61 +748,100 @@ class _DevicesPageState extends State<DevicesPage> {
               ownSnapshot.data,
             );
             final selected = _resolveSelected(devices);
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: DevicesPage.railWidth,
-                  child: _DeviceRail(
-                    devices: devices,
-                    selectedId: selected.id,
-                    onSelect: (id) => setState(() {
-                      _selectedDeviceId = id;
-                      _selectedRemoteSessionId = null;
-                    }),
-                    onRenameOwn: () => unawaited(_renameOwnDevice()),
-                  ),
-                ),
-                VerticalDivider(width: 1, color: FahColors.of(context).border),
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      top: MessengerGlassBodyInsets.topOf(context),
+            final drilledIn = _selectedDeviceId != null;
+            final items = _avatarItems(context, devices);
+            void open(String id) => _selectDevice(
+              devices.firstWhere((device) => device.id == id),
+            );
+            return MessengerDrilldownBody(
+              key: const ValueKey('deviceDrilldownBody'),
+              drilledIn: drilledIn,
+              strip: MessengerAvatarStrip(
+                items: items,
+                selectedId: selected.id,
+                onOpen: open,
+                stripKey: const ValueKey('deviceRail'),
+                selectedCapsuleKey: const ValueKey('deviceSelectedCapsule'),
+              ),
+              contentKey: ValueKey(
+                'devicesContent-${drilledIn ? selected.id : 'list'}',
+              ),
+              content: drilledIn
+                  ? Padding(
+                      padding: EdgeInsets.only(
+                        top: MessengerGlassBodyInsets.topOf(context),
+                      ),
+                      child: _devicePane(selected),
+                    )
+                  : MessengerAvatarList(
+                      items: items,
+                      onOpen: open,
+                      listKey: const ValueKey('deviceList'),
+                      bottomReserve: widget.compact
+                          ? MessengerFloatingDockInsets.bottomOf(context)
+                          : 0,
                     ),
-                    child: _DevicePane(
-                      device: selected,
-                      onOpenSession: widget.onOpenSession,
-                      selectedSessionId: widget.selectedSessionId,
-                      selectedRemoteSessionId: _selectedRemoteSessionId,
-                      onRenameOwn: () => unawaited(_renameOwnDevice()),
-                      onOpenConversation:
-                          (deviceId, agentAddress, sessionId, sessionTitle) {
-                            setState(
-                              () => _selectedRemoteSessionId = sessionId,
-                            );
-                            widget.onOpenRemoteConversation?.call(
-                              deviceId: deviceId,
-                              deviceLabel: selected.label,
-                              agentAddress: agentAddress,
-                              sessionId: sessionId,
-                              sessionTitle: sessionTitle,
-                            );
-                          },
-                    ),
-                  ),
-                ),
-              ],
             );
           },
         );
       },
     );
     if (controller == null) return body;
-    // The chat list notifies on loads/previews/pins — the rail+pane
-    // re-project with it, exactly like the Local sessions panel's
-    // ListenableBuilder.
     return ListenableBuilder(listenable: controller, builder: (_, _) => body);
   }
+
+  List<MessengerAvatarItem> _avatarItems(
+    BuildContext context,
+    List<_DeviceEntry> devices,
+  ) => [
+    for (final device in devices)
+      MessengerAvatarItem(
+        key: ValueKey(device.isOwn ? 'deviceRow' : 'deviceRow:${device.id}'),
+        id: device.id,
+        label: device.label,
+        subtitle: [
+          if (device.isOwn) context.l10n.networkDeviceThisDevice,
+          if (!device.isOwn && device.subtitle != null) device.subtitle!,
+          deviceMachineLabel(context, device.machine),
+        ].join(' · '),
+        avatar: (selected) => _DeviceAvatar(
+          key: ValueKey(
+            device.isOwn ? 'deviceAvatar' : 'deviceAvatar:${device.id}',
+          ),
+          seed: device.id,
+          dotKey: ValueKey(
+            device.isOwn ? 'deviceDot' : 'deviceDot:${device.id}',
+          ),
+          dotColor: device.dotColor,
+          selected: selected,
+          icon: device.icon,
+        ),
+      ),
+  ];
+
+  void _selectDevice(_DeviceEntry device) => setState(() {
+    _selectedDeviceId = device.id;
+    _selectedDeviceLabel = device.label;
+    _selectedDeviceIsOwn = device.isOwn;
+    _selectedRemoteSessionId = null;
+  });
+
+  Widget _devicePane(_DeviceEntry selected) => _DevicePane(
+    device: selected,
+    onOpenSession: widget.onOpenSession,
+    selectedSessionId: widget.selectedSessionId,
+    selectedRemoteSessionId: _selectedRemoteSessionId,
+    onOpenConversation: (deviceId, agentAddress, sessionId, sessionTitle) {
+      setState(() => _selectedRemoteSessionId = sessionId);
+      widget.onOpenRemoteConversation?.call(
+        deviceId: deviceId,
+        deviceLabel: selected.label,
+        agentAddress: agentAddress,
+        sessionId: sessionId,
+        sessionTitle: sessionTitle,
+      );
+    },
+  );
 
   /// The rail's devices: This device first (always present), then the
   /// remote machines in frame-arrival order. The OWN dot is ONLINE
@@ -817,6 +906,7 @@ class _DevicesPageState extends State<DevicesPage> {
         // The app is running on this machine — ONLINE locally, the
         // connector's link state stays the banners' story above.
         dotColor: FahColors.of(context).teal,
+        machine: MachinePresence.online,
         agents: {...?ownFrame?.agents, ...mergedAgents(ownMerged)},
         agentDmPubs: {for (final node in ownMerged) ...node.agentDmPubs},
         exposedSessions: {
@@ -872,14 +962,15 @@ class _DevicesPageState extends State<DevicesPage> {
     final best = nodes
         .map((node) => node.machine)
         .reduce((a, b) => a.index <= b.index ? a : b);
-    final label = single
-        ? (first.roster?.displayName ?? deviceIds.first)
+    final rawLabel = single
+        ? first.roster?.displayName
         : (nodes
                   .map((node) => node.roster?.friendlyName)
                   .whereType<String>()
                   .firstOrNull ??
               first.roster?.name ??
               groupKey);
+    final label = _deviceDisplayLabel(deviceIds.first, rawLabel);
     return _DeviceEntry(
       id: single ? deviceIds.first : 'machine:$groupKey',
       label: label,
@@ -887,6 +978,7 @@ class _DevicesPageState extends State<DevicesPage> {
           ? (first.roster?.friendlyName == null ? null : first.roster!.name)
           : first.roster?.name,
       dotColor: deviceMachineDotColor(colors, best),
+      machine: best,
       isOffline: best == MachinePresence.offline,
       icon: devicePlatformIcon(
         name: first.roster?.name,
@@ -1120,6 +1212,11 @@ String? machineGroupKey(String? name) {
 String? _enrollmentMachineGroupKey(DeviceInfo? device) =>
     machineGroupKey(device?.name) ?? machineGroupKey(device?.friendlyName);
 
+String _deviceDisplayLabel(String id, String? candidate) {
+  final label = candidate?.trim() ?? '';
+  return label.isEmpty || label == id ? shortDeviceId(id) : label;
+}
+
 /// Repeated integration-test enrollments have no useful identity, presence,
 /// or children. Hide those dead account rows instead of letting dozens of
 /// `device` phantoms dominate the rail. A live row, a named/friendly row, or
@@ -1197,6 +1294,7 @@ class _DeviceEntry {
     required this.label,
     this.subtitle,
     required this.dotColor,
+    required this.machine,
     this.isOwn = false,
     this.isOffline = false,
     this.agents = const {},
@@ -1226,6 +1324,7 @@ class _DeviceEntry {
   /// its last session heartbeat was wake-on-DM before an unclean disconnect.
   final bool isOffline;
   final Color dotColor;
+  final MachinePresence machine;
   final Map<String, AgentRunState> agents;
 
   /// Full agent address → base64 X25519 public key from the server roster.
@@ -1250,134 +1349,6 @@ class _DeviceEntry {
   final FaSemanticIcon? icon;
 }
 
-/// The device avatar rail — the NETWORKS strip over devices (owner pass):
-/// one Ø50 letter-gradient avatar per [DevicesPage.railItemPitch] cell,
-/// no labels or status meta. The selected device paints the accent
-/// capsule flush to the rail's left edge and squares its avatar; a tap
-/// switches the pane. No scrollbar thumb (the strip's owner clip).
-class _DeviceRail extends StatelessWidget {
-  const _DeviceRail({
-    required this.devices,
-    required this.selectedId,
-    required this.onSelect,
-    required this.onRenameOwn,
-  });
-
-  final List<_DeviceEntry> devices;
-  final String selectedId;
-  final ValueChanged<String> onSelect;
-  final VoidCallback onRenameOwn;
-
-  @override
-  Widget build(BuildContext context) {
-    if (devices.isEmpty) return const SizedBox.shrink();
-    return ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-      child: ListView(
-        key: const ValueKey('deviceRail'),
-        padding: EdgeInsets.only(
-          top: MessengerGlassBodyInsets.topOf(context) + 6,
-          bottom: 6,
-        ),
-        children: [
-          for (final device in devices)
-            _DeviceRailCell(
-              key: ValueKey(
-                device.isOwn ? 'deviceRow' : 'deviceRow:${device.id}',
-              ),
-              device: device,
-              selected: device.id == selectedId,
-              onTap: onSelect,
-              onLongPress: device.isOwn ? onRenameOwn : null,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// One rail cell: the avatar centered on the ~70pt pitch, the selection
-/// capsule flush to the rail's left edge when selected (the networks
-/// strip's indicator, key-for-key naming).
-class _DeviceRailCell extends StatelessWidget {
-  const _DeviceRailCell({
-    super.key,
-    required this.device,
-    required this.selected,
-    required this.onTap,
-    this.onLongPress,
-  });
-
-  final _DeviceEntry device;
-  final bool selected;
-  final ValueChanged<String> onTap;
-  final VoidCallback? onLongPress;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = FaDesignTokens.of(context);
-    return SizedBox(
-      width: DevicesPage.railWidth,
-      height: DevicesPage.railItemPitch,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => onTap(device.id),
-          onLongPress: onLongPress,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Tooltip(
-                message: device.label,
-                // Own-avatar long press is rename, not tooltip reveal.
-                triggerMode: onLongPress == null
-                    ? null
-                    : TooltipTriggerMode.manual,
-                child: Semantics(
-                  button: true,
-                  selected: selected,
-                  label: device.label,
-                  child: _DeviceAvatar(
-                    key: ValueKey(
-                      device.isOwn
-                          ? 'deviceAvatar'
-                          : 'deviceAvatar:${device.id}',
-                    ),
-                    seed: device.id,
-                    dotKey: ValueKey(
-                      device.isOwn ? 'deviceDot' : 'deviceDot:${device.id}',
-                    ),
-                    dotColor: device.dotColor,
-                    selected: selected,
-                    icon: device.icon,
-                  ),
-                ),
-              ),
-              if (selected)
-                Positioned(
-                  left: 0,
-                  top:
-                      (DevicesPage.railItemPitch - DevicesPage.capsuleHeight) /
-                      2,
-                  child: Container(
-                    key: const ValueKey('deviceSelectedCapsule'),
-                    width: DevicesPage.capsuleWidth,
-                    height: DevicesPage.capsuleHeight,
-                    decoration: BoxDecoration(
-                      color: tokens.accent,
-                      borderRadius: BorderRadius.circular(
-                        DevicesPage.capsuleWidth / 2,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// The device avatar: the strip avatar's geometry ([folderAvatarGradient]
 /// seeded by the device id — circles rest unselected, the selected one
@@ -1467,12 +1438,10 @@ class _DevicePane extends StatelessWidget {
     this.onOpenSession,
     this.selectedSessionId,
     this.selectedRemoteSessionId,
-    this.onRenameOwn,
     this.onOpenConversation,
   });
 
   final _DeviceEntry device;
-  final VoidCallback? onRenameOwn;
 
   /// Opens the DM conversation for (deviceId, full agent address, sessionId?).
   final void Function(
@@ -1566,18 +1535,6 @@ class _DevicePane extends StatelessWidget {
                   ],
                 ),
               ),
-              if (device.isOwn)
-                IconButton(
-                  key: const ValueKey('renameOwnDeviceButton'),
-                  onPressed: onRenameOwn,
-                  tooltip: context.l10n.networkDeviceRenameAction,
-                  visualDensity: VisualDensity.compact,
-                  icon: FaIcon(
-                    FaSemanticIcon.edit,
-                    size: 17,
-                    color: colors.dim,
-                  ),
-                ),
             ],
           ),
         ),
@@ -1624,16 +1581,9 @@ class _DevicePane extends StatelessWidget {
       final byActivity = rightActivity?.compareTo(leftActivity!) ?? 0;
       return byActivity != 0 ? byActivity : left.key.compareTo(right.key);
     });
-    // Owner feedback: long remote histories (dozens of home-dir sessions)
-    // flood the device pane. Mirror the Local panel's folder-first logic:
-    // with more than one project folder, remote sessions collapse into
-    // per-folder groups (single-folder devices keep the flat list).
-    final remoteFolders = _groupRemoteFolders(
-      context,
-      remote,
-      device.sessionMetadata,
-    );
-    final groupedRemote = remoteFolders.length > 1;
+    // Match Networks' channel adapter: every device uses one flat session
+    // list. cwd stays visible as row metadata; missing remote cwd can no
+    // longer silently disable grouping or change the navigation shape.
     // Hairlines are EXPLICIT positions, never a shared counter (review
     // #2196 round 1): folder sections build their cards in their own
     // setState passes, so a captured `sessionIndex++` drifted on every
@@ -1655,7 +1605,6 @@ class _DevicePane extends StatelessWidget {
         title: _sessionTitle(
           entry.key,
           metadata?.title,
-          preview: metadata?.snippet,
           path: metadata?.path ?? metadata?.cwd,
         ),
         subtitle: [
@@ -1707,20 +1656,8 @@ class _DevicePane extends StatelessWidget {
             hairline:
                 index < device.localSessions.length - 1 || remote.isNotEmpty,
           ),
-        if (!groupedRemote)
-          for (final (index, entry) in remote.indexed)
-            remoteCard(entry, hairline: index < remote.length - 1)
-        else
-          for (final (index, folder) in remoteFolders.indexed)
-            _RemoteSessionFolderSection(
-              key: ValueKey('remoteFolder:${folder.path}'),
-              folder: folder,
-              initiallyExpanded: folder.entries.any(
-                (entry) => entry.key == selectedRemoteSessionId,
-              ),
-              hasFollowingRows: index < remoteFolders.length - 1,
-              cardBuilder: remoteCard,
-            ),
+        for (final (index, entry) in remote.indexed)
+          remoteCard(entry, hairline: index < remote.length - 1),
       ],
     );
   }
@@ -1736,7 +1673,6 @@ class _DevicePane extends StatelessWidget {
     final title = _sessionTitle(
       sessionId,
       metadata?.title,
-      preview: metadata?.snippet,
       path: metadata?.path ?? metadata?.cwd,
     );
     for (final name in device.agents.keys) {
@@ -1769,12 +1705,7 @@ class _DevicePane extends StatelessWidget {
       key: ValueKey('sessionRow:$id'),
       dotKey: ValueKey('sessionDot:$id'),
       dotColor: deviceLocalSessionDotColor(colors, entry.presence),
-      title: _sessionTitle(
-        id,
-        entry.title,
-        preview: entry.preview,
-        path: entry.folderPath,
-      ),
+      title: _sessionTitle(id, entry.title, path: entry.folderPath),
       subtitle: entry.folderPath ?? '',
       timestamp: chatListRelativeTime(
         context,
@@ -1788,17 +1719,8 @@ class _DevicePane extends StatelessWidget {
   }
 }
 
-String _sessionTitle(
-  String id,
-  String? rawTitle, {
-  String? preview,
-  String? path,
-}) => deviceSessionDisplayTitle(
-  id: id,
-  title: rawTitle,
-  preview: preview,
-  path: path,
-);
+String _sessionTitle(String id, String? rawTitle, {String? path}) =>
+    deviceSessionDisplayTitle(id: id, title: rawTitle, path: path);
 
 /// Friendly-name editor. Validation is rune-based to match the deployed
 /// server contract (a 64-emoji name is valid despite 128 UTF-16 code units).
@@ -1928,188 +1850,3 @@ class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
   }
 }
 
-/// One remote-session project folder (the Local panel's folder-first
-/// grouping applied to a remote device's exposed sessions).
-final class _RemoteFolder {
-  const _RemoteFolder({
-    required this.path,
-    required this.name,
-    required this.entries,
-    required this.latestActivity,
-  });
-
-  final String path;
-  final String name;
-  final List<MapEntry<String, ConnectorSessionPresence>> entries;
-  final DateTime? latestActivity;
-}
-
-/// Groups the recency-sorted [remote] sessions by their project path
-/// ('' = unknown/Personal). Folders order by latest activity desc; entries
-/// keep their input (recency) order.
-List<_RemoteFolder> _groupRemoteFolders(
-  BuildContext context,
-  List<MapEntry<String, ConnectorSessionPresence>> remote,
-  Map<String, ConnectorSessionMetadata> metadata,
-) {
-  final byPath = <String, List<MapEntry<String, ConnectorSessionPresence>>>{};
-  DateTime? activityOf(String id) => metadata[id]?.lastActivity;
-  for (final entry in remote) {
-    byPath
-        .putIfAbsent(
-          metadata[entry.key]?.path ?? metadata[entry.key]?.cwd ?? '',
-          () => [],
-        )
-        .add(entry);
-  }
-  String basename(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    final segments = normalized.split('/').where((s) => s.isNotEmpty).toList();
-    return segments.isEmpty ? path : segments.last;
-  }
-
-  final folders = <_RemoteFolder>[
-    for (final entry in byPath.entries)
-      _RemoteFolder(
-        path: entry.key,
-        name: entry.key.isEmpty
-            ? context.l10n.sessionFolderPersonal
-            : basename(entry.key),
-        entries: entry.value,
-        latestActivity: entry.value
-            .map((session) => activityOf(session.key))
-            .whereType<DateTime>()
-            .fold<DateTime?>(
-              null,
-              (latest, activity) => latest == null || activity.isAfter(latest)
-                  ? activity
-                  : latest,
-            ),
-      ),
-  ];
-  folders.sort((left, right) {
-    final a = left.latestActivity;
-    final b = right.latestActivity;
-    if (a == null && b != null) return 1;
-    if (a != null && b == null) return -1;
-    final byActivity = b?.compareTo(a!) ?? 0;
-    return byActivity != 0 ? byActivity : left.name.compareTo(right.name);
-  });
-  return folders;
-}
-
-/// A collapsible remote folder: header (chevron + folder + name + count +
-/// latest activity) with the session cards nested underneath. Collapsed by
-/// default — the owner wants a SHORT device pane; the folder containing the
-/// open DM session starts expanded.
-final class _RemoteSessionFolderSection extends StatefulWidget {
-  const _RemoteSessionFolderSection({
-    super.key,
-    required this.folder,
-    required this.initiallyExpanded,
-    required this.hasFollowingRows,
-    required this.cardBuilder,
-  });
-
-  final _RemoteFolder folder;
-  final bool initiallyExpanded;
-
-  /// Whether more session rows follow this folder in the device pane —
-  /// the expanded cards' hairlines continue into them (review #2196 r1:
-  /// explicit positions instead of a shared counter).
-  final bool hasFollowingRows;
-  final Widget Function(
-    MapEntry<String, ConnectorSessionPresence> entry, {
-    required bool hairline,
-  })
-  cardBuilder;
-
-  @override
-  State<_RemoteSessionFolderSection> createState() =>
-      _RemoteSessionFolderSectionState();
-}
-
-final class _RemoteSessionFolderSectionState
-    extends State<_RemoteSessionFolderSection> {
-  late var _expanded = widget.initiallyExpanded;
-
-  @override
-  void didUpdateWidget(covariant _RemoteSessionFolderSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Selecting a session inside a collapsed folder opens it (DM opened
-    // from elsewhere must reveal its card).
-    if (widget.initiallyExpanded && !_expanded) {
-      setState(() => _expanded = true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final folder = widget.folder;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        InkWell(
-          key: ValueKey('remoteFolderHeader:${folder.path}'),
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Semantics(
-            button: true,
-            expanded: _expanded,
-            label:
-                '${folder.name}, ${folder.entries.length} sessions, '
-                '${_expanded ? 'expanded' : 'collapsed'}',
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-              child: Row(
-                children: [
-                  FaIcon(
-                    _expanded
-                        ? FaSemanticIcon.expandMore
-                        : FaSemanticIcon.chevronRight,
-                    size: 16,
-                    color: colors.dim,
-                  ),
-                  const SizedBox(width: 4),
-                  FaIcon(FaSemanticIcon.folder, size: 15, color: colors.dim),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      folder.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '${folder.entries.length}',
-                    style: TextStyle(color: colors.dim, fontSize: 11),
-                  ),
-                  if (folder.latestActivity != null) ...[
-                    const SizedBox(width: 6),
-                    Text(
-                      chatListRelativeTime(context, folder.latestActivity),
-                      style: TextStyle(color: colors.dim, fontSize: 11),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (_expanded)
-          for (final (index, entry) in folder.entries.indexed)
-            widget.cardBuilder(
-              entry,
-              hairline:
-                  index < folder.entries.length - 1 || widget.hasFollowingRows,
-            ),
-      ],
-    );
-  }
-}

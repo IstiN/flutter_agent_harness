@@ -1701,7 +1701,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       // The DEVICES section (issue #2062 chunk 16): signed-in accounts
       // only — guests have no machines to show. Same rail semantics as
       // Local/Activity (a root section destination).
-      if (widget.networkSessions?.hasJwt ?? false)
+      if (widget.networkSessions?.hasAccount ?? false)
         MessengerRailDestination(
           rowKey: const ValueKey('messengerPrimaryNav-devices'),
           icon: FaIconThemeData.of(context).resolve(FaSemanticIcon.devices),
