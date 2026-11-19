@@ -991,13 +991,26 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
 /// Resolves one directory-listed network peer without ever asking the model
 /// to copy its opaque encrypted route. Exact ids win; duplicate display names
 /// fail closed with the usable ids instead of picking a recipient silently.
+/// Exact network-peer ID lookup: `network-dm-N` is a synthetic namespace
+/// that cannot collide with local identities, so this match is always
+/// safe to take first (PR#2313 review).
+(String?, String?) _networkPeerAddressById(SubagentManager manager, String to) {
+  for (final peer in manager.networkDmPeers) {
+    if (peer.id == to) return (peer.address, null);
+  }
+  return (null, null);
+}
+
+/// Network-peer NAME lookup — must run only AFTER every local identity
+/// (selfId, local handles, child names, fabric directory names) declined
+/// the string: peer names arrive from the remote side (DM envelope
+/// fromName / roster label), so a peer calling itself "main" or a local
+/// sibling's display name would otherwise silently hijack local mail
+/// onto the encrypted transport (PR#2313 review).
 (String?, String?) _resolveNetworkDmPeerAddress(
   SubagentManager manager,
   String to,
 ) {
-  for (final peer in manager.networkDmPeers) {
-    if (peer.id == to) return (peer.address, null);
-  }
   final named = [
     for (final peer in manager.networkDmPeers)
       if (peer.name == to) peer,
@@ -1023,21 +1036,46 @@ Future<(String, String?)> _resolveFabricAddress(
   SubagentManager manager,
   String to,
 ) async {
-  final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
-    manager,
-    to,
-  );
-  if (networkError != null) return (to, networkError);
-  if (networkTarget != null) return (networkTarget, null);
+  // 1. exact network-peer id (synthetic namespace — cannot collide with
+  // local identities).
+  final (byId, _) = _networkPeerAddressById(manager, to);
+  if (byId != null) return (byId, null);
   final fabric = manager.messaging;
-  if (fabric == null) return (to, null);
+  if (fabric == null) {
+    // No local fabric identities to shadow — the network NAME space is
+    // the only one available (legacy fabric-less hosts).
+    final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
+      manager,
+      to,
+    );
+    if (networkError != null) return (to, networkError);
+    if (networkTarget != null) return (networkTarget, null);
+    return (to, null);
+  }
   final (stripped, suffixError) = _stripLocalMachineSuffix(manager, to);
   if (suffixError != null) return (stripped, suffixError);
   to = stripped;
   if (to == manager.selfId || manager[to] != null) return (to, null);
   final local = _resolveLocalChildName(manager, to);
   if (local != null) return local;
-  return _resolveDirectoryAddress(fabric, to);
+  final (directoryTarget, directoryError) = await _resolveDirectoryAddress(
+    fabric,
+    to,
+  );
+  // A local identity claimed the string (exact mailbox, unique session
+  // name, truncated id, or an ambiguity error) — it wins over any
+  // network-peer name. Only an UNKNOWN name (null target) falls through
+  // to the network NAME match, so a peer named "main" (or like a local
+  // sibling) can never hijack local mail (PR#2313 review).
+  if (directoryError != null) return (to, directoryError);
+  if (directoryTarget != null) return (directoryTarget, null);
+  final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
+    manager,
+    to,
+  );
+  if (networkError != null) return (to, networkError);
+  if (networkTarget != null) return (networkTarget, null);
+  return (to, null);
 }
 
 /// Session-local child-name resolution for [_resolveFabricAddress]
@@ -1088,9 +1126,11 @@ Future<(String, String?)> _resolveFabricAddress(
 
 /// Fabric-directory resolution for [_resolveFabricAddress]: an exact
 /// mailbox id passes through; a session display NAME resolves to the one
-/// live mailbox, or errors when ambiguous. An unknown name returns [to]
-/// unchanged so the manager's own unknown-recipient error applies.
-Future<(String, String?)> _resolveDirectoryAddress(
+/// live mailbox, or errors when ambiguous. An unknown name returns a
+/// NULL target so the caller can fall through to the network-peer NAME
+/// match (PR#2313 review) before the manager's own unknown-recipient
+/// error applies.
+Future<(String?, String?)> _resolveDirectoryAddress(
   MessagingRepository fabric,
   String to,
 ) async {
@@ -1107,7 +1147,7 @@ Future<(String, String?)> _resolveDirectoryAddress(
     final (prefixTarget, prefixError) = _resolveTruncatedId(entries, to);
     if (prefixError != null) return (to, prefixError);
     if (prefixTarget != null) return (prefixTarget, null);
-    return (to, null);
+    return (null, null);
   }
   if (matches.length > 1) {
     return (

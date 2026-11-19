@@ -192,6 +192,79 @@ void main() {
     );
 
     test(
+      'network peer names never shadow local identities (PR#2313 review)',
+      () async {
+        final sent = <String>[];
+        final fabric = _FakeMessagingRepository(
+          entries: [MailboxEntry(id: 'sess9/main', name: 'goal_builder')],
+        );
+        final local = SubagentManager(
+          parentSessionId: 'parent',
+          messaging: fabric,
+        )..mailboxPrefix = 'parent';
+        local.networkDmGateway = (address, message) async {
+          sent.add(address);
+        };
+        // A peer calling itself "main" (the parent keyword) and another
+        // named exactly like a live fabric session: both would hijack
+        // local mail if the network NAME match ran first.
+        final peerMain = local.registerNetworkDmPeer(
+          name: 'main',
+          address: 'network-dm:v1:route-main',
+        );
+        local.registerNetworkDmPeer(
+          name: 'goal_builder',
+          address: 'network-dm:v1:route-builder',
+        );
+        final tools = subagentMonitoringTools(manager: local);
+        final message = tools.firstWhere(
+          (tool) => tool.name == 'agent_message',
+        );
+
+        await message.execute({
+          'to': 'main',
+          'message': 'for parent',
+        }, null, null);
+        await message.execute({
+          'to': 'goal_builder',
+          'message': 'for local session',
+        }, null, null);
+        expect(
+          sent,
+          isEmpty,
+          reason: 'local identities (selfId "main", fabric session '
+              'name) win over remote-supplied peer names',
+        );
+        expect(
+          await fabric.peek('sess9/main'),
+          hasLength(1),
+          reason: 'the session-named peer must not intercept the local '
+              'mailbox delivery',
+        );
+
+        // An unknown local name still falls through to the network NAME
+        // match (the documented DM-by-name path keeps working).
+        local.registerNetworkDmPeer(
+          name: 'remote_only',
+          address: 'network-dm:v1:route-solo',
+        );
+        await message.execute({
+          'to': 'remote_only',
+          'message': 'for peer',
+        }, null, null);
+        // Exact peer ids (synthetic namespace) keep resolving first.
+        await message.execute({
+          'to': peerMain.id,
+          'message': 'by id',
+        }, null, null);
+        expect(sent, [
+          'network-dm:v1:route-solo',
+          'network-dm:v1:route-main',
+        ]);
+      },
+    );
+
+    test(
       'agent_directory hides stale zero-mail mailboxes unless all',
       () async {
         final env = MemoryExecutionEnv(cwd: '/work');
