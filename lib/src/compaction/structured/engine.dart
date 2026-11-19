@@ -161,18 +161,24 @@ final class StructuredCompactionPass {
   final CompactionUsageTotals? usage;
 }
 
-/// Rebuilds [state.messages] from the session projection, zeroing usage
-/// anchors on rebuilt transcripts (rebuilt messages carry no trustworthy
-/// usage). The ONE refresh both the engine passes and the agent-initiated
-/// hide use (issue #1379 tier 2) — a single contract, not two copies.
+/// Rebuilds [state.messages] from the session projection. gh-2237: the
+/// projection is the single anchor authority — `buildContextMessages`
+/// already normalizes usage with the stale-anchor curation
+/// (`_resetStaleUsageAnchors`: boundary-keyed resets, plus head-truncated
+/// boundary-less tails whose persisted anchors price a context the
+/// projection no longer renders — the windowed-resume window edge), so
+/// this rebuild must NOT blanket-zero anchors. Zeroing here re-derived a
+/// collapsed chars/4 basis where the arming gate had measured a
+/// usage-anchored over-trigger basis: the run exited under-trigger with
+/// zero passes, zero receipts, and the gate re-fired every turn (the
+/// silent auto-compact loop). Anchors travel with the data — and an
+/// anchor the resident tail cannot vouch for travels reset, so the gate
+/// basis and this rebuild's basis stay ONE measurement even after a
+/// boundary-less windowed resume. The ONE refresh both the engine passes
+/// and the agent-initiated hide use (issue #1379 tier 2) — a single
+/// contract, not two copies.
 Future<void> refreshAgentState(Session session, AgentState state) async {
-  final rebuilt = await session.buildContextMessages();
-  state.messages = [
-    for (final message in rebuilt)
-      message is AssistantMessage
-          ? message.copyWith(usage: Usage.zero)
-          : message,
-  ];
+  state.messages = await session.buildContextMessages();
 }
 
 /// The structured compaction engine.
@@ -225,6 +231,13 @@ final class StructuredCompactor {
 
   /// Optional progress hooks.
   final StructuredCompactorHooks? hooks;
+
+  /// gh-2237: WHY the last [run] returned without doing any work — the
+  /// deciding gate plus the basis/trigger numbers, rendered by the host
+  /// into the zero-pass terminal receipt (`auto-compact done passes=0
+  /// (no-op: …)`). Null when the run did work (its passes carry their
+  /// own receipts) or failed; cleared at every [run] start.
+  String? exitReason;
 
   /// Bound on judge iterations per run.
   final int maxHidePasses;
@@ -324,9 +337,18 @@ final class StructuredCompactor {
     tools: state.tools,
   );
 
-  /// Runs both passes; returns whether the context ended under pressure.
+  /// Runs both passes; returns whether the context settled at or below
+  /// the trigger — `true` when the pressure is resolved, `false` when
+  /// residual overflow remains and the host falls back to the classic
+  /// compactor. A zero-pass `true` outcome carries [exitReason] — the
+  /// deciding gate (gh-2237) — so the host can close the receipt chain
+  /// honestly.
   Future<bool> run({bool force = false}) async {
-    if (window <= 0) return true;
+    exitReason = null;
+    if (window <= 0) {
+      exitReason = 'window disabled (window <= 0)';
+      return true;
+    }
     // gh-2097: re-anchor the agent state from the session projection
     // BEFORE any trigger/before/over math. The in-memory transcript can
     // lag the session file (an in-memory tail cut, a second writer
@@ -336,8 +358,18 @@ final class StructuredCompactor {
     // the ledger cache (O(changed records)).
     await _refreshState();
     final trigger = window - settings.reserveTokens;
-    if (!force && _requestTokens() <= trigger) {
-      return true;
+    if (!force) {
+      // gh-2237: this is the exit that powered the silent loop — the
+      // engine deciding "nothing to do" against a basis the arming gate
+      // never measured. The reason rides [exitReason] into the host's
+      // terminal receipt. The basis binds once: the reason renders the
+      // SAME measurement the gate compared (gh-2237 rework review — one
+      // O(context) estimate, not two).
+      final basis = _requestTokens();
+      if (basis <= trigger) {
+        exitReason = 'basis $basis below trigger $trigger (trigger gate)';
+        return true;
+      }
     }
     // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
     // expansion artifacts first — the oldest expand call/result pairs
@@ -573,9 +605,20 @@ final class StructuredCompactor {
       // #2258: the verdict may have landed between iterations.
       if (_ladderTerminated) return false;
       final before = _requestTokens();
-      if (before <= trigger) return true;
-      final view = _viewWithHideableEntries(await _buildView());
-      if (view == null) return true;
+      if (before <= trigger) {
+        exitReason =
+            'basis $before below trigger $trigger '
+            '(hide-pass gate)';
+        return true;
+      }
+      final builtView = await _buildView();
+      final view = _viewWithHideableEntries(builtView);
+      if (view == null) {
+        if (builtView == null) {
+          exitReason = 'projection view unavailable (hide-pass gate)';
+        }
+        return true;
+      }
 
       // gh-2096: the cross-run latch gate — while latched the judge
       // contributes nothing unless the probe window elapsed (or the
@@ -1054,7 +1097,12 @@ final class StructuredCompactor {
       // #2258: the verdict may have landed between iterations.
       if (_ladderTerminated) return false;
       final before = _requestTokens();
-      if (before <= trigger) return true;
+      if (before <= trigger) {
+        exitReason =
+            'basis $before below trigger $trigger '
+            '(checkpoint gate)';
+        return true;
+      }
       // gh-2101: the pass's measured window — the summarizer call(s), the
       // append and the refresh all belong to the pass's duration/usage.
       final watch = Stopwatch()..start();

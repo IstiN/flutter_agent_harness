@@ -162,7 +162,12 @@ abstract class AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error);
 
   /// Called once after the loop terminates, on success or exhaustion.
-  void onDone(int passes, int tokens);
+  /// [reason] (gh-2237): the structured engine's zero-pass exit reason —
+  /// the deciding gate plus the basis/trigger numbers — so a host can
+  /// render the `passes=0` no-op terminal receipt honestly. Null on
+  /// pass-carrying runs and classic-engine paths (their receipts are the
+  /// passes themselves).
+  void onDone(int passes, int tokens, {String? reason});
 
   /// Called when both smol and main failed in the same pass. The CLI
   /// prints a "switch models" hint here; the Flutter sheet shows a
@@ -1219,7 +1224,13 @@ class AutoCompactorFactory {
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
         // so a structured run that skips it leaves them open forever.
-        hooks.onDone(adapter.passCount, _requestTokens());
+        // gh-2237: the engine's zero-pass exit reason rides along — the
+        // host renders the no-op terminal receipt from it.
+        hooks.onDone(
+          adapter.passCount,
+          _requestTokens(),
+          reason: outcome.reason,
+        );
         return true;
       }
       if (outcome.timedOut) {
@@ -1277,7 +1288,8 @@ class AutoCompactorFactory {
     return build().run();
   }
 
-  Future<({bool ok, bool timedOut, Object? error})> _runStructured({
+  Future<({bool ok, bool timedOut, Object? error, String? reason})>
+  _runStructured({
     _StructuredHooksAdapter? adapter,
     bool capTriggered = false,
   }) async {
@@ -1382,13 +1394,20 @@ class AutoCompactorFactory {
           throw timeout;
         },
       );
-      return (ok: ok, timedOut: false, error: null);
+      // gh-2237: the engine's zero-pass exit reason (deciding gate +
+      // basis/trigger numbers) lands in the host's onDone receipt.
+      return (
+        ok: ok,
+        timedOut: false,
+        error: null,
+        reason: compactor.exitReason,
+      );
     } on TimeoutException catch (error) {
       // The engine run may settle later (the abort propagates
       // asynchronously); drop that late settle — the named failure here
       // is the authoritative outcome.
       running.ignore();
-      return (ok: false, timedOut: true, error: error);
+      return (ok: false, timedOut: true, error: error, reason: null);
     }
   }
 
