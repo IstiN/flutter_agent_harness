@@ -267,8 +267,8 @@ final class ShellJobEntry {
   /// the process group could not be verified (single-pid kill on a host
   /// without group leadership, probe failure) — survivors may remain;
   /// empty = the whole group verified gone; non-empty = these members
-  /// survived. Native jobs report an empty list (their killTree reaps
-  /// the whole tree, gh-1053).
+  /// survived. Native jobs report an empty list (no #2260 group
+  /// verification runs for them).
   List<ShellSurvivor>? get stopSurvivors => switch (job) {
     _AdoptedShellJob adopted => adopted.stopSurvivors,
     _ => const [],
@@ -570,11 +570,14 @@ final class ShellJobRegistry {
           entry._settledAt ??= DateTime.now();
           _gcExitedJobs();
           onSettled?.call(entry);
-          // Issue #2201: a local job's NORMAL exit may leave live children
+          // Issue #2201: a local job's exit may leave live children
           // (`nohup x &` inside a background:true script settles the job,
           // not the work). The env buffered them at exit
-          // ([SurvivorReporting]); stopped/timed-out jobs report none —
-          // gh-1053 reaped those trees. Adoption is best-effort
+          // ([SurvivorReporting]); a stopped/timed-out job reports only
+          // what the stop could not reap — the group kill owns every
+          // descendant on ownGroup hosts (gh-1053), while the walk-based
+          // kill on other hosts can miss reparented TERM-trapping
+          // grandchildren (issue #2276). Adoption is best-effort
           // observation and must never break the settle path.
           if (entry.job case SurvivorReporting reporting) {
             final survivors = reporting.takeSurvivors();
