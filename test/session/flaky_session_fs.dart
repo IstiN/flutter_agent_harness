@@ -25,6 +25,11 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   /// How many more [appendFile] calls fail before appends succeed.
   int failNextAppends = 0;
 
+  /// Optional async gate invoked before every append. Tests use this to
+  /// land cancellation exactly while an append is in flight; the append
+  /// still delegates after the hook unless a failure is configured above.
+  Future<void> Function(String path, String content)? beforeAppend;
+
   /// How many more [listDir] calls fail before listings succeed.
   int failNextListings = 0;
 
@@ -76,8 +81,12 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<void, FileError>> appendFile(String path, String content) async {
+  Future<Result<void, FileError>> appendFile(
+    String path,
+    String content,
+  ) async {
     appendCalls++;
+    await beforeAppend?.call(path, content);
     if (failNextAppends > 0) {
       failNextAppends--;
       return Err(_enoent(path));
@@ -136,8 +145,7 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(
