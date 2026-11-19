@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-19T14:47:13.037Z",
+  "ticketKey": "gh-2314",
+  "headSha": "b80cb52859de30c8de25a1ddc8795c8717533202",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:b5c474334425e95e",
+      "size": 47632
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:22a58d156e5218c2",
+      "size": 61124
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:e0bd5e4bd25b5dbd",
+      "size": 552
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:ed9575d29702af3a",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1bfc83962f65b867",
+      "size": 7599
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:b5fd347e2a56f0c8",
+      "size": 4702
+    },
+    "request.md": {
+      "hash": "fnv1a64:1d726d0649d6887c",
+      "size": 587
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:f5ecd87dc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e8b9ce0f98217ac6",
+      "size": 646
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1d726d0649d6887c",
+      "size": 587
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:0720dcda",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the order-of-preference comment cites the wrong reference leg**\n\n`ci.yml:3257` says *\"preference, same as build-mobile.yml's iOS leg\"* — but build-mobile.yml's iOS leg has a **different shape**: it wipes first (`rm -rf \"$DEST/WasmRun.xcframework\"`, build-mobile.yml:1055), has **no actions/cache branch**, and seeds the zip from the owner-provisioned `~/vendor-cache/` host cache (build-mobile.yml:1068) before its 10×300s loop.\n\nThe shape actually implemented here — cache → in-place `Info.plist` check → `LOCAL_SRC` → plain `unzip -q`, no wipe — is **build-macos.yml's release step** (build-macos.yml:431–445 cache/in-place check, :555 unzip). The step's own no-wipe comment already names that precedent correctly (`ci.yml:3281`: \"build-macos.yml's release step sets the precedent\") — so the two comments in this same step contradict each other about which leg this was ported from.\n\nIn this repo the workflow comments are load-bearing doctrine records (several guard tests pin invariants derived from them), so a wrong cross-reference misdirects the next maintainer or back-port. One-line fix: attribute the order of preference to build-macos.yml's release step. The code itself is correct and precedent-consistent — comment accuracy only."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:fb227427",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: \"gh-223\" is missing a digit — the doctrine citation is gh-223**\n\nTwo new comment lines cite `gh-223` where the established citation for the `$RUNNER_TEMP` job-private zip-path doctrine is `gh-2233`:\n\n- `ci.yml:3234` — `gh-1149 → gh-1759 → gh-2197/gh-223)` → should be `gh-2197/gh-2233`\n- `ci.yml:3248` — `(gh-223: the fixed /tmp path races …` → should be `gh-2233`\n\nEvidence: the same doctrine is cited as `gh-2233` in build-mobile.yml:1035–1036/1065/1096, build-macos.yml, and 11 times in the header of `test/wasmrun_restore_temp_race_test.dart`; nothing else in the repo cites a distinct \"gh-223\" (the new test file in this PR also cites it correctly). Comment-only typos — nothing behavioral."
+    },
+    {
+      "id": "pr_discussions.md:IstiN:2026-11-19:ffea12c7",
+      "kind": "comment",
+      "author": "IstiN",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Fixed in 015927aa9d: (1) preference-shape reference re-attributed to build-macos.yml's release step (build-macos.yml:431-445), resolving the contradiction with the no-wipe comment at ci.yml:3281; (2) both gh-223 citations corrected to gh-2233. Comment-only, no behavior change; no test pins these strings (verified by grep)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-19:7d83eb59",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (2 polish findings)\n\n**Summary**: The gh-2314 fix is correct, precedent-consistent, and well-pinned: the cache → in-place → local-copy → resume-loop restore (12×540s, `-C -`, `--fail`, single retry layer, size+sha256 gates before unzip, no wipe) mirrors build-macos.yml's release step; budget arithmetic verified (12×540s=6480s+55s sleeps ≤ 120-min cap; 12×540s×16 KB/s ≈ 103.7 MB ≥ 97,238,501 B; job 150 min ≥ 120 + healthy ~16-min tail). Verified green on this tree: YAML parses, the new guard test 7/7, 18 sibling ci.yml-consuming guard files (370+ tests incl. all 5 `Restore vendored WasmRun` consumers), `dart analyze` + `dart format` clean; scope is exactly the 2 files — no product code, ticket scope respected (Quality-gate cascade = #1368, out of scope by design).\n\n**Key Issues**:\n- 💡 ci.yml:3257 — order-of-preference comment cites build-mobile.yml's leg, but the implemented shape (cache/in-place/no-wipe, no host seed) is build-macos.yml's release step; ci.yml:3281 names macos correctly — the two contradict. Comment accuracy only.\n- 🪶 ci.yml:3234, :3248 — `gh-223` typos for `gh-2233` (repo-wide citation is gh-2233).\n- Digest (observations, not threads):\n  - ci.yml:3214 — no `~/vendor-cache` host-seed fallback on this leg (both reference legs carry one); actions/cache is the only cross-run persistence, and a slow-window cache upload may miss the cache service's own budget — the warm path may not materialize exactly in the windows this PR targets (the loop converges regardless).\n  - ci.yml:3284 — non-download branches trust the framework in place without re-verification (only downloads are digest-gated); matches build-macos.yml precedent, and cache payload provenance is digest-verified unzips — awareness note.\n  - Budget headroom ~6%: a future window sustained below ~15 KB/s exhausts the 12×540 bank; the step then fails honestly and watchdog/cache retry covers the next run.\n  - PR description nits (no code impact): \"cache\" attributed to build-mobile.yml (its framework leg has no cache step); \"5/6 tests failed on the old workflow\" vs 7 tests committed.\n\n**Next Steps**:\n1. Fix the two `gh-223` → `gh-2233` typos and re-point the order-of-preference comment at build-macos.yml's release step (one-line comment edits, no logic change).\n2. Optional follow-up (separate issue): consider the `~/vendor-cache` host-seed pattern for this leg if slow-window cache saves prove unreliable."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:47bd84bb",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 015927aa9df4a04448286b456f2ad2655727b5e8 — run 44498998844 still queued at 2026-11-19T10:21:04.998Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:22b8dc0d",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 357762f91bbbe5fc44884644c6cbadd599f1da5d — stale base at 2026-11-19T11:47:04.126Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:b2b00c19",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel ce77d6644ea799bb003341f4d6f50411c27b026e — stale base at 2026-11-19T12:49:40.749Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-19:ede90237",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-19",
+      "updatedAt": "2026-11-19",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel d5d1013b47dfbce9918a1c92bc7d1c8374adece9 — stale base at 2026-11-19T14:10:42.438Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
