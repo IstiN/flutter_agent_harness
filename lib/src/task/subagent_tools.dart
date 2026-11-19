@@ -222,7 +222,9 @@ AgentTool _agentDirectoryTool(SubagentManager manager) {
         'message count, presence ("live" / "busy (run in progress, '
         'accepts mail)" / "offline"), the last-activity time for offline '
         'entries, and the working directory (home shortened to ~). '
-        'Declared capabilities render as sub-lines. Stale mailboxes are '
+        'Declared capabilities render as sub-lines. Authenticated network '
+        'DM peers learned from inbound mail render with [network-dm] and '
+        'are addressable by the shown name or short id. Stale mailboxes are '
         'hidden — pass all: true to list those too (that also shows FULL '
         'mailbox ids; the default view truncates them to save tokens). '
         'Address a mailbox by its session name via agent_message '
@@ -283,15 +285,32 @@ Future<String> _renderAgentDirectory(
   // Registered children get mailboxes on first mail — list them
   // explicitly so they are addressable before that.
   _writeDirectoryChildren(manager, buffer, entries.map((e) => e.id).toSet());
+  _writeDirectoryNetworkPeers(manager, buffer);
   if (stale > 0) {
     buffer
       ..writeln()
       ..write('  (+$stale stale mailbox(es) hidden — pass all: true)');
   }
-  if (entries.isEmpty && manager.handles.isEmpty) {
+  if (entries.isEmpty &&
+      manager.handles.isEmpty &&
+      manager.networkDmPeers.isEmpty) {
     buffer.write(' none yet — subagent mailboxes appear on first mail');
   }
   return buffer.toString();
+}
+
+/// Appends authenticated fa_network correspondents without exposing their
+/// opaque encrypted routes. Both the display name and short id resolve in
+/// `agent_message` through [_resolveNetworkDmPeerAddress].
+void _writeDirectoryNetworkPeers(
+  SubagentManager manager,
+  StringBuffer buffer,
+) {
+  for (final peer in manager.networkDmPeers) {
+    buffer
+      ..writeln()
+      ..write('  ${peer.name} (${peer.id}) — network DM peer [network-dm]');
+  }
 }
 
 /// Appends the registered-children section: every handle not already
@@ -684,7 +703,9 @@ AgentTool _agentMessageTool(
         'the remote machine must be configured under a2a.servers). A '
         'session display NAME from agent_directory works too: '
         '"goal_builder" or "goal_builder/main" resolve to that session\'s '
-        'live mailbox. The recipient sees the message in its inbox on its '
+        'live mailbox. A network DM peer\'s listed name or short id routes '
+        'through its encrypted fa_network transport. The recipient sees '
+        'the message in its inbox on its '
         'next turn; completed siblings are resumed. Unknown ids and full '
         'queues are rejected.\n\n'
         'REPORT SIZE: budget ${manager.maxReplyChars} chars — oversized '
@@ -700,8 +721,9 @@ AgentTool _agentMessageTool(
           'type': 'string',
           'description':
               'The sibling subagent id, "main", an absolute mailbox '
-              '"<sessionId>/main", a session name from agent_directory, '
-              'or "name@machine" for a cross-machine peer (A2A gateway).',
+              '"<sessionId>/main", a session or network-DM peer name/id '
+              'from agent_directory, or "name@machine" for a cross-machine '
+              'peer (A2A gateway).',
         },
         'message': {
           'type': 'string',
@@ -966,6 +988,59 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
   );
 }
 
+/// Resolves one directory-listed network peer without ever asking the model
+/// to copy its opaque encrypted route. Exact ids win; duplicate display names
+/// fail closed with the usable ids instead of picking a recipient silently.
+/// Exact network-peer ID lookup: `network-dm-N` is a synthetic namespace
+/// that cannot collide with local identities, so this match is always
+/// safe to take first (PR#2313 review).
+(String?, String?) _networkPeerAddressById(SubagentManager manager, String to) {
+  for (final peer in manager.networkDmPeers) {
+    if (peer.id == to) return (peer.address, null);
+  }
+  return (null, null);
+}
+
+/// Network-peer NAME lookup — must run only AFTER every local identity
+/// (selfId, local handles, child names, fabric directory names) declined
+/// the string: peer names arrive from the remote side (DM envelope
+/// fromName / roster label), so a peer calling itself "main" or a local
+/// sibling's display name would otherwise silently hijack local mail
+/// onto the encrypted transport (PR#2313 review).
+(String?, String?) _resolveNetworkDmPeerAddress(
+  SubagentManager manager,
+  String to,
+) {
+  final named = [
+    for (final peer in manager.networkDmPeers)
+      if (peer.name == to) peer,
+  ];
+  if (named.isEmpty) return (null, null);
+  if (named.length > 1) {
+    return (
+      null,
+      'network DM peer name "$to" is ambiguous — use one of: '
+      '${named.map((peer) => peer.id).join(', ')}',
+    );
+  }
+  return (named.single.address, null);
+}
+
+/// Last-resort network NAME lookup after every applicable local identity
+/// declined [to]. Unknown names retain the manager's own recipient error.
+(String, String?) _resolveNetworkPeerNameFallback(
+  SubagentManager manager,
+  String to,
+) {
+  final (networkTarget, networkError) = _resolveNetworkDmPeerAddress(
+    manager,
+    to,
+  );
+  if (networkError != null) return (to, networkError);
+  if (networkTarget != null) return (networkTarget, null);
+  return (to, null);
+}
+
 /// Resolves [to] against the fabric directory by session display NAME when
 /// the raw form does not already hit a deliverable address: a local
 /// sibling handle, `main`, or an exact absolute mailbox id. Returns the
@@ -976,15 +1051,34 @@ Future<(String, String?)> _resolveFabricAddress(
   SubagentManager manager,
   String to,
 ) async {
+  // 1. exact network-peer id (synthetic namespace — cannot collide with
+  // local identities).
+  final (byId, _) = _networkPeerAddressById(manager, to);
+  if (byId != null) return (byId, null);
   final fabric = manager.messaging;
-  if (fabric == null) return (to, null);
+  if (fabric == null) {
+    // No local fabric identities to shadow — the network NAME space is
+    // the only one available (legacy fabric-less hosts).
+    return _resolveNetworkPeerNameFallback(manager, to);
+  }
   final (stripped, suffixError) = _stripLocalMachineSuffix(manager, to);
   if (suffixError != null) return (stripped, suffixError);
   to = stripped;
   if (to == manager.selfId || manager[to] != null) return (to, null);
   final local = _resolveLocalChildName(manager, to);
   if (local != null) return local;
-  return _resolveDirectoryAddress(fabric, to);
+  final (directoryTarget, directoryError) = await _resolveDirectoryAddress(
+    fabric,
+    to,
+  );
+  // A local identity claimed the string (exact mailbox, unique session
+  // name, truncated id, or an ambiguity error) — it wins over any
+  // network-peer name. Only an UNKNOWN name (null target) falls through
+  // to the network NAME match, so a peer named "main" (or like a local
+  // sibling) can never hijack local mail (PR#2313 review).
+  if (directoryError != null) return (to, directoryError);
+  if (directoryTarget != null) return (directoryTarget, null);
+  return _resolveNetworkPeerNameFallback(manager, to);
 }
 
 /// Session-local child-name resolution for [_resolveFabricAddress]
@@ -1035,9 +1129,11 @@ Future<(String, String?)> _resolveFabricAddress(
 
 /// Fabric-directory resolution for [_resolveFabricAddress]: an exact
 /// mailbox id passes through; a session display NAME resolves to the one
-/// live mailbox, or errors when ambiguous. An unknown name returns [to]
-/// unchanged so the manager's own unknown-recipient error applies.
-Future<(String, String?)> _resolveDirectoryAddress(
+/// live mailbox, or errors when ambiguous. An unknown name returns a
+/// NULL target so the caller can fall through to the network-peer NAME
+/// match (PR#2313 review) before the manager's own unknown-recipient
+/// error applies.
+Future<(String?, String?)> _resolveDirectoryAddress(
   MessagingRepository fabric,
   String to,
 ) async {
@@ -1054,7 +1150,7 @@ Future<(String, String?)> _resolveDirectoryAddress(
     final (prefixTarget, prefixError) = _resolveTruncatedId(entries, to);
     if (prefixError != null) return (to, prefixError);
     if (prefixTarget != null) return (prefixTarget, null);
-    return (to, null);
+    return (null, null);
   }
   if (matches.length > 1) {
     return (
