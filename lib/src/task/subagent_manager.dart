@@ -54,6 +54,26 @@ typedef ChildSessionFactory =
 typedef NetworkDmGateway =
     Future<void> Function(String address, SubagentMessage message);
 
+/// One authenticated fa_network correspondent known to this CLI session.
+/// [address] stays internal: the model addresses the peer by [id] or [name],
+/// while the manager resolves that alias back to the durable encrypted route.
+final class NetworkDmPeer {
+  const NetworkDmPeer({
+    required this.id,
+    required this.name,
+    required this.address,
+  });
+
+  /// Short session-local alias shown by `agent_directory`.
+  final String id;
+
+  /// Human roster label (or the transport's honest fallback label).
+  final String name;
+
+  /// Canonical `network-dm:v1:` route used for the actual encrypted send.
+  final String address;
+}
+
 /// Callback to record the subagent registry into the parent session.
 typedef SubagentRegistrySink =
     Future<void> Function(List<Map<String, dynamic>> registry);
@@ -234,6 +254,35 @@ final class SubagentManager {
   /// CLI-installed gateway for encrypted network DM replies. Null preserves
   /// the legacy unknown-recipient behavior on hosts without that transport.
   NetworkDmGateway? networkDmGateway;
+
+  final _networkDmPeers = <String, NetworkDmPeer>{};
+  var _nextNetworkDmPeerId = 1;
+
+  /// Authenticated network correspondents learned from inbound DMs.
+  List<NetworkDmPeer> get networkDmPeers =>
+      List.unmodifiable(_networkDmPeers.values);
+
+  /// Registers (or returns the existing alias for) one durable reply route.
+  /// Aliases are deliberately session-local; the canonical address remains
+  /// in the fabric message so a resumed CLI can register it again lazily.
+  NetworkDmPeer registerNetworkDmPeer({
+    required String name,
+    required String address,
+  }) {
+    for (final peer in _networkDmPeers.values) {
+      if (peer.address == address) return peer;
+    }
+    final peer = NetworkDmPeer(
+      id: 'network-dm-${_nextNetworkDmPeerId++}',
+      name: name.trim().isEmpty ? 'network peer' : name.trim(),
+      address: address,
+    );
+    _networkDmPeers[peer.id] = peer;
+    return peer;
+  }
+
+  /// Whether [id] is one of this session's network-peer aliases.
+  bool isNetworkDmPeerId(String id) => _networkDmPeers.containsKey(id);
 
   /// The A2A boundary gateway (issue #27 phase 3): when set, a
   /// `name@machine` address naming ANOTHER machine delivers through the
