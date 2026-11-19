@@ -589,64 +589,98 @@ final class StructuredCompactor {
       // and usage.
       final watch = Stopwatch()..start();
       final usageBefore = usage?.snapshot();
-      final call = await _callJudge(view);
-      // #2258: the total-budget kill lands while the judge hangs — the
-      // factory's timeout verdict + local trim is authoritative, so this
-      // ladder must not count the kill as an ordinary judge failure
-      // (no receipt, no latch write, no deterministic hide), hide, or
-      // refresh after it.
-      if (_ladderTerminated) return false;
-      // F1: a failed judge call hides nothing — but since #541 it is
-      // COUNTED, not fatal: one retry, then the deterministic
-      // judge-less hide, so a dead judge can no longer brick the run.
-      // A garbage answer decided nothing — a failure like any other.
-      final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
-      if (picks == null) {
-        if (!await _handleJudgeFailure(
-          trigger,
-          call.failure ??
-              const CompactionException(
-                'hide judge returned an unparseable answer',
-              ),
-          shape: call.shape,
-        )) {
-          return true;
-        }
-        continue;
-      }
-      _consecutiveJudgeFailures = 0;
-      // gh-2096: a parsed answer is a live judge — clear the persisted
-      // latch (additive unlatch record; a no-op write when the session
-      // was never unhealthy, keeping the legacy flow write-free).
-      await _recordJudgeSuccess();
-      final ids = validateHidePicks(
-        picks,
-        view.ledger,
-        protectLastN: protectLastN,
-        pinnedRecordIds: view.state.pinnedRecordIds,
+      final attempt = await _runHideAttempt(
+        trigger,
+        view,
+        before,
+        watch,
+        usageBefore,
       );
-      if (ids.isEmpty) break;
-      await session.appendHiddenRange(recordIds: ids.toList()..sort());
-      // #2258: see _runLruRehidePasses — written-but-unprojected stops
-      // here; the verdict's local trim stays the tail.
-      if (_ladderTerminated) return false;
-      final after = await _refreshState();
-      hooks?.onPass(
-        StructuredCompactionPass(
-          kind: 'hide',
-          pass: ++_pass,
-          tokensBefore: before,
-          tokensAfter: after,
-          ok: true,
-          judgeCalls: 1,
-          hiddenCount: ids.length,
-          basisReadTokens: _basisFlip(before, after),
-          durationMs: watch.elapsedMilliseconds,
-          usage: _usageDelta(usageBefore),
-        ),
-      );
+      // #2258: the gate fired mid-attempt — the run surfaces abandoned.
+      if (attempt.killed) return false;
+      // A decided attempt (a counted judge failure, a latched skip, an
+      // empty or fully-vetoed pick list) ends the loop on the loop's own
+      // successful-verdict return — identical to the pre-extraction
+      // break/return-true exits.
+      if (attempt.decided) return true;
     }
     return true;
+  }
+
+  /// One judge hide attempt (gh-2101 pass window): the judge call, its
+  /// parse, the failure/fallback ladder and — on a hideable verdict — the
+  /// append, refresh and receipt. Extracted so [_runHidePasses] keeps its
+  /// iteration flow only (CRAP ratchet); behavior is byte-identical to
+  /// the inline loop body it replaced.
+  ///
+  /// Returns [killed] when the #2258 terminal gate fired mid-attempt (the
+  /// loop surfaces abandoned, `false`) and [decided] when the attempt
+  /// settled the run on the loop's own successful-verdict return (`true`
+  /// — the counted-failure and empty-pick exits). Neither flag: keep
+  /// iterating.
+  Future<({bool killed, bool decided})> _runHideAttempt(
+    int trigger,
+    _LedgerView view,
+    int before,
+    Stopwatch watch,
+    CompactionUsageTotals? usageBefore,
+  ) async {
+    final call = await _callJudge(view);
+    // #2258: the total-budget kill lands while the judge hangs — the
+    // factory's timeout verdict + local trim is authoritative, so this
+    // ladder must not count the kill as an ordinary judge failure
+    // (no receipt, no latch write, no deterministic hide), hide, or
+    // refresh after it.
+    if (_ladderTerminated) return (killed: true, decided: false);
+    // F1: a failed judge call hides nothing — but since #541 it is
+    // COUNTED, not fatal: one retry, then the deterministic
+    // judge-less hide, so a dead judge can no longer brick the run.
+    // A garbage answer decided nothing — a failure like any other.
+    final picks = call.failure == null ? parseHidePicks(call.answer!) : null;
+    if (picks == null) {
+      final continues = await _handleJudgeFailure(
+        trigger,
+        call.failure ??
+            const CompactionException(
+              'hide judge returned an unparseable answer',
+            ),
+        shape: call.shape,
+      );
+      return (killed: false, decided: !continues);
+    }
+    _consecutiveJudgeFailures = 0;
+    // gh-2096: a parsed answer is a live judge — clear the persisted
+    // latch (additive unlatch record; a no-op write when the session
+    // was never unhealthy, keeping the legacy flow write-free).
+    await _recordJudgeSuccess();
+    if (picks.isEmpty) return (killed: false, decided: true);
+    final ids = validateHidePicks(
+      picks,
+      view.ledger,
+      protectLastN: protectLastN,
+      pinnedRecordIds: view.state.pinnedRecordIds,
+    );
+    if (ids.isEmpty) return (killed: false, decided: true);
+    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    // #2258: see _runLruRehidePasses — written-but-unprojected stops
+    // here; the verdict's local trim stays the tail.
+    if (_ladderTerminated) return (killed: true, decided: false);
+    final after = await _refreshState();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: after,
+        ok: true,
+        judgeCalls: 1,
+        hiddenCount: ids.length,
+        basisReadTokens: _basisFlip(before, after),
+        durationMs: watch.elapsedMilliseconds,
+        usage: _usageDelta(usageBefore),
+      ),
+    );
+    return (killed: false, decided: false);
   }
 
   /// gh-2096: the cross-run latch gate. While latched the judge
