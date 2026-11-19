@@ -498,17 +498,20 @@ jobs:
           else
             echo "No cache, no local copy — downloading from upstream release..."
             # fa-m5 host warm cache (owner-provisioned): persistent
-            # CI-authentic zips live in ~/vendor-cache/ (per-arch names
-            # matching $ZIP's basename), a launchd refresher keeps /tmp
-            # stocked. If this run's per-arch partial is absent, seed it
-            # from the persistent copy — read-only cp, digest re-verified
-            # after, so a mid-refresh partial read degrades to the resume
-            # loop instead of a bad unzip.
+            # CI-authentic zips in ~/vendor-cache/ (per-arch names matching
+            # $ZIP's basename), launchd-refreshed. Cold-/tmp fallback: seed
+            # from a digest-verified CANDIDATE — the gh-1759 invariants
+            # stay literal: the partial itself is never removed before the
+            # loop (gh-1759), and a bad candidate is discarded by its own
+            # name without touching the partial.
             SEED="$HOME/vendor-cache/$(basename "$ZIP")"
             if [ ! -f "$ZIP" ] && [ -f "$SEED" ]; then
-              cp "$SEED" "$ZIP" 2>/dev/null || true
-              if ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null 2>&1; then
-                rm -f "$ZIP" # bad/partial seed — the resume loop below handles it
+              SEED_CANDIDATE="$ZIP.host-seed"
+              cp "$SEED" "$SEED_CANDIDATE" 2>/dev/null || true
+              if echo "$ASSET_DIGEST  $SEED_CANDIDATE" | shasum -a 256 -c - >/dev/null 2>&1; then
+                mv "$SEED_CANDIDATE" "$ZIP"
+              else
+                rm -f "$SEED_CANDIDATE"
               fi
             fi
             # The partial is deliberately NOT deleted between runs

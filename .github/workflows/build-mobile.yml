@@ -1060,21 +1060,21 @@ jobs:
           else
             echo "Local framework not found, downloading from upstream release..."
             # fa-m5 host warm cache (owner-provisioned): persistent
-            # CI-authentic zips live in ~/vendor-cache/, a launchd
-            # refresher keeps /tmp stocked. Seed the job-private zip from
-            # the shared READ-ONLY copy — the gh-2233 race was concurrent
-            # WRITES to one shared path; a read-only cp into $RUNNER_TEMP
-            # keeps every leg's partial private. The digest is re-verified
-            # after the copy, so even a mid-refresh partial read just
-            # degrades to the resume loop below.
-            for SEED in "/tmp/WasmRun.xcframework.zip" "$HOME/vendor-cache/WasmRun.xcframework.zip"; do
-              if [ ! -f "$ZIP" ] && [ -f "$SEED" ]; then
-                cp "$SEED" "$ZIP" 2>/dev/null || true
-                if ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null 2>&1; then
-                  rm -f "$ZIP" # bad/partial seed — the resume loop below handles it
-                fi
+            # CI-authentic zip in ~/vendor-cache/ (launchd-refreshed).
+            # Seed the job-private zip from a digest-verified candidate —
+            # read-only cp, gh-2233 posture: the arch-less /tmp path is
+            # never referenced, and a mid-refresh partial candidate is
+            # discarded (never unzipped, never resumed into "$ZIP").
+            SEED="$HOME/vendor-cache/WasmRun.xcframework.zip"
+            if [ ! -f "$ZIP" ] && [ -f "$SEED" ]; then
+              SEED_CANDIDATE="$ZIP.host-seed"
+              cp "$SEED" "$SEED_CANDIDATE" 2>/dev/null || true
+              if echo "$ASSET_DIGEST  $SEED_CANDIDATE" | shasum -a 256 -c - >/dev/null 2>&1; then
+                mv "$SEED_CANDIDATE" "$ZIP"
+              else
+                rm -f "$SEED_CANDIDATE"
               fi
-            done
+            fi
             # --retry alone skips transient mid-transfer resets (curl 56) —
             # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
             # The partial is deliberately NOT deleted between attempts:
