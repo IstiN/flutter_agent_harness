@@ -96,7 +96,7 @@ void main() {
         '123e4567-e89b-12d3-a456-426614174000',
         'older',
       ]);
-      expect(projection.entries[1].displayName, 'Fix the roster projection');
+      expect(projection.entries[1].displayName, 'flutter_agent');
       expect(
         projection.entries[1].displayName,
         isNot(projection.entries[1].id),
@@ -195,7 +195,7 @@ void main() {
         sessionCatalogDisplayName(
           _entry('123e4567-e89b-12d3-a456-426614174000', cwd: ''),
         ),
-        'Session 123e4567',
+        '123e4567…',
       );
     });
   });

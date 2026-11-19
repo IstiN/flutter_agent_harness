@@ -274,15 +274,16 @@ void main() {
     );
     expect(find.text('quiet-net'), findsNothing);
 
-    // The drilled network wears the accent capsule flush to the strip's
-    // LEFT edge and its avatar re-renders as a rounded square (radius
-    // ~25%); the other stays a circle.
+    // The drilled network wears a full accent capsule INSIDE the strip's
+    // left edge (never a clipped screen-edge sliver); its avatar re-renders
+    // as a rounded square (radius ~25%) and the other stays a circle.
     final capsule = tester.getRect(
       find.byKey(const ValueKey('networkSelectedCapsule')),
     );
     expect(capsule.width, ChatNetworksPanel.capsuleWidth);
     expect(capsule.height, ChatNetworksPanel.capsuleHeight);
-    expect(capsule.left, strip.left);
+    expect(capsule.left, greaterThan(strip.left));
+    expect(capsule.right, lessThanOrEqualTo(strip.right));
     final selectedAvatar = tester.widget<FolderAvatar>(
       find.descendant(
         of: find.byKey(const ValueKey('chatNetworkRow-net1')),

@@ -30,6 +30,24 @@ final RegExp _hexRun = RegExp(r'^[0-9a-fA-F][0-9a-fA-F_-]+$');
 final RegExp _isoTimestamp = RegExp(r'^\d{4}-\d{2}-\d{2}T');
 final RegExp _integrityHash = RegExp(r'^sha(256|384|512)-');
 
+/// Authenticated DM routing metadata is a public address, not a credential:
+/// its JSON carries the network/channel/recipient/session and the sender's
+/// PUBLIC X25519 key. Exempt only this canonical base64url form from the
+/// entropy heuristic; registered, vendor, context and every other secret
+/// layer still scan the same text normally.
+const String _networkDmReplyAddressPrefix = 'network-dm:v1:';
+final RegExp _base64UrlToken = RegExp(r'^[A-Za-z0-9_-]+$');
+
+bool _isNetworkDmReplyAddressToken(String text, RegExpMatch match) {
+  final prefixStart = match.start - _networkDmReplyAddressPrefix.length;
+  if (prefixStart < 0 ||
+      text.substring(prefixStart, match.start) !=
+          _networkDmReplyAddressPrefix) {
+    return false;
+  }
+  return _base64UrlToken.hasMatch(match.group(0)!);
+}
+
 /// gh-1952 (I3): compile-time defines and env-style assignments are not
 /// secrets by default. The token charset includes `=` and `-`, so a
 /// whole define argument is ONE candidate token — the incident command's
@@ -117,6 +135,7 @@ List<RedactionMatch> layerEntropy(
     // by default — exempt before the entropy math (the review-tightened
     // gate keeps `KEY=<random>`-shaped secrets covered).
     if (_isDefineOrAssignmentToken(token, cfg.minEntropy)) continue;
+    if (_isNetworkDmReplyAddressToken(text, m)) continue;
     if (shannonEntropy(token) < cfg.minEntropy) continue;
     if (isStructuredIdentifier(token)) continue;
     // A token glued after `/` is a path component, not a standalone

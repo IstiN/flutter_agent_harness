@@ -39,10 +39,17 @@ Future<void> _deliverNetworkDm(
   CliNetworkDm dm, {
   required String mailbox,
 }) async {
-  final messaging = cli._subagentManager.messaging;
+  final manager = cli._subagentManager;
+  final messaging = manager.messaging;
   if (messaging == null) {
     throw StateError('network DM mailbox is unavailable');
   }
+  // Keep the durable route in the fabric message for restart safety, but
+  // give the model a short directory alias instead of a multi-line token.
+  manager.registerNetworkDmPeer(
+    name: dm.senderLabel,
+    address: dm.replyAddress,
+  );
   final mail = dm.mail;
   await messaging.send(
     AgentMessage(

@@ -8,9 +8,8 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
-import 'package:fa/ui/chats/messenger_list_row_style.dart';
-import 'package:fa_ui/fa_ui.dart'
-    show FahColors, FaDesignTokens, FaIcon, FaSemanticIcon;
+import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
+import 'package:fa_ui/fa_ui.dart' show FahColors;
 // The presence payload model is pure Dart in the connector core.
 // ignore: implementation_imports
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
@@ -322,11 +321,9 @@ class DeviceRosterStatusLine extends StatelessWidget {
   }
 }
 
-/// One session row in the Local panel's anatomy: a bold title with a
-/// right-aligned relative timestamp, a muted PATH subtitle (never a message
-/// preview or presence word), a hairline separator, and a chevron only when
-/// the row opens. Live/busy activity may show the small subtitle dot; closed
-/// and unknown sessions have no misleading "Offline" label.
+/// The shared Networks panel row without a repeated session avatar: a bold
+/// title, right-aligned timestamp, muted PATH/state subtitle, and a chevron
+/// only when the row opens. Live/busy activity may show the subtitle dot.
 class DeviceSessionCard extends StatelessWidget {
   const DeviceSessionCard({
     super.key,
@@ -355,117 +352,24 @@ class DeviceSessionCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
-    final ink = selected ? tokens.accentInk : colors.text;
-    final subdued = selected
-        ? tokens.accentInk.withValues(alpha: .82)
-        : colors.dim;
-    return Material(
-      color: messengerListRowColor(selected: selected, accent: tokens.accent),
-      shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(12)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: 64,
-          child: Column(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: ink,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.2,
-                                    ),
-                                  ),
-                                ),
-                                if (timestamp.isNotEmpty) ...[
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    timestamp,
-                                    style: TextStyle(
-                                      color: subdued,
-                                      fontSize: 10.5,
-                                      height: 1.2,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            if (subtitle.isNotEmpty || showPresenceDot) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      subtitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: subdued,
-                                        fontSize: 12,
-                                        height: 1.25,
-                                      ),
-                                    ),
-                                  ),
-                                  if (showPresenceDot)
-                                    Container(
-                                      key: dotKey,
-                                      margin: const EdgeInsets.only(left: 6),
-                                      width: 10,
-                                      height: 10,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: dotColor,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      if (onTap != null)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 6),
-                          child: FaIcon(
-                            FaSemanticIcon.chevronRight,
-                            size: 16,
-                            color: subdued,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              if (hairline)
-                Container(
-                  height: .5,
-                  margin: const EdgeInsets.only(left: 10, right: 8),
-                  color: colors.border.withValues(alpha: .45),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MessengerPanelRow(
+    title: title,
+    meta: subtitle,
+    timestamp: timestamp,
+    selected: selected,
+    hairline: hairline,
+    onTap: onTap,
+    metaTrailing: showPresenceDot
+        ? Container(
+            key: dotKey,
+            margin: const EdgeInsets.only(left: 6),
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dotColor,
+            ),
+          )
+        : null,
+  );
 }

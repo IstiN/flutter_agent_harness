@@ -6,12 +6,13 @@
 /// app_icon.dart, apps_grid.dart, fa_work_bar.dart, fa_chat_overlay.dart,
 /// js_app_view.dart and the shared ui/widgets/chat_message_tile.dart.
 ///
-/// Everything runs on MemoryExecutionEnv with fixed manifests — no network,
-/// no real file system writes, no real JS engine. The grid seeds twelve
-/// custom "agent-built" apps (nothing is bundled anymore — the catalog is
-/// the source of apps). The JsAppView coverage uses the deterministic
-/// start-error chrome (missing widget.js) instead of booting the
-/// JavaScriptCore backend; the gh-1441 voxel shot feeds a JsVoxelWorld by
+/// Everything runs on MemoryExecutionEnv with fixed manifests — no network
+/// or real file system writes. The grid seeds twelve custom "agent-built"
+/// apps (nothing is bundled anymore — the catalog is the source of apps).
+/// Most JsAppView coverage uses the deterministic start-error chrome
+/// (missing widget.js); the top-start cases boot the real JS backend with
+/// inline source to cover actual renderer composition. The gh-1441 voxel
+/// shot feeds a JsVoxelWorld by
 /// hand (the exact `voxel.*` hostCall payloads a real engine's bridge
 /// world receives) so the terrain renders with no engine at all. FaWorkBar
 /// owns an infinitely repeating orbit animation, so its states are pumped
@@ -48,6 +49,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'golden_test_helper.dart';
 import '../fake_media_controllers.dart';
+import '../native_test_guard.dart';
 
 // --- Inline SVG icons (single-quoted XML so they embed in JSON manifests) --
 
@@ -1180,6 +1182,113 @@ void main() {
     );
     await expectGolden(tester, 'apps_permissions_dialog');
   });
+
+  /// Boots a real JS app whose fixed-size root exercises the host's canvas
+  /// alignment contract. The runtime shields explicitly sized roots with a
+  /// shrink-wrapping Center; without a top-start host anchor that shield
+  /// centers the whole app vertically.
+  Future<void> topStartGolden(
+    WidgetTester tester, {
+    required Size size,
+    required String golden,
+  }) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/top_start/widget.js', '''
+(function() {
+  jsr.onEvent(function(actionId, payload) {});
+  jsr.render({
+    type: 'container',
+    width: 320,
+    height: 220,
+    padding: [20, 20, 20, 20],
+    decoration: {color: '#172554', borderRadius: 16},
+    child: {
+      type: 'column',
+      mainAxisSize: 'min',
+      crossAxisAlignment: 'start',
+      children: [
+        {type: 'text', data: 'CONTENT STARTS HERE', style: {
+          color: '#f8fafc', fontSize: 22, fontWeight: 'w700'
+        }},
+        {type: 'sizedBox', height: 12},
+        {type: 'text', data: 'A fixed-size JS root belongs at the top.',
+         style: {color: '#bfdbfe', fontSize: 14}},
+        {type: 'sizedBox', height: 20},
+        {type: 'button', label: 'Top-start action', onPressed: 'noop'}
+      ]
+    }
+  });
+})();
+''');
+      final permissions = await AppPermissionsStore.load(env);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: JsAppView(
+            app: _app(const {
+              'id': 'top_start',
+              'name': 'Top Start Probe',
+              'icon': _sparkleIcon,
+            }, fallbackId: 'top_start'),
+            env: env,
+            permissionsStore: permissions,
+          ),
+        ),
+      );
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+        if (find.text('CONTENT STARTS HERE').evaluate().isNotEmpty) break;
+      }
+      expect(find.text('CONTENT STARTS HERE'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 300));
+    });
+    await tester.pump();
+    try {
+      await expectGolden(tester, golden);
+      final appBarBottom = tester.getRect(find.byType(AppBar)).bottom;
+      final contentTop = tester.getTopLeft(find.text('CONTENT STARTS HERE')).dy;
+      expect(
+        contentTop - appBarBottom,
+        lessThan(40),
+        reason:
+            'the JS app content must start immediately below the app bar, '
+            'not in the vertical center of the canvas',
+      );
+    } finally {
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+    }
+  }
+
+  testWidgets('JS app fixed-size root is top-start at 390x844', (tester) async {
+    await topStartGolden(
+      tester,
+      size: goldenSizePhone,
+      golden: 'apps_view_top_start_390',
+    );
+  }, skip: !quickJsBridgeAvailable);
+
+  testWidgets('JS app fixed-size root is top-start at 1280x800', (
+    tester,
+  ) async {
+    await topStartGolden(
+      tester,
+      size: goldenSizeDesktop,
+      golden: 'apps_view_top_start_1280',
+    );
+  }, skip: !quickJsBridgeAvailable);
 
   testWidgets('app view start-error chrome (no JS engine booted)', (
     tester,

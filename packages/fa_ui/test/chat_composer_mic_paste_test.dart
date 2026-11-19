@@ -95,6 +95,7 @@ void main() {
     WidgetTester tester, {
     FaChatVoiceInput? voiceInput,
     FaClipboardReader? clipboardReader,
+    ChatComposerDraftStore? draftStore,
     Future<void> Function()? onVoiceInputSettings,
     ThemeData? theme,
   }) async {
@@ -105,6 +106,7 @@ void main() {
         home: Scaffold(
           body: ChatComposer(
             service: service,
+            draftStore: draftStore,
             voiceInput: voiceInput,
             clipboardReader: clipboardReader,
             onVoiceInputSettings: onVoiceInputSettings,
@@ -122,6 +124,20 @@ void main() {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+  }
+
+  /// Paste through Flutter's intent route (native Edit menu / browser).
+  Future<void> smartPasteIntent(WidgetTester tester) async {
+    Actions.invoke(
+      tester.element(
+        find.descendant(
+          of: find.byType(EditableText),
+          matching: find.byType(TextFieldTapRegion),
+        ),
+      ),
+      const PasteTextIntent(SelectionChangedCause.keyboard),
+    );
     await tester.pump();
   }
 
@@ -546,6 +562,55 @@ void main() {
       expect(fieldText(tester), 'caption');
       // Image chips render a 48x48 thumbnail, not a name label.
       expect(find.byType(Image), findsOneWidget);
+    });
+
+    testWidgets('PasteTextIntent stages PNG bytes and MIME in the draft', (
+      tester,
+    ) async {
+      stubClipboard(tester, text: '');
+      final drafts = ChatComposerDraftStore();
+      var reads = 0;
+      final service = await pumpComposer(
+        tester,
+        draftStore: drafts,
+        clipboardReader: () async {
+          reads++;
+          return [
+            (
+              name: 'native-menu-paste.png',
+              bytes: Uint8List.fromList(k1x1Png),
+              mimeType: 'image/png',
+            ),
+          ];
+        },
+      );
+
+      // This route must not bypass the attachment-aware reader.
+      await smartPasteIntent(tester);
+      await tester.pumpAndSettle();
+
+      expect(reads, 1);
+      final pending = drafts.draftFor(service).attachments;
+      expect(pending, hasLength(1));
+      expect(pending.single.name, 'native-menu-paste.png');
+      expect(pending.single.bytes, k1x1Png);
+      expect(pending.single.mimeType, 'image/png');
+      expect(fieldText(tester), isEmpty);
+    });
+
+    testWidgets('PasteTextIntent keeps short text inline', (tester) async {
+      stubClipboard(tester, text: 'native menu text');
+      final service = await pumpComposer(
+        tester,
+        clipboardReader: () async => const [],
+      );
+      await tester.enterText(find.byType(TextField), 'before ');
+
+      await smartPasteIntent(tester);
+      await tester.pumpAndSettle();
+
+      expect(fieldText(tester), 'before native menu text');
+      expect(service.stagedCalls, isEmpty);
     });
 
     testWidgets('multiple clipboard files stage in order through the same '

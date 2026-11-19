@@ -1664,7 +1664,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           ),
           if (topOverlay.isNotEmpty)
             Positioned(
-              top: _glassHeaderExtent + 4,
+              top: (widget.showAppBar ? _glassHeaderExtent : 0) + 4,
               left: 0,
               right: duoRailWidth,
               child: Column(
