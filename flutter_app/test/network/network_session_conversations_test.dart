@@ -255,6 +255,7 @@ void main() {
     expect(jsonDecode(opened.plaintext), {
       'text': 'threaded answer',
       'sessionId': 'two',
+      'replyTo': 'thread-request-frame',
     });
   });
 
