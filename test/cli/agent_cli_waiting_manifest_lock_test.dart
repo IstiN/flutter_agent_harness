@@ -161,6 +161,72 @@ void main() {
     expect(ids, contains('sh-c'));
   });
 
+  test('REG: a non-occupancy lock refusal surfaces its real fs cause '
+      'without contention retries', () async {
+    final delegate = MemoryExecutionEnv(cwd: '/ws');
+    final env = _PermissionDeniedLockEnv(delegate);
+    final io = FakeCliIO();
+    addTearDown(io.close);
+    const manifestPath = '/ws/.fah/bash_jobs/running.json';
+    const manifest = '[{"id":"sh-x","command":"watch.sh","pid":"999999"}]';
+    await delegate.createDir('/ws/.fah/bash_jobs');
+    await delegate.writeFile(manifestPath, manifest);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    cli.waitingProcessTableForTest = () async =>
+        (pids: <int>{}, starts: <int, String>{});
+    // Keep the failing-first run quick: the old code retries this refusal
+    // as phantom contention until the bound and then reports a rival.
+    cli.waitingLockWaitBoundForTest = const Duration(milliseconds: 150);
+
+    await cli.waitingCaptureLostJobsForTest();
+
+    expect(cli.waitingRegistryNoticeForTest, contains('permissionDenied'));
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      contains('errno 13: Permission denied'),
+    );
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      contains('/ws/.fah/bash_jobs/running.json.lock'),
+    );
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      isNot(contains('manifest lock still held')),
+      reason: 'no phantom rival when the lock path is not occupied',
+    );
+    expect(env.claimAttempts, 1, reason: 'a broken fs is not retried for 70s');
+
+    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+      id: 'sh-b',
+      command: 'watch.sh',
+      pid: 424242,
+    );
+    await cli.waitingJobStartedForTest(job);
+
+    expect(cli.waitingRegistryNoticeForTest, contains('permissionDenied'));
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      isNot(startsWith('boot reconcile skipped:')),
+      reason: 'the ordinary mutation reports its own refused claim',
+    );
+    expect(io.out.toString(), contains('errno 13: Permission denied'));
+    expect(io.out.toString(), isNot(contains('manifest lock still held')));
+    expect(
+      (await delegate.readTextFile(manifestPath)).valueOrNull,
+      manifest,
+      reason: 'both failed claims skip their mutations fail-safe',
+    );
+  });
+
   test('AC3 REG: an exclusive-create-less backend keeps the documented '
       'degraded mode (issue #2266)', () async {
     // Memory's createDir always succeeds — no exclusivity, the lock is a
@@ -212,4 +278,26 @@ void main() {
     expect(cli.waitingRegistryNoticeForTest, isNull);
     expect(io.out.toString(), isNot(contains('#2266')));
   });
+}
+
+/// An exclusive-create backend whose lock claim is refused by the fs, not
+/// by an occupant. The delegate's missing lock path makes the distinction
+/// observable to the coordinator's subsequent fileInfo probe.
+final class _PermissionDeniedLockEnv extends ForwardingFs
+    implements ExclusiveCreateFileSystem {
+  _PermissionDeniedLockEnv(super.delegate);
+
+  int claimAttempts = 0;
+
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) async {
+    claimAttempts++;
+    return Err(
+      FileError(
+        FileErrorCode.permissionDenied,
+        'Cannot create file (errno 13: Permission denied)',
+        path: path,
+      ),
+    );
+  }
 }

@@ -132,11 +132,16 @@ final class _WaitingCoordinator {
   String? registryNotice;
 
   /// Whether the registry lock's exclusive-create capability is PROVEN:
-  /// true only after a real refusal from `createFileExclusive` (a
-  /// decorator can advertise the capability over a delegate that lacks
-  /// it and answer `notSupported` — that verdict is incapability, the
-  /// degraded mode). Evidence, never a timeout guess (issue #2266 AC3).
+  /// true only after a refusal from `createFileExclusive` is corroborated
+  /// by an occupied lock path (a decorator can advertise the capability
+  /// over a delegate that lacks it and answer `notSupported` — that
+  /// verdict is incapability, the degraded mode). Evidence, never a
+  /// timeout guess (issue #2266 AC3).
   bool _lockExclusiveProven = false;
+
+  /// The latest exclusive-create refusal, retained until the immediately
+  /// following occupancy probe distinguishes contention from a broken fs.
+  FileError? _lastRegistryLockClaimError;
 
   /// The queued-wait bound. Sits ABOVE the stale-steal threshold so a
   /// crashed holder's lock is always stolen before this fires; only a
@@ -463,6 +468,11 @@ final class _WaitingCoordinator {
       // silently partial boot. A later boot retries.
       _noteRegistryLockFailure('boot reconcile skipped: $error');
       return;
+    } on FileError catch (error) {
+      // An unoccupied lock path makes the claim refusal a real fs failure,
+      // not contention. Surface its errno + OS detail without the wait.
+      _noteRegistryLockFailure('boot reconcile skipped: $error');
+      return;
     }
     lostJobs = reconcile.dropped;
     // Issue #2201 AC5: manifest entries whose pid is ALIVE at boot are
@@ -623,6 +633,8 @@ final class _WaitingCoordinator {
       });
     } on ManifestLockTimeout catch (error) {
       _noteRegistryLockFailure(error);
+    } on FileError catch (error) {
+      _noteRegistryLockFailure(error);
     }
   }
 
@@ -747,6 +759,14 @@ final class _WaitingCoordinator {
     for (;;) {
       if (await _claimRegistryLock()) return true;
       final info = await _cli._env.fileInfo(_manifestLockPath);
+      final claimError = _lastRegistryLockClaimError;
+      if (claimError != null) {
+        // Only an occupied path verifies that the refusal was contention.
+        // Otherwise surface the real fs failure instead of inventing a
+        // rival and paying the full queued-wait bound.
+        if (!info.isOk) throw claimError;
+        _lockExclusiveProven = true;
+      }
       final stale =
           info.isOk &&
           DateTime.fromMillisecondsSinceEpoch(
@@ -769,13 +789,15 @@ final class _WaitingCoordinator {
   /// resolves to incapability and falls through to the plain create.
   Future<bool> _claimRegistryLock() async {
     final env = _cli._env;
+    _lastRegistryLockClaimError = null;
     if (env case final ExclusiveCreateFileSystem exclusive) {
       final claimed = await exclusive.createFileExclusive(_manifestLockPath);
       if (claimed.isOk) return true;
-      if (claimed.errorOrNull?.code != FileErrorCode.notSupported) {
-        // A real refusal: the path is occupied by a rival's lock — the
-        // capability is proven exclusive-create.
-        _lockExclusiveProven = true;
+      final refusal = claimed.errorOrNull!;
+      if (refusal.code != FileErrorCode.notSupported) {
+        // The following occupancy probe decides whether this is a rival's
+        // lock or a non-contention fs failure with its own cause to report.
+        _lastRegistryLockClaimError = refusal;
         return false;
       }
       // A decorator advertising the capability over an incapable
