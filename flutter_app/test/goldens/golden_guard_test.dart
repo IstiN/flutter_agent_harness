@@ -31,6 +31,10 @@ const _coverage = <String, String>{
   'lib/ui/network/network_chat_page.dart':
       'test/goldens/network_chat_golden_test.dart',
   'lib/ui/network/devices_page.dart': 'test/goldens/rail_golden_test.dart',
+  'lib/ui/network/device_roster_panel.dart':
+      'test/goldens/rail_golden_test.dart',
+  'lib/ui/chats/messenger_drilldown_panel.dart':
+      'test/goldens/rail_golden_test.dart',
   'lib/ui/screens/skills_toggles_section.dart':
       'test/goldens/settings_golden_test.dart',
   'lib/ui/screens/settings_sections.dart':
@@ -160,7 +164,6 @@ const _exempt = <String, String>{
       'fa_network #955: no goldens yet',
   // Machine connector roster surfaces (issue #2062): presence-tree pages
   // driven by live streams — goldens belong to the #2062 UI pass.
-  'lib/ui/network/device_roster_panel.dart': 'fa_network #2062: no goldens yet',
   'lib/ui/network/join_sheet.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_center.dart': 'fa_network #955: no goldens yet',
   'lib/ui/network/network_home.dart': 'fa_network #955: no goldens yet',

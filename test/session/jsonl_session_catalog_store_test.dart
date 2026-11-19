@@ -46,7 +46,8 @@ void main() {
     expect(namedRow.lastActiveAt, isNotNull);
     final snippetRow = rows.singleWhere((row) => row.id == 'snippet');
     expect(snippetRow.title, isNull);
-    expect(snippetRow.displayName, 'Snippet title');
+    expect(snippetRow.snippet, 'Snippet title');
+    expect(snippetRow.displayName, 'other');
     expect(snippetRow.live, isFalse);
   });
 

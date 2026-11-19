@@ -1376,47 +1376,60 @@ class ChatComposerState extends State<ChatComposer>
     // so text does not collide with the microphone.
     return Focus(
       onKeyEvent: _handleComposerKey,
-      child: TextField(
-        key: const ValueKey('faChatComposerTextField'),
-        controller: _textController,
-        focusNode: _focusNode,
-        style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
-        decoration:
-            // The host-localized hint (the session surface scopes
-            // FaChatStrings; channel chats override it with "Message
-            // <channel>").
-            faComposerFieldDecoration(
-              FaChatStrings.of(context).chatInputHint,
-            ).copyWith(
-              contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
-              // A narrow rotated Duo lane ellipsizes the hint instead of
-              // growing the floating composer into a two-line placeholder.
-              hintMaxLines:
-                  (FaDuoLayoutScope.maybeOf(context)?.isDuo ??
-                      FaDuoControlRail.isActive(context))
-                  ? 1
-                  : null,
-              isDense: true,
-              // The outer FaSurface is the composer's ONLY filled, bordered
-              // surface. A nested InputDecorator fill/outline produced doubled
-              // horizontal rules and a second right edge with the real glass
-              // renderer; InputBorder.none keeps editing inside that one clip.
-              filled: false,
-              fillColor: Colors.transparent,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              disabledBorder: InputBorder.none,
-              errorBorder: InputBorder.none,
-              focusedErrorBorder: InputBorder.none,
-            ),
-        // Multiline: Shift+Enter (hardware) or the touch return key
-        // inserts a line break; plain Enter sends (_handleComposerKey).
-        // The field grows 1→6 lines and then scrolls internally.
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        maxLines: 6,
-        minLines: 1,
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          // Native Edit > Paste and browser paste dispatch an intent rather
+          // than the hardware key event above. Route both through smart paste
+          // so an image never falls back to EditableText's text-only reader.
+          PasteTextIntent: CallbackAction<PasteTextIntent>(
+            onInvoke: (_) {
+              unawaited(_handleSmartPaste());
+              return null;
+            },
+          ),
+        },
+        child: TextField(
+          key: const ValueKey('faChatComposerTextField'),
+          controller: _textController,
+          focusNode: _focusNode,
+          style: TextStyle(color: palette.text, fontSize: 14, height: 1.4),
+          decoration:
+              // The host-localized hint (the session surface scopes
+              // FaChatStrings; channel chats override it with "Message
+              // <channel>").
+              faComposerFieldDecoration(
+                FaChatStrings.of(context).chatInputHint,
+              ).copyWith(
+                contentPadding: const EdgeInsets.fromLTRB(4, 8, 10, 8),
+                // A narrow rotated Duo lane ellipsizes the hint instead of
+                // growing the floating composer into a two-line placeholder.
+                hintMaxLines:
+                    (FaDuoLayoutScope.maybeOf(context)?.isDuo ??
+                        FaDuoControlRail.isActive(context))
+                    ? 1
+                    : null,
+                isDense: true,
+                // The outer FaSurface is the composer's ONLY filled, bordered
+                // surface. A nested InputDecorator fill/outline produced doubled
+                // horizontal rules and a second right edge with the real glass
+                // renderer; InputBorder.none keeps editing inside that one clip.
+                filled: false,
+                fillColor: Colors.transparent,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
+              ),
+          // Multiline: Shift+Enter (hardware) or the touch return key
+          // inserts a line break; plain Enter sends (_handleComposerKey).
+          // The field grows 1→6 lines and then scrolls internally.
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          maxLines: 6,
+          minLines: 1,
+        ),
       ),
     );
   }
