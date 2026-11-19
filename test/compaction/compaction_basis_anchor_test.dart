@@ -272,6 +272,133 @@ void main() {
       expect(underPressure, isTrue);
     });
   });
+
+  group('UT-5 — boundary-less windowed resume tails cannot vouch load-time '
+      'anchors (review: the AC1 counterexample)', () {
+    /// A boundary-less session whose persisted tail carries a
+    /// generation-time anchor reporting the PRE-TRIM size: 800 filler
+    /// records sit above a windowed resume's residency window (the
+    /// maxPages-exhausted walk), the anchored tail below it. No
+    /// boundary record anywhere — UT-2's twin needs one, E2 needs no
+    /// anchors; this is exactly the gap between them.
+    Future<(Session, Session)> resumedTailSession() async {
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      for (var i = 0; i < 800; i++) {
+        await session.appendMessage(UserMessage.text('m$i'));
+      }
+      await session.appendMessage(UserMessage.text('fix the login crash'));
+      await session.appendMessage(
+        _assistant(
+          'looking',
+          calls: [ToolCall(id: 'c1', name: 'read', arguments: const {})],
+        ),
+      );
+      await session.appendMessage(_result('c1', 'read', 'x' * 400));
+      await session.appendMessage(
+        _assistant('root cause found', anchorTokens: 201798),
+      );
+      final meta = await session.getMetadata();
+      final resumed = await repo.open(meta, windowed: true);
+      return (session, resumed);
+    }
+
+    test(
+      'gate basis vs engine basis after a maxPages-exhausted resume, '
+      'no boundary records: the refresh must not re-arm the phantom',
+      () async {
+        final (_, resumed) = await resumedTailSession();
+
+        // The field sequence: the boundary walk exhausts maxPages —
+        // the resident tail is a valid budget-truncated resume and the
+        // boot cap owns the residue.
+        expect(
+          await resumed.ensureCompactionBoundaryResident(maxPages: 1),
+          isFalse,
+          reason: 'fixture check: maxPages exhaustion',
+        );
+        final branch = await resumed.getBranch();
+        expect(
+          branch.whereType<CompactionRecord>(),
+          isEmpty,
+          reason: 'fixture check: no boundary record in the resident tail',
+        );
+        expect(
+          branch.first.parentId,
+          isNotNull,
+          reason: 'fixture check: the walk stopped mid-chain — the head '
+              'is non-resident, the tail cannot vouch its anchors',
+        );
+
+        // The CLI resume (session_commands.dart): build from the
+        // projection, then zero loaded anchors — the gate measures
+        // chars/4 over the REAL resident tail.
+        final state = AgentState(
+          model: _model,
+          messages: resetLoadedUsageAnchors(
+            await resumed.buildContextMessages(),
+          ),
+        );
+        int basis(List<Message> messages) => estimateRequestTokens(
+          messages,
+          systemPrompt: state.systemPrompt,
+          tools: state.tools,
+        );
+        final gateBasis = basis(state.messages);
+
+        // The engine refresh (refreshAgentState): the projection is the
+        // anchor authority — and a head-truncated boundary-less tail
+        // cannot vouch the persisted generation-time anchor. Re-arming
+        // it prices the request at the pre-trim 201798 (183k on a 27k
+        // branch, the gh-2237 divergence class in reverse: the engine
+        // folds far past the real over-amount).
+        await refreshAgentState(resumed, state);
+
+        expect(
+          basis(state.messages),
+          gateBasis,
+          reason:
+              'gh-2237 AC1: the engine basis is the gate basis after a '
+              'boundary-less windowed resume — the projection must '
+              'reset anchors its resident tail cannot vouch for',
+        );
+        final assistants = state.messages.whereType<AssistantMessage>();
+        expect(
+          assistants.last.usage.totalTokens,
+          0,
+          reason: 'the phantom pre-trim anchor stays reset through the refresh',
+        );
+      },
+    );
+
+    test(
+      'the twin: a fully-paged windowed resume keeps its vouchable '
+      'anchors (the truncation curation is keyed to the cut head)',
+      () async {
+        final (_, resumed) = await resumedTailSession();
+
+        // Page the whole chain resident: the branch reaches the file
+        // root, so every anchor's generation context is rendered and
+        // vouchable — the anchor must survive (UT-1 parity on a
+        // windowed open).
+        await resumed.ensureWholeLedgerResident();
+
+        final branch = await resumed.getBranch();
+        expect(branch, hasLength(804));
+        expect(
+          branch.first.parentId,
+          isNull,
+          reason: 'fixture check: the walk reached the true root',
+        );
+
+        final messages = await resumed.buildContextMessages();
+        expect(
+          messages.whereType<AssistantMessage>().last.usage.totalTokens,
+          201798,
+          reason: 'a vouchable anchor survives the projection curation',
+        );
+      },
+    );
+  });
 }
 
 /// A [StructuredCompactorHooks] probe recording completed passes.
