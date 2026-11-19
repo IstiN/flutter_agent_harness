@@ -379,50 +379,69 @@ extension AgentCliLease on AgentCli {
       final store = config.leaseStore;
       if (path == null || store == null) return;
       final beat = await store.heartbeat(path, _leaseBootId);
-      switch (beat) {
-        case LeaseBeatRenewed():
-          _leaseBeatFailures = 0;
-          return;
-        case LeaseBeatIoFailed(:final error):
-          // #2257: a sidecar IO hiccup does not refute ownership — keep
-          // driving and retry on the next tick; alarm while it persists.
-          _leaseBeatFailures++;
-          if (_leaseBeatFailures % _leaseBeatAlarmEvery == 0) {
-            io.writeln(
-              tuiWarning(
-                'lease heartbeat failing — fs error: ${error.message} '
-                '(ownership kept; retrying)',
-              ),
-            );
-          }
-          return;
-        case LeaseBeatLost():
-          _leaseBeatFailures = 0;
+      if (beat is! LeaseBeatLost) {
+        _absorbLeaseBeat(beat);
+        return;
       }
       // A release/session switch or an already-completed demotion wins
       // over this stale beat. In particular, never overwrite a viewer:
       // its event subscription would remain live but become unreachable.
       if (_viewer != null || _heldLeasePath != path) return;
-      _heldLeasePath = null;
-      final session = _session;
-      if (session == null) return;
-      final meta = await session.getMetadata();
-      final inspect = await store.inspect(path);
-      if (_viewer != null) return;
-      await _enterViewerMode(
-        lease: inspect.lease ?? beat.lease ?? _orphanLease(meta),
-        meta: meta,
-      );
-      io.writeln(
-        tuiWarning(
-          'lease: lost — another host is driving this session; you are a '
-          'viewer now',
-        ),
-      );
-      await _printViewerBannerIfAny();
+      await _demoteAfterLeaseLoss(path, store, beat);
     } finally {
       _leaseBeatInFlight = false;
     }
+  }
+
+  /// The non-loss beats (#2257): renewed zeroes the failure streak; an
+  /// IO hiccup keeps ownership — keep driving, retry on the next tick,
+  /// and alarm while the failure persists. [LeaseBeatLost] never reaches
+  /// here (the caller routes it to [_demoteAfterLeaseLoss]).
+  void _absorbLeaseBeat(LeaseBeat beat) {
+    switch (beat) {
+      case LeaseBeatRenewed():
+        _leaseBeatFailures = 0;
+      case LeaseBeatIoFailed(:final error):
+        _leaseBeatFailures++;
+        if (_leaseBeatFailures % _leaseBeatAlarmEvery == 0) {
+          io.writeln(
+            tuiWarning(
+              'lease heartbeat failing — fs error: ${error.message} '
+              '(ownership kept; retrying)',
+            ),
+          );
+        }
+      case LeaseBeatLost():
+        break;
+    }
+  }
+
+  /// The real-loss demote (AC4): viewer transition of the new owner
+  /// (or the orphan lease when nothing readable names it) + the
+  /// lost-lease notice.
+  Future<void> _demoteAfterLeaseLoss(
+    String path,
+    FileSessionLeaseStore store,
+    LeaseBeatLost beat,
+  ) async {
+    _leaseBeatFailures = 0;
+    _heldLeasePath = null;
+    final session = _session;
+    if (session == null) return;
+    final meta = await session.getMetadata();
+    final inspect = await store.inspect(path);
+    if (_viewer != null) return;
+    await _enterViewerMode(
+      lease: inspect.lease ?? beat.lease ?? _orphanLease(meta),
+      meta: meta,
+    );
+    io.writeln(
+      tuiWarning(
+        'lease: lost — another host is driving this session; you are a '
+        'viewer now',
+      ),
+    );
+    await _printViewerBannerIfAny();
   }
 
   SessionLease _orphanLease(SessionMetadata meta) => SessionLease(
