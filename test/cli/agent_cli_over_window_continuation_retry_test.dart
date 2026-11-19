@@ -660,8 +660,11 @@ void main() {
       // hung summarizer. The interrupt must surface as the dim receipt
       // ONLY: the round-4 `_afterRun` swallow (issue #1085 review) keeps
       // the CancelledException from re-entering error handling over an
-      // already-settled turn — even though the pass's trim fallback
-      // "succeeded" (a success racing a late cancel is equally dead).
+      // already-settled turn. Issue #2263: the interrupted compaction no
+      // longer TRIMS (an abort is never answered with the local trim), so
+      // the transcript stays over threshold and the NEXT turn's
+      // pre-flight compaction legitimately fires — call 4 is its
+      // summarizer, call 5 the turn itself.
       final fake = ScriptedThenHangStream([
         toolTurn([
           const ToolCall(
@@ -672,6 +675,10 @@ void main() {
         ]),
         textTurn('first answer'),
         textTurn('unused — call 3 is the cancelled post-run summarizer'),
+        textTurn(
+          'pre-flight summary — call 4 is turn 2\'s pre-flight '
+          'compaction',
+        ),
         textTurn('second answer'),
       ], hangFromCall: 3);
       final cli = AgentCli(
@@ -712,12 +719,13 @@ void main() {
       );
       fake.hangFromCall = 1 << 30; // re-arm: the follow-up turn must play out
 
-      // The next prompt runs normally: the trimmed transcript (9.4k) sits
-      // under the 12k threshold, so no pre-flight compaction fires and
-      // turn 2's request is call 4 (call 3 was the cancelled hang).
+      // The next prompt runs normally: the transcript is still over the
+      // 12k threshold (no trim on the aborted run — issue #2263), so
+      // turn 2's PRE-FLIGHT compaction fires first (call 4, its
+      // summarizer) and the turn's request is call 5.
       io.sendLine('again');
       await waitForIt(
-        () => fake.calls >= 4 && !cli.isBusy,
+        () => fake.calls >= 5 && !cli.isBusy,
         reason: 'the session survived: the next prompt runs normally',
       );
       final output = io.out.toString();
