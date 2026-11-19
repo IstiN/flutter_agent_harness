@@ -327,7 +327,7 @@ final class _NoopHooks implements AutoCompactorHooks {
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
 
   @override
-  void onDone(int passes, int tokens) {}
+  void onDone(int passes, int tokens, {String? reason}) {}
 
   @override
   void onBothRolesFailed(Object lastError) {}
