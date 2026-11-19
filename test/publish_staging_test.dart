@@ -885,7 +885,8 @@ void main() {
         expect(
           r.exitCode,
           0,
-          reason: '${r.stdout}${r.stderr}\n'
+          reason:
+              '${r.stdout}${r.stderr}\n'
               'the stamp must not die on a section bigger than the kernel '
               'argv/env string limit (E2BIG, "Argument list too long")',
         );

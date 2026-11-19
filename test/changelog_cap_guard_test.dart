@@ -130,7 +130,11 @@ void main() {
     'stamp_staged_release.sh caps the staged changelog after prepending the tag section',
     () {
       final stamp = read('scripts/stamp_staged_release.sh');
-      final prepend = stamp.indexOf('FA_SECTION=');
+      // gh-2318: the section hand-off became a temp FILE (FA_SECTION_FILE=)
+      // — the old FA_SECTION= env hand-off E2BIG-killed the stamp rehearsal
+      // once the curated Unreleased window crossed the kernel's 131072-byte
+      // per-string argv/env limit.
+      final prepend = stamp.indexOf('FA_SECTION_FILE=');
       final guard = stamp.indexOf(
         'bash "\$repo_root/scripts/check_changelog_size.sh" "\$changelog"',
       );
