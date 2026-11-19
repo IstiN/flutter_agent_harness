@@ -39,6 +39,7 @@ final class FileSessionEventSource implements SessionEventSource {
   final _controllers = <String, StreamController<AttachedSessionEvent>>{};
   final _watchers = <String, Future<void>>{};
   final _deliveredLines = <String, int>{};
+  final _lastRecordIds = <String, String?>{};
   final _disposed = false;
 
   @override
@@ -67,28 +68,97 @@ final class FileSessionEventSource implements SessionEventSource {
       final start = _deliveredLines[sessionId];
       if (start == null) {
         _deliveredLines[sessionId] = total;
+        _anchorId(sessionId, lines);
         if (lines != null) await _emit(sessionId, controller, lines, 0);
+      } else if (lines == null) {
+        // An unreadable/missing poll is not an empty-file rewrite. Keep
+        // both cursor and anchor so a transient failure cannot re-emit the
+        // whole transcript on the next successful read.
+      } else if (total < start ||
+          (total == start && _lastIdOf(lines) != _lastRecordIds[sessionId])) {
+        // The primary was rewritten under the watch — segment rotation
+        // seeds a header-only file, hard-cap truncation and quarantine heal
+        // drop lines, and a drop+append (or a torn line completed between
+        // polls) can leave the count unchanged. The line cursor is dead;
+        // re-anchor on record identity: resume after the last delivered
+        // record when it survived the rewrite, else treat the whole file as
+        // unseen (it is all post-rewrite content). Forward only — history
+        // comes from the normal open path.
+        final resume = _resumeIndex(lines, _lastRecordIds[sessionId]);
+        _deliveredLines[sessionId] = total;
+        _anchorId(sessionId, lines);
+        await _emit(sessionId, controller, lines, resume, reanchored: true);
       } else if (total > start) {
         _deliveredLines[sessionId] = total;
-        await _emit(sessionId, controller, lines ?? const [], start);
+        _anchorId(sessionId, lines);
+        await _emit(sessionId, controller, lines, start);
       }
       await Future<void>.delayed(_pollInterval);
     }
+  }
+
+  /// Remembers the anchor for rewrite re-anchoring: the last parseable
+  /// record id. A torn tail line decodes to nothing and never regresses an
+  /// earlier anchor; on the first poll the backward scan still finds the
+  /// last actually-delivered record before that torn tail.
+  void _anchorId(String sessionId, List<String>? lines) {
+    final id = _lastIdOf(lines);
+    if (id != null) _lastRecordIds[sessionId] = id;
+  }
+
+  /// Index right after the last delivered record in a rewritten file:
+  /// backward scan for the anchor id; 0 when it is gone (everything
+  /// surviving is unseen content).
+  static int _resumeIndex(List<String> lines, String? anchorId) {
+    if (anchorId == null) return 0;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (_recordIdOf(lines[i]) == anchorId) return i + 1;
+    }
+    return 0;
+  }
+
+  /// The top-level `id` of a JSONL line (session id on the header line,
+  /// record id on records), null for non-JSON / torn lines.
+  static String? _recordIdOf(String line) {
+    try {
+      final json = jsonDecode(line);
+      return json is Map<String, dynamic> ? json['id'] as String? : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The last parseable record id, scanning backward over torn/non-record
+  /// tail lines. Null when the file is unreadable or has no identifiable
+  /// line. In particular, a torn first-observed tail cannot leave the watch
+  /// without an anchor and cause a later heal to replay the whole backlog.
+  static String? _lastIdOf(List<String>? lines) {
+    if (lines == null) return null;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final id = _recordIdOf(lines[i]);
+      if (id != null) return id;
+    }
+    return null;
   }
 
   Future<void> _emit(
     String sessionId,
     StreamController<AttachedSessionEvent> controller,
     List<String> lines,
-    int start,
-  ) async {
+    int start, {
+    bool reanchored = false,
+  }) async {
     final appended = <AttachedMessage>[];
     for (final line in lines.skip(start)) {
       final row = _rowFromLine(line);
       if (row != null) appended.add(row);
     }
-    if (appended.isEmpty || controller.isClosed) return;
-    controller.add(AttachedSessionEvent(appended: appended));
+    // A re-anchor emits even without rows: the transition itself is the
+    // message — a rewritten transcript is never silently frozen.
+    if ((appended.isEmpty && !reanchored) || controller.isClosed) return;
+    controller.add(
+      AttachedSessionEvent(appended: appended, reanchored: reanchored),
+    );
   }
 
   /// One JSONL line → render row; null for records the view skips
@@ -124,6 +194,7 @@ final class FileSessionEventSource implements SessionEventSource {
     _controllers.clear();
     _watchers.clear();
     _deliveredLines.clear();
+    _lastRecordIds.clear();
   }
 }
 
