@@ -282,7 +282,9 @@ void main() {
     /// boundary record anywhere — UT-2's twin needs one, E2 needs no
     /// anchors; this is exactly the gap between them.
     Future<(Session, Session)> resumedTailSession() async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
       for (var i = 0; i < 800; i++) {
         await session.appendMessage(UserMessage.text('m$i'));
       }
@@ -325,7 +327,8 @@ void main() {
         expect(
           branch.first.parentId,
           isNotNull,
-          reason: 'fixture check: the walk stopped mid-chain — the head '
+          reason:
+              'fixture check: the walk stopped mid-chain — the head '
               'is non-resident, the tail cannot vouch its anchors',
         );
 
@@ -370,34 +373,31 @@ void main() {
       },
     );
 
-    test(
-      'the twin: a fully-paged windowed resume keeps its vouchable '
-      'anchors (the truncation curation is keyed to the cut head)',
-      () async {
-        final (_, resumed) = await resumedTailSession();
+    test('the twin: a fully-paged windowed resume keeps its vouchable '
+        'anchors (the truncation curation is keyed to the cut head)', () async {
+      final (_, resumed) = await resumedTailSession();
 
-        // Page the whole chain resident: the branch reaches the file
-        // root, so every anchor's generation context is rendered and
-        // vouchable — the anchor must survive (UT-1 parity on a
-        // windowed open).
-        await resumed.ensureWholeLedgerResident();
+      // Page the whole chain resident: the branch reaches the file
+      // root, so every anchor's generation context is rendered and
+      // vouchable — the anchor must survive (UT-1 parity on a
+      // windowed open).
+      await resumed.ensureWholeLedgerResident();
 
-        final branch = await resumed.getBranch();
-        expect(branch, hasLength(804));
-        expect(
-          branch.first.parentId,
-          isNull,
-          reason: 'fixture check: the walk reached the true root',
-        );
+      final branch = await resumed.getBranch();
+      expect(branch, hasLength(804));
+      expect(
+        branch.first.parentId,
+        isNull,
+        reason: 'fixture check: the walk reached the true root',
+      );
 
-        final messages = await resumed.buildContextMessages();
-        expect(
-          messages.whereType<AssistantMessage>().last.usage.totalTokens,
-          201798,
-          reason: 'a vouchable anchor survives the projection curation',
-        );
-      },
-    );
+      final messages = await resumed.buildContextMessages();
+      expect(
+        messages.whereType<AssistantMessage>().last.usage.totalTokens,
+        201798,
+        reason: 'a vouchable anchor survives the projection curation',
+      );
+    });
   });
 }
 

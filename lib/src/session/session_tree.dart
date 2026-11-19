@@ -871,6 +871,18 @@ final class Session {
   /// generated, not the smaller context reconstructed after a compaction.
   /// Resetting only the prefix before the boundary gives hosts the safe CLI
   /// behavior by default while preserving fresh usage reported afterwards.
+  ///
+  /// gh-2237: a boundary-less path whose walk stopped mid-chain — the
+  /// oldest resident record's parent is missing from the projection (a
+  /// windowed resume's window edge, the maxPages/token-budget exhaustion
+  /// of [ensureCompactionBoundaryResident], a hard-cap hole) — cannot
+  /// vouch ANY of its anchors: every one of them prices a request whose
+  /// context included the non-resident head (the 183k-on-a-27k-branch
+  /// phantom). This is the `resetLoadedUsageAnchors` rationale applied at
+  /// projection level, so the engine's `refreshAgentState` rebuild cannot
+  /// re-arm what the resume deliberately zeroed: engine basis = gate
+  /// basis, one measurement. A complete walk (parent chain reaches a
+  /// tree root) keeps its anchors — they are vouchable.
   Set<String> _staleUsageAnchorEntryIds(List<SessionRecord> path) {
     var boundary = -1;
     for (var i = 0; i < path.length; i++) {
@@ -881,7 +893,12 @@ final class Session {
         boundary = i;
       }
     }
-    if (boundary < 0) return const {};
+    if (boundary < 0) {
+      if (path.isNotEmpty && path.first.parentId != null) {
+        return {for (final entry in path) entry.id};
+      }
+      return const {};
+    }
     return {for (var i = 0; i < boundary; i++) path[i].id};
   }
 
