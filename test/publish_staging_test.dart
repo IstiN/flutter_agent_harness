@@ -865,6 +865,40 @@ void main() {
     );
 
     test(
+      'a curated Unreleased body over the kernel argv/env string limit still '
+      'stamps (gh-2318 CI: E2BIG killed the stamp rehearsal)',
+      () {
+        // Linux caps ONE exec argument/environment string at
+        // MAX_ARG_STRLEN = 32 pages = 131072 bytes. The curated
+        // `## Unreleased` window rides exec env on the FA_SECTION= hand-off
+        // below, and main's window is already ~130 KB — a PR entry crossing
+        // the line made the CI stamp rehearsal die with
+        // "Argument list too long" (E2BIG, exit 126) BEFORE pub.dev's own
+        // 262144-byte cap could ever matter. The section must survive the
+        // hand-off regardless of its size (file, not env/argv).
+        final bullet = '- ${'x' * 190}\n'; // ~192 bytes per bullet line
+        final body = bullet * 700; // ~134,400 bytes > 131,072
+        final fx = fixture(
+          repoChangelog: '# Changelog\n\n## Unreleased\n\n$body\n',
+        );
+        final r = stamp(fx, '1.0.999');
+        expect(
+          r.exitCode,
+          0,
+          reason:
+              '${r.stdout}${r.stderr}\n'
+              'the stamp must not die on a section bigger than the kernel '
+              'argv/env string limit (E2BIG, "Argument list too long")',
+        );
+        final stagedFile = File('${fx.stage}/CHANGELOG.md');
+        expect(stagedFile.lengthSync(), lessThan(262144));
+        final staged = stagedFile.readAsStringSync();
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- ${'x' * 190}'));
+      },
+    );
+
+    test(
       'a curated ## <version> section for the same version never duplicates',
       () {
         // The repo file already carries a curated section for the version
