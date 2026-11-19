@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -715,8 +717,240 @@ void main() {
     // A viewer's exit never releases the new owner's lease.
     expect((await store.inspect(meta.path)).lease!.bootId, 'new-owner');
   });
+
+  test('#2257: a stalled heartbeat cannot pile up or re-enter demotion',
+      () async {
+    final meta = await namedSession('stalled-beat');
+    final gate = _HiccupGateEnv(env);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'stalled-beat',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    await waitForIt(
+      () async => (await gatedStore.inspect(meta.path)).lease?.pid == 4242,
+      reason: 'the boot claim',
+    );
+
+    // A rival owns the sidecar, but reading that verdict stalls past the
+    // next heartbeat tick. Only one beat may be in flight while blocked.
+    await seedLiveLease(meta.path, pid: 31337, bootId: 'new-owner');
+    gate.sidecarReadBarrier = Completer<void>();
+    await waitForIt(
+      () => gate.blockedSidecarReads == 1,
+      reason: 'the first stalled heartbeat',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    expect(
+      gate.blockedSidecarReads,
+      1,
+      reason: 'the next inbox tick does not queue another heartbeat',
+    );
+
+    gate.sidecarReadBarrier!.complete();
+    await waitForIt(
+      () => out().contains('lease: lost — another host is driving'),
+      reason: 'the stalled beat demotes after the read resumes',
+    );
+    await waitForIt(
+      () => out().contains('Driven by fa CLI (pid 31337)'),
+      reason: 'the new owner viewer banner',
+    );
+
+    // A second demotion would leave two live watch streams. Append one
+    // row through the repository and prove that it is rendered once.
+    final owned = await repo.open(meta);
+    await owned.appendMessage(UserMessage.text('after demote'));
+    await waitForIt(
+      () => out().contains('user: after demote'),
+      reason: 'the viewer watch delivers the appended row',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect('user: after demote'.allMatches(out()).length, 1);
+    expect('lease: lost — another host is driving'.allMatches(out()).length, 1);
+
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('#2257: a heartbeat sidecar IO hiccup does NOT demote the owner — '
+      'alarm fires, lease stays held, no lie printed', () async {
+    final meta = await namedSession('hiccup');
+    final gate = _HiccupGateEnv(env);
+    final gatedStore = FileSessionLeaseStore(env: gate);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'hiccup',
+        leaseStore: gatedStore,
+        processId: 4242,
+        presenceStore: presence,
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([]).call,
+    );
+    final run = cli.run();
+    var live = LeaseInspect.free();
+    for (var i = 0; i < 5000 && live.state != LeaseState.live; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      live = await gatedStore.inspect(meta.path);
+    }
+    expect(live.state, LeaseState.live, reason: 'the boot claim');
+    final ours = (await env.readTextFile(
+      gatedStore.sidecarPath(meta.path),
+    )).valueOrNull!;
+    final ourBootId = (jsonDecode(ours) as Map<String, dynamic>)['bootId'];
+
+    // From here the sidecar READ hiccups persistently: every beat fails
+    // with a fs error, but ownership must stand (AC1/AC2).
+    gate.failingSidecarReads = 1 << 30;
+    await waitForIt(
+      () => out().contains('lease heartbeat failing — fs error:'),
+      reason: 'the persistent-failure alarm (AC2)',
+    );
+    await waitForIt(
+      () => out().split('lease heartbeat failing').length > 2,
+      reason: 'the alarm re-fires while the failure persists',
+    );
+    expect(
+      out().contains('another host is driving'),
+      isFalse,
+      reason: '#2257: an IO hiccup is not a loss — no demote, no lie',
+    );
+    expect(
+      out().contains('Driven by'),
+      isFalse,
+      reason: 'no viewer transition happened',
+    );
+    final now = (await env.readTextFile(
+      gatedStore.sidecarPath(meta.path),
+    )).valueOrNull!;
+    expect(
+      (jsonDecode(now) as Map<String, dynamic>)['bootId'],
+      ourBootId,
+      reason: 'the sidecar still names us — the owner kept the lease',
+    );
+    io.sendLine('/exit');
+    await run;
+  });
 }
 
 /// 14:32 local wall-clock: the banner's "since HH:MM" round-trips
 /// through toLocal, so this pins the exact banner text in any TZ.
 final DateTime _fixedWhen = DateTime(2026, 9, 15, 14, 32);
+
+/// The #2257 rig: makes the next N sidecar READS fail with a raw fs
+/// error while everything else delegates to the shared memory env —
+/// the lease store sees IO hiccups on `.owner.json` reads only.
+final class _HiccupGateEnv implements ExecutionEnv, RenamableFileSystem {
+  _HiccupGateEnv(this._delegate);
+
+  final MemoryExecutionEnv _delegate;
+
+  /// The next N `.owner.json` reads fail. 0 = reads pass through.
+  int failingSidecarReads = 0;
+
+  /// Optional open gate for stalled-I/O coverage. Reads arriving while it
+  /// is non-null wait on the same completer and are counted before waiting.
+  Completer<void>? sidecarReadBarrier;
+  int blockedSidecarReads = 0;
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    final barrier = sidecarReadBarrier;
+    if (barrier != null && path.endsWith('.owner.json')) {
+      blockedSidecarReads++;
+      await barrier.future;
+    }
+    if (failingSidecarReads > 0 && path.endsWith('.owner.json')) {
+      failingSidecarReads--;
+      return Err(const FileError(FileErrorCode.unknown, 'sidecar read hiccup'));
+    }
+    return _delegate.readTextFile(path);
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _delegate.renamePath(from, to);
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _delegate.exec(command, options: options);
+}
