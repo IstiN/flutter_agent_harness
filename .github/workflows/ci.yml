@@ -5485,13 +5485,46 @@ jobs:
   # run — so the only `push` events this workflow ever receives are v*
   # tag pushes (release flow), whose reds used to live only in the Actions
   # tab. Files/updates one issue per red run, always assigned to
-  # ai-teammate. quality-gate aggregates every leg (always()), so its
-  # failure verdict covers the whole matrix — the fa#456 lesson on
-  # transitive skips: this job keys on the aggregator's result directly.
+  # ai-teammate.
+  # gh-2332 (the v1.0.752/753/754 class): keying on quality-gate alone went
+  # stale when gh-1801 moved the artifact train AFTER the gate. Three tag
+  # runs went red with quality-gate green: no draft, no release object, no
+  # issue — invisible unless someone scrolled the tag-filtered Actions tab.
+  # Coverage = EVERY post-gate leg that can redden a tag run, keyed on its
+  # DIRECT result (fa#456: never transitive skips):
+  #   artifact train  binaries → release-provenance → release-asset-smoke /
+  #                   installer-smoke / install-pin-bump / train-draft-guard,
+  #   publish path    integration (the #551 hard provider gate) → publish,
+  #   siblings        js-ext-integration, watchdog, step-timings,
+  #                   faui-coverage.
+  # NOT covered, deliberately: web-spa / build-extension carry job-level
+  # continue-on-error (downstream needs see SUCCESS, so they cannot redden
+  # a run); release / binaries-pr / binaries-smoke-gate are schedule-,
+  # dispatch- or PR-scoped (never run on tag pushes); everything upstream
+  # of quality-gate rides its verdict. Pinned — with the coverage set
+  # DERIVED from the live needs graph, so an un-covered future leg fails
+  # the guard — by test/ci_red_report_release_legs_guard_test.dart.
   ci-red-report:
     name: CI red → issue (ai-teammate)
-    needs: [quality-gate]
-    if: ${{ always() && github.event_name == 'push' && needs.quality-gate.result == 'failure' }}
+    needs: [quality-gate, binaries, integration, js-ext-integration, publish, watchdog, step-timings, faui-coverage, release-provenance, release-asset-smoke, installer-smoke, install-pin-bump, train-draft-guard]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      (
+        needs.quality-gate.result == 'failure' ||
+        needs.binaries.result == 'failure' ||
+        needs.integration.result == 'failure' ||
+        needs.js-ext-integration.result == 'failure' ||
+        needs.publish.result == 'failure' ||
+        needs.watchdog.result == 'failure' ||
+        needs.step-timings.result == 'failure' ||
+        needs.faui-coverage.result == 'failure' ||
+        needs.release-provenance.result == 'failure' ||
+        needs.release-asset-smoke.result == 'failure' ||
+        needs.installer-smoke.result == 'failure' ||
+        needs.install-pin-bump.result == 'failure' ||
+        needs.train-draft-guard.result == 'failure'
+      )
     permissions:
       issues: write
       contents: read
