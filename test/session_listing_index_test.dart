@@ -636,6 +636,72 @@ void main() {
       },
     );
 
+    test(
+      'a name archived into .part-0001 resolves via the walk (#2321)',
+      () async {
+        // The #2321 incident shape: the only session_info rotated into
+        // `.part-0001`, the primary is header+work — the walk's segment
+        // knowledge must say hasParts=true so the names pass probes the
+        // chain instead of the primary alone.
+        final rotated = await repo.create(
+          const JsonlSessionCreateOptions(id: 'archived-namer', cwd: '/work/a'),
+        );
+        await rotated.appendSessionName('Archived Name');
+        final path = (await rotated.getMetadata()).path;
+        final content = (await base.readTextFile(path)).valueOrNull!;
+        final lines = content.trim().split('\n');
+        await base.writeFile('$path.part-0001', '${lines[0]}\n${lines[1]}\n');
+        await base.writeFile(
+          path,
+          '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+        );
+
+        final sessions = await repo.list();
+        final names = await repo.sessionNamesQuick(sessions);
+        expect(names['archived-namer'], 'Archived Name');
+        final raw = await base.readTextFile('$_root/.listing-index.json');
+        final index = SessionListingIndex.fromJson(
+          jsonDecode(raw.valueOrNull!),
+        )!;
+        expect(index.entryById('archived-namer')!.hasParts, isTrue);
+      },
+    );
+
+    test(
+      'a hasParts=false sidecar row heals on the next walk (#2321)',
+      () async {
+        // A pre-#2321 build persisted hasParts=false for rotated sessions.
+        // List BEFORE the segment exists (a truthful false row), rotate
+        // out-of-band, list again: the settle path must flip the row and
+        // rewrite the sidecar.
+        final rotated = await repo.create(
+          const JsonlSessionCreateOptions(id: 'heal-me', cwd: '/work/a'),
+        );
+        await rotated.appendSessionName('Healed Name');
+        final path = (await rotated.getMetadata()).path;
+        await repo.list(); // cold: sidecar row hasParts=false (no parts yet)
+
+        final content = (await base.readTextFile(path)).valueOrNull!;
+        final lines = content.trim().split('\n');
+        await base.writeFile('$path.part-0001', '${lines[0]}\n${lines[1]}\n');
+        await base.writeFile(
+          path,
+          '${lines[0]}\n${lines.sublist(2).join('\n')}\n',
+        );
+
+        fs.indexWrites = 0;
+        final sessions = await repo.list();
+        expect(fs.indexWrites, 1, reason: 'the stale hasParts row settles');
+        final raw = await base.readTextFile('$_root/.listing-index.json');
+        final index = SessionListingIndex.fromJson(
+          jsonDecode(raw.valueOrNull!),
+        )!;
+        expect(index.entryById('heal-me')!.hasParts, isTrue);
+        final names = await repo.sessionNamesQuick(sessions);
+        expect(names['heal-me'], 'Healed Name');
+      },
+    );
+
     test('a stale walk hint is dropped by writer mutations', () async {
       await _seed(fs, dirs: ['/work/a'], perDir: 2);
       final sessions = await repo.list();

@@ -73,4 +73,44 @@ void main() {
       expect((await env.exists(realPath)).valueOrNull, isTrue);
     },
   );
+
+  test('exit keeps a booted NAMED empty session (#2320 incident)', () async {
+    // The incident: `fa --session network-redesign` resolved an empty
+    // (namesake) session; on exit the clean-exit empty-cleanup trashed
+    // it — a NAMED session is a deliberate anchor, never litter, even
+    // when this process persisted no record into it.
+    final seeder = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final named = await seeder.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await named.appendSessionName('network-redesign');
+    final namedMeta = await named.getMetadata();
+    final namedPath = namedMeta.path;
+
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'network-redesign',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([
+        textTurn('unused — the REPL exits before any prompt'),
+      ]).call,
+    );
+    final run = cli.run();
+    await io.out.waitUntilContains(
+      namedMeta.id,
+      reason: 'the named session resolved and booted',
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(
+      (await env.exists(namedPath)).valueOrNull,
+      isTrue,
+      reason: '#2320: exit never trashes a named session',
+    );
+  });
 }
