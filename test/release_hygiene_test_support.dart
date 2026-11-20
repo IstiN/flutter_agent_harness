@@ -545,7 +545,24 @@ case "\$cmd" in
   api)
     case "\$2 \$3" in
       "-X DELETE"*) : ;;
-      *) cat "\$GH_STUB_DIR/releases.json" ;;
+      *)
+        # gh-236: the sweeper's per-ticket cycle-state lookup
+        # (GET repos/<o>/<r>/issues/<n>) — issue-<n>.json when planted,
+        # {} (unknown state → the script must fail safe) otherwise. The
+        # script pipes the response through its own jq, so the stub stays
+        # jq-free like every other api answer.
+        case "\$2" in
+          */issues/*)
+            n="\${2##*/}"
+            if [ -s "\$GH_STUB_DIR/issue-\$n.json" ]; then
+              cat "\$GH_STUB_DIR/issue-\$n.json"
+            else
+              echo '{}'
+            fi
+            ;;
+          *) cat "\$GH_STUB_DIR/releases.json" ;;
+        esac
+        ;;
     esac
     ;;
   label)
