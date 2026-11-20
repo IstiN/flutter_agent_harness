@@ -37,27 +37,7 @@
       "model": "glm-5.3-flash"
     }
   ],
-  "issue-2059": [
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:37:56Z",
-      "prompt": 28098,
-      "completion": 0,
-      "total": 28098,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    }
-  ],
   "pr-2060": [
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:36:36Z",
-      "prompt": 20739,
-      "completion": 0,
-      "total": 20739,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
     {
       "leg": "review",
       "at": "2026-11-06T07:18:21Z",
@@ -4711,6 +4691,17 @@
       "completion": 64797,
       "total": 891321,
       "cacheRead": 22838656,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "pr-2338": [
+    {
+      "leg": "review",
+      "at": "2026-11-20T07:03:00Z",
+      "prompt": 159578,
+      "completion": 36480,
+      "total": 196058,
+      "cacheRead": 2321024,
       "model": "glm-5.3-flash"
     }
   ]
