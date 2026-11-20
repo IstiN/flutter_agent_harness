@@ -40,159 +40,6 @@
   "issue-2059": [
     {
       "leg": "review",
-      "at": "2026-11-05T23:46:06Z",
-      "prompt": 12042,
-      "completion": 0,
-      "total": 12042,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "rework",
-      "at": "2026-11-06T00:02:54Z",
-      "prompt": 165421,
-      "completion": 0,
-      "total": 165421,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T00:29:23Z",
-      "prompt": 12711,
-      "completion": 0,
-      "total": 12711,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T00:47:23Z",
-      "prompt": 13380,
-      "completion": 0,
-      "total": 13380,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "rework",
-      "at": "2026-11-06T01:01:28Z",
-      "prompt": 167765,
-      "completion": 0,
-      "total": 167765,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:19:19Z",
-      "prompt": 14049,
-      "completion": 0,
-      "total": 14049,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:27:57Z",
-      "prompt": 14718,
-      "completion": 0,
-      "total": 14718,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:37:04Z",
-      "prompt": 15387,
-      "completion": 0,
-      "total": 15387,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:48:49Z",
-      "prompt": 16056,
-      "completion": 0,
-      "total": 16056,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:58:43Z",
-      "prompt": 16725,
-      "completion": 0,
-      "total": 16725,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "rework",
-      "at": "2026-11-06T02:24:10Z",
-      "prompt": 170109,
-      "completion": 0,
-      "total": 170109,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T02:35:37Z",
-      "prompt": 17394,
-      "completion": 0,
-      "total": 17394,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T02:47:59Z",
-      "prompt": 18063,
-      "completion": 0,
-      "total": 18063,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T03:03:57Z",
-      "prompt": 18732,
-      "completion": 0,
-      "total": 18732,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T03:19:46Z",
-      "prompt": 19401,
-      "completion": 0,
-      "total": 19401,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T03:29:01Z",
-      "prompt": 20070,
-      "completion": 0,
-      "total": 20070,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T03:53:56Z",
-      "prompt": 20739,
-      "completion": 0,
-      "total": 20739,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-06T04:04:01Z",
       "prompt": 21408,
       "completion": 0,
@@ -301,78 +148,6 @@
     }
   ],
   "pr-2060": [
-    {
-      "leg": "review",
-      "at": "2026-11-06T00:04:47Z",
-      "prompt": 10704,
-      "completion": 0,
-      "total": 10704,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T00:31:05Z",
-      "prompt": 11373,
-      "completion": 0,
-      "total": 11373,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:01:38Z",
-      "prompt": 12042,
-      "completion": 0,
-      "total": 12042,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:19:03Z",
-      "prompt": 12711,
-      "completion": 0,
-      "total": 12711,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:28:18Z",
-      "prompt": 13380,
-      "completion": 0,
-      "total": 13380,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T01:35:48Z",
-      "prompt": 14049,
-      "completion": 0,
-      "total": 14049,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T02:47:59Z",
-      "prompt": 14718,
-      "completion": 0,
-      "total": 14718,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T03:20:24Z",
-      "prompt": 15387,
-      "completion": 0,
-      "total": 15387,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
     {
       "leg": "review",
       "at": "2026-11-06T04:18:30Z",
@@ -5067,6 +4842,15 @@
       "completion": 27565,
       "total": 120975,
       "cacheRead": 3334784,
+      "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-20T03:56:01Z",
+      "prompt": 77151,
+      "completion": 16461,
+      "total": 93612,
+      "cacheRead": 1080256,
       "model": "glm-5.3-flash"
     }
   ]
