@@ -531,18 +531,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: theme.colorScheme.outlineVariant),
-                  ),
-                  child: Center(
-                    child: AppIcon(app: app, env: widget.env, size: 26),
-                  ),
-                ),
+                AppIcon(app: app, env: widget.env, size: 56, framed: true),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -550,15 +539,27 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
                     children: [
                       Text(
                         app.displayName(locale),
-                        style: theme.textTheme.titleSmall,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                         overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'v${app.version}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: FahColors.of(context).indigo,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       if (app.displayDescription(locale).isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             app.displayDescription(locale),
-                            style: theme.textTheme.bodySmall,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: FahColors.of(context).dim,
+                            ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -670,35 +671,63 @@ class _CatalogTile extends StatelessWidget {
       onTap: onTap,
       child: Container(
         key: ValueKey('catalogTile-${entry.id}'),
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          // Match My Apps' token surface instead of Material's navy
-          // surfaceContainerLow, which sat outside the messenger palette.
           color: colors.panelAlt,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(color: tokens.hairline),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .08),
+              blurRadius: 16,
+              offset: const Offset(0, 5),
+            ),
+          ],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _CatalogIcon(entry: entry, iconFuture: iconFuture),
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${entry.displayName(locale)}  ·  v${entry.version}',
-                    style: theme.textTheme.titleMedium,
+                    entry.displayName(locale),
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: colors.text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'v${entry.version}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.indigo,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                   if (entry.displayDescription(locale).isNotEmpty)
                     Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.only(top: 3),
                       child: Text(
                         entry.displayDescription(locale),
-                        style: theme.textTheme.bodySmall,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.dim,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -835,76 +864,42 @@ class _CatalogIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     if (entry.iconFile == null || entry.iconFile!.isEmpty) {
       return _fallback(Localizations.localeOf(context).toLanguageTag());
     }
     return FutureBuilder<String?>(
       future: iconFuture,
-      builder: (context, snapshot) => _iconTile(context, theme, snapshot),
+      builder: (context, snapshot) => _iconTile(snapshot),
     );
   }
 
-  /// The SVG tile for a loaded icon; the letter fallback while loading or
-  /// when the markup is blank (gh-1848 split). The SVG sits in a neutral
-  /// rounded tile: widgets whose icon is a bare glyph (crypto's ₿) get a
-  /// proper frame instead of floating naked next to the colored icons.
-  Widget _iconTile(
-    BuildContext context,
-    ThemeData theme,
-    AsyncSnapshot<String?> snapshot,
-  ) {
+  /// The SVG sits on the same continuous-corner gradient as the launcher;
+  /// its own first non-neutral color drives the tile's accent.
+  Widget _iconTile(AsyncSnapshot<String?> snapshot) {
     final markup = snapshot.data;
     if (markup == null || markup.trim().isEmpty) return _fallback();
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Center(
-        child: SizedBox(
-          width: 36,
-          height: 36,
-          child: SvgPicture.string(markup, fit: BoxFit.contain),
-        ),
-      ),
+    return AppIconBadge(
+      seed: entry.id,
+      artwork: markup,
+      size: 64,
+      child: SvgPicture.string(markup, fit: BoxFit.contain),
     );
   }
 
-  /// Deterministic accent per widget id — the SVG tiles each have their
-  /// own color, and a bare letter on the washed-out default CircleAvatar
-  /// looked broken next to them.
-  static const _palette = [
-    Color(0xFF4F46E5),
-    Color(0xFF0D9488),
-    Color(0xFFD97706),
-    Color(0xFFDC2626),
-    Color(0xFF7C3AED),
-    Color(0xFF2563EB),
-    Color(0xFF059669),
-    Color(0xFFDB2777),
-  ];
-
   Widget _fallback([String? locale]) {
-    final color = _palette[entry.id.hashCode.abs() % _palette.length];
     final label = entry.displayName(locale);
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Center(
-        child: Text(
-          label.isEmpty ? '?' : label.characters.first.toUpperCase(),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-            fontSize: 22,
+    return AppIconBadge(
+      seed: entry.id,
+      size: 64,
+      child: Builder(
+        builder: (context) => Center(
+          child: Text(
+            label.isEmpty ? '?' : label.characters.first.toUpperCase(),
+            style: TextStyle(
+              color: AppIconPalette.foregroundFor(Theme.of(context).brightness),
+              fontWeight: FontWeight.w700,
+              fontSize: 25,
+            ),
           ),
         ),
       ),

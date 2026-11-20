@@ -73,10 +73,7 @@ void main() {
           for (var i = 0; i < count; i++)
             (w: 1 + random.nextInt(6), h: 1 + random.nextInt(4)),
         ];
-        final placements = packTileSpans(
-          crossAxisCount: columns,
-          spans: spans,
-        );
+        final placements = packTileSpans(crossAxisCount: columns, spans: spans);
         expect(placements.length, spans.length, reason: 'trial $trial');
         final occupied = <String>{};
         var lastRow = 0;
@@ -87,24 +84,37 @@ void main() {
           final p = placements[i];
           // Within the grid bounds (a span wider than the grid clamps to
           // full width — AC4).
-          expect(p.col + w, lessThanOrEqualTo(columns),
-              reason: 'trial $trial tile $i overflows the row');
+          expect(
+            p.col + w,
+            lessThanOrEqualTo(columns),
+            reason: 'trial $trial tile $i overflows the row',
+          );
           expect(p.col, greaterThanOrEqualTo(0));
           expect(p.row, greaterThanOrEqualTo(0));
           // No overlap.
           for (var r = 0; r < h; r++) {
             for (var c = 0; c < w; c++) {
-              expect(occupied.add('${p.row + r}:${p.col + c}'), isTrue,
-                  reason: 'trial $trial tile $i overlaps at '
-                      '(${p.row + r},${p.col + c})');
+              expect(
+                occupied.add('${p.row + r}:${p.col + c}'),
+                isTrue,
+                reason:
+                    'trial $trial tile $i overlaps at '
+                    '(${p.row + r},${p.col + c})',
+              );
             }
           }
           // Order preserved: row-major reading order never goes backwards.
-          expect(p.row, greaterThanOrEqualTo(lastRow),
-              reason: 'trial $trial tile $i broke reading order');
+          expect(
+            p.row,
+            greaterThanOrEqualTo(lastRow),
+            reason: 'trial $trial tile $i broke reading order',
+          );
           if (p.row == lastRow) {
-            expect(p.col, greaterThan(lastCol),
-                reason: 'trial $trial tile $i broke reading order');
+            expect(
+              p.col,
+              greaterThan(lastCol),
+              reason: 'trial $trial tile $i broke reading order',
+            );
           }
           lastRow = p.row;
           lastCol = p.col;
@@ -190,6 +200,7 @@ void main() {
 
   group('SpanGridDelegate (rectangular cells)', () {
     test('geometry: WxH span = W x H cells + inner spacing', () {
+      const icon = LauncherGridSpec.cellCrossExtent;
       final delegate = SpanGridDelegate(
         crossAxisCount: 4,
         spans: const [(w: 2, h: 2), (w: 1, h: 1)],
@@ -203,7 +214,7 @@ void main() {
           precedingScrollExtent: 0,
           overlap: 0,
           remainingPaintExtent: 800,
-          crossAxisExtent: 4 * 56 + 3 * 16,
+          crossAxisExtent: 4 * icon + 3 * 16,
           crossAxisDirection: AxisDirection.right,
           viewportMainAxisExtent: 800,
           remainingCacheExtent: 800,
@@ -215,10 +226,10 @@ void main() {
       final first = layout.getGeometryForChildIndex(0);
       expect(first.scrollOffset, 0);
       expect(first.crossAxisOffset, 0);
-      expect(first.crossAxisExtent, 2 * 56 + g);
+      expect(first.crossAxisExtent, 2 * icon + g);
       expect(first.mainAxisExtent, 2 * cellMain + g);
       final second = layout.getGeometryForChildIndex(1);
-      expect(second.crossAxisOffset, 2 * (56 + g));
+      expect(second.crossAxisOffset, 2 * (icon + g));
       expect(second.mainAxisExtent, cellMain);
       expect(layout.computeMaxScrollOffset(2), 2 * cellMain + g);
     });

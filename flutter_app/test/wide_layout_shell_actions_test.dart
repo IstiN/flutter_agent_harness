@@ -1527,7 +1527,7 @@ void main() {
     expect(reveal, findsOneWidget);
   });
 
-  testWidgets('wide shell Apps retains Back to Chats', (tester) async {
+  testWidgets('wide shell Apps omits Back to Chats', (tester) async {
     final env = MemoryExecutionEnv();
     final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
       ..addSession('design-session', _fakeService(env));
@@ -1536,8 +1536,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AppLauncherScreen), findsOneWidget);
-    expect(find.byKey(const ValueKey('appsBackButton')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('appsBackButton')));
+    expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
+    // The directory rail, not a duplicate back button, owns root navigation.
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-local')));
     await tester.pumpAndSettle();
     expect(find.byType(AppLauncherScreen), findsNothing);
     expect(find.byKey(const ValueKey('messengerSearchField')), findsOneWidget);
@@ -1731,58 +1732,52 @@ void main() {
     }
   });
 
-  testWidgets(
-    'Apps overview uses real feature cards and Widgets Catalog name',
-    (tester) async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile(
-        'apps/demo/manifest.json',
-        '{"name":"Demo","description":"A real installed demo app"}',
-      );
-      await env.writeFile(
-        'apps/demo/widget.js',
-        '(function(){jsr.render({type:"text",data:"hi"});})();',
-      );
-      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
-        ..addSession('design-session', _fakeService(env));
-      await pumpShell(tester, manager: manager);
-      await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
-      await tester.pumpAndSettle();
+  testWidgets('Apps overview opens installed apps from the Launchpad grid', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/demo/manifest.json',
+      '{"name":"Demo","description":"A real installed demo app"}',
+    );
+    await env.writeFile(
+      'apps/demo/widget.js',
+      '(function(){jsr.render({type:"text",data:"hi"});})();',
+    );
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    await pumpShell(tester, manager: manager);
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
 
-      expect(find.text('Widgets Catalog'), findsWidgets);
-      expect(find.text('Widget Store'), findsNothing);
-      expect(find.text('Widgets Store'), findsNothing);
-      expect(find.byKey(const ValueKey('appsFeatureCards')), findsOneWidget);
-      final feature = find.byKey(const ValueKey('appsFeatureCard-demo'));
-      expect(feature, findsOneWidget);
-      expect(find.text('A real installed demo app'), findsOneWidget);
-      await tester.ensureVisible(feature);
-      await tester.pumpAndSettle();
-      final featureViewport = tester.getRect(
-        find.byKey(const ValueKey('appsFeatureCards')),
-      );
-      expect(featureViewport.contains(tester.getCenter(feature)), isTrue);
-      await tester.runAsync(() async {
-        await tester.tap(feature);
-        await tester.pump();
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      });
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(find.byType(SnackBar), findsNothing);
-      expect(find.byType(MessengerAppPanel), findsOneWidget);
+    expect(find.text('Widgets Catalog'), findsWidgets);
+    expect(find.text('Widget Store'), findsNothing);
+    expect(find.text('Widgets Store'), findsNothing);
+    expect(find.byKey(const ValueKey('appsFeatureCards')), findsNothing);
+    final appTile = find.byKey(const ValueKey('launcherCell:app:demo'));
+    expect(appTile, findsOneWidget);
+    await tester.ensureVisible(appTile);
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(appTile);
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.byType(MessengerAppPanel), findsOneWidget);
 
-      // Close the real app presentation so JsAppView/JsAppEngine dispose and
-      // their UI-tree watcher cannot outlive this widget test.
-      await tester.runAsync(() async {
-        await tester.tap(find.byIcon(Icons.close));
-        await tester.pump();
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      });
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(milliseconds: 1));
-    },
-  );
+    // Close the real app presentation so JsAppView/JsAppEngine dispose and
+    // their UI-tree watcher cannot outlive this widget test.
+    await tester.runAsync(() async {
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 
   wideShellNarrowHomeTests();
 

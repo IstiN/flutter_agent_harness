@@ -27,6 +27,7 @@ http.Client _catalogServer() => MockClient((req) async {
             'name': 'Focus Timer',
             'version': '1.2.0',
             'description': 'Pomodoro timer with long breaks',
+            'icon': 'icon.svg',
             'tags': ['timer'],
             'permissions': {'network': false, 'allowedCommands': []},
             'zip': {'file': 'focus-timer-1.2.0.zip'},
@@ -45,6 +46,15 @@ http.Client _catalogServer() => MockClient((req) async {
       200,
     );
   }
+  if (name == 'icon.svg') {
+    return http.Response(
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+      "<circle cx='12' cy='12' r='8' fill='none' stroke='#f8fafc' "
+      "stroke-width='2'/><path d='M12 7v5l3 2' fill='none' "
+      "stroke='#f8fafc' stroke-width='2' stroke-linecap='round'/></svg>",
+      200,
+    );
+  }
   return http.Response('nf', 404);
 });
 
@@ -58,23 +68,26 @@ void main() {
   ) async {
     await pumpGolden(
       tester,
-      SizedBox(
-        width: 420,
-        height: 700,
-        child: WidgetsCatalogSheet(
-          env: MemoryExecutionEnv(),
-          httpClient: client,
-        ),
-      ),
+      WidgetsCatalogSheet(env: MemoryExecutionEnv(), httpClient: client),
       size: size,
+      // Full app frame at the mandated phone/desktop sizes — never a
+      // floating 420px strip on an empty backdrop.
+      wrap: (child) => Scaffold(body: child),
     );
   }
 
-  testWidgets('widgets catalog sheet lists installable entries', (
+  testWidgets('widgets catalog sheet lists installable entries — phone', (
     tester,
   ) async {
-    await pumpSheet(tester, _catalogServer(), goldenSizeTall);
+    await pumpSheet(tester, _catalogServer(), goldenSizePhone);
     await expectGolden(tester, 'widgets_catalog_sheet');
+  });
+
+  testWidgets('widgets catalog sheet lists installable entries — desktop', (
+    tester,
+  ) async {
+    await pumpSheet(tester, _catalogServer(), goldenSizeDesktop);
+    await expectGolden(tester, 'widgets_catalog_sheet_desktop');
   });
 
   testWidgets('widgets catalog sheet shows the offline error state', (
@@ -84,7 +97,7 @@ void main() {
     await pumpSheet(
       tester,
       MockClient((req) async => http.Response('nf', 404)),
-      goldenSizeTall,
+      const Size(500, 800),
     );
     await expectGolden(tester, 'widgets_catalog_sheet_error');
   });
