@@ -186,8 +186,9 @@ void main() {
       // boots the live tile through the injected tile engine factory.
       expect(find.byType(AppTileHost), findsOneWidget);
       expect(find.text('LIVE TILE'), findsOneWidget);
-      // A live tile replaces the static icon + label.
-      expect(find.text('Todo'), findsNothing);
+      // A live tile replaces the static icon + label; on large tiles the
+      // live host shows its own identity header titled with the app name.
+      expect(find.text('Todo'), findsOneWidget);
       harness.service.dispose();
     });
   });

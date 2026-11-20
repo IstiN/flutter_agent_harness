@@ -261,8 +261,10 @@ void main() {
     final colors = FahColors.of(
       tester.element(find.byKey(const ValueKey('devicesPage'))),
     );
-    DeviceRosterRow agentRow() => tester.widget<DeviceRosterRow>(
-      find.byKey(const ValueKey('agentRow:fa@dev-own')),
+    DeviceSessionCard agentRow() => tester.widget<DeviceSessionCard>(
+      // Agent rows are keyed by the CANONICAL mailbox name (REST `fa` and
+      // presence `fa@dev-own` aliases dedup into one row).
+      find.byKey(const ValueKey('agentRow:fa')),
     );
     expect(agentRow().stateLabel, 'Busy');
     expect(agentRow().dotColor, colors.pending);
@@ -285,10 +287,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
-    final remoteAgent = tester.widget<DeviceRosterRow>(
-      find.byKey(const ValueKey('agentRow:fa')),
-    );
-    expect(remoteAgent.stateLabel, 'Busy');
+    // Own and remote devices both expose the canonical `fa` row; pick the
+    // remote (still busy) card after expanding its device.
+    final remoteAgent = tester
+        .widgetList<DeviceSessionCard>(find.byKey(const ValueKey('agentRow:fa')))
+        .singleWhere((card) => card.stateLabel == 'Busy');
     expect(remoteAgent.dotColor, colors.pending);
   });
 }
