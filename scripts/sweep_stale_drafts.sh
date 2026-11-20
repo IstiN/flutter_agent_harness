@@ -241,7 +241,7 @@ while IFS=$'\t' read -r bucket tag id created author stale marker_run; do
       elif [ "$stale" = "true" ]; then
         gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
         art_swept_count=$((art_swept_count + 1))
-        art_swept="$art_swept- \`$tag\` — created $created by @$author; swept after 24h with the ticket still open (parked leg — the cache is recreated if the leg resumes; gh-236)\n"
+        art_swept="$art_swept- \`$tag\` — created $created by @$author; swept after 24h with the ticket still open or its state unknown (parked leg — the cache is recreated if the leg resumes; gh-236)\n"
         art_swept_tags="$art_swept_tags $tag"
       else
         art_kept_count=$((art_kept_count + 1))
@@ -409,7 +409,7 @@ if [ "$stale_count" -gt 0 ]; then
       # Findings are kept human drafts only (gh-236: cache lifecycle
       # traffic is excluded from the finding counters) — the create-death
       # prose would misdirect: nothing died and nothing failed to publish.
-      echo "Kept human drafts above are listed, never deleted (E1) — delete by hand once done with them. Machine-loop artefact-cache drafts (\`ai-gh-*\`/\`ai-pr-*\`) are lifecycle-managed (gh-236): reclaimed when their ticket cycle closes, swept after 24h when the ticket stays open."
+      echo "Kept human drafts above are listed, never deleted (E1) — delete by hand once done with them. Machine-loop artefact-cache drafts (\`ai-gh-*\`/\`ai-pr-*\`) are lifecycle-managed (gh-236): reclaimed when their ticket cycle closes, swept after 24h when the ticket stays open or its state is unknown."
     fi
     echo
     echo "---"

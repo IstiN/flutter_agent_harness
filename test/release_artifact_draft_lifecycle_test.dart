@@ -25,6 +25,7 @@
 //   machine-authored NON-artifact drafts (vX.Y.Z) → remain bot-bucket
 //       findings (the guard must not swallow real train drafts).
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:test/test.dart';
 
@@ -355,6 +356,180 @@ void main() {
           reason:
               'the release-failure prose must never be attached to cache '
               'reclaims — nothing died, nothing failed to publish',
+        );
+      });
+
+      test('the 24h-backstop prose names the swept cohort truthfully — '
+          'ticket still open OR its state unknown (lookup failures are '
+          'swept too, only the early reclaim is blocked)', () {
+        // Review thread (⚠️ IMPORTANT): the prose on the swept lines and
+        // the E1 footer described the swept cohort as "ticket still open"
+        // while the backstop ALSO sweeps state-UNKNOWN caches — a lookup
+        // failure blocks only the EARLY reclaim. An auditor tracing a
+        // deleted state-unknown cache must not read a broken keep-promise.
+        final run = runSweeper(
+          'art-backstop-prose-truthful',
+          fixtures([
+            artDraft('ai-gh-2208', 220802), // stale, state unknown
+            artDraft('ai-pr-210', 210002), // stale, state unknown
+            {
+              'tag_name': 'v0.2.1',
+              'id': 220804,
+              'draft': true,
+              'created_at': oldDate,
+              'author': {'login': 'somehuman', 'type': 'User'},
+              'body': 'my WIP draft',
+            }, // kept human finding — fires the E1 footer prose
+          ]),
+        );
+        expect(
+          run.body,
+          contains(
+            'swept after 24h with the ticket still open or its state unknown',
+          ),
+          reason:
+              'the swept-cohort prose must include state-UNKNOWN caches — '
+              'the backstop deletes them (a lookup failure only blocks the '
+              'early reclaim, art-backstop-unknown-stale)',
+        );
+        expect(
+          run.body,
+          contains(
+            'swept after 24h when the ticket stays open or its state is '
+            'unknown',
+          ),
+          reason: 'the E1-footer prose carries the same carve-out',
+        );
+        final logText = run.log.join('\n');
+        expect(
+          logText,
+          contains('api -X DELETE repos/OWNER/REPO/releases/220802'),
+          reason:
+              'backstop sweeps the stale state-unknown cache — behavior '
+              'unchanged, prose truthful (gh-2287 semantics preserved)',
+        );
+        expect(
+          logText,
+          contains('api -X DELETE repos/OWNER/REPO/releases/210002'),
+          reason:
+              'multi-item: the ai-pr-* sibling is swept by the backstop too',
+        );
+        expect(
+          logText,
+          isNot(contains('releases/220804')),
+          reason: 'the human draft stays kept (E1)',
+        );
+      });
+
+      test('docs/ci.md states the lookup-failure carve-out exactly as '
+          'implemented — kept, then only the 24h backstop applies', () {
+        // Review thread (⚠️ IMPORTANT): docs/ci.md promised "kept on ANY
+        // ticket-state lookup failure" while the implemented — and tested
+        // — behavior is narrower: the failure blocks only the EARLY
+        // reclaim; a stale (>24h) cache is still deleted by the 24h
+        // backstop. The doc sentence must mirror the script header so an
+        // auditor tracing a deleted state-unknown cache reads the
+        // carve-out, not a broken keep-promise.
+        final docs = File(
+          'docs/ci.md',
+        ).readAsStringSync().replaceAll(RegExp(r'\s+'), ' ');
+        expect(
+          docs,
+          contains(
+            'kept on any ticket-state lookup failure (never delete blind) '
+            '— only the 24h backstop then applies',
+          ),
+          reason:
+              'the artefact-cache doc sentence must carry the backstop '
+              'carve-out, mirroring the scripts/sweep_stale_drafts.sh '
+              'header',
+        );
+        expect(
+          docs,
+          isNot(contains('kept on ANY ticket-state lookup failure')),
+          reason:
+              'the unqualified keep-promise (the pre-rework wording) must '
+              'be gone — it contradicts art-backstop-unknown-stale',
+        );
+      });
+
+      test('the gh stub requires the issues scope for api .../issues/<n> — '
+          'a dropped issues: grant fails loud, not silent', () {
+        // Review thread (💡 SUGGESTION): the stub mapped EVERY `gh api`
+        // call to need=contents, so the per-ticket cycle-state lookup
+        // (repos/<o>/<r>/issues/<n>) passed enforcement even though
+        // production needs the issues scope — a dropped issues: grant
+        // stayed green while production 403s every lookup and the early
+        // reclaim silently dies. Mirror the #294 precedent the stub
+        // comment cites: scope follows the resource path.
+        final dir = Directory(
+          '${hygieneFixtureRoot.path}/stub-issues-scope-'
+          '${DateTime.now().microsecondsSinceEpoch}',
+        )..createSync(recursive: true);
+        final bin = stubGh(dir.path);
+        Map<String, String> probeEnv() => {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
+          'GH_STUB_PERMISSIONS': 'contents',
+          'GH_LOG_FILE': '${dir.path}/log',
+          'GH_STUB_DIR': dir.path,
+        };
+        final probe = Process.runSync('$bin/gh', [
+          'api',
+          'repos/OWNER/REPO/issues/228',
+        ], environment: probeEnv());
+        expect(
+          probe.exitCode,
+          1,
+          reason:
+              'api repos/*/issues/<n> maps to the issues scope — the stub '
+              'must 403 when only contents is granted (#294 precedent)',
+        );
+        expect(
+          probe.stderr,
+          contains("needs 'issues'"),
+          reason:
+              "the 403 names the missing scope, like every other "
+              "stub enforcement",
+        );
+        // api repos/*/releases/* stays contents (the lookup tightening
+        // must not disturb the release-path calls).
+        final releasesProbe = Process.runSync('$bin/gh', [
+          'api',
+          '-X',
+          'DELETE',
+          'repos/OWNER/REPO/releases/9',
+        ], environment: probeEnv());
+        expect(
+          releasesProbe.exitCode,
+          0,
+          reason:
+              'the -X DELETE releases path keeps need=contents — deleting '
+              'draft releases is the contents grant, unchanged',
+        );
+        // End-to-end: with only contents granted the lookup 403s → state
+        // unknown → the fail-safe keep blocks the early reclaim (visible
+        // here; before the tightening this run silently reclaimed).
+        final run = runSweeper(
+          'art-no-issues-grant-failsafe',
+          fixtures(
+            [artDraft('ai-gh-228', 228005, created: '${freshDate}Z')],
+            tickets: {'issue-228.json': '{"state":"closed"}'},
+          ),
+          extraEnv: {'GH_STUB_PERMISSIONS': 'contents'},
+        );
+        expect(
+          run.log.join('\n'),
+          isNot(contains('-X DELETE repos/OWNER/REPO/releases/228005')),
+          reason:
+              'lookup 403 → state unknown → never reclaim blind; every '
+              'other runSweper test enforces the real workflow grant',
+        );
+        expect(
+          run.stdoutText,
+          isNot(contains('::error::')),
+          reason:
+              'the fail-safe keep stays green — the dropped grant fails '
+              'the permission probe above, not the sweep',
         );
       });
     },

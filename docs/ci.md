@@ -263,8 +263,9 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   pack's restore is non-fatal, recreating the cache on "first run"), kept
   while the ticket is open and the draft is fresh (an in-flight leg may be
   writing snapshots), swept by the existing 24h backstop when the ticket
-  stays open (parked leg), and kept on ANY ticket-state lookup failure
-  (never delete blind). The class is excluded from the sweep-issue finding
+  stays open (parked leg), and kept on any ticket-state lookup failure
+  (never delete blind) — only the 24h backstop then applies. The class is
+  excluded from the sweep-issue finding
   counters — reclaiming a lifecycle-managed cache is routine hygiene, so
   the recurring sweep issue (gh-2287 → gh-2318 → gh-236) finally
   auto-closes when only cache traffic remains. Human-authored `ai-*`
