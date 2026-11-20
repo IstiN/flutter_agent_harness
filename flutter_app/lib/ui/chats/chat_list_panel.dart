@@ -667,7 +667,10 @@ class _ChatListPanelState extends State<ChatListPanel> {
         // the last rows reachable above the pill. The legacy 76 stays for
         // hosts whose MediaQuery was not inflated (desktop keeps 10).
         bottom: widget.compact
-            ? math.max<double>(76, MessengerFloatingDockInsets.bottomOf(context))
+            ? math.max<double>(
+                76,
+                MessengerFloatingDockInsets.bottomOf(context),
+              )
             : 10,
       ),
       itemCount: visibleEntries.length,
@@ -1499,9 +1502,13 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-String chatListRelativeTime(BuildContext context, DateTime? activity) {
+String chatListRelativeTime(
+  BuildContext context,
+  DateTime? activity, {
+  DateTime? now,
+}) {
   if (activity == null) return '';
-  final difference = DateTime.now().difference(activity);
+  final difference = (now ?? DateTime.now()).difference(activity);
   if (difference.isNegative || difference.inMinutes < 1) {
     return context.l10n.chatTimeNow;
   }

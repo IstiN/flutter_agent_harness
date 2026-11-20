@@ -218,10 +218,14 @@ final class ConnectorSessionMetadata {
   /// Decodes the additive session fields without rejecting legacy rows.
   static ConnectorSessionMetadata? fromJson(Object? value) {
     if (value is! Map) return null;
-    final rawTitle = value['title'];
-    final rawSnippet = value['snippet'];
-    final rawPath = value['path'];
-    final rawCwd = value['cwd'];
+    final rawTitle = value['title'] ?? value['displayName'];
+    final rawSnippet =
+        value['snippet'] ??
+        value['preview'] ??
+        value['lastMessagePreview'] ??
+        value['lastDmPreview'];
+    final rawPath = value['path'] ?? value['projectPath'];
+    final rawCwd = value['cwd'] ?? value['project'];
     final rawActivity = value['lastActivity'] ?? value['lastActiveAt'];
     String? text(Object? raw) =>
         raw is String && raw.trim().isNotEmpty ? raw.trim() : null;

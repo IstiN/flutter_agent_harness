@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'device_display.dart';
 import 'network_session.dart';
 
 /// Adapts a fa_network channel to the shared Grok-style chat UI
@@ -89,8 +90,35 @@ final class ChannelChatService implements FaChatService {
     if (!isDmChannel(channelId)) return stored;
     return [
       for (final message in stored)
-        if (message.sessionId == dmSessionId) message,
+        if (message.sessionId == dmSessionId && !_isDeliveryReceipt(message))
+          message,
     ];
+  }
+
+  bool _isDeliveryReceipt(ChannelMessage message) =>
+      !message.isOwn &&
+      (message.text == deviceDmQueuedReceipt ||
+          message.text == deviceDmAcceptedReceipt);
+
+  /// Receipts stay in the transport store for history/live dedup, but only
+  /// project onto their original outbound bubble. Acceptance is monotonic:
+  /// a delayed queued retry cannot regress an already accepted message.
+  FaChatDeliveryStatus? _deliveryFor(ChannelMessage message) {
+    if (!message.isOwn || !isDmChannel(channelId)) return null;
+    FaChatDeliveryStatus? status;
+    for (final candidate in _state.messages) {
+      if (!_isDeliveryReceipt(candidate) ||
+          candidate.sessionId != message.sessionId ||
+          candidate.replyTo != message.envelopeId) {
+        continue;
+      }
+      if (candidate.text == deviceDmAcceptedReceipt) {
+        status = FaChatDeliveryStatus.accepted;
+      } else if (status != FaChatDeliveryStatus.accepted) {
+        status = FaChatDeliveryStatus.queued;
+      }
+    }
+    return status;
   }
 
   @override
@@ -129,6 +157,7 @@ final class ChannelChatService implements FaChatService {
       return FaChatMessage(
         role: 'user',
         content: message.text ?? '_($_undecryptablePlaceholder)_',
+        deliveryStatus: _deliveryFor(message),
       );
     }
     return FaChatMessage(
@@ -142,11 +171,33 @@ final class ChannelChatService implements FaChatService {
   String _senderName(ChannelMessage message) {
     // The envelope-carried name wins (hub-originated DAP agents are not in
     // the fa_network roster — fa_network#2); members resolve via roster.
+    // Raw session UUIDs are routing ids, not human sender names. Reuse the
+    // Devices display chain so restored replies and receipt/system rows get
+    // exactly the same friendly CLI · first8…last4 fallback.
+    String friendly(String value) {
+      final sessionId = message.sessionId;
+      if (deviceSessionIdIsUuid(value)) {
+        return deviceSessionDisplayTitle(
+          id: value,
+          title: value,
+          cliFallback: true,
+        );
+      }
+      if (sessionId != null && value.contains(sessionId)) {
+        return deviceSessionDisplayTitle(
+          id: sessionId,
+          title: value,
+          cliFallback: true,
+        );
+      }
+      return value;
+    }
+
     final claimed = message.senderName;
-    if (claimed != null && claimed.isNotEmpty) return claimed;
+    if (claimed != null && claimed.isNotEmpty) return friendly(claimed);
     final member = session.roster[message.senderId];
     final name = member?.displayName;
-    return (name == null || name.isEmpty) ? message.senderId : name;
+    return friendly((name == null || name.isEmpty) ? message.senderId : name);
   }
 
   String _transcriptPlaceholder(bool isOwn) => !isDmChannel(channelId) && !isOwn

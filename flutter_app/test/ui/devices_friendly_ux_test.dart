@@ -55,51 +55,93 @@ void main() {
       expect(snippet, '${'a' * 59}…');
     });
 
-    test('display name, project folder, then short id is the complete chain', () {
-      const id = '123e4567-e89b-12d3-a456-426614174000';
-      expect(
-        deviceSessionDisplayTitle(
-          id: id,
-          title: 'Release plan',
-          path: '/work/flutter_agent',
-        ),
-        'Release plan',
-      );
-      expect(
-        deviceSessionDisplayTitle(
-          id: id,
-          title: id,
-          path: '/work/flutter_agent',
-        ),
-        'flutter_agent',
-        reason: 'a first-message snippet is not the session display name',
-      );
-      expect(
-        deviceSessionDisplayTitle(
-          id: id,
-          title: id,
-          path: '/work/flutter_agent/',
-        ),
-        'flutter_agent',
-      );
-      expect(
-        deviceSessionDisplayTitle(id: id, path: r'C:\work\flutter_agent'),
-        'flutter_agent',
-      );
-      expect(deviceSessionDisplayTitle(id: id, title: id), '123e4567…');
-      expect(
-        deviceSessionDisplayTitle(id: id, title: 'mymac · $id'),
-        'mymac · 123e4567…',
-      );
-      expect(
-        deviceSessionDisplayTitle(
-          id: id,
-          title: 'mymac · $id',
-          path: '/work/flutter_agent',
-        ),
-        'mymac · flutter_agent',
-      );
-    });
+    test(
+      'display name, project folder, then short id is the complete chain',
+      () {
+        const id = '123e4567-e89b-12d3-a456-426614174000';
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            title: 'Release plan',
+            path: '/work/flutter_agent',
+          ),
+          'Release plan',
+        );
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            title: id,
+            path: '/work/flutter_agent',
+          ),
+          'flutter_agent',
+          reason: 'a first-message snippet is not the session display name',
+        );
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            title: id,
+            path: '/work/flutter_agent/',
+          ),
+          'flutter_agent',
+        );
+        expect(
+          deviceSessionDisplayTitle(id: id, path: r'C:\work\flutter_agent'),
+          'flutter_agent',
+        );
+        expect(deviceSessionDisplayTitle(id: id, title: id), '123e4567…4000');
+        expect(
+          deviceSessionDisplayTitle(id: id, title: 'mymac · $id'),
+          'mymac · 123e4567…4000',
+        );
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            title: 'mymac · $id',
+            path: '/work/flutter_agent',
+          ),
+          'mymac · flutter_agent',
+        );
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            title: '123e4567-e89b-12d3',
+            path: '/work/flutter_agent',
+          ),
+          'flutter_agent',
+          reason: 'a legacy peer may truncate a raw id before publishing it',
+        );
+        expect(
+          deviceSessionDisplayTitle(id: id, title: '123e4567-e89b-12d3'),
+          '123e4567…4000',
+        );
+        expect(
+          deviceSessionDisplayTitle(
+            id: id,
+            preview: 'Last DM answer from the peer',
+            cliFallback: true,
+          ),
+          'CLI · Last DM answer from the peer',
+        );
+        expect(
+          deviceSessionDisplayTitle(id: id, cliFallback: true),
+          'CLI · 123e4567…4000',
+        );
+      },
+    );
+  });
+
+  test('session path subtitles preserve both ends with a middle ellipsis', () {
+    expect(
+      deviceSessionPathSubtitle(
+        '/Users/Uladzimir_Klyshevich/git/flutter_js_widget_runtime',
+      ),
+      '/Users/Uladz…idget_runtime',
+    );
+    expect(
+      deviceSessionPathSubtitle('/work/flutter_agent'),
+      '/work/flutter_agent',
+    );
+    expect(deviceSessionPathSubtitle(null), '');
   });
 
   test(
@@ -232,6 +274,11 @@ void main() {
     );
     expect(card.title, 'flutter_agent');
     expect(card.title, isNot('123e4567'));
+    expect(
+      find.text('/work/flutter_agent'),
+      findsOneWidget,
+      reason: 'the path remains visible even when its basename is the title',
+    );
   });
 
   testWidgets('sleeping remote session opens DM with address and session id', (
@@ -309,7 +356,7 @@ void main() {
     final card = tester.widget<DeviceSessionCard>(
       find.byKey(const ValueKey('sessionRow:$sessionId')),
     );
-    expect(card.title, 'flutter_agent');
+    expect(card.title, 'CLI · flutter_agent');
     expect(card.onTap, isNotNull);
     await tester.tap(find.byKey(const ValueKey('sessionRow:$sessionId')));
 
@@ -317,7 +364,7 @@ void main() {
     expect(openedLabel, 'Duo');
     expect(openedAddress, 'fa@dev-duo-000');
     expect(openedSession, sessionId);
-    expect(openedSessionTitle, 'flutter_agent');
+    expect(openedSessionTitle, 'CLI · flutter_agent');
   });
 
   testWidgets('named remote catalog rows render snippet/cwd/activity and '
@@ -358,7 +405,7 @@ void main() {
                   'id': 'live-row',
                   'state': 'live',
                   'networks': ['net-personal'],
-                  'title': 'Current plan',
+                  'displayName': 'Current plan',
                   'path': '/work/flutter_agent',
                   'lastActivity': '2026-11-12T12:00:00Z',
                 },
@@ -385,105 +432,117 @@ void main() {
     DeviceSessionCard card(String id) => tester.widget<DeviceSessionCard>(
       find.byKey(ValueKey('sessionRow:$id')),
     );
-    expect(card(uuid).title, 'flutter_agent');
+    expect(card(uuid).title, 'CLI · flutter_agent');
     expect(card(uuid).title, isNot(uuid));
-    expect(card(uuid).title, isNot('123e4567…'));
+    expect(card(uuid).title, isNot('123e4567…4000'));
     expect(card(uuid).subtitle, contains('/work/flutter_agent'));
-    expect(card(uuid).subtitle, contains('Wake on DM'));
+    expect(card(uuid).stateLabel, 'Wake on DM');
     expect(card(uuid).timestamp, isNotEmpty);
     expect(card('live-row').title, 'Current plan');
-    expect(card('live-row').subtitle, contains('Online'));
+    expect(card('live-row').stateLabel, 'Online');
     expect(card('offline-row').title, 'Old plan');
-    expect(card('offline-row').subtitle, contains('Offline'));
+    expect(card('offline-row').stateLabel, 'Offline');
     expect(card(uuid).showPresenceDot, isTrue);
     expect(card('offline-row').showPresenceDot, isTrue);
   });
 
-  testWidgets('devices reuse Networks rows, mini-strip, header and flat sessions', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    const unnamedId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
-    const folderId = '123e4567-e89b-12d3-a456-426614174000';
-    const fallbackId = '89abcdef-e89b-12d3-a456-426614174000';
-    final service = FakeDevicesService(
-      initialPhase: DeviceConnectorPhase.online,
-      deviceId: 'dev-own',
-      ownDevice: const DeviceInfo(
+  testWidgets(
+    'devices reuse Networks rows, mini-strip, header and flat sessions',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const unnamedId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
+      const folderId = '123e4567-e89b-12d3-a456-426614174000';
+      const fallbackId = '89abcdef-e89b-12d3-a456-426614174000';
+      final service = FakeDevicesService(
+        initialPhase: DeviceConnectorPhase.online,
         deviceId: 'dev-own',
-        name: 'workstation',
-        friendlyName: 'Workstation',
-      ),
-      rosterDevices: const [
-        DeviceInfo(deviceId: 'dev-mac', name: 'mymac', presence: 'online'),
-        DeviceInfo(deviceId: unnamedId, name: '', presence: 'online'),
-      ],
-    );
-    final sessions = chatListOf([
-      _entry('named', title: 'Release assistant'),
-      _entry(
-        folderId,
-        preview: 'This prompt must not replace the project folder',
-        folderPath: '/work/flutter_agent',
-      ),
-      _entry(fallbackId),
-    ]);
+        ownDevice: const DeviceInfo(
+          deviceId: 'dev-own',
+          name: 'workstation',
+          friendlyName: 'Workstation',
+        ),
+        rosterDevices: const [
+          DeviceInfo(deviceId: 'dev-mac', name: 'mymac', presence: 'online'),
+          DeviceInfo(deviceId: unnamedId, name: '', presence: 'online'),
+        ],
+      );
+      final sessions = chatListOf([
+        _entry('named', title: 'Release assistant'),
+        _entry(
+          folderId,
+          preview: 'This prompt must not replace the project folder',
+          folderPath: '/work/flutter_agent',
+        ),
+        _entry(fallbackId),
+      ]);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        home: Scaffold(
-          body: DevicesPage(
-            service: service,
-            sessions: sessions,
-            compact: true,
-            now: () => DateTime.utc(2026, 11, 12),
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          home: Scaffold(
+            body: DevicesPage(
+              service: service,
+              sessions: sessions,
+              compact: true,
+              now: () => DateTime.utc(2026, 11, 12),
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
+      );
+      await tester.pump();
+      await tester.pump();
 
-    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
-    expect(find.byType(VerticalDivider), findsNothing);
-    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsNothing);
-    expect(tester.getSize(find.byKey(const ValueKey('deviceRow'))).height, 70);
-    expect(find.text('This device · Online'), findsOneWidget);
-    expect(find.text('Workstation'), findsOneWidget);
-    expect(find.text('mymac'), findsOneWidget);
-    expect(find.text('01a15985…'), findsOneWidget);
-    expect(find.text('Online'), findsWidgets);
-    expect(find.byKey(const ValueKey('devicePane:dev-own')), findsNothing);
+      expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
+      expect(find.byType(VerticalDivider), findsNothing);
+      expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsNothing);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('deviceRow'))).height,
+        70,
+      );
+      expect(find.text('This device · Online'), findsOneWidget);
+      expect(find.text('Workstation'), findsOneWidget);
+      expect(find.text('mymac'), findsOneWidget);
+      expect(find.text('01a15985…a9c2'), findsOneWidget);
+      expect(find.text('Online'), findsWidgets);
+      expect(find.byKey(const ValueKey('devicePane:dev-own')), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('deviceRow')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsOneWidget);
-    expect(find.byKey(const ValueKey('devicePane:dev-own')), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceBackButton')), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceOptionsMenu')), findsOneWidget);
-    expect(find.byKey(const ValueKey('currentDeviceBadge')), findsOneWidget);
-    expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsNothing);
-    expect(find.byType(MessengerPanelRow), findsWidgets);
-    expect(find.byType(NeutralGlyphAvatar), findsNothing);
-    expect(find.text('Workstation'), findsWidgets);
-    expect(find.text('Release assistant'), findsOneWidget);
-    expect(find.text('flutter_agent'), findsOneWidget);
-    expect(find.text('89abcdef…'), findsOneWidget);
-    expect(find.textContaining('This prompt must not'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('deviceRow')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('deviceSelectedCapsule')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('devicePane:dev-own')), findsOneWidget);
+      expect(find.byKey(const ValueKey('deviceBackButton')), findsOneWidget);
+      expect(find.byKey(const ValueKey('deviceOptionsMenu')), findsOneWidget);
+      expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+      expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsNothing);
+      expect(find.byKey(const ValueKey('currentDeviceBadge')), findsNothing);
+      expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsNothing);
+      expect(find.byType(MessengerPanelRow), findsWidgets);
+      expect(find.byType(NeutralGlyphAvatar), findsNothing);
+      expect(find.text('Workstation'), findsWidgets);
+      expect(find.text('Release assistant'), findsOneWidget);
+      expect(find.text('flutter_agent'), findsOneWidget);
+      expect(find.text('89abcdef…4000'), findsOneWidget);
+      expect(find.textContaining('This prompt must not'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('deviceBackButton')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('deviceRow:$unnamedId')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
-    expect(find.byKey(const ValueKey('devicePane:$unnamedId')), findsOneWidget);
-    expect(find.text('01a15985…'), findsWidgets);
-  });
+      await tester.tap(find.byKey(const ValueKey('deviceBackButton')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('deviceRow:$unnamedId')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('deviceRail')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('devicePane:$unnamedId')),
+        findsOneWidget,
+      );
+      expect(find.text('01a15985…a9c2'), findsWidgets);
+    },
+  );
 
   testWidgets('repaired app enrollment unions with same-host CLI enrollment', (
     tester,

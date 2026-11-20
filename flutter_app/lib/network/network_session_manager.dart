@@ -339,6 +339,19 @@ final class NetworkSessionManager extends ChangeNotifier {
       return Future.value(_jwt);
     }
 
+    return _refreshAccount(account);
+  }
+
+  /// Forces one shared refresh even when the wallet's declared access-token
+  /// expiry is still in the future. A 401 is the server's authoritative
+  /// signal that rotation/revocation made that cached token unusable.
+  Future<String?> refreshAccountJwt() {
+    final account = _wallet.account;
+    if (account == null) return Future.value(null);
+    return _refreshAccount(account);
+  }
+
+  Future<String?> _refreshAccount(WalletAccount account) {
     final inFlight = _jwtRefreshInFlight;
     if (inFlight != null) return inFlight;
     final refresh = _refreshExpiredAccount(account);
@@ -666,6 +679,8 @@ final class NetworkSessionManager extends ChangeNotifier {
       client: client,
       ws: ws,
       wallet: _wallet,
+      freshAccountToken: ensureFreshJwt,
+      refreshAccountToken: refreshAccountJwt,
     );
     sessions[networkId] = session;
     notifyListeners();

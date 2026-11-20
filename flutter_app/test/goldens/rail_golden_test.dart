@@ -108,10 +108,18 @@ const _unnamedDeviceId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
 const _folderSessionId = '123e4567-e89b-12d3-a456-426614174000';
 const _fallbackSessionId = '89abcdef-e89b-12d3-a456-426614174000';
 const _remoteFallbackSessionId = 'abcdef12-e89b-12d3-a456-426614174000';
+const _ownerSessionId = '01a15985-f6c3-7345-ae10-e44fc7a9c201';
+const _releaseSessionId = '234e4567-e89b-12d3-a456-426614174000';
+const _opsSessionId = '345e4567-e89b-12d3-a456-426614174000';
+const _cliAgentId = '456e4567-e89b-12d3-a456-426614174000';
 
-Future<void> _pumpAdaptiveDevices(WidgetTester tester, Size size) async {
+Future<void> _pumpAdaptiveDevices(
+  WidgetTester tester,
+  Size size, {
+  DeviceConnectorPhase phase = DeviceConnectorPhase.online,
+}) async {
   final service = FakeDevicesService(
-    initialPhase: DeviceConnectorPhase.online,
+    initialPhase: phase,
     deviceId: 'self',
     ownDevice: const DeviceInfo(
       deviceId: 'self',
@@ -142,11 +150,33 @@ Future<void> _pumpAdaptiveDevices(WidgetTester tester, Size size) async {
                 'state': 'live',
                 'dmPub': 'cHViLW1hYw==',
               },
+              {
+                'address': _cliAgentId,
+                'state': 'live',
+                'dmPub': 'cHViLWNsaQ==',
+              },
             ],
             'sessions': [
               {
-                'id': 'remote-folder',
-                'title': 'remote-folder',
+                'id': _ownerSessionId,
+                'displayName': 'goal_builder',
+                'lastDmPreview': 'Latest peer answer from the named CLI',
+                'path':
+                    '/Users/Uladzimir_Klyshevich/git/flutter_js_widget_runtime',
+                'state': 'live',
+                'lastActivity': '2025-12-01T09:30:00.000Z',
+              },
+              {
+                'id': _releaseSessionId,
+                'lastDmPreview': 'Release review completed on the peer',
+                'path': '/work/flutter_agent',
+                'state': 'wake_on_dm',
+                'lastActivity': '2025-12-01T09:30:00.000Z',
+              },
+              {
+                'id': _opsSessionId,
+                'displayName': 'Ops console',
+                'lastDmPreview': 'Latest operations reply',
                 'path': '/work/ops',
                 'state': 'wake_on_dm',
                 'lastActivity': '2025-12-01T09:30:00.000Z',
@@ -183,7 +213,7 @@ Future<void> _pumpAdaptiveDevices(WidgetTester tester, Size size) async {
       service: service,
       sessions: sessions,
       compact: size.width < 640,
-      now: () => DateTime.utc(2025, 12, 2),
+      now: () => DateTime.utc(2025, 12, 1, 11, 30),
     ),
     size: size,
     theme: buildFaTheme(
@@ -350,26 +380,51 @@ void main() {
     expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
     expect(find.byKey(const ValueKey('deviceSelectedCapsule')), findsNothing);
     expect(find.text('mymac'), findsOneWidget);
-    expect(find.text('01a15985…'), findsOneWidget);
+    expect(find.text('01a15985…a9c2'), findsOneWidget);
     await expectGolden(tester, 'devices_phone_list');
 
     await tester.tap(find.byKey(const ValueKey('deviceRow')));
     await tester.pumpAndSettle();
     expect(find.text('Release assistant'), findsOneWidget);
     expect(find.text('flutter_agent'), findsOneWidget);
-    expect(find.text('89abcdef…'), findsOneWidget);
+    expect(find.text('/work/flutter_agent'), findsNWidgets(2));
+    expect(find.text('89abcdef…4000'), findsOneWidget);
     expect(find.byType(MessengerPanelRow), findsWidgets);
     expect(find.byType(DeviceSessionCard), findsWidgets);
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.text('Workstation'), findsOneWidget);
     await expectGolden(tester, 'devices_phone_sessions');
 
     await tester.tap(find.byKey(const ValueKey('deviceBackButton')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
     await tester.pumpAndSettle();
-    expect(find.text('ops'), findsOneWidget);
-    expect(find.text('abcdef12…'), findsOneWidget);
+    expect(find.text('goal_builder'), findsOneWidget);
+    expect(find.text('/Users/Uladz…idget_runtime'), findsOneWidget);
+    expect(find.text('CLI · flutter_agent'), findsOneWidget);
+    expect(find.text('Ops console'), findsOneWidget);
+    expect(find.text('CLI · 456e4567…4000'), findsOneWidget);
+    expect(find.text('CLI · abcdef12…4000'), findsOneWidget);
     expect(find.text(_remoteFallbackSessionId), findsNothing);
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.text('mymac'), findsOneWidget);
     await expectGolden(tester, 'devices_phone_remote_sessions');
+  });
+
+  testWidgets('Devices phone connecting keeps the populated list geometry', (
+    tester,
+  ) async {
+    await _pumpAdaptiveDevices(
+      tester,
+      goldenSizePhone,
+      phase: DeviceConnectorPhase.connecting,
+    );
+
+    expect(find.byKey(const ValueKey('devicesConnecting')), findsOneWidget);
+    expect(find.byKey(const ValueKey('deviceList')), findsOneWidget);
+    expect(find.textContaining('This device'), findsWidgets);
+    expect(find.byKey(const ValueKey('devicesSkeleton')), findsNothing);
+    await expectGolden(tester, 'devices_phone_connecting');
   });
 
   testWidgets('Devices desktop reuses the Networks list and mini-strip', (
@@ -388,12 +443,21 @@ void main() {
     expect(find.byType(VerticalDivider), findsNothing);
     expect(find.text('Release assistant'), findsOneWidget);
     expect(find.text('flutter_agent'), findsOneWidget);
+    expect(find.text('/work/flutter_agent'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.text('Workstation'), findsOneWidget);
     await expectGolden(tester, 'devices_desktop');
 
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-mac')));
     await tester.pumpAndSettle();
-    expect(find.text('ops'), findsOneWidget);
-    expect(find.text('abcdef12…'), findsOneWidget);
+    expect(find.text('goal_builder'), findsOneWidget);
+    expect(find.text('/Users/Uladz…idget_runtime'), findsOneWidget);
+    expect(find.text('CLI · flutter_agent'), findsOneWidget);
+    expect(find.text('Ops console'), findsOneWidget);
+    expect(find.text('CLI · 456e4567…4000'), findsOneWidget);
+    expect(find.text('CLI · abcdef12…4000'), findsOneWidget);
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.text('mymac'), findsOneWidget);
     await expectGolden(tester, 'devices_desktop_remote_sessions');
   });
 
@@ -427,7 +491,7 @@ void main() {
         service: service,
         sessions: sessions,
         initialDeviceId: 'self',
-        now: () => DateTime.utc(2025, 12, 2),
+        now: () => DateTime.utc(2025, 12, 1, 11, 30),
       ),
       size: goldenSizeDesktop,
       theme: buildFaTheme(

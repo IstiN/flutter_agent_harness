@@ -270,6 +270,7 @@ final class MessengerPanelRow extends StatelessWidget {
     required this.onTap,
     this.leading,
     this.timestamp = '',
+    this.metaSuffix = '',
     this.metaTrailing,
   });
 
@@ -280,6 +281,10 @@ final class MessengerPanelRow extends StatelessWidget {
   final VoidCallback? onTap;
   final Widget? leading;
   final String timestamp;
+
+  /// Non-flexing metadata (for example relative activity) that remains
+  /// visible even when the flexible host/project label needs an ellipsis.
+  final String metaSuffix;
   final Widget? metaTrailing;
 
   @override
@@ -343,6 +348,7 @@ final class MessengerPanelRow extends StatelessWidget {
                               ],
                             ),
                             if ((meta?.isNotEmpty ?? false) ||
+                                metaSuffix.isNotEmpty ||
                                 metaTrailing != null) ...[
                               const SizedBox(height: 3),
                               Row(
@@ -359,6 +365,16 @@ final class MessengerPanelRow extends StatelessWidget {
                                       ),
                                     ),
                                   ),
+                                  if (metaSuffix.isNotEmpty)
+                                    Text(
+                                      '${(meta?.isNotEmpty ?? false) ? ' · ' : ''}$metaSuffix',
+                                      maxLines: 1,
+                                      style: TextStyle(
+                                        color: subdued,
+                                        fontSize: 12,
+                                        height: 1.2,
+                                      ),
+                                    ),
                                   ?metaTrailing,
                                 ],
                               ),

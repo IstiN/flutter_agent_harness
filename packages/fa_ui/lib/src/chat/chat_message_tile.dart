@@ -281,6 +281,29 @@ class ChatMessageTile extends StatelessWidget {
                     _onMarkdownLink(context, text, href, title),
               ),
             ),
+            if (isUser && message.deliveryStatus != null)
+              Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    switch (message.deliveryStatus!) {
+                      FaChatDeliveryStatus.queued => Icons.schedule,
+                      FaChatDeliveryStatus.accepted => Icons.done_all,
+                    },
+                    key: ValueKey(
+                      'chatDelivery-${message.deliveryStatus!.name}',
+                    ),
+                    size: switch (message.deliveryStatus!) {
+                      FaChatDeliveryStatus.queued => 12,
+                      FaChatDeliveryStatus.accepted => 14,
+                    },
+                    color: (styleSheet.p?.color ?? palette.dim).withValues(
+                      alpha: .72,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

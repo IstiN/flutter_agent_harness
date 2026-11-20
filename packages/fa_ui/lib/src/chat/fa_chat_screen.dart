@@ -1063,6 +1063,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       toolName: metadata['toolName'] as String?,
       isError: (metadata['isError'] as bool?) ?? false,
       data: metadata['data'],
+      deliveryStatus: metadata['deliveryStatus'] as FaChatDeliveryStatus?,
     );
   }
 
@@ -1523,6 +1524,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           toolName: metadata['toolName'] as String?,
           isError: (metadata['isError'] as bool?) ?? false,
           data: metadata['data'],
+          deliveryStatus: metadata['deliveryStatus'] as FaChatDeliveryStatus?,
         ),
         images: _images,
         avatarBuilder: widget.avatarBuilder,
@@ -1575,7 +1577,10 @@ class _FaChatScreenState extends State<FaChatScreen>
   ) {
     final tokens = FaDesignTokens.of(context);
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    final transcript = _wrapTranscriptKeyboardDismiss(context, _buildTranscript(context));
+    final transcript = _wrapTranscriptKeyboardDismiss(
+      context,
+      _buildTranscript(context),
+    );
     final topOverlay = <Widget>[
       ?_buildErrorBanner(context, strings),
       ?widget.noticeBanner,

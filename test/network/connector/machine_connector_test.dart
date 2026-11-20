@@ -803,6 +803,57 @@ void main() {
     });
 
     test(
+      'minted DM echo is suppressed by id before user-side decoding',
+      () async {
+        var decodeCalls = 0;
+        final connector = buildConnector(
+          decodeMail: (envelope) {
+            decodeCalls++;
+            return const DecodedMail(payload: 'must not reach the sink');
+          },
+        );
+        final written = <InboundMail>[];
+        final rejections = <RejectedMail>[];
+        const channel = 'dm:user:u1:goal@macbook';
+        connector.registerLocalSink(
+          network: 'personal-x',
+          channel: channel,
+          sink: (mail) async => written.add(mail),
+        );
+        connector.rejections.listen(rejections.add);
+        await connector.start();
+        await _waitUntil(() => connector.isConnected);
+        final sentId = await connector.sendMail(
+          network: 'personal-x',
+          channel: channel,
+          from: 'user:u1',
+          to: 'goal@macbook',
+          ciphertext: 'sealed-request',
+        );
+        await _waitUntil(
+          () => server.persistedMail.any((frame) => frame.msgId == sentId),
+        );
+        final echo = server.persistedMail.singleWhere(
+          (frame) => frame.msgId == sentId,
+        );
+        server.deliverTo(deviceId: 'macbook', mail: echo);
+        await _waitUntil(
+          () => server.received.any(
+            (frame) =>
+                frame.kind == NetworkEnvelopeKind.ack && frame.refId == sentId,
+          ),
+        );
+
+        expect(written, isEmpty);
+        expect(rejections, isEmpty);
+        expect(decodeCalls, 0);
+        expect(logs, anyElement(contains('own DM echo')));
+        await connector.stop();
+        connector.dispose();
+      },
+    );
+
+    test(
       'non-echo own-echo-shaped frame (rewritten sender) acks loudly',
       () async {
         final connector = buildConnector(

@@ -136,8 +136,8 @@ final class DeviceInfo {
     if (id is! String || id.isEmpty) {
       throw const FormatException('device row lacks a string "deviceId"');
     }
-    final name = json['name'];
-    final friendly = json['friendlyName'];
+    final name = json['name'] ?? json['hostname'] ?? json['host'];
+    final friendly = json['friendlyName'] ?? json['displayName'];
     final createdAt = json['createdAt'];
     final revokedAt = json['revokedAt'];
     final presence = json['presence'];
