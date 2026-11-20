@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-20T07:21:19.071Z",
+  "ticketKey": "gh-2336",
+  "headSha": "2d4848c723f323f8952d7a6f8ee56d8ab216487c",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:f44ef6772b078976",
+      "size": 15795
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:707a8cd81f82f5a5",
+      "size": 15209
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:d5ff832d6495982a",
+      "size": 306
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:ca823e7332bb771d",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:edee77e74d4d901d",
+      "size": 8735
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:280a5a1f46a51aa2",
+      "size": 4190
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:925e6978fc215f42",
+      "size": 3141
+    },
+    "request.md": {
+      "hash": "fnv1a64:e904acc1ecc19b29",
+      "size": 1896
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:90f954b4f818fe47",
+      "size": 794
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:34944ff1c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e87ae336140033c7",
+      "size": 1965
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e904acc1ecc19b29",
+      "size": 1896
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6534tk",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "docs/ci.md:266",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: docs/ci.md contradicts the implemented lookup-failure behavior**\n\n`docs/ci.md:266` states the artefact-cache class is \"kept on ANY ticket-state\nlookup failure (never delete blind)\". The implemented — and tested — behavior\nis narrower: a lookup failure blocks only the **early** reclaim; a stale (>24h)\ncache is still deleted by the 24h backstop:\n\n```bash\n# scripts/sweep_stale_drafts.sh:241-245\nelif [ \"$stale\" = \"true\" ]; then\n  gh api -X DELETE \"repos/$repo/releases/$id\" >/dev/null\n```\n\nEverything else in the PR states the carve-out; this sentence is the outlier:\n\n- the script's own header (sweep_stale_drafts.sh:47-48): \"KEPT on any\n  ticket-state lookup failure (never delete blind) — **only the 24h backstop\n  then applies**\";\n- the PR description's own Test Coverage bullet: \"24h backstop for\n  **open/unknown** state\";\n- the `art-backstop-unknown-stale` test, which asserts the DELETE fires and\n  reasons \"it only blocks the early reclaim\".\n\nAn auditor tracing a deleted state-unknown cache would read docs/ci.md as a\npromise of keep — and conclude the sweeper misbehaved, when in fact it did\nexactly what the header/tests specify.\n\nTwo prose strings repeat the same misstatement by describing the swept cohort\nas \"ticket still open\" when it also includes state-UNKNOWN drafts:\n\n- `scripts/sweep_stale_drafts.sh:244` — \"swept after 24h with the ticket still\n  open (parked leg …)\" — fires for lookup failures too;\n- `scripts/sweep_stale_drafts.sh:412` — \"swept after 24h when the ticket stays\n  open\".\n\nFix (one lap, doc-only + two prose strings): reword docs/ci.md:266 to\n\"kept on any ticket-state lookup failure — only the 24h backstop then applies\"\n(mirroring the script header), and make both prose strings say \"with the\nticket still open **or its state unknown**\"."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc6534vs",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/release_hygiene_test_support.dart:555",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the gh stub's permission model doesn't cover the new issues lookup**\n\nThe stub maps every `api` call to `need=contents`\n(`test/release_hygiene_test_support.dart:536` — pre-existing line), so the new\nper-ticket cycle-state lookup `gh api \"repos/$repo/issues/$num\"`\n(`scripts/sweep_stale_drafts.sh:234`) passes permission enforcement in tests\neven though in production it needs the `issues` scope. The PR Notes say the\ncall is \"covered by the job's existing `issues: write` grant\", and\ndocs/ci.md's stub rationale (review of #294) is explicitly \"a dropped grant\nfails CI instead of silently degrading\" — but for **this** call a dropped\n`issues:` grant stays green: the stub serves the fixture regardless of the\ngranted scopes, while production 403s every lookup, `state` stays empty, and\nthe early reclaim dies silently (the 24h backstop survives, so nothing breaks\nloudly — the feature just stops working with no test signal).\n\nMirror the #294 precedent this stub comment cites — refine the need-case so\n`api repos/*/issues/<n>` requires `issues`:\n\n```bash\ncase \"\\$cmd \\$2\" in\n  \"run list\"|\"run view\"|\"run watch\"|\"run rerun\") need=actions ;;\n  \"issue \"*|\"label \"*) need=issues ;;\n  \"release \"*) need=contents ;;\nesac\n# gh api: scope follows the resource path (gh-236 lookup = issues:read)\n[ \"\\$cmd\" = \"api\" ] && case \"\\$2\" in\n  */issues/*) need=issues ;;\n  *) need=contents ;;\nesac\n```\n\nSuggestion-level: the `issues` grant as a whole is still pinned indirectly —\nthe auto-close test (`issue close`) 403s without it — so nothing blocks merge\nhere; this just closes the residual silent-degradation window on the new call."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:d208dd34",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: docs/ci.md contradicts the implemented lookup-failure behavior**\n\n`docs/ci.md:266` states the artefact-cache class is \"kept on ANY ticket-state\nlookup failure (never delete blind)\". The implemented — and tested — behavior\nis narrower: a lookup failure blocks only the **early** reclaim; a stale (>24h)\ncache is still deleted by the 24h backstop:\n\n```bash\n# scripts/sweep_stale_drafts.sh:241-245\nelif [ \"$stale\" = \"true\" ]; then\n  gh api -X DELETE \"repos/$repo/releases/$id\" >/dev/null\n```\n\nEverything else in the PR states the carve-out; this sentence is the outlier:\n\n- the script's own header (sweep_stale_drafts.sh:47-48): \"KEPT on any\n  ticket-state lookup failure (never delete blind) — **only the 24h backstop\n  then applies**\";\n- the PR description's own Test Coverage bullet: \"24h backstop for\n  **open/unknown** state\";\n- the `art-backstop-unknown-stale` test, which asserts the DELETE fires and\n  reasons \"it only blocks the early reclaim\".\n\nAn auditor tracing a deleted state-unknown cache would read docs/ci.md as a\npromise of keep — and conclude the sweeper misbehaved, when in fact it did\nexactly what the header/tests specify.\n\nTwo prose strings repeat the same misstatement by describing the swept cohort\nas \"ticket still open\" when it also includes state-UNKNOWN drafts:\n\n- `scripts/sweep_stale_drafts.sh:244` — \"swept after 24h with the ticket still\n  open (parked leg …)\" — fires for lookup failures too;\n- `scripts/sweep_stale_drafts.sh:412` — \"swept after 24h when the ticket stays\n  open\".\n\nFix (one lap, doc-only + two prose strings): reword docs/ci.md:266 to\n\"kept on any ticket-state lookup failure — only the 24h backstop then applies\"\n(mirroring the script header), and make both prose strings say \"with the\nticket still open **or its state unknown**\"."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:81868fbd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the gh stub's permission model doesn't cover the new issues lookup**\n\nThe stub maps every `api` call to `need=contents`\n(`test/release_hygiene_test_support.dart:536` — pre-existing line), so the new\nper-ticket cycle-state lookup `gh api \"repos/$repo/issues/$num\"`\n(`scripts/sweep_stale_drafts.sh:234`) passes permission enforcement in tests\neven though in production it needs the `issues` scope. The PR Notes say the\ncall is \"covered by the job's existing `issues: write` grant\", and\ndocs/ci.md's stub rationale (review of #294) is explicitly \"a dropped grant\nfails CI instead of silently degrading\" — but for **this** call a dropped\n`issues:` grant stays green: the stub serves the fixture regardless of the\ngranted scopes, while production 403s every lookup, `state` stays empty, and\nthe early reclaim dies silently (the 24h backstop survives, so nothing breaks\nloudly — the feature just stops working with no test signal).\n\nMirror the #294 precedent this stub comment cites — refine the need-case so\n`api repos/*/issues/<n>` requires `issues`:\n\n```bash\ncase \"\\$cmd \\$2\" in\n  \"run list\"|\"run view\"|\"run watch\"|\"run rerun\") need=actions ;;\n  \"issue \"*|\"label \"*) need=issues ;;\n  \"release \"*) need=contents ;;\nesac\n# gh api: scope follows the resource path (gh-236 lookup = issues:read)\n[ \"\\$cmd\" = \"api\" ] && case \"\\$2\" in\n  */issues/*) need=issues ;;\n  *) need=contents ;;\nesac\n```\n\nSuggestion-level: the `issues` grant as a whole is still pinned indirectly —\nthe auto-close test (`issue close`) 403s without it — so nothing blocks merge\nhere; this just closes the residual silent-degradation window on the new call."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:342225f4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-236 artefact-cache lifecycle is well-built and correctly pinned (9 new + 125 regression tests green, shellcheck clean) — one docs-vs-behavior contradiction must be fixed first: `docs/ci.md` promises \"kept on ANY ticket-state lookup failure\", while the sweeper sweeps unknown-state caches after 24h (per its own header, the PR description, and the `art-backstop-unknown-stale` test).\n\n**Key Issues**:\n- ⚠️ `docs/ci.md:266` — lookup-failure clause mistates the behavior; same wrong \"ticket still open\" prose in `scripts/sweep_stale_drafts.sh:244` and `:412`.\n\n**Next Steps**:\n1. Reword `docs/ci.md:266` to mirror the script header (\"only the 24h backstop then applies\"); fix both prose strings to say \"still open or state unknown\".\n2. Optional: gh stub's permission model should require `issues` scope for `api .../issues/<n>` (inline suggestion).\n\n**Digest**: `scripts/sweep_stale_drafts.sh:248` — `art_kept_tags` accumulates but is never read; print it or drop it. · `scripts/sweep_stale_drafts.sh:164` — the `ai-(gh|pr)` guard hardcodes gh/pr key shapes; a future factory key (e.g. ADO `ai-ado-<n>`) silently falls back to the bot bucket and resurrects the recurring-issue bug for that shape."
+    }
+  ]
+}
