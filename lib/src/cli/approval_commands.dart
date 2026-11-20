@@ -1287,7 +1287,7 @@ extension ApprovalCommands on AgentCli {
         if (action == ForegroundBudgetAction.offer) {
           budgetOfferSurfaced(toolCallId);
         } else {
-          budgetOfferCleared();
+          budgetOfferCleared(toolCallId);
         }
         // The terminal line carries the deterministic announcement (the
         // detail IS the `[foreground-budget] …` line) — redacted the same
@@ -1801,8 +1801,10 @@ extension ApprovalCommands on AgentCli {
         _toolStarts.remove(toolCallId) ?? (null, '', const <String, dynamic>{});
     _waiting.toolCallEnded(toolCallId);
     // No offer may outlive its call (issue #1786): the call ending is the
-    // last chance to clear a stale outstanding `b` affordance.
-    budgetOfferCleared();
+    // last chance to clear a stale outstanding `b` affordance — but only
+    // the OFFERED call's end clears it (issue #2272: a parallel sibling
+    // ending must not wipe another call's live affordance).
+    budgetOfferCleared(toolCallId);
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';

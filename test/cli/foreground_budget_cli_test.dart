@@ -7,11 +7,33 @@
 /// stays byte-identical (REG-3).
 library;
 
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_steering_persistence_test.dart' show waitForSessions;
 import 'agent_cli_test_support.dart';
+
+/// A [Shell] that holds the commands keyed in [gates] until their
+/// completer completes; anything else answers immediately. The parallel
+/// batch tests release one call while the other keeps running.
+class PerCallGatedShell implements Shell {
+  PerCallGatedShell(this.gates);
+
+  final Map<String, Completer<void>> gates;
+
+  void release(String command) => gates[command]?.complete();
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    await gates[command]?.future;
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+}
 
 void main() {
   late MemoryExecutionEnv env;
@@ -32,22 +54,25 @@ void main() {
   // the watchdog rung is driven deterministically by the liveness tick
   // seam, not the clock — and the short cancel grace bounds the mock
   // shell's token-ignoring unwind after an accept.
-  AgentCli cliFor(FakeStreamFunction fake) => AgentCli(
-    config: AgentCliConfig(
-      model: testModel,
-      apiKey: '[REDACTED:Sensitive-Value]',
-      env: env,
-      sessionRoot: '/sessions',
-      approvalMode: ApprovalMode.yolo,
-      foregroundCall: const ForegroundCallBudgetConfig(
-        budget: Duration(minutes: 10),
-        cancelGrace: Duration(milliseconds: 120),
+  AgentCli cliFor(FakeStreamFunction fake, {MemoryExecutionEnv? envOverride}) {
+    final localEnv = envOverride ?? env;
+    return AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive-Value]',
+        env: localEnv,
+        sessionRoot: '/sessions',
+        approvalMode: ApprovalMode.yolo,
+        foregroundCall: const ForegroundCallBudgetConfig(
+          budget: Duration(minutes: 10),
+          cancelGrace: Duration(milliseconds: 120),
+        ),
       ),
-    ),
-    io: io,
-    streamFunction: fake.call,
-    waitingClock: () => now,
-  );
+      io: io,
+      streamFunction: fake.call,
+      waitingClock: () => now,
+    );
+  }
 
   /// One bash call the mock shell holds until the ladder acts, then the
   /// wrap-up answer and the steering-drain extension turn (consumed only
@@ -182,7 +207,83 @@ void main() {
     expect(cli.acceptOutstandingBudgetOffer(), isFalse);
     expect(cli.hasOutstandingBudgetOffer, isFalse);
 
-    cli.budgetOfferCleared();
+    // Issue #2272: a DIFFERENT call's end never clears the offer — only
+    // the offered call's own end does (#1786).
+    cli.budgetOfferSurfaced('t9');
+    cli.budgetOfferCleared('t8');
+    expect(cli.hasOutstandingBudgetOffer, isTrue);
+    cli.budgetOfferCleared('t9');
     expect(cli.hasOutstandingBudgetOffer, isFalse);
+  });
+
+  // Issue #2272: a parallel batch ends its calls independently — one
+  // call's end must never wipe another call's surfaced `b` affordance.
+  test('a sibling parallel call ending cannot clear the outstanding '
+      'budget offer; the offer\'s own call end still does', () async {
+    // Both calls held; the offer (offer on the watched calls at the tick)
+    // surfaces while both are in flight, then ONE call ends.
+    final gates = {
+      'make release-a': Completer<void>(),
+      'make release-b': Completer<void>(),
+    };
+    final localEnv = MemoryExecutionEnv(
+      cwd: '/work',
+      shell: PerCallGatedShell(gates),
+    );
+    final fake = FakeStreamFunction([
+      toolTurn(const [
+        ToolCall(
+          id: 'ta',
+          name: 'bash',
+          arguments: {'command': 'make release-a'},
+        ),
+        ToolCall(
+          id: 'tb',
+          name: 'bash',
+          arguments: {'command': 'make release-b'},
+        ),
+      ]),
+      textTurn('steered reply'),
+      textTurn('done'),
+      textTurn('spare'),
+    ]);
+    final cli = cliFor(fake, envOverride: localEnv);
+    final run = cli.run();
+    await waitForSessions(localEnv);
+    io.sendLine('hi');
+    await waitForIt(
+      () => cli.toolLivenessCallsForTest.length == 2,
+      reason: 'both parallel calls watched',
+    );
+
+    // The offer rung is only eligible with steering pending (UT-1).
+    await cli.steerForTest('switch to plan b');
+    now = now.add(const Duration(seconds: 300));
+    cli.toolLivenessTickForTest();
+    await waitForIt(
+      () => cli.hasOutstandingBudgetOffer,
+      reason: 'the watchdog offer reached the CLI surface',
+    );
+
+    // AC1: the FIRST call ends while the offer is outstanding — a
+    // different call's end must leave the affordance armed (the loop
+    // ladder still holds its offer; interactive escape must survive).
+    gates['make release-a']!.complete();
+    await waitForIt(
+      () => cli.toolLivenessCallsForTest.length == 1,
+      reason: 'the first call ended',
+    );
+    expect(cli.hasOutstandingBudgetOffer, isTrue);
+
+    // AC2 (REG, #1786): the offer's own call ending still clears it.
+    gates['make release-b']!.complete();
+    await waitForIt(
+      () => cli.toolLivenessCallsForTest.isEmpty,
+      reason: 'the second call ended',
+    );
+    expect(cli.hasOutstandingBudgetOffer, isFalse);
+
+    io.sendLine('/exit');
+    await run;
   });
 }
