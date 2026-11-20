@@ -2281,6 +2281,14 @@ class AgentCli {
   /// a picker selection resolves to metadata without a second round trip.
   List<SessionListRow>? _lastSessionRows;
 
+  /// Whether the active session was MINTED by this process (`_createSession`)
+  /// rather than loaded from an existing file (`_loadSession`): the gh-1660
+  /// litter contract deletes an untouched session on switch/exit even when
+  /// it is named (the trash releases the name binding with the file), while
+  /// a session this process only FOUND — the #2320 incident twin — never
+  /// becomes empty-cleanup food when it carries a name anchor.
+  bool _sessionIsHomegrown = false;
+
   /// Whether the sessions picker shows the flat single-level list instead
   /// of the tree (toggled from the picker's first item).
   bool _sessionPickerFlat = false;
