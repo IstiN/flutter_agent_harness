@@ -472,9 +472,12 @@ extension AgentCliMessagingFlow on AgentCli {
 }
 
 /// Builds the detached wake command for an asleep mailbox:
-/// `nohup <exe> --session <name> "<prompt>" >/dev/null 2>&1 &`. Single
-/// quotes every shell word; falls back to `fa` on PATH when [wakeExecutable]
-/// is null/empty and to [sessionId] when [sessionName] is.
+/// `nohup <exe> --session <id> "<prompt>" >/dev/null 2>&1 &`. Single
+/// quotes every shell word and falls back to `fa` on PATH when
+/// [wakeExecutable] is null/empty. The stable id is mandatory: a display
+/// name can be shared by several sessions, and a headless wake cannot resolve
+/// the interactive same-name picker. [sessionName] remains only for source
+/// compatibility with older embedders and is deliberately not an address.
 String mailboxWakeCommand({
   String? wakeExecutable,
   required String sessionId,
@@ -483,11 +486,8 @@ String mailboxWakeCommand({
   final exe = (wakeExecutable == null || wakeExecutable.isEmpty)
       ? 'fa'
       : wakeExecutable;
-  final address = (sessionName == null || sessionName.isEmpty)
-      ? sessionId
-      : sessionName;
   String q(String s) => "'${s.replaceAll("'", r"'\''")}'";
-  return 'nohup ${q(exe)} --session ${q(address)} '
+  return 'nohup ${q(exe)} --session ${q(sessionId)} '
       '${q(wakePromptText)} >/dev/null 2>&1 & echo woken';
 }
 

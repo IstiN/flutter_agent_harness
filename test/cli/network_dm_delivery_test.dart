@@ -107,12 +107,14 @@ void main() {
         hasLength(1),
         reason: 'redelivery was deduped before steering',
       );
-      for (final receipt in server.persistedMail.where(
-        (frame) => frame.to == 'user:user-1',
-      )) {
+      final receipts = server.persistedMail
+          .where((frame) => frame.to == 'user:user-1')
+          .toList();
+      for (final (index, receipt) in receipts.indexed) {
         expect(await _decryptReply(receipt, user), {
           'text': deviceDmAcceptedReceipt,
           'sessionId': cli.subagentManager.mailboxPrefix,
+          'replyTo': 'app-dm-${index + 1}',
         });
       }
       expect(
@@ -150,10 +152,7 @@ void main() {
           ToolCall(
             id: 'network-reply-1',
             name: 'agent_message',
-            arguments: {
-              'to': 'network-dm-1',
-              'message': 'CLI encrypted reply',
-            },
+            arguments: {'to': 'network-dm-1', 'message': 'CLI encrypted reply'},
           ),
         ]),
       );
@@ -169,6 +168,7 @@ void main() {
       expect(await _decryptReply(reply, user), {
         'text': 'CLI encrypted reply',
         'sessionId': cli.subagentManager.mailboxPrefix,
+        'replyTo': 'app-dm-1',
       });
       final directoryText = fake.contexts
           .expand((context) => context.messages)

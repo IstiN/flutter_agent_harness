@@ -805,12 +805,10 @@ final class NetworkPresenceController
       try {
         // The production launcher is AgentCli._launchMailboxWake, which
         // delegates to launchMailboxWake: exact catalog cwd + gh-1744 guard +
-        // mailboxWakeCommand targeting the explicit session name/id.
-        error = await launcher(
-          cwd: target.cwd,
-          sessionId: target.id,
-          sessionName: target.sessionName,
-        );
+        // mailboxWakeCommand targeting the stable session id. A friendly
+        // name is not unique and would strand a headless wake on the CLI's
+        // interactive same-name picker (or resume the wrong session).
+        error = await launcher(cwd: target.cwd, sessionId: target.id);
       } on Object {
         error = 'wake launcher failed';
       } finally {

@@ -412,6 +412,7 @@ void main() {
         expect(restored.hashCode, route.hashCode);
         expect(restored.sessionId, 'session-1');
         expect(restored.threaded, isTrue);
+        expect(restored.replyTo, 'frame-route');
         expect(restored.senderPubkey, base64Encode(userPub.bytes));
       },
     );
@@ -472,6 +473,7 @@ void main() {
           sessionId: 'session-1',
           senderPubkey: base64Encode(userPub.bytes),
           threaded: true,
+          replyTo: 'original-user-frame',
         );
 
         final msgId = await sendDeviceDmReply(
@@ -500,6 +502,7 @@ void main() {
         expect(jsonDecode(plaintext), {
           'text': 'accepted, awaiting steering',
           'sessionId': 'session-1',
+          'replyTo': 'original-user-frame',
         });
         final missingKeyRoute = DeviceDmReplyRoute(
           network: route.network,
@@ -536,6 +539,7 @@ void main() {
       text: 'raw assistant text',
       sessionId: null,
       threaded: false,
+      replyTo: null,
     ));
     expect(unwrapDeviceDmText('{not-json').text, '{not-json');
     expect(

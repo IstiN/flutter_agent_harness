@@ -294,6 +294,10 @@ class _DevicesPageState extends State<DevicesPage> {
       ];
       final remoteIds = remote.map((device) => device.deviceId).toSet();
       setState(() {
+        // Enrollment can finish AFTER a cached server roster was replayed.
+        // At that point the formerly anonymous own echo is known by id and
+        // must leave the remote source, not merely be hidden by the layout.
+        if (ownId != null && ownId.isNotEmpty) _remote.remove(ownId);
         // A successful account snapshot also RETIRES rows that disappeared
         // or were revoked. Presence-only rows stay until the next roster
         // refresh; cached REST rows must not become permanent phantoms.
@@ -305,9 +309,7 @@ class _DevicesPageState extends State<DevicesPage> {
           _remote[device.deviceId] = _RemoteDeviceNode(
             roster: device,
             presence: previous?.presence,
-            agentDmPubs: device.agentDmPubs.isNotEmpty
-                ? device.agentDmPubs
-                : previous?.agentDmPubs ?? const {},
+            agentDmPubs: _mergedAgentDmPubs(device, previous),
             rosterFromAccount: true,
           );
         }
@@ -319,6 +321,13 @@ class _DevicesPageState extends State<DevicesPage> {
       if (identical(service, widget.service)) _fetchingRoster = false;
     }
   }
+
+  Map<String, String> _mergedAgentDmPubs(
+    DeviceInfo device,
+    _RemoteDeviceNode? previous,
+  ) => device.agentDmPubs.isNotEmpty
+      ? device.agentDmPubs
+      : previous?.agentDmPubs ?? const {};
 
   @override
   void dispose() {
@@ -338,6 +347,16 @@ class _DevicesPageState extends State<DevicesPage> {
   /// `payload.devices`. The legacy device-level `payload.deviceId` shape
   /// remains a fallback for older connectors.
   void _onFrame(NetworkEnvelope envelope) {
+    // A roster replay can precede credential restoration. Once the local id
+    // is available, retract its already-cached echo at the source as well as
+    // filtering new own frames below.
+    final ownId = widget.service.deviceId;
+    if (ownId != null &&
+        ownId.isNotEmpty &&
+        _remote.remove(ownId) != null &&
+        mounted) {
+      setState(() {});
+    }
     final devices = envelope.payload['devices'];
     if (devices is List) {
       _onServerDevices(envelope, devices);
@@ -750,9 +769,8 @@ class _DevicesPageState extends State<DevicesPage> {
             final selected = _resolveSelected(devices);
             final drilledIn = _selectedDeviceId != null;
             final items = _avatarItems(context, devices);
-            void open(String id) => _selectDevice(
-              devices.firstWhere((device) => device.id == id),
-            );
+            void open(String id) =>
+                _selectDevice(devices.firstWhere((device) => device.id == id));
             return MessengerDrilldownBody(
               key: const ValueKey('deviceDrilldownBody'),
               drilledIn: drilledIn,
@@ -871,7 +889,9 @@ class _DevicesPageState extends State<DevicesPage> {
     final grouping = _RemoteDeviceGrouping.build(
       entries: [
         for (final entry in _remote.entries)
-          if (!_hiddenRemoteEnrollment(entry.value)) entry,
+          if (entry.key != widget.service.deviceId &&
+              !_hiddenRemoteEnrollment(entry.value))
+            entry,
       ],
       ownMachineKey: ownMachineKey,
       ownSessionIds: ownSessionIds,
@@ -1348,7 +1368,6 @@ class _DeviceEntry {
   /// The platform glyph override (null = the generic device vector glyph).
   final FaSemanticIcon? icon;
 }
-
 
 /// The device avatar: the strip avatar's geometry ([folderAvatarGradient]
 /// seeded by the device id — circles rest unselected, the selected one
@@ -1849,4 +1868,3 @@ class _RenameDeviceDialogState extends State<_RenameDeviceDialog> {
     );
   }
 }
-

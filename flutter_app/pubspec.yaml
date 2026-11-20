@@ -96,7 +96,7 @@ dependencies:
   # R1 and Flutter GPU presentation, and the current QuickJS isolate fixes.
   # It requires quickjs_runtime ^0.4.9; the vendored 0.4.9 below supplies
   # that API with the Android libpthread linker fix applied.
-  js_widget_runtime: 0.4.204
+  js_widget_runtime: 0.4.208
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that
@@ -257,7 +257,7 @@ dependency_overrides:
   # (composer fa_tui needs LineEditor, which the hosted 2.x predates.)
   dart_tui:
     path: ../vendor/dart_tui
-  # js_widget_runtime 0.4.204 requires quickjs_runtime ^0.4.9. Upstream
+  # js_widget_runtime 0.4.208 requires quickjs_runtime ^0.4.9. Upstream
   # 0.4.9 fixes the old Windows/MSVC and isolate drain/stack issues, but
   # still links `-lpthread` on Android (the NDK has no libpthread since
   # r18). Consume vendored 0.4.9 with that one linker delta plus the

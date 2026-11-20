@@ -106,6 +106,104 @@ void main() {
   );
 
   test(
+    'a selected session keeps its own row and one correlated queue state',
+    () async {
+      const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
+      final state = ChannelState();
+      state.add(
+        const ChannelMessage(
+          envelopeId: 'original-1',
+          senderId: 'u-1',
+          senderPub: '',
+          text: 'сделал',
+          isOwn: true,
+          sessionId: sessionId,
+        ),
+      );
+      // 1.0.751 receipts have no replyTo: infer the preceding own envelope.
+      for (final id in const ['queued-1', 'queued-2']) {
+        state.add(
+          ChannelMessage(
+            envelopeId: id,
+            senderId: 'main@device',
+            senderPub: '',
+            text: 'queued / not listening',
+            isOwn: false,
+            sessionId: sessionId,
+          ),
+        );
+      }
+      // A current peer carries the original id explicitly; it must coalesce
+      // with the legacy retries too, while a second user turn gets new state.
+      state.add(
+        const ChannelMessage(
+          envelopeId: 'queued-3',
+          senderId: 'main@device',
+          senderPub: '',
+          text: 'queued / not listening',
+          isOwn: false,
+          sessionId: sessionId,
+          replyTo: 'original-1',
+        ),
+      );
+      state.add(
+        const ChannelMessage(
+          envelopeId: 'original-2',
+          senderId: 'u-1',
+          senderPub: '',
+          text: 'second turn',
+          isOwn: true,
+          sessionId: sessionId,
+        ),
+      );
+      state.add(
+        const ChannelMessage(
+          envelopeId: 'queued-4',
+          senderId: 'main@device',
+          senderPub: '',
+          text: 'queued / not listening',
+          isOwn: false,
+          sessionId: sessionId,
+          replyTo: 'original-2',
+        ),
+      );
+
+      expect(
+        state.seen,
+        containsAll(const ['queued-1', 'queued-2', 'queued-3']),
+      );
+      expect(state.messages, hasLength(4));
+      expect(
+        state.messages.where(
+          (message) => message.text == 'queued / not listening',
+        ),
+        hasLength(2),
+      );
+
+      final session = buildSession(
+        httpClient: FakeHttpClient(),
+        connector: FakeWsConnector(),
+        wallet: await KeyWallet.load(MemoryWalletBackend()),
+      );
+      addTearDown(session.dispose);
+      session.channelStates[_dmChannel] = state;
+      final chat = ChannelChatService(
+        session: session,
+        channelId: _dmChannel,
+        dmSessionId: sessionId,
+      );
+      addTearDown(chat.dispose);
+      expect(chat.messages, isNotEmpty);
+      expect(
+        chat.messages.where(
+          (message) => message.content.contains('queued / not listening'),
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
     'consecutive foreign-encrypted rows collapse without hiding own text',
     () async {
       final session = await _sessionWithMessages();
@@ -193,60 +291,57 @@ void main() {
     await session.close();
   });
 
-  testWidgets('DM session id fallback is short in the header and one-line hint', (
-    tester,
-  ) async {
-    const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
-    final session = await _sessionWithMessages();
-    addTearDown(session.close);
-    session.selectDmSession(
-      _dmChannel,
-      sessionId,
-      title: 'Duo · $sessionId',
-    );
-    final manager = NetworkSessionManager(
-      baseUrl: testBase,
-      wallet: await KeyWallet.load(MemoryWalletBackend()),
-      httpClient: FakeHttpClient(),
-      wsConnector: FakeWsConnector(),
-    );
-    manager.sessions['net1'] = session;
-    addTearDown(manager.disconnectAll);
-    final controller = NetworkModeController.inMemory(
-      mode: AppMode.network,
-      networkId: 'net1',
-      channelId: _dmChannel,
-    );
+  testWidgets(
+    'DM session id fallback is short in the header and one-line hint',
+    (tester) async {
+      const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
+      final session = await _sessionWithMessages();
+      addTearDown(session.close);
+      session.selectDmSession(_dmChannel, sessionId, title: 'Duo · $sessionId');
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: await KeyWallet.load(MemoryWalletBackend()),
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+      );
+      manager.sessions['net1'] = session;
+      addTearDown(manager.disconnectAll);
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+        channelId: _dmChannel,
+      );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: NetworkChatPage(
-            controller: controller,
-            manager: manager,
-            showAppBar: true,
-            showChannelHeader: false,
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: NetworkChatPage(
+              controller: controller,
+              manager: manager,
+              showAppBar: true,
+              showChannelHeader: false,
+            ),
           ),
         ),
-      ),
-    );
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 30));
-    }
+      );
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 30));
+      }
 
-    expect(find.text('Duo · 01a15985…'), findsWidgets);
-    expect(find.textContaining(sessionId), findsNothing);
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
-            widget.decoration?.hintText == 'Message Duo · 01a15985…',
-      ),
-      findsOneWidget,
-    );
-    await session.close();
-  });
+      expect(find.text('Duo · 01a15985…'), findsWidgets);
+      expect(find.textContaining(sessionId), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == 'Message Duo · 01a15985…',
+        ),
+        findsOneWidget,
+      );
+      await session.close();
+    },
+  );
 }

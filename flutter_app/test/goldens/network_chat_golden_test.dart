@@ -151,9 +151,9 @@ Future<void> _pumpDm(
   WidgetTester tester,
   Size size, {
   String? projectPath,
+  bool queueRetryFixture = false,
 }) async {
-  const channelId =
-      'dm:user:u-1:main@01a15985f6c37e9eb16b203817f2a9c2';
+  const channelId = 'dm:user:u-1:main@01a15985f6c37e9eb16b203817f2a9c2';
   const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
   final wallet = await KeyWallet.load(MemoryWalletBackend());
   await wallet.createIfMissing(displayName: 'Golden User');
@@ -174,24 +174,38 @@ Future<void> _pumpDm(
     sessionId,
     // The fallback case deliberately exercises a legacy raw title. The
     // folder case mirrors Devices handing over its cwd-derived title.
-    title: projectPath == null
-        ? 'mymac · $sessionId'
-        : 'mymac · $sessionLabel',
+    title: projectPath == null ? 'mymac · $sessionId' : 'mymac · $sessionLabel',
   );
   final state = session.channelStates.putIfAbsent(channelId, ChannelState.new);
-  state
-    ..add(
-      ChannelMessage(
-        envelopeId: 'dm-own',
-        senderId: 'u-1',
-        senderPub: '',
-        text: 'Please review the mobile device list.',
-        isOwn: true,
-        createdAt: DateTime.utc(2025, 12, 1, 9, 30),
-        sessionId: sessionId,
-      ),
-    )
-    ..add(
+  state.add(
+    ChannelMessage(
+      envelopeId: 'dm-own',
+      senderId: 'u-1',
+      senderPub: '',
+      text: 'Please review the mobile device list.',
+      isOwn: true,
+      createdAt: DateTime.utc(2025, 12, 1, 9, 30),
+      sessionId: sessionId,
+    ),
+  );
+  if (queueRetryFixture) {
+    for (var index = 0; index < 3; index++) {
+      state.add(
+        ChannelMessage(
+          envelopeId: 'dm-queued-$index',
+          senderId: 'main@mymac',
+          senderPub: '',
+          senderName: 'mymac',
+          text: 'queued / not listening',
+          isOwn: false,
+          createdAt: DateTime.utc(2025, 12, 1, 9, 31),
+          sessionId: sessionId,
+          replyTo: 'dm-own',
+        ),
+      );
+    }
+  } else {
+    state.add(
       ChannelMessage(
         envelopeId: 'dm-reply',
         senderId: 'main@mymac',
@@ -202,8 +216,9 @@ Future<void> _pumpDm(
         createdAt: DateTime.utc(2025, 12, 1, 9, 31),
         sessionId: sessionId,
       ),
-    )
-    ..historyResolved = true;
+    );
+  }
+  state.historyResolved = true;
   final manager = NetworkSessionManager(
     baseUrl: testBase,
     wallet: wallet,
@@ -247,7 +262,10 @@ Future<void> _pumpDm(
     ),
     findsOneWidget,
   );
-  if (projectPath == null) {
+  if (queueRetryFixture) {
+    expect(find.textContaining('queued / not listening'), findsOneWidget);
+    await expectGolden(tester, 'network_dm_queue_${size.width.toInt()}');
+  } else if (projectPath == null) {
     await expectGolden(tester, 'network_dm_${size.width.toInt()}');
   } else {
     await expectGolden(tester, 'network_dm_folder_${size.width.toInt()}');
@@ -269,11 +287,11 @@ void main() {
     );
     testWidgets(
       'DM folder title and short hint ${size.width.toInt()}',
-      (tester) => _pumpDm(
-        tester,
-        size,
-        projectPath: '/work/flutter_agent',
-      ),
+      (tester) => _pumpDm(tester, size, projectPath: '/work/flutter_agent'),
+    );
+    testWidgets(
+      'DM queue retries render one state ${size.width.toInt()}',
+      (tester) => _pumpDm(tester, size, queueRetryFixture: true),
     );
   }
 
