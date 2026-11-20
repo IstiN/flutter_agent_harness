@@ -163,6 +163,7 @@ extension AgentCliRunNotices on AgentCli {
   /// size-gate split moved them beyond a plain unit test's reach).
   void wireRunNoticesForTesting() {
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     _wireImageDropNotice();
     _wireImageCapLearnedNotice();
     _wireImageRecoveryNotice();
@@ -220,6 +221,17 @@ extension AgentCliRunNotices on AgentCli {
   String _shortNoticeLine(String text) {
     final line = text.split('\n').first;
     return line.length <= 120 ? line : '${line.substring(0, 120)}...';
+  }
+
+  /// Copilot provider-failure cards (issue #2327 AC3): the token
+  /// exchange's geo-restriction family surfaces LOUD — bold transcript
+  /// line + fa.log entry. The 2026-11-19 incident's 403 existed only as a
+  /// raw fa.log line; the user never saw why Copilot died.
+  void _wireCopilotProviderCard() {
+    copilotProviderCardNotice = (card) {
+      io.writeln(_style.bold('[copilot] $card'));
+      _logDiagnostic('copilot card sid=$_logSid ${_shortNoticeLine(card)}');
+    };
   }
 
   /// Appends the `429_retry` session record (gh-1602) for a rate-limit

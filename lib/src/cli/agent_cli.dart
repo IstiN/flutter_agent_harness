@@ -2150,6 +2150,7 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     await _logBootLine();
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     _wireDeliverySloNotice();
     _wireDeliverableDurabilityLog();
     _wireImageDropNotice();
@@ -2280,6 +2281,14 @@ class AgentCli {
   /// a picker selection resolves to metadata without a second round trip.
   List<SessionListRow>? _lastSessionRows;
 
+  /// Whether the active session was MINTED by this process (`_createSession`)
+  /// rather than loaded from an existing file (`_loadSession`): the gh-1660
+  /// litter contract deletes an untouched session on switch/exit even when
+  /// it is named (the trash releases the name binding with the file), while
+  /// a session this process only FOUND — the #2320 incident twin — never
+  /// becomes empty-cleanup food when it carries a name anchor.
+  bool _sessionIsHomegrown = false;
+
   /// Whether the sessions picker shows the flat single-level list instead
   /// of the tree (toggled from the picker's first item).
   bool _sessionPickerFlat = false;
@@ -2347,6 +2356,7 @@ class AgentCli {
     // connect-stall death indistinguishable from a no-retry one in the
     // trial artifacts.
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
@@ -2385,6 +2395,7 @@ class AgentCli {
     // the same `[net]` line, or a multi-second retry pause is silent
     // exactly where nobody watches a TUI.
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
     // both holds bracket it the same way: session-held acquires on the
     // session open, per-run on the run start (the prompt below).

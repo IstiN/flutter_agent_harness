@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/session_listing_index.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -145,47 +146,56 @@ void main() {
       await repo.delete(metadata, actor: 'test:ac1');
 
       expect((await fs.exists(metadata.path)).valueOrNull, isFalse);
-      expect(
-        (await repo.list()).where((m) => m.id == metadata.id),
-        isEmpty,
-      );
+      expect((await repo.list()).where((m) => m.id == metadata.id), isEmpty);
     });
 
-    test('a backend that renames nothing still deletes via copy+delete', () async {
-      // The decorator gap behind issue #863 ("renamePath not supported by
-      // Instance of 'LocalExecutionEnv'"): the base reports the rename
-      // capability but fails it as notSupported. The delete must still
-      // really happen — trash copy first, then the unlink.
-      final env = _NoRenameEnv();
-      final noRenameRepo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: '/sessions',
-        processId: 4242,
-        now: () => clock,
-      );
-      final session = await noRenameRepo.create(
-        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1002', cwd: '/proj'),
-      );
-      await env.appendFile((await session.getMetadata()).path, '{"record":"real"}\n');
-      final metadata = await session.getMetadata();
+    test(
+      'a backend that renames nothing still deletes via copy+delete',
+      () async {
+        // The decorator gap behind issue #863 ("renamePath not supported by
+        // Instance of 'LocalExecutionEnv'"): the base reports the rename
+        // capability but fails it as notSupported. The delete must still
+        // really happen — trash copy first, then the unlink.
+        final env = _NoRenameEnv();
+        final noRenameRepo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        final session = await noRenameRepo.create(
+          JsonlSessionCreateOptions(
+            id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1002',
+            cwd: '/proj',
+          ),
+        );
+        await env.appendFile(
+          (await session.getMetadata()).path,
+          '{"record":"real"}\n',
+        );
+        final metadata = await session.getMetadata();
 
-      await noRenameRepo.delete(metadata, actor: 'test:copy-delete');
+        await noRenameRepo.delete(metadata, actor: 'test:copy-delete');
 
-      expect((await env.exists(metadata.path)).valueOrNull, isFalse);
-      final trash = (await env.listDir('/sessions/.trash')).valueOrNull!;
-      expect(trash, hasLength(1));
-      expect(
-        (await env.readTextFile(trash.single.path)).valueOrNull,
-        contains('"record":"real"'),
-      );
-      final raw = (await env.readTextFile('/sessions/session_ops.journal'))
-          .valueOrNull!;
-      expect(raw, contains('"result":"copy-delete"'));
-      expect(
-        await noRenameRepo.list().then((l) => l.where((m) => m.id == metadata.id)),
-        isEmpty,
-      );
-    });
+        expect((await env.exists(metadata.path)).valueOrNull, isFalse);
+        final trash = (await env.listDir('/sessions/.trash')).valueOrNull!;
+        expect(trash, hasLength(1));
+        expect(
+          (await env.readTextFile(trash.single.path)).valueOrNull,
+          contains('"record":"real"'),
+        );
+        final raw = (await env.readTextFile(
+          '/sessions/session_ops.journal',
+        )).valueOrNull!;
+        expect(raw, contains('"result":"copy-delete"'));
+        expect(
+          await noRenameRepo.list().then(
+            (l) => l.where((m) => m.id == metadata.id),
+          ),
+          isEmpty,
+        );
+      },
+    );
 
     test('copy+delete refuses sessions over the trash-copy budget', () async {
       // The fallback stages the trash copy in RAM; an oversized session
@@ -200,7 +210,10 @@ void main() {
         now: () => clock,
       );
       final session = await noRenameRepo.create(
-        JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004', cwd: '/proj'),
+        JsonlSessionCreateOptions(
+          id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1004',
+          cwd: '/proj',
+        ),
       );
       await env.appendFile(
         (await session.getMetadata()).path,
@@ -224,29 +237,37 @@ void main() {
       expect((await env.listDir('/sessions/.trash')).valueOrNull, isEmpty);
     });
 
-    test('E3: a backend that removes nothing fails loudly, not silently', () async {
-      final env = _LyingRemoveEnv();
-      final lyingRepo = JsonlSessionRepo(
-        fs: env,
-        sessionsRoot: '/sessions',
-        processId: 4242,
-        now: () => clock,
-      );
-      final metadata = await lyingRepo
-          .create(JsonlSessionCreateOptions(id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1003', cwd: '/proj'))
-          .then((s) => s.getMetadata());
+    test(
+      'E3: a backend that removes nothing fails loudly, not silently',
+      () async {
+        final env = _LyingRemoveEnv();
+        final lyingRepo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        final metadata = await lyingRepo
+            .create(
+              JsonlSessionCreateOptions(
+                id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa1003',
+                cwd: '/proj',
+              ),
+            )
+            .then((s) => s.getMetadata());
 
-      await expectLater(
-        lyingRepo.delete(metadata, actor: 'test:lying'),
-        throwsA(
-          isA<SessionException>()
-              .having((e) => e.code, 'code', SessionErrorCode.storage)
-              .having((e) => e.message, 'message', contains('still exists')),
-        ),
-      );
-      // The file survived (the backend lied) — the refusal is the point.
-      expect((await env.exists(metadata.path)).valueOrNull, isTrue);
-    });
+        await expectLater(
+          lyingRepo.delete(metadata, actor: 'test:lying'),
+          throwsA(
+            isA<SessionException>()
+                .having((e) => e.code, 'code', SessionErrorCode.storage)
+                .having((e) => e.message, 'message', contains('still exists')),
+          ),
+        );
+        // The file survived (the backend lied) — the refusal is the point.
+        expect((await env.exists(metadata.path)).valueOrNull, isTrue);
+      },
+    );
   });
 
   group('live-session guard (AC2)', () {
@@ -323,6 +344,104 @@ void main() {
     });
   });
 
+  group('named/rotated sessions are never litter (#2320)', () {
+    test('cleanupEmptySessions keeps a named session past the grace', () async {
+      // The name lives in the persisted session-names sidecar while the
+      // file itself is header-only: age must never turn a deliberately
+      // named session into sweep food (the #2320 incident's anchor).
+      final named = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0021');
+      fs.setMtime(
+        named.path,
+        clock.subtract(const Duration(minutes: 30)).millisecondsSinceEpoch,
+      );
+      // The names sidecar only learns ids a listing walk has indexed.
+      await repo.list();
+      await repo.rememberSessionNames({named.id: 'network-redesign'});
+
+      final removed = await repo.cleanupEmptySessions(
+        olderThan: const Duration(minutes: 10),
+      );
+
+      expect(removed, 0);
+      expect((await fs.exists(named.path)).valueOrNull, isTrue);
+    });
+
+    test(
+      'cleanupEmptySessions keeps a rotated session with a header-only primary',
+      () async {
+        // The records rotated into `.part-0001` and the primary reseeded
+        // header-only: the chain is the session (the 623 MB class), never
+        // sweep food.
+        final rotated = await seedSession('aaaaaaaaaaaaaaaaaaaaaaaaaaaa0022');
+        final content = (await fs.readTextFile(rotated.path)).valueOrNull!;
+        final header = content.trim().split('\n').first;
+        await fs.writeFile('${rotated.path}.part-0001', content);
+        await fs.writeFile(rotated.path, '$header\n');
+        fs.setMtime(
+          rotated.path,
+          clock.subtract(const Duration(minutes: 30)).millisecondsSinceEpoch,
+        );
+
+        final removed = await repo.cleanupEmptySessions(
+          olderThan: const Duration(minutes: 10),
+        );
+
+        expect(removed, 0);
+        expect((await fs.exists(rotated.path)).valueOrNull, isTrue);
+        expect(
+          (await fs.exists('${rotated.path}.part-0001')).valueOrNull,
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'Windows-style listing paths keep rotated primaries and index their parts',
+      () async {
+        // The real Windows backend returns backslash-separated FileInfo
+        // paths. The in-memory backend normally hides that distinction by
+        // normalizing every path to '/', so make the listing boundary
+        // faithfully Windows-shaped while keeping the delegate portable.
+        final base = MemoryFileSystem();
+        final windowsRepo = JsonlSessionRepo(
+          fs: _BackslashListingFs(base),
+          sessionsRoot: '/sessions',
+          processId: 4242,
+          now: () => clock,
+        );
+        const id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaa0023';
+        final session = await windowsRepo.create(
+          const JsonlSessionCreateOptions(id: id, cwd: '/proj'),
+        );
+        final path = (await session.getMetadata()).path;
+        final content = (await base.readTextFile(path)).valueOrNull!;
+        final header = content.trim().split('\n').first;
+        await base.writeFile('$path.part-0001', content);
+        await base.writeFile(path, '$header\n');
+        base.setMtime(
+          path,
+          clock.subtract(const Duration(minutes: 30)).millisecondsSinceEpoch,
+        );
+
+        final removed = await windowsRepo.cleanupEmptySessions(
+          olderThan: const Duration(minutes: 10),
+        );
+
+        expect(removed, 0);
+        expect((await base.exists(path)).valueOrNull, isTrue);
+
+        // The sibling _walkRoot map feeds the born-truthful #2321 row; it
+        // must use the same separator-safe part→primary matching.
+        await windowsRepo.list();
+        final raw = await base.readTextFile('/sessions/.listing-index.json');
+        final index = SessionListingIndex.fromJson(
+          jsonDecode(raw.valueOrNull!),
+        )!;
+        expect(index.entryById(id)!.hasParts, isTrue);
+      },
+    );
+  });
+
   group('no raw unlink on session files (AC3 grep-test)', () {
     test('the gate is the only remove site in the session zones', () async {
       const zones = [
@@ -383,6 +502,87 @@ void main() {
   });
 }
 
+/// Presents Windows-style paths at the listing boundary while delegating
+/// storage to the portable in-memory filesystem. Incoming paths are mapped
+/// back to the delegate's POSIX spelling, just as the real backend resolves
+/// its own native paths.
+final class _BackslashListingFs implements FileSystem, RenamableFileSystem {
+  _BackslashListingFs(this._base);
+
+  final MemoryFileSystem _base;
+
+  String _native(String path) => path.replaceAll('\\', '/');
+  String _windows(String path) => path.replaceAll('/', '\\');
+
+  @override
+  String get cwd => _base.cwd;
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _base.absolutePath(_native(path));
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _base.joinPath([for (final part in parts) _native(part)]);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _base.readTextFile(_native(path));
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _base.readBinaryFile(_native(path));
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _base.readTextLines(_native(path), maxLines: maxLines);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _base.writeFile(_native(path), content);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _base.writeBinaryFile(_native(path), content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _base.appendFile(_native(path), content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _base.fileInfo(_native(path));
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    final result = await _base.listDir(_native(path));
+    final entries = result.valueOrNull;
+    if (entries == null) return result;
+    return Ok([
+      for (final entry in entries)
+        FileInfo(
+          name: entry.name,
+          path: _windows(entry.path),
+          kind: entry.kind,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+        ),
+    ]);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _base.exists(_native(path));
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(_native(path), recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _base.remove(_native(path), recursive: recursive, force: force);
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
+      _base.renamePath(_native(from), _native(to));
+}
+
 /// A base that declares the rename capability but fails the operation as
 /// `notSupported` — the decorator/env gap behind issue #863 (the desktop
 /// trash move died on exactly this error).
@@ -430,8 +630,10 @@ final class _NoRenameEnv implements FileSystem, RenamableFileSystem {
   @override
   Future<Result<bool, FileError>> exists(String path) => _base.exists(path);
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _base.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _base.createDir(path, recursive: recursive);
   @override
   Future<Result<void, FileError>> remove(
     String path, {
