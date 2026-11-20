@@ -25,6 +25,7 @@ enum FaSemanticIcon {
   folder,
   laptop,
   send,
+  sync,
 }
 
 /// Theme-owned glyph mapping for [FaIcon].
@@ -57,6 +58,7 @@ class FaIconThemeData extends ThemeExtension<FaIconThemeData> {
     FaSemanticIcon.apps: Icons.apps_rounded,
     FaSemanticIcon.laptop: Icons.laptop_mac_rounded,
     FaSemanticIcon.send: Icons.send_rounded,
+    FaSemanticIcon.sync: Icons.sync,
   };
 
   static FaIconThemeData of(BuildContext context) =>

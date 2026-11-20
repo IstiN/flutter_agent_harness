@@ -684,7 +684,7 @@ class _DevicesPageState extends State<DevicesPage> {
             key: const ValueKey('devicesConnecting'),
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.sync, size: 12, color: colors.dim),
+              FaIcon(FaSemanticIcon.sync, size: 12, color: colors.dim),
               const SizedBox(width: 6),
               Text(
                 context.l10n.networkDeviceConnecting,

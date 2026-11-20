@@ -59,19 +59,21 @@ abstract final class AppIconPalette {
     final light = brightness == Brightness.light;
     return [
       light
-          ? Color.lerp(muted, Colors.white, .68)!
-          : Color.lerp(muted, Colors.black, .20)!,
+          ? Color.lerp(muted, const Color(0xFFFFFFFF), .68)!
+          : Color.lerp(muted, const Color(0xFF000000), .20)!,
       light
-          ? Color.lerp(muted, Colors.white, .54)!
-          : Color.lerp(muted, Colors.black, .38)!,
+          ? Color.lerp(muted, const Color(0xFFFFFFFF), .54)!
+          : Color.lerp(muted, const Color(0xFF000000), .38)!,
       light
-          ? Color.lerp(muted, Colors.black, .04)!
-          : Color.lerp(muted, Colors.black, .52)!,
+          ? Color.lerp(muted, const Color(0xFF000000), .04)!
+          : Color.lerp(muted, const Color(0xFF000000), .52)!,
     ];
   }
 
   static Color foregroundFor(Brightness brightness) =>
-      brightness == Brightness.light ? const Color(0xFF2D3748) : Colors.white;
+      brightness == Brightness.light
+      ? const Color(0xFF2D3748)
+      : const Color(0xFFFFFFFF);
 
   /// SVGs commonly paint their own saturated background over the badge
   /// gradient. Filter the artwork too, preserving whites/darks and hue while
@@ -117,15 +119,15 @@ abstract final class AppIconPalette {
         borderRadius: BorderRadius.circular(size * .22),
         side: BorderSide(
           color: brightness == Brightness.light
-              ? Colors.black.withValues(alpha: .06)
-              : Colors.white.withValues(alpha: .12),
+              ? const Color(0xFF000000).withValues(alpha: .06)
+              : const Color(0xFFFFFFFF).withValues(alpha: .12),
         ),
       ),
       shadows: [
         BoxShadow(
-          color: Colors.black.withValues(
-            alpha: brightness == Brightness.light ? .10 : .18,
-          ),
+          color: const Color(
+            0xFF000000,
+          ).withValues(alpha: brightness == Brightness.light ? .10 : .18),
           blurRadius: size * .16,
           offset: Offset(0, size * .045),
         ),
