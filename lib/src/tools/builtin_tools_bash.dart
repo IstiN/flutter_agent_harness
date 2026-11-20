@@ -1124,10 +1124,12 @@ Future<ToolExecutionResult> _bashJobOutputResult(
       // gh-1459 ask #4: reading the job's log is the model probing it —
       // it counts as liveness for the drain's liveness leg.
       entry.markProbed();
-      // Issue #2201 AC3: adopted jobs have no harness log — the honest
-      // adopted-explanation instead of an empty-log reading.
+      // Issue #2201 AC3 / #2265: adopted jobs with no harness log keep
+      // the honest adopted-explanation; a boot re-adopted native job
+      // (kept id ⇒ derivable log) tails its real file like any native
+      // job.
       if (entry.isAdopted) {
-        return ToolExecutionResult.text(adoptedJobOutputText(entry));
+        return _adoptedOutputResult(jobs, entry, maxLines);
       }
       return ToolExecutionResult.text(
         await _exactOutputText(jobs, entry, maxLines),
@@ -1145,6 +1147,30 @@ Future<ToolExecutionResult> _bashJobOutputResult(
     case ShellJobUnknownId(:final closestIds):
       return _unknownOutputResult(jobs, lookup.id, closestIds, maxLines);
   }
+}
+
+/// The `bash_job output` answer for an adopted job (issue #2201 AC3,
+/// #2265): a foreign survivor (or a log deleted since adoption —
+/// `tailFromLog` returns null) gets the adopted-explanation, never an
+/// empty-log reading; a native-identifiable job tails its real harness
+/// log under the same line cap as the native path.
+Future<ToolExecutionResult> _adoptedOutputResult(
+  ShellJobRegistry jobs,
+  ShellJobEntry entry,
+  int maxLines,
+) async {
+  final logPath = entry.logPath;
+  final tail = logPath.isEmpty
+      ? null
+      : await jobs.tailFromLog(logPath, maxLines: maxLines);
+  if (tail == null) {
+    return ToolExecutionResult.text(adoptedJobOutputText(entry));
+  }
+  return ToolExecutionResult.text(
+    '${tail.isEmpty ? '(no output)' : tail}\n'
+    'Tail of $logPath — the harness log captured by the original run '
+    '(adopted; no exit code — not our child).',
+  );
 }
 
 /// The unknown-id `output` flow: malformed ids dead-end with the shortest
@@ -1403,9 +1429,10 @@ String _shellJobStatusLine(ShellJobEntry entry) {
   // gh-1438: exited rows carry their age — a settled-but-never-collected
   // job is the exact thing stale-id polling hunts for.
   final ago = entry.isRunning ? '' : ' — exited ${_settledAgo(entry)}';
-  // Issue #2201: an adopted job has no harness log; the honest pointer
-  // replaces the path.
-  final log = entry.isAdopted
+  // Issue #2201: a foreign adopted job has no harness log; the honest
+  // pointer replaces the path. Issue #2265: a boot re-adopted native job
+  // resolved its real log — name it like a native job.
+  final log = entry.isAdopted && entry.logPath.isEmpty
       ? 'no captured log — output in its own redirect'
       : 'log: ${entry.logPath}';
   return '${entry.id}: $state — $command ($log)$ago';
