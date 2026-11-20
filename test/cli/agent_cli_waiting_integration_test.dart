@@ -625,9 +625,9 @@ void main() async {
   // -- Registry lock branches (issue #478 CRAP gate) -------------------------
 
   /// A local-FS CLI: the lock's contended branches need a real
-  /// filesystem — the exclusive create only fails when a regular FILE
-  /// occupies the lock path, which no memory env can express (its
-  /// createDir always succeeds).
+  /// filesystem — only an exclusive-create backend refuses the claim
+  /// when the lock path is occupied, which no memory env can express
+  /// (its createDir always succeeds; issue #2266).
   Future<AgentCli> lockCli(
     LocalExecutionEnv localEnv,
     FakeCliIO localIo,
@@ -668,21 +668,34 @@ void main() async {
     return (await lockCli(localEnv, localIo), logs);
   }
 
-  test('a freshly held lock times out and the mutation degrades to an '
-      'unlocked write (issue #478)', () async {
+  test('a freshly held lock exhausts the bound into a NAMED failure — '
+      'the mutation never proceeds unlocked (issue #2266)', () async {
     final (cli, logs) = await lockFixture();
+    // The real bound sits above the stale-steal threshold; shrink it so
+    // the test exercises the exhaustion, not a 70s wait.
+    cli.waitingLockWaitBoundForTest = const Duration(milliseconds: 300);
 
     await cli.waitingCaptureLostJobsForTest();
 
     expect(
       cli.waitingLostJobsForTest,
-      1,
-      reason: 'the bounded wait gives up and the write proceeds unlocked',
+      0,
+      reason: 'the reconcile was skipped — never raced unlocked',
+    );
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      contains('registry update skipped to avoid an unlocked write'),
+      reason: 'the named failure surfaces, never vanishes',
     );
     expect(
       File('$logs/running.json.lock').existsSync(),
       isTrue,
       reason: "a timed-out contender never removes someone else's lock",
+    );
+    expect(
+      File('$logs/running.json').readAsStringSync(),
+      contains('sh-dead'),
+      reason: 'the manifest is untouched — no unlocked rewrite',
     );
   });
 
