@@ -1,0 +1,15 @@
+{
+  "pr-2347": [
+    {
+      "leg": "review",
+      "at": "2026-11-20T11:40:07Z",
+      "prompt": 93596,
+      "completion": 24249,
+      "total": 117845,
+      "cacheRead": 1621760,
+      "requests": 29,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
+  ]
+}
