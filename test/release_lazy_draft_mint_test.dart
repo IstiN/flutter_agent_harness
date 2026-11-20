@@ -87,4 +87,67 @@ void main() {
       expect(r.pushes.where((l) => l.contains(':refs/tags/')), hasLength(1));
     },
   );
+
+  test(
+    'gh-2337: a lazy draft whose create fails (body too long) fails loud — never "✅ lazy draft ready"',
+    () {
+      // Run 44680647719 (v1.0.756): the curated `## Unreleased` notes body
+      // (131,072 bytes) exceeded GitHub's 125,000-character release-body
+      // cap; `gh release create` answered HTTP 422 "body is too long",
+      // the `|| true` swallowed it, the script printed "✅ lazy draft
+      // ready", and the attach gate failed with "release not found". The
+      // create failure must surface: exit ≠ 0 with a ::error::, and no
+      // success line.
+      final r = runReleaseMintFixture(
+        'scripts/release_lazy_draft.sh',
+        args: const ['v1.2.3'],
+        name: 'lazy-create-fails',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        ghCreateFails: true,
+        githubRunId: '222',
+        githubJob: 'build-extension',
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.output, contains('::error::'));
+      expect(
+        r.output,
+        isNot(contains('✅ lazy draft ready')),
+        reason: 'the success line must never print for a failed create',
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
+        hasLength(1),
+        reason: 'the create was attempted exactly once',
+      );
+    },
+  );
+
+  test(
+    'gh-2337: a lazy draft whose create loses the view→create race still exits 0',
+    () {
+      // The ORIGINAL `|| true` intent (gh-1801): a sibling leg may create
+      // the release between our view and create; the loser must exit 0
+      // and let the caller upload into the winner's release. A failed
+      // create followed by a release that NOW exists is exactly that
+      // race — not an error.
+      final r = runReleaseMintFixture(
+        'scripts/release_lazy_draft.sh',
+        args: const ['v1.2.3'],
+        name: 'lazy-create-race',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        ghCreateFails: true,
+        viewFoundAfterFirst: true,
+        githubRunId: '222',
+        githubJob: 'build-extension',
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(
+        r.output,
+        contains('✅ lazy draft ready'),
+        reason: 'the race-won path keeps the tolerant contract',
+      );
+    },
+  );
 }

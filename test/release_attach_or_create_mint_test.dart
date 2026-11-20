@@ -205,4 +205,33 @@ void main() {
       );
     },
   );
+
+  test(
+    'gh-2337: an over-cap release-notes.md is bounded before the create',
+    () {
+      // Run 44680647719 (v1.0.756): the release body must never exceed
+      // GitHub's 125,000-character cap — the attach path bounds its
+      // notes file (here 130,001 bytes) under the 120,000-byte ceiling
+      // with a truncation marker before `gh release create`.
+      final r = runReleaseMintFixture(
+        'scripts/release_attach_or_create.sh',
+        args: const ['v1.2.3', 'a.zip'],
+        name: 'bounded-notes',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        seedReleaseNotes: true,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.notesCapture, isNotEmpty, reason: 'the create carried notes');
+      expect(
+        r.notesCapture.length,
+        lessThanOrEqualTo(120_000),
+        reason:
+            'the notes body must fit the bounded ceiling — the v1.0.756 '
+            '131k curated body HTTP-422\'d the create in three legs',
+      );
+      expect(r.notesCapture, contains('truncated'));
+      expect(r.notesCapture, contains('CHANGELOG.md'));
+    },
+  );
 }

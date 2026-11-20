@@ -102,6 +102,11 @@ marker="<!-- release-draft-owner: run/${GITHUB_RUN_ID:?GITHUB_RUN_ID must be set
 [ -s "$notes" ] || printf 'Release %s — see the CHANGELOG.\n' "$tag" > "$notes"
 grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 
+# gh-237: bound the notes body before the create — GitHub's release-body
+# cap is 125,000 characters and the curated `## Unreleased` section past
+# it HTTP-422'd the create in run 468064719 (v1.0.756).
+bash "$(dirname "$0")/release_notes_cap.sh" "$notes"
+
 # A `gh release create` for a MISSING tag mints a lightweight API tag:
 # no push event → no ci.yml tag run → no publish/binaries (the v0.1.408
 # silent class, issue #597). If the ref is absent, mint it as an
