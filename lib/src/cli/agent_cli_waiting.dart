@@ -610,10 +610,16 @@ final class _WaitingCoordinator {
     String id,
     String command,
     int? pid, {
-    String? pidStart,
+    Future<String?> Function()? pidStartProbe,
   }) async {
-    await _mutateRegistry(
-      (entries) => entries.any((entry) => entry.id == id)
+    await _mutateRegistry((entries) async {
+      // The probe runs INSIDE the critical section (issue #2275): run
+      // outside, its async gap let a fast-settling job's remove land
+      // first — the add then resurrected an EXITED job as running until
+      // the next boot. Under the lock, the settle's remove queues
+      // behind this add instead.
+      final pidStart = await pidStartProbe?.call();
+      return entries.any((entry) => entry.id == id)
           ? entries
           : [
               ...entries,
@@ -624,13 +630,13 @@ final class _WaitingCoordinator {
                 pidStart: pidStart,
                 startedAtMs: _clock().millisecondsSinceEpoch,
               ),
-            ],
-    );
+            ];
+    });
   }
 
   Future<void> _manifestRemove(String id) async {
     await _mutateRegistry(
-      (entries) => [
+      (entries) async => [
         for (final entry in entries)
           if (entry.id != id) entry,
       ],
@@ -643,11 +649,11 @@ final class _WaitingCoordinator {
   /// never silent: the mutation is SKIPPED and the named failure
   /// surfaces, rather than racing the winner unlocked.
   Future<void> _mutateRegistry(
-    List<_ManifestEntry> Function(List<_ManifestEntry>) mutate,
+    Future<List<_ManifestEntry>> Function(List<_ManifestEntry>) mutate,
   ) async {
     try {
       await _withRegistryLock(() async {
-        await _writeRegistryEntries(mutate(await _readRegistryEntries()));
+        await _writeRegistryEntries(await mutate(await _readRegistryEntries()));
       });
     } on ManifestLockTimeout catch (error) {
       _noteRegistryLockFailure(error);
@@ -856,12 +862,16 @@ final class _WaitingCoordinator {
     return (pids: pids, starts: starts);
   }
 
+  /// The per-job pid start probe (issue #478 pid-reuse guard): the
+  /// injected seam when a test set one, else the real `ps` snapshot.
+  Future<String?> Function(int pid)? _pidStartProbe;
+
   /// The OS start string of [pid] (`ps -o lstart=`), or null when the
   /// platform cannot tell (the entry then has no pid-reuse protection
   /// but still gets plain liveness checks + the age belt).
   Future<String?> _pidStart(int? pid) async {
     if (pid == null) return null;
-    return pidStartSnapshot(pid);
+    return _pidStartProbe?.call(pid) ?? pidStartSnapshot(pid);
   }
 
   /// The boot liveness verdict for one registry entry (issue #2267
@@ -912,13 +922,14 @@ final class _WaitingCoordinator {
   /// A background job started (event-driven waiting-row enter): record it
   /// in the cross-run registry and refresh the row. The pid's OS start
   /// time rides along (issue #478) so a later boot can tell a recycled
-  /// pid from the real owner.
+  /// pid from the real owner — probed INSIDE the manifest lock (issue
+  /// #2275) so a fast-settling job's remove can only land after this add.
   Future<void> jobStarted(ShellJobEntry job) async {
     await _manifestAdd(
       job.id,
       job.command,
       job.pid,
-      pidStart: await _pidStart(job.pid),
+      pidStartProbe: () => _pidStart(job.pid),
     );
     await push();
   }
@@ -1422,6 +1433,20 @@ extension AgentCliWaitingSeams on AgentCli {
   @visibleForTesting
   Future<void> waitingJobStartedForTest(ShellJobEntry job) =>
       _waiting.jobStarted(job);
+
+  /// Test seam: fires the settle-side manifest leave — the unawaited
+  /// chain `onSettled` drives (issue #2275's race test races it against
+  /// [waitingJobStartedForTest]).
+  @visibleForTesting
+  Future<void> waitingJobSettledForTest(ShellJobEntry job) =>
+      _waiting.jobSettled(job);
+
+  /// Test seam: replaces the per-job pid start probe (issue #2275) —
+  /// the settle race needs a probe slow enough to lose to the settle
+  /// chain. Null restores the real `ps -o lstart=` snapshot.
+  @visibleForTesting
+  set waitingPidStartProbeForTest(Future<String?> Function(int pid)? probe) =>
+      _waiting._pidStartProbe = probe;
 
   /// Test seam: shrinks the registry lock's queued-wait bound (issue
   /// #2266 AC2) — the real default sits above the stale-steal threshold
