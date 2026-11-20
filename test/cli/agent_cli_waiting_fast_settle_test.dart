@@ -104,4 +104,40 @@ void main() {
     expect(entries.single['pidStart'], startTag);
     expect(entries.single['pid'], '4243');
   });
+
+  test(
+    'AC3: a remove that fully landed before its add claims drops the '
+    'late add — no ghost on the inverted claim order (issue #2350)',
+    () async {
+      final (cli, env, io, manifest) = await settleCli(
+        'ac3',
+        pidStart: (pid) async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          return 'slow probe';
+        },
+      );
+      final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+        id: 'sh-2350',
+        command: 'true',
+        pid: 4242,
+      );
+      // The registry lock queues whoever CLAIMS first — it cannot reorder
+      // claims. Under load jobStarted's pre-claim fs work loses the 10ms
+      // settle lag, the remove lands on an empty manifest, and the late
+      // add resurrects the exited job (2/2 CI runs, issue #2350). The
+      // deterministic extreme of that order: the settle chain runs to
+      // completion BEFORE the add fires at all. The settle tombstone is
+      // what makes the late add drop.
+      await cli.waitingJobSettledForTest(job);
+      await cli.waitingJobStartedForTest(job);
+
+      expect(
+        manifestEntries((await env.readTextFile(manifest)).valueOrNull),
+        isEmpty,
+        reason:
+            'a remove observed before its add must be remembered '
+            'so the late add drops',
+      );
+    },
+  );
 }
