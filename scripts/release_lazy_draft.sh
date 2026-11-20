@@ -66,6 +66,19 @@ fi
 marker="<!-- release-draft-owner: $identity -->"
 grep -qF "$marker" "$notes_file" || printf '\n%s\n' "$marker" >>"$notes_file"
 
+# gh-2242-class: agent-session commit subjects run 1-2KB (essay-length),
+# so 50 capped entries can exceed the GitHub release body limit
+# (125000 chars) — `gh release create` then fails with "body is too
+# long", the `|| true` masks it, and every attach leg later dies with
+# "release not found". The draft body is a DRAFT: the publisher owns the
+# final notes, so cap the bytes here instead of failing the train.
+notes_bytes=$(wc -c <"$notes_file")
+if [ "$notes_bytes" -gt 110000 ]; then
+  head -c 110000 "$notes_file" >"${notes_file}.capped"
+  printf '\n\n<!-- release notes truncated from %s bytes (GitHub body limit 125000; gh-2242) -->\n' "$notes_bytes" >>"${notes_file}.capped"
+  mv "${notes_file}.capped" "$notes_file"
+fi
+
 # gh-2026: a `gh release create` for a MISSING ref REST-mints a
 # lightweight API tag with NO push event — the v0.1.408 silent class
 # (issue #597). The fast legs (build-macos.yml build-extension /
