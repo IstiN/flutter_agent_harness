@@ -416,10 +416,22 @@ extension on AgentCli {
     final session = _session;
     if (session == null) return;
     try {
-      await _repo.delete(
-        await session.getMetadata(),
-        actor: 'cli:empty-cleanup',
-      );
+      final metadata = await session.getMetadata();
+      // #2320: a NAMED session this process FOUND (not minted) is a
+      // deliberate anchor (`fa --session X` semantics) — never litter,
+      // even when this process persisted no record (the name may predate
+      // this process or live in a rotated segment). A session this
+      // process minted itself follows the gh-1660 litter contract: an
+      // untouched one is deleted on switch/exit, name binding released
+      // with the file (pinned by the agent_cli switch/exit suites).
+      // Best-effort probe: a failed read keeps the file.
+      final repo = _repo;
+      if (repo is JsonlSessionRepo &&
+          !_sessionIsHomegrown &&
+          await repo.sessionNameQuick(metadata) != null) {
+        return;
+      }
+      await _repo.delete(metadata, actor: 'cli:empty-cleanup');
       _session = null;
       // The session scope is gone — drop it from the resolution.
       unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -563,7 +575,12 @@ extension on AgentCli {
     // [_loadSession]: creation resets agent state too.
     _sessionLoadsInFlight++;
     try {
-      return await _createSessionInner(name: name);
+      final session = await _createSessionInner(name: name);
+      // This process minted the session: the gh-1660 litter contract
+      // (delete on untouched switch/exit) applies to it, named or not —
+      // #2320 keeps only sessions the process FOUND.
+      _sessionIsHomegrown = true;
+      return session;
     } finally {
       _sessionLoadsInFlight--;
     }
@@ -850,6 +867,9 @@ extension on AgentCli {
 
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
+    // A loaded session was minted by another run (or an earlier flow):
+    // #2320's keep-guard applies to it (see [_deleteEmptySessionFile]).
+    _sessionIsHomegrown = false;
     // gh-968 parity: the budget must price the prompt the FIRST REQUEST
     // will carry. The messaging section joins at mailbox-prefix sync,
     // which runs after this walk in boot order — project the prefix

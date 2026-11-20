@@ -119,6 +119,14 @@ abstract interface class SessionRepo {
   });
 }
 
+/// Both separators, aligned with `JsonlSessionStorage`: Windows listings
+/// use backslashes while path joins in this repository use '/'. These keys
+/// are comparison-only; filesystem operations keep the backend's own paths.
+final _sessionPathSeparators = RegExp(r'[/\\]');
+
+String _sessionPathKey(String path) =>
+    path.replaceAll(_sessionPathSeparators, '/');
+
 String _encodeCwd(String cwd) {
   final normalized = cwd.replaceAll(RegExp(r'[/\\]+$'), '');
   final bare = normalized.replaceFirst(RegExp(r'^[/\\]'), '');
@@ -600,6 +608,11 @@ final class JsonlSessionRepo implements SessionRepo {
   /// (the last run crashed) and has no presence row yet, so without the
   /// exemption the fire-and-forget boot sweep could soft-delete the exact
   /// file the process is about to open, mid-load (issue #2083).
+  ///
+  /// #2320: a header-only primary is not proof of emptiness on its own —
+  /// a session with a known name (the persisted session-names sidecar)
+  /// or `.part-NN` segment siblings (the records — and often the name —
+  /// rotated into an older segment) is deliberate state, never litter.
   Future<int> cleanupEmptySessions({
     Duration? olderThan,
     String? exemptSessionId,
@@ -612,9 +625,11 @@ final class JsonlSessionRepo implements SessionRepo {
     );
     if (!rootExists) return 0;
     final live = (await presenceStore?.list()) ?? const {};
+    final namedIds = (await knownSessionNames()).keys.toSet();
     final cutoff = olderThan == null ? null : now().subtract(olderThan);
-    final files = await _collectJsonlFileInfos(root);
-    for (final entry in files) {
+    final collected = await _collectJsonlFileInfos(root);
+    final partPrimaries = collected.partPrimaries;
+    for (final entry in collected.files) {
       final path = entry.path;
       // Emptiness is decidable from the first two lines: line 1 is the
       // header, and any transcript content means a second line. The read
@@ -629,6 +644,16 @@ final class JsonlSessionRepo implements SessionRepo {
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
       final id = _sessionIdFromPath(path);
+      // #2320: knowledge the walk already collected can protect this
+      // header-only primary from the trash (see [_sweepKnowledgeProtects]).
+      if (_sweepKnowledgeProtects(
+        _sessionPathKey(path),
+        partPrimaries: partPrimaries,
+        id: id,
+        namedIds: namedIds,
+      )) {
+        continue;
+      }
       if (id != null && live.containsKey(id)) continue;
       if (id == exemptSessionId) continue;
       if (cutoff != null &&
@@ -647,6 +672,22 @@ final class JsonlSessionRepo implements SessionRepo {
     }
     return removed;
   }
+
+  /// The #2320 knowledge guards for one header-only sweep candidate, split
+  /// out of [cleanupEmptySessions] for the CRAP ratchet (CC 3, fully
+  /// covered by the session_deletion suites). True — the file survives —
+  /// when a `.part-NN` sibling shows the chain holds the records (the
+  /// 623 MB class; [pathKey] is the separator-normalized primary path),
+  /// or when the persisted session-names sidecar knows a deliberate
+  /// `fa --session <name>` anchor for [id]: a named session is never
+  /// litter, whatever its age.
+  static bool _sweepKnowledgeProtects(
+    String pathKey, {
+    required Set<String> partPrimaries,
+    required String? id,
+    required Set<String> namedIds,
+  }) =>
+      partPrimaries.contains(pathKey) || (id != null && namedIds.contains(id));
 
   /// The `.trash` directory under the sessions root (issue #522): deleted
   /// session files land here — `<root>/.trash/<timestamp>_<name>` — and
@@ -893,24 +934,38 @@ final class JsonlSessionRepo implements SessionRepo {
   String? _sessionIdFromPath(String path) => sessionIdFromSessionPath(path);
 
   /// The session sweep's file walk (gh-1660 age guard reads the mtime):
-  /// every `.jsonl` under [dirPath], carrying each file's [FileInfo].
-  Future<List<FileInfo>> _collectJsonlFileInfos(String dirPath) async {
+  /// every `.jsonl` under [dirPath], carrying each file's [FileInfo],
+  /// plus the primary paths that have `.part-NN` segment siblings — the
+  /// same directory listings, zero extra IO (#2320: a rotated session's
+  /// header-only primary is never "empty", its chain holds the records).
+  Future<({List<FileInfo> files, Set<String> partPrimaries})>
+  _collectJsonlFileInfos(String dirPath) async {
     final entries = _fsOrThrow(
       await _fs.listDir(dirPath),
       'Failed to list session directory $dirPath',
     );
     final files = <FileInfo>[];
+    final partPrimaries = <String>{};
     for (final entry in entries) {
       if (entry.kind == FileKind.directory) {
         // The trash (issue #522) is recoverable storage, not a session
         // folder — its files must never re-enter list()/cleanup sweeps.
         if (entry.name == trashDirName) continue;
-        files.addAll(await _collectJsonlFileInfos(entry.path));
+        final nested = await _collectJsonlFileInfos(entry.path);
+        files.addAll(nested.files);
+        partPrimaries.addAll(nested.partPrimaries);
         continue;
       }
-      if (entry.name.endsWith('.jsonl')) files.add(entry);
+      if (entry.name.endsWith('.jsonl')) {
+        files.add(entry);
+      } else {
+        final primary = _primaryOfPartName(entry.name);
+        if (primary != null) {
+          partPrimaries.add(_sessionPathKey('$dirPath/$primary'));
+        }
+      }
     }
-    return files;
+    return (files: files, partPrimaries: partPrimaries);
   }
 
   @override
@@ -1349,7 +1404,9 @@ final class JsonlSessionRepo implements SessionRepo {
             // name resolution and consumers skip re-listing this
             // directory per session.
             final primary = _primaryOfPartName(entry.name);
-            if (primary != null) partPrimaries.add('$dir/$primary');
+            if (primary != null) {
+              partPrimaries.add(_sessionPathKey('$dir/$primary'));
+            }
           }
         }
       }
@@ -1369,7 +1426,7 @@ final class JsonlSessionRepo implements SessionRepo {
     return name.substring(0, name.length - match.group(0)!.length);
   }
 
-  static final RegExp _partSuffixPattern = RegExp(r'\.jsonl\.part-\d+$');
+  static final RegExp _partSuffixPattern = RegExp(r'\.part-\d+$');
 
   static bool _reusableListingEntry(
     SessionListingIndexEntry entry,
@@ -1392,7 +1449,7 @@ final class JsonlSessionRepo implements SessionRepo {
     final walk = await _walkRoot(root);
     _lastListingParts = {
       for (final file in walk.files)
-        file.path: walk.partPrimaries.contains(file.path),
+        file.path: walk.partPrimaries.contains(_sessionPathKey(file.path)),
     };
     final index = await _listingIndexStore.read(_fs, root);
     if (index == null) {
@@ -1456,7 +1513,7 @@ final class JsonlSessionRepo implements SessionRepo {
     var mutated = false;
     for (final file in walk.files) {
       final entry = byPath[file.path];
-      final hasParts = walk.partPrimaries.contains(file.path);
+      final hasParts = walk.partPrimaries.contains(_sessionPathKey(file.path));
       if (entry != null && _reusableListingEntry(entry, file)) {
         final settled = entry.hasParts == hasParts
             ? entry
@@ -1500,7 +1557,7 @@ final class JsonlSessionRepo implements SessionRepo {
     final walk = await _walkRoot(dirPath);
     _lastListingParts = {
       for (final file in walk.files)
-        file.path: walk.partPrimaries.contains(file.path),
+        file.path: walk.partPrimaries.contains(_sessionPathKey(file.path)),
     };
     return _loadSessionMetadataBatch(walk.files);
   }
@@ -1519,6 +1576,9 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// Builds the listing-index entry of a freshly read session (no name —
   /// names are learned lazily and persisted by [rememberSessionNames]).
+  /// hasParts rides the walk's segment knowledge (#2321): the cold write
+  /// runs after `_lastListingParts` is populated, so a rotated session's
+  /// row is born truthful instead of healing one boot late.
   SessionListingIndexEntry _entryFromMetadata(SessionMetadata metadata) =>
       SessionListingIndexEntry(
         id: metadata.id,
@@ -1530,6 +1590,7 @@ final class JsonlSessionRepo implements SessionRepo {
         lastUpdatedAtMs: metadata.lastUpdatedAt?.millisecondsSinceEpoch,
         parentSessionPath: metadata.parentSessionPath,
         metadata: metadata.metadata,
+        hasParts: _lastListingParts?[metadata.path] ?? false,
       );
 
   /// Serves a session's listing metadata straight from an index entry —
