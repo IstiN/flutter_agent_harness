@@ -1148,6 +1148,26 @@ http.Client? _sharedProviderClient;
 /// factory swaps in tests, issue #1392).
 void debugResetSharedProviderHttpClient() => _sharedProviderClient = null;
 
+/// Production pool recycle (issue #2327 AC4): after a Copilot truncation
+/// self-heal fires, the shared client is replaced ONCE so the next stream
+/// opens on a fresh pool — a degraded/poisoned pool episode (DNS storm,
+/// accept-then-truncate gateway enforcement) does not survive the heal.
+/// Concurrency-safe (review r2): this is a generation swap, NOT a close.
+/// Streams that already fetched the old client keep it referenced and
+/// drain without a time limit; new streams build a fresh generation.
+/// Dropping the cache reference lets the old client and its idle sockets
+/// be reclaimed after its remaining users finish. An eager or timer-based
+/// `IOClient.close()` aborts in-flight requests, including unrelated
+/// providers' streams, so neither belongs here. Guarded by the heal's own
+/// rate bound, and only meaningful on the shared client (an injected test
+/// client is owned by its caller — the wrapper recycles only when it used
+/// the shared one). Not flag-gated: unlike the `FA_POOL_EVICTION` hygiene
+/// ([maybeEvictProviderPool] → [resetSharedProviderHttpClient]) this is
+/// part of the heal itself.
+void recycleProviderHttpClientAfterHeal() {
+  _sharedProviderClient = null;
+}
+
 /// The shared keep-alive HTTP client for provider streams.
 ///
 /// Streaming adapters use it when the caller injects no client: a fresh
