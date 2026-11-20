@@ -918,7 +918,7 @@ void main() async {
         (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
     // Boot re-adoption with an OLD start: the 10-minute cadence is due
     // on the very first poll tick.
-    cli.shellJobsRegistryForTest.adoptRunningEntry(
+    await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-live-r4',
       command: 'watch.sh',
       pid: 4242,
@@ -956,7 +956,7 @@ void main() async {
       await waitForSessions(env);
       cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
           (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
-      cli.shellJobsRegistryForTest.adoptRunningEntry(
+      await cli.shellJobsRegistryForTest.adoptRunningEntry(
         id: 'sh-live-r4b',
         command: 'watch.sh',
         pid: 4242,

@@ -83,7 +83,7 @@ void main() {
     // B queues behind A: its jobStarted must wait for the lock. At the
     // old 300ms bound it proceeded unlocked and its read-modify-write
     // raced A's remove — one of the two updates was always lost.
-    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final job = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-b',
       command: 'watch.sh',
       pid: 424242,
@@ -107,7 +107,7 @@ void main() {
     // the shrunken bound turns the exhaustion into the named failure.
     cli.waitingLockWaitBoundForTest = const Duration(milliseconds: 150);
 
-    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final job = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-b',
       command: 'watch.sh',
       pid: 424242,
@@ -136,7 +136,7 @@ void main() {
       '(issue #2266)', () async {
     final (cli, env, io, logs, lock) = await lockFixture('ac2b');
     cli.waitingLockWaitBoundForTest = const Duration(milliseconds: 150);
-    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final job = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-b',
       command: 'watch.sh',
       pid: 424242,
@@ -147,7 +147,7 @@ void main() {
     // The holder releases; the next mutation runs under the lock and
     // clears the notice.
     await lock.delete();
-    final settleJob = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final settleJob = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-c',
       command: 'probe.sh',
       pid: 424243,
@@ -205,7 +205,7 @@ void main() {
     );
     expect(env.claimAttempts, 1, reason: 'a broken fs is not retried for 70s');
 
-    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final job = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-b',
       command: 'watch.sh',
       pid: 424242,
@@ -263,7 +263,7 @@ void main() {
       '[]',
     );
 
-    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    final job = await cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-b',
       command: 'watch.sh',
       pid: 424242,

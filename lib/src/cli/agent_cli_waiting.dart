@@ -487,7 +487,7 @@ final class _WaitingCoordinator {
       for (final entry in reconcile.kept) {
         final pid = entry.pid;
         if (pid == null) continue;
-        _jobs.adoptRunningEntry(
+        await _jobs.adoptRunningEntry(
           id: entry.id,
           command: entry.command ?? '<unknown cmd>',
           pid: pid,

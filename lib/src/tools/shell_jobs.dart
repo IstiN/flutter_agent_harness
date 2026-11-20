@@ -626,14 +626,17 @@ final class ShellJobRegistry {
   /// Boot re-adoption (issue #2201 AC5): a manifest entry whose pid is
   /// alive at boot becomes a real registry job instead of an invisible
   /// ghost. The manifest id is KEPT — board resume matching and
-  /// `bash_job` id resolution keep working.
-  ShellJobEntry adoptRunningEntry({
+  /// `bash_job` id resolution keep working. Issue #2265: because the id
+  /// is kept, a harness-NATIVE job's log (`$dir/$id.log`, issue #1408
+  /// co-location) is still on disk — the adopted entry resolves it and
+  /// stays output-capable instead of degrading to liveness-only.
+  Future<ShellJobEntry> adoptRunningEntry({
     required String id,
     required String command,
     required int pid,
     String? pidStart,
     int? startedAtMs,
-  }) {
+  }) async {
     // Idempotent (issue #2201 r3): captureLostJobs runs at every boot —
     // a wake/continuation loop re-boots the same CLI instance — and
     // adoption never rewrites the manifest, so a second boot re-hands
@@ -647,10 +650,22 @@ final class ShellJobRegistry {
       command: command,
       pid: pid,
       pidStart: pidStart,
+      logPath: await _adoptedLogPath(id),
       startedAt: startedAtMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
     );
+  }
+
+  /// The kept-id job's original harness log, or '' when there is none:
+  /// foreign survivors have no file at the derivable path, and neither
+  /// has a native log deleted between runs (retention sweep) — both fall
+  /// back to the honest liveness-only surfaces.
+  Future<String> _adoptedLogPath(String id) async {
+    final baseEnv = env;
+    final path = '${jobLogDir ?? '${baseEnv.cwd}/.fah/bash_jobs'}/$id.log';
+    final exists = await baseEnv.exists(path);
+    return exists.valueOrNull == true ? path : '';
   }
 
   ShellJobEntry _adopt({
@@ -658,6 +673,7 @@ final class ShellJobRegistry {
     required String command,
     required int pid,
     String? pidStart,
+    String logPath = '',
     DateTime? startedAt,
   }) {
     final entry = ShellJobEntry._(
@@ -668,6 +684,7 @@ final class ShellJobRegistry {
         startTag: pidStart ?? '',
         stopProcess: stopAdoptedOverride ?? stopDetachedProcess,
         livenessSample: livenessTableOverride ?? _probeLivenessTable,
+        logPath: logPath,
       ),
       adopted: true,
       startedAt: startedAt,
@@ -1012,6 +1029,7 @@ final class _AdoptedShellJob implements ShellJob {
     required this._startTag,
     required this._stopProcess,
     this._livenessSample,
+    this.logPath = '',
   });
 
   @override
@@ -1053,8 +1071,14 @@ final class _AdoptedShellJob implements ShellJob {
   final _settled = Completer<void>();
   final _output = StreamController<String>.broadcast();
 
+  /// The harness log captured by the ORIGINAL run, when one exists at the
+  /// derivable `$dir/$id.log` path under the kept manifest id (issue
+  /// #2265): boot re-adoption keeps the id, so a native job's log is
+  /// still addressable and the entry stays output-capable. '' = foreign
+  /// survivor (harness never wrote a log) or the log is gone — the
+  /// liveness-only surfaces apply.
   @override
-  String get logPath => '';
+  final String logPath;
 
   @override
   bool get isRunning => _running;
@@ -1192,16 +1216,19 @@ String stopSurvivorNames(List<ShellSurvivor> survivors) => [
 ].join(', ');
 
 /// The model-facing settle notice for an ADOPTED job (issue #2201 AC3):
-/// liveness-only honesty — no exit code, no harness log — plus the
-/// pointer at the launcher's own redirect. Survivor-aware (issue #2260):
-/// a stop that could not verify the whole process group never claims the
-/// job is simply "no longer running" — it names the survivors or admits
-/// the unverified group, and points at the kept record the boot sweep
-/// reaps through.
+/// liveness-only honesty — no exit code — plus the output pointer:
+/// issue #2265 — a boot re-adopted native job names its real harness
+/// log; a foreign survivor points at the launcher's own redirect.
+/// Survivor-aware (issue #2260): a stop that could not verify the whole
+/// process group never claims the job is simply "no longer running" —
+/// it names the survivors or admits the unverified group, and points at
+/// the kept record the boot sweep reaps through.
 String adoptedJobSettleNoticeText(ShellJobEntry job) {
-  const redirectHint =
-      'Its output went to whatever redirect its launcher used (e.g. '
-      'nohup.out), not a harness log.';
+  final logLine = job.logPath.isEmpty
+      ? 'Its output went to whatever redirect its launcher used (e.g. '
+            'nohup.out), not a harness log.'
+      : 'Log: ${job.logPath} — the harness log captured by the original '
+            'run; check it with bash_job (action: output).';
   final head =
       'Adopted background process ${job.id} '
       '(pid ${job.pid}, `${shellJobCommandLabel(job.command)}`) ';
@@ -1212,7 +1239,7 @@ String adoptedJobSettleNoticeText(ShellJobEntry job) {
           '${head}was stopped by its leader pid, but its process group '
           'could not be verified on this host — group members may remain. '
           'The job record is kept, and the next boot reaps any survivors.\n'
-          '$redirectHint\n'
+          '$logLine\n'
           '</system-notice>';
     }
     if (survivors.isNotEmpty) {
@@ -1227,7 +1254,7 @@ String adoptedJobSettleNoticeText(ShellJobEntry job) {
             'running: ${stopSurvivorNames(survivors)}. The job record is '
             'kept, but the boot sweep skips live leaders — the group '
             'needs manual cleanup (kill -9).\n'
-            '$redirectHint\n'
+            '$logLine\n'
             '</system-notice>';
       }
       return '<system-notice>\n'
@@ -1236,16 +1263,21 @@ String adoptedJobSettleNoticeText(ShellJobEntry job) {
           '${survivors.length == 1 ? 'is' : 'are'} still running: '
           '${stopSurvivorNames(survivors)}. The job record is kept — the '
           'next boot reaps the survivors.\n'
-          '$redirectHint\n'
+          '$logLine\n'
           '</system-notice>';
     }
   }
+  // Issue #2265: the re-run advice stays foreign-only — a native job's
+  // result already sits in its harness log.
+  final rerunAdvice = job.logPath.isEmpty
+      ? ' If you still need its result, check '
+            'that redirect, or re-run the work with background: true to '
+            'capture it.'
+      : '';
   return '<system-notice>\n'
       '${head}is no longer running '
       '(liveness poll; no exit code — it was not our child).\n'
-      '$redirectHint If you still need its result, check '
-      'that redirect, or re-run the work with background: true to capture '
-      'it.\n'
+      '$logLine$rerunAdvice\n'
       '</system-notice>';
 }
 
