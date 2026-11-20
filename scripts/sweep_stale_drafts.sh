@@ -33,6 +33,34 @@
 #     instead of a duplicate, auto-closed again once a sweep comes up
 #     clean (same convention as nightly.yml / daily_publish_report.sh).
 #
+# ── artefact-cache drafts have their own lifecycle (gh-236) ────────────────
+# The machine loop (dmtools-agents factory: timerAutoCommitAndSave.js →
+# releaseArtefacts.uploadRawFile → github_get_or_create_draft_release, tag
+# template `ai-{ticketKey}`) writes every fa leg's session/output snapshots
+# as assets of a per-ticket DRAFT release `ai-gh-<n>` / `ai-pr-<n>`, created
+# with the ai-teammate token — User-typed, marker-less, no Actions run owns
+# it. Those drafts are caches by design (never published, assets
+# best-effort), NOT failed release-train drafts — but without a lifecycle
+# they rotted 24h, were swept as generic bot-bucket findings, and re-filed
+# the recurring sweep issue every day (gh-2287 → gh-2318 → gh-236). The
+# guard: a machine-account draft whose tag matches `ai-(gh|pr)-<digits>` is
+#   - RECLAIMED NOW, any age, when the ticket entity is `closed` — a closed
+#     cycle never resumes (a reopened ticket starts a fresh session; the
+#     pack's restore path is non-fatal and recreates the cache on "first
+#     run"), so the draft is provably garbage the moment the cycle ends;
+#   - swept by the existing 24h backstop when the ticket is still open (a
+#     parked leg — the cache is recreated if the leg resumes);
+#   - kept untouched while the ticket is open and the draft is fresh (an
+#     in-flight leg may be writing snapshots into it);
+#   - KEPT on any ticket-state lookup failure (never delete blind) — only
+#     the 24h backstop then applies.
+# The class is EXCLUDED from the sweep-issue finding counters: reclaiming a
+# lifecycle-managed cache is routine hygiene, not a stale-draft finding, so
+# the issue auto-closes when only cache traffic remains. Human-authored
+# `ai-*` drafts are NOT lifecycle-managed (E1 holds — they stay listed,
+# kept), and machine-authored non-matching drafts (e.g. a machine-authored
+# `vX.Y.Z` train draft) stay in the bot bucket and remain findings.
+#
 # Drafts are deleted by release id via the API: a draft may carry an empty
 # tag_name, which makes every tag-based `gh release delete` ambiguous.
 #
@@ -110,6 +138,9 @@ gh label create "$label" --repo "$repo" --color B60205 \
 # gh api --paginate emits one JSON array per page; the jq stream filter
 # flattens them all. Bucketing happens in jq so the whole rule is
 # reviewable in one place:
+#   artifacts (machine account + ai-(gh|pr)-<n> tag — gh-236)
+#                    -> lifecycle-managed: reclaim at cycle end / 24h
+#                    backstop / keep in flight; NEVER a sweep finding
 #   stale + pipeline (bot author, the machine account, or well-formed
 #                    release-draft-owner: run/<id>/job/<job>
 #                    marker in the body) -> delete, name the marker run
@@ -120,8 +151,19 @@ gh label create "$label" --repo "$repo" --color B60205 \
 #                    SKIPPED (publish point unreachable) is deleted NOW
 drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" --arg assignee "$assignee" '
   [ .[] | select(.draft == true)
-    | { bucket: (
-          if ((now - (.created_at | fromdateiso8601)) > $maxage)
+    | { stale: ((now - (.created_at | fromdateiso8601)) > $maxage),
+        bucket: (
+          # gh-236 first: the machine loop artefact-cache class, keyed on
+          # the machine account AND the `ai-{ticketKey}` tag shape the
+          # factory releaseArtefacts.buildTag() produces (lowercased,
+          # non-alnum to '-', so `GH-2288` becomes `ai-gh-2288`,
+          # `pr-2293` becomes `ai-pr-2293`). Human-authored ai-* drafts and
+          # machine-authored vX.Y.Z drafts never match and fall through to
+          # the buckets below.
+          if (((.author.login // "") == $assignee)
+              and ((.tag_name // "") | test("^ai-(gh|pr)-[0-9]+$")))
+          then "artifacts"
+          elif ((now - (.created_at | fromdateiso8601)) > $maxage)
           then (if ((.author.type // "User") == "Bot"
                     or ((.author.login // "") | test("\\[bot\\]$"))
                     or ((.author.login // "") == $assignee)
@@ -143,7 +185,10 @@ drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max
                 | .run ]
               | .[0] // "") } ]
   | sort_by(.created)[]
-  | [ .bucket, .tag, .id, .created, .author, .run ] | @tsv')
+  # Column order matters: `read` collapses runs of whitespace IFS chars, so
+  # the only possibly-EMPTY field (.run — marker-less drafts) must stay
+  # LAST; .stale sits before it (gh-236: the artifacts branch branches on it).
+  | [ .bucket, .tag, .id, .created, .author, .stale, .run ] | @tsv')
 
 deleted=""
 deleted_tags=""
@@ -158,10 +203,51 @@ reclaimed_count=0
 humans=""
 human_tags=""
 fresh_count=0
+# gh-236: machine-loop artefact-cache drafts — lifecycle-managed, NOT
+# sweep findings (reclaiming a cache whose ticket cycle ended is routine
+# hygiene; the issue must auto-close when only cache traffic remains).
+#   reclaimed at cycle end (ticket closed, any age) / swept by the 24h
+#   backstop (ticket still open / state unknown) / kept (fresh + open).
+art_reclaimed=""
+art_reclaimed_tags=""
+art_reclaimed_count=0
+art_swept=""
+art_swept_tags=""
+art_swept_count=0
+art_kept_tags=""
+art_kept_count=0
 
-while IFS=$'\t' read -r bucket tag id created author marker_run; do
+while IFS=$'\t' read -r bucket tag id created author stale marker_run; do
   [ -n "$bucket" ] || continue
   case "$bucket" in
+    artifacts)
+      # gh-236: the machine loop's per-ticket artefact-cache draft
+      # (`ai-gh-<n>` / `ai-pr-<n>` — timerAutoCommitAndSave.js snapshot
+      # storage). The tag shape was validated by the jq bucket rule, so
+      # `gh #<num>` / `pr #<num>` parsing below is total. State lookup:
+      # the issues REST API serves PRs too (state=closed covers merged).
+      # Any lookup failure yields an empty state — fail-safe: no early
+      # reclaim, only the 24h backstop below may delete.
+      rest="${tag#ai-}"
+      kind="${rest%%-*}"
+      num="${rest##*-}"
+      state=$(gh api "repos/$repo/issues/$num" 2>/dev/null \
+        | jq -r '.state // ""' 2>/dev/null || echo "")
+      if [ "$state" = "closed" ]; then
+        gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
+        art_reclaimed_count=$((art_reclaimed_count + 1))
+        art_reclaimed="$art_reclaimed- \`$tag\` — created $created by @$author; ticket cycle ended (\`$kind #$num\` closed) — reclaimed at cycle end, no 24h wait: a closed cycle never resumes and the cache is recreated on any future first run (gh-236)\n"
+        art_reclaimed_tags="$art_reclaimed_tags $tag"
+      elif [ "$stale" = "true" ]; then
+        gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
+        art_swept_count=$((art_swept_count + 1))
+        art_swept="$art_swept- \`$tag\` — created $created by @$author; swept after 24h with the ticket still open or its state unknown (parked leg — the cache is recreated if the leg resumes; gh-236)\n"
+        art_swept_tags="$art_swept_tags $tag"
+      else
+        art_kept_count=$((art_kept_count + 1))
+        art_kept_tags="$art_kept_tags $tag"
+      fi
+      ;;
     fresh)
       # gh-2318: "fresh — untouched" is right while an in-flight run may
       # own the draft, but a fresh draft can already be PROVABLY
@@ -297,15 +383,33 @@ if [ "$stale_count" -gt 0 ]; then
       printf '%b' "$reclaimed"
     fi
     [ -n "$humans" ] && { echo; echo "**Kept (human drafts, listed not deleted — E1):**"; printf '%b' "$humans"; }
+    # gh-236: cache lifecycle activity rides the filed issue for
+    # visibility — in its own section, with the release-failure prose
+    # never attached (nothing died, nothing failed to publish). It does
+    # NOT contribute to the finding count above.
+    if [ "$((art_reclaimed_count + art_swept_count))" -gt 0 ]; then
+      echo
+      echo "**Artefact-cache drafts (machine-loop \`ai-gh-*\`/\`ai-pr-*\` caches — lifecycle-managed, not release failures):** $art_reclaimed_count reclaimed at cycle end, $art_swept_count swept after 24h"
+      printf '%b' "$art_reclaimed"
+      printf '%b' "$art_swept"
+    fi
     echo
     echo "**Fresh drafts (<$((max_age / 3600))h):** $fresh_count — untouched (an in-flight run may own them)"
+    if [ "$art_kept_count" -gt 0 ]; then
+      echo "**Artefact-cache drafts kept (ticket in flight):** $art_kept_count — reclaimed when the cycle closes, swept after 24h if parked (gh-236)"
+    fi
     echo
     if [ "$failed_trains" -gt 0 ]; then
       echo "**Failed tag trains named above:** $failed_trains"
       echo
       echo "A stale draft whose tag train failed means the publish owner never ran — the draft was the gh-1801 staging draft and release-provenance (its sole publish point) is gated behind the failed train. Rerun the train if the tag should still ship; recurrence means a lifecycle guard is missing (issue #282)."
-    else
+    elif [ "$deleted_count" -gt 0 ]; then
       echo "A stale draft means a \`gh release create\` step died between asset upload and publish — check the creating run's failed step. Recurrence means a lifecycle guard is missing (issue #282)."
+    else
+      # Findings are kept human drafts only (gh-236: cache lifecycle
+      # traffic is excluded from the finding counters) — the create-death
+      # prose would misdirect: nothing died and nothing failed to publish.
+      echo "Kept human drafts above are listed, never deleted (E1) — delete by hand once done with them. Machine-loop artefact-cache drafts (\`ai-gh-*\`/\`ai-pr-*\`) are lifecycle-managed (gh-236): reclaimed when their ticket cycle closes, swept after 24h when the ticket stays open or its state is unknown."
     fi
     echo
     echo "---"
@@ -335,7 +439,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • reclaimed early: **$reclaimed_count** • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • reclaimed early: **$reclaimed_count** • artefact-cache (gh-236): **$art_reclaimed_count** reclaimed at cycle end, **$art_swept_count** swept, **$art_kept_count** kept • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
-echo "sweeper: deleted=${deleted_tags# } reclaimed-early=${reclaimed_tags# } human-kept=${human_tags# } fresh=$fresh_count issue=$issue_action"
+echo "sweeper: deleted=${deleted_tags# } reclaimed-early=${reclaimed_tags# } human-kept=${human_tags# } fresh=$fresh_count art-reclaimed=${art_reclaimed_tags# } art-swept=${art_swept_tags# } art-kept=$art_kept_count issue=$issue_action"

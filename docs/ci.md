@@ -249,6 +249,29 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   stuck draft points at its broken step. The test stub enforces the
   workflow-declared token permissions, so a dropped grant fails CI instead
   of silently degrading the issue to "no run on ref".
+- **Artefact-cache lifecycle** (gh-236) — the machine loop writes every fa
+  leg's session/output snapshots into a per-ticket DRAFT release
+  `ai-gh-<n>` / `ai-pr-<n>` (dmtools-agents factory: `timerAutoCommitAndSave.js`
+  → `releaseArtefacts.uploadRawFile` → `github_get_or_create_draft_release`,
+  tag template `ai-{ticketKey}`), authored by ai-teammate with its own
+  token — marker-less, no Actions run owns it. Those drafts are caches by
+  design (never published), so the sweeper manages them by lifecycle, not
+  as release failures: a machine-account draft whose tag matches
+  `ai-(gh|pr)-<digits>` is **reclaimed immediately — any age — once its
+  ticket entity is `closed`** (issues REST API serves PRs too; a closed
+  cycle never resumes — a reopened ticket starts a fresh session, and the
+  pack's restore is non-fatal, recreating the cache on "first run"), kept
+  while the ticket is open and the draft is fresh (an in-flight leg may be
+  writing snapshots), swept by the existing 24h backstop when the ticket
+  stays open (parked leg), and kept on any ticket-state lookup failure
+  (never delete blind) — only the 24h backstop then applies. The class is
+  excluded from the sweep-issue finding
+  counters — reclaiming a lifecycle-managed cache is routine hygiene, so
+  the recurring sweep issue (gh-2287 → gh-2318 → gh-236) finally
+  auto-closes when only cache traffic remains. Human-authored `ai-*`
+  drafts stay E1-protected (listed, kept), and machine-authored
+  non-matching drafts (e.g. a machine-authored `vX.Y.Z` train draft) stay
+  bot-bucket findings. Pinned by `test/release_artifact_draft_lifecycle_test.dart`.
 - **Naming** — titles are the bare `vX.Y.Z` tag everywhere (matches the
   tag, matches pub.dev). No `Fa ` prefixes, no untitled creates; both are
   lint-failed by `test/release_hygiene_test.dart`. Pre-existing published
