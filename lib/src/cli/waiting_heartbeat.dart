@@ -182,8 +182,10 @@ final class WaitingConfig {
 }
 
 /// Default age belt for cross-run job manifest entries (`jobs:
-/// staleHours`): entries older than this are dropped at boot; `0`
-/// disables the belt.
+/// staleHours`): entries older than this are dropped at boot — unless
+/// the boot process table verifies their pid alive with a matching
+/// start string, which outranks the belt (issue #2267). `0` ages every
+/// unverifiable entry out at once.
 const defaultJobsStaleHours = 24;
 
 /// Default retention for `.fah/bash_jobs/*.log` (`jobs:
