@@ -17,6 +17,33 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+/// Best-effort teardown of the systemTemp workspace. The boot's
+/// reconcile writes, job-log flushes and the pkilled fixture processes'
+/// final writes are the tolerated post-seal straggler class (the gh-2097
+/// seal comment: "a late settle's registry snapshot, a lost usage
+/// record") — one can land in the tree a beat after the body finished
+/// asserting, and a recursive delete that listed the tree before that
+/// write throws errno 39 (ENOTEMPTY; the identical 2/2 teardown flake
+/// on compaction_diag_log_test, issue #2352). Retry briefly, then
+/// abandon the dir (the convention in agent_cli_single_render_test /
+/// settings_flow_test / compaction diag): a disposable systemTemp
+/// workspace the test no longer reads once the body returned must never
+/// fail a green run.
+Future<void> _deleteBestEffort(Directory dir) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      await dir.delete(recursive: true);
+      return;
+    } on FileSystemException catch (error) {
+      if (attempt >= 3) {
+        print('teardown left ${dir.path} behind: $error');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+}
+
 void main() async {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -66,7 +93,7 @@ void main() async {
         : 'needs setsid (group leadership)',
     () async {
       final workspace = await Directory.systemTemp.createTemp('fah517-cli-');
-      addTearDown(() => workspace.delete(recursive: true));
+      addTearDown(() => _deleteBestEffort(workspace));
       // Fabricate the crashed run: a job group whose leader is dead but
       // whose grandchild survived.
       final secs = '517.9${DateTime.now().microsecondsSinceEpoch % 100000}';
@@ -127,7 +154,7 @@ void main() async {
         : null,
     () async {
       final workspace = await Directory.systemTemp.createTemp('fah2260a-');
-      addTearDown(() => workspace.delete(recursive: true));
+      addTearDown(() => _deleteBestEffort(workspace));
       // A live setsid group: leader sh + a two-sleep pipeline, all one
       // group (pgid == leader pid) — the issue's exact burn-CPU shape.
       final micros = DateTime.now().microsecondsSinceEpoch % 1000000;
@@ -228,7 +255,7 @@ void main() async {
     skip: !psAvailable ? 'needs POSIX with ps access' : null,
     () async {
       final workspace = await Directory.systemTemp.createTemp('fah2260b-');
-      addTearDown(() => workspace.delete(recursive: true));
+      addTearDown(() => _deleteBestEffort(workspace));
       // No setsid: the child sits in OUR group — the harness can never
       // prove the group is gone, so the stop must keep the record.
       final micros = DateTime.now().microsecondsSinceEpoch % 1000000;
@@ -675,7 +702,7 @@ void main() async {
   test('boot log GC prunes old job logs, keeps fresh, retention 0 disables '
       '(issue #478)', () async {
     final workspace = await Directory.systemTemp.createTemp('fah478-logs-');
-    addTearDown(() => workspace.delete(recursive: true));
+    addTearDown(() => _deleteBestEffort(workspace));
     final dir = workspace.path;
     final localEnv = LocalExecutionEnv(cwd: dir);
     final logs = '$dir/.fah/bash_jobs';
@@ -750,7 +777,7 @@ void main() async {
   /// and a foreign lock held by a regular file.
   Future<(AgentCli, String)> lockFixture() async {
     final workspace = await Directory.systemTemp.createTemp('fah478-lock-');
-    addTearDown(() => workspace.delete(recursive: true));
+    addTearDown(() => _deleteBestEffort(workspace));
     final dir = workspace.path;
     final localEnv = LocalExecutionEnv(cwd: dir);
     final localIo = FakeCliIO();
