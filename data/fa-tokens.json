@@ -40,15 +40,6 @@
   "issue-2059": [
     {
       "leg": "review",
-      "at": "2026-11-06T04:04:01Z",
-      "prompt": 21408,
-      "completion": 0,
-      "total": 21408,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-06T04:20:05Z",
       "prompt": 22077,
       "completion": 0,
@@ -4851,6 +4842,17 @@
       "completion": 16461,
       "total": 93612,
       "cacheRead": 1080256,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2335": [
+    {
+      "leg": "dev",
+      "at": "2026-11-20T04:11:44Z",
+      "prompt": 452946,
+      "completion": 56073,
+      "total": 509019,
+      "cacheRead": 12165952,
       "model": "glm-5.3-flash"
     }
   ]
