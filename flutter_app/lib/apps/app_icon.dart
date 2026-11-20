@@ -186,35 +186,28 @@ class AppIconBadge extends StatelessWidget {
 /// two-stop materials, and fine highlight strokes. Keeping the artwork here
 /// also upgrades existing installs; it does not require rewriting user files.
 abstract final class AppIconArtwork {
-  static String? svgFor(String appId) => switch (appId) {
-    'settings' || 'system:settings' => _settings,
-    'files' || 'system:files' => _files,
-    'networks' || 'system:networks' => _networks,
-    'contacts' => _contacts,
-    'reminders' => _reminders,
-    'adaptive-dashboard' => _dashboard,
-    'm3-showcase' => _componentShowcase,
-    '3d-viewer' => _modelViewer,
-    '3d-game' => _dodgeGame,
-    'neon-breakout-3d' => _breakout,
-    'voxel-sandbox' => _voxelSandbox,
-    _ => null,
+  /// Lookup table keeps the CRAP complexity of the accessors at 1 (the
+  /// previous multi-case switches tripped the 12.0 ratchet at 16.0).
+  static const _entries = <String, (String, Color)>{
+    'settings': (_settings, Color(0xFF626672)),
+    'system:settings': (_settings, Color(0xFF626672)),
+    'files': (_files, Color(0xFF4C6A8A)),
+    'system:files': (_files, Color(0xFF4C6A8A)),
+    'networks': (_networks, Color(0xFF43766F)),
+    'system:networks': (_networks, Color(0xFF43766F)),
+    'contacts': (_contacts, Color(0xFF73859B)),
+    'reminders': (_reminders, Color(0xFFB68A4A)),
+    'adaptive-dashboard': (_dashboard, Color(0xFF4B5B70)),
+    'm3-showcase': (_componentShowcase, Color(0xFF6B5F7E)),
+    '3d-viewer': (_modelViewer, Color(0xFF59677F)),
+    '3d-game': (_dodgeGame, Color(0xFF35677A)),
+    'neon-breakout-3d': (_breakout, Color(0xFF252D49)),
+    'voxel-sandbox': (_voxelSandbox, Color(0xFF596B62)),
   };
 
-  static Color? accentFor(String appId) => switch (appId) {
-    'settings' || 'system:settings' => const Color(0xFF626672),
-    'files' || 'system:files' => const Color(0xFF4C6A8A),
-    'networks' || 'system:networks' => const Color(0xFF43766F),
-    'contacts' => const Color(0xFF73859B),
-    'reminders' => const Color(0xFFB68A4A),
-    'adaptive-dashboard' => const Color(0xFF4B5B70),
-    'm3-showcase' => const Color(0xFF6B5F7E),
-    '3d-viewer' => const Color(0xFF59677F),
-    '3d-game' => const Color(0xFF35677A),
-    'neon-breakout-3d' => const Color(0xFF252D49),
-    'voxel-sandbox' => const Color(0xFF596B62),
-    _ => null,
-  };
+  static String? svgFor(String appId) => _entries[appId]?.$1;
+
+  static Color? accentFor(String appId) => _entries[appId]?.$2;
 
   static const _settings = '''
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">

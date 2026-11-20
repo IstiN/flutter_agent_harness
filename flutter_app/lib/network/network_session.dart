@@ -432,10 +432,7 @@ final class NetworkSession extends ChangeNotifier {
           useAccountToken: account,
         );
       } on FaNetworkException catch (error) {
-        if (account &&
-            error.statusCode == 401 &&
-            !authRetried &&
-            await _syncAccountToken(refresh: true)) {
+        if (await _retryAfterAccountTokenRefresh(error, account, authRetried)) {
           authRetried = true;
           continue;
         }
@@ -454,6 +451,18 @@ final class NetworkSession extends ChangeNotifier {
       }
     }
   }
+
+  /// 401 on an account-token (DM) request: refresh once, then retry. Split
+  /// out of [_listHistoryPage] to keep its CRAP complexity under the ratchet.
+  Future<bool> _retryAfterAccountTokenRefresh(
+    FaNetworkException error,
+    bool account,
+    bool authRetried,
+  ) async =>
+      account &&
+      error.statusCode == 401 &&
+      !authRetried &&
+      await _syncAccountToken(refresh: true);
 
   Future<bool> _syncAccountToken({required bool refresh}) async {
     final provider = refresh ? _refreshAccountToken : _freshAccountToken;
