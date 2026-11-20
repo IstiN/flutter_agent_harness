@@ -40,96 +40,6 @@
   "issue-2059": [
     {
       "leg": "review",
-      "at": "2026-11-06T04:20:05Z",
-      "prompt": 22077,
-      "completion": 0,
-      "total": 22077,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T04:28:15Z",
-      "prompt": 22746,
-      "completion": 0,
-      "total": 22746,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "rework",
-      "at": "2026-11-06T04:37:55Z",
-      "prompt": 172452,
-      "completion": 0,
-      "total": 172452,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T04:47:44Z",
-      "prompt": 23415,
-      "completion": 0,
-      "total": 23415,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:03:35Z",
-      "prompt": 24084,
-      "completion": 0,
-      "total": 24084,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:22:17Z",
-      "prompt": 24753,
-      "completion": 0,
-      "total": 24753,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:36:06Z",
-      "prompt": 25422,
-      "completion": 0,
-      "total": 25422,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:46:17Z",
-      "prompt": 26091,
-      "completion": 0,
-      "total": 26091,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:03:40Z",
-      "prompt": 26760,
-      "completion": 0,
-      "total": 26760,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:23:11Z",
-      "prompt": 27429,
-      "completion": 0,
-      "total": 27429,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-06T06:37:56Z",
       "prompt": 28098,
       "completion": 0,
@@ -139,69 +49,6 @@
     }
   ],
   "pr-2060": [
-    {
-      "leg": "review",
-      "at": "2026-11-06T04:18:30Z",
-      "prompt": 16056,
-      "completion": 0,
-      "total": 16056,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T04:30:12Z",
-      "prompt": 16725,
-      "completion": 0,
-      "total": 16725,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:03:40Z",
-      "prompt": 17394,
-      "completion": 0,
-      "total": 17394,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:20:52Z",
-      "prompt": 18063,
-      "completion": 0,
-      "total": 18063,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T05:37:19Z",
-      "prompt": 18732,
-      "completion": 0,
-      "total": 18732,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:04:34Z",
-      "prompt": 19401,
-      "completion": 0,
-      "total": 19401,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
-    {
-      "leg": "review",
-      "at": "2026-11-06T06:24:47Z",
-      "prompt": 20070,
-      "completion": 0,
-      "total": 20070,
-      "cacheRead": 0,
-      "model": "kimi-for-coding"
-    },
     {
       "leg": "review",
       "at": "2026-11-06T06:36:36Z",
@@ -4853,6 +4700,17 @@
       "completion": 56073,
       "total": 509019,
       "cacheRead": 12165952,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2336": [
+    {
+      "leg": "dev",
+      "at": "2026-11-20T06:30:40Z",
+      "prompt": 826524,
+      "completion": 64797,
+      "total": 891321,
+      "cacheRead": 22838656,
       "model": "glm-5.3-flash"
     }
   ]
