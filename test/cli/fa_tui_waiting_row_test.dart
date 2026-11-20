@@ -106,4 +106,32 @@ void main() {
     expect(lines.single, isNot(contains('\n')));
     expect(lines.single, contains('python3 -c " import os print(1) " (sh-1)'));
   });
+
+  test('the registry lock notice renders under the waiting rows '
+      '(issue #2266 AC2)', () {
+    final lines = waitingRowLines(
+      busy: false,
+      waitingJobs: const ['watch.sh (sh-b)'],
+      waitingTimers: const [],
+      waitingLostJobs: 0,
+      waitingRegistryNotice:
+          'manifest lock still held after 150ms — registry update skipped '
+          'to avoid an unlocked write (#2266)',
+      nowMs: 0,
+    );
+    expect(lines, hasLength(2));
+    expect(lines.last, contains('⚠'));
+    expect(lines.last, contains('registry update skipped'));
+    // Cleared (null) → the notice row disappears.
+    expect(
+      waitingRowLines(
+        busy: false,
+        waitingJobs: const ['watch.sh (sh-b)'],
+        waitingTimers: const [],
+        waitingLostJobs: 0,
+        nowMs: 0,
+      ),
+      hasLength(1),
+    );
+  });
 }

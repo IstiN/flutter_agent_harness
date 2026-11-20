@@ -89,7 +89,11 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
 /// Relative paths resolve against [cwd] (default: the process working
 /// directory). All operations uphold the [FileSystem] never-throw invariant.
 final class LocalFileSystem
-    implements FileSystem, RangedReadFileSystem, RenamableFileSystem {
+    implements
+        FileSystem,
+        RangedReadFileSystem,
+        RenamableFileSystem,
+        ExclusiveCreateFileSystem {
   /// Creates a [LocalFileSystem] rooted at [cwd].
   LocalFileSystem({String? cwd}) : cwd = cwd ?? Directory.current.path;
 
@@ -331,6 +335,20 @@ final class LocalFileSystem
     final resolved = _resolve(path);
     try {
       await Directory(resolved).create(recursive: recursive);
+      return const Ok(null);
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolved));
+    }
+  }
+
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) async {
+    final resolved = _resolve(path);
+    try {
+      // O_EXCL: the call fails when anything already occupies the path —
+      // the primitive cross-process locks need (issue #2266; a plain
+      // Directory.create is a no-op over an existing dir, never a lock).
+      await File(resolved).create(recursive: false, exclusive: true);
       return const Ok(null);
     } on Object catch (error) {
       return Err(_toFileError(error, resolved));
@@ -1495,7 +1513,8 @@ final class LocalExecutionEnv
         ExecutionEnv,
         BackgroundShell,
         RangedReadFileSystem,
-        RenamableFileSystem {
+        RenamableFileSystem,
+        ExclusiveCreateFileSystem {
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
@@ -1583,6 +1602,10 @@ final class LocalExecutionEnv
     String path, {
     bool recursive = true,
   }) => _fs.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) =>
+      _fs.createFileExclusive(path);
 
   @override
   Future<Result<void, FileError>> remove(
