@@ -61,11 +61,12 @@ import 'package:fa/apps/viewport_reporter.dart';
 /// semantics wherever they are valid, but fall back to centered children at
 /// the intrinsic row height instead of failing the entire JS app's layout.
 Widget _finishJsAppNode(Map<String, dynamic> node, Widget built) {
-  if (node['type'] != 'row' ||
-      built is! Row ||
-      built.crossAxisAlignment != CrossAxisAlignment.stretch) {
-    return built;
-  }
+  if (node['type'] != 'row' || built is! Row) return built;
+  return _finishStretchJsRow(built);
+}
+
+Widget _finishStretchJsRow(Row built) {
+  if (built.crossAxisAlignment != CrossAxisAlignment.stretch) return built;
   return LayoutBuilder(
     builder: (context, constraints) {
       if (constraints.hasBoundedHeight) return built;

@@ -309,9 +309,7 @@ class _DevicesPageState extends State<DevicesPage> {
           _remote[device.deviceId] = _RemoteDeviceNode(
             roster: device,
             presence: previous?.presence,
-            agentDmPubs: device.agentDmPubs.isNotEmpty
-                ? device.agentDmPubs
-                : previous?.agentDmPubs ?? const {},
+            agentDmPubs: _mergedAgentDmPubs(device, previous),
             rosterFromAccount: true,
           );
         }
@@ -323,6 +321,13 @@ class _DevicesPageState extends State<DevicesPage> {
       if (identical(service, widget.service)) _fetchingRoster = false;
     }
   }
+
+  Map<String, String> _mergedAgentDmPubs(
+    DeviceInfo device,
+    _RemoteDeviceNode? previous,
+  ) => device.agentDmPubs.isNotEmpty
+      ? device.agentDmPubs
+      : previous?.agentDmPubs ?? const {};
 
   @override
   void dispose() {
