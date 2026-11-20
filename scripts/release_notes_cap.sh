@@ -3,7 +3,7 @@
 #
 # `gh release create`/`gh release edit` hard-reject a body over
 # 125,000 characters with HTTP 422 "body is too long (maximum is
-# 125000 characters)" — run 468064719 (daily-publish cli leg, v1.0.756)
+# 125000 characters)" — run 44680647719 (daily-publish cli leg, v1.0.756)
 # red THREE attach jobs (build-macos-cli arm64/x64 + build-extension)
 # with exactly that error: scripts/release_notes.sh returned the curated
 # `## Unreleased` CHANGELOG section (131,072 bytes by then) as the release

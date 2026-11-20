@@ -63,14 +63,20 @@ if ! bash "$(dirname "$0")/release_notes.sh" "$tag" >"$notes_file" ||
   [ ! -s "$notes_file" ]; then
   printf 'Release %s — see the CHANGELOG.\n' "$tag" >"$notes_file"
 fi
+# gh-237: bound the body BEFORE stamping the owner marker — the cap
+# truncates from the TAIL, so a pre-stamped marker is cut off and the
+# created draft carries no ownership proof: release_draft_guard.sh
+# resolves `<unmarked>` and refuses to reclaim it, the daily sweeper
+# buckets it human (the legs run with GH_TOKEN=RELEASE_PAT) and keeps
+# it, dedupe ignores it — a forever-orphaned draft (gh-282). Bounded
+# body (≤ 120,000) + the marker stays under the 125,000-character
+# release-body cap whose overshoot HTTP-422'd `gh release create` in
+# run 44680647719 (v1.0.756) and left every attach gate on the tag
+# dying with "release not found".
+bash "$(dirname "$0")/release_notes_cap.sh" "$notes_file"
+
 marker="<!-- release-draft-owner: $identity -->"
 grep -qF "$marker" "$notes_file" || printf '\n%s\n' "$marker" >>"$notes_file"
-
-# gh-237: bound the body BEFORE the create — a curated `## Unreleased`
-# section past GitHub's 125,000-character release-body cap HTTP-422'd
-# `gh release create` in run 468064719 (v1.0.756) and every attach gate
-# on the tag then died with "release not found".
-bash "$(dirname "$0")/release_notes_cap.sh" "$notes_file"
 
 # gh-2026: a `gh release create` for a MISSING ref REST-mints a
 # lightweight API tag with NO push event — the v0.1.408 silent class
@@ -108,7 +114,7 @@ gh release create "$tag" \
 if [ "$create_rc" -ne 0 ]; then
   # gh-1801's `|| true` tolerated ONLY the view→create race — a sibling
   # leg creating the release between our view and create. gh-237 (run
-  # 468064719, v1.0.756): that swallow ALSO ate real create failures
+  # 44680647719, v1.0.756): that swallow ALSO ate real create failures
   # (body-too-long 422), printed "✅ lazy draft ready", and failed every
   # attach gate with "release not found". Re-view: the release existing
   # NOW means we lost the race (upload into the winner's release); it

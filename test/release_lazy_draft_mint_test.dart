@@ -150,4 +150,48 @@ void main() {
       );
     },
   );
+
+  test(
+    'gh-2337 rework: an over-cap lazy draft body still carries the release-draft-owner marker',
+    () {
+      // The cap helper truncates from the TAIL, so a marker stamped
+      // before the cap is cut off — the created draft then carries no
+      // ownership proof: release_draft_guard.sh resolves `<unmarked>`
+      // and refuses to reclaim, the daily sweeper buckets it human
+      // (the legs run with GH_TOKEN=RELEASE_PAT) and keeps it, and
+      // dedupe ignores it — a forever-orphaned draft (gh-282). The
+      // body must be bounded BEFORE the marker is stamped; the bounded
+      // body (≤ 120,000) plus the marker stays far under the
+      // 125,000-character API cap.
+      final r = runReleaseMintFixture(
+        'scripts/release_lazy_draft.sh',
+        args: const ['v1.2.3'],
+        name: 'lazy-marker-survives-cap',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        seedOversizeChangelog: true,
+        githubRunId: '222',
+        githubJob: 'build-extension',
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.notesCapture, isNotEmpty, reason: 'the create carried notes');
+      expect(
+        r.notesCapture,
+        contains('truncated'),
+        reason: 'the seeded 131k-class curated body must actually be bounded',
+      );
+      expect(
+        r.notesCapture,
+        contains('release-draft-owner: run/222/job/build-extension'),
+        reason:
+            'the ownership marker must survive the body cap — the guard, '
+            'sweeper and dedupe all match it in the release body',
+      );
+      expect(
+        r.notesCapture.length,
+        lessThanOrEqualTo(125_000),
+        reason: 'the created body must stay under the API cap',
+      );
+    },
+  );
 }
