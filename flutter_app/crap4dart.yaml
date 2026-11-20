@@ -226,6 +226,14 @@ gates:
       # detector cannot discriminate (same blind spot as p3/p4).
       - 'test/goldens/goldens/wide_layout_shell_*.png'
       - 'test/goldens/goldens/narrow_layout_shell_*.png'
+      # 2026-11-21 launchpad gallery: the flagged pairs are the rounded
+      # brick <rect> elements of AppIconArtwork._breakout (neon-breakout
+      # icon), not glyphs — real Inter text throughout, guarded by
+      # expectRealFontText in the gallery tests. Manually reviewed on the
+      # CI macOS captures (detector pair at phone (58,337)/(72,337),
+      # desktop (843,129)/(857,129) = first two breakout bricks).
+      - 'test/goldens/goldens/launcher/gallery_launchpad_phone.png'
+      - 'test/goldens/goldens/launcher/gallery_launchpad_desktop.png'
 
   # Widget → golden coverage. WARNING (not error): the 0.9.5 widget
   # census is broader than the enforced test/goldens/golden_guard_test.dart
