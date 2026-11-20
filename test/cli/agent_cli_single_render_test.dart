@@ -57,6 +57,29 @@ List<String> _rowLines(String channel) => channel
     .where((line) => line.startsWith('│ '))
     .toList();
 
+/// Best-effort teardown of the systemTemp artifact dirs. The backgrounded
+/// bash job's settle path can still be flushing its job-log when the test
+/// body has finished asserting, so a recursive delete that lists the tree a
+/// beat before the append lands throws errno 39 (ENOTEMPTY, gh-2330). Retry
+/// briefly, then abandon the dir (same convention as settings_flow_test):
+/// the dir is a disposable systemTemp artifact holding nothing the test
+/// still reads once the body returned, and a leaked temp dir must never
+/// fail a green run.
+Future<void> _deleteBestEffort(Directory dir) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      await dir.delete(recursive: true);
+      return;
+    } on FileSystemException catch (error) {
+      if (attempt >= 3) {
+        print('teardown left ${dir.path} behind: $error');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+}
+
 AgentCli _cli(
   CliIO io, {
   ExecutionEnv? env,
@@ -372,8 +395,8 @@ void main() {
         'fa_single_render_art',
       );
       addTearDown(() async {
-        await taskDir.delete(recursive: true);
-        await artifactsDir.delete(recursive: true);
+        await _deleteBestEffort(taskDir);
+        await _deleteBestEffort(artifactsDir);
       });
       final io = SplitChannelCliIO();
       final cli = AgentCli(
@@ -430,8 +453,8 @@ void main() {
         'fa_single_render_art',
       );
       addTearDown(() async {
-        await taskDir.delete(recursive: true);
-        await artifactsDir.delete(recursive: true);
+        await _deleteBestEffort(taskDir);
+        await _deleteBestEffort(artifactsDir);
       });
       final io = SplitChannelCliIO();
       final cli = AgentCli(
