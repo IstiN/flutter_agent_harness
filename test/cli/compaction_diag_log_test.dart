@@ -26,6 +26,32 @@ Model get _model => const Model(
 
 const _taskMarker = 'diag log compaction probe';
 
+/// Best-effort teardown of the systemTemp artifact dir. The headless run's
+/// exit drains the diag-log chain before the seal (gh-2097), but the seal
+/// itself documents tolerated straggler writes after it (a late settle's
+/// registry snapshot, a lost usage record) — one can land in the tree a
+/// beat after the test body finished asserting, and a recursive delete
+/// that listed the tree before that write throws errno 39 (ENOTEMPTY,
+/// issue #2352, 2/2 same-sig). Retry briefly, then abandon the dir (same
+/// convention as agent_cli_single_render_test / settings_flow_test): the
+/// dir is a disposable systemTemp artifact holding nothing the test still
+/// reads once the body returned, and a leaked temp dir must never fail a
+/// green run.
+Future<void> _deleteBestEffort(Directory dir) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      await dir.delete(recursive: true);
+      return;
+    } on FileSystemException catch (error) {
+      if (attempt >= 3) {
+        print('teardown left ${dir.path} behind: $error');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+}
+
 /// A structured-compaction-aware fake stream: judge calls (the
 /// context-hygiene judge prompt) answer `[]` (hide nothing), checkpoint
 /// calls answer a canned summary, real turns answer from [turnAnswers].
@@ -173,7 +199,7 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
       final taskDir = await Directory.systemTemp.createTemp('fa_2274_skip');
-      addTearDown(() => taskDir.delete(recursive: true));
+      addTearDown(() => _deleteBestEffort(taskDir));
       final home = '${taskDir.path}/home';
       // Content-routed fake: the hide judge (the `context-hygiene judge`
       // system prompt) answers garbage — two unparseable answers engage
