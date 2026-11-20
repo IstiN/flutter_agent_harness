@@ -66,6 +66,7 @@ MintRun runReleaseMintFixture(
   bool ghCreateFails = false,
   bool viewFoundAfterFirst = false,
   bool seedReleaseNotes = false,
+  bool seedOversizeChangelog = false,
 }) {
   final dir = Directory(
     '${_fixtureRoot.path}/mint-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -140,6 +141,16 @@ exit 0
     File(
       '$work/release-notes.md',
     ).writeAsStringSync('${'x' * 130_000}\ntrailing curated line\n');
+  }
+  // gh-237 rework: an over-cap curated `## Unreleased` CHANGELOG body
+  // (the production shape — the v1.0.756 curated section was ~131 KB),
+  // which release_notes.sh preference 1b returns as the lazy draft's
+  // notes; the cap helper must bound it before the owner marker is
+  // stamped or the truncation strips the marker.
+  if (seedOversizeChangelog) {
+    File('$work/CHANGELOG.md').writeAsStringSync(
+      '## Unreleased\n${'${'x' * 220}\n' * 600}', // ~132 KB curated body
+    );
   }
   // What actions/checkout leaves behind (persist-credentials defaults
   // true): the job token as an http extraheader on the host's URL.
