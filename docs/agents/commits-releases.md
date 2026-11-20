@@ -40,7 +40,12 @@
   `## Unreleased`; the release folds it into the tag's section AT STAGE
   TIME (`scripts/release_notes.sh` preference order: curated `## <version>`
   section → curated `## Unreleased` body → conventional commits since the
-  previous tag). The version scheme is `1.0.<counter>` (gh-785: App Store
+  previous tag). The release PAGE body (never the changelog itself) is
+  bounded under GitHub's hard 125,000-character release-body cap by
+  `scripts/release_notes_cap.sh` at the two release-body writers
+  (`release_lazy_draft.sh` + `release_attach_or_create.sh`) — gh-2337:
+  the v1.0.756 curated Unreleased body (131k) HTTP-422'd the draft
+  create in three attach legs. The version scheme is `1.0.<counter>` (gh-785: App Store
   Connect approved 1.0.0 and enforces a monotonic
   `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
   train can never upload again). Release checklist: push to main (or the

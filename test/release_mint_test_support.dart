@@ -26,12 +26,24 @@ String resolveRealGit() {
 
 /// One scripted run over the mint fixture.
 class MintRun {
-  MintRun(this.exitCode, this.output, this.ghLog, this.pushes, this.gitLog);
+  MintRun(
+    this.exitCode,
+    this.output,
+    this.ghLog,
+    this.pushes,
+    this.gitLog, {
+    this.notesCapture = '',
+  });
   final int exitCode;
   final String output;
   final List<String> ghLog; // every gh invocation the script made
   final List<String> pushes; // captured token-URL push command lines
   final List<String> gitLog; // every git invocation, in order
+
+  /// The body of the `--notes-file` the script passed to `gh release
+  /// create` (empty when the stub never captured one) — gh-237 body-cap
+  /// evidence.
+  final String notesCapture;
 }
 
 /// A local bare origin whose refs answer but lack the release tag (the
@@ -50,6 +62,11 @@ MintRun runReleaseMintFixture(
   String githubRunId = '111',
   String githubJob = 'release-macos',
   Map<String, String> extraEnv = const {},
+  bool seedTag = false,
+  bool ghCreateFails = false,
+  bool viewFoundAfterFirst = false,
+  bool seedReleaseNotes = false,
+  bool seedOversizeChangelog = false,
 }) {
   final dir = Directory(
     '${_fixtureRoot.path}/mint-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -59,12 +76,32 @@ MintRun runReleaseMintFixture(
 #!/usr/bin/env bash
 echo "\$*" >> "\$GH_LOG_FILE"
 if [ "\$1" = "release" ] && [ "\$2" = "view" ]; then
+  if [ "\${GH_STUB_VIEW_FOUND_AFTER_FIRST:-0}" = "1" ] && [ -f "\$GH_STUB_STATE/view-seen" ]; then
+    exit 0
+  fi
+  touch "\$GH_STUB_STATE/view-seen"
   echo "release not found (stub)" >&2
   exit 1
 fi
 if [ "\$1" = "run" ] && [ "\$2" = "list" ]; then
   # Simulate the Actions run row the push event should have created.
   if [ "\${GH_STUB_TRAIN_RUNNING:-0}" = "1" ]; then echo 1; fi
+  exit 0
+fi
+if [ "\$1" = "release" ] && [ "\$2" = "create" ]; then
+  # Capture the notes body the create carried (gh-237 body-cap evidence).
+  prev=""
+  for a in "\$@"; do
+    if [ "\$prev" = "--notes-file" ] && [ -f "\$a" ]; then
+      cp "\$a" "\$GH_NOTES_CAPTURE" 2>/dev/null || true
+    fi
+    prev="\$a"
+  done
+  if [ "\${GH_STUB_CREATE_FAILS:-0}" = "1" ]; then
+    echo "HTTP 422: Validation Failed (stub)" >&2
+    echo "body is too long (maximum is 125000 characters)" >&2
+    exit 1
+  fi
   exit 0
 fi
 exit 0
@@ -90,6 +127,31 @@ exit 0
     'rev-parse',
     'HEAD',
   ], workingDirectory: work).stdout.toString().trim();
+  // gh-237: seed the release tag so `git ls-remote --exit-code` answers
+  // rc 0 and the script skips the whole mint path — the body-cap and
+  // loud-failure tests exercise the create handling, not the mint.
+  if (seedTag) {
+    final tag = args.first;
+    git(['tag', '-a', tag, '-m', tag]);
+    git(['push', '-q', 'origin', 'refs/tags/$tag']);
+  }
+  // gh-237: an over-cap release-notes.md (a curated body larger than
+  // GitHub's 125,000-character release-body cap) prepared by the caller.
+  if (seedReleaseNotes) {
+    File(
+      '$work/release-notes.md',
+    ).writeAsStringSync('${'x' * 130_000}\ntrailing curated line\n');
+  }
+  // gh-237 rework: an over-cap curated `## Unreleased` CHANGELOG body
+  // (the production shape — the v1.0.756 curated section was ~131 KB),
+  // which release_notes.sh preference 1b returns as the lazy draft's
+  // notes; the cap helper must bound it before the owner marker is
+  // stamped or the truncation strips the marker.
+  if (seedOversizeChangelog) {
+    File('$work/CHANGELOG.md').writeAsStringSync(
+      '## Unreleased\n${'${'x' * 220}\n' * 600}', // ~132 KB curated body
+    );
+  }
   // What actions/checkout leaves behind (persist-credentials defaults
   // true): the job token as an http extraheader on the host's URL.
   if (seedExtraheader) {
@@ -126,6 +188,10 @@ exit 0
     'FA_MINT_GIT_LOG': '${dir.path}/git.log',
     'FA_REAL_GIT': realGit,
     'GH_STUB_TRAIN_RUNNING': trainRunning ? '1' : '0',
+    'GH_STUB_CREATE_FAILS': ghCreateFails ? '1' : '0',
+    'GH_STUB_VIEW_FOUND_AFTER_FIRST': viewFoundAfterFirst ? '1' : '0',
+    'GH_STUB_STATE': dir.path,
+    'GH_NOTES_CAPTURE': '${dir.path}/notes-capture.md',
     ...extraEnv,
   };
   // Explicit override both ways: Process.runSync merges the parent env by
@@ -148,5 +214,8 @@ exit 0
     lines('${dir.path}/gh.log'),
     lines('${dir.path}/push.log'),
     lines('${dir.path}/git.log'),
+    notesCapture: File('${dir.path}/notes-capture.md').existsSync()
+        ? File('${dir.path}/notes-capture.md').readAsStringSync()
+        : '',
   );
 }
