@@ -994,9 +994,21 @@ jobs:
           targets=$(python3 scripts/shard_files.py scripts/test_shards.json ${{ matrix.shard }})
           echo "shard targets: $targets"
           mkdir -p build/test-results
-          dart test --coverage=coverage --exclude-tags integration \
+          # Issue #2331: under CI-leg load the dart test loader's loopback ws
+          # to a spawning test VM dies mid-handshake ("Failed to load …:
+          # Connection closed before full header was received / Connection
+          # reset by peer") — an arbitrary victim file, 6/6 occurrences on
+          # this leg family. The wrapper re-runs ONLY that dropped file once
+          # (gh-1026 rerun-only-failed discipline); real failures carry no
+          # ws-drop signature and stay loud. junit below still reads the
+          # attempt-1 main log — a healed rerun writes to …retry.json.
+          bash scripts/load_drop_retry.sh \
+            "build/test-results/dart-shard-${{ matrix.shard }}.json" \
+            "build/test-results/dart-shard-${{ matrix.shard }}.retry.json" \
+            -- \
+            dart test --coverage=coverage --exclude-tags integration \
             --file-reporter="json:build/test-results/dart-shard-${{ matrix.shard }}.json" \
-            $targets
+            "$targets"
           python3 scripts/junit_from_dart_json.py \
             build/test-results/dart-shard-${{ matrix.shard }}.json \
             build/test-results/junit-shard-${{ matrix.shard }}.xml
@@ -1418,11 +1430,19 @@ jobs:
             exit 0
           fi
           mkdir -p build/test-results
-          dart test --tags integration --exclude-tags browser-ext,llm \
+          # Issue #2331: same loopback-ws loader-drop family as the core
+          # shards (occ1 + occ5 hit THIS leg at --concurrency=4 — the cap
+          # alone does not kill the class). One-shot rerun of the dropped
+          # file only; see scripts/load_drop_retry.sh.
+          bash scripts/load_drop_retry.sh \
+            "build/test-results/integration-shard-${{ matrix.shard }}.json" \
+            "build/test-results/integration-shard-${{ matrix.shard }}.retry.json" \
+            -- \
+            dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
             --file-reporter="json:build/test-results/integration-shard-${{ matrix.shard }}.json" \
-            $targets
+            "$targets"
       # The file-reporter writes the json even on a RED leg — convert +
       # upload must not be chained into the failing step (#928 review):
       # timing evidence is exactly what red runs need to keep.
