@@ -1,0 +1,1 @@
+{"ts":"2026-11-20T08:16:48.672059Z","event":"scheduled","id":"1795162608670911_0000_1k5xqu","dueMs":1795162968670,"to":"main","text":"Check full-suite job sh-44-hoby6sjvycfb3to9 (`dart test --exclude-tags integration`, log /tmp/full_suite.log): read the `exit=` line and failure count, update outputs/response.md Test Coverage section"}
