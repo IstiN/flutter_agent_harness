@@ -147,6 +147,17 @@ final class _WaitingCoordinator {
   /// timeout guess (issue #2266 AC3).
   bool _lockExclusiveProven = false;
 
+  /// Settled ids whose remove landed before their add could claim the
+  /// registry lock (issue #2350): the lock queues whoever claims FIRST,
+  /// it cannot reorder claims — under load the add's pre-claim fs work
+  /// can lose the 10ms settle lag, the remove lands on an empty
+  /// manifest, and the late add resurrects an exited job as running.
+  /// A settle remembers its id here (synchronously, before any await)
+  /// and the add checks the tombstone inside the locked mutate: a late
+  /// add for a settled id is dropped. Same-isolate bookkeeping — the
+  /// cross-process RMW race stays under the fs lock.
+  final _settledBeforeAdd = <String>{};
+
   /// The latest exclusive-create refusal, retained until the immediately
   /// following occupancy probe distinguishes contention from a broken fs.
   FileError? _lastRegistryLockClaimError;
@@ -618,6 +629,13 @@ final class _WaitingCoordinator {
     Future<String?> Function()? pidStartProbe,
   }) async {
     await _mutateRegistry((entries) async {
+      // A settle that already landed for this id (its remove won the
+      // claim race — issue #2350) drops this late add: without the check
+      // the add resurrects an exited job as running until the next boot.
+      // NOT consumed: adoption fires an unawaited add chain of its own
+      // (onStart), so duplicate adds for one settled id are normal — the
+      // first consumer must not un-protect the second.
+      if (_settledBeforeAdd.contains(id)) return entries;
       // The probe runs INSIDE the critical section (issue #2275): run
       // outside, its async gap let a fast-settling job's remove land
       // first — the add then resurrected an EXITED job as running until
@@ -947,7 +965,13 @@ final class _WaitingCoordinator {
   /// surviving group members keyed by it. Verified-gone stops (and every
   /// natural settle) remove as before.
   Future<void> jobSettled(ShellJobEntry job) async {
-    if (!adoptedStopKeepsManifestRecord(job)) await _manifestRemove(job.id);
+    if (!adoptedStopKeepsManifestRecord(job)) {
+      // Remembered SYNCHRONOUSLY, before any await (issue #2350): this
+      // chain can outrun the still-unclaimed add — the tombstone is what
+      // makes the late add drop instead of resurrecting the exited job.
+      _settledBeforeAdd.add(job.id);
+      await _manifestRemove(job.id);
+    }
     await push();
   }
 
