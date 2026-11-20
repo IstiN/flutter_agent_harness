@@ -358,92 +358,15 @@ class _AppTileHostState extends State<AppTileHost> {
         ),
         child: ClipRSuperellipse(
           borderRadius: BorderRadius.circular(radius),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // Tiny drag-feedback/test surfaces and user-resized 1-column
-              // tiles keep the whole canvas; wider 2-row widgets have room
-              // for the Shortcuts identity without squeezing the title.
-              final showHeader =
-                  constraints.maxHeight >= 160 && constraints.maxWidth >= 120;
-              return Column(
-                children: [
-                  if (showHeader) _buildHeader(context),
-                  Expanded(
-                    child: ColoredBox(
-                      // The pastel belongs to the identity strip, not behind
-                      // arbitrary JS text. A neutral canvas keeps explicit
-                      // app colors readable and avoids acid-on-accent tiles.
-                      color: Theme.of(context).colorScheme.surface,
-                      child: _buildBody(Theme.of(context)),
-                    ),
-                  ),
-                ],
-              );
-            },
+          // Live tiles are the JS canvas alone: many apps draw their own
+          // identity, so a host header duplicated their titles (store
+          // screenshots CI). A neutral canvas keeps explicit app colors
+          // readable and avoids acid-on-accent tiles.
+          child: ColoredBox(
+            color: Theme.of(context).colorScheme.surface,
+            child: _buildBody(Theme.of(context)),
           ),
         ),
-      ),
-    );
-  }
-
-  /// Shortcuts-style identity strip: colorful artwork, a bold name, the
-  /// compact version subtitle and one muted description line. The live JS
-  /// canvas stays below it and keeps all existing event/routing behavior.
-  Widget _buildHeader(BuildContext context) {
-    final app = widget.app;
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final description = app.displayDescription(locale);
-    final foreground = AppIconPalette.foregroundFor(
-      Theme.of(context).brightness,
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-      child: Row(
-        children: [
-          AppIcon(app: app, env: widget.env, size: 40, framed: true),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  app.displayName(locale),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    height: 1.15,
-                  ),
-                ),
-                Text(
-                  'v${app.version}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: foreground.withValues(alpha: .78),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    height: 1.15,
-                  ),
-                ),
-                if (description.isNotEmpty)
-                  Text(
-                    description,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: foreground.withValues(alpha: .66),
-                      fontSize: 10.5,
-                      height: 1.15,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

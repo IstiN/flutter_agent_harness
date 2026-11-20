@@ -621,8 +621,9 @@ void main() {
       // The live tile replaces Alpha's static icon + label …
       expect(find.byType(AppTileHost), findsOneWidget);
       expect(find.text('LIVE TILE'), findsOneWidget);
-      // The Shortcuts-style identity strip carries the app name instead.
-      expect(find.text('Alpha'), findsOneWidget);
+      // The live tile replaces Alpha's static icon + label; the JS canvas
+      // owns the whole cell (no host identity header — apps draw their own).
+      expect(find.text('Alpha'), findsNothing);
       // … while the other apps keep the classic icon tile.
       expect(find.text('Beta'), findsOneWidget);
       expect(find.text('Gamma'), findsOneWidget);
