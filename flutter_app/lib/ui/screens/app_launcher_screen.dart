@@ -1492,10 +1492,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               // to fit; larger Launchpad icons exposed the missing inset).
               final duoRailInset = FaDuoControlRail.widthOf(context);
               final crossAxisCount = _crossAxisCount(
-                // The scroll view contributes 16pt gutters on both sides;
-                // include them in the fit so the occupied tracks never
-                // overflow the pane at an exact column boundary.
-                math.max(0.0, constraints.maxWidth - duoRailInset - 32),
+                // The scroll gutters are accounted for INSIDE
+                // _crossAxisCount (single subtraction); pass the raw lane.
+                math.max(0.0, constraints.maxWidth - duoRailInset),
               );
               // Launchpad rhythm: large colorful artwork, a generous gutter
               // on desktop and a tighter phone pitch. Widget spans use the
@@ -1617,6 +1616,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final spacing = widget.fullScreen
         ? LauncherGridSpec.desktopSpacing
         : LauncherGridSpec.spacing;
+    // The scroll view contributes 16pt gutters on both sides; reserve them
+    // here (the ONLY subtraction — callers pass the raw lane width) so the
+    // occupied tracks never overflow the pane at an exact column boundary.
     final usableWidth = math.max(0.0, width - 32);
     final fittedTracks =
         ((usableWidth + spacing) / (LauncherGridSpec.cellCrossExtent + spacing))

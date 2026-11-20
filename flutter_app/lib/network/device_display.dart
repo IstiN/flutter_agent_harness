@@ -19,7 +19,9 @@ String shortDeviceId(String id) => id.length > 12
 
 /// Resolves a session row title like the Local tab: the registry display
 /// name, then the project folder basename, then a short id. First-prompt
-/// snippets stay previews; they never stand in for the session name.
+/// snippets stay previews for registry-named sessions; for a CLI row with
+/// neither name nor path (`cliFallback`) the snippet is the last-resort
+/// display name, ahead of the abbreviated id.
 ///
 /// Legacy DM titles sometimes prefixed the raw id with a device label. Keep
 /// that useful prefix while replacing only the id with the same fallback.
