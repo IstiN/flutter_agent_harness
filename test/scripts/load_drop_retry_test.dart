@@ -6,12 +6,17 @@
 /// load-drop retry behind the sharded dart test legs.
 ///
 /// Under CI-leg load the dart test loader's loopback WebSocket to a freshly
-/// spawned test VM dies mid-handshake (`Failed to load "x_test.dart": Connection closed before full header was received`).
-/// The victim file is arbitrary, never an
+/// spawned test VM dies mid-handshake (`Failed to load "x_test.dart": Connection closed before full header was received` /
+/// `Connection reset by peer, uri=http://127.0.0.1:…/ws`). The victim file is arbitrary, never an
 /// assertion failure (6/6 occurrences). The wrapper must:
-///   - re-run ONLY the dropped file(s), exactly once, on that signature;
-///   - keep every real failure loud (no signature → no rerun);
-///   - never rerun blind (signature without an extractable file);
+///   - rerun at all ONLY on that signature (no signature → no rerun, loud);
+///   - rerun the FULL attempt-1 failed inventory ONCE — the ws-dropped
+///     files PLUS every failed suite the attempt-1 reporter log records
+///     (`gate_failed_targets.py`) — so a healed rerun can never mask a
+///     co-occurring real failure (PR #2347 review round 1, blocking):
+///     assertion failure + drop → the rerun includes the failing suite and
+///     the shard stays red;
+///   - never rerun blind (signature without any failed-file inventory);
 ///   - point the rerun's --file-reporter at the retry log while the main
 ///     log keeps its attempt-1 evidence for junit/duration consumers.
 /// Fixture-tested here with a stubbed runner — no CI, no real dart test.
@@ -29,23 +34,56 @@ const droppedClosedHeader =
 const droppedConnReset =
     'Failed to load "test/cli/wire_serve_test.dart": Connection reset by peer, uri=http://127.0.0.1:46295/x/ws';
 
-/// Stub runner: per MODE, prints loader-drop lines on attempt 1 and exits 1;
-/// exits 0 on the rerun (except drop-always). Every invocation appends its
-/// argv to `<tmp>/argv.log` so the rerun's exact command line is assertable.
+/// Minimal dart-json file-reporter fixture: one real suite with one failing
+/// test (resolved via the suite map) and one hidden `loading <path>` error
+/// (load failure, resolved from the name — no suite event, the real dart
+/// shape for a file that never loaded).
+String reporterFixture({
+  required String failingSuitePath,
+  required String failingCase,
+  String? loadingPath,
+}) => [
+  '{"type":"suite","suite":{"id":7,"path":"$failingSuitePath","platform":"vm"}}',
+  if (loadingPath != null)
+    '{"type":"testStart","test":{"id":70,"name":"loading $loadingPath","suiteID":99},"time":0}',
+  if (loadingPath != null)
+    '{"type":"testDone","testID":70,"result":"error","hidden":true,"time":5}',
+  '{"type":"testStart","test":{"id":71,"name":"$failingCase","suiteID":7},"time":6}',
+  '{"type":"testDone","testID":71,"result":"failure","time":10}',
+  '{"type":"done","success":false}',
+].join('\n');
+
+/// Stub runner. Attempt 1 prints the MODE's failure output (and, for the
+/// reporter-fixture modes, writes the dart-json log the wrapper's
+/// --file-reporter flag points at); the rerun (attempt 2) fails iff a
+/// deterministic failure file appears in its targets — modeling that real
+/// failures fail again — else passes (a pure ws drop heals).
 String stubRunner(String tmp) =>
     '''
 #!/usr/bin/env bash
+main=''
+for a in "\$@"; do
+  case "\$a" in --file-reporter=json:*) main="\${a#--file-reporter=json:}" ;; esac
+done
 echo "\$*" >> "$tmp/argv.log"
+if [ -f "$tmp/attempt2" ]; then
+  case "\$MODE" in
+    drop-always)
+      echo '$droppedClosedHeader'
+      exit 1 ;;
+  esac
+  case "\$*" in
+    *b_two_test*|*ok_test*|*rep_only_test*) exit 1 ;;
+  esac
+  exit 0
+fi
+touch "$tmp/attempt2"
 case "\$MODE" in
   ok) exit 0 ;;
   drop-closed-header)
-    [ -f "$tmp/attempt2" ] && exit 0
-    touch "$tmp/attempt2"
     echo '$droppedClosedHeader'
     exit 1 ;;
   drop-conn-reset)
-    [ -f "$tmp/attempt2" ] && exit 0
-    touch "$tmp/attempt2"
     echo '$droppedConnReset'
     exit 1 ;;
   drop-always)
@@ -59,11 +97,21 @@ case "\$MODE" in
     echo 'socket error: Connection reset by peer'
     exit 1 ;;
   drop-two-plus-compile-error)
-    [ -f "$tmp/attempt2" ] && exit 0
-    touch "$tmp/attempt2"
+    printf '%s\n' '${reporterFixture(failingSuitePath: "test/b_two_test.dart", failingCase: "loading test/b_two_test.dart", loadingPath: "test/b_two_test.dart")}' > "\$main"
     echo 'Failed to load "test/a_one_test.dart": Connection closed before full header was received, uri = http://127.0.0.1:1/a/ws'
     echo 'Failed to load "test/b_two_test.dart": Error: Compilation failed'
     echo 'Failed to load "test/c_three_test.dart": Connection reset by peer, uri=http://127.0.0.1:2/b/ws'
+    exit 1 ;;
+  assert-fail-plus-drop)
+    printf '%s\n' '${reporterFixture(failingSuitePath: "test/cli/ok_test.dart", failingCase: "the real case", loadingPath: "test/cli/dropped_test.dart")}' > "\$main"
+    echo '00:01 +0 -1: test/cli/ok_test.dart [E]'
+    echo '  Expected: true'
+    echo '   Actual: false'
+    echo '$droppedClosedHeader'
+    exit 1 ;;
+  rep-only-union)
+    printf '%s\n' '${reporterFixture(failingSuitePath: "test/rep_only_test.dart", failingCase: "reporter-only failure", loadingPath: "test/cli/dropped_test.dart")}' > "\$main"
+    echo '$droppedClosedHeader'
     exit 1 ;;
   *) echo "unknown MODE \$MODE" >&2; exit 3 ;;
 esac
@@ -118,7 +166,8 @@ void main() {
     final calls = invocations(tmp.path);
     expect(calls, hasLength(2));
     // Rerun argv: the dropped file ONLY — the healthy target from attempt 1
-    // must not re-run.
+    // must not re-run. (The stub writes no reporter log, so this also pins
+    // the console-derived fallback when the attempt-1 log is absent.)
     expect(
       calls[1],
       contains('test/cli/dropped_test.dart'),
@@ -145,15 +194,18 @@ void main() {
     expect(invocations(tmp.path), hasLength(2));
   });
 
-  test('AC4 a real assertion failure never reruns — stays loud', () async {
-    final r = await runWrapper(tmp.path, mode: 'assert-fail');
-    expect(r.exitCode, isNot(0));
-    expect(r.stdout, contains('Expected: true'));
-    expect(invocations(tmp.path), hasLength(1));
-  });
+  test(
+    'AC4 a real assertion failure alone never reruns — stays loud',
+    () async {
+      final r = await runWrapper(tmp.path, mode: 'assert-fail');
+      expect(r.exitCode, isNot(0));
+      expect(r.stdout, contains('Expected: true'));
+      expect(invocations(tmp.path), hasLength(1));
+    },
+  );
 
   test(
-    'AC5 ws signature without a Failed-to-load file never reruns blind',
+    'AC5 ws signature without a failed-file inventory never reruns blind',
     () async {
       final r = await runWrapper(tmp.path, mode: 'ws-no-path');
       expect(r.exitCode, isNot(0));
@@ -168,23 +220,66 @@ void main() {
     expect(invocations(tmp.path), hasLength(2), reason: 'exactly one rerun');
   });
 
-  test('AC7 mixed run: only signature-bearing dropped files rerun; a '
-      'compile-error load failure does not', () async {
+  test('AC7 co-occurring compile-error load failure joins the rerun and '
+      'keeps the shard red (review round 1, blocking variant 2)', () async {
     final r = await runWrapper(
       tmp.path,
       mode: 'drop-two-plus-compile-error',
       targets:
           'test/a_one_test.dart test/b_two_test.dart test/c_three_test.dart',
     );
-    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    // Precise targeting is not enough: a deterministic compile-error load
+    // failure from attempt 1 must be IN the rerun and fail it again.
+    expect(r.exitCode, isNot(0), reason: 'stderr: ${r.stderr}');
     final calls = invocations(tmp.path);
     expect(calls, hasLength(2));
     expect(calls[1], contains('test/a_one_test.dart'));
     expect(calls[1], contains('test/c_three_test.dart'));
     expect(
       calls[1],
-      isNot(contains('test/b_two_test.dart')),
-      reason: 'a compile-error load failure is deterministic — never rerun',
+      contains('test/b_two_test.dart'),
+      reason:
+          'the compile-error file comes from the attempt-1 reporter log '
+          '(gate_failed_targets.py) — the rerun must include it',
+    );
+  });
+
+  test(
+    'AC8 assertion failure + ws drop in one run: rerun includes the '
+    'failing suite, shard stays RED (review round 1, blocking variant 1)',
+    () async {
+      final r = await runWrapper(tmp.path, mode: 'assert-fail-plus-drop');
+      expect(r.exitCode, isNot(0), reason: 'stderr: ${r.stderr}');
+      final calls = invocations(tmp.path);
+      expect(calls, hasLength(2));
+      expect(
+        calls[1],
+        contains('test/cli/ok_test.dart'),
+        reason:
+            'the genuinely failing suite must rerun — a healed dropped '
+            'file alone must never green-light the shard',
+      );
+      expect(calls[1], contains('test/cli/dropped_test.dart'));
+    },
+  );
+
+  test('AC9 the rerun inventory unions both sources: a reporter-only failed '
+      'suite rides along with the console-derived dropped file', () async {
+    final r = await runWrapper(tmp.path, mode: 'rep-only-union');
+    expect(r.exitCode, isNot(0), reason: 'stderr: ${r.stderr}');
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2));
+    expect(
+      calls[1],
+      contains('test/rep_only_test.dart'),
+      reason:
+          'failed suite present ONLY in the attempt-1 reporter log '
+          '(gate_failed_targets.py) must join the rerun',
+    );
+    expect(
+      calls[1],
+      contains('test/cli/dropped_test.dart'),
+      reason: 'console-derived ws drop stays a rerun target',
     );
   });
 }

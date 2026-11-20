@@ -13,9 +13,14 @@
 #
 # This wrapper runs the shard's dart test command as given, and on failure
 # that carries BOTH the `Failed to load "<path>"` marker AND a ws-drop
-# signature, re-runs ONLY the dropped file(s) once (the gh-1026
-# rerun-only-failed-files discipline). Real test failures never match the
-# signature and stay loud — nothing is rerun blind, nothing is masked.
+# signature, re-runs the failed inventory ONCE (the gh-1026
+# rerun-only-failed-files discipline): the ws-dropped files PLUS every
+# attempt-1 failed suite the main reporter log records (via the repo's
+# scripts/gate_failed_targets.py). A co-occurring real failure — assertion
+# failure or compile-error load failure — is therefore IN the rerun and
+# keeps the shard red; an attempt 1 whose only failures are ws drops heals.
+# Without the ws-drop signature the wrapper never reruns at all: real
+# failures stay loud, nothing is rerun blind, nothing is masked.
 #
 # Usage:
 #   scripts/load_drop_retry.sh <main-log> <retry-log> -- <cmd...> "<targets>"
@@ -35,6 +40,10 @@
 # --coverage=coverage, so a healed file's hits land in the same coverage/
 # dir the gate merges.
 set -euo pipefail
+# TARGETS/RERUN_TARGETS expand unquoted below (word-split by design — the
+# caller passes a quoted, space-separated list). Glob-off: a path carrying
+# glob metacharacters must never expand (PR #2347 review digest).
+set -f
 
 usage() {
   echo "usage: $0 <main-log> <retry-log> -- <cmd...> \"<targets>\"" >&2
@@ -63,10 +72,11 @@ if [ "$RC" -eq 0 ]; then
   exit 0
 fi
 
-# Detection: the ws-drop family signature ONLY. A real assertion failure,
-# compile error, or timeout never pairs `Failed to load "…"` with ws text
-# (that prefix is emitted solely by the test loader) — those exit here,
-# loud.
+# Detection: the ws-drop family signature ONLY — it gates WHETHER this
+# wrapper reruns at all. A real assertion failure, compile error, or
+# timeout never pairs `Failed to load "…"` with ws text (that prefix is
+# emitted solely by the test loader) — with no signature the failure is
+# deterministic runner territory: exit here, loud, no rerun.
 if ! grep -qE 'Connection closed before full header was received|Connection reset by peer' \
     "$CONSOLE"; then
   echo "load_drop_retry: failure carries no loopback-ws drop signature — not rerunning" >&2
@@ -76,13 +86,22 @@ DROPPED=$(awk '/Failed to load/ && (/Connection closed before full header was re
   "$CONSOLE" |
   sed -E -e 's/.*Failed to load "([^"]+)".*/\1/' -e 't' -e 's/.*Failed to load ([^:"]+):.*/\1/' |
   sort -u)
-if [ -z "$DROPPED" ]; then
-  echo "load_drop_retry: ws-drop signature present but no dropped file extractable — not rerunning blind" >&2
+# WHAT to rerun is the FULL attempt-1 failed inventory, not just the
+# ws-dropped files (PR #2347 review round 1, blocking): union the console
+# drops with every failed suite the attempt-1 reporter recorded
+# (gate_failed_targets.py — failure AND error results, load failures via
+# the hidden `loading <path>` tests; missing/unparsable log = clean empty).
+# A co-occurring real failure is therefore IN the rerun and fails it — the
+# shard stays red; an attempt 1 whose ONLY failures are ws drops heals.
+REPORTER_FAILED=$(python3 scripts/gate_failed_targets.py "$MAIN_LOG")
+RERUN_TARGETS=$(printf '%s\n%s\n' "$DROPPED" "$REPORTER_FAILED" | sed '/^$/d' | sort -u)
+if [ -z "$RERUN_TARGETS" ]; then
+  echo "load_drop_retry: ws-drop signature present but no failed-file inventory — not rerunning blind" >&2
   exit "$RC"
 fi
 
-echo "🔁 load-drop retry (#2331): rerunning dropped file(s) ONCE:" >&2
-printf '%s\n' "$DROPPED" | sed 's/^/   /' >&2
+echo "🔁 load-drop retry (#2331): rerunning failed file(s) ONCE:" >&2
+printf '%s\n' "$RERUN_TARGETS" | sed 's/^/   /' >&2
 
 RETRY_CMD=()
 for arg in "${CMD[@]}"; do
@@ -93,7 +112,7 @@ for arg in "${CMD[@]}"; do
 done
 
 set +e
-"${RETRY_CMD[@]}" --file-reporter="json:$RETRY_LOG" $DROPPED 2>&1 | tee -a "$CONSOLE"
+"${RETRY_CMD[@]}" --file-reporter="json:$RETRY_LOG" $RERUN_TARGETS 2>&1 | tee -a "$CONSOLE"
 RETRY_RC=${PIPESTATUS[0]}
 set -e
 
