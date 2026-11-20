@@ -38,8 +38,15 @@ typedef DeviceDmChannelParts = ({
 });
 
 /// Parsed encrypted DM text wrapper. Raw legacy assistant text has no session
-/// and does not opt into structured replies.
-typedef DeviceDmText = ({String text, String? sessionId, bool threaded});
+/// and does not opt into structured replies. [replyTo] correlates a delivery
+/// receipt with the original user envelope even when a retry mints a fresh
+/// receipt envelope id.
+typedef DeviceDmText = ({
+  String text,
+  String? sessionId,
+  bool threaded,
+  String? replyTo,
+});
 
 /// Parses a DM channel id; null on any shape violation.
 DeviceDmChannelParts? parseDeviceDmChannelId(String channelId) {
@@ -56,28 +63,30 @@ DeviceDmChannelParts? parseDeviceDmChannelId(String channelId) {
   );
 }
 
-/// Unwraps `{"text": …, "sessionId"?, "threading"?}` while preserving raw
-/// legacy text and malformed wrappers byte-for-byte.
+/// Unwraps `{"text": …, "sessionId"?, "threading"?, "replyTo"?}` while
+/// preserving raw legacy text and malformed wrappers byte-for-byte.
 DeviceDmText unwrapDeviceDmText(String plaintext) {
   if (!plaintext.startsWith('{')) {
-    return (text: plaintext, sessionId: null, threaded: false);
+    return (text: plaintext, sessionId: null, threaded: false, replyTo: null);
   }
   try {
     final decoded = jsonDecode(plaintext);
     if (decoded is Map && decoded['text'] is String) {
       final sessionId = decoded['sessionId'];
+      final replyTo = decoded['replyTo'];
       return (
         text: decoded['text'] as String,
         sessionId: sessionId is String && sessionId.isNotEmpty
             ? sessionId
             : null,
         threaded: decoded['threading'] == 1,
+        replyTo: replyTo is String && replyTo.isNotEmpty ? replyTo : null,
       );
     }
   } on FormatException {
     // Raw text also decrypts here — keep it as-is.
   }
-  return (text: plaintext, sessionId: null, threaded: false);
+  return (text: plaintext, sessionId: null, threaded: false, replyTo: null);
 }
 
 /// Wraps a reply only when the incoming request opted into threading. This
@@ -86,7 +95,10 @@ String wrapDeviceDmText(
   String reply, {
   required String? sessionId,
   required bool threaded,
-}) => threaded ? jsonEncode({'text': reply, 'sessionId': ?sessionId}) : reply;
+  String? replyTo,
+}) => threaded
+    ? jsonEncode({'text': reply, 'sessionId': ?sessionId, 'replyTo': ?replyTo})
+    : reply;
 
 /// Agent-side fanet1 decoder for one enrolled device.
 final class DeviceDmCodec {
@@ -174,6 +186,7 @@ final class DeviceDmReplyRoute {
     required this.sessionId,
     required this.senderPubkey,
     required this.threaded,
+    this.replyTo,
   });
 
   /// Captures the authenticated route and metadata from one accepted mail.
@@ -204,6 +217,7 @@ final class DeviceDmReplyRoute {
       sessionId: mail.sessionId,
       senderPubkey: senderPubkey,
       threaded: mail.threaded,
+      replyTo: envelope.msgId,
     );
   }
 
@@ -231,6 +245,10 @@ final class DeviceDmReplyRoute {
       if (sessionId != null && (sessionId is! String || sessionId.isEmpty)) {
         throw const FormatException('route sessionId is invalid');
       }
+      final replyTo = decoded['replyTo'];
+      if (replyTo != null && (replyTo is! String || replyTo.isEmpty)) {
+        throw const FormatException('route replyTo is invalid');
+      }
       final senderPubkey = requiredString('senderPubkey');
       if (base64Decode(senderPubkey).length != 32) {
         throw const FormatException('route sender public key is invalid');
@@ -249,6 +267,7 @@ final class DeviceDmReplyRoute {
         sessionId: sessionId as String?,
         senderPubkey: senderPubkey,
         threaded: decoded['threaded'] == true,
+        replyTo: replyTo as String?,
       );
     } on Object {
       // Never echo an attacker-controlled opaque address in a tool error.
@@ -264,6 +283,10 @@ final class DeviceDmReplyRoute {
   final String senderPubkey;
   final bool threaded;
 
+  /// Original user envelope id. Kept in the opaque route so delayed agent
+  /// answers and queued receipts retain the same correlation after restart.
+  final String? replyTo;
+
   /// Encodes every field needed after a CLI restart; no in-memory pub cache.
   String toAddress() {
     final route = jsonEncode({
@@ -274,6 +297,7 @@ final class DeviceDmReplyRoute {
       if (sessionId != null) 'sessionId': sessionId,
       'senderPubkey': senderPubkey,
       'threaded': threaded,
+      'replyTo': ?replyTo,
     });
     return '$deviceDmReplyAddressPrefix'
         '${base64UrlEncode(utf8.encode(route)).replaceAll('=', '')}';
@@ -288,7 +312,8 @@ final class DeviceDmReplyRoute {
       other.agentAddress == agentAddress &&
       other.sessionId == sessionId &&
       other.senderPubkey == senderPubkey &&
-      other.threaded == threaded;
+      other.threaded == threaded &&
+      other.replyTo == replyTo;
 
   @override
   int get hashCode => Object.hash(
@@ -299,6 +324,7 @@ final class DeviceDmReplyRoute {
     sessionId,
     senderPubkey,
     threaded,
+    replyTo,
   );
 }
 
@@ -338,6 +364,7 @@ Future<String> sendDeviceDmReply({
         reply,
         sessionId: route.sessionId,
         threaded: route.threaded,
+        replyTo: route.replyTo,
       ),
     ),
   );

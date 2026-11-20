@@ -43,6 +43,7 @@ final class ChannelMessage {
     this.senderName,
     this.createdAt,
     this.sessionId,
+    this.replyTo,
   });
 
   /// The envelope id — the at-least-once dedupe key.
@@ -71,6 +72,11 @@ final class ChannelMessage {
   /// DM thread target decrypted from the plaintext wrapper. Null identifies
   /// the device-general bucket used by legacy/session-less rows.
   final String? sessionId;
+
+  /// Original user envelope id for a threaded agent reply/delivery receipt.
+  /// Unlike [envelopeId], this stays stable when an unacked original is
+  /// retried and the peer mints another receipt envelope.
+  final String? replyTo;
 }
 
 /// The live message store of one channel: deduped, decrypted, paged.
@@ -100,8 +106,65 @@ final class ChannelState {
 
   bool add(ChannelMessage message) {
     if (!seen.add(message.envelopeId)) return false;
-    messages.add(message);
+    final candidate = _collapseForInsert(message, existing: messages);
+    if (candidate == null) return false;
+    messages.add(candidate);
     return true;
+  }
+
+  /// Normalizes a queued receipt and returns null when it duplicates one in
+  /// [existing]. [preceding] limits legacy reply correlation to rows that
+  /// chronologically precede the candidate; older history pages are prepended,
+  /// so rows already in the store must not supply their legacy correlation.
+  ChannelMessage? _collapseForInsert(
+    ChannelMessage message, {
+    required Iterable<ChannelMessage> existing,
+    Iterable<ChannelMessage>? preceding,
+  }) {
+    if (message.isOwn || message.text != deviceDmQueuedReceipt) {
+      return message;
+    }
+    // Queue notices are delivery STATE, not three agent answers. A peer
+    // pre-restart retry can mint a fresh envelope id for the same original,
+    // so id-dedup alone cannot collapse them. New peers carry replyTo;
+    // infer it from the preceding own row for 1.0.751 legacy receipts.
+    final correlation =
+        message.replyTo ??
+        _latestOwnEnvelopeId(preceding ?? existing, message.sessionId) ??
+        'session:${message.senderId}:${message.sessionId ?? ''}';
+    final duplicate = existing.any(
+      (row) =>
+          !row.isOwn &&
+          row.text == deviceDmQueuedReceipt &&
+          row.senderId == message.senderId &&
+          row.sessionId == message.sessionId &&
+          row.replyTo == correlation,
+    );
+    if (duplicate) return null;
+    if (message.replyTo != null) return message;
+    return ChannelMessage(
+      envelopeId: message.envelopeId,
+      senderId: message.senderId,
+      senderPub: message.senderPub,
+      senderName: message.senderName,
+      text: message.text,
+      isOwn: message.isOwn,
+      createdAt: message.createdAt,
+      sessionId: message.sessionId,
+      replyTo: correlation,
+    );
+  }
+
+  String? _latestOwnEnvelopeId(
+    Iterable<ChannelMessage> rows,
+    String? sessionId,
+  ) {
+    for (final message in rows.toList().reversed) {
+      if (message.isOwn && message.sessionId == sessionId) {
+        return message.envelopeId;
+      }
+    }
+    return null;
   }
 }
 
@@ -357,7 +420,12 @@ final class NetworkSession extends ChangeNotifier {
         if (!state.seen.add(envelope.id)) continue;
         final message = await _decode(envelope);
         if (!_isCurrentChannelState(channelId, state, revision)) return;
-        decoded.add(message);
+        final candidate = state._collapseForInsert(
+          message,
+          existing: decoded.followedBy(state.messages),
+          preceding: decoded,
+        );
+        if (candidate != null) decoded.add(candidate);
       }
       state.messages.insertAll(0, decoded);
       state.nextCursor = (page.nextCursor?.isEmpty ?? true)

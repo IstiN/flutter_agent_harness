@@ -56,6 +56,35 @@ import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
 import 'package:fa/apps/viewport_reporter.dart';
 
+/// Flutter cannot stretch a row's children when its parent gives it an
+/// unbounded height (commonly a non-flex row inside a column). Keep stretch
+/// semantics wherever they are valid, but fall back to centered children at
+/// the intrinsic row height instead of failing the entire JS app's layout.
+Widget _finishJsAppNode(Map<String, dynamic> node, Widget built) {
+  if (node['type'] != 'row' || built is! Row) return built;
+  return _finishStretchJsRow(built);
+}
+
+Widget _finishStretchJsRow(Row built) {
+  if (built.crossAxisAlignment != CrossAxisAlignment.stretch) return built;
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.hasBoundedHeight) return built;
+      return Row(
+        key: built.key,
+        mainAxisAlignment: built.mainAxisAlignment,
+        mainAxisSize: built.mainAxisSize,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        textDirection: built.textDirection,
+        verticalDirection: built.verticalDirection,
+        textBaseline: built.textBaseline,
+        spacing: built.spacing,
+        children: built.children,
+      );
+    },
+  );
+}
+
 /// Payload delivered when the user talks to Fa from inside an app: their
 /// message, the app's exported state, and a screenshot of the app.
 class FaAppMessage {
@@ -1440,6 +1469,7 @@ class _JsAppViewState extends State<JsAppView> {
           return const Center(child: CircularProgressIndicator());
         }
         final renderer = JsonWidgetRenderer(
+          buildHooks: const JsonWidgetBuildHooks(finishNode: _finishJsAppNode),
           theme: JsonWidgetTheme.fromAccent(
             theme.colorScheme.primary,
             brightness: theme.brightness,
@@ -1499,7 +1529,18 @@ class _JsAppViewState extends State<JsAppView> {
           // sizing shield. Anchor that shield to the top of the host canvas;
           // otherwise its Center places the whole app in the vertical middle.
           child: ClipRect(
-            child: Align(alignment: Alignment.topCenter, child: rendered),
+            child: Align(
+              alignment: Alignment.topCenter,
+              // The canvas already reserves the exact app-bar/safe-area
+              // inset. Scaffold also exposes that inset as MediaQuery
+              // padding; without this, a root ListView with no explicit
+              // padding inserts the app-bar height a second time.
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: rendered,
+              ),
+            ),
           ),
         );
       },

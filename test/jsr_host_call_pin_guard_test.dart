@@ -31,7 +31,7 @@ const minFixedVersion = '0.4.156';
 /// The THREE-capable runtime required by gh-2215. Keep this exact pin newer
 /// than [minFixedVersion]; the lockfile assertion below still guards the
 /// original bridge-channel floor independently.
-const pinnedRuntimeVersion = '0.4.204';
+const pinnedRuntimeVersion = '0.4.208';
 
 int pubVersion(String v) {
   // Strip any prerelease/build suffix ("0.5.0-dev.1", "0.4.157+1") —

@@ -168,35 +168,39 @@ final class MessengerAvatarStrip extends StatelessWidget {
                       color: Colors.transparent,
                       child: InkWell(
                         onTap: () => onOpen(item.id),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            item.avatar(selected),
-                            if (selected)
-                              Positioned(
-                                // Keep the full 6pt capsule on-screen; a
-                                // zero inset clips it to an edge sliver.
-                                left: 4,
-                                top:
-                                    (MessengerDrilldownMetrics.itemPitch -
-                                        MessengerDrilldownMetrics.capsuleHeight) /
-                                    2,
-                                child: Container(
-                                  key: selectedCapsuleKey,
-                                  width:
-                                      MessengerDrilldownMetrics.capsuleWidth,
-                                  height:
-                                      MessengerDrilldownMetrics.capsuleHeight,
-                                  decoration: BoxDecoration(
-                                    color: tokens.accent,
-                                    borderRadius: BorderRadius.circular(
-                                      MessengerDrilldownMetrics.capsuleWidth /
-                                          2,
+                        child: Tooltip(
+                          message: item.label,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              item.avatar(selected),
+                              if (selected)
+                                Positioned(
+                                  // Keep the full 6pt capsule on-screen; a
+                                  // zero inset clips it to an edge sliver.
+                                  left: 4,
+                                  top:
+                                      (MessengerDrilldownMetrics.itemPitch -
+                                          MessengerDrilldownMetrics
+                                              .capsuleHeight) /
+                                      2,
+                                  child: Container(
+                                    key: selectedCapsuleKey,
+                                    width:
+                                        MessengerDrilldownMetrics.capsuleWidth,
+                                    height:
+                                        MessengerDrilldownMetrics.capsuleHeight,
+                                    decoration: BoxDecoration(
+                                      color: tokens.accent,
+                                      borderRadius: BorderRadius.circular(
+                                        MessengerDrilldownMetrics.capsuleWidth /
+                                            2,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
