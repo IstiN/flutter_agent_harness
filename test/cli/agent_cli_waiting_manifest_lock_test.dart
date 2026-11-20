@@ -16,6 +16,32 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+/// Best-effort teardown of the systemTemp workspace. The contender's
+/// registry mutation chain and the CLI's exit writes are the tolerated
+/// post-seal straggler class (the gh-2097 seal comment: "a late settle's
+/// registry snapshot, a lost usage record") — one can land in the tree a
+/// beat after the body finished asserting, and a recursive delete that
+/// listed the tree before that write throws errno 39 (ENOTEMPTY; the
+/// identical 2/2 teardown flake on compaction_diag_log_test, issue
+/// #2352). Retry briefly, then abandon the dir (the convention in
+/// agent_cli_single_render_test / settings_flow_test / compaction
+/// diag): a disposable systemTemp workspace the test no longer reads
+/// once the body returned must never fail a green run.
+Future<void> _deleteBestEffort(Directory dir) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      await dir.delete(recursive: true);
+      return;
+    } on FileSystemException catch (error) {
+      if (attempt >= 3) {
+        print('teardown left ${dir.path} behind: $error');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+}
+
 void main() {
   /// A local-FS CLI over [dir]: the lock's contention needs a real
   /// filesystem — only an exclusive-create backend refuses createDir on
@@ -47,7 +73,7 @@ void main() {
     String tag,
   ) async {
     final workspace = await Directory.systemTemp.createTemp('fah2266-$tag-');
-    addTearDown(() => workspace.delete(recursive: true));
+    addTearDown(() => _deleteBestEffort(workspace));
     final dir = workspace.path;
     final (cli, env, io) = await lockCli(dir);
     final logs = '$dir/.fah/bash_jobs';
