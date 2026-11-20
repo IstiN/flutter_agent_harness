@@ -24,6 +24,26 @@ import 'package:test/test.dart';
 final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   final MemoryExecutionEnv _delegate = MemoryExecutionEnv(cwd: '/w');
 
+  /// Seeds a file in the in-memory fs (issue #2265: the adopted log seam).
+  Future<void> seedFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  Future<void> removeFile(String path) => _delegate.remove(path);
+
+  // The noSuchMethod delegation below does not re-dispatch into the
+  // delegate's real members (Object.noSuchMethod throws) — the fs reads
+  // the adoption path exercises need explicit forwarders.
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
   @override
   String get cwd => _delegate.cwd;
 
@@ -61,8 +81,9 @@ ShellJobRegistry _registry({
   int adoptedLivenessNoticeMinutes = 0,
   Future<ShellLivenessTable?> Function()? livenessTableOverride,
   Future<List<ShellSurvivor>?> Function(int pid)? stopAdoptedOverride,
+  _FakeBackgroundEnv? env,
 }) => ShellJobRegistry(
-  env: _FakeBackgroundEnv(),
+  env: env ?? _FakeBackgroundEnv(),
   onStart: onStart,
   onSettled: onSettled,
   onAdopt: onAdopt,
@@ -418,7 +439,7 @@ void main() async {
       );
     });
 
-    test('adoptRunningEntry keeps the manifest identity (AC5)', () {
+    test('adoptRunningEntry keeps the manifest identity (AC5)', () async {
       final registry = _registry();
       final now = DateTime.fromMillisecondsSinceEpoch(1700000000000);
       final entry = registry.adoptRunningEntry(
@@ -695,7 +716,7 @@ void main() async {
       expect(entry.isRunning, isFalse);
     });
 
-    test('adoptRunningEntry is idempotent across boots (r3)', () {
+    test('adoptRunningEntry is idempotent across boots (r3)', () async {
       var starts = 0;
       final registry = _registry(onStart: (_) => starts++);
       final first = registry.adoptRunningEntry(
@@ -716,44 +737,166 @@ void main() async {
     });
   });
 
-  group('notice texts', () {
-    test('adoption notice batches ONE per call with pids and the caveat', () {
-      final registry = _registry();
-      final adopted = [
+  group('boot re-adoption resolves the native log (issue #2265)', () {
+    const logDir = '/w/.fah/bash_jobs';
+    const logPath = '$logDir/sh-9-prev.log';
+
+    Future<(ShellJobRegistry, _FakeBackgroundEnv)> seededRegistry(
+      String? content, {
+      Future<ShellLivenessTable?> Function()? table,
+    }) async {
+      final env = _FakeBackgroundEnv();
+      if (content != null) await env.seedFile(logPath, content);
+      final registry = _registry(
+        env: env,
+        livenessTableOverride:
+            table ?? (() async => (pids: {4242}, starts: {4242: 'PS'})),
+      );
+      // The boot path snapshots the job-log dir before re-adoption
+      // (issue #2265); the tests ride the same real listing.
+      await registry.refreshExistingJobLogIds();
+      return (registry, env);
+    }
+
+    ShellJobEntry adoptAt(ShellJobRegistry registry) =>
         registry.adoptRunningEntry(
-          id: 'sh-1-x',
-          command: 'a',
-          pid: 1,
-          pidStart: 'S',
-        ),
-        registry.adoptRunningEntry(
-          id: 'sh-2-x',
-          command: 'b',
-          pid: 2,
-          pidStart: 'S',
-        ),
-      ];
-      final text = adoptedSurvivorsNoticeText(adopted, source: 'make all');
-      expect(text, contains('Detected 2 surviving background processes'));
-      expect(text, contains('(pid 1, `a`)'));
-      expect(text, contains('no captured output and no exit code'));
-      expect(text, contains('nohup.out'));
+          id: 'sh-9-prev',
+          command: 'watch.sh',
+          pid: 4242,
+          pidStart: 'PS',
+        );
+
+    test('bash_job output tails the original harness log — no apology '
+        '(AC1)', () async {
+      final (registry, _) = await seededRegistry('alpha\nbeta\ngamma\n');
+      final entry = adoptAt(registry);
+      expect(entry.logPath, logPath);
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'output',
+        'id': 'sh-9-prev',
+      });
+      expect(text, contains('alpha'));
+      expect(text, contains('gamma'));
+      expect(text, contains('Tail of $logPath'));
+      expect(text, contains('no exit code'));
+      expect(
+        text,
+        isNot(contains('ADOPTED background process — the harness')),
+        reason: 'the apology is foreign-only now',
+      );
     });
 
-    test('adopted settle notice names pid, honesty, and the redirect hint', () {
-      final registry = _registry();
-      final entry = registry.adoptRunningEntry(
-        id: 'sh-5-x',
-        command: 'backtest --full',
-        pid: 777,
-        pidStart: 'S',
+    test(
+      'a huge original log keeps the native tail cap (AC1 border)',
+      () async {
+        final lines = [for (var i = 1; i <= 120; i++) 'l$i'];
+        final (registry, _) = await seededRegistry('${lines.join('\n')}\n');
+        adoptAt(registry);
+        final text = await _toolText(bashJobTool(registry), {
+          'action': 'output',
+          'id': 'sh-9-prev',
+        });
+        expect(text, contains('l120'), reason: 'the newest line survives');
+        expect(text, isNot(contains('l70')), reason: 'only the last 50 tail');
+      },
+    );
+
+    test('native-adopted settle notice names the log; the re-run advice '
+        'is foreign-only (AC2)', () async {
+      final (registry, _) = await seededRegistry(
+        'result: ok\n',
+        table: () async => (pids: <int>{}, starts: <int, String>{}),
       );
+      final entry = adoptAt(registry);
+      await registry.adoptedPollTickForTest();
+      expect(entry.isRunning, isFalse);
       final text = adoptedJobSettleNoticeText(entry);
-      expect(text, contains('<system-notice>'));
-      expect(text, contains('pid 777'));
+      expect(text, contains('Log: $logPath'));
       expect(text, contains('no exit code'));
-      expect(text, contains('nohup.out'));
+      expect(text, isNot(contains('re-run the work')));
+      expect(text, isNot(contains('nohup.out')));
     });
+
+    test('truly foreign adoption (no log on disk) keeps today\'s texts '
+        '(AC4 REG)', () async {
+      final (registry, _) = await seededRegistry(null);
+      final entry = adoptAt(registry);
+      expect(entry.logPath, '');
+      final output = await _toolText(bashJobTool(registry), {
+        'action': 'output',
+        'id': 'sh-9-prev',
+      });
+      expect(output, contains('ADOPTED background process'));
+      expect(output, contains('nohup.out'));
+      expect(output, isNot(contains('Tail of')));
+      final notice = adoptedJobSettleNoticeText(entry);
+      expect(notice, contains('re-run the work with background: true'));
+      expect(notice, contains('nohup.out'));
+      final status = await _toolText(bashJobTool(registry), {
+        'action': 'status',
+        'id': 'sh-9-prev',
+      });
+      expect(status, contains('no captured log'));
+    });
+
+    test('a log deleted between runs falls back to the foreign text '
+        '(AC4 border)', () async {
+      final (registry, env) = await seededRegistry('gone soon\n');
+      final entry = adoptAt(registry);
+      expect(entry.logPath, logPath);
+      await env.removeFile(logPath);
+      final output = await _toolText(bashJobTool(registry), {
+        'action': 'output',
+        'id': 'sh-9-prev',
+      });
+      expect(output, contains('ADOPTED background process'));
+    });
+  });
+
+  group('notice texts', () {
+    test(
+      'adoption notice batches ONE per call with pids and the caveat',
+      () async {
+        final registry = _registry();
+        final adopted = [
+          registry.adoptRunningEntry(
+            id: 'sh-1-x',
+            command: 'a',
+            pid: 1,
+            pidStart: 'S',
+          ),
+          registry.adoptRunningEntry(
+            id: 'sh-2-x',
+            command: 'b',
+            pid: 2,
+            pidStart: 'S',
+          ),
+        ];
+        final text = adoptedSurvivorsNoticeText(adopted, source: 'make all');
+        expect(text, contains('Detected 2 surviving background processes'));
+        expect(text, contains('(pid 1, `a`)'));
+        expect(text, contains('no captured output and no exit code'));
+        expect(text, contains('nohup.out'));
+      },
+    );
+
+    test(
+      'adopted settle notice names pid, honesty, and the redirect hint',
+      () async {
+        final registry = _registry();
+        final entry = registry.adoptRunningEntry(
+          id: 'sh-5-x',
+          command: 'backtest --full',
+          pid: 777,
+          pidStart: 'S',
+        );
+        final text = adoptedJobSettleNoticeText(entry);
+        expect(text, contains('<system-notice>'));
+        expect(text, contains('pid 777'));
+        expect(text, contains('no exit code'));
+        expect(text, contains('nohup.out'));
+      },
+    );
 
     test('settle notice after a survivors stop names the members and the '
         'kept record (issue #2260 AC2)', () async {
@@ -881,7 +1024,7 @@ void main() async {
       );
     });
 
-    test('liveness reminder names the elapsed minutes (AC4)', () {
+    test('liveness reminder names the elapsed minutes (AC4)', () async {
       final registry = _registry();
       final entry = registry.adoptRunningEntry(
         id: 'sh-3-x',
