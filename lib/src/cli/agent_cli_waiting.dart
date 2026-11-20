@@ -43,6 +43,12 @@ final class WaiterSnapshot {
 /// recycled pid's start never matches the recorded one).
 typedef _ProcessTable = ({Set<int> pids, Map<int, String> starts});
 
+/// The boot reconcile's liveness verdict for one registry entry against
+/// the process table (issue #2267): [dead] drops whatever the age,
+/// [alive] keeps whatever the age — only [unknown] (no evidence) lets
+/// the `jobs.staleHours` age belt decide.
+enum _BootLiveness { dead, alive, unknown }
+
 /// One cross-run registry entry (`running.json`): the job identity plus
 /// the owner-process evidence a later boot reconciles against — the OS
 /// pid, its start string (pid reuse), and the entry's own birth time
@@ -122,7 +128,9 @@ final class _WaitingCoordinator {
 
   /// Previous-run jobs the boot reconcile (issue #478) dropped as lost:
   /// dead or recycled pid, no pid at all, or past the `jobs.staleHours`
-  /// age belt. Live detached jobs are kept — they are not lost.
+  /// age belt when liveness could not verify them (a table-verified-alive
+  /// pid outranks the belt — issue #2267). Live detached jobs are kept —
+  /// they are not lost.
   int lostJobs = 0;
 
   /// The surfaced registry-lock failure (issue #2266 AC2): the named
@@ -448,10 +456,14 @@ final class _WaitingCoordinator {
   ///   concatenated two JSON documents into it);
   /// - entries whose pid is dead — or was recycled onto another process
   ///   (start-time mismatch) — are dropped; so are entries with no pid
-  ///   at all (nothing to verify) and entries past `jobs.staleHours`
-  ///   (the age belt). Live entries are KEPT — a detached job
-  ///   legitimately outlives the run that started it. Every drop counts
-  ///   as [lostJobs] (restart honesty);
+  ///   at all (nothing to verify). Entries past `jobs.staleHours` (the
+  ///   age belt) drop too — but a table-verified-alive entry (pid
+  ///   present, start string matching) outranks the belt and is KEPT
+  ///   (issue #2267): a detached job legitimately outlives the run that
+  ///   started it, however long — a nightly watcher or a week-long
+  ///   build stays visible and `bash_job`-manageable. On a platform
+  ///   that could not produce a process table the belt remains the
+  ///   only guard. Every drop counts as [lostJobs] (restart honesty);
   /// - job logs older than `jobs.logRetentionDays` are deleted (24,144
   ///   files accumulated once — nothing ever pruned them).
   ///
@@ -492,8 +504,10 @@ final class _WaitingCoordinator {
     // settle path — instead of sitting invisible in the manifest. Only
     // verifiable pids adopt: a platform that could not produce a process
     // table (probed=false), or an entry without one, keeps today's
-    // honest counting (dead/recycled/aged entries already dropped above
-    // and counted in [lostJobs]).
+    // honest counting (dead/recycled entries already dropped above and
+    // counted in [lostJobs]; since issue #2267 the belt no longer drops
+    // aged entries liveness verified alive — they adopt here like any
+    // live one).
     if (reconcile.probed) {
       for (final entry in reconcile.kept) {
         final pid = entry.pid;
@@ -577,7 +591,11 @@ final class _WaitingCoordinator {
         final tooOld =
             started != null &&
             DateTime.fromMillisecondsSinceEpoch(started).isBefore(staleBefore);
-        if (tooOld || !_entryAlive(entry, table)) {
+        // Issue #2267: liveness first — the belt claims only what
+        // liveness could not save (dead, recycled, no pid, unverifiable).
+        final liveness = _entryLiveness(entry, table);
+        if (liveness == _BootLiveness.dead ||
+            (tooOld && liveness == _BootLiveness.unknown)) {
           dropped++;
           if (tooOld) aged++;
           continue;
@@ -874,18 +892,31 @@ final class _WaitingCoordinator {
     return _pidStartProbe?.call(pid) ?? pidStartSnapshot(pid);
   }
 
-  /// Whether the entry's owning process is alive: a dead pid is a ghost;
-  /// a pid whose start string drifted from the recorded one was recycled
-  /// onto an unrelated process — equally gone.
-  bool _entryAlive(_ManifestEntry entry, _ProcessTable? table) {
+  /// The boot liveness verdict for one registry entry (issue #2267
+  /// split the old bool so the age belt could stop outranking evidence):
+  ///
+  /// - [dead]: no pid at all, the pid is gone from the table, or the
+  ///   pid was recycled onto another process (start-string mismatch —
+  ///   the impersonation guard). Dropped whatever the entry's age;
+  /// - [alive]: the table VERIFIED the pid live with a matching start
+  ///   string (a missing start string on either side counts as a
+  ///   match). Kept whatever the entry's age — a >staleHours live
+  ///   detached job (nightly watcher, week-long build) stays visible
+  ///   and `bash_job`-manageable;
+  /// - [unknown]: the platform could not produce a table — no evidence
+  ///   either way; only the age belt disposes of the entry.
+  _BootLiveness _entryLiveness(_ManifestEntry entry, _ProcessTable? table) {
     final pid = entry.pid;
-    if (pid == null) return false;
+    if (pid == null) return _BootLiveness.dead;
     final t = table;
-    if (t == null) return true;
-    if (!t.pids.contains(pid)) return false;
+    if (t == null) return _BootLiveness.unknown;
+    if (!t.pids.contains(pid)) return _BootLiveness.dead;
     final recorded = entry.pidStart;
     final actual = t.starts[pid];
-    return recorded == null || actual == null || recorded == actual;
+    if (recorded != null && actual != null && recorded != actual) {
+      return _BootLiveness.dead;
+    }
+    return _BootLiveness.alive;
   }
 
   /// Boot log GC (issue #478): deletes `*.log` files older than
