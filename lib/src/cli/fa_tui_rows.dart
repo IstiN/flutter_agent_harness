@@ -429,6 +429,7 @@ extension _TuiRowRenderers on FaTuiModel {
     waitingJobs: waitingJobs,
     waitingTimers: waitingTimers,
     waitingLostJobs: waitingLostJobs,
+    waitingRegistryNotice: waitingRegistryNotice,
     nowMs: nowFn().millisecondsSinceEpoch,
   );
 
@@ -440,6 +441,7 @@ extension _TuiRowRenderers on FaTuiModel {
       waitingJobs: msg.jobs,
       waitingTimers: msg.timers,
       waitingLostJobs: msg.lostJobs,
+      waitingRegistryNotice: msg.registryNotice,
     );
     if (next.waitingTimers.isNotEmpty && !scheduledTickPending) {
       return (
@@ -460,6 +462,7 @@ List<String> waitingRowLines({
   required List<String> waitingJobs,
   required List<WaitingTimer> waitingTimers,
   required int waitingLostJobs,
+  String? waitingRegistryNotice,
   required int nowMs,
 }) {
   if (busy) return const [];
@@ -473,6 +476,8 @@ List<String> waitingRowLines({
     _waitingHeadLine(waitingJobs, waitingTimers, etaOf),
     ..._waitingDetailLines(waitingJobs, waitingTimers, etaOf),
     if (waitingLostJobs > 0) _waitingLostLine(waitingLostJobs),
+    if (waitingRegistryNotice != null)
+      _waitingNoticeLine(waitingRegistryNotice),
   ];
   return lines;
 }
@@ -531,3 +536,8 @@ String _waitingLostLine(int lost) {
   final verb = lost == 1 ? 'was' : 'were';
   return _dim('$lost $noun from the previous run $verb lost');
 }
+
+/// The surfaced registry-lock failure (issue #2266 AC2): a manifest
+/// mutation skipped at the queued-wait bound is never silent — the named
+/// text rides the row until the next successful mutation clears it.
+String _waitingNoticeLine(String notice) => _dim('⚠ $notice');

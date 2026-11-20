@@ -15,7 +15,8 @@ final class CwdOverrideEnv extends ForwardingFs
     with
         ForwardingBackgroundShell,
         ForwardingRangedReadFs,
-        ForwardingRenamableFs {
+        ForwardingRenamableFs,
+        ForwardingExclusiveCreateFs {
   /// Creates a decorator over [delegate] whose effective cwd starts at
   /// [delegate.cwd].
   CwdOverrideEnv(super.delegate) : _cwd = delegate.cwd;
