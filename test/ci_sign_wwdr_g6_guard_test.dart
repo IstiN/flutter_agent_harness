@@ -44,7 +44,7 @@ void main() {
       // The real fingerprint of https://www.apple.com/certificateauthority/
       // AppleWWDRCAG6.cer (OU=G6, 2021-03-17 → 2036-03-19), verified by
       // downloading the cert and hashing it (openssl x509 -fingerprint -sha1).
-      const g6Sha1 = '0BE38BFE21FD434D8CC51CBE0E2BC7758DBF97B';
+      const g6Sha1 = '0BE38BFE21FD434D8CC51CBE0E2BC7758DDBF97B';
       expect(script, contains('WWDR_G6_SHA1="$g6Sha1"'),
           reason: 'G6 fingerprint pin missing or wrong');
       expect(
