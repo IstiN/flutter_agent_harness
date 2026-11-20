@@ -2150,6 +2150,7 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     await _logBootLine();
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     _wireDeliverySloNotice();
     _wireDeliverableDurabilityLog();
     _wireImageDropNotice();
@@ -2355,6 +2356,7 @@ class AgentCli {
     // connect-stall death indistinguishable from a no-retry one in the
     // trial artifacts.
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
@@ -2393,6 +2395,7 @@ class AgentCli {
     // the same `[net]` line, or a multi-second retry pause is silent
     // exactly where nobody watches a TUI.
     _wireTransientRetryNotice();
+    _wireCopilotProviderCard();
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
     // both holds bracket it the same way: session-held acquires on the
     // session open, per-run on the run start (the prompt below).
