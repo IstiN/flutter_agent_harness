@@ -41,6 +41,10 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
       _delegate.readTextFile(path);
 
   @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
   String get cwd => _delegate.cwd;
 
   @override
@@ -438,7 +442,7 @@ void main() async {
     test('adoptRunningEntry keeps the manifest identity (AC5)', () async {
       final registry = _registry();
       final now = DateTime.fromMillisecondsSinceEpoch(1700000000000);
-      final entry = await registry.adoptRunningEntry(
+      final entry = registry.adoptRunningEntry(
         id: 'sh-9-prev',
         command: 'watch.sh',
         pid: 4242,
@@ -461,7 +465,7 @@ void main() async {
           onAdoptedLiveness: (job, elapsed) => reminded.add(job.id),
           livenessTableOverride: () async => table,
         );
-        await registry.adoptRunningEntry(
+        registry.adoptRunningEntry(
           id: 'sh-1-x',
           command: 'x',
           pid: 42,
@@ -482,7 +486,7 @@ void main() async {
           onAdoptedLiveness: (job, elapsed) => reminded.add(job.id),
           livenessTableOverride: () async => table,
         );
-        await quiet.adoptRunningEntry(
+        quiet.adoptRunningEntry(
           id: 'sh-2-y',
           command: 'y',
           pid: 42,
@@ -715,13 +719,13 @@ void main() async {
     test('adoptRunningEntry is idempotent across boots (r3)', () async {
       var starts = 0;
       final registry = _registry(onStart: (_) => starts++);
-      final first = await registry.adoptRunningEntry(
+      final first = registry.adoptRunningEntry(
         id: 'sh-9-prev',
         command: 'watch.sh',
         pid: 4242,
         pidStart: 'PS',
       );
-      final second = await registry.adoptRunningEntry(
+      final second = registry.adoptRunningEntry(
         id: 'sh-9-prev',
         command: 'watch.sh',
         pid: 4242,
@@ -743,17 +747,18 @@ void main() async {
     }) async {
       final env = _FakeBackgroundEnv();
       if (content != null) await env.seedFile(logPath, content);
-      return (
-        _registry(
-          env: env,
-          livenessTableOverride:
-              table ?? (() async => (pids: {4242}, starts: {4242: 'PS'})),
-        ),
-        env,
+      final registry = _registry(
+        env: env,
+        livenessTableOverride:
+            table ?? (() async => (pids: {4242}, starts: {4242: 'PS'})),
       );
+      // The boot path snapshots the job-log dir before re-adoption
+      // (issue #2265); the tests ride the same real listing.
+      await registry.refreshExistingJobLogIds();
+      return (registry, env);
     }
 
-    Future<ShellJobEntry> adoptAt(ShellJobRegistry registry) =>
+    ShellJobEntry adoptAt(ShellJobRegistry registry) =>
         registry.adoptRunningEntry(
           id: 'sh-9-prev',
           command: 'watch.sh',
@@ -764,7 +769,7 @@ void main() async {
     test('bash_job output tails the original harness log — no apology '
         '(AC1)', () async {
       final (registry, _) = await seededRegistry('alpha\nbeta\ngamma\n');
-      final entry = await adoptAt(registry);
+      final entry = adoptAt(registry);
       expect(entry.logPath, logPath);
       final text = await _toolText(bashJobTool(registry), {
         'action': 'output',
@@ -786,7 +791,7 @@ void main() async {
       () async {
         final lines = [for (var i = 1; i <= 120; i++) 'l$i'];
         final (registry, _) = await seededRegistry('${lines.join('\n')}\n');
-        await adoptAt(registry);
+        adoptAt(registry);
         final text = await _toolText(bashJobTool(registry), {
           'action': 'output',
           'id': 'sh-9-prev',
@@ -802,7 +807,7 @@ void main() async {
         'result: ok\n',
         table: () async => (pids: <int>{}, starts: <int, String>{}),
       );
-      final entry = await adoptAt(registry);
+      final entry = adoptAt(registry);
       await registry.adoptedPollTickForTest();
       expect(entry.isRunning, isFalse);
       final text = adoptedJobSettleNoticeText(entry);
@@ -815,7 +820,7 @@ void main() async {
     test('truly foreign adoption (no log on disk) keeps today\'s texts '
         '(AC4 REG)', () async {
       final (registry, _) = await seededRegistry(null);
-      final entry = await adoptAt(registry);
+      final entry = adoptAt(registry);
       expect(entry.logPath, '');
       final output = await _toolText(bashJobTool(registry), {
         'action': 'output',
@@ -837,7 +842,7 @@ void main() async {
     test('a log deleted between runs falls back to the foreign text '
         '(AC4 border)', () async {
       final (registry, env) = await seededRegistry('gone soon\n');
-      final entry = await adoptAt(registry);
+      final entry = adoptAt(registry);
       expect(entry.logPath, logPath);
       await env.removeFile(logPath);
       final output = await _toolText(bashJobTool(registry), {
@@ -854,13 +859,13 @@ void main() async {
       () async {
         final registry = _registry();
         final adopted = [
-          await registry.adoptRunningEntry(
+          registry.adoptRunningEntry(
             id: 'sh-1-x',
             command: 'a',
             pid: 1,
             pidStart: 'S',
           ),
-          await registry.adoptRunningEntry(
+          registry.adoptRunningEntry(
             id: 'sh-2-x',
             command: 'b',
             pid: 2,
@@ -879,7 +884,7 @@ void main() async {
       'adopted settle notice names pid, honesty, and the redirect hint',
       () async {
         final registry = _registry();
-        final entry = await registry.adoptRunningEntry(
+        final entry = registry.adoptRunningEntry(
           id: 'sh-5-x',
           command: 'backtest --full',
           pid: 777,
@@ -971,7 +976,7 @@ void main() async {
 
       // Natural death — the plain liveness-only line.
       final plainRegistry = _registry();
-      final plain = await plainRegistry.adoptRunningEntry(
+      final plain = plainRegistry.adoptRunningEntry(
         id: 'sh-7-plain',
         command: 'watch.sh',
         pid: 5,
@@ -1021,7 +1026,7 @@ void main() async {
 
     test('liveness reminder names the elapsed minutes (AC4)', () async {
       final registry = _registry();
-      final entry = await registry.adoptRunningEntry(
+      final entry = registry.adoptRunningEntry(
         id: 'sh-3-x',
         command: 'watch.sh',
         pid: 5,

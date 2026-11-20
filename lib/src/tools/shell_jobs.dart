@@ -628,15 +628,17 @@ final class ShellJobRegistry {
   /// ghost. The manifest id is KEPT — board resume matching and
   /// `bash_job` id resolution keep working. Issue #2265: because the id
   /// is kept, a harness-NATIVE job's log (`$dir/$id.log`, issue #1408
-  /// co-location) is still on disk — the adopted entry resolves it and
-  /// stays output-capable instead of degrading to liveness-only.
-  Future<ShellJobEntry> adoptRunningEntry({
+  /// co-location) may still be on disk — [refreshExistingJobLogIds]
+  /// snapshots the job-log dir before boot adoption, and a kept id seen
+  /// there resolves its real log so the entry stays output-capable
+  /// instead of degrading to liveness-only.
+  ShellJobEntry adoptRunningEntry({
     required String id,
     required String command,
     required int pid,
     String? pidStart,
     int? startedAtMs,
-  }) async {
+  }) {
     // Idempotent (issue #2201 r3): captureLostJobs runs at every boot —
     // a wake/continuation loop re-boots the same CLI instance — and
     // adoption never rewrites the manifest, so a second boot re-hands
@@ -650,22 +652,43 @@ final class ShellJobRegistry {
       command: command,
       pid: pid,
       pidStart: pidStart,
-      logPath: await _adoptedLogPath(id),
+      logPath: _keptIdLogPath(id),
       startedAt: startedAtMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
     );
   }
 
-  /// The kept-id job's original harness log, or '' when there is none:
-  /// foreign survivors have no file at the derivable path, and neither
-  /// has a native log deleted between runs (retention sweep) — both fall
-  /// back to the honest liveness-only surfaces.
-  Future<String> _adoptedLogPath(String id) async {
+  /// Log filenames seen in the job-log dir at the last boot reconcile
+  /// (issue #2265) — `<id>.log` basenames. The snapshot lets the SYNC
+  /// [adoptRunningEntry] (issue #2275 callers pass the entry straight
+  /// into the settle chain) tell a native-identifiable kept id from a
+  /// foreign one without any async step. Empty until
+  /// [refreshExistingJobLogIds] runs — direct adopters keep today's
+  /// liveness-only behavior.
+  Set<String> _existingJobLogIds = const {};
+
+  /// Snapshots the job-log dir's log filenames (issue #2265). Called
+  /// once per boot before manifest re-adoption, so adoption decides
+  /// native-vs-foreign from real disk state. A missing dir (bench
+  /// relocation, first boot) is simply an empty snapshot.
+  Future<void> refreshExistingJobLogIds() async {
     final baseEnv = env;
-    final path = '${jobLogDir ?? '${baseEnv.cwd}/.fah/bash_jobs'}/$id.log';
-    final exists = await baseEnv.exists(path);
-    return exists.valueOrNull == true ? path : '';
+    final dir = jobLogDir ?? '${baseEnv.cwd}/.fah/bash_jobs';
+    final listing = await baseEnv.listDir(dir);
+    _existingJobLogIds = {
+      for (final info in listing.valueOrNull ?? const <FileInfo>[])
+        if (info.kind == FileKind.file && info.name.endsWith('.log')) info.name,
+    };
+  }
+
+  /// The kept-id job's original harness log, or '' when this boot saw no
+  /// log for the id: foreign survivors have no file at the derivable
+  /// path, and neither has a native log deleted between runs (retention
+  /// sweep) — both fall back to the honest liveness-only surfaces.
+  String _keptIdLogPath(String id) {
+    if (!_existingJobLogIds.contains('$id.log')) return '';
+    return '${jobLogDir ?? '${env.cwd}/.fah/bash_jobs'}/$id.log';
   }
 
   ShellJobEntry _adopt({

@@ -484,10 +484,15 @@ final class _WaitingCoordinator {
     // honest counting (dead/recycled/aged entries already dropped above
     // and counted in [lostJobs]).
     if (reconcile.probed) {
+      // Issue #2265: snapshot the job-log dir BEFORE re-adoption so a
+      // kept-id native job resolves its real log (output-capable) while
+      // adoption itself stays sync (issue #2275's settle chain hands the
+      // entry around unawaited).
+      await _jobs.refreshExistingJobLogIds();
       for (final entry in reconcile.kept) {
         final pid = entry.pid;
         if (pid == null) continue;
-        await _jobs.adoptRunningEntry(
+        _jobs.adoptRunningEntry(
           id: entry.id,
           command: entry.command ?? '<unknown cmd>',
           pid: pid,
