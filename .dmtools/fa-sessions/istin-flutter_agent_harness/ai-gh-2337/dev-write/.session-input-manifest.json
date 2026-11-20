@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-20T10:28:40.140Z",
+  "ticketKey": "gh-2337",
+  "headSha": "21aa16c8e3d57cfe62c028d7ef553952f3b419a8",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:067db844325b4651",
+      "size": 93854
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:5dfd0e4911bb2236",
+      "size": 696660
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:c783bbe7bd8d315d",
+      "size": 712
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:be7b053a6c74672e",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:880159fa7ab1080b",
+      "size": 8775
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:e3f78b65a48b802e",
+      "size": 4000
+    },
+    "request.md": {
+      "hash": "fnv1a64:442fb4cbc54c4494",
+      "size": 4733
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:7b74bdd6c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e8435180e735260d",
+      "size": 4846
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:442fb4cbc54c4494",
+      "size": 4733
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:38623203",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the body-cap truncation drops the `release-draft-owner` marker — truncated drafts become un-reclaimable**\n\nBoth writers stamp the draft-ownership marker at the **end** of the notes file and *then* call the cap helper, which truncates from the tail:\n\n```bash\n# release_lazy_draft.sh:67 / release_attach_or_create.sh:103\ngrep -qF \"$marker\" \"$notes\" || printf '\\n%s\\n' \"$marker\" >> \"$notes\"\n# ... then (line 73 / 108):\nbash \"$(dirname \"$0\")/release_notes_cap.sh\" \"$notes\"\n```\n\n`release_notes_cap.sh` keeps the first ~120 KB and cuts the tail — verified with a 141 KB body + marker: after the cap the marker is gone (`grep -c 'release-draft-owner'` → 0). Every consumer matches the marker **in the release body**:\n\n- `scripts/release_draft_guard.sh:60-64` — on a leg failure after the create, owner resolves to `<unmarked>` ≠ identity → the guard refuses to delete its own draft (warning, exit 0);\n- `scripts/sweep_stale_drafts.sh:128` — unmarked body + PAT author (the legs run with `GH_TOKEN=RELEASE_PAT`; per gh-2008 the API author is the human owner, the marker is \"the only ownership proof\") → **human** bucket → kept and merely listed, never reclaimed; the fresh gh-2318 reclaim also requires a well-formed marker;\n- `scripts/release_draft_dedupe.sh:73` — twin-draft dedupe requires `contains(\"release-draft-owner: \" + $run)`.\n\nThis is not a rare path: the curated `## Unreleased` section is ~131 KB and archiving is deferred (your own Notes), so **every upcoming release body truncates**. Before this PR an over-cap create failed (no draft existed); after it the create succeeds with an unmarked body — and a leg dying mid-upload leaves a permanently orphaned draft, exactly the hazard `release_lazy_draft.sh`'s own identity-validation comment warns about (\"a forever-orphaned draft\", gh-282: a draft must be published or deleted, never orphaned).\n\n**Fix (either, ~2 lines):** call `release_notes_cap.sh` **before** appending the owner marker in both writers (bounded body + marker ≈ 120.1 KB < the 125k API cap), or teach the truncation cut to preserve a trailing `<!-- release-draft-owner: ... -->` line. The attach-path site (`release_attach_or_create.sh:108`) needs the same ordering fix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:ec6669f6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread: `scripts/release_lazy_draft.sh:73` — body-cap truncation drops the `release-draft-owner` marker\n\n**Severity**: ⚠️ IMPORTANT — **fixed in code** (commits `eb3d56b604` + `a2d531fdf3`, pushed to `ai/gh-2337`).\n\n## Fix\n\nTook fix option 1 (the ordering swap) at **both** writer sites — `release_lazy_draft.sh` and `release_attach_or_create.sh` — so the created draft body is always bounded-notes **plus** the trailing owner marker:\n\n```bash\n# release_lazy_draft.sh (attach twin mirrored in release_attach_or_create.sh)\nbash \"$(dirname \"$0\")/release_notes_cap.sh\" \"$notes_file\"   # cap FIRST — truncation cuts from the tail\nmarker=\"<!-- release-draft-owner: $identity -->\"\ngrep -qF \"$marker\" \"$notes_file\" || printf '\\n%s\\n' \"$marker\" >>\"$notes_file\"\n```\n\nRationale documented inline at both sites: a pre-stamped marker is cut off by the tail-truncation, leaving a draft `release_draft_guard.sh` resolves as `<unmarked>` and refuses to reclaim, that `sweep_stale_drafts.sh` buckets human (the legs run with `GH_TOKEN=RELEASE_PAT`) and keeps, and that `release_draft_dedupe.sh` ignores — the forever-orphaned-draft shape (gh-282). Bounded body (≤ 120,000 bytes) + the ~70-byte marker stays well under the 125,000-character API cap, so the swap does not re-open the HTTP 422 this PR fixes (`release_notes_cap.sh`'s own header already budgeted \"the slack also absorbs the marker line itself\").\n\n## TDD evidence\n\n- RED (before the fix): two new fixture tests reproduced your exact experiment — an over-cap body (~131 KB, the production curated-`## Unreleased` shape) created a draft whose `--notes-file` capture contained **no** `release-draft-owner` marker (`…(truncated — 12877 bytes dropped…` tail only):\n  - `test/release_lazy_draft_mint_test.dart` — \"gh-2337 rework: an over-cap lazy draft body still carries the release-draft-owner marker\" (new `seedOversizeChangelog` fixture knob seeds a ~132 KB curated Unreleased CHANGELOG, exercising `release_notes.sh` preference 1b end-to-end).\n  - `test/release_attach_or_create_mint_test.dart` — \"gh-2337 rework: the bounded attach body still carries the release-draft-owner marker\".\n- GREEN (after the fix): both pass; both assert the captured create body carries `release-draft-owner: run/<id>/job/<job>` **and** stays ≤ 125,000 bytes. The pre-existing \"over-cap release-notes.md is bounded before the create\" test was tightened to the new contract: body-minus-marker ≤ 120,000 (the bounded ceiling) and full notes ≤ 125,000 (the API cap).\n- Full touched-file surface green: 22 tests in the three mint/cap test files; 167 tests across the release/guard surface (`release_hygiene`, `release_draft_dedupe`, `release_stale_draft_reclaim`, `release_empty_latest_guard`, `release_publish_immutability`, `ci_release_dedupe_guard`, `ci_release_pending_guard`). `bash -n` + `shellcheck` clean on all three scripts; `dart analyze` + `dart format --set-exit-if-changed` clean on the touched test files.\n\n## Digest pickup (same release surface)\n\nThe 4 digit-dropped run-id comment spots (`468064719` → `44680647719`) are corrected in `release_lazy_draft.sh`, `release_attach_or_create.sh`, and `release_notes_cap.sh`. The `test/ci_2337_macos_size_floor_test.dart` comment/test-name digit-drops are left for triage (outside the files this fix touches, per the same-files-only opportunistic bound; the code constants there are already correct)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:6fe883b6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Root-cause fix is on-target for gh-2337 (release-body cap + both mac size floors, documented gh-2088-style reseed) and well tested — 26 touched tests green, `bash -n`/`shellcheck` clean, `dart format`/`analyze` clean. One real defect: the new truncation silently strips the `release-draft-owner` marker the draft guard, sweeper and dedupe all match on.\n\n**Key Issues**:\n- ⚠️ Both writers append the ownership marker **before** `release_notes_cap.sh` truncates the tail — any over-cap body (the ~131 KB curated `## Unreleased` will truncate on every train until archived) creates a marker-less draft: the lifecycle guard refuses to reclaim it, the sweeper buckets it human (PAT author) and keeps it, dedupe ignores it — a forever-orphaned draft on the failure path gh-282 exists to prevent.\n\n**Next Steps**:\n1. Cap the notes **before** appending the marker (swap the order in `release_lazy_draft.sh` and `release_attach_or_create.sh`; bounded body + marker ≈ 120.1 KB < the 125k cap), or preserve the marker line in the truncation cut.\n2. Digest (no threads): mangled run id `468064719` in 4 script comment spots and `TOTAL 811153036` / `74701116` digit-drops in `test/ci_2337_macos_size_floor_test.dart` comments/test name — real values `44680647719` / `811153036` / `74701116` (tests use the correct ones; comments only).\n3. Digest: a transient `gh release view` failure in the new race re-view reds a race-won leg (safe direction — fails loud); `release_notes_cap.sh` with a cap below the marker reserve misbehaves via negative slice (unreachable from the two callers, default 120000)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-20:486ddddd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-20",
+      "updatedAt": "2026-11-20",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review converges. The one open ⚠️ (F1: the body-cap truncation stripped the `release-draft-owner` marker, leaving truncated drafts un-reclaimable by guard/sweeper/dedupe) is **fixed** — the cap now runs before the marker is stamped at both writer sites, pinned by new end-to-end marker-survives-cap tests; verified independently (over-cap 141k body → bounded 120,023 bytes with the marker intact) and 28 touched tests green.\n\n**Key Issues**:\n- None open. The large `agent_cli_waiting.dart`/TUI hunks in the head delta are base movement from the `main` merge (PR #2294, verified `git diff <main-tip> <head> -- lib/ bin/` empty) — not PR-authored, out of this review's scope.\n\n**Next Steps**:\n1. None blocking — ready to merge.\n2. Digest (no threads): `test/ci_2337_macos_size_floor_test.dart` still carries the digit-dropped ids in comments/test name (`TOTAL 81153036` → `811153036` at the x64 test name; `7470116` → `74701116` in two comment spots) — comment-only, code constants already correct; left for triage by the same-files-only opportunistic bound."
+    }
+  ]
+}
