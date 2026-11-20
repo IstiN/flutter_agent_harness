@@ -509,10 +509,12 @@ final class _WaitingCoordinator {
     // aged entries liveness verified alive — they adopt here like any
     // live one).
     if (reconcile.probed) {
-      // Issue #2265: snapshot the job-log dir BEFORE re-adoption so a
-      // kept-id native job resolves its real log (output-capable) while
-      // adoption itself stays sync (issue #2275's settle chain hands the
-      // entry around unawaited).
+      // Issue #2265: snapshot the job-log dir BEFORE re-adoption (and
+      // before this boot's retention prune below) so a kept-id native
+      // job resolves its real log while adoption itself stays sync
+      // (issue #2275's settle chain hands the entry around unawaited).
+      // A log swept right after the snapshot degrades honestly: the
+      // output action falls back to the no-log text when the read fails.
       await _jobs.refreshExistingJobLogIds();
       for (final entry in reconcile.kept) {
         final pid = entry.pid;

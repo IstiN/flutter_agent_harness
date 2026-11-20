@@ -202,7 +202,10 @@ final class ShellJobEntry {
   /// Whether this entry was ADOPTED (issue #2201) instead of spawned by
   /// the registry: a detached survivor of a foreground call, or a
   /// previous-run manifest entry re-adopted at boot. Liveness-only —
-  /// surfaces show no exit code and no captured log for it.
+  /// surfaces show no exit code for it; captured output only when the
+  /// boot resolved an original harness log under the kept id (issue
+  /// #2265, [ShellJobRegistry.refreshExistingJobLogIds]) — foreign
+  /// survivors have none.
   final bool isAdopted;
 
   /// When the job registered (drives the terminal card's elapsed).
@@ -1312,10 +1315,12 @@ String adoptedLivenessNoticeText(ShellJobEntry job, Duration elapsed) =>
     '${elapsed.inMinutes} min. No action needed — you will be notified '
     'when it exits.';
 
-/// The `bash_job output` answer for an adopted job (issue #2201 AC3):
-/// the adopted-explanation, never an empty-log reading.
+/// The `bash_job output` answer for an adopted job with no readable log
+/// (issue #2201 AC3): foreign survivors never had one, and a native log
+/// swept since adoption is gone (issue #2265 fallback) — never an
+/// empty-log reading, never a false "the harness did not spawn it".
 String adoptedJobOutputText(ShellJobEntry entry) =>
-    '${entry.id} is an ADOPTED background process — the harness did not '
-    'spawn it, so there is no captured output or log. Its output goes to '
-    'whatever redirect its launcher used (e.g. nohup.out). '
+    '${entry.id} is an ADOPTED background process — no captured output '
+    'is available here. Its output went to whatever redirect its '
+    'launcher used (e.g. nohup.out), and no harness log remains for it. '
     '${entry.isRunning ? 'Still running (pid ${entry.pid}).' : 'No longer running — no exit code is available (not our child).'}';

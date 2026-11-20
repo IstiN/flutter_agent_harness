@@ -397,10 +397,13 @@ extension AgentCliHubDriver on AgentCli {
         state: TaskBlockState.running,
         label: job.command,
         // Issue #2201 AC2: adopted processes carry their marker on the
-        // board card — the user sees WHAT is tracked and that its output
-        // lives elsewhere.
+        // board card — the user sees WHAT is tracked. Issue #2265: a
+        // boot re-adopted native job resolved its original harness log,
+        // so the card names it instead of claiming no capture.
         detail: job.isAdopted
-            ? 'adopted pid ${job.pid} — no captured log'
+            ? (job.logPath.isEmpty
+                  ? 'adopted pid ${job.pid} — no captured log'
+                  : 'adopted pid ${job.pid} — log: ${job.logPath}')
             : null,
       ),
     );
