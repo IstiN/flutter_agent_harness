@@ -98,8 +98,19 @@ fi
 # Body: prepared notes (CHANGELOG section / conventional-commit fallback)
 # plus the ownership marker the guard verifies before deleting.
 notes="release-notes.md"
-marker="<!-- release-draft-owner: run/${GITHUB_RUN_ID:?GITHUB_RUN_ID must be set (GitHub Actions default env)}/job/${GITHUB_JOB:?GITHUB_JOB must be set (GitHub Actions default env)} -->"
 [ -s "$notes" ] || printf 'Release %s — see the CHANGELOG.\n' "$tag" > "$notes"
+bash "$(dirname "$0")/release_notes_cap.sh" "$notes"
+
+# gh-237: the cap runs BEFORE the owner marker is stamped — it
+# truncates from the TAIL, so a pre-stamped marker is cut off and the
+# created draft carries no ownership proof: release_draft_guard.sh
+# resolves `<unmarked>` and refuses to reclaim it, the daily sweeper
+# buckets it human (the legs run with GH_TOKEN=RELEASE_PAT) and keeps
+# it, dedupe ignores it — a forever-orphaned draft (gh-282). Bounded
+# body (≤ 120,000) + the marker stays under GitHub's 125,000-character
+# release-body cap whose overshoot HTTP-422'd the create in run
+# 44680647719 (v1.0.756).
+marker="<!-- release-draft-owner: run/${GITHUB_RUN_ID:?GITHUB_RUN_ID must be set (GitHub Actions default env)}/job/${GITHUB_JOB:?GITHUB_JOB must be set (GitHub Actions default env)} -->"
 grep -qF "$marker" "$notes" || printf '\n%s\n' "$marker" >> "$notes"
 
 # A `gh release create` for a MISSING tag mints a lightweight API tag:

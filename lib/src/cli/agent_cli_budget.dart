@@ -14,10 +14,14 @@ extension AgentCliBudget on AgentCli {
     _outstandingBudgetOffer = toolCallId;
   }
 
-  /// The offer is gone: a terminal budget action fired (background /
-  /// abort), or the call ended, or the accept already consumed it.
-  void budgetOfferCleared() {
-    _outstandingBudgetOffer = null;
+  /// The offer is gone: a terminal budget action fired for [toolCallId]
+  /// (background / abort), or THAT call ended, or the accept already
+  /// consumed it. A different call's end never clears this offer (issue
+  /// #2272: parallel batches end their calls independently).
+  void budgetOfferCleared(String toolCallId) {
+    if (_outstandingBudgetOffer == toolCallId) {
+      _outstandingBudgetOffer = null;
+    }
   }
 
   /// Whether the stall banner should advertise the `b` affordance.

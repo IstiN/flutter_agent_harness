@@ -13,6 +13,32 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2337): the daily-publish cli leg's release draft create no longer
+  fails silently on an oversized notes body, and the mac size floors match
+  the v1.0.756 shape. The curated `## Unreleased` body (131k bytes)
+  exceeded GitHub's hard 125,000-character release-body cap — `gh release
+  create` answered HTTP 422 "body is too long", release_lazy_draft.sh's
+  `|| true` swallowed it, printed "✅ lazy draft ready", and all three
+  attach legs (build-macos-cli arm64/x64 + build-extension) died on
+  "release not found" (run 44680647719). Fixes: the new
+  scripts/release_notes_cap.sh bounds the release BODY (never the
+  changelog — stamp_staged_release.sh stamps release_notes.sh output into
+  the pub.dev package uncapped) under 120,000 bytes at a line boundary
+  with an explicit CHANGELOG.md marker, wired into the two release-body
+  writers (release_lazy_draft.sh + release_attach_or_create.sh); a failed
+  create now re-views the release — a concurrent creator wins the race as
+  before, a still-missing release fails loud instead of lying green. Size
+  floor: fa-macos-arm64.tsv reseeded to the failing run's gate-printed
+  manifest (TOTAL 74,701,116 → 78,493,725, +5.08% — js_widget_runtime
+  0.4.208 three.js bundles +2.37MB, Fa 2 Outfit/DM Mono fonts, Dart AOT +
+  Flutter 3.50.0 engine growth; the gh-2088 reseed precedent), and the
+  never-armed fa-macos-x64.tsv committed from the same run's
+  size-baselines-macos artifact (TOTAL 81,153,036 — the x64 gate had been
+  self-seeding transiently every run since gh-2088).
+  Pinned by `test/release_notes_cap_test.dart`,
+  `test/release_lazy_draft_mint_test.dart` (gh-2337 group),
+  `test/release_attach_or_create_mint_test.dart` (gh-2337 bounded-notes),
+  `test/ci_2337_macos_size_floor_test.dart` (supersedes the gh-2088 pin).
 - fix(gh-2318): the daily draft sweeper now reclaims a fresh (<24h)
   pipeline draft whose publish point is provably unreachable, instead of
   letting it rot to the 24h sweep and re-file the recurring

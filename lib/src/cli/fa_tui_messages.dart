@@ -117,6 +117,7 @@ final class WaitingStatusMsg extends Msg {
     required this.jobs,
     required this.timers,
     this.lostJobs = 0,
+    this.registryNotice,
   });
 
   /// Running background jobs, one purpose per job (command + id).
@@ -127,6 +128,10 @@ final class WaitingStatusMsg extends Msg {
 
   /// Background jobs the previous run of this session left running.
   final int lostJobs;
+
+  /// The surfaced registry-lock failure (issue #2266 AC2): a manifest
+  /// mutation skipped at the queued-wait bound, named; null clears it.
+  final String? registryNotice;
 }
 
 /// Host push of the background-job board's live region (issue #429): the

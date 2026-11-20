@@ -248,6 +248,24 @@ abstract interface class RenamableFileSystem {
   Future<Result<void, FileError>> renamePath(String from, String to);
 }
 
+/// Optional [FileSystem] capability: atomic exclusive-create.
+///
+/// Powers the cross-run bash-jobs manifest lock (issue #2266): the lock
+/// exists only when `createFileExclusive` genuinely refuses a second
+/// creation of the same path (O_EXCL). NOTE: plain `createDir` is NOT
+/// exclusive on the local filesystem — Dart's `Directory.create` is a
+/// no-op over an existing directory, so a directory lock never contends.
+/// Backends without the capability (memory, web — single-writer) do not
+/// implement it — consumers probe with `is ExclusiveCreateFileSystem`
+/// and degrade to the documented unlocked behavior. Decorators forward
+/// to their delegate so wrapping an env never hides the capability.
+abstract interface class ExclusiveCreateFileSystem {
+  /// Creates an empty file at [path], failing when anything already
+  /// occupies it — the atomic exclusive-create cross-process locks need.
+  /// The parent directory must exist.
+  Future<Result<void, FileError>> createFileExclusive(String path);
+}
+
 /// Optional [FileSystem] capability: byte-range reads.
 ///
 /// Powers windowed session loading (`SessionChunkReader`): the app reads

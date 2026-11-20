@@ -186,6 +186,7 @@ final class FaTuiController {
     required List<String> jobs,
     required List<WaitingTimer> timers,
     int lostJobs = 0,
+    String? registryNotice,
   }) {}
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui

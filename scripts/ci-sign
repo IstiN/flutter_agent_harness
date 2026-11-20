@@ -150,6 +150,16 @@ label_env() { # label_env <label> <SUFFIX> -> prints resolved env var VALUE
   local upper
   upper="$(printf '%s' "$label" | tr '[:lower:]' '[:upper:]')"
   upper="${upper//-/_}"
+  # gh-2345-class: the DIRECT per-label variable wins. A step that
+  # provisions SEVERAL labels (e.g. yoclip-macos via the legacy mapping
+  # AND yoclip-macos-developer-id via CI_SIGN_YOCLIP_MACOS_DEVELOPER_ID_*)
+  # must not have the legacy value forced onto every label — the old
+  # precedence made the developer-id install import the Apple
+  # Distribution payload (run 44718966575).
+  if [ -n "$(eval "printf '%s' "\${CI_SIGN_${upper}_${suffix}:-}"")" ]; then
+    p12_env_value "CI_SIGN_${upper}_${suffix}"
+    return 0
+  fi
   if [ -n "${CI_SIGN_P12_B64_ENV:-}" ] || [ -n "${CI_SIGN_P12_PASSWORD_ENV:-}" ]; then
     # Legacy secret names, mapped explicitly by the caller.
     case "$suffix" in
@@ -295,7 +305,7 @@ case "$CMD" in
     # (tr exit 141) and flips the guard to a false-negative "G6 absent"
     # → duplicate import + false WARN; plain `grep -i >/dev/null` drains
     # the whole listing instead.
-    WWDR_G6_SHA1="0BE38BFE21FD434D8CC51CBE0E2BC7758DBF97B"
+    WWDR_G6_SHA1="0BE38BFE21FD434D8CC51CBE0E2BC7758DDBF97B"
     if ! security find-certificate -a -Z -c "Apple Worldwide Developer Relations" "$KC" 2>/dev/null \
         | tr -d ' :' | grep -i "$WWDR_G6_SHA1" >/dev/null; then
       WWDR_G6_URL="https://www.apple.com/certificateauthority/AppleWWDRCAG6.cer"

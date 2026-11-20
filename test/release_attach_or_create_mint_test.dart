@@ -205,4 +205,82 @@ void main() {
       );
     },
   );
+
+  test(
+    'gh-2337: an over-cap release-notes.md is bounded before the create',
+    () {
+      // Run 44680647719 (v1.0.756): the release body must never exceed
+      // GitHub's 125,000-character cap — the attach path bounds its
+      // notes file (here 130,001 bytes) under the 120,000-byte ceiling
+      // with a truncation marker before `gh release create`.
+      final r = runReleaseMintFixture(
+        'scripts/release_attach_or_create.sh',
+        args: const ['v1.2.3', 'a.zip'],
+        name: 'bounded-notes',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        seedReleaseNotes: true,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.notesCapture, isNotEmpty, reason: 'the create carried notes');
+      // gh-2337 rework: the BODY is bounded under the 120,000-byte
+      // ceiling and the owner marker is stamped AFTER the cap (the
+      // truncation cuts from the tail — a pre-stamped marker would be
+      // stripped, leaving an un-reclaimable draft). The created notes
+      // are therefore bounded body + marker, still far under the
+      // 125,000-character API cap.
+      final bodyWithoutMarker = r.notesCapture
+          .split('\n')
+          .where((line) => !line.startsWith('<!-- release-draft-owner:'))
+          .join('\n');
+      expect(
+        bodyWithoutMarker.length,
+        lessThanOrEqualTo(120_000),
+        reason:
+            'the notes body must fit the bounded ceiling — the v1.0.756 '
+            '131k curated body HTTP-422\'d the create in three legs',
+      );
+      expect(
+        r.notesCapture.length,
+        lessThanOrEqualTo(125_000),
+        reason: 'bounded body + owner marker stays under the API cap',
+      );
+      expect(r.notesCapture, contains('truncated'));
+      expect(r.notesCapture, contains('CHANGELOG.md'));
+    },
+  );
+
+  test(
+    'gh-2337 rework: the bounded attach body still carries the release-draft-owner marker',
+    () {
+      // Same ordering contract as the lazy writer: cap FIRST, then
+      // stamp the owner marker — the truncation cuts from the tail and
+      // would strip a pre-stamped marker, leaving a draft the
+      // failure-path guard refuses to reclaim, the sweeper buckets
+      // human (PAT author) and keeps, and dedupe ignores.
+      final r = runReleaseMintFixture(
+        'scripts/release_attach_or_create.sh',
+        args: const ['v1.2.3', 'a.zip'],
+        name: 'marker-survives-cap',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        seedReleaseNotes: true,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.notesCapture, isNotEmpty, reason: 'the create carried notes');
+      expect(r.notesCapture, contains('truncated'));
+      expect(
+        r.notesCapture,
+        contains('release-draft-owner: run/111/job/release-macos'),
+        reason:
+            'the ownership marker must survive the body cap — the guard, '
+            'sweeper and dedupe all match it in the release body',
+      );
+      expect(
+        r.notesCapture.length,
+        lessThanOrEqualTo(125_000),
+        reason: 'the created body must stay under the API cap',
+      );
+    },
+  );
 }

@@ -63,6 +63,18 @@ if ! bash "$(dirname "$0")/release_notes.sh" "$tag" >"$notes_file" ||
   [ ! -s "$notes_file" ]; then
   printf 'Release %s — see the CHANGELOG.\n' "$tag" >"$notes_file"
 fi
+# gh-237: bound the body BEFORE stamping the owner marker — the cap
+# truncates from the TAIL, so a pre-stamped marker is cut off and the
+# created draft carries no ownership proof: release_draft_guard.sh
+# resolves `<unmarked>` and refuses to reclaim it, the daily sweeper
+# buckets it human (the legs run with GH_TOKEN=RELEASE_PAT) and keeps
+# it, dedupe ignores it — a forever-orphaned draft (gh-282). Bounded
+# body (≤ 120,000) + the marker stays under the 125,000-character
+# release-body cap whose overshoot HTTP-422'd `gh release create` in
+# run 44680647719 (v1.0.756) and left every attach gate on the tag
+# dying with "release not found".
+bash "$(dirname "$0")/release_notes_cap.sh" "$notes_file"
+
 marker="<!-- release-draft-owner: $identity -->"
 grep -qF "$marker" "$notes_file" || printf '\n%s\n' "$marker" >>"$notes_file"
 
@@ -90,10 +102,30 @@ fi
 
 # DRAFT-first (gh-1801): a create here must never publish — the resolved
 # asset list at this point can never include the signed checksums. The
-# race-lost create is tolerated (the winner owns the release).
+# race-lost create is tolerated (the winner owns the release), but a REAL
+# create failure is not (gh-237): the body was already bounded above by
+# release_notes_cap.sh, so a surviving failure is a genuine API error.
+create_rc=0
 gh release create "$tag" \
   --repo "$repo" \
   --title "$tag" \
   --draft \
-  --notes-file "$notes_file" || true
+  --notes-file "$notes_file" || create_rc=$?
+if [ "$create_rc" -ne 0 ]; then
+  # gh-1801's `|| true` tolerated ONLY the view→create race — a sibling
+  # leg creating the release between our view and create. gh-237 (run
+  # 44680647719, v1.0.756): that swallow ALSO ate real create failures
+  # (body-too-long 422), printed "✅ lazy draft ready", and failed every
+  # attach gate with "release not found". Re-view: the release existing
+  # NOW means we lost the race (upload into the winner's release); it
+  # still being missing means the create itself failed — the leg must
+  # go red, there is nothing to attach to.
+  if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+    echo "release create failed but $tag now exists — lost the view→create race, the winner owns the release"
+    echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
+    exit 0
+  fi
+  echo "::error::the draft create for $tag failed (rc $create_rc) and no concurrent release appeared — nothing to attach to; fix the create failure above (e.g. the release body exceeding the 125,000-character API cap, gh-237)" >&2
+  exit 1
+fi
 echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"

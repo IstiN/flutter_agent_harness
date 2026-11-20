@@ -507,11 +507,81 @@ void main() async {
     );
   });
 
-  test('boot reconcile drops a past-staleHours entry even with a live pid '
-      '(issue #478)', () async {
+  test('boot reconcile KEEPS a past-staleHours entry whose pid is '
+      'verified alive (issue #2267)', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
     cli.waitingProcessTableForTest = () async =>
-        (pids: {42}, starts: {42: 'start'});
+        (pids: {42}, starts: {42: 'Mon Sep 16 09:00:00 2026'});
+    final dir = env.cwd;
+    await env.createDir('$dir/.fah/bash_jobs');
+    await env.writeFile(
+      '$dir/.fah/bash_jobs/running.json',
+      jsonEncode([
+        {
+          'id': 'sh-1',
+          'command': 'sleep 9000',
+          'pid': '42',
+          'pidStart': 'Mon Sep 16 09:00:00 2026',
+          'startedAtMs': DateTime.now()
+              .subtract(const Duration(hours: 25))
+              .millisecondsSinceEpoch,
+        },
+      ]),
+    );
+
+    await cli.waitingCaptureLostJobsForTest();
+    // The age belt never claims a verified-alive entry: not lost, still
+    // registered, no stale-job warning (AC1/AC3).
+    expect(cli.waitingLostJobsForTest, 0);
+    expect(
+      (await env.readTextFile('$dir/.fah/bash_jobs/running.json')).valueOrNull,
+      contains('sh-1'),
+      reason: 'a live detached job outranks the age belt',
+    );
+    expect(io.out.toString(), isNot(contains('stale job')));
+    // And it adopts like any live entry — visible, manageable (AC1).
+    final adopted = cli.shellJobsRegistryForTest.job('sh-1');
+    expect(adopted, isNotNull);
+    expect(adopted!.isAdopted, isTrue);
+    expect(adopted.pid, 42);
+  });
+
+  test('boot reconcile drops a past-staleHours RECYCLED pid regardless of '
+      'age (issue #2267)', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    cli.waitingProcessTableForTest = () async =>
+        (pids: {42}, starts: {42: 'Mon Sep 17 10:00:00 2026'});
+    final dir = env.cwd;
+    await env.createDir('$dir/.fah/bash_jobs');
+    await env.writeFile(
+      '$dir/.fah/bash_jobs/running.json',
+      jsonEncode([
+        {
+          'id': 'sh-1',
+          'command': 'sleep 9000',
+          'pid': '42',
+          'pidStart': 'Mon Sep 16 09:00:00 2026',
+          'startedAtMs': DateTime.now()
+              .subtract(const Duration(hours: 25))
+              .millisecondsSinceEpoch,
+        },
+      ]),
+    );
+
+    await cli.waitingCaptureLostJobsForTest();
+    expect(cli.waitingLostJobsForTest, 1);
+    expect(
+      (await env.readTextFile('$dir/.fah/bash_jobs/running.json')).valueOrNull,
+      '[]',
+      reason: 'the impersonation guard outranks liveness and the belt alike',
+    );
+  });
+
+  test('boot reconcile drops a past-staleHours entry when the platform '
+      'could not verify — the belt stays the only guard there '
+      '(issue #2267)', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    cli.waitingProcessTableForTest = () async => null;
     final dir = env.cwd;
     await env.createDir('$dir/.fah/bash_jobs');
     await env.writeFile(
@@ -533,8 +603,35 @@ void main() async {
     expect(
       (await env.readTextFile('$dir/.fah/bash_jobs/running.json')).valueOrNull,
       '[]',
+      reason: 'unverifiable entries still age out — no immortal ghosts',
     );
-    expect(io.out.toString(), contains('1 stale job entr'));
+  });
+
+  test('jobs.staleHours 0 border unchanged: unverifiable aged entries '
+      'still drop (issue #2267)', () async {
+    final cli = cliFor(
+      FakeStreamFunction([textTurn('ok')]),
+      jobs: const JobsConfig(staleHours: 0),
+    );
+    cli.waitingProcessTableForTest = () async => null;
+    final dir = env.cwd;
+    await env.createDir('$dir/.fah/bash_jobs');
+    await env.writeFile(
+      '$dir/.fah/bash_jobs/running.json',
+      jsonEncode([
+        {
+          'id': 'sh-1',
+          'command': 'sleep 9000',
+          'pid': '42',
+          'startedAtMs': DateTime.now()
+              .subtract(const Duration(hours: 1))
+              .millisecondsSinceEpoch,
+        },
+      ]),
+    );
+
+    await cli.waitingCaptureLostJobsForTest();
+    expect(cli.waitingLostJobsForTest, 1);
   });
 
   test('a corrupt manifest is quarantined as .bad and rebuilt empty '
@@ -625,9 +722,9 @@ void main() async {
   // -- Registry lock branches (issue #478 CRAP gate) -------------------------
 
   /// A local-FS CLI: the lock's contended branches need a real
-  /// filesystem — the exclusive create only fails when a regular FILE
-  /// occupies the lock path, which no memory env can express (its
-  /// createDir always succeeds).
+  /// filesystem — only an exclusive-create backend refuses the claim
+  /// when the lock path is occupied, which no memory env can express
+  /// (its createDir always succeeds; issue #2266).
   Future<AgentCli> lockCli(
     LocalExecutionEnv localEnv,
     FakeCliIO localIo,
@@ -668,21 +765,34 @@ void main() async {
     return (await lockCli(localEnv, localIo), logs);
   }
 
-  test('a freshly held lock times out and the mutation degrades to an '
-      'unlocked write (issue #478)', () async {
+  test('a freshly held lock exhausts the bound into a NAMED failure — '
+      'the mutation never proceeds unlocked (issue #2266)', () async {
     final (cli, logs) = await lockFixture();
+    // The real bound sits above the stale-steal threshold; shrink it so
+    // the test exercises the exhaustion, not a 70s wait.
+    cli.waitingLockWaitBoundForTest = const Duration(milliseconds: 300);
 
     await cli.waitingCaptureLostJobsForTest();
 
     expect(
       cli.waitingLostJobsForTest,
-      1,
-      reason: 'the bounded wait gives up and the write proceeds unlocked',
+      0,
+      reason: 'the reconcile was skipped — never raced unlocked',
+    );
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      contains('registry update skipped to avoid an unlocked write'),
+      reason: 'the named failure surfaces, never vanishes',
     );
     expect(
       File('$logs/running.json.lock').existsSync(),
       isTrue,
       reason: "a timed-out contender never removes someone else's lock",
+    );
+    expect(
+      File('$logs/running.json').readAsStringSync(),
+      contains('sh-dead'),
+      reason: 'the manifest is untouched — no unlocked rewrite',
     );
   });
 

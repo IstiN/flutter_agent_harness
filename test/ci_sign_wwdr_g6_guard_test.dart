@@ -32,36 +32,51 @@ void main() {
       final tmpUse = script.indexOf('"\$TMP/wwdr.pem"');
       expect(tmpAssign, greaterThan(-1), reason: 'TMP assignment missing');
       expect(trap, greaterThan(-1), reason: 'EXIT trap missing');
-      expect(block, greaterThan(tmpAssign),
-          reason: 'WWDR block must sit below TMP= (set -u crash otherwise)');
-      expect(block, greaterThan(trap),
-          reason: 'WWDR block must sit below the EXIT trap (wwdr.pem cleanup)');
-      expect(tmpUse, greaterThan(tmpAssign),
-          reason: '"\$TMP/wwdr.pem" must never expand before TMP is set');
+      expect(
+        block,
+        greaterThan(tmpAssign),
+        reason: 'WWDR block must sit below TMP= (set -u crash otherwise)',
+      );
+      expect(
+        block,
+        greaterThan(trap),
+        reason: 'WWDR block must sit below the EXIT trap (wwdr.pem cleanup)',
+      );
+      expect(
+        tmpUse,
+        greaterThan(tmpAssign),
+        reason: '"\$TMP/wwdr.pem" must never expand before TMP is set',
+      );
     });
 
     test('idempotency guard pins the G6 SHA-1, not the shared WWDR CN', () {
       // The real fingerprint of https://www.apple.com/certificateauthority/
       // AppleWWDRCAG6.cer (OU=G6, 2021-03-17 → 2036-03-19), verified by
       // downloading the cert and hashing it (openssl x509 -fingerprint -sha1).
-      const g6Sha1 = '0BE38BFE21FD434D8CC51CBE0E2BC7758DBF97B';
-      expect(script, contains('WWDR_G6_SHA1="$g6Sha1"'),
-          reason: 'G6 fingerprint pin missing or wrong');
+      const g6Sha1 = '0BE38BFE21FD434D8CC51CBE0E2BC7758DDBF97B';
       expect(
         script,
-        contains('security find-certificate -a -Z -c '
-            '"Apple Worldwide Developer Relations"'),
+        contains('WWDR_G6_SHA1="$g6Sha1"'),
+        reason: 'G6 fingerprint pin missing or wrong',
+      );
+      expect(
+        script,
+        contains(
+          'security find-certificate -a -Z -c '
+          '"Apple Worldwide Developer Relations"',
+        ),
         reason: 'guard must list matches with -Z (SHA-1 per cert)',
       );
       // PR#2295 review: plain `grep -i >/dev/null`, NOT `grep -q` —
       // under pipefail an early-exiting grep SIGPIPEs the producer and
       // flips the guard to a false-negative (duplicate import + WARN).
       expect(
-          script,
-          contains(
-              '| tr -d \' :\' | grep -i "\$WWDR_G6_SHA1" >/dev/null'),
-          reason: 'guard must compare the normalized hash against the '
-              'pin, draining the full listing (no grep -q SIGPIPE)');
+        script,
+        contains('| tr -d \' :\' | grep -i "\$WWDR_G6_SHA1" >/dev/null'),
+        reason:
+            'guard must compare the normalized hash against the '
+            'pin, draining the full listing (no grep -q SIGPIPE)',
+      );
     });
   });
 }

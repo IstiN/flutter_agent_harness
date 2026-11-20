@@ -657,6 +657,11 @@ jobs:
   # slips through (a cancelled run, a path without a guard) is deleted after
   # 24h and a deduplicated self-closing issue names the creating run so a
   # RECURRING stuck draft points at its broken step instead of rotting.
+  # Exception (gh-236): the machine loop's artefact-cache drafts
+  # (ai-gh-*/ai-pr-* — per-ticket session-snapshot storage) are
+  # lifecycle-managed, not findings: reclaimed the moment their ticket
+  # closes, swept after 24h while parked, kept while in flight — so the
+  # sweep issue auto-closes when only cache traffic remains.
   # Runs on every daily (and manual) invocation regardless of leg results —
   # change-gating must not gate hygiene.
   sweep-drafts:

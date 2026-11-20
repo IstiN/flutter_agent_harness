@@ -959,7 +959,7 @@ final class JsonlSessionRepo implements SessionRepo {
       if (entry.name.endsWith('.jsonl')) {
         files.add(entry);
       } else {
-        final primary = _primaryOfPartName(entry.name);
+        final primary = primaryOfPartName(entry.name);
         if (primary != null) {
           partPrimaries.add(_sessionPathKey('$dirPath/$primary'));
         }
@@ -1403,7 +1403,7 @@ final class JsonlSessionRepo implements SessionRepo {
             // Rotated segment sibling (gh-1077): remember its primary so
             // name resolution and consumers skip re-listing this
             // directory per session.
-            final primary = _primaryOfPartName(entry.name);
+            final primary = primaryOfPartName(entry.name);
             if (primary != null) {
               partPrimaries.add(_sessionPathKey('$dir/$primary'));
             }
@@ -1420,10 +1420,12 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// The primary session filename of a `.part-NN` sibling basename
   /// (`foo.jsonl.part-0001` → `foo.jsonl`); null for anything else.
-  static String? _primaryOfPartName(String name) {
+  @visibleForTesting
+  static String? primaryOfPartName(String name) {
     final match = _partSuffixPattern.firstMatch(name);
     if (match == null) return null;
-    return name.substring(0, name.length - match.group(0)!.length);
+    final primary = name.substring(0, name.length - match.group(0)!.length);
+    return primary.endsWith('.jsonl') ? primary : null;
   }
 
   static final RegExp _partSuffixPattern = RegExp(r'\.part-\d+$');

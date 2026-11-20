@@ -533,8 +533,19 @@ need=""
 case "\$cmd \$2" in
   "run list"|"run view"|"run watch"|"run rerun") need=actions ;;
   "issue "*|"label "*) need=issues ;;
-  "release "*|"api"*) need=contents ;;
+  "release "*) need=contents ;;
 esac
+# gh api: the scope follows the resource path (gh-236 lookup = issues) —
+# the per-ticket cycle-state lookup repos/<o>/<r>/issues/<n> needs the
+# issues scope in production, so a dropped issues: grant must fail TESTS
+# (the stub 403s and the script's fail-safe keep hides the dead early
+# reclaim) instead of silently degrading it.
+if [ "\$cmd" = "api" ]; then
+  case "\$2" in
+    */issues/*) need=issues ;;
+    *) need=contents ;;
+  esac
+fi
 if [ "\$granted" != "*" ] && [ -n "\$need" ] \\
    && ! printf '%s\\n' "\$granted" | grep -qw "\$need"; then
   echo "gh: HTTP 403: Resource not accessible by integration (stub: '\$cmd \$2' needs '\$need'; granted: '\$granted')" >&2
@@ -545,7 +556,24 @@ case "\$cmd" in
   api)
     case "\$2 \$3" in
       "-X DELETE"*) : ;;
-      *) cat "\$GH_STUB_DIR/releases.json" ;;
+      *)
+        # gh-236: the sweeper's per-ticket cycle-state lookup
+        # (GET repos/<o>/<r>/issues/<n>) — issue-<n>.json when planted,
+        # {} (unknown state → the script must fail safe) otherwise. The
+        # script pipes the response through its own jq, so the stub stays
+        # jq-free like every other api answer.
+        case "\$2" in
+          */issues/*)
+            n="\${2##*/}"
+            if [ -s "\$GH_STUB_DIR/issue-\$n.json" ]; then
+              cat "\$GH_STUB_DIR/issue-\$n.json"
+            else
+              echo '{}'
+            fi
+            ;;
+          *) cat "\$GH_STUB_DIR/releases.json" ;;
+        esac
+        ;;
     esac
     ;;
   label)
@@ -769,7 +797,11 @@ TrainGuardRun runTrainGuard(
   );
 }
 
-SweepRun runSweeper(String stubDir, Map<String, String> stubFiles) {
+SweepRun runSweeper(
+  String stubDir,
+  Map<String, String> stubFiles, {
+  Map<String, String> extraEnv = const {},
+}) {
   final dir = Directory(
     '${hygieneFixtureRoot.path}/sweep-${DateTime.now().microsecondsSinceEpoch}',
   )..createSync(recursive: true);
@@ -790,6 +822,7 @@ SweepRun runSweeper(String stubDir, Map<String, String> stubFiles) {
       'GH_LOG_FILE': '${dir.path}/log',
       'GITHUB_STEP_SUMMARY': '${dir.path}/summary.md',
       'GH_STUB_PERMISSIONS': sweepPermissions(),
+      ...extraEnv,
     },
   );
   return SweepRun(

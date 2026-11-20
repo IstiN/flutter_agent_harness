@@ -236,3 +236,25 @@ mixin ForwardingRenamableFs on ForwardingFs implements RenamableFileSystem {
     );
   }
 }
+
+/// Exclusive-create forwarding for decorators over an
+/// [ExclusiveCreateFileSystem] delegate.
+mixin ForwardingExclusiveCreateFs on ForwardingFs
+    implements ExclusiveCreateFileSystem {
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) {
+    final d = delegate;
+    if (d case final ExclusiveCreateFileSystem exclusive) {
+      return exclusive.createFileExclusive(mapPath(path));
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'createFileExclusive not supported by $delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
+}

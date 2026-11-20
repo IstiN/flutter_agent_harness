@@ -2,41 +2,46 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-// gh-2088 — the daily-publish cli leg (build-macos run 42761496337,
-// v1.0.702) passed the full macOS arm64 build, then failed the size
-// budget: `Fa.app/Contents/Resources/Assets.car` +101.6% (93,640 →
-// 188,792) — the #2063 Fa 2 / Porcelain app-marketing redesign replaced
-// every macOS AppIcon.appiconset PNG with the Squircle-V2 brand mark
-// (7/7 icons ~2.2–2.4× heavier), and actool compiles the icon set into
-// Assets.car. Intentional growth: the stale floor (seeded from the
-// v1.0.634 shape, gh-1820) needed the gate's own documented remediation
-// — a reseed from the failing run's artifact manifest (the gh-1820
-// arm64 / gh-1954 fa-ios / gh-2030 extension precedent). The same run's
-// shape shift is mostly CONTRACTION: GemmaModelConstraintProvider,
-// LiteRtLm and LiteRtMetalAccelerator frameworks left the bundle, so
-// TOTAL fell 116.4 MB → 74.7 MB while the #2063 Fa2 typography presets
-// added the Geist/IBM Plex/Manrope/PlusJakartaSans/SpaceGrotesk font
-// families to flutter_assets.
+// gh-237 — the daily-publish cli leg (build-macos run 44680647719,
+// v1.0.756) failed the macOS arm64 size budget: first-party TOTAL
+// 74,701,116 → 78,493,725 (+5.08%, past the +5.0% budget) with no single
+// line breaching — the js_widget_runtime 0.4.208 bump (PR #2333) ships
+// the three.js renderer bundles (`packages/js_widget_runtime/assets/
+// three/`, +2,371,493 B of NEW rows), the Fa 2.0 typography added the
+// Outfit/DM Mono families (each file below the 64 KiB manifest floor),
+// and the Dart AOT / Flutter 3.50.0 engine grew a few percent in place.
+// Intentional growth → the gate's own documented remediation (the
+// gh-2088 / gh-1820 / gh-1954 / gh-2030 reseed precedent): commit the
+// reseeded floor from the failing run's artifact manifest.
 //
-// The arm64 zip was NOT uploaded (the leg failed at the gate), so the
-// authoritative artifact evidence is the manifest table the gate itself
-// printed into that run log — 56 rows ≥ 64 KiB + TOTAL, the exact
-// `--reseed` output shape. This test pins that shape as the committed
-// floor, two ways (the gh-1820 test's structure, `check_lockfiles_gate_
-// test.dart` pattern of running the enforcing script from a test — the
-// gate cannot rot between static-gate runs):
+// The arm64 zip was NOT uploaded (the artifact steps run after the
+// gate), so the authoritative evidence is again the manifest table the
+// gate itself printed into that run log — 59 rows ≥ 64 KiB + TOTAL, the
+// exact `--reseed` output shape, byte-verified against the gate's own
+// error line (`TOTAL-1P + 5.1% 7470116 -> 78493725`).
+//
+// The same run ALSO exposed the x64 gate as never-armed: `scripts/
+// size_budget/fa-macos-x64.tsv` did not exist in-repo, so every x86_64
+// leg ran `--init-if-missing`, transiently self-seeded a baseline, and
+// uploaded it as an artifact nobody committed (the run log's notice:
+// "COMMIT scripts/size_budget/fa-macos-x64.tsv to arm the gate"). The
+// seeded x64 baseline from that run's `size-baselines-macos` artifact
+// (written by size_manifest.py itself, TOTAL 81,153,036) is now the
+// committed x64 floor.
+//
+// This test pins both floors, two ways each (the gh-2088 structure):
 //   1. the REAL gate (`scripts/size_manifest.py check`) run against the
 //      REAL committed baseline and a fixture of the run's artifact shape
 //      must go GREEN — before the reseed it exits 1 with the very
-//      `GREW +101.6% Assets.car  93640 -> 188792` regression that
-//      blocked the leg;
+//      `TOTAL-1P +5.1% 74701116 -> 78493725` regression that blocked the
+//      leg;
 //   2. a `--reseed` round-trip from the same fixture rewrites the
 //      baseline BYTE-IDENTICAL to the committed file — the committed
 //      floor stays the exact `--reseed` output shape for the shipped
 //      artifact (no hand-massaged rows, no sort/format drift).
 //
-// Supersedes test/ci_1820_macos_arm64_size_floor_test.dart: that test
-// pinned the v1.0.634 shape byte-exactly and reds once the floor moves
+// Supersedes test/ci_2088_macos_arm64_size_floor_test.dart: that test
+// pinned the v1.0.702 shape byte-exactly and reds once the floor moves
 // to this shape (the pin travels with the floor, per-ticket named).
 library;
 
@@ -46,20 +51,28 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 /// The arm64 baseline the build-macos.yml mac-zip gate reads.
-const baseline = 'scripts/size_budget/fa-macos-arm64.tsv';
+const arm64Baseline = 'scripts/size_budget/fa-macos-arm64.tsv';
 
-/// v1.0.702 arm64 zip TOTAL (run 42761496337 gate output, uncompressed
+/// The x64 baseline the same gate reads (`baseline_arch=x64` for the
+/// x86_64 matrix leg) — committed by gh-237, arming the gate.
+const x64Baseline = 'scripts/size_budget/fa-macos-x64.tsv';
+
+/// v1.0.756 arm64 zip TOTAL (run 44680647719 gate output, uncompressed
 /// bytes — includes the sub-64 KiB payload below the manifest floor).
-const artifactTotalBytes = 74701116;
+const arm64ArtifactTotalBytes = 78493725;
 
-/// The gate-printed manifest of the failing run's artifact
-/// (run 42761496337, job "Build macOS arm64"): every row ≥ 64 KiB,
-/// `<bytes>\t<path>`, path-sorted — the exact `size_manifest.py --reseed`
-/// output shape.
-const artifactManifest = [
-  [26546800, 'Fa.app/Contents/Frameworks/App.framework/Versions/A/App'],
+/// v1.0.756 x86_64 zip TOTAL (same run, "Build macOS x86_64" gate —
+/// the seeded x64 artifact).
+const x64ArtifactTotalBytes = 81153036;
+
+/// The gate-printed manifest of the failing run's arm64 artifact
+/// (run 44680647719, job "Build macOS arm64"): every row ≥ 64 KiB,
+/// `<bytes>\t<path>`, path-sorted — the exact `size_manifest.py
+/// --reseed` output shape.
+const arm64ArtifactManifest = [
+  [27778080, 'Fa.app/Contents/Frameworks/App.framework/Versions/A/App'],
   [
-    119017,
+    119800,
     'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/NOTICES.Z',
   ],
   [
@@ -231,11 +244,23 @@ const artifactManifest = [
     'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/packages/flutter_inappwebview_web/assets/web/web_support.js',
   ],
   [
-    719720,
+    898758,
+    'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/packages/js_widget_runtime/assets/three/jsr_three_native.js',
+  ],
+  [
+    859983,
+    'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/packages/js_widget_runtime/assets/three/jsr_three_web.js',
+  ],
+  [
+    612752,
+    'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/packages/js_widget_runtime/assets/three/three_r1.shaderbundle',
+  ],
+  [
+    721160,
     'Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets/packages/liquid_glass_widgets/shaders/liquid_glass_geometry_blended.frag',
   ],
   [
-    14634976,
+    14768784,
     'Fa.app/Contents/Frameworks/FlutterMacOS.framework/Versions/A/FlutterMacOS',
   ],
   [
@@ -263,27 +288,43 @@ const artifactManifest = [
     'Fa.app/Contents/Frameworks/objective_c.framework/Versions/A/objective_c',
   ],
   [
-    844112,
+    844320,
     'Fa.app/Contents/Frameworks/quickjs_bridge.framework/Versions/A/quickjs_bridge',
   ],
   [1671040, 'Fa.app/Contents/Frameworks/sqlite3.framework/Versions/A/sqlite3'],
-  [18514032, 'Fa.app/Contents/MacOS/Fa'],
+  [18555920, 'Fa.app/Contents/MacOS/Fa'],
   [188792, 'Fa.app/Contents/Resources/Assets.car'],
 ];
 
-/// Builds a directory artifact with the run's exact shape: one sparse file
-/// (st_size is all `size_manifest.py` reads) per manifest row + filler
-/// files (< the 64 KiB tracking floor, so they only move the TOTAL)
-/// carrying the sub-floor payload the real zip had.
-Directory buildArtifactFixture() {
-  final dir = Directory.systemTemp.createTempSync('gh2088_arm64_artifact');
+/// Builds a directory artifact with the run's exact shape: one sparse
+/// file (st_size is all `size_manifest.py` reads) per manifest row +
+/// filler files (< the 64 KiB tracking floor, so they only move the
+/// TOTAL) carrying the sub-floor payload the real zip had. With
+/// [rows] null the rows are read from the committed baseline file —
+/// that fixture pins the x64 floor, whose authoritative evidence IS the
+/// committed file (the gate's own `write_baseline` output, downloaded
+/// from the run's `size-baselines-macos` artifact).
+Directory buildArtifactFixture(
+  int artifactTotalBytes,
+  String baselinePath, {
+  List<List<Object>>? rows,
+}) {
+  final resolvedRows =
+      rows ??
+      File(baselinePath).readAsLinesSync().where((l) => l.isNotEmpty).map((l) {
+        final split = l.split('\t');
+        return [int.parse(split[0]), split[1]];
+      }).toList();
+  final dir = Directory.systemTemp.createTempSync('gh2337_artifact');
   addTearDown(() => dir.deleteSync(recursive: true));
-  for (final row in artifactManifest) {
+  var trackedSum = 0;
+  for (final row in resolvedRows) {
+    if (row[1] == 'TOTAL') continue;
     writeSparseFile(File('${dir.path}/${row[1] as String}'), row[0] as int);
+    trackedSum += row[0] as int;
   }
   // Sub-floor payload: TOTAL − Σ(tracked rows), spread over files each
-  // below the 64 KiB manifest floor (62,183 < 65,536 bytes).
-  final trackedSum = artifactManifest.fold<int>(0, (s, r) => s + (r[0] as int));
+  // below the 64 KiB manifest floor.
   final fillerBytes = artifactTotalBytes - trackedSum;
   expect(fillerBytes, greaterThanOrEqualTo(0));
   const fillerChunk = 62183;
@@ -332,35 +373,87 @@ ProcessResult runGate({
 );
 
 void main() {
+  test('both mac arch baselines exist and carry a TOTAL row (gh-2337)', () {
+    for (final path in [arm64Baseline, x64Baseline]) {
+      final file = File(path);
+      expect(
+        file.existsSync(),
+        isTrue,
+        reason:
+            '$path must be committed — the build-macos.yml gate reads it '
+            'with --init-if-missing, so a missing floor silently arms '
+            'nothing and the gate self-seeds transiently every run',
+      );
+      final total = file
+          .readAsLinesSync()
+          .where((l) => l.isNotEmpty)
+          .map((l) => l.split('\t')[1])
+          .contains('TOTAL');
+      expect(total, isTrue, reason: '$path must carry a TOTAL row');
+    }
+  });
+
+  test('x64 floor is the seeded v1.0.756 shape (TOTAL 811153036, gh-2337)', () {
+    final rows = <String, int>{};
+    for (final line in File(x64Baseline).readAsLinesSync()) {
+      if (line.isEmpty) continue;
+      final split = line.split('\t');
+      rows[split[1]] = int.parse(split[0]);
+    }
+    expect(
+      rows['TOTAL'],
+      x64ArtifactTotalBytes,
+      reason:
+          'the committed x64 floor must be the baseline the v1.0.756 '
+          'x86_64 leg seeded (run 44680647719 "Build macOS x86_64", '
+          '--init-if-missing notice: "COMMIT scripts/size_budget/'
+          'fa-macos-x64.tsv to arm the gate")',
+    );
+    expect(rows.length, 59, reason: '58 tracked rows + TOTAL');
+    expect(
+      rows.keys.where((k) => k.contains('js_widget_runtime/assets/three')),
+      hasLength(3),
+      reason: 'the jsr 0.4.208 three.js rows are the headline growth',
+    );
+  });
+
   test(
-    'arm64 size floor gates the v1.0.702 artifact shape green (gh-2088)',
+    'arm64 size floor gates the v1.0.756 artifact shape green (gh-2337)',
     () {
-      final artifact = buildArtifactFixture();
-      final result = runGate(artifact: artifact, baselinePath: baseline);
+      final artifact = buildArtifactFixture(
+        arm64ArtifactTotalBytes,
+        arm64Baseline,
+        rows: arm64ArtifactManifest,
+      );
+      final result = runGate(artifact: artifact, baselinePath: arm64Baseline);
       expect(
         result.exitCode,
         0,
         reason:
-            'the committed arm64 floor must accept the shipped v1.0.702 '
-            'shape — run 42761496337 red the leg with `GREW +101.6% '
-            'Assets.car  93640 -> 188792` (intentional icon growth, the '
-            'gate\'s own reseed case). Gate output:\n'
-            '${result.stdout}\n${result.stderr}',
+            'the committed arm64 floor must accept the shipped v1.0.756 '
+            'shape — run 44680647719 red the leg with `TOTAL-1P +5.1% '
+            '7470116 -> 78493725` (intentional jsr 0.4.208 + Fa 2 fonts '
+            '+ engine growth, the gate\'s own reseed case). Gate '
+            'output:\n${result.stdout}\n${result.stderr}',
       );
       expect(result.stdout, contains('size budget OK'));
     },
   );
 
-  test('committed floor is the byte-exact --reseed output for that shape '
-      '(gh-2088)', () {
-    final artifact = buildArtifactFixture();
-    final reseeded =
-        '${Directory.systemTemp.createTempSync('gh2088_reseed').path}/'
-        'reseed.tsv';
-    addTearDown(() => File(reseeded).parent.deleteSync(recursive: true));
+  test('committed arm64 floor is the byte-exact --reseed output for that shape '
+      '(gh-2337)', () {
+    final artifact = buildArtifactFixture(
+      arm64ArtifactTotalBytes,
+      arm64Baseline,
+      rows: arm64ArtifactManifest,
+    );
+    final reseedDir = Directory.systemTemp.createTempSync(
+      'gh2337_reseed_arm64',
+    );
+    addTearDown(() => reseedDir.deleteSync(recursive: true));
+    final reseeded = '${reseedDir.path}/reseed.tsv';
     // --reseed requires an EXISTING baseline file to overwrite; the old
     // content is irrelevant (it rewrites from the artifact manifest).
-    File(reseeded).parent.createSync(recursive: true);
     File(reseeded).writeAsStringSync('0\tseed\n0\tTOTAL\n');
     final result = runGate(
       artifact: artifact,
@@ -370,12 +463,49 @@ void main() {
     expect(result.exitCode, 0, reason: '${result.stdout}');
     expect(
       File(reseeded).readAsBytesSync(),
-      File(baseline).readAsBytesSync(),
+      File(arm64Baseline).readAsBytesSync(),
       reason:
-          'the committed $baseline must be the byte-exact `--reseed` '
-          'output for the shipped v1.0.702 shape (56 rows ≥ 64 KiB + '
-          'TOTAL, path-sorted) — any hand-edit drift desyncs the floor '
-          'from what the gate would have seeded',
+          'the committed $arm64Baseline must be the byte-exact '
+          '`--reseed` output for the shipped v1.0.756 shape (59 rows '
+          '≥ 64 KiB + TOTAL, path-sorted) — any hand-edit drift '
+          'desyncs the floor from what the gate would have seeded',
+    );
+  });
+
+  test('x64 floor gates the seeded v1.0.756 shape green (gh-2337)', () {
+    final artifact = buildArtifactFixture(x64ArtifactTotalBytes, x64Baseline);
+    final result = runGate(artifact: artifact, baselinePath: x64Baseline);
+    expect(
+      result.exitCode,
+      0,
+      reason:
+          'the newly armed x64 floor must accept the shape it was seeded '
+          'from — run 44680647719 x86_64. Gate output:\n'
+          '${result.stdout}\n${result.stderr}',
+    );
+    expect(result.stdout, contains('size budget OK'));
+  });
+
+  test('committed x64 floor is the byte-exact --reseed output for that shape '
+      '(gh-2337)', () {
+    final artifact = buildArtifactFixture(x64ArtifactTotalBytes, x64Baseline);
+    final reseedDir = Directory.systemTemp.createTempSync('gh2337_reseed_x64');
+    addTearDown(() => reseedDir.deleteSync(recursive: true));
+    final reseeded = '${reseedDir.path}/reseed.tsv';
+    File(reseeded).writeAsStringSync('0\tseed\n0\tTOTAL\n');
+    final result = runGate(
+      artifact: artifact,
+      baselinePath: reseeded,
+      reseed: true,
+    );
+    expect(result.exitCode, 0, reason: '${result.stdout}');
+    expect(
+      File(reseeded).readAsBytesSync(),
+      File(x64Baseline).readAsBytesSync(),
+      reason:
+          'the committed $x64Baseline must be the byte-exact '
+          '`--reseed` output shape (58 rows ≥ 64 KiB + TOTAL, '
+          'path-sorted)',
     );
   });
 }
