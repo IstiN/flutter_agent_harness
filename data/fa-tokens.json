@@ -40,15 +40,6 @@
   "pr-2060": [
     {
       "leg": "review",
-      "at": "2026-11-06T07:18:21Z",
-      "prompt": 227597,
-      "completion": 30062,
-      "total": 257659,
-      "cacheRead": 5447168,
-      "model": "glm-5.3-flash"
-    },
-    {
-      "leg": "review",
       "at": "2026-11-06T07:59:08Z",
       "prompt": 294463,
       "completion": 10054,
@@ -4702,6 +4693,17 @@
       "completion": 36480,
       "total": 196058,
       "cacheRead": 2321024,
+      "model": "glm-5.3-flash"
+    }
+  ],
+  "issue-2337": [
+    {
+      "leg": "dev",
+      "at": "2026-11-20T07:22:50Z",
+      "prompt": 388449,
+      "completion": 88084,
+      "total": 476533,
+      "cacheRead": 29660672,
       "model": "glm-5.3-flash"
     }
   ]
