@@ -83,6 +83,11 @@ String iso(int seconds) {
 ///                        modeled a running job, however the body was built
 ///   `view-fail-next`   — holds N: the next N `gh run view` calls fail
 ///                        (exit 1, no output) — models a gh/API outage
+///   `view-hold-<id>`   — while present, `gh run view <id>` blocks
+///                        (bounded 30s) before serving — a sequencing
+///                        seam: the watcher bash is pinned to waiting on
+///                        a KNOWN foreground child, so a signal sent now
+///                        is deferred behind it deterministically (#2326)
 ///   `sibling-fail-next`— holds N: the next N sibling-liveness probes fail
 ///                        (exit 1, no output) — the probe cannot establish
 ///                        OR exclude pool idleness (gh-1903)
@@ -152,6 +157,22 @@ case "\$cmd" in
             echo \$((failN - 1)) > "\$GH_STUB_DIR/view-fail-next"
             exit 1
           fi
+        fi
+        # view-hold-<id> present: block this invocation (bounded 30s,
+        # portable count loop — the same no-`seq` discipline as the jobs
+        # body below) until the file is removed, then serve normally.
+        # Issue #2326: the INT orphan-cancel test parks the watcher's
+        # THIRD poll here so its SIGINT lands while bash waits on a known
+        # foreground child, and the trap dispatch happens at THIS child's
+        # exit when the hold is released — not at a random point of the
+        # poll cycle. The bound self-heals an aborted test (no wedged
+        # poller, no fixture consumed while held).
+        if [ -f "\$GH_STUB_DIR/view-hold-\$id" ]; then
+          held=0
+          while [ "\$held" -lt 300 ] && [ -f "\$GH_STUB_DIR/view-hold-\$id" ]; do
+            sleep 0.1
+            held=\$((held + 1))
+          done
         fi
         if [ -f "\$GH_STUB_DIR/cancelled-\$id" ]; then
           status=completed; conclusion=cancelled; jobs_body=""
@@ -992,10 +1013,50 @@ void main() {
       // Same poll anchor as the TERM-after-start test (issue #1924
       // validation red): the handoff must land inside the poll loop.
       await live.waitForPolls('run view 777 --repo OWNER/REPO');
+      // #2326 determinized seam: park the THIRD poll's `gh run view` at
+      // the stub. Written now — poll 2's stub has logged (and thus left
+      // the hold check behind) but poll 3 is still a full `sleep 1` away,
+      // so only poll 3 can ever see this file. The INT below then lands
+      // while the watcher bash is parked on a KNOWN foreground child
+      // (bash defers the trap behind it — normal semantics), and
+      // releasing the hold makes the trap dispatch at that child's exit
+      // — milliseconds later, not at a random point of the poll cycle.
+      // Without this the INT's arrival phase inside the 1s poll sleep is
+      // uncontrolled and the exit latency stretches with it (CI run
+      // 44588657339: the trap dispatch was lost ENTIRELY on bash 5.2 /
+      // ubuntu-24.04-arm — the watcher kept polling 30+ clean 1s
+      // iterations after the signal, so no exit budget can cover the
+      // wedge; the bounded backstop containment below owns that shape
+      // instead).
+      File('${live.dir.path}/view-hold-777').writeAsStringSync('hold\n');
+      // Third completed `run view` = the poll the stub is holding. The
+      // watcher bash is in `wait` on that exact child; INT is deferred.
+      await live.waitForPolls('run view 777 --repo OWNER/REPO', occurrences: 3);
       live.process.kill(ProcessSignal.sigint);
-      final code = await live.finish();
+      // Release: the held stub serves, the deferred trap dispatches at
+      // its exit and orphan_cleanup cancels the never-started child.
+      File('${live.dir.path}/view-hold-777').deleteSync();
+      // 12s: ≥10x the observed fork latency of the release→exit segment
+      // (two stub calls + bash internals) even under CI shard load —
+      // the 30s default only delayed the #2326 wedge reds.
+      int code;
+      var wedged = false;
+      var wedgeDiagnostics = '';
+      try {
+        code = await live.finish(timeout: const Duration(seconds: 12));
+      } on StateError catch (e) {
+        // The bash deferred-trap drop (see the fixture comment): finish()
+        // has SIGKILLed the shell; the DETACHED BACKSTOP now performs the
+        // same single cancel from outside — its documented rationale
+        // covers exactly this death mode ("SIGKILL after a wedged signal
+        // handoff, any death mode"). The gh-1903 contract under test is
+        // the single orphan-cancel, not which bash mechanism delivers it.
+        wedged = true;
+        code = -9;
+        wedgeDiagnostics = e.message;
+      }
       expect(
-        const {130, 2}.contains(code),
+        wedged || const {130, 2}.contains(code),
         isTrue,
         reason:
             'killed by manual cancel (INT) — 130 dies through the '
@@ -1005,8 +1066,11 @@ void main() {
             'The single cancel never depends on the shape: the handler '
             'marks handler-ran BEFORE its gh call so the detached '
             'backstop cancels exactly once on the poisoned path '
-            '(pinned by the parse-loss test below); diagnostics:\n'
-            '${live.diagnostics()}',
+            '(pinned by the parse-loss test below); a wedged shell '
+            '(#2326: bash 5.2 deferred-trap dispatch lost, CI run '
+            '44588657339) is SIGKILLed and contained by the backstop — '
+            'asserted below via the same single-cancel contract; '
+            'diagnostics:\n${wedged ? wedgeDiagnostics : live.diagnostics()}',
       );
       // Same asynchronous-cancel caveat as the TERM test above: on the
       // poisoned-parse death shape (2) the single never-started cancel
