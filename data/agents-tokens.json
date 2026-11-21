@@ -178,6 +178,17 @@
       "requests": 1630,
       "source": "",
       "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-21T09:10:33Z",
+      "prompt": 42195,
+      "completion": 10582,
+      "total": 52777,
+      "cacheRead": 1001984,
+      "requests": 26,
+      "source": "reported",
+      "model": "kimi-for-coding"
     }
   ],
   "pr-2361": [
