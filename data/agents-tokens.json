@@ -202,6 +202,17 @@
       "requests": 21,
       "source": "reported",
       "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-21T10:14:38Z",
+      "prompt": 53199,
+      "completion": 6050,
+      "total": 59249,
+      "cacheRead": 753408,
+      "requests": 20,
+      "source": "reported",
+      "model": "kimi-for-coding"
     }
   ]
 }
