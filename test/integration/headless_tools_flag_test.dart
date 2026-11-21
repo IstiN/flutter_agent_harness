@@ -21,6 +21,7 @@ import 'package:test/test.dart';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
 
+import 'fa_cube_headless_helper.dart';
 import 'pty_harness.dart';
 
 void main() {
@@ -68,7 +69,14 @@ void main() {
       command.first,
       command.sublist(1),
       workingDirectory: Directory.current.path,
-      environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
+      environment: {
+        // gh-760 review convention: the ambient dev/CI shell may export
+        // FA_PROVIDERS_QUEUE (or real provider keys); the scrub keeps the
+        // child on the mock instead of the developer's real queue.
+        ...scrubbedChildEnv(),
+        'OPENAI_API_KEY': 'mock',
+        'HOME': tempHome.path,
+      },
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     ).timeout(const Duration(minutes: 4));
