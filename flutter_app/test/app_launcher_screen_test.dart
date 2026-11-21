@@ -287,13 +287,19 @@ void main() {
       expect(find.byKey(const ValueKey('appsFeatureCards')), findsNothing);
       expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
 
-      // No featured stack: the first icon starts directly below the one
-      // floating header, with only the grid's normal 8pt top gutter.
+      // No featured stack. The scroll view extends UNDER the floating
+      // glass header (owner feedback): the 108pt clearance lives in its
+      // scroll padding, so the first icon starts at the same visual spot
+      // while scrolled content travels under the glass instead of being
+      // hard-clipped at a fixed spacer.
       final scroll = tester.getRect(
         find.byKey(const ValueKey('appsGridScrollView')),
       );
-      expect(tester.getRect(_cell('app:alpha')).top, scroll.top + 8);
-      expect(LauncherGridSpec.iconSize, 64);
+      expect(
+        tester.getRect(_cell('app:alpha')).top,
+        scroll.top + 8 + MessengerFloatingPageScaffold.bodyTop,
+      );
+      expect(LauncherGridSpec.iconSize, 60);
       expect(LauncherGridSpec.desktopSpacing, 24);
       expect(LauncherGridSpec.desktopRowSpacing, 20);
 
@@ -311,11 +317,12 @@ void main() {
       final alpha = tester.getRect(_cell('app:alpha'));
       final beta = tester.getRect(_cell('app:beta'));
 
-      // The same 16pt gap as the launcher's own grid spec, not a stretched
-      // 44pt gutter that makes every icon feel like an isolated card.
+      // The same compact gap as the launcher's own grid spec, not a
+      // stretched 44pt gutter that makes every icon feel like an isolated
+      // card. 12pt + 60pt icons fit five phone columns (owner feedback).
       expect(alpha.width, LauncherGridSpec.cellCrossExtent);
       expect(beta.left - alpha.right, LauncherGridSpec.spacing);
-      expect(LauncherGridSpec.spacing, 16);
+      expect(LauncherGridSpec.spacing, 12);
     });
 
     testWidgets('glass header keeps actions while grid scrolls beneath it', (
@@ -731,7 +738,8 @@ void main() {
       const cellMain = LauncherGridSpec.cellMainExtent;
       const gr = LauncherGridSpec.compactRowSpacing;
       final hostRect = tester.getRect(find.byType(AppTileHost));
-      expect(hostRect.width, moreOrLessEquals(3 * i + 2 * 16, epsilon: 0.5));
+      const g = LauncherGridSpec.spacing;
+      expect(hostRect.width, moreOrLessEquals(3 * i + 2 * g, epsilon: 0.5));
       expect(
         hostRect.height,
         moreOrLessEquals(2 * cellMain + gr, epsilon: 0.5),
@@ -741,7 +749,7 @@ void main() {
       expect(betaRect.top, moreOrLessEquals(hostRect.top, epsilon: 0.5));
       expect(
         betaRect.left,
-        moreOrLessEquals(hostRect.left + 3 * (i + 16), epsilon: 0.5),
+        moreOrLessEquals(hostRect.left + 3 * (i + g), epsilon: 0.5),
       );
       expect(betaRect.width, moreOrLessEquals(i, epsilon: 0.5));
     });
@@ -789,11 +797,12 @@ void main() {
       );
     });
 
-    testWidgets('defaults to 4 icon columns on a phone-width screen', (
+    testWidgets('defaults to 5 icon columns on a phone-width screen', (
       tester,
     ) async {
       await _pumpLauncher(tester, surface: const Size(390, 844));
-      // Row 0: alpha, beta, gamma, settings — files wraps to row 1.
+      // Row 0 fits all five tiles: alpha, beta, gamma, settings, files
+      // (owner feedback: four oversized columns looked sparse AND cramped).
       final settingsRect = tester.getRect(
         _cell(LauncherLayoutStore.settingsKey),
       );
@@ -802,18 +811,41 @@ void main() {
       final gammaRect = tester.getRect(_cell('app:gamma'));
       expect(settingsRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
       expect(settingsRect.left, greaterThan(gammaRect.left));
-      expect(filesRect.top, greaterThan(settingsRect.top));
-      // Four Launchpad columns are centered inside the 16pt side padding.
+      expect(filesRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
+      expect(filesRect.left, greaterThan(settingsRect.left));
+      // Five Launchpad columns are centered inside the 16pt side padding.
       const gridWidth =
-          4 * LauncherGridSpec.cellCrossExtent + 3 * LauncherGridSpec.spacing;
+          5 * LauncherGridSpec.cellCrossExtent + 4 * LauncherGridSpec.spacing;
       expect(
         alphaRect.left,
         moreOrLessEquals(16 + (390 - 32 - gridWidth) / 2, epsilon: 0.5),
       );
-      // A 5th column would NOT fit — the count stays 4.
+      // A 6th column would NOT fit the 358pt usable lane (6·60+5·12=420).
+      expect(
+        6 * LauncherGridSpec.cellCrossExtent + 5 * LauncherGridSpec.spacing,
+        greaterThan(390 - 32),
+      );
       expect(
         gammaRect.left - tester.getRect(_cell('app:beta')).left,
         LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing,
+      );
+    });
+
+    testWidgets('narrower phone fits fewer columns adaptively', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester, surface: const Size(320, 700));
+      // Adaptive fit (owner feedback — no fixed per-class count): the
+      // 320pt lane holds 4 tracks ((320-32+12)/72 ≈ 4.2), so files wraps
+      // to row 1 while settings stays on row 0.
+      final alphaRect = tester.getRect(_cell('app:alpha'));
+      expect(
+        tester.getRect(_cell(LauncherLayoutStore.settingsKey)).top,
+        moreOrLessEquals(alphaRect.top, epsilon: 0.5),
+      );
+      expect(
+        tester.getRect(_cell(LauncherLayoutStore.filesKey)).top,
+        greaterThan(alphaRect.top),
       );
     });
 
@@ -1227,7 +1259,7 @@ void main() {
     });
 
     testWidgets('search filters the grid to matching tiles', (tester) async {
-      await _pumpLauncher(tester);
+      await _pumpLauncher(tester, revealSearch: true);
 
       await tester.enterText(searchField(), 'alp');
       await tester.pumpAndSettle();
@@ -1242,7 +1274,7 @@ void main() {
     testWidgets(
       'search result updates animate without duplicate settled items',
       (tester) async {
-        await _pumpLauncher(tester);
+        await _pumpLauncher(tester, revealSearch: true);
         await tester.enterText(searchField(), 'alp');
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
@@ -1288,7 +1320,7 @@ void main() {
     testWidgets('a query with no matches shows the empty marker', (
       tester,
     ) async {
-      await _pumpLauncher(tester);
+      await _pumpLauncher(tester, revealSearch: true);
 
       await tester.enterText(searchField(), 'zzz');
       await tester.pumpAndSettle();
@@ -1300,7 +1332,7 @@ void main() {
     testWidgets('a search-result tile long-press opens the tile menu', (
       tester,
     ) async {
-      await _pumpLauncher(tester);
+      await _pumpLauncher(tester, revealSearch: true);
 
       await tester.enterText(searchField(), 'beta');
       await tester.pumpAndSettle();

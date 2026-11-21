@@ -89,6 +89,31 @@ final class _NewSessionFolderDialogState
               leading: const Icon(Icons.drive_file_rename_outline),
             ),
           ),
+        // Explicit Create/Cancel (owner feedback: tapping a folder row
+        // being the only way to actually create was not obvious). Create
+        // uses the current folder with the typed name — same as the
+        // current-folder option, now visible as a primary action.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
+          // OverflowBar (not a Row): narrow Duo dialogs wrap the buttons
+          // instead of overflowing the right edge.
+          child: OverflowBar(
+            alignment: MainAxisAlignment.end,
+            spacing: 8,
+            children: [
+              TextButton(
+                key: const ValueKey('newSessionCancel'),
+                onPressed: () => Navigator.pop(context),
+                child: Text(l10n.commonCancel),
+              ),
+              FilledButton(
+                key: const ValueKey('newSessionCreate'),
+                onPressed: () => _select(_NewSessionFolderAction.current),
+                child: Text(l10n.networkCreate),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

@@ -9,12 +9,16 @@ private final class FaProjectFolderPicker: NSObject, UIDocumentPickerDelegate {
   var completion: ((URL?) -> Void)?
   var grantedURL: URL?
 
-  func pick(from controller: UIViewController?, completion: @escaping (URL?) -> Void) {
+  func pick(from controller: UIViewController?, initialPath: String? = nil, completion: @escaping (URL?) -> Void) {
     self.completion = completion
     let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder])
     picker.delegate = self
     picker.allowsMultipleSelection = false
     picker.shouldShowFileExtensions = true
+    if let initialPath, !initialPath.isEmpty {
+      // Allow-access for a known session folder: open AT that folder.
+      picker.directoryURL = URL(fileURLWithPath: initialPath, isDirectory: true)
+    }
     guard let controller else {
       self.completion = nil
       completion(nil)
@@ -87,7 +91,8 @@ func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
   channel.setMethodCallHandler { call, result in
     switch call.method {
     case "pickDirectory":
-      faProjectFolderPicker.pick(from: faVisibleViewController()) { url in
+      let initial = (call.arguments as? [String: Any])?["path"] as? String
+      faProjectFolderPicker.pick(from: faVisibleViewController(), initialPath: initial) { url in
         guard let url else {
           result(nil)
           return
@@ -126,6 +131,43 @@ func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
         result(granted)
       } catch {
         result(false)
+      }
+    case "startAccessingResolved":
+      // Richer grant: the RESOLVED url.path (+ refreshed bookmark when the
+      // stored one was stale). After reinstall/container moves the resolved
+      // path differs from the persisted one — mounting the stale path hid
+      // every existing session from the chat list (owner iOS incident).
+      guard let encoded = call.arguments as? String,
+            let bookmark = Data(base64Encoded: encoded) else {
+        result(nil)
+        return
+      }
+      do {
+        var stale = false
+        let url = try URL(
+          resolvingBookmarkData: bookmark,
+          options: [],
+          relativeTo: nil,
+          bookmarkDataIsStale: &stale
+        )
+        let granted = url.startAccessingSecurityScopedResource()
+        if granted {
+          var outBookmark = encoded
+          if stale, let refreshed = try? url.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+          ) {
+            outBookmark = refreshed.base64EncodedString()
+          }
+          faProjectFolderBookmarks[outBookmark] = url
+          faProjectFolderPicker.grantedURL = url
+          result(["path": url.path, "bookmark": outBookmark])
+        } else {
+          result(nil)
+        }
+      } catch {
+        result(nil)
       }
     case "stopAccessing":
       guard let encoded = call.arguments as? String else {

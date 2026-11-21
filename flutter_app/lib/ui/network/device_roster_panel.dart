@@ -135,28 +135,48 @@ class DeviceRosterPanel extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-              child: Text(
-                context.l10n.networkDevicesTitle.toUpperCase(),
-                style: TextStyle(
-                  color: FahColors.of(context).dim,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      context.l10n.networkDevicesTitle.toUpperCase(),
+                      style: TextStyle(
+                        color: FahColors.of(context).dim,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  // Reconnecting rides in the title row as a small dot: the
+                  // last-known roster stays mounted below, so the section
+                  // never jumps when the phase flips (owner feedback).
+                  if (phase == DeviceConnectorPhase.reconnecting)
+                    Tooltip(
+                      message: context.l10n.networkDeviceReconnecting,
+                      child: Container(
+                        key: const ValueKey('deviceRosterReconnecting'),
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: FahColors.of(context).pending,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             switch (phase) {
-              DeviceConnectorPhase.online => _OnlineRoster(service: service),
+              DeviceConnectorPhase.online ||
+              DeviceConnectorPhase.reconnecting => _OnlineRoster(
+                service: service,
+              ),
               DeviceConnectorPhase.preparing ||
               DeviceConnectorPhase.connecting => DeviceRosterStatusLine(
                 key: const ValueKey('deviceRosterSkeleton'),
                 label: context.l10n.networkDeviceConnecting,
                 color: FahColors.of(context).dim.withValues(alpha: 0.5),
-              ),
-              DeviceConnectorPhase.reconnecting => DeviceRosterStatusLine(
-                key: const ValueKey('deviceRosterReconnecting'),
-                label: context.l10n.networkDeviceReconnecting,
-                color: FahColors.of(context).pending,
               ),
               DeviceConnectorPhase.signedOut => const SizedBox.shrink(),
             },

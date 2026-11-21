@@ -105,11 +105,12 @@ void wideShellAppsActivityTests() {
           find.byKey(const ValueKey('appsDirectoryRunning')),
           findsOneWidget,
         );
-        expect(find.text('Files'), findsNothing);
+        // Files is a first-class launcher tile again (owner call).
+        expect(find.text('Files'), findsOneWidget);
         expect(find.byKey(const ValueKey('appsDirectoryFiles')), findsNothing);
         expect(
           find.byKey(const ValueKey('launcherCell:system:files')),
-          findsNothing,
+          findsOneWidget,
         );
         // The directory's Settings tile plus the rail's pinned settings row.
         expect(find.text('Settings'), findsNWidgets(2));
@@ -128,11 +129,17 @@ void wideShellAppsActivityTests() {
         await tester.pumpAndSettle();
         expect(find.byType(WidgetsCatalogSheet), findsNothing);
         expect(find.byKey(const ValueKey('appsQuickOpen')), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('messengerSearchField')));
-        await tester.pump();
+        // No sidebar search on Apps (owner call) — the launcher's
+        // header-reveal search is the single surface.
+        expect(
+          find.byKey(const ValueKey('messengerSearchField')),
+          findsNothing,
+        );
+        await tester.tap(find.byKey(const ValueKey('appsNarrowSearchReveal')));
+        await tester.pumpAndSettle();
         final search = tester.widget<CupertinoTextField>(
           find.descendant(
-            of: find.byKey(const ValueKey('messengerSearchField')),
+            of: find.byKey(const ValueKey('appsSearchField')),
             matching: find.byType(CupertinoTextField),
           ),
         );

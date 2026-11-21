@@ -20,6 +20,10 @@ import 'package:fa/sandbox/unload_flush.dart';
 /// Web has no home directory concept - user-level skill roots do not apply.
 String? desktopHomeDir([Map<String, String>? _]) => null;
 
+/// Web counterpart of the io folder env: recents are in-memory here.
+Future<ExecutionEnv> createFolderEnv(String cwd) async =>
+    MemoryExecutionEnv(cwd: cwd);
+
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   final shell = MemoryShell(httpClient: httpClient);
   final env = MemoryExecutionEnv(cwd: '/', shell: shell);

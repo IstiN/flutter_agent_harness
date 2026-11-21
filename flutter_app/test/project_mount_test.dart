@@ -36,6 +36,11 @@ Future<ProjectMountEnv> _envWithHost() async {
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
+  // The widget/seam tests here SIMULATE the sandbox (owner call: real
+  // non-sandboxed hosts skip the gate entirely — covered by its own test).
+  setUp(() => debugDirectFolderAccess = false);
+  tearDown(() => debugDirectFolderAccess = null);
+
   group('visibleFolderRoot — the Files initialPath visibility seam (P1)', () {
     test('session folder == the mounted root passes through', () {
       final base = LocalExecutionEnv(cwd: '/app/support');
@@ -104,6 +109,14 @@ void main() {
       );
     });
 
+    test('non-sandbox hosts see EVERY absolute folder (owner call)', () {
+      debugDirectFolderAccess = true;
+      final env = MemoryExecutionEnv();
+      expect(visibleFolderRoot(env, '/Users/x/project'), '/Users/x/project');
+      expect(visibleFolderRoot(env, '/work/elsewhere'), '/work/elsewhere');
+      debugDirectFolderAccess = false;
+    });
+
     test('null/empty candidates stay null', () {
       final env = ProjectMountEnv(LocalExecutionEnv(cwd: '/app'))
         ..mountedRoot = '/Users/x/project';
@@ -161,7 +174,7 @@ void main() {
     });
   });
 
-  testWidgets('open-folder button mounts and lists the project', (
+  testWidgets('allow-access gate mounts and lists the session folder', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -172,28 +185,34 @@ void main() {
       pickResult: (path: '/host/repo', bookmark: 'Ym9va21hcms='),
     );
     await tester.pumpWidget(
-      _wrap(FileBrowser(env: env, projectFolderOps: ops)),
+      _wrap(
+        FileBrowser(
+          env: env,
+          projectFolderOps: ops,
+          sessionFolder: '/host/repo',
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 
-    // Not mounted yet: the open-folder button is there, listing is container.
-    expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
+    // The Mount action is gone (owner call): the session folder the env
+    // cannot open shows the allow-access gate instead.
+    expect(
+      find.byKey(const ValueKey('filesSessionFolderGate')),
+      findsOneWidget,
+    );
     expect(find.text('a.txt'), findsNothing);
 
-    await tester.tap(find.byIcon(Icons.create_new_folder_outlined));
+    await tester.tap(find.byKey(const ValueKey('filesSessionFolderGateAllow')));
     await tester.pumpAndSettle();
 
     expect(env.mountedRoot, '/host/repo');
-    expect(
-      find.byIcon(Icons.eject_outlined),
-      findsOneWidget,
-      reason: 'mounted state shows the eject chip',
-    );
     expect(
       find.byKey(const ValueKey('fileBrowserMountIdentity')),
       findsOneWidget,
     );
     expect(find.text('repo'), findsOneWidget);
+    expect(find.text('a.txt'), findsOneWidget);
     final title = tester.widget<Text>(
       find.descendant(
         of: find.byKey(const ValueKey('fileBrowserHeader')),
@@ -205,27 +224,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('eject unmounts and stops the scoped access', (tester) async {
+  test('unapplyProjectMount clears the mount and stops the access', () async {
     final env = await _envWithHost();
     final ops = _FakeFolderOps(
       pickResult: (path: '/host/repo', bookmark: 'Ym9va21hcms='),
     );
-    await tester.pumpWidget(
-      _wrap(FileBrowser(env: env, projectFolderOps: ops)),
+    final picked = await pickAndApplyProjectMount(
+      env: env,
+      ops: ops,
+      onApplied: () {},
     );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.create_new_folder_outlined));
-    await tester.pumpAndSettle();
+    expect(picked, '/host/repo');
+    expect(env.mountedRoot, '/host/repo');
 
-    await tester.tap(find.byIcon(Icons.eject_outlined));
-    await tester.pumpAndSettle();
+    await unapplyProjectMount(env: env, ops: ops, onApplied: () {});
 
     expect(env.mountedRoot, isNull);
     expect(ops.stopped, ['Ym9va21hcms=']);
-    expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
   });
 
-  testWidgets('a stale stored mount shows the warning chip', (tester) async {
+  testWidgets('a stale stored mount renders no mount action', (tester) async {
     final env = await _envWithHost()
       ..mountUnavailable = '/host/gone';
     await tester.pumpWidget(
@@ -233,7 +251,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
+    // Mount controls were removed (owner call) — no warning action either.
+    expect(find.byKey(const ValueKey('fileBrowserMount')), findsNothing);
+    expect(find.byIcon(Icons.warning_amber_outlined), findsNothing);
     expect(find.byIcon(Icons.create_new_folder_outlined), findsNothing);
   });
 
@@ -246,36 +266,39 @@ void main() {
     expect(find.byIcon(Icons.warning_amber_outlined), findsNothing);
   });
 
-  group('folderPathsTailMatch — platform fold seam (review blockers, PR #2112)', () {
-    test('web fold is case-sensitive (URL semantics, same as Linux)', () {
-      // The web build cannot touch dart:io's Platform at all — the seam
-      // takes the resolved bool so this branch is exercisable on the VM.
-      expect(
-        folderPathsTailMatch('/a/b/Demo', '/x/b/Demo', caseSensitive: true),
-        isTrue,
-      );
-      expect(
-        folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: true),
-        isFalse,
-      );
-    });
+  group(
+    'folderPathsTailMatch — platform fold seam (review blockers, PR #2112)',
+    () {
+      test('web fold is case-sensitive (URL semantics, same as Linux)', () {
+        // The web build cannot touch dart:io's Platform at all — the seam
+        // takes the resolved bool so this branch is exercisable on the VM.
+        expect(
+          folderPathsTailMatch('/a/b/Demo', '/x/b/Demo', caseSensitive: true),
+          isTrue,
+        );
+        expect(
+          folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: true),
+          isFalse,
+        );
+      });
 
-    test('case-insensitive platforms fold the trailing two segments', () {
-      expect(
-        folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: false),
-        isTrue,
-      );
-    });
+      test('case-insensitive platforms fold the trailing two segments', () {
+        expect(
+          folderPathsTailMatch('/a/b/Demo', '/x/b/demo', caseSensitive: false),
+          isTrue,
+        );
+      });
 
-    test('single-segment paths never tail-match on any platform', () {
-      expect(
-        folderPathsTailMatch('/Demo', '/x/Demo', caseSensitive: true),
-        isFalse,
-      );
-      expect(
-        folderPathsTailMatch('/Demo', '/x/demo', caseSensitive: false),
-        isFalse,
-      );
-    });
-  });
+      test('single-segment paths never tail-match on any platform', () {
+        expect(
+          folderPathsTailMatch('/Demo', '/x/Demo', caseSensitive: true),
+          isFalse,
+        );
+        expect(
+          folderPathsTailMatch('/Demo', '/x/demo', caseSensitive: false),
+          isFalse,
+        );
+      });
+    },
+  );
 }

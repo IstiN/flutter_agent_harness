@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
@@ -64,6 +65,8 @@ class FileBrowser extends StatefulWidget {
     this.htmlPreviewBuilder,
     this.projectFolderOps,
     this.onProjectMountChanged,
+    this.recentFolders,
+    this.onOpenRecentFolder,
     this.showHeader = true,
     this.topCenterline = false,
     this.filterController,
@@ -126,6 +129,14 @@ class FileBrowser extends StatefulWidget {
   /// Fired after the project-folder mount changes (mount/unmount), so the
   /// host can recompose the agent's system prompt.
   final void Function()? onProjectMountChanged;
+
+  /// Most-recent-first chat folders rendered as quick-jump chips under the
+  /// header (owner call: replaces the Mount button flow). Null/empty keeps
+  /// the legacy mounted-identity chip.
+  final List<String>? recentFolders;
+
+  /// Opens a recent folder from its chip (the host swaps the Files root).
+  final ValueChanged<String>? onOpenRecentFolder;
 
   /// Biases the band's circles onto the host header's shared action
   /// centerline (the docked Files surface sits beside the chat header's
@@ -207,7 +218,7 @@ class _FileBrowserState extends State<FileBrowser> {
   /// failure keeps the affordance (no silent wrong listing).
   Future<void> _grantSessionFolder() async {
     final folder = widget.sessionFolder?.trim();
-    await _pickProjectFolder();
+    await _pickProjectFolder(initialPath: folder);
     if (!mounted) return;
     if (_gatedSessionFolder != null) return; // decline / other folder picked
     // Granted: the mount IS the session's folder now — jump the listing
@@ -224,13 +235,14 @@ class _FileBrowserState extends State<FileBrowser> {
     await _load();
   }
 
-  Future<void> _pickProjectFolder() async {
+  Future<void> _pickProjectFolder({String? initialPath}) async {
     final ops = widget.projectFolderOps ?? _defaultProjectFolderOps();
     final String? picked;
     try {
       picked = await pickAndApplyProjectMount(
         env: widget.env,
         ops: ops,
+        initialPath: initialPath,
         onApplied: () => widget.onProjectMountChanged?.call(),
         onAccessDenied: () {
           if (mounted) {
@@ -248,17 +260,6 @@ class _FileBrowserState extends State<FileBrowser> {
       return;
     }
     if (picked == null) return;
-    setState(() {});
-    await _load();
-  }
-
-  Future<void> _unmountProjectFolder() async {
-    final cleared = await unapplyProjectMount(
-      env: widget.env,
-      ops: widget.projectFolderOps ?? _defaultProjectFolderOps(),
-      onApplied: () => widget.onProjectMountChanged?.call(),
-    );
-    if (!cleared) return;
     setState(() {});
     await _load();
   }
@@ -283,6 +284,20 @@ class _FileBrowserState extends State<FileBrowser> {
       widget.iCloudSyncService ??
       (icloudSyncSupported ? createICloudSyncService(widget.env) : null);
 
+  /// The sync button appears ONLY when the ubiquity container is actually
+  /// configured (owner call: unconfigured iCloud must not show a button
+  /// that can only fail with guidance).
+  bool _iCloudAvailable = false;
+
+  Future<void> _checkICloudAvailability() async {
+    final service = _iCloudSync;
+    if (service == null) return;
+    final available = await service.isAvailable().catchError((_) => false);
+    if (mounted && available != _iCloudAvailable) {
+      setState(() => _iCloudAvailable = available);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -290,6 +305,7 @@ class _FileBrowserState extends State<FileBrowser> {
     _search.addListener(_onFilterChanged);
     _searchFocus.addListener(_onSearchFocusChanged);
     _segments.addAll(_initialSegments(widget.initialPath));
+    unawaited(_checkICloudAvailability());
     _load();
   }
 
@@ -379,7 +395,16 @@ class _FileBrowserState extends State<FileBrowser> {
       _mountEnv?.mountedRoot != null &&
       envCwdResolvesToMountSegment(widget.env);
 
+  /// True when [_segments] name an ABSOLUTE filesystem path (direct-access
+  /// hosts browsing outside the env cwd): [_envPath] must keep the leading
+  /// slash, otherwise the segments are resolved against the env cwd and
+  /// the listing fails (owner: kidstalk "Could not open folder").
+  bool _segmentsAbsolute = false;
+
   String get _envPath {
+    if (_segmentsAbsolute) {
+      return _segments.isEmpty ? '/' : '/${_segments.join('/')}';
+    }
     if (_segments.isEmpty) {
       return _navigatesMountNamespace ? projectMountSegment : '.';
     }
@@ -422,7 +447,10 @@ class _FileBrowserState extends State<FileBrowser> {
   /// empty yields no segments — the env cwd itself.
   List<String> _initialSegments(String? path) {
     var target = path?.trim() ?? '';
-    if (target.isEmpty || target == '.') return const [];
+    if (target.isEmpty || target == '.') {
+      _segmentsAbsolute = false;
+      return const [];
+    }
     final cwd = widget.env.cwd;
     if (!target.startsWith('/')) {
       target = cwd.endsWith('/') ? '$cwd$target' : '$cwd/$target';
@@ -434,7 +462,10 @@ class _FileBrowserState extends State<FileBrowser> {
     final underCwd =
         resolved.length >= cwdSegments.length &&
         _segmentsStartWith(resolved, cwdSegments);
-    if (underCwd) return resolved.sublist(cwdSegments.length);
+    if (underCwd) {
+      _segmentsAbsolute = false;
+      return resolved.sublist(cwdSegments.length);
+    }
     // The mount namespace: a host absolute path under the mounted root
     // lives INSIDE the mount at [projectMountSegment] — rebase onto the
     // mount root so the listing goes through the env's host mapping.
@@ -448,9 +479,11 @@ class _FileBrowserState extends State<FileBrowser> {
       final mountSegments = _segmentsOf(mountRoot);
       if (resolved.length >= mountSegments.length &&
           _segmentsStartWith(resolved, mountSegments)) {
+        _segmentsAbsolute = false;
         return resolved.sublist(mountSegments.length);
       }
     }
+    _segmentsAbsolute = true;
     return resolved;
   }
 
@@ -687,8 +720,13 @@ class _FileBrowserState extends State<FileBrowser> {
     final tokens = FaDesignTokens.of(context);
     // Chrome stack heights are fixed (header 52, identity chip 32, path or
     // preview bar 44, hairline 1) so the body can pad its top and scroll
-    // beneath the chrome band, like the chat list.
-    final hasIdentity = _mountEnv?.mountedRoot != null;
+    // beneath the chrome band, like the chat list. The recent-folder chip
+    // row occupies the SAME 32pt slot (owner layout fix: the path bar
+    // overlapped "Folders" when recents rendered without a mount).
+    final hasRecents =
+        widget.recentFolders?.isNotEmpty == true &&
+        widget.onOpenRecentFolder != null;
+    final hasIdentity = hasRecents || _mountEnv?.mountedRoot != null;
     final chromeHeight =
         (widget.showHeader ? 52.0 : 0.0) +
         (hasIdentity ? 32.0 : 0.0) +
@@ -740,7 +778,7 @@ class _FileBrowserState extends State<FileBrowser> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ?_headerRow(context),
-        ?_buildMountIdentity(context),
+        ?_buildRecentFolders(context),
         _preview != null ? _buildPreviewBar(context) : _buildPathBar(context),
         Divider(height: 1, color: colors.border.withValues(alpha: .55)),
       ],
@@ -791,14 +829,15 @@ class _FileBrowserState extends State<FileBrowser> {
           label: context.l10n.filesUploadTooltip,
           onPressed: _upload,
         ),
-      if (_iCloudSync != null)
+      if (_iCloudSync != null && _iCloudAvailable)
         FaHeaderAction(
           key: const ValueKey('fileBrowserICloudSync'),
           icon: Icons.cloud_sync_outlined,
           label: context.l10n.filesICloudSyncTooltip,
           onPressed: _syncICloud,
         ),
-      ?_buildMountControl(context),
+      // Mount button removed (owner call): recent-folder chips own
+      // folder switching now.
     ];
     return FilesChrome(
       key: widget.headerKey ?? const ValueKey('fileBrowserHeader'),
@@ -816,38 +855,85 @@ class _FileBrowserState extends State<FileBrowser> {
     );
   }
 
-  /// The project-folder action uses the same adaptive overflow as every
-  /// other panel action. Mounted identity lives in a secondary chip so a
-  /// long folder name can never squeeze the Files title or action row.
-  FaHeaderAction? _buildMountControl(BuildContext context) {
-    final mountEnv = _mountEnv;
-    if (mountEnv == null) return null;
-    final unavailable = mountEnv.mountUnavailable;
-    if (unavailable != null) {
-      return FaHeaderAction(
-        key: const ValueKey('fileBrowserMount'),
-        icon: Icons.warning_amber_outlined,
-        label: context.l10n.filesMountUnavailableTooltip(unavailable),
-        onPressed: _pickProjectFolder,
-      );
+  /// Recent chat folders as quick-jump chips (owner call). Falls back to
+  /// the legacy mounted-identity chip when the host supplies no recents.
+  Widget? _buildRecentFolders(BuildContext context) {
+    final recents = widget.recentFolders;
+    final onOpen = widget.onOpenRecentFolder;
+    if (recents == null || recents.isEmpty || onOpen == null) {
+      return _buildMountIdentity(context);
     }
-    final mountedPath = mountEnv.mountedRoot;
-    if (mountedPath != null) {
-      return FaHeaderAction(
-        key: const ValueKey('fileBrowserMount'),
-        icon: Icons.eject_outlined,
-        label: context.l10n.filesUnmountTooltip(mountedPath),
-        onPressed: _unmountProjectFolder,
-      );
-    }
-    final canPick =
-        widget.projectFolderOps != null || defaultProjectFolderOps() != null;
-    if (!canPick) return null;
-    return FaHeaderAction(
-      key: const ValueKey('fileBrowserMount'),
-      icon: Icons.create_new_folder_outlined,
-      label: context.l10n.filesOpenProjectFolderTooltip,
-      onPressed: _pickProjectFolder,
+    final colors = FahColors.of(context);
+    final tokens = FaDesignTokens.of(context);
+    final current =
+        widget.sessionFolder ?? _mountEnv?.mountedRoot ?? widget.env.cwd;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: SingleChildScrollView(
+        key: const ValueKey('fileBrowserRecentFolders'),
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final path in recents)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 6),
+                child: _recentChip(context, colors, tokens, path, current),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _recentChip(
+    BuildContext context,
+    FahColors colors,
+    FaDesignTokens tokens,
+    String path,
+    String current,
+  ) {
+    final selected = path == current;
+    final name = path.split('/').where((part) => part.isNotEmpty).last;
+    return Tooltip(
+      message: path,
+      child: GestureDetector(
+        onTap: () => widget.onOpenRecentFolder!(path),
+        child: FaSurface(
+          glass: true,
+          color: selected ? colors.indigo : tokens.surface1,
+          tintAmount: .22,
+          tintOpacity: .55,
+          borderRadius: BorderRadius.circular(10),
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          child: SizedBox(
+            key: ValueKey('fileBrowserRecentChip:$path'),
+            height: 28,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.folder_outlined,
+                  size: 14,
+                  // Selected = white on the indigo fill (indigo-on-indigo
+                  // rendered as an empty blue chip in the owner build).
+                  color: selected ? Colors.white : colors.dim,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? Colors.white : colors.dim,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

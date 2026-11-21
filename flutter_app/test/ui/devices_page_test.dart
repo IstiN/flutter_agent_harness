@@ -492,7 +492,7 @@ void main() {
     );
   });
 
-  testWidgets('reconnecting → muted banner over the rail + pane', (
+  testWidgets('reconnecting → header indicator; rail keeps its geometry', (
     tester,
   ) async {
     final service = FakeDevicesService(
@@ -504,9 +504,23 @@ void main() {
 
     expect(find.byKey(const ValueKey('devicesReconnecting')), findsOneWidget);
     expect(find.text('Reconnecting…'), findsOneWidget);
-    // The last-known root list stays mounted under the banner.
+    // The last-known root list stays mounted, WITHOUT a body banner.
     expect(find.byKey(const ValueKey('deviceList')), findsOneWidget);
     expect(find.text('This device'), findsWidgets);
+    final reconnectingList = tester.getRect(
+      find.byKey(const ValueKey('deviceList')),
+    );
+
+    // Owner feedback: the body banner made the list jump on every phase
+    // flip. The header indicator leaves the rail geometry untouched.
+    service.setPhase(DeviceConnectorPhase.online);
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('devicesReconnecting')), findsNothing);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('deviceList'))),
+      reconnectingList,
+    );
   });
 
   testWidgets('online → This device rail cell: teal dot WITHOUT a frame, '

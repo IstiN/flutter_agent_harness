@@ -799,18 +799,22 @@ void main() {
             final sidebar = tester.getRect(
               find.byKey(const ValueKey('desktopSidebarContainer')),
             );
-            final search = tester.getRect(
-              find.byKey(const ValueKey('messengerSearchField')),
-            );
+            // Apps has no sidebar search (owner call) — skip its
+            // centerline measurement, keep the toggle/brand checks.
+            if (label != 'Apps') {
+              final search = tester.getRect(
+                find.byKey(const ValueKey('messengerSearchField')),
+              );
+              expect(
+                search.center.dy,
+                closeTo(collapse.center.dy, .001),
+                reason: reason,
+              );
+            }
             final expandedCenter = tester.getRect(
               find.byKey(const ValueKey('glassCenterPanel')),
             );
             expect(collapse.center.dy, closeTo(35, .001), reason: reason);
-            expect(
-              search.center.dy,
-              closeTo(collapse.center.dy, .001),
-              reason: reason,
-            );
             // The panel's 8pt gutter contract on BOTH sides: 8pt card
             // margin + 8pt gutter between the toggle's right edge and the
             // panel's right edge (owner call: the open panel's toggle must
@@ -1630,7 +1634,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Files is absent from Apps and remains available from chat', (
+  testWidgets('Files tile lives in Apps and remains available from chat', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -1643,11 +1647,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Files'), findsNothing);
+    expect(find.text('Files'), findsOneWidget);
     expect(find.byKey(const ValueKey('appsDirectoryFiles')), findsNothing);
     expect(
       find.byKey(const ValueKey('launcherCell:system:files')),
-      findsNothing,
+      findsOneWidget,
     );
 
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
@@ -1698,14 +1702,16 @@ void main() {
         FaIconActionButton.defaultDiameter,
         reason: label,
       );
-      expect(
-        tester
-                .getRect(find.byKey(const ValueKey('messengerSearchField')))
-                .right <=
-            newRect.left,
-        isTrue,
-        reason: label,
-      );
+      // Apps has no sidebar search (owner call) — nothing to measure.
+      if (label != 'Apps')
+        expect(
+          tester
+                  .getRect(find.byKey(const ValueKey('messengerSearchField')))
+                  .right <=
+              newRect.left,
+          isTrue,
+          reason: label,
+        );
       expect(
         find.descendant(
           of: collapse,
@@ -1804,21 +1810,28 @@ void main() {
         }
         final search = find.byKey(const ValueKey('messengerSearchField'));
         final newButton = find.byKey(const ValueKey('messengerNewButton'));
-        expect(search, findsOneWidget, reason: section);
+        // Apps has no sidebar search (owner call) — only Chats/Activity
+        // share the header search slot.
+        expect(
+          search,
+          section == 'apps' ? findsNothing : findsOneWidget,
+          reason: section,
+        );
         expect(newButton, findsOneWidget, reason: section);
         // One shared component: both slots are descendants of the ONE
         // MessengerSectionHeader the shell builds for every section.
-        expect(
-          find
-              .ancestor(
-                of: search,
-                matching: find.byType(MessengerSectionHeader),
-              )
-              .evaluate()
-              .length,
-          1,
-          reason: section,
-        );
+        if (section != 'apps')
+          expect(
+            find
+                .ancestor(
+                  of: search,
+                  matching: find.byType(MessengerSectionHeader),
+                )
+                .evaluate()
+                .length,
+            1,
+            reason: section,
+          );
         expect(
           find
               .ancestor(
@@ -1830,6 +1843,7 @@ void main() {
           1,
           reason: section,
         );
+        if (section == 'apps') continue;
         snapshots[section] = _HeaderSlotSnapshot(
           searchRect: tester.getRect(search),
           newRect: tester.getRect(newButton),

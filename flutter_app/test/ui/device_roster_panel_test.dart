@@ -142,7 +142,9 @@ void main() {
     expect(find.byKey(const ValueKey('deviceRow')), findsNothing);
   });
 
-  testWidgets('reconnecting → muted line, no roster rows', (tester) async {
+  testWidgets('reconnecting → title-row dot, roster rows stay mounted', (
+    tester,
+  ) async {
     final service = FakeRosterService(
       initialPhase: DeviceConnectorPhase.reconnecting,
     );
@@ -154,8 +156,9 @@ void main() {
       find.byKey(const ValueKey('deviceRosterReconnecting')),
       findsOneWidget,
     );
-    expect(find.text('Reconnecting…'), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceRow')), findsNothing);
+    // Owner feedback: swapping the whole roster for a status line made the
+    // section jump on every phase flip — the last-known rows stay mounted.
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
   });
 
   testWidgets('online → device row (online dot) + nested agent/session '
@@ -235,8 +238,9 @@ void main() {
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.pending);
   });
 
-  testWidgets('phase flips online → reconnecting swap the roster for the '
-      'muted line', (tester) async {
+  testWidgets('phase flips online → reconnecting keep the roster mounted', (
+    tester,
+  ) async {
     final service = FakeRosterService(
       initialPhase: DeviceConnectorPhase.online,
     );
@@ -254,6 +258,6 @@ void main() {
       find.byKey(const ValueKey('deviceRosterReconnecting')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('deviceRow')), findsNothing);
+    expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
   });
 }

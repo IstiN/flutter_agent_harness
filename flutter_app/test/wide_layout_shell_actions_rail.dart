@@ -175,10 +175,16 @@ void wideShellRailHeaderTests() {
           final reason = '$direction $brightness ${labels[section]}';
           final search = find.byKey(const ValueKey('messengerSearchField'));
           final newButton = find.byKey(const ValueKey('messengerNewButton'));
-          expect(search, findsOneWidget, reason: reason);
+          // Apps has no sidebar search (owner call) — the launcher's
+          // header-reveal search is the single apps search surface.
+          expect(
+            search,
+            section == 2 ? findsNothing : findsOneWidget,
+            reason: reason,
+          );
           expect(newButton, findsOneWidget, reason: reason);
           final current = <String, Rect>{
-            'search': tester.getRect(search),
+            if (section != 2) 'search': tester.getRect(search),
             'new': tester.getRect(newButton),
             if (section == 0)
               for (final label in const ['All', 'Unread', 'Channels'])
@@ -298,7 +304,10 @@ void wideShellRailHeaderTests() {
               findsNothing,
               reason: reason,
             );
-            expect(search, findsOneWidget, reason: reason);
+            // Apps has NO sidebar search at all (owner call) — the
+            // launcher's header-reveal search is the single surface.
+            expect(search, findsNothing, reason: reason);
+            continue;
           }
 
           // Kit-level reads: the shared field is the kit's GlassTextField —

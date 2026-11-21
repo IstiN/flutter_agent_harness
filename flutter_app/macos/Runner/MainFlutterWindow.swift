@@ -95,7 +95,8 @@ private func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
   channel.setMethodCallHandler { call, result in
     switch call.method {
     case "pickDirectory":
-      result(pickDirectoryWithBookmark())
+      let initial = (call.arguments as? [String: Any])?["path"] as? String
+      result(pickDirectoryWithBookmark(initialPath: initial))
     case "startAccessing":
       let bookmark = call.arguments as? String ?? ""
       result(startAccessing(bookmarkBase64: bookmark))
@@ -111,7 +112,7 @@ private func registerProjectFolderChannel(messenger: FlutterBinaryMessenger) {
 
 /// Opens an NSOpenPanel for a single directory and returns the chosen path
 /// plus a security-scoped bookmark for it, or nil when cancelled.
-private func pickDirectoryWithBookmark() -> [String: String]? {
+private func pickDirectoryWithBookmark(initialPath: String? = nil) -> [String: String]? {
   let panel = NSOpenPanel()
   panel.canChooseDirectories = true
   panel.canChooseFiles = false
@@ -119,6 +120,12 @@ private func pickDirectoryWithBookmark() -> [String: String]? {
   panel.canCreateDirectories = true
   panel.prompt = "Open"
   panel.message = "Choose a project folder the agent may work in"
+  if let initialPath, !initialPath.isEmpty {
+    // Allow-access for a known session folder: the panel opens AT it, so
+    // Open grants exactly that folder without any navigation.
+    panel.directoryURL = URL(fileURLWithPath: initialPath, isDirectory: true)
+    panel.prompt = "Allow Access"
+  }
   guard panel.runModal() == .OK, let url = panel.url else { return nil }
   guard let bookmark = try? url.bookmarkData(
     options: .withSecurityScope,
