@@ -25,6 +25,7 @@ const bool appProviderQueueConfigSupported = true;
 ProviderQueueResolution resolveAppProviderQueue({
   String? projectDir,
   String? homeDir,
+  Map<String, String>? environment,
 }) {
   final resolvedHome = homeDir ?? desktopHomeDir();
   if (resolvedHome == null && projectDir == null) {
@@ -34,7 +35,7 @@ ProviderQueueResolution resolveAppProviderQueue({
       notices: [],
     );
   }
-  final envText = io.Platform.environment['FA_PROVIDERS_QUEUE'];
+  final envText = (environment ?? io.Platform.environment)['FA_PROVIDERS_QUEUE'];
   try {
     return resolveProviderQueueScopes([
       ProviderQueueScopeInput(
@@ -97,6 +98,7 @@ Future<String> writeAppProviderQueue(
   required ProviderQueueScope layer,
   String? projectDir,
   String? homeDir,
+  Map<String, String>? environment,
 }) async {
   _assertFileQueueScope(layer);
   final path = appQueueConfigPath(
@@ -104,7 +106,7 @@ Future<String> writeAppProviderQueue(
     projectDir: projectDir,
     homeDir: homeDir,
   );
-  assertQueueEnvNotSet();
+  assertQueueEnvNotSet(environment);
   final file = io.File(path);
   final edited = editedQueueYaml(
     file.existsSync() ? file.readAsStringSync() : '',

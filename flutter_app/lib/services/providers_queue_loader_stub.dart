@@ -20,6 +20,7 @@ const bool appProviderQueueConfigSupported = false;
 ProviderQueueResolution resolveAppProviderQueue({
   String? projectDir,
   String? homeDir,
+  Map<String, String>? environment,
 }) => const ProviderQueueResolution(
   scope: ProviderQueueScope.user,
   entries: [],
@@ -32,6 +33,7 @@ Future<String> writeAppProviderQueue(
   required ProviderQueueScope layer,
   String? projectDir,
   String? homeDir,
+  Map<String, String>? environment,
 }) => throw UnsupportedError(
   'providersQueue cannot be persisted on the web (no config yaml)',
 );
