@@ -135,9 +135,13 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
   host-locked in build-macos.yml) → one aggregate `Quality gate`
   required check, plus `step-timings` (per-step duration telemetry) and a
-  `watchdog` (>2x-baseline timeouts; a timed-out PR leg gets ONE
-  empty-commit retrigger — never `gh run rerun`, which reallocates into
-  the same degraded runner pool). `perf-gate` (issue #303) folds the #262
+  `watchdog` (>2x-baseline timeouts / degraded-runner kills; a tripped
+  PR leg gets ONE empty-commit retrigger, a tripped v* tag gate gets ONE
+  `workflow_dispatch` re-run on the tag (gh-2290) — never `gh run
+  rerun`, which reallocates into the same degraded runner pool). The
+  trip decision is `scripts/watchdog_trip_check.sh` (fixture-self-tested
+  in the static gate): it trips on the timeout-kill AND runner-death
+  shapes (gh-2358) and never on a real test failure. `perf-gate` (issue #303) folds the #262
   DoD `dart test --tags perf` trajectory gate into the aggregate for
   trajectory-touching PRs. Issue #551 adds the `integration-mock` leg to
   the aggregate for `test/integration/**` PRs (no-key legs via

@@ -24,6 +24,7 @@ import 'package:test/test.dart';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
 
+import 'fa_cube_headless_helper.dart';
 import 'pty_harness.dart';
 
 void main() {
@@ -44,6 +45,19 @@ void main() {
   });
 
   Map<String, String> envOf() => {
+    // gh-760 review convention: the ambient dev/CI shell may export
+    // FA_PROVIDERS_QUEUE (or real provider keys); the scrub keeps the
+    // child on the mock instead of the developer's real queue.
+    ...scrubbedChildEnv(),
+    // Blank pins: Process.run merges the parent env by default, so a key
+    // the scrub dropped would resurrect from the developer shell; blanks
+    // read as unset at every consumer (fa_cube_headless_helper convention).
+    'FA_PROVIDER_TYPE': '',
+    'FA_PROVIDER_NAME': '',
+    'FA_PROVIDER_CONFIG': '',
+    'FA_PROVIDER_CONFIG_BASE64': '',
+    'FA_PROVIDERS_QUEUE': '',
+    'FA_LOG_FILE': '',
     'OPENAI_API_KEY': 'mock',
     'HOME': tempHome.path,
   };
