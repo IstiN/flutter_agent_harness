@@ -19,12 +19,15 @@ final _fixtureRoot = Directory.systemTemp.createTempSync('teammate-picker-');
 /// One stubbed-gh sandbox: `bin/gh` answers `pr list` from `$GH_STUB_DIR`
 /// fixtures and logs every invocation to `$GH_LOG_FILE`.
 class PickRun {
-  PickRun(this.leg, this.output, this.ghLog, this.dir);
+  PickRun(this.leg, this.stdout, this.output, this.ghLog, this.dir);
 
-  /// The leg the picker derived: 'dev' (pick it) or '' (skip — fix in
-  /// flight). This is the picker's entire decision surface.
+  /// The leg the picker derived, read from STDOUT ONLY — exactly how the
+  /// ai-teammate gate consumes it (`LEG=$(bash scripts/teammate_picker.sh …)`).
+  /// 'dev' (pick it) or '' (skip — fix in flight). Notices/warnings ride
+  /// stderr so they can never pollute the leg.
   final String leg;
-  final String output; // stdout+stderr
+  final String stdout;
+  final String output; // stdout+stderr (progress + notices)
   final List<String> ghLog;
   final String dir; // fixture dir (debugging)
 }
@@ -69,10 +72,12 @@ exit 1
       'GH_LOG_FILE': '$dir/gh.log',
     },
   );
-  final out = '${res.stdout}${res.stderr}';
+  final stdout = res.stdout.toString();
+  final stderr = res.stderr.toString();
   return PickRun(
-    res.exitCode == 0 && out.startsWith('dev') ? 'dev' : '',
-    out,
+    stdout.trim() == 'dev' ? 'dev' : '',
+    stdout,
+    '$stdout$stderr',
     File('$dir/gh.log').existsSync()
         ? File('$dir/gh.log').readAsLinesSync()
         : <String>[],
@@ -101,6 +106,13 @@ void main() {
           reason:
               'a human-authored open PR is still a fix in flight — ${r.output}',
         );
+        expect(
+          r.stdout.trim(),
+          isEmpty,
+          reason:
+              'the skip contract is an EMPTY leg: the ::notice:: must ride '
+              'stderr, never the stdout the gate captures — ${r.stdout}',
+        );
         expect(r.output, contains('fix-in-flight'));
         expect(
           r.output,
@@ -122,6 +134,11 @@ void main() {
 ''',
       );
       expect(r.leg, isEmpty, reason: r.output);
+      expect(
+        r.stdout.trim(),
+        isEmpty,
+        reason: 'every skip path must keep stdout empty — ${r.stdout}',
+      );
     });
 
     test('Closes/Resolves keyword variants and `: #n` spacing link too', () {
@@ -180,6 +197,11 @@ void main() {
     test('an issue with NO open PR picks normally (dev)', () {
       final r = runPicker('clean', issue: '2337', openPrs: '[]');
       expect(r.leg, 'dev', reason: r.output);
+      expect(
+        r.stdout,
+        'dev\n',
+        reason: 'the pick contract: stdout carries exactly the leg',
+      );
       expect(r.output, isNot(contains('fix-in-flight')));
     });
 
@@ -200,6 +222,13 @@ void main() {
         r.leg,
         isEmpty,
         reason: 'a duplicate fix is worse than a delayed one — ${r.output}',
+      );
+      expect(
+        r.stdout.trim(),
+        isEmpty,
+        reason:
+            'the ::warning:: rides stderr — the captured leg stays empty '
+            '(same contract as the skip path) — ${r.stdout}',
       );
       expect(r.output, contains('::warning::'));
       expect(r.output.trim(), isNot(contains('dev')));

@@ -22,7 +22,7 @@ esac
 
 open_prs=$(gh pr list --repo "$repo" --state open --limit 100 \
   --json number,author,headRefName,body 2>/dev/null) || {
-  echo "::warning::open-PR lookup failed — skipping the pick for issue #${issue} (gh-2359 AC2, fail-closed)"
+  echo "::warning::open-PR lookup failed — skipping the pick for issue #${issue} (gh-2359 AC2, fail-closed)" >&2
   exit 0
 }
 
@@ -42,7 +42,9 @@ linked=$(printf '%s' "$open_prs" | jq -r --arg n "$issue" '
   | "#\(.number) by \((.author // {}).login // "unknown")"')
 
 if [ -n "$linked" ]; then
-  echo "::notice title=fix-in-flight::issue #${issue} already has an open referencing PR (${linked//$'\n'/, }) — picker skips it (gh-2359 AC2)"
+  # >&2: the gate captures STDOUT as the leg (LEG=$(…)) — the empty-leg
+  # skip contract means the notice must never ride stdout.
+  echo "::notice title=fix-in-flight::issue #${issue} already has an open referencing PR (${linked//$'\n'/, }) — picker skips it (gh-2359 AC2)" >&2
   exit 0
 fi
 

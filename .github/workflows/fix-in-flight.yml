@@ -28,7 +28,8 @@ on:
     types: [opened, reopened, closed]
 
 permissions:
-  issues: write
+  contents: read # actions/checkout — a scope left unlisted drops to none
+  issues: write  # label + comment on the linked issue
 
 concurrency:
   # Latest event wins: a rapid open->close burst must never interleave a

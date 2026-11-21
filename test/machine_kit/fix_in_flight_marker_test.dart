@@ -260,6 +260,13 @@ void main() {
           'write',
           reason: 'label + comment on the issue need issues: write',
         );
+        expect(
+          perms['contents'].toString(),
+          'read',
+          reason:
+              'actions/checkout needs contents: read — an unlisted scope '
+              'drops to none and the checkout fails on EVERY trigger',
+        );
         final jobs = wf['jobs'] as YamlMap;
         final mark = jobs['mark'] as YamlMap;
         final steps = mark['steps'] as YamlList;
