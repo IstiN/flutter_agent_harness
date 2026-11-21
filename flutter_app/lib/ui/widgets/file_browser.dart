@@ -916,7 +916,7 @@ class _FileBrowserState extends State<FileBrowser> {
                   size: 14,
                   // Selected = white on the indigo fill (indigo-on-indigo
                   // rendered as an empty blue chip in the owner build).
-                  color: selected ? Colors.white : colors.dim,
+                  color: selected ? colors.onAccent : colors.dim,
                 ),
                 const SizedBox(width: 7),
                 Text(
@@ -924,7 +924,7 @@ class _FileBrowserState extends State<FileBrowser> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected ? Colors.white : colors.dim,
+                    color: selected ? colors.onAccent : colors.dim,
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
                   ),

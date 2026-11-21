@@ -374,12 +374,37 @@ final class NetworkPresenceController
   }) async {
     final route = DeviceDmReplyRoute.parse(address);
     final connector = _connector;
-    final currentAddress = _agentAddress;
-    if (connector == null || currentAddress == null) {
+    if (connector == null || _agentAddress == null) {
       throw StateError(
         'network DM replies are unavailable before a CLI session starts',
       );
     }
+    _validateDmReplyRoute(route);
+    if (text.trim().isEmpty) {
+      throw StateError('network DM reply text must not be empty');
+    }
+    try {
+      return await sendDeviceDmReply(
+        connector: connector,
+        keys: _dmKeys,
+        route: route,
+        reply: text,
+      );
+    } on Object {
+      // Host/key-store failures can contain implementation details. The tool
+      // gets an actionable safe error instead of credentials or dial URLs.
+      throw StateError(
+        'network DM reply could not be queued; check the connection and retry',
+      );
+    }
+  }
+
+  /// Authorizes one parsed reply route against THIS session: the original
+  /// agent alias OR the authenticated sessionId, on our own network.
+  /// Split from [sendNetworkDmReply] so each guard stays unit-testable
+  /// (CRAP ratchet).
+  void _validateDmReplyRoute(DeviceDmReplyRoute route) {
+    final currentAddress = _agentAddress!;
     final parts = parseDeviceDmChannelId(route.channel);
     // A woken session answers through the ORIGINAL agent alias (its own
     // mailbox prefix differs from the previously exposed agent): the
@@ -398,23 +423,6 @@ final class NetworkPresenceController
       throw StateError(
         'network DM reply route does not belong to the current CLI session; '
         'use the address from a DM received by this session',
-      );
-    }
-    if (text.trim().isEmpty) {
-      throw StateError('network DM reply text must not be empty');
-    }
-    try {
-      return await sendDeviceDmReply(
-        connector: connector,
-        keys: _dmKeys,
-        route: route,
-        reply: text,
-      );
-    } on Object {
-      // Host/key-store failures can contain implementation details. The tool
-      // gets an actionable safe error instead of credentials or dial URLs.
-      throw StateError(
-        'network DM reply could not be queued; check the connection and retry',
       );
     }
   }

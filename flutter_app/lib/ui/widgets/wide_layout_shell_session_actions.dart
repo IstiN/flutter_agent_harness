@@ -101,15 +101,16 @@ final class _NewSessionFolderDialogState
             alignment: MainAxisAlignment.end,
             spacing: 8,
             children: [
-              TextButton(
+              FaButton(
                 key: const ValueKey('newSessionCancel'),
+                variant: FaButtonVariant.ghost,
+                label: l10n.commonCancel,
                 onPressed: () => Navigator.pop(context),
-                child: Text(l10n.commonCancel),
               ),
-              FilledButton(
+              FaButton(
                 key: const ValueKey('newSessionCreate'),
+                label: l10n.networkCreate,
                 onPressed: () => _select(_NewSessionFolderAction.current),
-                child: Text(l10n.networkCreate),
               ),
             ],
           ),
@@ -175,14 +176,15 @@ final class _NewSandboxFolderDialogState
         ),
       ),
       actions: [
-        TextButton(
+        FaButton(
+          variant: FaButtonVariant.ghost,
+          label: l10n.commonCancel,
           onPressed: () => Navigator.pop(context),
-          child: Text(l10n.commonCancel),
         ),
-        FilledButton(
+        FaButton(
           key: const ValueKey('newSessionCreateSandboxFolder'),
+          label: l10n.newSessionCreate,
           onPressed: _submit,
-          child: Text(l10n.newSessionCreate),
         ),
       ],
     );

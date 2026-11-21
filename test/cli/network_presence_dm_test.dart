@@ -747,6 +747,171 @@ void main() {
       );
     });
   });
+  group('sendNetworkDmReply route guards (CRAP coverage)', () {
+    Future<NetworkPresenceController> startedController(
+      FakeDeviceServer server, {
+      MemoryDeviceDmKeyStore? store,
+    }) async {
+      final controller = NetworkPresenceController(
+        device: device,
+        dmKeyStore: store ?? MemoryDeviceDmKeyStore(),
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket',
+        transport: server.transport,
+        idFactory: _ids(),
+      );
+      addTearDown(controller.dispose);
+      await controller.startSession(session);
+      await _waitUntil(() => controller.connector?.isConnected == true);
+      return controller;
+    }
+
+    DeviceDmReplyRoute route({
+      String agent = address,
+      String network = 'personal-1',
+      String? sessionId,
+      required String senderPubkey,
+    }) => DeviceDmReplyRoute(
+      network: network,
+      channel: dmChannelId('user-1', agent),
+      replyRecipient: 'user:user-1',
+      agentAddress: agent,
+      sessionId: sessionId,
+      senderPubkey: senderPubkey,
+      threaded: true,
+    );
+
+    test('replies before a session starts are unavailable', () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      final controller = NetworkPresenceController(
+        device: device,
+        dmKeyStore: MemoryDeviceDmKeyStore(),
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket',
+        transport: server.transport,
+        idFactory: _ids(),
+      );
+      addTearDown(controller.dispose);
+      final user = await hubGenerateX25519KeyPair();
+      final pub = base64Encode((await user.extractPublicKey()).bytes);
+      await expectLater(
+        controller.sendNetworkDmReply(
+          address: route(senderPubkey: pub).toAddress(),
+          text: 'hi',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('unavailable'),
+          ),
+        ),
+      );
+    });
+
+    test('foreign alias without a session match is refused', () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      final controller = await startedController(server);
+      final user = await hubGenerateX25519KeyPair();
+      final pub = base64Encode((await user.extractPublicKey()).bytes);
+      await expectLater(
+        controller.sendNetworkDmReply(
+          address: route(
+            agent: 'other@device-1',
+            senderPubkey: pub,
+          ).toAddress(),
+          text: 'hi',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('does not belong'),
+          ),
+        ),
+      );
+    });
+
+    test('a route on another network is refused even with the alias', () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      final controller = await startedController(server);
+      final user = await hubGenerateX25519KeyPair();
+      final pub = base64Encode((await user.extractPublicKey()).bytes);
+      await expectLater(
+        controller.sendNetworkDmReply(
+          address: route(
+            network: 'other-network',
+            senderPubkey: pub,
+          ).toAddress(),
+          text: 'hi',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('does not belong'),
+          ),
+        ),
+      );
+    });
+
+    test('blank reply text is refused before any send', () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      final controller = await startedController(server);
+      final user = await hubGenerateX25519KeyPair();
+      final pub = base64Encode((await user.extractPublicKey()).bytes);
+      await expectLater(
+        controller.sendNetworkDmReply(
+          address: route(senderPubkey: pub).toAddress(),
+          text: '   ',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('must not be empty'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'the sessionId match alone authorizes the reply (woken session)',
+      () async {
+        final server = FakeDeviceServer()
+          ..seedDevice(device.deviceId, networks: const ['personal-1']);
+        // The original alias's keys exist in the persistent store (created
+        // when that alias was first exposed) — the woken session answers
+        // THROUGH the original alias, exactly like the owner incident.
+        final store = MemoryDeviceDmKeyStore();
+        await DeviceDmKeyProvider(store).loadOrCreate('other@device-1');
+        final controller = await startedController(server, store: store);
+        final user = await hubGenerateX25519KeyPair();
+        final pub = base64Encode((await user.extractPublicKey()).bytes);
+        // The ORIGINAL agent alias differs from this controller's address;
+        // only the authenticated sessionId matches — must still queue.
+        final id = await controller.sendNetworkDmReply(
+          address: route(
+            agent: 'other@device-1',
+            sessionId: session.sessionId,
+            senderPubkey: pub,
+          ).toAddress(),
+          text: 'late answer',
+        );
+        expect(id, isNotEmpty);
+        await _waitUntil(
+          () => server.persistedMail.any(
+            (frame) =>
+                frame.from == 'other@device-1' && frame.to == 'user:user-1',
+          ),
+        );
+      },
+    );
+  });
 }
 
 final class _FakeWakeCatalogStore implements SessionCatalogStore {
