@@ -164,6 +164,33 @@ On a failing (or timed-out) leg the `report` job files an issue:
   of a duplicate;
 - **auto-close**: when the leg goes green in a later daily run, the open
   issue is closed with a comment.
+- **same-run cross-link (gh-2359 AC3)**: when a NEW issue is filed, open
+  issues already carrying this run's URL get a `same run as #X — roots
+  may be shared` comment on the fresh filing — one failing run can file
+  several issues (leg failure + sweep finding) whose error signatures
+  never match but whose root is shared (the #2336/#2337 pair, run
+  44680178688).
+
+## Duplicate-fix prevention guard (gh-2359)
+
+No two fixes for the same root may run in parallel:
+
+- **AC1** — `.github/workflows/fix-in-flight.yml` reacts to
+  `pull_request` opened/reopened/closed and stamps the linked issue
+  (label `fix-in-flight` + comment naming PR+branch) via
+  `scripts/fix_in_flight_marker.sh`; the marker clears when the PR
+  closes (merged or not). ANY author stamps: a human fix PR is as
+  blocking as a machine one. Linkage = the `ai/gh-<n>` branch convention
+  and/or the `Fixes/Closes/Resolves #n` body keyword the merge train
+  links on.
+- **AC2** — the ai-teammate gate's fresh-dev handoff runs
+  `scripts/teammate_picker.sh`: an issue with an OPEN referencing PR is
+  skipped (empty leg → the loop does not start a dev leg), from ANY
+  author. Lookup failures fail closed (skip + warn) — a duplicate fix is
+  worse than a delayed one.
+- **AC4** — the signature dedupe above is untouched: a matching
+  signature still comments on the open root-cause issue instead of
+  filing, and no run-link machinery fires on that path.
 
 Each run also writes a single job-summary table (leg → version → status →
 links) and exits red itself when any leg failed.

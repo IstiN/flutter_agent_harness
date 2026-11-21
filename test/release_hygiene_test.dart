@@ -1254,6 +1254,84 @@ gh release create "v9.9.9" \
       },
     );
     test(
+      'gh-2359 AC3: the sweep filing cross-links an open issue from the SAME run',
+      () {
+        final run = runSweeper(
+          'run-link',
+          {
+            'releases.json': releasesJson([
+              {
+                'tag': 'v0.1.190',
+                'id': 111,
+                'created': oldDate,
+                'author': 'github-actions[bot]',
+                'type': 'Bot',
+              },
+            ]),
+            'issues.tsv': '',
+            'runs.tsv': 'https://github.com/OWNER/REPO/actions/runs/9999\n',
+            // A leg failure filed earlier by the SAME daily run (the
+            // #2337 half of the 2026-11-20 #2336/#2337 pair).
+            'issues-body.json':
+                '[{"number": 2337, "body": "**Daily run:** https://github.com/OWNER/REPO/actions/runs/555"}]',
+          },
+          extraEnv: const {
+            'GITHUB_RUN_ID': '555',
+            'GITHUB_SERVER_URL': 'https://github.com',
+          },
+        );
+        expect(
+          run.log,
+          anyElement(contains('issue create')),
+          reason: 'the sweep issue is filed',
+        );
+        final crossLink = run.log
+            .where((l) => l.contains('issue comment 13'))
+            .where((l) => l.contains('same run as #2337'))
+            .toList();
+        expect(
+          crossLink,
+          hasLength(1),
+          reason:
+              'exactly one cross-link comment naming the same-run leg issue: '
+              '${run.log.join('\n---\n')}',
+        );
+        expect(crossLink.single, contains('roots may be shared'));
+      },
+    );
+
+    test('gh-2359 AC3: no same-run open issue -> the sweep files unlinked', () {
+      final run = runSweeper(
+        'run-link-none',
+        {
+          'releases.json': releasesJson([
+            {
+              'tag': 'v0.1.190',
+              'id': 111,
+              'created': oldDate,
+              'author': 'github-actions[bot]',
+              'type': 'Bot',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': 'https://github.com/OWNER/REPO/actions/runs/9999\n',
+          // issues-body.json deliberately absent: no open issue carries
+          // this run's URL.
+        },
+        extraEnv: const {
+          'GITHUB_RUN_ID': '555',
+          'GITHUB_SERVER_URL': 'https://github.com',
+        },
+      );
+      expect(run.log, anyElement(contains('issue create')));
+      expect(
+        run.log.where((l) => l.contains('Same-run cross-link')),
+        isEmpty,
+        reason: 'nothing to cross-link — no comment fires',
+      );
+    });
+
+    test(
       'gh-2008: stale PAT-attributed pipeline draft (release-draft-owner marker, human author) is swept; unmarked human draft stays kept (E1)',
       () {
         // Every pipeline draft is created with GH_TOKEN=RELEASE_PAT (the

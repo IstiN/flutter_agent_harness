@@ -106,6 +106,10 @@ jobs:
       issue: ${{ steps.resolve.outputs.issue }}
       leg: ${{ steps.resolve.outputs.leg }}
     steps:
+      # gh-2359 AC2: the fresh-dev pick runs scripts/teammate_picker.sh
+      # (skip issues with an open referencing PR from ANY author) — the
+      # gate needs a checkout of that script.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Resolve target issue and leg for this event
         id: resolve
         env:
@@ -134,7 +138,14 @@ jobs:
                 HUMAN=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" \
                   --jq '[.assignees[].login] | map(select(. != "ai-teammate")) | length')
                 if [ "$HUMAN" = "0" ]; then
-                  echo "leg=dev" >> "$GITHUB_OUTPUT"
+                  # gh-2359 AC2: the fresh dev handoff is guarded — an
+                  # issue with an open referencing PR (ANY author, machine
+                  # or human) is skipped (empty leg). 2026-11-20: PR #2339
+                  # (machine) and #2340 (human) wrote the same fix in
+                  # parallel; a duplicate fix must never start while one
+                  # is visible.
+                  LEG=$(bash scripts/teammate_picker.sh "${ISSUE_NUMBER}")
+                  echo "leg=${LEG}" >> "$GITHUB_OUTPUT"
                 else
                   echo "leg=" >> "$GITHUB_OUTPUT"
                   echo "::notice title=machine-standby::issue #${ISSUE_NUMBER} has a human assignee — no dev, review-only"

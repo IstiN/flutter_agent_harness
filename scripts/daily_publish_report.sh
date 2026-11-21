@@ -208,6 +208,21 @@ find_open_issue() { # $1 = exact title; echoes the issue number or nothing
       done | head -1
 }
 
+same_run_issues() { # gh-2359 AC3: open issues already filed from THIS daily run
+  # The run URL is the join key: every filer embeds it (**Daily run:** /
+  # **Sweep run:**), so same-run different-signature issues (the
+  # #2336/#2337 shape — a sweep finding + a leg failure from run
+  # 44680178688, one shared root) find each other even though their
+  # error signatures never match.
+  # gh itself has no --arg flag — the filter runs through real jq, exactly
+  # like the sweep's `gh api --paginate … | jq -r --arg …` lookups.
+  gh issue list --repo "$repo" --state open --limit 200 --json number,body \
+    2>/dev/null \
+    | jq -r --arg run_url "$daily_url" \
+      '.[] | select((.body // "") | contains($run_url)) | .number' \
+    || true
+}
+
 file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg result
   local leg="$1" prefix="$2" url="$3" result="${4:-failure}"
   # Job-name fragment for the own-run jobs API (the yaml display names add
@@ -308,6 +323,11 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
 
   local existing
   existing=$(find_open_issue "$title")
+  # gh-2359 AC3: computed BEFORE the create — a same-run peer listed after
+  # the create could be this very issue (GitHub list-after-create is only
+  # eventually consistent).
+  local peers
+  peers=$(same_run_issues)
   if [ -n "$existing" ]; then
     gh issue comment "$existing" --repo "$repo" --body-file "$body" >/dev/null
     actions+="updated #${existing} ($leg still failing)"$'\n'
@@ -317,6 +337,16 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
       --label bug --label daily-publish --assignee "$assignee" 2>/dev/null || true)
     if [ -n "$created" ]; then
       actions+="filed ${created} ($leg failed)"$'\n'
+      if [ -n "$peers" ]; then
+        # gh-2359 AC3: cross-link at file time — one failing run can file
+        # several issues with different signatures and one shared root;
+        # the comment names every peer so the fixes don't duplicate work.
+        local peer_list
+        peer_list=$(printf '%s' "$peers" | awk '{printf "%s#%s", (NR > 1 ? ", " : ""), $1}')
+        gh issue comment "${created##*/}" --repo "$repo" \
+          --body "**Same-run cross-link (gh-2359):** same run as ${peer_list} — roots may be shared. One failing run can file several issues; check whether a single root cause covers them before fixing each in parallel." >/dev/null
+        actions+="cross-linked ${created} with same-run issue(s) ${peer_list}"$'\n'
+      fi
     else
       echo "::warning::could not file the self-healing issue for leg '$leg' (permissions?)"
       actions+="FAILED to file an issue for $leg"$'\n'

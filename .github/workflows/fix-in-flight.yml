@@ -1,0 +1,54 @@
+# Fix-in-flight marker (gh-2359 AC1) — duplicate-fix prevention guard.
+#
+# When a fix PR opens, its linked issue is stamped visibly: label
+# `fix-in-flight` + a comment naming the PR and branch; when the PR
+# closes (merged or not), the marker clears. 2026-11-20 incident: the
+# machine loop opened PR #2339 (ai/gh-2337) for the 125k release-body
+# root with no marker on #2337, and a human PR (#2340) for the same root
+# landed in parallel — two fixes for one root, one closed as superseded.
+#
+# ANY author stamps the issue (machine or human): the point is that a
+# second fix never starts while one is visible. Linkage = the machine
+# branch convention `ai/gh-<n>` and/or the body keyword the merge train
+# already links on (Fixes/Closes/Resolves #n).
+#
+# The marker logic lives in scripts/fix_in_flight_marker.sh
+# (shell-harness testable — test/machine_kit/fix_in_flight_marker_test.dart);
+# this workflow is a thin event caller, like machine-sm.yml over the
+# factory. Standalone (no reusable `uses:` call) — the #624/#625
+# startup-failure class was specific to pull_request runs of a REUSABLE
+# stub, and plain steps have no such constraint.
+
+name: 'Fix In Flight'
+
+run-name: 🛠 fix-in-flight #${{ github.event.pull_request.number }} (${{ github.event.action }})
+
+on:
+  pull_request:
+    types: [opened, reopened, closed]
+
+permissions:
+  issues: write
+
+concurrency:
+  # Latest event wins: a rapid open->close burst must never interleave a
+  # stamp with a clear (a cancelled stamp self-corrects — the close clears).
+  group: fix-in-flight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Stamp/clear fix-in-flight on the linked issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+        run: bash scripts/fix_in_flight_marker.sh
