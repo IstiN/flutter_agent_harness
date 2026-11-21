@@ -811,7 +811,12 @@ jobs:
       # classic failure-with-cut-step shape, real test failures in both
       # landing shapes (failed step last AND failed step trailed by
       # success evidence — the old last-step detector was blind to this),
-      # never-started cancels, malformed bodies failing safe, and the
+      # the gh-2358 runner-death shape (job `failure`, mid-flight and
+      # trailing steps frozen at conclusion `null` — v1.0.759 lost
+      # fa-m5-1 mid-`flutter build ios` and the `cancelled`-step-only
+      # signature was blind to it), death AFTER a real red (failed step
+      # + frozen tail) never tripping, never-started cancels, malformed
+      # bodies failing safe, and the
       # GITHUB_OUTPUT contract — so the release path's degraded-runner
       # retrigger cannot rot silently before the next red tag (#1100
       # pattern).
@@ -4188,11 +4193,16 @@ jobs:
       # verified against a 69-job run), then the extracted,
       # fixture-self-tested trip decision (scripts/watchdog_trip_check.sh;
       # static-gate selftest: scripts/watchdog_trip_selftest.sh). It trips
-      # ONLY on the timeout-kill signature — job conclusion `failure` OR
-      # `cancelled` (the v1.0.745 kill landed as plain `cancelled`) with
-      # at least one `cancelled` step and NO `failed` step — and never on
-      # a real test failure (a step failed, regardless of which step is
-      # last), a skip, or a cancelled never-started job.
+      # ONLY on the degraded-runner-kill signature — job conclusion
+      # `failure` OR `cancelled` (the v1.0.745 kill landed as plain
+      # `cancelled`) with at least one `cancelled` step or one UNCONCLUDED
+      # (`null`) step (gh-2358: the v1.0.759 runner death froze the
+      # mid-flight `flutter build ios` step — and every trailing step — at
+      # `null`, invisible to a `cancelled`-step-only detector) and NO
+      # `failed` step (a real test failure ends with a failed step,
+      # including death after a real red — only the trailing steps freeze)
+      # — and never on a real test failure, a skip, or a cancelled
+      # never-started job.
       - name: Detect a timeout-type failure
         id: trip
         env:

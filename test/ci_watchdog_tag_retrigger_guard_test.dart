@@ -28,9 +28,17 @@
 ///       (scripts/watchdog_trip_check.sh) that trips ONLY on the
 ///       timeout-kill signature — job conclusion `failure` OR `cancelled`
 ///       with at least one `cancelled` step (the mid-flight cut) and NO
-///       `failed` step — and never on a real test failure (a step
-///       failed, regardless of which step is last: the `if: always()`
-///       evidence steps trail red shards with `success`), a skip, or a
+///       `failed` step — or, the gh-2358 runner-death shape, at least one
+///       UNCONCLUDED (`null`) step: the v1.0.759 tag run
+///       (44868070949, job 136736814346) lost its self-hosted runner
+///       `fa-m5-1` mid-`flutter build ios`; GitHub concluded the JOB
+///       `failure` but froze the mid-flight step — and every trailing
+///       step — at `conclusion: null` (nothing ever reported), so a
+///       `cancelled`-step-only detector was blind to it and the release
+///       train sat red until a manual full rerun. The trip guard stays
+///       "NO `failed` step": a real test failure ends with a failed step
+///       (runner death AFTER a real red freezes only the trailing
+///       steps), and a fresh allocation cannot fix a defect — a skip, or a
 ///       clean/empty job; the script is network-free (jobs JSON in,
 ///       `trip=<bool>` out),
 ///  AC3  the trip step runs the repo script, which requires the file to
@@ -184,6 +192,77 @@ void main() {
             "the original detector's shape: a job-level timeout the "
             'runner reports as failure with a cut mid-flight step and '
             'nothing genuinely failed',
+      );
+    });
+
+    test('trips on the gh-2358 runner-death mode: failed job, UNCONCLUDED '
+        '(null) mid-flight step', () {
+      final out = _runScript(
+        _jobsJson([
+          _jobRaw('Build iOS (debug, unsigned)', 'failure', [
+            '{"name": "Restore vendored WasmRun iOS framework", "conclusion": "success"}',
+            '{"name": "flutter build ios (debug, unsigned)", "conclusion": null}',
+            '{"name": "Post Run ./.github/actions/flutter-pub-get", "conclusion": null}',
+            '{"name": "Post Cache CocoaPods (iOS)", "conclusion": null}',
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isTrue,
+        reason:
+            'gh-2358 (v1.0.759 tag run 44868070949, job 136736814346): '
+            'the self-hosted fa-m5-1 runner lost communication ~11 min '
+            'into `flutter build ios (debug, unsigned)`; the jobs API '
+            'froze that step — and every trailing step — at conclusion '
+            '`null` while the JOB concluded `failure` (the check-run '
+            'annotation: "The self-hosted runner lost communication '
+            'with the server"). A mid-flight cut with no failed step is '
+            'a degraded-runner kill whether GitHub concluded the cancel '
+            '(`cancelled`) or nothing ever concluded (`null`) — the '
+            'watchdog must dispatch the fresh-allocation retrigger',
+      );
+    });
+
+    test('trips on the runner-death mode under the cancelled conclusion '
+        'too', () {
+      final out = _runScript(
+        _jobsJson([
+          _jobRaw('Build iOS (debug, unsigned)', 'cancelled', [
+            '{"name": "flutter build ios (debug, unsigned)", "conclusion": null}',
+            '{"name": "Post Cache CocoaPods (iOS)", "conclusion": null}',
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isTrue,
+        reason:
+            'a run-level cancel racing the lost heartbeat can land the '
+            'same frozen-steps shape under job conclusion `cancelled` — '
+            'still a mid-flight cut, still no failed step',
+      );
+    });
+
+    test('does NOT trip when the runner died after a REAL test failure '
+        '(failed step + frozen trailing nulls)', () {
+      final out = _runScript(
+        _jobsJson([
+          _jobRaw('Core tests (shard 1/4)', 'failure', [
+            '{"name": "dart test (core shard 1)", "conclusion": "failure"}',
+            '{"name": "junit durations (shard 1)", "conclusion": null}',
+            '{"name": "Post Native-assets hook cache", "conclusion": null}',
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isFalse,
+        reason:
+            'the red dart test step FAILED before the box vanished; the '
+            'frozen `null` tail is the always() evidence steps that '
+            'never reported — a fresh runner allocation cannot fix a '
+            'genuine red, so the no-failed-step guard must dominate',
       );
     });
 
@@ -447,3 +526,10 @@ String _job(String name, String conclusion, List<String>? steps) {
 }
 
 String _step(String name, String conclusion) => '$name|$conclusion';
+
+/// Like [_job] but the steps are given as raw JSON objects, so a frozen
+/// (unconcluded) step can be expressed as `"conclusion": null` — the
+/// gh-2358 runner-death shape the `name|conclusion` helper cannot emit.
+String _jobRaw(String name, String conclusion, List<String> stepJson) =>
+    '{"name": "$name", "conclusion": "$conclusion", '
+    '"steps": [${stepJson.join(",")}]}';
