@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/device_connector_service.dart';
+import 'package:fa/network/device_display.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
@@ -208,21 +209,38 @@ class _OnlineRoster extends StatelessWidget {
                     : colors.teal,
               ),
             for (final entry in (presence?.sessions ?? const {}).entries)
-              DeviceRosterRow(
-                key: ValueKey('sessionRow:${entry.key}'),
-                dotKey: ValueKey('sessionDot:${entry.key}'),
-                dotColor: deviceSessionDotColor(colors, entry.value),
-                label: entry.key,
-                stateLabel: deviceSessionLabel(context, entry.value),
-                stateColor: entry.value == ConnectorSessionPresence.offline
-                    ? colors.dim
-                    : colors.teal,
-              ),
+              _onlineSessionCard(context, colors, presence, entry),
           ],
         );
       },
     );
   }
+}
+
+Widget _onlineSessionCard(
+  BuildContext context,
+  FahColors colors,
+  PresenceFrame? presence,
+  MapEntry<String, ConnectorSessionPresence> entry,
+) {
+  final metadata = presence?.sessionMetadata[entry.key];
+  final path = metadata?.path ?? metadata?.cwd ?? '';
+  return DeviceSessionCard(
+    key: ValueKey('sessionRow:${entry.key}'),
+    dotKey: ValueKey('sessionDot:${entry.key}'),
+    dotColor: deviceSessionDotColor(colors, entry.value),
+    title: deviceSessionDisplayTitle(
+      id: entry.key,
+      title: metadata?.title,
+      path: path,
+    ),
+    subtitle: path,
+    stateLabel: deviceSessionLabel(context, entry.value),
+    stateColor: entry.value == ConnectorSessionPresence.offline
+        ? colors.dim
+        : colors.teal,
+    showPresenceDot: true,
+  );
 }
 
 /// One roster line: presence dot + name + a trailing state label (the
@@ -321,9 +339,9 @@ class DeviceRosterStatusLine extends StatelessWidget {
   }
 }
 
-/// The shared Networks panel row without a repeated session avatar: a bold
-/// title, right-aligned timestamp, muted PATH/state subtitle, and a chevron
-/// only when the row opens. Live/busy activity may show the subtitle dot.
+/// A two-line device session row: friendly title, then project/activity
+/// context with its presence state aligned at the trailing edge. The
+/// drilldown appbar owns host identity, so it is not repeated in every row.
 class DeviceSessionCard extends StatelessWidget {
   const DeviceSessionCard({
     super.key,
@@ -332,6 +350,8 @@ class DeviceSessionCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.timestamp = '',
+    this.stateLabel = '',
+    this.stateColor,
     this.selected = false,
     this.hairline = false,
     this.showPresenceDot = false,
@@ -342,8 +362,11 @@ class DeviceSessionCard extends StatelessWidget {
   final Key dotKey;
   final Color dotColor;
   final String title;
+
   final String subtitle;
   final String timestamp;
+  final String stateLabel;
+  final Color? stateColor;
   final bool selected;
   final bool hairline;
   final bool showPresenceDot;
@@ -352,24 +375,75 @@ class DeviceSessionCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => MessengerPanelRow(
-    title: title,
-    meta: subtitle,
-    timestamp: timestamp,
-    selected: selected,
-    hairline: hairline,
-    onTap: onTap,
-    metaTrailing: showPresenceDot
-        ? Container(
-            key: dotKey,
-            margin: const EdgeInsets.only(left: 6),
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: dotColor,
+  Widget build(BuildContext context) {
+    // Keep the path even when its basename is also the title: the title says
+    // WHICH project, this middle-ellipsized line says WHERE it lives.
+    return MessengerPanelRow(
+      title: title,
+      meta: deviceSessionPathSubtitle(subtitle),
+      // Activity belongs to the context line and never flexes away on phone.
+      timestamp: '',
+      metaSuffix: timestamp,
+      selected: selected,
+      hairline: hairline,
+      onTap: onTap,
+      metaTrailing: showPresenceDot
+          ? _DeviceSessionPresence(
+              dotKey: dotKey,
+              dotColor: dotColor,
+              color: stateColor ?? dotColor,
+              label: stateLabel,
+            )
+          : null,
+    );
+  }
+}
+
+class _DeviceSessionPresence extends StatelessWidget {
+  const _DeviceSessionPresence({
+    required this.dotKey,
+    required this.dotColor,
+    required this.color,
+    required this.label,
+  });
+
+  final Key dotKey;
+  final Color dotColor;
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final dot = Container(
+      key: dotKey,
+      margin: label.isEmpty ? const EdgeInsets.only(left: 6) : EdgeInsets.zero,
+      width: label.isEmpty ? 10 : 7,
+      height: label.isEmpty ? 10 : 7,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+    );
+    if (label.isEmpty) return dot;
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          dot,
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: color,
             ),
-          )
-        : null,
-  );
+          ),
+        ],
+      ),
+    );
+  }
 }

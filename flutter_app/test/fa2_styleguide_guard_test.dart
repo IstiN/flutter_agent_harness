@@ -14,7 +14,9 @@ void main() {
         'FaDesignTokens.of(context)',
         'FaTextField(',
         'MessengerFloatingPageHeader(',
-        'RoundedSuperellipseBorder(',
+        // Tile art moved into the shared AppIconBadge component, which owns
+        // the RoundedSuperellipseBorder shape (AppIconPalette.decoration).
+        'AppIconBadge(',
       ],
       'lib/ui/screens/settings_sections.dart': [
         'VisualDirectionSection',

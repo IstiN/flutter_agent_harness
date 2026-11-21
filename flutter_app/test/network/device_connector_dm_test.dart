@@ -9,6 +9,7 @@ import 'package:fa/network/envelope_codec.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/machine_connector.dart';
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart'
     show AgentRunState;
 import 'package:flutter_test/flutter_test.dart';
@@ -151,6 +152,76 @@ void main() {
       'threading': 1,
     });
   });
+
+  test(
+    'same-account CLI reply with a foreign id is delivered, not echo-dropped',
+    () async {
+      final agent = await EnvelopeCodec.newX25519KeyPair();
+      final (service, manager, _, transport, _) = await fixture.buildService(
+        httpClient: http(),
+        tokenStore: fixture.enrolledTokens(),
+        userIdProvider: () async => 'user-1',
+      );
+      addTearDown(service.dispose);
+      await manager.wallet.createIfMissing();
+      await service.start();
+      await fixture.pumpUntilOnline(service);
+      final received = <NetworkEnvelope>[];
+      final subscription = service.dmMail.listen(received.add);
+      addTearDown(subscription.cancel);
+      final rejections = <RejectedMail>[];
+      final rejectionSubscription = service.connector!.rejections.listen(
+        rejections.add,
+      );
+      addTearDown(rejectionSubscription.cancel);
+
+      const sessionId = '01a0ca2d-783a-78a0-8217-0533f83f8912';
+      const deviceId =
+          '3d87abcbe6428ec5222d1062c6d0b93a9792a7b4467e2ccddc29f25d551bcb22';
+      const channel = 'dm:user:user-1:$sessionId@$deviceId';
+      const replyId = 'cli-reply-foreign-id';
+      const replyText =
+          'Привет! По AIIN активной кодовой задачи нет; фикс availability задеплоен.';
+      final ciphertext = await codec.encrypt(
+        senderIdentity: await codec.keyPairFromPriv(agent.priv),
+        channelPub: codec.publicKeyFromB64(manager.wallet.identityPub!),
+        frameId: replyId,
+        aadTarget: channel,
+        plaintext: jsonEncode({
+          'text': replyText,
+          'sessionId': sessionId,
+          'replyTo': 'app-outbound-1',
+        }),
+      );
+
+      // This is the deployed relay shape: the authenticated CLI sender is
+      // rewritten to the SAME account uid as the recipient. Its foreign id
+      // proves this is not an echo of an envelope minted by this connector.
+      transport.sockets.first.serverSends(
+        NetworkEnvelope(
+          kind: NetworkEnvelopeKind.mail,
+          msgId: replyId,
+          network: 'net-personal',
+          channel: channel,
+          from: 'user:user-1',
+          to: 'user:user-1',
+          ts: '2026-11-20T10:00:00.000Z',
+          ciphertext: ciphertext,
+        ),
+      );
+
+      await waitFor(() => received.isNotEmpty);
+      await waitFor(
+        () => transport.sockets.first.sent.any(
+          (frame) =>
+              frame.kind == NetworkEnvelopeKind.ack && frame.refId == replyId,
+        ),
+      );
+      expect(received.single.msgId, replyId);
+      expect(received.single.ciphertext, ciphertext);
+      expect(rejections, isEmpty);
+    },
+  );
 
   for (final route in <({String label, String sender, String recipient})>[
     (

@@ -15,6 +15,7 @@ import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -118,6 +119,7 @@ Map<String, List<String>> get _apps => {
 
 Future<MemoryExecutionEnv> _seededEnv({
   bool liveTiles = false,
+  bool curatedArtwork = false,
   Map<String, String> extraTiles = const {},
 
   /// Issue #866: adds one `broken` app whose manifest.json does not
@@ -133,6 +135,32 @@ Future<MemoryExecutionEnv> _seededEnv({
           '"icon": ${_jsonString(entry.value[1])}}',
     );
     await env.writeFile('apps/${entry.key}/widget.js', '(function(){})();');
+  }
+  if (curatedArtwork) {
+    // Exercise the host's professional vector replacements using the real
+    // catalog ids. The manifest still supplies a deliberately plain asset;
+    // AppIcon must select the curated keyline artwork instead.
+    const apps = {
+      'contacts': 'Contacts',
+      'adaptive-dashboard': 'Adaptive Dashboard',
+      '3d-viewer': '3D Model Viewer',
+      '3d-game': '3D Dodge Game',
+      'neon-breakout-3d': 'Neon Breakout 3D',
+      'm3-showcase': 'M3 Showcase',
+    };
+    for (final entry in apps.entries) {
+      await env.writeFile(
+        'apps/${entry.key}/manifest.json',
+        '{"id":"${entry.key}","name":"${entry.value}",'
+            '"description":"${entry.value}","icon":"icon.svg"}',
+      );
+      await env.writeFile(
+        'apps/${entry.key}/icon.svg',
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
+            "<rect x='4' y='4' width='16' height='16' fill='#0ea5e9'/></svg>",
+      );
+      await env.writeFile('apps/${entry.key}/widget.js', '(function(){})();');
+    }
   }
   if (liveTiles) {
     // Two live-tile apps: the `"widget"` manifest section opts them into
@@ -442,14 +470,17 @@ Future<void> _pumpLauncher(
   List<String>? order,
   List<LauncherFolder>? folders,
   bool liveTiles = false,
+  bool curatedArtwork = false,
   TileEngineFactory? tileEngineFactory,
   Size size = goldenSizePhone,
   int? gridColumns,
   Map<String, String> extraTiles = const {},
   bool brokenManifest = false,
+  bool fullScreen = false,
 }) async {
   final env = await _seededEnv(
     liveTiles: liveTiles,
+    curatedArtwork: curatedArtwork,
     extraTiles: extraTiles,
     brokenManifest: brokenManifest,
   );
@@ -475,6 +506,7 @@ Future<void> _pumpLauncher(
     ),
     appsStore: _appsStore(env),
     tileEngineFactory: tileEngineFactory,
+    fullScreen: fullScreen,
   );
   await pumpGolden(
     tester,
@@ -498,6 +530,82 @@ void main() {
     testWidgets('launcher grid — light', (tester) async {
       await _pumpLauncher(tester, theme: buildFahThemeLight());
       await expectGolden(tester, 'launcher/grid_light');
+    });
+
+    testWidgets('Launchpad gallery and Shortcuts widgets — desktop', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        size: goldenSizeDesktop,
+        fullScreen: true,
+        liveTiles: true,
+        curatedArtwork: true,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        order: [
+          'app:notes',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          'app:contacts',
+          'app:adaptive-dashboard',
+          'app:3d-viewer',
+          'app:3d-game',
+          'app:neon-breakout-3d',
+          'app:m3-showcase',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+          'app:weather',
+          'app:reminders',
+        ],
+      );
+      expect(find.byKey(const ValueKey('appsOverviewHeader')), findsOneWidget);
+      expect(find.byKey(const ValueKey('appsTab-myApps')), findsNothing);
+      expect(find.byKey(const ValueKey('appsTab-catalog')), findsNothing);
+      expect(find.byKey(const ValueKey('appsFeatureCards')), findsNothing);
+      expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
+      expect(LauncherGridSpec.iconSize, 64);
+      expect(LauncherGridSpec.cellMainExtent, 88);
+      for (final host in tester.elementList(find.byType(AppTileHost))) {
+        final size = tester.getRect(find.byWidget(host.widget)).size;
+        expect(size.height / size.width, lessThanOrEqualTo(1.0));
+        expect(
+          size.height,
+          lessThanOrEqualTo(
+            2 * LauncherGridSpec.cellMainExtent +
+                LauncherGridSpec.desktopRowSpacing,
+          ),
+        );
+      }
+      await expectGolden(tester, 'launcher/gallery_launchpad_desktop');
+    });
+
+    testWidgets('Launchpad gallery and Shortcuts widgets — phone', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        liveTiles: true,
+        curatedArtwork: true,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        order: [
+          'app:notes',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          'app:contacts',
+          'app:adaptive-dashboard',
+          'app:3d-viewer',
+          'app:3d-game',
+          'app:neon-breakout-3d',
+          'app:m3-showcase',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+          'app:weather',
+          'app:reminders',
+        ],
+      );
+      await expectGolden(tester, 'launcher/gallery_launchpad_phone');
     });
 
     testWidgets('launcher grid — ru', (tester) async {
@@ -576,7 +684,9 @@ void main() {
       await expectGolden(tester, 'launcher/settings_route');
     });
 
-    testWidgets('grid with live tiles (4x2 + 2x2) — dark', (tester) async {
+    testWidgets('grid with live tiles (4x2 + bounded 3x2) — dark', (
+      tester,
+    ) async {
       await _pumpLauncher(
         tester,
         liveTiles: true,
@@ -585,7 +695,9 @@ void main() {
       await expectGolden(tester, 'launcher/grid_widget_tile_dark');
     });
 
-    testWidgets('grid with live tiles (4x2 + 2x2) — light', (tester) async {
+    testWidgets('grid with live tiles (4x2 + bounded 3x2) — light', (
+      tester,
+    ) async {
       await _pumpLauncher(
         tester,
         liveTiles: true,
@@ -597,9 +709,9 @@ void main() {
 
     /// The alignment showcase: a plain row of app icons sits ABOVE the 4x2
     /// weather widget, so a reviewer can see the widget's left/right edges
-    /// line up EXACTLY with the outer edges of the 4-icon row (and the 2x2
-    /// reminders widget with a 2-icon block) — the icon-unit geometry
-    /// contract of LauncherGridSpec.
+    /// line up EXACTLY with the outer edges of the 4-icon row (and the
+    /// normalized 3x2 reminders widget with a 3-icon block) — the icon-unit
+    /// geometry contract of LauncherGridSpec.
     testWidgets('ios alignment — widgets align with icon blocks', (
       tester,
     ) async {
@@ -622,8 +734,8 @@ void main() {
     });
 
     /// AC4 of issue #166 (clamp, narrow): a 4x2 span on a 3-column grid
-    /// renders full-width without overflow, the 1x3 steps widget stretches
-    /// one cell wide and three tall beside the 2x2 reminders widget.
+    /// renders full-width without overflow; default portrait widgets are
+    /// bounded to compact two-row, near-square cards beside the icons.
     testWidgets('custom spans clamp on a narrow grid — dark', (tester) async {
       await _pumpLauncher(
         tester,

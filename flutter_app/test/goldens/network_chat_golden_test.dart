@@ -210,7 +210,7 @@ Future<void> _pumpDm(
         envelopeId: 'dm-reply',
         senderId: 'main@mymac',
         senderPub: '',
-        senderName: 'mymac',
+        senderName: sessionId,
         text: 'The phone now shows one named device per row.',
         isOwn: false,
         createdAt: DateTime.utc(2025, 12, 1, 9, 31),
@@ -263,9 +263,32 @@ Future<void> _pumpDm(
     findsOneWidget,
   );
   if (queueRetryFixture) {
-    expect(find.textContaining('queued / not listening'), findsOneWidget);
+    expect(find.textContaining('queued / not listening'), findsNothing);
+    expect(find.textContaining('accepted, awaiting steering'), findsNothing);
+    expect(find.byKey(const ValueKey('chatDelivery-queued')), findsOneWidget);
     await expectGolden(tester, 'network_dm_queue_${size.width.toInt()}');
+
+    state.add(
+      ChannelMessage(
+        envelopeId: 'dm-accepted',
+        senderId: 'main@mymac',
+        senderPub: '',
+        senderName: sessionId,
+        text: 'accepted, awaiting steering',
+        isOwn: false,
+        createdAt: DateTime.utc(2025, 12, 1, 9, 32),
+        sessionId: sessionId,
+        replyTo: 'dm-own',
+      ),
+    );
+    session.notifyDmChanged();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chatDelivery-queued')), findsNothing);
+    expect(find.byKey(const ValueKey('chatDelivery-accepted')), findsOneWidget);
+    expect(find.textContaining('accepted, awaiting steering'), findsNothing);
+    await expectGolden(tester, 'network_dm_accepted_${size.width.toInt()}');
   } else if (projectPath == null) {
+    expect(find.textContaining('CLI · 01a15985…a9c2'), findsOneWidget);
     await expectGolden(tester, 'network_dm_${size.width.toInt()}');
   } else {
     await expectGolden(tester, 'network_dm_folder_${size.width.toInt()}');

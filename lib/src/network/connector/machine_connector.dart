@@ -388,6 +388,22 @@ final class MachineConnector {
     NetworkEnvelope envelope,
     Future<void> Function(InboundMail mail) sink,
   ) async {
+    // DM echoes are identified by the exact id minted for OUR outbound
+    // frame, before direction/shape decoding. The server rewrites every
+    // authenticated sender to the account uid, so a same-account CLI reply
+    // can legitimately arrive as from == to == user:<uid> with a FOREIGN
+    // id; that reply must continue through user-side decryption instead of
+    // being mistaken for this connector's echo.
+    if (isDmChannel(envelope.channel ?? '') &&
+        _sentMailIds.contains(envelope.msgId)) {
+      _onLog?.call(
+        'own reply echo (own DM echo) acknowledged and dropped '
+        '(${envelope.msgId})',
+      );
+      upstream.acknowledge(envelope.msgId);
+      return;
+    }
+
     final DecodedMail decoded;
     try {
       decoded = await decodeMail(envelope);

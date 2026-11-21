@@ -11,6 +11,7 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatDeliveryStatus;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -106,7 +107,7 @@ void main() {
   );
 
   test(
-    'a selected session keeps its own row and one correlated queue state',
+    'delivery receipts stay out of the transcript and update their own bubble',
     () async {
       const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
       final state = ChannelState();
@@ -167,17 +168,31 @@ void main() {
           replyTo: 'original-2',
         ),
       );
+      state.add(
+        const ChannelMessage(
+          envelopeId: 'accepted-1',
+          senderId: 'main@device',
+          senderPub: '',
+          text: 'accepted, awaiting steering',
+          isOwn: false,
+          sessionId: sessionId,
+          replyTo: 'original-1',
+        ),
+      );
 
       expect(
         state.seen,
         containsAll(const ['queued-1', 'queued-2', 'queued-3']),
       );
-      expect(state.messages, hasLength(4));
+      expect(state.messages, hasLength(5));
       expect(
         state.messages.where(
-          (message) => message.text == 'queued / not listening',
+          (message) =>
+              message.text == 'queued / not listening' ||
+              message.text == 'accepted, awaiting steering',
         ),
-        hasLength(2),
+        hasLength(3),
+        reason: 'transport dedup retains one record per state per original',
       );
 
       final session = buildSession(
@@ -193,15 +208,52 @@ void main() {
         dmSessionId: sessionId,
       );
       addTearDown(chat.dispose);
-      expect(chat.messages, isNotEmpty);
+      expect(chat.messages, hasLength(2));
+      expect(chat.messages.every((message) => message.role == 'user'), isTrue);
+      expect(chat.messages[0].deliveryStatus, FaChatDeliveryStatus.accepted);
+      expect(chat.messages[1].deliveryStatus, FaChatDeliveryStatus.queued);
       expect(
         chat.messages.where(
-          (message) => message.content.contains('queued / not listening'),
+          (message) =>
+              message.content.contains('queued / not listening') ||
+              message.content.contains('accepted, awaiting steering'),
         ),
-        hasLength(2),
+        isEmpty,
       );
     },
   );
+
+  test('raw UUID reply titles use the friendly CLI display chain', () async {
+    const sessionId = '01a0ca2d-c767-7e9e-b16b-203817f2a98912';
+    final state = ChannelState();
+    state.add(
+      const ChannelMessage(
+        envelopeId: 'reply-1',
+        senderId: 'main@device',
+        senderPub: '',
+        senderName: sessionId,
+        text: 'Done',
+        isOwn: false,
+        sessionId: sessionId,
+      ),
+    );
+    final session = buildSession(
+      httpClient: FakeHttpClient(),
+      connector: FakeWsConnector(),
+      wallet: await KeyWallet.load(MemoryWalletBackend()),
+    );
+    addTearDown(session.dispose);
+    session.channelStates[_dmChannel] = state;
+    final chat = ChannelChatService(
+      session: session,
+      channelId: _dmChannel,
+      dmSessionId: sessionId,
+    );
+    addTearDown(chat.dispose);
+
+    expect(chat.messages.single.content, '**CLI · 01a0ca2d…8912**\n\nDone');
+    expect(chat.messages.single.content, isNot(contains(sessionId)));
+  });
 
   test(
     'consecutive foreign-encrypted rows collapse without hiding own text',
@@ -331,13 +383,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 30));
       }
 
-      expect(find.text('Duo · 01a15985…'), findsWidgets);
+      expect(find.text('Duo · 01a15985…a9c2'), findsWidgets);
       expect(find.textContaining(sessionId), findsNothing);
       expect(
         find.byWidgetPredicate(
           (widget) =>
               widget is TextField &&
-              widget.decoration?.hintText == 'Message Duo · 01a15985…',
+              widget.decoration?.hintText == 'Message Duo · 01a15985…a9c2',
         ),
         findsOneWidget,
       );

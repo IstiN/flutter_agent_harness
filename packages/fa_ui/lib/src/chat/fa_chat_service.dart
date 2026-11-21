@@ -28,6 +28,10 @@ String faSystemNoticeText(String content) {
   return text.trim().replaceAll(RegExp(r'\s+'), ' ');
 }
 
+/// Delivery metadata for an outbound message. Null on [FaChatMessage] means
+/// unknown/not applicable and renders no indicator.
+enum FaChatDeliveryStatus { queued, accepted }
+
 /// One message in the chat transcript the [FaChatScreen] renders.
 ///
 /// Moved out of the app's agent service so hosts can adapt any backend
@@ -42,6 +46,7 @@ final class FaChatMessage {
     this.toolName,
     this.isError = false,
     this.data,
+    this.deliveryStatus,
   });
 
   /// `user` | `assistant` | `tool` | `system` | `systemNotice` | `widget`.
@@ -67,6 +72,9 @@ final class FaChatMessage {
   /// Host payload: a dynamic-message widget id, or the internal
   /// `systemNotices` list used by a grouped notice tile.
   final Object? data;
+
+  /// Optional outbound delivery state, rendered inside a user bubble.
+  final FaChatDeliveryStatus? deliveryStatus;
 }
 
 /// One attachment of a user message: [bytes] when the record carries the

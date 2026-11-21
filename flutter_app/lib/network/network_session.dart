@@ -112,8 +112,8 @@ final class ChannelState {
     return true;
   }
 
-  /// Normalizes a queued receipt and returns null when it duplicates one in
-  /// [existing]. [preceding] limits legacy reply correlation to rows that
+  /// Correlates a delivery receipt and returns null when it duplicates the
+  /// same state in [existing]. [preceding] limits legacy reply correlation to rows that
   /// chronologically precede the candidate; older history pages are prepended,
   /// so rows already in the store must not supply their legacy correlation.
   ChannelMessage? _collapseForInsert(
@@ -121,13 +121,15 @@ final class ChannelState {
     required Iterable<ChannelMessage> existing,
     Iterable<ChannelMessage>? preceding,
   }) {
-    if (message.isOwn || message.text != deviceDmQueuedReceipt) {
-      return message;
-    }
-    // Queue notices are delivery STATE, not three agent answers. A peer
-    // pre-restart retry can mint a fresh envelope id for the same original,
-    // so id-dedup alone cannot collapse them. New peers carry replyTo;
-    // infer it from the preceding own row for 1.0.751 legacy receipts.
+    final isReceipt =
+        message.text == deviceDmQueuedReceipt ||
+        message.text == deviceDmAcceptedReceipt;
+    if (message.isOwn || !isReceipt) return message;
+    // Delivery receipts are STATE, not agent answers. A peer pre-restart
+    // retry can mint a fresh envelope id for the same original, so id-dedup
+    // alone cannot collapse them. New peers carry replyTo; infer it from
+    // the preceding own row for 1.0.751 legacy receipts. Queued and accepted
+    // are separate states: one must never dedup away the other's transition.
     final correlation =
         message.replyTo ??
         _latestOwnEnvelopeId(preceding ?? existing, message.sessionId) ??
@@ -135,7 +137,7 @@ final class ChannelState {
     final duplicate = existing.any(
       (row) =>
           !row.isOwn &&
-          row.text == deviceDmQueuedReceipt &&
+          row.text == message.text &&
           row.senderId == message.senderId &&
           row.sessionId == message.sessionId &&
           row.replyTo == correlation,
@@ -189,12 +191,16 @@ final class NetworkSession extends ChangeNotifier {
     EnvelopeCodec codec = const EnvelopeCodec(),
     Uuid uuid = const Uuid(),
     Future<ChannelMessage> Function(Envelope envelope)? envelopeDecoder,
+    Future<String?> Function()? freshAccountToken,
+    Future<String?> Function()? refreshAccountToken,
   }) : _client = client,
        _ws = ws,
        _wallet = wallet,
        _codec = codec,
        _uuid = uuid,
-       _envelopeDecoder = envelopeDecoder;
+       _envelopeDecoder = envelopeDecoder,
+       _freshAccountToken = freshAccountToken,
+       _refreshAccountToken = refreshAccountToken;
 
   final String networkId;
   final JoinedIdentity identity;
@@ -210,6 +216,12 @@ final class NetworkSession extends ChangeNotifier {
   final EnvelopeCodec _codec;
   final Uuid _uuid;
   final Future<ChannelMessage> Function(Envelope envelope)? _envelopeDecoder;
+
+  /// Account JWT providers for owner-only DM history. The normal provider
+  /// refreshes on declared expiry; the second forces a refresh after the
+  /// server rejects a still-unexpired cached token (rotation/re-enrollment).
+  final Future<String?> Function()? _freshAccountToken;
+  final Future<String?> Function()? _refreshAccountToken;
 
   StreamSubscription<WsEvent>? _events;
   Future<void>? _startup;
@@ -399,17 +411,79 @@ final class NetworkSession extends ChangeNotifier {
   ) =>
       identical(channelStates[channelId], state) && state._revision == revision;
 
+  /// Reads one history page with the two recoverable DM failure modes:
+  /// an expired/rotated account token refreshes once, and an invalid server
+  /// cursor restarts pagination from the newest page instead of spinning on
+  /// the same cursor forever. Ordinary channels keep their member token.
+  Future<MessagePage> _listHistoryPage(
+    String channelId,
+    ChannelState state, {
+    bool latest = false,
+  }) async {
+    final account = isDmChannel(channelId);
+    if (account) await _syncAccountToken(refresh: false);
+    var authRetried = false;
+    var cursorReset = false;
+    while (true) {
+      try {
+        return await _client.listMessages(
+          channelId,
+          cursor: latest || cursorReset ? null : state.nextCursor,
+          useAccountToken: account,
+        );
+      } on FaNetworkException catch (error) {
+        if (await _retryAfterAccountTokenRefresh(error, account, authRetried)) {
+          authRetried = true;
+          continue;
+        }
+        if (_unknownHistoryCursor(error) && !cursorReset) {
+          cursorReset = true;
+          state.nextCursor = null;
+          if (!latest) {
+            // Older pages cannot be prepended safely after jumping back to
+            // the newest page. Rebuild from that fresh page instead.
+            state.messages.clear();
+            state.seen.clear();
+          }
+          continue;
+        }
+        rethrow;
+      }
+    }
+  }
+
+  /// 401 on an account-token (DM) request: refresh once, then retry. Split
+  /// out of [_listHistoryPage] to keep its CRAP complexity under the ratchet.
+  Future<bool> _retryAfterAccountTokenRefresh(
+    FaNetworkException error,
+    bool account,
+    bool authRetried,
+  ) async =>
+      account &&
+      error.statusCode == 401 &&
+      !authRetried &&
+      await _syncAccountToken(refresh: true);
+
+  Future<bool> _syncAccountToken({required bool refresh}) async {
+    final provider = refresh ? _refreshAccountToken : _freshAccountToken;
+    if (provider == null) return false;
+    final token = await provider();
+    if (token == null || token.isEmpty) return false;
+    _client.jwt = token;
+    return true;
+  }
+
+  bool _unknownHistoryCursor(FaNetworkException error) =>
+      error.statusCode == 404 &&
+      error.message.toLowerCase().contains('unknown cursor');
+
   Future<void> _loadHistoryPage(String channelId, ChannelState state) async {
     final revision = state._revision;
     state.loading = true;
     state.loadError = null;
     notifyListeners();
     try {
-      final page = await _client.listMessages(
-        channelId,
-        cursor: state.nextCursor,
-        useAccountToken: isDmChannel(channelId),
-      );
+      final page = await _listHistoryPage(channelId, state);
       if (!_isCurrentChannelState(channelId, state, revision)) return;
       // Chat-order pagination (fa_network contract): pages arrive
       // ascending oldest→newest; the first (cursor-less) page IS the

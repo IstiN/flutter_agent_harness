@@ -181,6 +181,8 @@ Future<_Harness> _pumpLauncher(
   VoidCallback? onOpenNetworks,
   bool pushed = false,
   bool revealSearch = false,
+  bool fullScreen = false,
+  VoidCallback? onBack,
 }) async {
   if (surface != null) {
     tester.view.physicalSize = surface;
@@ -210,6 +212,8 @@ Future<_Harness> _pumpLauncher(
     appsStore: _appsStore(env),
     tileEngineFactory: tileEngineFactory,
     onOpenNetworks: onOpenNetworks,
+    fullScreen: fullScreen,
+    onBack: onBack,
   );
   await tester.pumpWidget(
     MaterialApp(
@@ -265,6 +269,38 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Files'), findsOneWidget);
+    });
+
+    testWidgets('wide gallery starts at Launchpad grid without extra chrome', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        surface: const Size(1280, 800),
+        fullScreen: true,
+        onBack: () {},
+      );
+      expect(find.byKey(const ValueKey('appsOverviewHeader')), findsOneWidget);
+      expect(find.byKey(const ValueKey('appsTab-myApps')), findsNothing);
+      expect(find.byKey(const ValueKey('appsTab-catalog')), findsNothing);
+      expect(find.byKey(const ValueKey('appsHeaderCatalog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('appsFeatureCards')), findsNothing);
+      expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
+
+      // No featured stack: the first icon starts directly below the one
+      // floating header, with only the grid's normal 8pt top gutter.
+      final scroll = tester.getRect(
+        find.byKey(const ValueKey('appsGridScrollView')),
+      );
+      expect(tester.getRect(_cell('app:alpha')).top, scroll.top + 8);
+      expect(LauncherGridSpec.iconSize, 64);
+      expect(LauncherGridSpec.desktopSpacing, 24);
+      expect(LauncherGridSpec.desktopRowSpacing, 20);
+
+      // The same header action reveals search on the wide route too.
+      await tester.tap(find.byKey(const ValueKey('appsNarrowSearchReveal')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('appsSearchField')), findsOneWidget);
     });
 
     testWidgets('app tiles use the surrounding list spacing metrics', (
@@ -585,6 +621,8 @@ void main() {
       // The live tile replaces Alpha's static icon + label …
       expect(find.byType(AppTileHost), findsOneWidget);
       expect(find.text('LIVE TILE'), findsOneWidget);
+      // The live tile replaces Alpha's static icon + label; the JS canvas
+      // owns the whole cell (no host identity header — apps draw their own).
       expect(find.text('Alpha'), findsNothing);
       // … while the other apps keep the classic icon tile.
       expect(find.text('Beta'), findsOneWidget);
@@ -654,9 +692,10 @@ void main() {
         tileApps: {'alpha': '4x2'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
-      const i = 56.0, cellMain = 76.0;
-      // The compact spec gap is shared by both axes.
-      const g = 16.0, gr = 16.0;
+      const i = LauncherGridSpec.iconSize;
+      const cellMain = LauncherGridSpec.cellMainExtent;
+      const g = LauncherGridSpec.spacing;
+      const gr = LauncherGridSpec.compactRowSpacing;
       final hostRect = tester.getRect(find.byType(AppTileHost));
       final betaRect = tester.getRect(_cell('app:beta'));
       // Exact icon-unit extents: 4 slots + 3 gaps wide, 2 + 1 row-gap high.
@@ -677,30 +716,32 @@ void main() {
       expect(betaRect.height, moreOrLessEquals(cellMain, epsilon: 0.5));
     });
 
-    testWidgets('a manifest 1x3 span renders one cell wide, three tall', (
+    testWidgets('a manifest portrait span becomes a bounded compact tile', (
       tester,
     ) async {
-      // AC1 (issue #166): an app declaring a 1x3 span renders 1 wide × 3
-      // tall; apps WITHOUT span metadata stay 1x1 and pack beside it.
+      // Gallery defaults never become giant portrait slabs: 1x3 normalizes
+      // to three tracks by two rows. Explicit user resize overrides still
+      // remain available from the tile menu.
       await _pumpLauncher(
         tester,
         tileApps: {'alpha': '1x3'},
         tileEngineFactory: _fakeTileEngineFactory(),
       );
-      const i = 56.0, cellMain = 76.0, gr = 16.0;
+      const i = LauncherGridSpec.iconSize;
+      const cellMain = LauncherGridSpec.cellMainExtent;
+      const gr = LauncherGridSpec.compactRowSpacing;
       final hostRect = tester.getRect(find.byType(AppTileHost));
-      expect(hostRect.width, moreOrLessEquals(i, epsilon: 0.5));
+      expect(hostRect.width, moreOrLessEquals(3 * i + 2 * 16, epsilon: 0.5));
       expect(
         hostRect.height,
-        moreOrLessEquals(3 * cellMain + 2 * gr, epsilon: 0.5),
+        moreOrLessEquals(2 * cellMain + gr, epsilon: 0.5),
       );
-      // Beta (no span metadata → 1x1) packs in the SAME row, one slot
-      // to the right; the narrow tile never stretches.
+      // Beta packs beside the bounded widget in the same row.
       final betaRect = tester.getRect(_cell('app:beta'));
       expect(betaRect.top, moreOrLessEquals(hostRect.top, epsilon: 0.5));
       expect(
         betaRect.left,
-        moreOrLessEquals(hostRect.left + i + 16, epsilon: 0.5),
+        moreOrLessEquals(hostRect.left + 3 * (i + 16), epsilon: 0.5),
       );
       expect(betaRect.width, moreOrLessEquals(i, epsilon: 0.5));
     });
@@ -734,8 +775,18 @@ void main() {
       // Reflowed geometry: one slot wide, two slots + one gap tall.
       expect(find.byType(AppTileHost), findsOneWidget); // tile survived
       final rect = tester.getRect(find.byType(AppTileHost));
-      expect(rect.width, moreOrLessEquals(56, epsilon: 0.5));
-      expect(rect.height, moreOrLessEquals(2 * 76 + 16, epsilon: 0.5));
+      expect(
+        rect.width,
+        moreOrLessEquals(LauncherGridSpec.iconSize, epsilon: 0.5),
+      );
+      expect(
+        rect.height,
+        moreOrLessEquals(
+          2 * LauncherGridSpec.cellMainExtent +
+              LauncherGridSpec.compactRowSpacing,
+          epsilon: 0.5,
+        ),
+      );
     });
 
     testWidgets('defaults to 4 icon columns on a phone-width screen', (
@@ -752,14 +803,18 @@ void main() {
       expect(settingsRect.top, moreOrLessEquals(alphaRect.top, epsilon: 0.5));
       expect(settingsRect.left, greaterThan(gammaRect.left));
       expect(filesRect.top, greaterThan(settingsRect.top));
-      // Four compact columns are centered inside the 16pt side padding:
-      // 4×56 + 3×16 = 272 wide, without stretched inter-tile gutters.
+      // Four Launchpad columns are centered inside the 16pt side padding.
+      const gridWidth =
+          4 * LauncherGridSpec.cellCrossExtent + 3 * LauncherGridSpec.spacing;
       expect(
         alphaRect.left,
-        moreOrLessEquals(16 + (390 - 32 - 272) / 2, epsilon: 0.5),
+        moreOrLessEquals(16 + (390 - 32 - gridWidth) / 2, epsilon: 0.5),
       );
       // A 5th column would NOT fit — the count stays 4.
-      expect(gammaRect.left - tester.getRect(_cell('app:beta')).left, 72.0);
+      expect(
+        gammaRect.left - tester.getRect(_cell('app:beta')).left,
+        LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing,
+      );
     });
 
     testWidgets('dragging over an edge half live-reflows the grid', (
@@ -879,7 +934,10 @@ void main() {
       expect(harness.layout.tileSizeFor('alpha'), (w: 4, h: 2));
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        moreOrLessEquals(4 * 56 + 3 * 16, epsilon: 0.5),
+        moreOrLessEquals(
+          4 * LauncherGridSpec.cellCrossExtent + 3 * LauncherGridSpec.spacing,
+          epsilon: 0.5,
+        ),
       );
 
       // Menu again → current size checked, reset offered; reset clears.
@@ -964,7 +1022,7 @@ void main() {
         tileEngineFactory: _fakeTileEngineFactory(),
         useEnvLayout: true,
       );
-      // Seed the v2 layout: 4 columns, alpha at its manifest size (2x2).
+      // Seed the v2 layout: 4 columns, alpha at its normalized manifest size.
       await harness.env.writeFile(
         appStateFilePath(harness.env, LauncherLayoutStore.fileName),
         '{"version":2,'
@@ -978,8 +1036,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
-        // Two icon slots plus the shared 16pt grid gap.
-        moreOrLessEquals(2 * 56 + 16, epsilon: 0.5),
+        // A default two-row widget uses three tracks for a bounded aspect.
+        moreOrLessEquals(
+          3 * LauncherGridSpec.cellCrossExtent + 2 * LauncherGridSpec.spacing,
+          epsilon: 0.5,
+        ),
       );
 
       // The agent reconfigures: 3 columns + a 4x2 override (clamped to 3).
@@ -997,7 +1058,10 @@ void main() {
       expect(
         tester.getRect(find.byType(AppTileHost)).width,
         // Three icon slots plus two shared 16pt grid gaps.
-        moreOrLessEquals(3 * 56 + 2 * 16, epsilon: 0.5),
+        moreOrLessEquals(
+          3 * LauncherGridSpec.cellCrossExtent + 2 * LauncherGridSpec.spacing,
+          epsilon: 0.5,
+        ),
       );
     });
 
@@ -1248,17 +1312,18 @@ void main() {
     });
   });
 
-  testWidgets('compact apps list reserves the floating catalog icon', (
+  testWidgets('compact apps list uses only the header catalog action', (
     tester,
   ) async {
     await _pumpLauncher(tester, surface: const Size(390, 844));
-    expect(find.byKey(const ValueKey('appsCatalogFab')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('appsCatalogFab')));
+    expect(find.byKey(const ValueKey('appsCatalogFab')), findsNothing);
+    expect(find.byKey(const ValueKey('appsOverviewHeader')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('appsHeaderCatalog')));
     await tester.pumpAndSettle();
-    // The catalog tab hides the FAB; the header toggle returns to My Apps.
     expect(find.byKey(const ValueKey('appsCatalogFab')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('appsHeaderCatalog')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('appsCatalogFab')), findsOneWidget);
+    expect(find.byKey(const ValueKey('appsOverviewHeader')), findsOneWidget);
+    expect(find.byKey(const ValueKey('appsCatalogFab')), findsNothing);
   });
 }

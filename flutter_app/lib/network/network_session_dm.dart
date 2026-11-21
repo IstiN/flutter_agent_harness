@@ -158,7 +158,7 @@ extension NetworkSessionDm on NetworkSession {
 
   Future<void> _pollDmChannel(String channelId, ChannelState state) async {
     final revision = state._revision;
-    final page = await _client.listMessages(channelId, useAccountToken: true);
+    final page = await _listHistoryPage(channelId, state, latest: true);
     var changed = false;
     for (final envelope in page.items) {
       if (state.seen.contains(envelope.id)) continue;
@@ -354,10 +354,12 @@ extension NetworkSessionDm on NetworkSession {
     DmChannelParts? parts,
     String? sessionId,
   ) {
+    final selectedTitle = _dmSessionTitles[channelId];
     if (sessionId != null &&
-        sessionId == _dmSessionTargets[channelId] &&
-        _dmSessionTitles[channelId] != null) {
-      return _dmSessionTitles[channelId];
+        (sessionId == _dmSessionTargets[channelId] ||
+            sessionId == parts?.agentName) &&
+        selectedTitle != null) {
+      return selectedTitle;
     }
     final name = parts?.agentName;
     if (name == null || name.isEmpty) return null;

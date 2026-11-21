@@ -20,7 +20,6 @@ import 'package:fa/apps/js_theme.dart';
 import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
-import 'package:fa/ui/app_theme.dart';
 
 /// Engine factory behind [AppTileHost]; tests and goldens inject a fake
 /// engine emitting a deterministic tree, the default builds a real
@@ -346,19 +345,27 @@ class _AppTileHostState extends State<AppTileHost> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
+    const radius = 20.0;
     return Semantics(
       label: widget.app.name,
       button: true,
       child: Container(
-        decoration: BoxDecoration(
-          color: colors.panelAlt,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colors.border.withValues(alpha: .45)),
+        decoration: AppIconPalette.decoration(
+          seed: widget.app.id,
+          artwork: widget.app.icon,
+          brightness: Theme.of(context).brightness,
+          size: 92,
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: _buildBody(Theme.of(context)),
+        child: ClipRSuperellipse(
+          borderRadius: BorderRadius.circular(radius),
+          // Live tiles are the JS canvas alone: many apps draw their own
+          // identity, so a host header duplicated their titles (store
+          // screenshots CI). A neutral canvas keeps explicit app colors
+          // readable and avoids acid-on-accent tiles.
+          child: ColoredBox(
+            color: Theme.of(context).colorScheme.surface,
+            child: _buildBody(Theme.of(context)),
+          ),
         ),
       ),
     );

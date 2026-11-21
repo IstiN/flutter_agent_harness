@@ -396,9 +396,10 @@ void main() {
     expect(tester.getRect(railFinder).top, 0);
     expect(rail.padding, const EdgeInsets.only(top: 56, bottom: 4));
     expect(
-      tester.getRect(find.byKey(const ValueKey('devicePaneTitle'))).top,
+      tester.getRect(find.byKey(const ValueKey('deviceNoSessionsHint'))).top,
       greaterThanOrEqualTo(52),
     );
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
   });
 
   testWidgets(
@@ -453,7 +454,9 @@ void main() {
     expect(find.text('DeviceEnrollmentException: 401'), findsOneWidget);
   });
 
-  testWidgets('connecting → skeleton line, no rail', (tester) async {
+  testWidgets('connecting keeps the device list geometry stable', (
+    tester,
+  ) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.connecting,
     );
@@ -463,10 +466,30 @@ void main() {
 
     expect(find.byKey(const ValueKey('devicesPage')), findsOneWidget);
     expect(find.text('My devices'), findsOneWidget);
-    expect(find.byKey(const ValueKey('devicesSkeleton')), findsOneWidget);
+    expect(find.byKey(const ValueKey('devicesConnecting')), findsOneWidget);
     expect(find.text('Connecting…'), findsOneWidget);
-    expect(find.byKey(const ValueKey('deviceRail')), findsNothing);
-    expect(find.text('This device'), findsNothing);
+    expect(find.byKey(const ValueKey('devicesSkeleton')), findsNothing);
+    expect(find.byKey(const ValueKey('deviceList')), findsOneWidget);
+    expect(find.text('This device'), findsWidgets);
+    final connectingList = tester.getRect(
+      find.byKey(const ValueKey('deviceList')),
+    );
+    final connectingRow = tester.getRect(
+      find.byKey(const ValueKey('deviceRow')),
+    );
+
+    service.setPhase(DeviceConnectorPhase.online);
+    await tester.pump();
+
+    expect(find.text('Connecting…'), findsNothing);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('deviceList'))),
+      connectingList,
+    );
+    expect(
+      tester.getRect(find.byKey(const ValueKey('deviceRow'))),
+      connectingRow,
+    );
   });
 
   testWidgets('reconnecting → muted banner over the rail + pane', (
@@ -527,9 +550,10 @@ void main() {
       findsOneWidget,
     );
     expect(dotColor(tester, const ValueKey('deviceDot')), palette.teal);
-    // The default selection is the rail's first device: its pane header.
-    expect(find.byKey(const ValueKey('devicePaneTitle')), findsOneWidget);
-    expect(find.text('This device'), findsWidgets);
+    // The default selection is named once by the glass appbar, not again by
+    // an in-list pane header.
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.text('This device'), findsOneWidget);
 
     // The frame does NOT drive this dot — a frame even claiming the
     // machine OFFLINE leaves it teal (the connector's link state stays
@@ -554,13 +578,10 @@ void main() {
     expect(find.text('goal_builder'), findsOneWidget);
     expect(find.text('scout'), findsOneWidget);
     expect(
-      dotColor(tester, const ValueKey('agentDot:goal_builder@dev-1')),
+      dotColor(tester, const ValueKey('agentDot:goal_builder')),
       palette.pending,
     );
-    expect(
-      dotColor(tester, const ValueKey('agentDot:scout@dev-1')),
-      palette.teal,
-    );
+    expect(dotColor(tester, const ValueKey('agentDot:scout')), palette.teal);
     // The streaming agent is the only 'Busy' label; the streaming local
     // session's card shows its timestamp subtitle instead.
     expect(find.text('Busy'), findsOneWidget);
@@ -579,6 +600,80 @@ void main() {
     // The local session cards route through the shell's open flow.
     await tester.tap(find.byKey(const ValueKey('sessionRow:sess-main')));
     expect(opened, ['sess-main']);
+  });
+
+  testWidgets('a raw agent session id adopts the local registry name and '
+      'rich context without changing its DM target', (tester) async {
+    const id = '01a15985-f6c3-7345-ae10-e44fc7a9c201';
+    final controller = chatListOf([
+      localEntry(
+        id,
+        title: 'goal_builder',
+        folderPath: '/work/flutter_agent',
+        lastActivity: DateTime.utc(2026, 11, 12, 8),
+      ),
+    ]);
+    final service = FakeDevicesService(
+      initialPhase: DeviceConnectorPhase.online,
+      deviceId: 'dev-1',
+      ownDevice: const DeviceInfo(
+        deviceId: 'dev-1',
+        name: 'mymac',
+        friendlyName: 'mymac',
+      ),
+    );
+    String? openedAddress;
+    String? openedSessionId = 'sentinel';
+    await tester.pumpWidget(
+      _wrap(
+        devicesPage(
+          service,
+          sessions: controller,
+          now: () => DateTime.utc(2026, 11, 12, 9),
+          onOpenRemoteConversation:
+              ({
+                required String deviceId,
+                required String deviceLabel,
+                required String agentAddress,
+                String? sessionId,
+                String? sessionTitle,
+              }) {
+                openedAddress = agentAddress;
+                openedSessionId = sessionId;
+              },
+        ),
+      ),
+    );
+    await tester.pump();
+    service.emitPresence(_frame(agents: const {id: AgentRunState.busy}));
+    await tester.pump();
+
+    final card = tester.widget<DeviceSessionCard>(
+      find.byKey(const ValueKey('agentRow:$id')),
+    );
+    expect(card.title, 'goal_builder');
+    expect(card.subtitle, '/work/flutter_agent');
+    expect(card.timestamp, isNotEmpty);
+    expect(card.stateLabel, 'Busy');
+    expect(find.text(id), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('agentRow:$id')),
+        matching: find.text('/work/flutter_agent'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('agentRow:$id')),
+        matching: find.textContaining('mymac'),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('agentRow:$id')));
+    expect(openedAddress, '$id@dev-1');
+    expect(openedSessionId, isNull);
   });
 
   testWidgets('active and orphaned subagents render exactly one parent row', (
@@ -649,13 +744,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
 
-    expect(find.text('dev-remo…'), findsWidgets);
-    expect(find.text('dev-remote'), findsNothing);
+    expect(find.text('dev-remote'), findsOneWidget);
     expect(find.text('agent'), findsOneWidget);
-    expect(
-      dotColor(tester, const ValueKey('agentDot:agent@dev-remote')),
-      palette.teal,
-    );
+    expect(dotColor(tester, const ValueKey('agentDot:agent')), palette.teal);
 
     // Remote presence stays frame-based: the LATEST frame's machine
     // state drives the dot (an offline frame ⇒ the dim dot) while the
@@ -672,7 +763,7 @@ void main() {
       dotColor(tester, const ValueKey('deviceDot:dev-remote')),
       palette.dim,
     );
-    expect(find.text('dev-remo…'), findsWidgets);
+    expect(find.text('dev-remote'), findsOneWidget);
   });
 
   testWidgets('selection persists while frames stream updates (a new '
@@ -853,8 +944,8 @@ void main() {
     );
     expect(openCard.selected, isTrue);
     expect(openCard.onTap, isNotNull);
-    // The timestamp sits in its OWN right-aligned slot (a fresh session reads
-    // 'now'); the subtitle is the session path, never preview/presence text.
+    // Activity stays relative (a fresh session reads 'now'); the subtitle is
+    // the session path, never preview/presence text.
     expect(openCard.timestamp, 'now');
     expect(openCard.subtitle, '/work/open');
     final idleCard = tester.widget<DeviceSessionCard>(
@@ -1080,8 +1171,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
 
-    expect(find.text('Workstation'), findsWidgets);
-    expect(find.text('thinkpad'), findsOneWidget);
+    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('thinkpad'), findsNothing);
     expect(find.byKey(const ValueKey('agentRow:goal_builder')), findsOneWidget);
     expect(find.byKey(const ValueKey('agentRow:hidden')), findsNothing);
     expect(find.byKey(const ValueKey('sessionRow:sess-live')), findsOneWidget);
@@ -1266,9 +1357,8 @@ void main() {
     expect(find.byKey(const ValueKey('deviceRow')), findsOneWidget);
   });
 
-  testWidgets('own friendly name drives header, root row and host subtitle', (
-    tester,
-  ) async {
+  testWidgets('own friendly name drives appbar and root row without an '
+      'in-list duplicate', (tester) async {
     final service = FakeDevicesService(
       initialPhase: DeviceConnectorPhase.online,
       deviceId: 'dev-1',
@@ -1282,9 +1372,10 @@ void main() {
     await tester.pumpWidget(_wrap(devicesPage(service)));
     await tester.pump();
 
-    expect(find.text('Studio'), findsWidgets);
-    expect(find.text('MacBook-Pro'), findsOneWidget);
-    expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsOneWidget);
+    expect(find.text('Studio'), findsOneWidget);
+    expect(find.text('MacBook-Pro'), findsNothing);
+    expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+    expect(find.byKey(const ValueKey('devicePaneSubtitle')), findsNothing);
     expect(find.byKey(const ValueKey('deviceOptionsMenu')), findsOneWidget);
     expect(find.byKey(const ValueKey('renameOwnDeviceButton')), findsNothing);
 
@@ -1320,8 +1411,8 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-remote')));
     await tester.pump();
-    expect(find.text('Workstation'), findsWidgets);
-    expect(find.text('thinkpad'), findsOneWidget);
+    expect(find.text('Workstation'), findsOneWidget);
+    expect(find.text('thinkpad'), findsNothing);
 
     service.emitEnvelope(
       _envelope(deviceId: 'dev-remote', msgId: 'remote-online'),
@@ -1557,6 +1648,108 @@ void main() {
       expect(find.byKey(const ValueKey('agentRow:fa')), findsOneWidget);
     });
 
+    testWidgets(
+      'owner mymac aliases merge and every remote UUID gets a CLI title',
+      (tester) async {
+        const ids = [
+          '01a0ca2d-783a-78a0-8217-0533f83f8912',
+          '01a1d9c0-3019-7ce5-bf00-a412bce3d1f0',
+          '01a1f815-e533-73e7-9757-acaf7e933239',
+          '01a1e375-6757-78d7-bdbc-6e47976a6b67',
+          '01a15985-f6c3-7345-ae10-e44fc7fbb827',
+          '01a1f53f-0f40-733b-9cc4-894a1e1237bf',
+          '01a1e9f3-5ab6-726f-9719-a7d43b6487b0',
+        ];
+        final service = FakeDevicesService(
+          initialPhase: DeviceConnectorPhase.online,
+          deviceId: 'dev-own',
+          personalNetworkId: 'net-personal',
+          ownDevice: const DeviceInfo(
+            deviceId: 'dev-own',
+            name: 'mymac.local',
+            friendlyName: 'mymac',
+          ),
+          rosterDevices: const [
+            DeviceInfo(
+              deviceId: 'dev-cli',
+              name: 'Uladzimirs-MacBook-Pro',
+              friendlyName: 'mymac',
+            ),
+            DeviceInfo(
+              deviceId: 'dev-phone',
+              name: 'iPhone',
+              friendlyName: 'MyMac',
+            ),
+            DeviceInfo(deviceId: 'dev-vpn', name: 'vpn', friendlyName: 'mymac'),
+          ],
+        );
+        await tester.pumpWidget(_wrap(devicesPage(service)));
+        await tester.pump();
+        service.emitRoster(
+          _devicesEnvelope(
+            devices: [
+              for (var index = 0; index < ids.length; index++)
+                {
+                  'deviceId': 'dev-$index',
+                  'name': index.isEven ? 'mymac.local' : 'vpn',
+                  'friendlyName': 'mymac',
+                  'presence': 'online',
+                  'sessions': [
+                    {
+                      'id': ids[index],
+                      'state': 'wake_on_dm',
+                      'networks': ['net-personal'],
+                      if (index == 0) 'path': '/work/flutter_agent',
+                      if (index == 1)
+                        'lastDmPreview': 'Peer answered from the vpn session',
+                      if (index == 2) 'displayName': 'goal_builder',
+                    },
+                  ],
+                },
+            ],
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('deviceRail')),
+            matching: find.byType(InkWell),
+          ),
+          findsOneWidget,
+          reason: 'one physical mymac, not one avatar per enrollment',
+        );
+        expect(find.byKey(const ValueKey('deviceRow:dev-cli')), findsNothing);
+        expect(find.byKey(const ValueKey('deviceRow:dev-vpn')), findsNothing);
+        for (final id in ids) {
+          final card = tester.widget<DeviceSessionCard>(
+            find.byKey(ValueKey('sessionRow:$id')),
+          );
+          expect(card.title, isNot(id));
+          expect(card.title, isNot(startsWith('01a')));
+        }
+        expect(find.text('CLI · flutter_agent'), findsOneWidget);
+        expect(
+          find.text('CLI · Peer answered from the vpn session'),
+          findsOneWidget,
+        );
+        expect(find.text('goal_builder'), findsOneWidget);
+        expect(find.text('CLI · 01a1e375…6b67'), findsOneWidget);
+        expect(find.text('mymac'), findsOneWidget);
+        expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+        for (final id in ids) {
+          expect(
+            find.descendant(
+              of: find.byKey(ValueKey('sessionRow:$id')),
+              matching: find.textContaining('mymac'),
+            ),
+            findsNothing,
+          );
+        }
+      },
+    );
+
     testWidgets('agent tap opens the DM via the shell callback; roster stays', (
       tester,
     ) async {
@@ -1613,7 +1806,7 @@ void main() {
 
   group('field regressions: physical roster, metadata rows, reconnect', () {
     testWidgets(
-      'friendly own device carries an explicit current-device badge',
+      'friendly own device is named only by the appbar in drilldown',
       (tester) async {
         final service = FakeDevicesService(
           initialPhase: DeviceConnectorPhase.online,
@@ -1627,12 +1820,10 @@ void main() {
         await tester.pumpWidget(_wrap(devicesPage(service)));
         await tester.pump();
 
-        expect(
-          find.byKey(const ValueKey('currentDeviceBadge')),
-          findsOneWidget,
-        );
-        expect(find.text('this device'), findsOneWidget);
-        expect(find.text('Mac'), findsWidgets);
+        expect(find.byKey(const ValueKey('currentDeviceBadge')), findsNothing);
+        expect(find.byKey(const ValueKey('devicePaneTitle')), findsNothing);
+        expect(find.text('this device'), findsNothing);
+        expect(find.text('Mac'), findsOneWidget);
       },
     );
 
@@ -1817,11 +2008,12 @@ void main() {
         ),
       );
       expect(titled.title, 'Release plan');
-      expect(titled.subtitle, '/work/flutter_agent · Wake on DM');
+      expect(titled.subtitle, '/work/flutter_agent');
+      expect(titled.stateLabel, 'Wake on DM');
       expect(titled.timestamp, isNotEmpty);
       expect(find.text('123e4567-e89b-12d3-a456-426614174000'), findsNothing);
       expect(find.text('Offline'), findsNothing);
-      expect(find.text('abcdef12…'), findsOneWidget);
+      expect(find.text('CLI · abcdef12…0000'), findsOneWidget);
       expect(find.text('abcdef12-0000-0000-0000-000000000000'), findsNothing);
 
       // A live-only/empty presence projection is a patch, not an instruction
@@ -2071,7 +2263,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('deviceRow:dev-agent')));
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('agentRow:fa@dev-agent')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agentRow:fa')), findsOneWidget);
     final dynamic pageState = tester.state(find.byType(DevicesPage));
     expect(pageState.debugRemoteAgentDmPubs('dev-agent'), {
       'fa@dev-agent': 'public-key',

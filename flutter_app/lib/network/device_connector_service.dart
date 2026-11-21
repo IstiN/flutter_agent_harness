@@ -910,6 +910,52 @@ class DeviceConnectorService {
   Stream<NetworkEnvelope> get dmMail => _dmMailController.stream;
   final _dmMailController = StreamController<NetworkEnvelope>.broadcast();
 
+  /// Decodes agent-bound writes with the enrolled agent key, and user-bound
+  /// replies with the account wallet. The backend rewrites a CLI reply's
+  /// sender to the same account uid as its recipient; direction (`to`) is
+  /// therefore the reliable distinction, not `from == to` or the sender id.
+  Future<DecodedMail> _decodeDmMail(
+    DeviceDmCodec agentCodec,
+    NetworkEnvelope envelope,
+  ) async {
+    final parts = parseDeviceDmChannelId(envelope.channel ?? '');
+    final recipient = envelope.to ?? '';
+    final userRecipient = parts == null ? '' : 'user:${parts.userId}';
+    if (parts == null ||
+        (recipient != parts.userId && recipient != userRecipient)) {
+      return agentCodec.decode(envelope);
+    }
+
+    final ciphertext = envelope.ciphertext ?? '';
+    final frame = hubTryOpenFanet1(ciphertext);
+    if (frame == null) {
+      throw const MailDecodeException('DM payload is not valid fanet1');
+    }
+    // Wallet/keychain failures are transient: propagate them so the original
+    // frame remains unacked, matching DeviceDmCodec's key-provider contract.
+    final userKeyPair = await _userIdentity();
+    try {
+      final plaintext = await hubDecryptPayloadWithKeyPair(
+        recipientDhKeyPair: userKeyPair,
+        senderDhPubkey: frame.senderPubkey,
+        frameId: envelope.msgId,
+        aadTarget: envelope.channel!,
+        ciphertextB64: frame.ciphertextB64,
+      );
+      final unwrapped = unwrapDeviceDmText(plaintext);
+      return DecodedMail(
+        payload: plaintext,
+        sessionId: unwrapped.sessionId,
+        senderPubkey: base64Encode(frame.senderPubkey.bytes),
+        threaded: unwrapped.threaded,
+      );
+    } on Object {
+      throw const MailDecodeException(
+        'DM fanet1 authentication/decryption failed',
+      );
+    }
+  }
+
   Future<void> _onDmSink(InboundMail mail) async {
     final envelope = mail.envelope;
     if (envelope.from != _localAgentAddress()) {
@@ -1033,7 +1079,7 @@ class DeviceConnectorService {
       outbox: _outboxOverride ?? await _defaultOutbox(),
       presence: presence,
       leases: () async => sessionManager.sessions.keys.toSet(),
-      decodeMail: dmCodec.decode,
+      decodeMail: (envelope) => _decodeDmMail(dmCodec, envelope),
       idFactory: idFactory,
       onLog: onLog,
     );

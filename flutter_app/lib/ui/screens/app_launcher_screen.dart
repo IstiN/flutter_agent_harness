@@ -10,6 +10,7 @@ import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
@@ -33,7 +34,6 @@ import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/apps/app_launcher_controller.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
-import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
@@ -1138,6 +1138,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Widget? _buildBackButton() {
+    // Wide Apps is a root destination in the directory shell. Back-to-Chats
+    // belongs to the narrow drill-in/standalone route, not the desktop header.
+    if (widget.fullScreen) return null;
     var onBack = widget.onBack;
     if (onBack == null && Navigator.of(context).canPop()) {
       onBack = () => unawaited(Navigator.of(context).maybePop());
@@ -1169,7 +1172,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
       actions: [
-        if (compact && !_narrowSearchShown)
+        if (!_showsInlineSearch(context) && !_narrowSearchShown)
           FaIconActionButton(
             buttonKey: const ValueKey('appsNarrowSearchReveal'),
             onPressed: _onSearchReveal,
@@ -1178,6 +1181,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             glyphSize: 21,
             glass: false,
             child: const FaIcon(FaSemanticIcon.search),
+          ),
+        if (!compact &&
+            widget.networkMode != null &&
+            widget.networkSessions != null)
+          NetworkModeChip(
+            controller: widget.networkMode!,
+            manager: widget.networkSessions!,
           ),
         FaIconActionButton(
           buttonKey: const ValueKey('appsHeaderCatalog'),
@@ -1206,24 +1216,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             glyphSize: 20,
             glass: false,
             child: const FaIcon(FaSemanticIcon.folder, size: 20),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildOverviewHeader(FahColors colors) {
-    return MessengerFloatingPageHeader(
-      key: const ValueKey('appsOverviewHeader'),
-      title: context.l10n.appsGridTitle,
-      subtitle: context.l10n.appsOverviewSubtitle,
-      icon: Icons.apps_rounded,
-      onIconTap: widget.onProfile,
-      leading: _buildBackButton(),
-      actions: [
-        if (widget.networkMode != null && widget.networkSessions != null)
-          NetworkModeChip(
-            controller: widget.networkMode!,
-            manager: widget.networkSessions!,
           ),
       ],
     );
@@ -1277,8 +1269,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// it; compact shows it after the header search-icon reveal). Extracted
   /// from [_buildGridArea] for the CRAP 12 ratchet.
   bool _showsInlineSearch(BuildContext context) =>
-      !widget.fullScreen &&
-      (_narrowSearchShown ||
+      _narrowSearchShown ||
+      (!widget.fullScreen &&
           faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
               FaWindowClass.small);
 
@@ -1310,23 +1302,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: _buildNarrowSearch(),
           ),
-        if (widget.fullScreen &&
-            _tab == _LauncherTab.widgets &&
-            _searchController.text.trim().isEmpty)
-          _buildFeaturedApps(colors),
-        // Desktop keeps its tab chrome; the phone's catalog moved into
-        // the header actions (owner feedback: reclaim the scroll area).
-        if (widget.fullScreen) _buildLauncherTabs(),
-        if (widget.fullScreen)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: FaSectionEyebrow(
-              label: _tab == _LauncherTab.widgets
-                  ? context.l10n.appsMyAppsSubtitle
-                  : context.l10n.appsWidgetStoreSubtitle,
-              padding: EdgeInsets.zero,
-            ),
-          ),
         Expanded(
           child: _tab == _LauncherTab.getWidgets
               // The catalog inline (no bottom-sheet chrome) — install,
@@ -1351,128 +1326,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
     return MessengerFloatingPageScaffold(
       underlayKey: const ValueKey('appsChromeUnderlay'),
-      header: widget.fullScreen
-          ? _buildOverviewHeader(colors)
-          : _buildNarrowHeader(colors),
-      body: !widget.fullScreen && _tab == _LauncherTab.widgets
-          // The reserved Widget-Catalog icon in the apps list itself
-          // (owner feedback): floating, so it costs no fixed chrome.
-          ? _NarrowAppsBody(
-              content: content,
-              onOpenCatalog: () => _selectLauncherTab(_LauncherTab.getWidgets),
-            )
-          : content,
+      // One phone-style floating header on every form factor. Catalog,
+      // search, network and profile controls live here, not in a second
+      // desktop-only title/tab row.
+      header: _buildNarrowHeader(colors),
+      body: content,
     );
   }
-
-  Widget _buildLauncherTabs() {
-    return Padding(
-      padding: widget.fullScreen
-          ? const EdgeInsets.fromLTRB(16, 10, 16, 4)
-          : const EdgeInsets.fromLTRB(20, 0, 20, 4),
-      child: widget.fullScreen
-          ? _buildWideLauncherTabs()
-          : _buildNarrowLauncherTabs(),
-    );
-  }
-
-  Widget _buildWideLauncherTabs() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final tab in _LauncherTab.values) _buildWideLauncherTab(tab),
-          if (_unpackedPicker != null) _buildWideUnpackedChip(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNarrowLauncherTabs() {
-    return Center(
-      child: SizedBox(
-        width: 760,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final tab in _LauncherTab.values)
-                _buildNarrowLauncherTab(tab),
-              if (_unpackedPicker != null) _buildNarrowUnpackedChip(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  ValueKey<String> _launcherTabKey(_LauncherTab tab) => ValueKey(
-    tab == _LauncherTab.widgets ? 'appsTab-myApps' : 'appsTab-catalog',
-  );
-
-  IconData _launcherTabIcon(_LauncherTab tab) => tab == _LauncherTab.widgets
-      ? Icons.apps_outlined
-      : Icons.download_outlined;
-
-  String _launcherTabLabel(_LauncherTab tab) => switch (tab) {
-    _LauncherTab.widgets => context.l10n.appsMyApps,
-    _LauncherTab.getWidgets => context.l10n.appsWidgetStore,
-  };
 
   void _selectLauncherTab(_LauncherTab tab) {
     _controller.select(
       tab == _LauncherTab.widgets
           ? AppsDirectorySection.myApps
           : AppsDirectorySection.widgetStore,
-    );
-  }
-
-  Widget _buildWideLauncherTab(_LauncherTab tab) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: _OverviewChip(
-        chipKey: _launcherTabKey(tab),
-        icon: _launcherTabIcon(tab),
-        label: _launcherTabLabel(tab),
-        selected: _tab == tab,
-        onTap: () => _selectLauncherTab(tab),
-      ),
-    );
-  }
-
-  Widget _buildNarrowLauncherTab(_LauncherTab tab) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: MessengerCategoryChip(
-        chipKey: _launcherTabKey(tab),
-        icon: _launcherTabIcon(tab),
-        label: _launcherTabLabel(tab),
-        selected: _tab == tab,
-        onTap: () => _selectLauncherTab(tab),
-      ),
-    );
-  }
-
-  Widget _buildWideUnpackedChip() {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: _OverviewChip(
-        chipKey: const ValueKey('appsLoadUnpacked'),
-        icon: Icons.folder_open_outlined,
-        label: context.l10n.launcherLoadUnpacked,
-        selected: false,
-        onTap: () => unawaited(_loadUnpacked()),
-      ),
-    );
-  }
-
-  Widget _buildNarrowUnpackedChip() {
-    return MessengerCategoryChip(
-      chipKey: const ValueKey('appsLoadUnpacked'),
-      icon: Icons.folder_open_outlined,
-      label: context.l10n.launcherLoadUnpacked,
-      selected: false,
-      onTap: () => unawaited(_loadUnpacked()),
     );
   }
 
@@ -1494,73 +1360,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         : _buildDraggableGrid(colors);
     if (widget.fullScreen) return body;
     return Center(child: SizedBox(width: 760, child: body));
-  }
-
-  /// App-Store-like content-first overview. These are real installed apps:
-  /// tapping a feature uses exactly the same launch path as its grid tile.
-  Widget _buildFeaturedApps(FahColors colors) {
-    final apps = (_apps ?? const <JsAppInfo>[]).take(4).toList();
-    if (apps.isEmpty) return const SizedBox.shrink();
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    return SizedBox(
-      key: const ValueKey('appsFeatureCards'),
-      height: 158,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-        itemCount: apps.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final app = apps[index];
-          final description = app.displayDescription(locale);
-          return FaSurface(
-            key: ValueKey('appsFeatureCard-${app.id}'),
-            color: colors.panelAlt,
-            borderRadius: BorderRadius.circular(18),
-            padding: const EdgeInsets.all(16),
-            onTap: () => unawaited(_launchApp(app)),
-            child: SizedBox(
-              width: 246,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppIcon(app: app, env: widget.manager.env, size: 48),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          app.displayName(locale),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          description.isEmpty ? app.id : description,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: colors.dim,
-                            fontSize: 12,
-                            height: 1.3,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
   }
 
   /// Flat filtered grid while the search field has a query: tap opens,
@@ -1596,14 +1395,14 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 padding: EdgeInsets.fromLTRB(
                   16,
                   8 + _contentHeaderInset,
-                  16,
+                  16 + FaDuoControlRail.widthOf(context),
                   MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 220,
-                  childAspectRatio: 1.0,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
+                  maxCrossAxisExtent: 180,
+                  childAspectRatio: .9,
+                  crossAxisSpacing: 20,
+                  mainAxisSpacing: 24,
                 ),
                 itemCount: matches.length,
                 itemBuilder: (context, index) =>
@@ -1645,13 +1444,23 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          AppIcon(app: app, env: widget.manager.env, size: 32),
-          const SizedBox(height: 6),
+          AppIcon(
+            app: app,
+            env: widget.manager.env,
+            size: LauncherGridSpec.iconSize,
+            framed: true,
+          ),
+          const SizedBox(height: 8),
           Text(
             app.displayName(Localizations.localeOf(context).toLanguageTag()),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: colors.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -1677,38 +1486,59 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final crossAxisCount = _crossAxisCount(constraints.maxWidth);
-              // Keep the same compact rhythm as the surrounding lists and
-              // grids. The centered stage may leave side whitespace; it must
-              // not manufacture 44pt gutters between otherwise dense tiles.
-              const spacing = LauncherGridSpec.spacing;
+              // Duo keeps its search/catalog controls in a vertical system
+              // rail over the body. Fit and center the artwork in the usable
+              // lane, not underneath that rail (the old 56pt icons happened
+              // to fit; larger Launchpad icons exposed the missing inset).
+              final duoRailInset = FaDuoControlRail.widthOf(context);
+              final crossAxisCount = _crossAxisCount(
+                // The scroll gutters are accounted for INSIDE
+                // _crossAxisCount (single subtraction); pass the raw lane.
+                math.max(0.0, constraints.maxWidth - duoRailInset),
+              );
+              // Launchpad rhythm: large colorful artwork, a generous gutter
+              // on desktop and a tighter phone pitch. Widget spans use the
+              // exact same gaps, so their edges still align with icon blocks.
+              final spacing = widget.fullScreen
+                  ? LauncherGridSpec.desktopSpacing
+                  : LauncherGridSpec.spacing;
+              final rowSpacing = widget.fullScreen
+                  ? LauncherGridSpec.desktopRowSpacing
+                  : LauncherGridSpec.compactRowSpacing;
               final keys = _previewOrder ?? layout.topLevelKeys;
               final rects = layOutTileRects(
                 crossAxisCount: crossAxisCount,
                 spans: [for (final key in keys) _tileSpan(key, crossAxisCount)],
                 spacing: spacing,
-                mainAxisSpacing: LauncherGridSpec.spacing,
+                mainAxisSpacing: rowSpacing,
               );
-              final gridWidth =
+              final availableGridWidth =
                   crossAxisCount * LauncherGridSpec.cellCrossExtent +
                   (crossAxisCount - 1) * spacing;
+              var occupiedWidth = 0.0;
+              for (final rect in rects) {
+                occupiedWidth = math.max(occupiedWidth, rect.x + rect.w);
+              }
+              // Fill the available lane when there are enough apps, but do
+              // not left-anchor a tiny final/incomplete grid in a huge box.
+              final gridWidth = rects.isEmpty
+                  ? availableGridWidth
+                  : math.min(availableGridWidth, occupiedWidth);
               return SingleChildScrollView(
                 key: const ValueKey('appsGridScrollView'),
                 padding: EdgeInsets.fromLTRB(
                   16,
                   8 + _contentHeaderInset,
-                  16,
+                  16 + duoRailInset,
                   // Clear the floating bottom navigation just like the
                   // search-results grid; 16 hid the last row behind it.
                   MediaQuery.viewPaddingOf(context).bottom + 128,
                 ),
-                // Desktop: the grid's left edge sits on the band's 16pt
-                // inset (the audit's 130px dead flank). The phone keeps
-                // its centered iOS stage.
+                // Center only the occupied tracks. With a full app set the
+                // responsive track count fills the pane with modest, equal
+                // gutters instead of an eight-column island and giant edges.
                 child: Align(
-                  alignment: widget.fullScreen
-                      ? AlignmentDirectional.topStart
-                      : AlignmentDirectional.center,
+                  alignment: AlignmentDirectional.topCenter,
                   child: SizedBox(
                     width: gridWidth,
                     height: packedTilesHeight(rects),
@@ -1779,10 +1609,23 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
-  /// The grid column count: the layout's `grid.columns` override when set,
-  /// else the Fa 2.0 responsive 4 / 6 / 8 contract — clamped to the store's
-  /// 3..8 range and to what actually fits the available width.
+  /// The layout's explicit `grid.columns` override always wins. Otherwise
+  /// the full launcher derives its track count from the real pane width;
+  /// compact/classic hosts retain the responsive 4 / 6 / 8 store contract.
   int _crossAxisCount(double width) {
+    final spacing = widget.fullScreen
+        ? LauncherGridSpec.desktopSpacing
+        : LauncherGridSpec.spacing;
+    // The scroll view contributes 16pt gutters on both sides; reserve them
+    // here (the ONLY subtraction — callers pass the raw lane width) so the
+    // occupied tracks never overflow the pane at an exact column boundary.
+    final usableWidth = math.max(0.0, width - 32);
+    final fittedTracks =
+        ((usableWidth + spacing) / (LauncherGridSpec.cellCrossExtent + spacing))
+            .floor();
+    if (widget.fullScreen && _layout?.gridColumns == null) {
+      return fittedTracks.clamp(1, 24);
+    }
     final configured =
         _layout?.gridColumns ??
         switch (faWindowClassForWidth(width)) {
@@ -1790,11 +1633,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           FaWindowClass.medium => 6,
           FaWindowClass.large => 8,
         };
-    final fits =
-        ((width + LauncherGridSpec.spacing) /
-                (LauncherGridSpec.cellCrossExtent + LauncherGridSpec.spacing))
-            .floor()
-            .clamp(1, LauncherLayoutStore.maxGridColumns);
+    final fits = fittedTracks.clamp(1, LauncherLayoutStore.maxGridColumns);
     return configured
         .clamp(
           LauncherLayoutStore.minGridColumns,
@@ -1812,8 +1651,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       final tile = _appsById[appId]?.tileWidget;
       if (tile != null) {
         final override = _layout?.tileSizeFor(appId);
-        final w = override?.w ?? tile.widthCells;
-        final h = override?.h ?? tile.heightCells;
+        var w = override?.w ?? tile.widthCells;
+        var h = override?.h ?? tile.heightCells;
+        if (override == null) {
+          // Manifest defaults are a compact glanceable widget, never a
+          // portrait slab. Two-row widgets need at least three icon tracks
+          // for a near-square canvas; explicit user resize choices win.
+          h = h.clamp(1, 2);
+          if (h > 1 && w < 3) w = 3;
+        }
         return (w: w.clamp(1, crossAxisCount), h: h);
       }
     }
@@ -2026,7 +1872,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.text,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -.1,
+                ),
               ),
             ),
           ),
@@ -2035,47 +1886,51 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
-  Widget _tileIcon(FahColors colors, String key, {double size = 56}) {
-    final child = switch (key) {
-      LauncherLayoutStore.settingsKey => Icon(
-        Icons.settings_outlined,
-        size: size * 0.5,
-        color: colors.dim,
-      ),
-      LauncherLayoutStore.filesKey => Icon(
-        Icons.folder_outlined,
-        size: size * 0.5,
-        color: colors.dim,
-      ),
-      LauncherLayoutStore.networksKey => Icon(
-        Icons.hub_outlined,
-        size: size * 0.5,
-        color: colors.dim,
-      ),
-      _ when LauncherLayoutStore.isFolderKey(key) => _folderMiniIcons(
-        colors,
-        LauncherLayoutStore.folderIdOf(key),
-        size,
-      ),
-      _ => Center(
-        child: AppIcon(
-          app: _appsById[key.substring(4)] ?? _fallbackApp(key),
-          env: widget.manager.env,
-          size: size * 0.55,
+  Widget _tileIcon(
+    FahColors colors,
+    String key, {
+    double size = LauncherGridSpec.iconSize,
+  }) {
+    if (key.startsWith('app:')) {
+      return AppIcon(
+        app: _appsById[key.substring(4)] ?? _fallbackApp(key),
+        env: widget.manager.env,
+        size: size,
+        framed: true,
+      );
+    }
+    if (LauncherLayoutStore.isFolderKey(key)) {
+      return AppIconBadge(
+        seed: key,
+        size: size,
+        accent: const Color(0xFF64748B),
+        child: _folderMiniIcons(
+          colors,
+          LauncherLayoutStore.folderIdOf(key),
+          size,
+        ),
+      );
+    }
+    final artwork = AppIconArtwork.svgFor(key);
+    if (artwork != null) {
+      return AppIconBadge(
+        seed: key,
+        size: size,
+        accent: AppIconArtwork.accentFor(key),
+        child: SvgPicture.string(artwork, fit: BoxFit.contain),
+      );
+    }
+    return AppIconBadge(
+      seed: key,
+      size: size,
+      accent: colors.indigo,
+      child: Center(
+        child: Icon(
+          Icons.widgets_rounded,
+          size: size * .46,
+          color: AppIconPalette.foregroundFor(Theme.of(context).brightness),
         ),
       ),
-    };
-    return Container(
-      width: size,
-      height: size,
-      decoration: ShapeDecoration(
-        color: colors.panelAlt,
-        shape: RoundedSuperellipseBorder(
-          borderRadius: BorderRadius.circular(size * 0.27),
-          side: BorderSide(color: colors.border),
-        ),
-      ),
-      child: child,
     );
   }
 
@@ -2336,6 +2191,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 Flexible(
                   child: GridView.count(
                     crossAxisCount: 3,
+                    childAspectRatio:
+                        LauncherGridSpec.cellCrossExtent /
+                        LauncherGridSpec.cellMainExtent,
                     padding: EdgeInsets.zero,
                     shrinkWrap: true,
                     children: [
@@ -2386,103 +2244,3 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
 /// The launcher's content tabs: the app grid vs the widgets catalog.
 enum _LauncherTab { widgets, getWidgets }
-
-/// One desktop overview tab: a [FaSurface] capsule (the directory
-/// toolbar's 34px glass-capsule density) instead of a flat grey pill.
-final class _OverviewChip extends StatelessWidget {
-  const _OverviewChip({
-    required this.chipKey,
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Key chipKey;
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    final tokens = FaDesignTokens.of(context);
-    final foreground = selected ? colors.indigo : colors.dim;
-    return FaSurface(
-      key: chipKey,
-      color: selected ? colors.indigo.withValues(alpha: .16) : tokens.surface2,
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: SizedBox(
-        height: 34,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 15, color: foreground),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected ? colors.indigo : colors.text,
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The narrow My Apps body: the grid content plus the reserved floating
-/// Widget-Catalog icon. Its own widget so [_AppLauncherScreenState
-/// ._buildGridArea] keeps its complexity under the CRAP 12 ratchet.
-class _NarrowAppsBody extends StatelessWidget {
-  const _NarrowAppsBody({required this.content, required this.onOpenCatalog});
-
-  final Widget content;
-  final VoidCallback onOpenCatalog;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = FahColors.of(context);
-    return Stack(
-      children: [
-        content,
-        Positioned(
-          right: 16,
-          // Clear the shell's floating dock even when the nested Apps
-          // navigator zeroes the ambient bottom padding.
-          bottom:
-              16 +
-              math.max(
-                MediaQuery.paddingOf(context).bottom,
-                MessengerFloatingDockInsets.minInflatedBottom,
-              ),
-          child: FaSurface(
-            key: const ValueKey('appsCatalogFab'),
-            circular: true,
-            borderRadius: BorderRadius.circular(24),
-            color: colors.panelAlt,
-            onTap: onOpenCatalog,
-            child: SizedBox.square(
-              dimension: 44,
-              child: FaIcon(
-                FaSemanticIcon.download,
-                size: 20,
-                color: colors.teal,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}

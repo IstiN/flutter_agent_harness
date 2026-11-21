@@ -51,5 +51,11 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: goldens-macos-350
-          path: flutter_app/test/goldens/goldens/
+          path: |
+            flutter_app/test/goldens/goldens/
+            flutter_app/test/goldens/store/
+            flutter_app/fastlane/metadata/android/en-US/images/phoneScreenshots/
+            flutter_app/fastlane/metadata/android/en-US/images/tenInchScreenshots/
+            flutter_app/fastlane/metadata/android/ru-RU/images/phoneScreenshots/
+            flutter_app/fastlane/metadata/android/ru-RU/images/tenInchScreenshots/
           retention-days: 7

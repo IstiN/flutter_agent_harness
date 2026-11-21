@@ -14,10 +14,10 @@ const _svg =
     '<rect x="4" y="4" width="16" height="16" fill="#fff"/>'
     '</svg>';
 
-JsAppInfo _app(String icon) => JsAppInfo.fromManifest(
-  {'id': 'demo', 'name': 'Demo', 'icon': icon},
+JsAppInfo _app(String icon, {String id = 'demo'}) => JsAppInfo.fromManifest(
+  {'id': id, 'name': 'Demo', 'icon': icon},
   bundled: false,
-  fallbackId: 'demo',
+  fallbackId: id,
 );
 
 void main() {
@@ -66,5 +66,110 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('📦'), findsOneWidget);
+  });
+
+  testWidgets('framed icon uses a colorful continuous-corner badge', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: AppIcon(app: _app(_svg), env: env, size: 76, framed: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final badge = tester.widget<AppIconBadge>(find.byType(AppIconBadge));
+    expect(badge.size, 76);
+    final container = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byType(AppIconBadge),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final decoration = container.decoration! as ShapeDecoration;
+    expect(decoration.gradient, isA<LinearGradient>());
+    expect(decoration.shape, isA<RoundedSuperellipseBorder>());
+  });
+
+  testWidgets('curated catalog artwork replaces placeholder SVG by app id', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: AppIcon(
+            app: _app('icon.svg', id: 'contacts'),
+            env: env,
+            size: 64,
+            framed: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SvgPicture), findsOneWidget);
+    expect(find.text('📦'), findsNothing);
+    // No asynchronous manifest-file read is needed for curated artwork.
+    expect(AppIconArtwork.svgFor('contacts'), contains('id="paper"'));
+  });
+
+  test('curated vector family shares a keyline and preserves good assets', () {
+    const curated = [
+      'system:settings',
+      'contacts',
+      'reminders',
+      'adaptive-dashboard',
+      'm3-showcase',
+      '3d-viewer',
+      '3d-game',
+      'neon-breakout-3d',
+      'voxel-sandbox',
+    ];
+    for (final id in curated) {
+      expect(AppIconArtwork.svgFor(id), contains('viewBox="0 0 64 64"'));
+      expect(AppIconArtwork.accentFor(id), isNotNull);
+    }
+    // Owner-approved manifest assets keep loading from the app directory.
+    expect(AppIconArtwork.svgFor('2048'), isNull);
+    expect(AppIconArtwork.svgFor('fa-craft'), isNull);
+  });
+
+  test('gradients are desaturated and keep adaptive foreground contrast', () {
+    for (final brightness in Brightness.values) {
+      final colors = AppIconPalette.gradientFor(
+        const Color(0xFFEC4899),
+        brightness,
+      );
+      for (final color in colors) {
+        expect(HSLColor.fromColor(color).saturation, lessThanOrEqualTo(.40));
+      }
+      final foreground = AppIconPalette.foregroundFor(brightness);
+      final a = foreground.computeLuminance();
+      final b = colors[1].computeLuminance();
+      final contrast =
+          (a > b ? a + .05 : b + .05) / (a > b ? b + .05 : a + .05);
+      expect(contrast, greaterThanOrEqualTo(4.5));
+    }
+  });
+
+  test('artwork accent wins and fallback accents are stable', () {
+    // Neutral white glyph paths do not masquerade as the app accent.
+    expect(
+      AppIconPalette.accentFor('demo', _svg),
+      AppIconPalette.accentFor('demo'),
+    );
+    expect(
+      AppIconPalette.accentFor('demo', '<svg fill="#0ea5e9"/>'),
+      const Color(0xFF0EA5E9),
+    );
+    expect(
+      AppIconPalette.accentFor('repeatable'),
+      AppIconPalette.accentFor('repeatable'),
+    );
   });
 }

@@ -57,6 +57,53 @@ void main() {
     );
   });
 
+  testWidgets('outbound delivery states render subtly inside the user bubble', (
+    tester,
+  ) async {
+    Future<void> pump(FaChatDeliveryStatus? status) => tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(
+            role: 'user',
+            content: 'сделал',
+            deliveryStatus: status,
+          ),
+          images: images(),
+        ),
+      ),
+    );
+
+    await pump(null);
+    expect(find.byType(Icon), findsNothing);
+
+    await pump(FaChatDeliveryStatus.queued);
+    final queued = find.byKey(const ValueKey('chatDelivery-queued'));
+    expect(queued, findsOneWidget);
+    expect(tester.widget<Icon>(queued).icon, Icons.schedule);
+    expect(tester.widget<Icon>(queued).size, 12);
+
+    await pump(FaChatDeliveryStatus.accepted);
+    final accepted = find.byKey(const ValueKey('chatDelivery-accepted'));
+    expect(accepted, findsOneWidget);
+    expect(tester.widget<Icon>(accepted).icon, Icons.done_all);
+    expect(tester.widget<Icon>(accepted).size, 14);
+    final bubble = find.byWidgetPredicate(
+      (widget) =>
+          widget is Container &&
+          widget.padding ==
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    );
+    expect(find.ancestor(of: accepted, matching: bubble), findsOneWidget);
+    expect(
+      tester.getBottomRight(accepted).dx,
+      lessThanOrEqualTo(tester.getBottomRight(bubble).dx),
+    );
+    expect(
+      tester.getBottomRight(accepted).dy,
+      lessThanOrEqualTo(tester.getBottomRight(bubble).dy),
+    );
+  });
+
   testWidgets('assistant bubble shows the avatarBuilder widget', (
     tester,
   ) async {

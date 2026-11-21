@@ -18,11 +18,15 @@ NetworkSession _buildDecodingSession({
   required FakeWsConnector connector,
   required KeyWallet wallet,
   required Future<ChannelMessage> Function(Envelope envelope) decoder,
+  String? jwtToken,
+  Future<String?> Function()? freshAccountToken,
+  Future<String?> Function()? refreshAccountToken,
 }) {
   final client = FaNetworkClient(
     baseUrl: testBase,
     httpClient: httpClient,
     sessionToken: 'st-1',
+    jwtToken: jwtToken,
   );
   final ws = FaNetworkWs(
     baseUrl: testBase,
@@ -40,6 +44,8 @@ NetworkSession _buildDecodingSession({
     ws: ws,
     wallet: wallet,
     envelopeDecoder: decoder,
+    freshAccountToken: freshAccountToken,
+    refreshAccountToken: refreshAccountToken,
   );
 }
 
@@ -384,6 +390,117 @@ void main() {
         ]);
         expect(state.messages.last.replyTo, 'original-1');
         expect(state.nextCursor, isNull);
+      },
+    );
+
+    test('DM history 401 forces a token refresh and retries once', () async {
+      const channelId = 'dm:user:user-1:fa@dev-1';
+      final httpClient = FakeHttpClient()
+        ..respond(
+          401,
+          body:
+              '{"error":{"code":"unauthorized",'
+              '"message":"invalid token"}}',
+        )
+        ..respond(200, body: '{"items":[],"nextCursor":""}');
+      final tokenCalls = <String>[];
+      final session = _buildDecodingSession(
+        httpClient: httpClient,
+        connector: FakeWsConnector(),
+        wallet: await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        ),
+        decoder: (envelope) async => _decodedMessage(envelope),
+        jwtToken: 'stale-jwt',
+        freshAccountToken: () async {
+          tokenCalls.add('fresh');
+          return 'stale-jwt';
+        },
+        refreshAccountToken: () async {
+          tokenCalls.add('refresh');
+          return 'new-jwt';
+        },
+      );
+      addTearDown(session.close);
+
+      await session.openChannel(channelId);
+
+      expect(tokenCalls, ['fresh', 'refresh']);
+      expect(httpClient.requests, hasLength(2));
+      expect(
+        httpClient.requests.map((request) => request.headers['authorization']),
+        ['Bearer stale-jwt', 'Bearer new-jwt'],
+      );
+      expect(session.channelStates[channelId]?.historyResolved, isTrue);
+      expect(session.channelStates[channelId]?.loadError, isNull);
+    });
+
+    test(
+      'DM history unknown cursor resets pagination and refetches newest',
+      () async {
+        const channelId = 'dm:user:user-1:fa@dev-1';
+        final httpClient = FakeHttpClient()
+          ..respond(
+            404,
+            body:
+                '{"error":{"code":"not_found",'
+                '"message":"unknown cursor"}}',
+          )
+          ..respond(
+            200,
+            body: jsonEncode({
+              'items': [
+                {
+                  'id': 'newest',
+                  'channelId': channelId,
+                  'senderId': 'peer-1',
+                  'payload': 'opaque',
+                },
+              ],
+              'nextCursor': '',
+            }),
+          );
+        final session = _buildDecodingSession(
+          httpClient: httpClient,
+          connector: FakeWsConnector(),
+          wallet: await walletWithChannel(
+            channelPub: channelKeys.pub,
+            channelPriv: channelKeys.priv,
+          ),
+          decoder: (envelope) async => _decodedMessage(envelope),
+        );
+        addTearDown(session.close);
+        final state = session.channelStates.putIfAbsent(
+          channelId,
+          ChannelState.new,
+        );
+        state.historyResolved = true;
+        state.nextCursor = 'retired-cursor';
+        state.add(
+          const ChannelMessage(
+            envelopeId: 'old',
+            senderId: 'peer-1',
+            senderPub: '',
+            text: 'old',
+            isOwn: false,
+          ),
+        );
+
+        await session.loadOlder(channelId);
+
+        expect(httpClient.requests, hasLength(2));
+        expect(
+          httpClient.requests[0].url.queryParameters['cursor'],
+          'retired-cursor',
+        );
+        expect(
+          httpClient.requests[1].url.queryParameters.containsKey('cursor'),
+          isFalse,
+        );
+        expect(state.nextCursor, isNull);
+        expect(state.messages.map((message) => message.envelopeId), ['newest']);
+        expect(state.loadError, isNull);
       },
     );
 

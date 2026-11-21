@@ -68,9 +68,9 @@ Message _projectDisplayMessage(
 
   switch (chat.role) {
     case 'user':
-      // User messages with attachments render through the shared
-      // ChatMessageTile (thumbnails/chips inside the bubble).
-      if (chat.attachments.isNotEmpty) {
+      // Attachments and delivery metadata render through the shared
+      // ChatMessageTile inside the bubble; plain text keeps the stock row.
+      if (chat.attachments.isNotEmpty || chat.deliveryStatus != null) {
         return Message.custom(
           id: id,
           authorId: 'user',
@@ -79,6 +79,7 @@ Message _projectDisplayMessage(
             'role': 'user',
             'content': chat.content,
             'attachments': chat.attachments,
+            'deliveryStatus': chat.deliveryStatus,
           },
         );
       }
