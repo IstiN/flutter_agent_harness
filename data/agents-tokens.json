@@ -167,6 +167,17 @@
       "requests": 129,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-21T08:47:13Z",
+      "prompt": 2827474,
+      "completion": 154949,
+      "total": 2982423,
+      "cacheRead": 216554240,
+      "requests": 1630,
+      "source": "",
+      "model": "kimi-for-coding"
     }
   ],
   "pr-2361": [
