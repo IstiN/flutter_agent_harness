@@ -130,6 +130,10 @@ void main() {
         layer: ProviderQueueScope.project,
         projectDir: projectDir,
         homeDir: temp.path,
+        // A CI/dev shell may export FA_PROVIDERS_QUEUE for the agent
+        // itself; the write and the read-back must not see it (issue
+        // #675: no process-env read in tests).
+        environment: const {},
       );
       expect(path, '$projectDir/.fah/config.yaml');
       expect(io.File(path).existsSync(), isTrue);
@@ -137,6 +141,7 @@ void main() {
       final resolution = resolveAppProviderQueue(
         projectDir: projectDir,
         homeDir: temp.path,
+        environment: const {},
       );
       expect(resolution.scope, ProviderQueueScope.project);
       expect(resolution.entries.single.model, 'gpt-5');
@@ -148,11 +153,13 @@ void main() {
         [_entry('gpt-5')],
         layer: ProviderQueueScope.project,
         projectDir: projectDir,
+        environment: const {},
       );
       await writeAppProviderQueue(
         [_entry('claude')],
         layer: ProviderQueueScope.project,
         projectDir: projectDir,
+        environment: const {},
       );
       final body = io.File('$projectDir/.fah/config.yaml').readAsStringSync();
       expect('providersQueue'.allMatches(body), hasLength(1));

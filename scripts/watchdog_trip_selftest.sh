@@ -20,6 +20,13 @@
 #     134588877581/134566192421 → trip,
 #   AC2  the classic kill mode: job `failure`, a cut `cancelled` step,
 #     no failed step → trip,
+#   AC3  the gh-2358 runner-death kill mode: the box (fa-m5-1, v1.0.759
+#     tag run 44868070949, job 136736814346) lost communication ~11 min
+#     into `flutter build ios (debug, unsigned)`; the JOB concluded
+#     `failure` and the mid-flight step — with every trailing step —
+#     froze at conclusion `null` (never reported). One trip decision,
+#     two kill shapes: the mid-flight cut is `cancelled` (GitHub
+#     concluded the cancel) or `null` (nothing ever concluded).
 #   FC1  a REAL test failure never trips — in either landing shape: the
 #     failed step LAST, or the failed step TRAILED by the `if: always()`
 #     evidence steps (`success`) that every red pty shard actually
@@ -30,6 +37,9 @@
 #   FC3  a malformed body fails SAFE to trip=false with a warning (a
 #     broken pre-check must degrade to no retrigger, never to a
 #     spurious dispatch loop),
+#   FC4  the runner died AFTER a real test failure — the red step
+#     concluded `failure` and only the trailing steps froze at `null`:
+#     a genuine red must never trip, regardless of the frozen tail.
 #   RG   the output contract: exactly ONE `trip=<bool>` line, no
 #     diagnostic masquerading as `trip=`, GITHUB_OUTPUT lands exactly
 #     one line, multiple matches still produce a single line, and the
@@ -68,12 +78,16 @@ trip_count() { # trip_count <output> — number of trip= lines
 json_for() { # json_for <conclusion> <shape: kill|failure|success>
   # kill:    the REAL gh-2290 shape — the mid-flight dart test step
   #          cancelled, the trailing if:always() evidence steps skipped.
+  # death:   the REAL gh-2358 runner-death shape — the mid-flight
+  #          flutter build ios step and everything after it froze at
+  #          conclusion null (the runner never reported anything again).
   # failure: a real test failure — the dart test step FAILED, the
   #          evidence steps still trail with success (the last step is
   #          NOT the failed one in these shards).
   # success: a clean job.
   case "$2" in
     kill)    steps='[{"name": "dart test", "conclusion": "cancelled"}, {"name": "junit durations", "conclusion": "skipped"}, {"name": "upload artifact", "conclusion": "skipped"}, {"name": "Post cache", "conclusion": "skipped"}]' ;;
+    death)   steps='[{"name": "flutter build ios (debug, unsigned)", "conclusion": null}, {"name": "Post Run ./.github/actions/flutter-pub-get", "conclusion": null}, {"name": "Post Cache CocoaPods (iOS)", "conclusion": null}]' ;;
     failure) steps='[{"name": "dart test", "conclusion": "failure"}, {"name": "junit durations", "conclusion": "success"}]' ;;
     *)       steps='[{"name": "run", "conclusion": "success"}]' ;;
   esac
@@ -95,6 +109,21 @@ out="$(fixture ac2 "$(json_for failure kill)")"
 [ "$(trip_line "$out")" = "trip=true" ]
 check "AC2 failure job with a cancelled step and no failed step trips" $?
 
+# AC3 — the gh-2358 runner-death kill mode (the REAL shape: fa-m5-1
+# lost communication ~11 min into the flutter build ios step of tag
+# run 44868070949, job 136736814346; the JOB concluded failure and the
+# mid-flight step — with every trailing step — froze at null).
+out="$(fixture ac3 "$(json_for failure death)")"
+[ "$(trip_line "$out")" = "trip=true" ]
+check "AC3 failure job with an UNCONCLUDED (null) mid-flight step trips (gh-2358 runner death)" $?
+
+# AC3b — the same runner death under the cancelled conclusion (a
+# run-level cancel racing the lost heartbeat): still a mid-flight cut,
+# still no failed step.
+out="$(fixture ac3b "$(json_for cancelled death)")"
+[ "$(trip_line "$out")" = "trip=true" ]
+check "AC3b cancelled job with an unconcluded (null) mid-flight step trips" $?
+
 # FC1 — a real test failure must NOT retrigger (both landing shapes).
 out="$(fixture fc1a '{"jobs": [{"name": "Core tests (shard 0/4)", "conclusion": "failure", "steps": [{"name": "dart test", "conclusion": "failure"}, {"name": "junit", "conclusion": "success"}]}]}')"
 [ "$(trip_line "$out")" = "trip=false" ]
@@ -103,6 +132,15 @@ check "FC1a real test failure (failed step, trailing evidence) does NOT trip" $?
 out="$(fixture fc1b '{"jobs": [{"name": "Core tests (shard 3/4)", "conclusion": "failure", "steps": [{"name": "setup", "conclusion": "success"}, {"name": "dart test", "conclusion": "failure"}]}]}')"
 [ "$(trip_line "$out")" = "trip=false" ]
 check "FC1b real test failure (failed LAST step) does NOT trip" $?
+
+# FC4 — the runner died AFTER a real test failure: the red step
+# concluded `failure`, then the box vanished before the trailing
+# always() evidence steps reported — they froze at null. A genuine red
+# must never trip regardless of the frozen tail (a fresh runner
+# allocation cannot fix a defect).
+out="$(fixture fc4 '{"jobs": [{"name": "Core tests (shard 1/4)", "conclusion": "failure", "steps": [{"name": "dart test", "conclusion": "failure"}, {"name": "junit durations", "conclusion": null}, {"name": "Post cache", "conclusion": null}]}]}')"
+[ "$(trip_line "$out")" = "trip=false" ]
+check "FC4 failed step + frozen trailing steps (death after a real red) does NOT trip" $?
 
 # FC2 — clean, skipped, never-started, empty.
 out="$(fixture fc2a '{"jobs": [{"name": "Static gates", "conclusion": "success", "steps": [{"name": "analyze", "conclusion": "success"}]}]}')"
