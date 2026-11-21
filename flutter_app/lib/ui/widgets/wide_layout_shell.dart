@@ -2515,13 +2515,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     AppAnalytics.instance.filesOpened('sidebar');
     if (!mounted) return;
     final service = widget.manager.active?.service;
-    // Without an active service we still have an env (post-onboarding
-    // empty manager creates one for the home screen), so the file
-    // browser renders against the sandbox cwd. A recent-folder chip
-    // opens that folder's own env (owner call).
-    final env = recentFolder != null
-        ? await createFolderEnv(recentFolder)
-        : (service?.env ?? await _resolveHomeEnv());
+    final env = await _resolveFilesEnv(recentFolder);
     if (!mounted) return;
     // Phones always get the FULL-SCREEN Files page (owner call), even
     // in landscape/wide windows where _isNarrow is false — EXCEPT Duo,
@@ -2573,6 +2567,20 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       );
     });
     _presentSurface();
+  }
+
+  /// Without an active service we still have an env (post-onboarding
+  /// empty manager creates one for the home screen), so the file browser
+  /// renders against the sandbox cwd. A recent-folder chip opens that
+  /// folder's own env (owner call). Kept separate from [_openFiles] so the
+  /// presentation branches remain below the CRAP ratchet.
+  Future<ExecutionEnv> _resolveFilesEnv(String? recentFolder) {
+    final service = widget.manager.active?.service;
+    return recentFolder != null
+        ? createFolderEnv(recentFolder)
+        : (service?.env != null
+              ? Future<ExecutionEnv>.value(service!.env)
+              : _resolveHomeEnv());
   }
 
   /// Cached env for routes that need a sandbox root but not an active

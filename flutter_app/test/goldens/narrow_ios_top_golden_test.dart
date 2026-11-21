@@ -270,7 +270,7 @@ void main() {
   );
 
   testWidgets(
-    'narrow_ios_top_trajectory: trajectory header flush with chat header',
+    'narrow_ios_top_trajectory: single trajectory chrome replaces chat header',
     (tester) async {
       await seedIphone(tester);
       final env = MemoryExecutionEnv(cwd: '/work/fa_network');
@@ -314,15 +314,15 @@ void main() {
       await tester.tap(find.byIcon(Icons.timeline));
       await tester.pumpAndSettle();
 
-      // The trajectory page starts at the chat header's bottom edge — not
-      // another status bar lower (the old double SafeArea, 162 + 59) — and
-      // its bar shares the chat header's canonical height (the old header
-      // stacked stats + search + filters into a 210pt block).
+      // Owner: ONE chrome on the narrow trajectory page. The chat floating
+      // header is gone; the trajectory bar clears the status bar itself,
+      // with the same canonical height as the chat bar it replaced.
+      expect(find.byKey(const ValueKey('faChatFloatingHeader')), findsNothing);
       final trajectoryHeader = _globalRect(find.byType(TrajectoryHeader));
       expect(
         trajectoryHeader.top,
-        chatHeader.bottom,
-        reason: 'no second top inset between the chat chrome and trajectory',
+        _iPhoneTopInset,
+        reason: 'the only trajectory chrome clears the status bar once',
       );
       expect(
         trajectoryHeader.height,
@@ -370,15 +370,13 @@ void main() {
       service.messages.add(
         FahChatMessage(role: 'user', content: 'Hello from the bar golden.'),
       );
-      final manager = FlutterSessionManager(
-        env: env,
-        sessionsRoot: '/sessions',
-      )..addSession(
-        'design-session',
-        service,
-        createdAt: DateTime.utc(2020, 1, 2, 15, 4),
-        lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
-      );
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(
+          'design-session',
+          service,
+          createdAt: DateTime.utc(2020, 1, 2, 15, 4),
+          lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
+        );
       manager.switchTo('design-session');
       await pumpGolden(
         tester,
@@ -401,7 +399,11 @@ void main() {
       final avatar = _globalRect(
         find.byKey(const ValueKey('faChatHeaderAvatar')),
       );
-      expect(avatar.top, 76, reason: '59 status bar + 6 header + 11 icon inset');
+      expect(
+        avatar.top,
+        76,
+        reason: '59 status bar + 6 header + 11 icon inset',
+      );
       final pill = _globalRect(
         find.byKey(const ValueKey('faChatHeaderTitlePill')),
       );
@@ -432,7 +434,11 @@ void main() {
       );
       expectCanonicalBar(appsBar, 'Apps header');
       final icon = _globalRect(find.byKey(const ValueKey('messengerPageIcon')));
-      expect(icon.top, 76, reason: 'same leading-circle row as the chat avatar');
+      expect(
+        icon.top,
+        76,
+        reason: 'same leading-circle row as the chat avatar',
+      );
       final pill = _globalRect(
         find.byKey(const ValueKey('messengerPageTitlePill')),
       );
@@ -446,7 +452,7 @@ void main() {
     });
 
     testWidgets(
-      'narrow_header_heights_trajectory: pane bar equals the chat bar LIVE',
+      'narrow_header_heights_trajectory: single pane bar equals the chat bar LIVE',
       (tester) async {
         await seedIphone(tester);
         final env = MemoryExecutionEnv(cwd: '/work/fa_network');
@@ -454,15 +460,14 @@ void main() {
         service.messages.add(
           FahChatMessage(role: 'user', content: 'Hello from the bar golden.'),
         );
-        final manager = FlutterSessionManager(
-          env: env,
-          sessionsRoot: '/sessions',
-        )..addSession(
-          'design-session',
-          service,
-          createdAt: DateTime.utc(2020, 1, 2, 15, 4),
-          lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
-        );
+        final manager =
+            FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+              ..addSession(
+                'design-session',
+                service,
+                createdAt: DateTime.utc(2020, 1, 2, 15, 4),
+                lastUpdatedAt: DateTime.utc(2020, 1, 2, 15, 4),
+              );
         manager.switchTo('design-session');
         await pumpGolden(
           tester,
@@ -484,11 +489,15 @@ void main() {
         await tester.tap(find.byIcon(Icons.timeline));
         await tester.pumpAndSettle();
 
+        expect(
+          find.byKey(const ValueKey('faChatFloatingHeader')),
+          findsNothing,
+        );
         final trajectoryBar = _globalRect(find.byType(TrajectoryHeader));
         expect(
           trajectoryBar.top,
-          chatBar.bottom,
-          reason: 'the pane bar is flush with the chat header above it',
+          _iPhoneTopInset,
+          reason: 'the pane bar replaces the chat header at the same inset',
         );
         expect(
           trajectoryBar.height,
@@ -517,7 +526,9 @@ void main() {
       (tester) async {
         await seedIphone(tester);
         final manager = await pumpShell(tester);
-        await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+        await tester.tap(
+          find.byKey(const ValueKey('messengerPrimaryNav-apps')),
+        );
         await tester.pumpAndSettle();
         await manager.env.writeFile(
           'apps/demo/manifest.json',
