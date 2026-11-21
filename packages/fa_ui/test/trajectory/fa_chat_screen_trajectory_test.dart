@@ -130,8 +130,16 @@ void main() {
     expect(find.byType(BottomSheet), findsNothing);
     expect(find.byType(Dialog), findsNothing);
 
-    // Back to chat: the page goes away, the transcript stays.
-    await tester.tap(find.byTooltip('Chat'));
+    // Owner: NO stacked chat header above the trajectory page — the
+    // switch-back toggle is gone while the trajectory is visible; the
+    // trajectory's own close affordance returns to the transcript.
+    expect(find.byTooltip('Chat'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(TrajectoryHeader),
+        matching: find.byIcon(Icons.close),
+      ),
+    );
     await tester.pump();
     expect(find.byType(TrajectoryScreen), findsNothing);
     await flushTimers(tester);
@@ -206,7 +214,12 @@ void main() {
     await dismissSheet(tester);
 
     // Chat and back: the query survives too.
-    await tester.tap(find.byTooltip('Chat'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(TrajectoryHeader),
+        matching: find.byIcon(Icons.close),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.byTooltip('Trajectory'));
     await tester.pump();
@@ -251,7 +264,12 @@ void main() {
     expect(offsetBefore, greaterThan(0));
 
     // Chat and back: everything survives the swap.
-    await tester.tap(find.byTooltip('Chat'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(TrajectoryHeader),
+        matching: find.byIcon(Icons.close),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.byTooltip('Trajectory'));
     await tester.pump();

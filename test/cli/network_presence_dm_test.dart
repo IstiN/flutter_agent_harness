@@ -300,7 +300,10 @@ void main() {
       await headless.startSession(
         CliNetworkSession(
           sessionId: 'session-other',
-          mailboxPrefix: session.mailboxPrefix,
+          // Production: the woken session publishes its OWN prefix, so the
+          // redelivered original (addressed to the earlier alias) must be
+          // accepted via the authenticated matching sessionId alone.
+          mailboxPrefix: 'session-other',
           dmSink: (dm) async {
             headlessDelivered.add(dm);
             await headless.sendNetworkDmReply(

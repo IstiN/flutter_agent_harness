@@ -172,6 +172,57 @@ void main() {
     expect(store.loads, greaterThanOrEqualTo(2));
   });
 
+  test(
+    'unlisted named live session still publishes its friendly title/cwd',
+    () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      // The persisted catalog has NO row for the live session (fresh start,
+      // stale rediscovery) — the old code projected a bare UUID-only row.
+      final store = _FakeCatalogStore([_row('session-old')]);
+      final requests = <http.Request>[];
+      final controller = NetworkPresenceController(
+        device: device,
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket',
+        transport: server.transport,
+        rosterClient: DeviceEnrollmentClient(
+          httpClient: MockClient((request) async {
+            requests.add(request);
+            return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+          }),
+        ),
+        rosterDebounce: const Duration(milliseconds: 5),
+        catalogStore: store,
+        catalogPollInterval: Duration.zero,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.startSession(
+        const CliNetworkSession(
+          sessionId: 'session-live',
+          mailboxPrefix: 'mailbox-1',
+          displayName: 'mymac work',
+          cwd: '/work/live',
+        ),
+      );
+
+      await _waitUntil(
+        () => requests
+            .expand((request) => _sessions(request))
+            .any((row) => row['id'] == 'session-live'),
+      );
+      final published = {
+        for (final row in requests.expand((request) => _sessions(request)))
+          row['id']: row,
+      };
+      expect(published['session-live']?['title'], 'mymac work');
+      expect(published['session-live']?['path'], '/work/live');
+      // Catalog rows keep their own metadata — no overlay clobbering.
+      expect(published['session-old']?['title'], 'Session session-old');
+    },
+  );
+
   test('full connect retracts active and orphaned subagent sessions', () async {
     final server = FakeDeviceServer()
       ..seedDevice(device.deviceId, networks: const ['personal-1']);

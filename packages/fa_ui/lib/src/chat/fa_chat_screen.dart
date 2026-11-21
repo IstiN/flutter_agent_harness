@@ -2199,7 +2199,9 @@ class _FaChatScreenState extends State<FaChatScreen>
                 fit: StackFit.expand,
                 children: [
                   Positioned.fill(child: body),
-                  if (widget.showAppBar)
+                  // Narrow trajectory owns the whole chrome — the chat's
+                  // floating header must not stack above it (owner).
+                  if (widget.showAppBar && !(!isWide && _showTrajectory))
                     Positioned(
                       top: 0,
                       left: 0,
@@ -2208,7 +2210,9 @@ class _FaChatScreenState extends State<FaChatScreen>
                       right: slotMounted ? filesPanelWidth * reveal : 0,
                       child: _buildFloatingGlassHeader(isWide, headerActions),
                     ),
-                  if (widget.showAppBar && FaDuoControlRail.isActive(context))
+                  if (widget.showAppBar &&
+                      !(!isWide && _showTrajectory) &&
+                      FaDuoControlRail.isActive(context))
                     _buildDuoFloatingRail(
                       headerActions,
                       slotMounted ? filesPanelWidth * reveal : 0,
@@ -2347,7 +2351,12 @@ class _FaChatScreenState extends State<FaChatScreen>
           _buildChatBody(context),
           Padding(
             padding: EdgeInsets.only(
-              top: widget.showAppBar ? _glassHeaderExtent : 0,
+              // While the trajectory page is visible the chat's floating
+              // header is GONE (owner: stacked duplicate headers) — its
+              // extent must not reserve space either.
+              top: widget.showAppBar && !_showTrajectory
+                  ? _glassHeaderExtent
+                  : 0,
             ),
             // The measured glass header extent INCLUDES the SafeArea the
             // floating header consumed. TrajectoryScreen's own Scaffold
@@ -2359,7 +2368,8 @@ class _FaChatScreenState extends State<FaChatScreen>
             // traffic lights. The pushed standalone route keeps both.
             child: MediaQuery.removePadding(
               context: context,
-              removeTop: true,
+              // Header hidden → the trajectory's OWN SafeArea applies.
+              removeTop: !_showTrajectory,
               child: TrajectoryScreen(
                 controller: _trajectory,
                 loaded: _trajectoryLoaded,

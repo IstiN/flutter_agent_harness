@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- CLI: network DM acceptance notices + session display names in presence.
+- fa_ui: chat message spacing; narrow trajectory drops the stacked chat
+  header (single chrome, close returns to the transcript).
+- App: curated launchpad icons (fa_widgets mirror bumped too), Files
+  recent-folder chips replacing the Mount button, iCloud action hidden
+  unless the container is configured, full-page Files on phones, Files
+  tile restored on all hosts, non-sandbox direct folder access with the
+  allow-access picker opening AT the session folder, absolute-path
+  listing fix, iOS resolved-path remount (restores sessions after the
+  AppGroup container moved), Apps sidebar search removed (launcher
+  overlay search owns it), reconnecting network banner.
+
 - fix(gh-2359): duplicate-fix prevention guard for the machine loop —
   nothing marked an issue as "fix in flight", so the machine loop
   (ai/gh-<n>) and humans wrote the same fix in parallel (PR #2339 machine
