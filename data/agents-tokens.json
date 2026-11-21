@@ -168,5 +168,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2361": [
+    {
+      "leg": "review",
+      "at": "2026-11-21T06:51:07Z",
+      "prompt": 41575,
+      "completion": 11362,
+      "total": 52937,
+      "cacheRead": 796928,
+      "requests": 21,
+      "source": "reported",
+      "model": "kimi-for-coding"
+    }
   ]
 }
