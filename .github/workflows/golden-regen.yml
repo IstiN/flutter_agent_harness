@@ -54,4 +54,8 @@ jobs:
           path: |
             flutter_app/test/goldens/goldens/
             flutter_app/test/goldens/store/
+            flutter_app/fastlane/metadata/android/en-US/images/phoneScreenshots/
+            flutter_app/fastlane/metadata/android/en-US/images/tenInchScreenshots/
+            flutter_app/fastlane/metadata/android/ru-RU/images/phoneScreenshots/
+            flutter_app/fastlane/metadata/android/ru-RU/images/tenInchScreenshots/
           retention-days: 7
