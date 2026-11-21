@@ -632,7 +632,31 @@ case "\$cmd" in
     fi
     ;;
   issue)
-    if [ "\$2" = "list" ]; then cat "\$GH_STUB_DIR/issues.tsv" 2>/dev/null || true; exit 0; fi
+    if [ "\$2" = "list" ]; then
+      # gh-2359: the run-id join query (--json number,body --jq ... --arg
+      # run_url ...) is served from issues-body.json through the real jq.
+      if printf '%s' "\$*" | grep -q 'number,body'; then
+        jqf="."; argn=""; argv=""
+        while [ \$# -gt 0 ]; do
+          case "\$1" in
+            --jq) jqf="\$2"; shift 2 ;;
+            --arg) argn="\$2"; argv="\$3"; shift 3 ;;
+            *) shift ;;
+          esac
+        done
+        if [ -s "\$GH_STUB_DIR/issues-body.json" ]; then
+          if [ -n "\$argn" ]; then
+            jq -r --arg "\$argn" "\$argv" "\$jqf" "\$GH_STUB_DIR/issues-body.json"
+          else
+            jq -r "\$jqf" "\$GH_STUB_DIR/issues-body.json"
+          fi
+        else
+          echo '[]' | jq -r "\$jqf"
+        fi
+        exit 0
+      fi
+      cat "\$GH_STUB_DIR/issues.tsv" 2>/dev/null || true; exit 0
+    fi
     want_url=""
     [ "\$2" = "create" ] && want_url=1
     while [ \$# -gt 0 ]; do

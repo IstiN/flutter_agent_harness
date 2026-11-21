@@ -13,6 +13,30 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2359): duplicate-fix prevention guard for the machine loop —
+  nothing marked an issue as "fix in flight", so the machine loop
+  (ai/gh-<n>) and humans wrote the same fix in parallel (PR #2339 machine
+  vs #2340 human, same 125k release-body root, #2340 closed superseded),
+  and auto-filed issues from one daily run (#2336/#2337, run 44680178688)
+  were not cross-linked though they shared a root. Fixes: (AC1) a new
+  fix-in-flight.yml pull_request hook stamps the linked issue with the
+  `fix-in-flight` label + a comment naming PR+branch the moment a fix PR
+  opens (any author — human or machine), and clears it when the PR closes
+  (merged or not); linkage = the ai/gh-<n> branch convention and/or the
+  Fixes/Closes/Resolves #n body keyword. (AC2) the ai-teammate gate's
+  fresh-dev handoff runs scripts/teammate_picker.sh: an issue with an
+  OPEN referencing PR is skipped (empty leg) — fail-closed on lookup
+  errors. (AC3) both auto-filers (daily_publish_report.sh + the
+  sweep_stale_drafts.sh sweep issue) join by run-id at file time: an open
+  issue already carrying this run's URL gets a "same run as #X — roots
+  may be shared" cross-link comment on the fresh filing. (AC4) the
+  signature-dedupe (same signature, new run → comment on the open
+  root-cause issue) is unchanged and pinned.
+  Pinned by `test/machine_kit/teammate_picker_test.dart`,
+  `test/machine_kit/fix_in_flight_marker_test.dart`, the gh-2359 groups in
+  `test/daily_publish_report_signal_test.dart`, and the gh-2359 AC3 sweep
+  tests in `test/release_hygiene_test.dart`.
+
 - fix(gh-2337): the daily-publish cli leg's release draft create no longer
   fails silently on an oversized notes body, and the mac size floors match
   the v1.0.756 shape. The curated `## Unreleased` body (131k bytes)

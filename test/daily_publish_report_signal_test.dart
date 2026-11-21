@@ -272,17 +272,22 @@ case "$cmd" in
     sub="$1"; shift || true
     case "$sub" in
       list)
-        jqf="."
+        jqf="."; argn=""; argv=""
         while [ $# -gt 0 ]; do
           case "$1" in
             --jq) jqf="$2"; shift 2 ;;
+            # gh-2359: the run-id join query passes --arg run_url —
+            # forwarded to the real jq so the filter can reference it.
+            --arg) argn="$2"; argv="$3"; shift 3 ;;
             --repo|--state|--label|--limit) shift 2 ;;
             --json) shift 2 ;;
             *) shift ;;
           esac
         done
         f="$GH_STUB_DIR/issues.json"
-        if [ -f "$f" ]; then jq -r "$jqf" "$f"; else echo '[]' | jq -r "$jqf"; fi
+        if [ -f "$f" ]; then
+          if [ -n "$argn" ]; then jq -r --arg "$argn" "$argv" "$jqf" "$f"; else jq -r "$jqf" "$f"; fi
+        else echo '[]' | jq -r "$jqf"; fi
         ;;
       create)
         body=""
@@ -301,13 +306,16 @@ case "$cmd" in
         while [ $# -gt 0 ]; do
           case "$1" in
             --body-file) body="$2"; shift 2 ;;
+            # gh-2359: the run-id cross-link comments inline (--body) —
+            # capture both shapes so assertions read comments.md.
+            --body) body="$2"; shift 2 ;;
             *) shift ;;
           esac
         done
-        if [ -n "$body" ] && [ -f "$body" ]; then
+        if [ -n "$body" ]; then
           {
             echo "── comment on #$num ──"
-            cat "$body"
+            if [ -f "$body" ]; then cat "$body"; else printf '%s\n' "$body"; fi
           } >> "$GH_STUB_DIR/comments.md"
         fi
         ;;
@@ -720,6 +728,155 @@ tail noise
         );
       },
     );
+  });
+
+  // ── gh-2359 AC3 — same-run cross-link at file time ───────────────────────
+  // 2026-11-20: #2336 (sweep finding) and #2337 (leg failure) were filed
+  // from run 44680178688 with different signatures and one shared root;
+  // nothing joined them at file time.
+  group('same-run cross-link (gh-2359 AC3)', () {
+    // An open issue already carrying THIS daily run's URL (the sweep
+    // finding #2336, run 555 in fixtures).
+    const sameRunSweepIssue =
+        '[{"number": 2336, "title": "[daily-publish] stale release drafts swept",'
+        ' "body": "**Sweep run:** https://github.com/OWNER/REPO/actions/runs/555\\n\\n**Swept:** 2 stale pipeline-created draft(s)"}]';
+
+    test('a fresh leg failure cross-links the same-run open issue', () {
+      final r = runReport(
+        'run-link',
+        legResults: const {'pubdev': 'failure'},
+        legUrls: const {
+          'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+        },
+        fixtures: const {
+          'failed-log-777.txt': _treeNoiseLog,
+          'issues.json': sameRunSweepIssue,
+        },
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.created, isTrue, reason: r.output);
+      expect(
+        r.comments,
+        contains('── comment on #99 ──'),
+        reason: 'the cross-link lands on the freshly filed issue',
+      );
+      expect(
+        r.comments,
+        contains('same run as #2336 — roots may be shared'),
+        reason: 'the AC3 phrase, naming the peer',
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('issue comment 99')),
+        hasLength(1),
+        reason: 'exactly one cross-link comment',
+      );
+    });
+
+    test('no same-run open issue -> no cross-link comment', () {
+      final r = runReport(
+        'run-link-none',
+        legResults: const {'pubdev': 'failure'},
+        legUrls: const {
+          'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+        },
+        fixtures: const {
+          'failed-log-777.txt': _treeNoiseLog,
+          'issues.json':
+              '[{"number": 282, "title": "[daily-publish] stale release drafts swept", "body": "old finding from another run"}]',
+        },
+      );
+      expect(r.created, isTrue, reason: r.output);
+      expect(r.comments, isEmpty, reason: r.comments);
+    });
+
+    test('the run URL is the join key: a different-run issue never links', () {
+      final r = runReport(
+        'run-link-url-key',
+        legResults: const {'pubdev': 'failure'},
+        legUrls: const {
+          'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+        },
+        fixtures: const {
+          'failed-log-777.txt': _treeNoiseLog,
+          // Same title/label family, but its body carries ANOTHER run's
+          // URL (777 is the child run, not this daily run 555).
+          'issues.json':
+              '[{"number": 2336, "title": "[daily-publish] stale release drafts swept", "body": "**Sweep run:** https://github.com/OWNER/REPO/actions/runs/444"}]',
+        },
+      );
+      expect(r.created, isTrue, reason: r.output);
+      expect(r.comments, isEmpty, reason: r.comments);
+    });
+
+    test('two failing legs in one run: the second filing cross-links the '
+        'first (both carry the same run URL)', () {
+      // The first leg's issue is already open (#99 from the create stub's
+      // perspective is the NEW one; here the earlier leg's issue pre-exists
+      // as #98 carrying the run URL).
+      final r = runReport(
+        'run-link-two-legs',
+        legResults: const {'pubdev': 'failure', 'cli': 'failure'},
+        legUrls: const {
+          'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+          'cli': 'https://github.com/OWNER/REPO/actions/runs/890',
+        },
+        fixtures: {
+          'failed-log-777.txt': _treeNoiseLog,
+          'failed-log-890.txt': '''
+Leg: CLI + macOS desktop\tBuild\t2026-10-10T05:20:00.0000000Z ::error::CLI leg failure (second filing of run 555)
+''',
+          'issues.json':
+              '[{"number": 98, "title": "[daily-publish] pub.dev leg failed", "body": "**Daily run:** https://github.com/OWNER/REPO/actions/runs/555"}]',
+        },
+      );
+      expect(r.created, isTrue, reason: r.output);
+      expect(
+        r.comments,
+        contains('same run as #98 — roots may be shared'),
+        reason: 'the CLI filing names the pub.dev issue filed from run 555',
+      );
+    });
+  });
+
+  // ── gh-2359 AC4 — REG: signature dedupe is unchanged ────────────────────
+  group('signature dedupe REG (gh-2359 AC4)', () {
+    test('a same-signature issue in the same run still dedupes: comment on '
+        'the open root cause, no new issue, no cross-link noise', () {
+      final r = runReport(
+        'sig-dedup-reg',
+        legResults: const {'pubdev': 'failure'},
+        legUrls: const {
+          'pubdev': 'https://github.com/OWNER/REPO/actions/runs/777',
+        },
+        fixtures: const {
+          'failed-log-777.txt': _treeNoiseLog,
+          // The root cause is already tracked (#1452)…
+          'search.json': '[{"number": 1452}]',
+          // …AND a same-run sweep issue is open. The signature path must
+          // still win: dedupe by root cause, no new issue, no run-link
+          // side effects.
+          'issues.json':
+              '[{"number": 2336, "title": "[daily-publish] stale release drafts swept", "body": "**Sweep run:** https://github.com/OWNER/REPO/actions/runs/555"}]',
+        },
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(
+        r.created,
+        isFalse,
+        reason: 'the signature dedupe must keep suppressing the duplicate',
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('issue comment 1452')),
+        hasLength(1),
+        reason: 'the digest still lands on the root-cause issue',
+      );
+      expect(r.comments, contains('Root-cause dedup'));
+      expect(
+        r.comments,
+        isNot(contains('Same-run cross-link')),
+        reason: 'no issue was filed, so no cross-link comment fires',
+      );
+    });
   });
 
   // ── AC4 — existing lifecycle behavior is unchanged ──────────────────────

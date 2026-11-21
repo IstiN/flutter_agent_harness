@@ -365,6 +365,20 @@ find_open_issue() { # echoes the issue number of the open sweep issue, or nothin
       done | head -1
 }
 
+same_run_issues() { # gh-2359 AC3: open issues already filed from THIS run
+  # The run URL is the join key (the leg-filer embeds the same
+  # **Daily run:**/**Sweep run:** URL): a sweep finding and a leg failure
+  # from one daily run (the #2336/#2337 shape) share roots even though
+  # their error signatures never match.
+  # gh itself has no --arg flag — the filter runs through real jq, exactly
+  # like this script's `gh api --paginate … | jq -r --arg …` draft lookups.
+  gh issue list --repo "$repo" --state open --limit 200 --json number,body \
+    2>/dev/null \
+    | jq -r --arg run_url "$daily_url" \
+      '.[] | select((.body // "") | contains($run_url)) | .number' \
+    || true
+}
+
 stale_count=$((deleted_count + reclaimed_count + $(printf '%s' "$humans" | grep -c . || true) ))
 
 if [ "$stale_count" -gt 0 ]; then
@@ -416,6 +430,8 @@ if [ "$stale_count" -gt 0 ]; then
     echo "Auto-filed by the daily draft sweeper; auto-closes when a sweep finds nothing stale."
   } > "$body"
   existing=$(find_open_issue)
+  # gh-2359 AC3: peers computed BEFORE the create (eventual consistency).
+  peers=$(same_run_issues)
   if [ -n "$existing" ]; then
     gh issue comment "$existing" --repo "$repo" --body-file "$body" >/dev/null
     issue_action="commented on #$existing (still finding stale drafts)"
@@ -423,6 +439,15 @@ if [ "$stale_count" -gt 0 ]; then
     created_issue=$(gh issue create --repo "$repo" --title "$title" \
       --body-file "$body" --label bug --label "$label" --assignee "$assignee" 2>/dev/null || true)
     issue_action="filed ${created_issue:-<issue creation failed>}"
+    if [ -n "$created_issue" ] && [ -n "$peers" ]; then
+      # gh-2359 AC3: the sweep finding is filed from the same run as
+      # another open issue (typically a leg failure) — cross-link so the
+      # shared root is visible before anyone fixes each in parallel.
+      peer_list=$(printf '%s' "$peers" | awk '{printf "%s#%s", (NR > 1 ? ", " : ""), $1}')
+      gh issue comment "${created_issue##*/}" --repo "$repo" \
+        --body "**Same-run cross-link (gh-2359):** same run as ${peer_list} — roots may be shared. One failing run can surface as several findings; check whether a single root cause covers them before fixing each in parallel." >/dev/null
+      issue_action+=" + cross-linked with same-run issue(s) ${peer_list}"
+    fi
   fi
   rm -f "$body"
 else
