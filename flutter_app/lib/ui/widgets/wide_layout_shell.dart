@@ -2517,14 +2517,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     final service = widget.manager.active?.service;
     final env = await _resolveFilesEnv(recentFolder);
     if (!mounted) return;
-    // Phones always get the FULL-SCREEN Files page (owner call), even
-    // in landscape/wide windows where _isNarrow is false — EXCEPT Duo,
-    // whose right dock is the whole point of that presentation.
-    final isPhone =
-        !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.iOS ||
-            defaultTargetPlatform == TargetPlatform.android);
-    if (_isNarrow || (isPhone && !FaDuoControlRail.isActive(context))) {
+    if (_filesUseFullPageRoute()) {
       final fsRevision = service?.fsRevision;
       // The SAME Files card every other entry uses — the shared chrome
       // band, never a legacy Scaffold + app-bar duplicate.
@@ -2567,6 +2560,18 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       );
     });
     _presentSurface();
+  }
+
+  /// Phones always get the FULL-SCREEN Files page (owner call), even in
+  /// landscape/wide windows where [_isNarrow] is false — EXCEPT Duo, whose
+  /// right dock is the whole point of that presentation.
+  bool _filesUseFullPageRoute() {
+    if (_isNarrow) return true;
+    if (kIsWeb) return false;
+    final isPhone =
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android;
+    return isPhone && !FaDuoControlRail.isActive(context);
   }
 
   /// Without an active service we still have an env (post-onboarding
