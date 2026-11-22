@@ -379,3 +379,6 @@ export 'src/network/connector/device_dm_keys.dart';
 // ── network DM delivery (#2214; append-only) ──
 export 'src/network/connector/device_dm.dart';
 export 'src/cli/network_presence.dart';
+
+// ── product workspace ──
+export 'src/product/fa_product_config.dart';
