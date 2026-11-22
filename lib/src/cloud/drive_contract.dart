@@ -216,6 +216,13 @@ final class RemoteDriveItem {
   final String? etag;
 }
 
+final class RemoteDriveDownload {
+  const RemoteDriveDownload({required this.item, required this.bytes});
+
+  final RemoteDriveItem item;
+  final Uint8List bytes;
+}
+
 final class DriveUploadRequest {
   DriveUploadRequest({
     required this.scope,
@@ -360,8 +367,12 @@ abstract interface class RemoteDriveProvider {
     DriveMountScope scope,
     DrivePath path,
   );
+  Future<DriveResult<RemoteDriveDownload>> download(
+    DriveMountScope scope,
+    DrivePath path,
+  );
   Future<DriveResult<RemoteDriveItem>> upload(DriveUploadRequest request);
-  Future<DriveResult<void>> delete(DriveDeleteRequest request);
+  Future<DriveResult<RemoteDriveItem>> delete(DriveDeleteRequest request);
   Future<DriveResult<DriveChangesPage>> changes(DriveChangesRequest request);
 }
 

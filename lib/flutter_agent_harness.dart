@@ -385,3 +385,5 @@ export 'src/product/fa_product_config.dart';
 
 // ── cloud drive ──
 export 'src/cloud/drive_contract.dart';
+export 'src/cloud/drive_sync_store.dart';
+export 'src/cloud/drive_sync_engine.dart';

@@ -11,6 +11,7 @@ import 'package:fa/ui/widgets/messenger_section_header.dart'
     show MessengerGlassUnderlay;
 import 'package:fa/ui/widgets/session_search_field.dart'
     show SessionSearchField;
+import 'package:fa/services/cloud/drive_sync_controller.dart';
 import 'package:fa/services/icloud_sync_service.dart';
 import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -60,6 +61,7 @@ class FileBrowser extends StatefulWidget {
     this.inlinePreview = true,
     this.uploadPicker,
     this.iCloudSyncService,
+    this.driveSyncController,
     this.maxUploadBatchBytes = kMaxUploadBatchBytes,
     this.fsRevision,
     this.htmlPreviewBuilder,
@@ -108,6 +110,9 @@ class FileBrowser extends StatefulWidget {
   /// platform service (`null` off macOS/iOS → the button is hidden); tests
   /// inject a fake (same pattern as [uploadPicker]).
   final ICloudSyncService? iCloudSyncService;
+
+  /// Optional product cloud state; null preserves stock local-only Files.
+  final DriveSyncController? driveSyncController;
 
   /// Total-byte cap for one upload batch; oversized batches are refused
   /// with a message before anything is written.
@@ -302,6 +307,7 @@ class _FileBrowserState extends State<FileBrowser> {
   void initState() {
     super.initState();
     widget.fsRevision?.addListener(_onFsRevision);
+    widget.driveSyncController?.addListener(_onDriveSync);
     _search.addListener(_onFilterChanged);
     _searchFocus.addListener(_onSearchFocusChanged);
     _segments.addAll(_initialSegments(widget.initialPath));
@@ -312,6 +318,10 @@ class _FileBrowserState extends State<FileBrowser> {
   @override
   void didUpdateWidget(FileBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.driveSyncController != widget.driveSyncController) {
+      oldWidget.driveSyncController?.removeListener(_onDriveSync);
+      widget.driveSyncController?.addListener(_onDriveSync);
+    }
     if (oldWidget.fsRevision != widget.fsRevision) {
       oldWidget.fsRevision?.removeListener(_onFsRevision);
       widget.fsRevision?.addListener(_onFsRevision);
@@ -334,6 +344,7 @@ class _FileBrowserState extends State<FileBrowser> {
   @override
   void dispose() {
     widget.fsRevision?.removeListener(_onFsRevision);
+    widget.driveSyncController?.removeListener(_onDriveSync);
     _search.removeListener(_onFilterChanged);
     _searchFocus.removeListener(_onSearchFocusChanged);
     if (widget.filterController == null) _ownedSearch.dispose();
@@ -342,6 +353,10 @@ class _FileBrowserState extends State<FileBrowser> {
   }
 
   /// Host-side search capsule typed into — re-run the (cheap) name filter.
+  void _onDriveSync() {
+    if (mounted) setState(() {});
+  }
+
   void _onFilterChanged() {
     if (mounted) setState(() {});
   }
@@ -734,6 +749,7 @@ class _FileBrowserState extends State<FileBrowser> {
     final chromeHeight =
         (widget.showHeader ? 52.0 : 0.0) +
         (hasIdentity ? 32.0 : 0.0) +
+        (widget.driveSyncController == null ? 0.0 : 28.0) +
         44.0 +
         1.0;
     return Material(
@@ -783,6 +799,8 @@ class _FileBrowserState extends State<FileBrowser> {
       children: [
         ?_headerRow(context),
         ?_buildRecentFolders(context),
+        if (widget.driveSyncController case final controller?)
+          _buildDriveSyncStatus(controller),
         _preview != null ? _buildPreviewBar(context) : _buildPathBar(context),
         Divider(height: 1, color: colors.border.withValues(alpha: .55)),
       ],
@@ -833,6 +851,13 @@ class _FileBrowserState extends State<FileBrowser> {
           label: context.l10n.filesUploadTooltip,
           onPressed: _upload,
         ),
+      if (widget.driveSyncController case final controller?)
+        FaHeaderAction(
+          key: const ValueKey('fileBrowserDriveSync'),
+          icon: _driveIcon(controller.overallState.status),
+          label: 'Drive: ${_driveStatusText(controller.overallState.status)}',
+          onPressed: () => unawaited(_syncDrive(controller)),
+        ),
       if (_iCloudSync != null && _iCloudAvailable)
         FaHeaderAction(
           key: const ValueKey('fileBrowserICloudSync'),
@@ -858,6 +883,117 @@ class _FileBrowserState extends State<FileBrowser> {
       topCenterline: widget.topCenterline,
     );
   }
+
+  Widget _buildDriveSyncStatus(DriveSyncController controller) {
+    final state = controller.overallState;
+    final colors = FahColors.of(context);
+    return SizedBox(
+      key: const ValueKey('fileBrowserDriveSyncStatus'),
+      height: 28,
+      child: InkWell(
+        onTap: () => unawaited(_syncDrive(controller)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Icon(
+                _driveIcon(state.status),
+                size: 15,
+                color: colors.text.withValues(alpha: .65),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  _driveStatusText(state.status),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.text.withValues(alpha: .65),
+                  ),
+                ),
+              ),
+              if (controller.pendingCount > 0)
+                Text(
+                  '${controller.pendingCount}',
+                  key: const ValueKey('fileBrowserDrivePending'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.text.withValues(alpha: .65),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _syncDrive(DriveSyncController controller) async {
+    try {
+      final conflict = controller.firstConflict;
+      if (conflict != null) {
+        final keepLocal = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Drive conflict'),
+            content: Text(
+              'Keep the local ${conflict.name ?? 'file'} or use the remote version?',
+            ),
+            actions: [
+              TextButton(
+                key: const ValueKey('driveConflictUseRemote'),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Use remote'),
+              ),
+              FilledButton(
+                key: const ValueKey('driveConflictKeepLocal'),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Keep local'),
+              ),
+            ],
+          ),
+        );
+        if (keepLocal == null) return;
+        if (keepLocal) {
+          await controller.resolveKeepLocal(conflict);
+        } else {
+          await controller.resolveAcceptRemote(conflict);
+        }
+        if (keepLocal) await controller.flush();
+      } else {
+        await controller.synchronize();
+      }
+      if (!mounted) return;
+      final state = controller.overallState;
+      _showSnack(state.providerDetails ?? _driveStatusText(state.status));
+      await _load();
+    } on Object catch (error) {
+      if (mounted) _showSnack('$error', error: true);
+    }
+  }
+
+  static IconData _driveIcon(DriveSyncStatus status) => switch (status) {
+    DriveSyncStatus.localOnly => Icons.cloud_off_outlined,
+    DriveSyncStatus.syncing => Icons.cloud_sync_outlined,
+    DriveSyncStatus.synced => Icons.cloud_done_outlined,
+    DriveSyncStatus.conflict => Icons.cloud_sync_outlined,
+    DriveSyncStatus.planInactive => Icons.cloud_off_outlined,
+    DriveSyncStatus.quotaExceeded => Icons.cloud_off_outlined,
+    DriveSyncStatus.providerReauthRequired => Icons.cloud_off_outlined,
+    DriveSyncStatus.permanentError => Icons.cloud_off_outlined,
+  };
+
+  static String _driveStatusText(DriveSyncStatus status) => switch (status) {
+    DriveSyncStatus.localOnly => 'Local only',
+    DriveSyncStatus.syncing => 'Syncing',
+    DriveSyncStatus.synced => 'Synced',
+    DriveSyncStatus.conflict => 'Conflict — choose a version',
+    DriveSyncStatus.planInactive => 'Drive plan inactive',
+    DriveSyncStatus.quotaExceeded => 'Drive quota exceeded',
+    DriveSyncStatus.providerReauthRequired => 'Drive sign-in required',
+    DriveSyncStatus.permanentError => 'Drive sync error',
+  };
 
   /// Recent chat folders as quick-jump chips (owner call). Falls back to
   /// the legacy mounted-identity chip when the host supplies no recents.
