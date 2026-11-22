@@ -11,6 +11,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/session_listing.dart';
+import 'package:fa/services/session_lease_host_stub.dart'
+    if (dart.library.io) 'package:fa/services/session_lease_host_io.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/subagent_parent_resolver.dart';
 
@@ -1076,12 +1078,30 @@ final class FlutterSessionManager extends ChangeNotifier {
       );
       return;
     }
+    if (singleProcessAppHost()) {
+      // iOS/Android have one primary app process. A different app bootId
+      // therefore belongs to the previous, now-dead process: its fresh
+      // heartbeat must not force a cold start into a fresh session.
+      final path = store.sidecarPath(metadata.path);
+      final found = await store.inspect(path);
+      final previous = found.lease;
+      if (found.state == LeaseState.live &&
+          previous != null &&
+          previous.host == 'app' &&
+          previous.bootId != _leaseBootId) {
+        debugPrint(
+          '[fah][lease] ${metadata.id}: replacing previous '
+          'single-process app lease',
+        );
+        await store.release(path, previous.bootId);
+      }
+    }
     final result = await store.acquire(
       sessionFilePath: metadata.path,
       sessionId: metadata.id,
       host: 'app',
       bootId: _leaseBootId,
-      pid: 0,
+      pid: appHostPid(),
     );
     switch (result) {
       case LeaseAcquired():
