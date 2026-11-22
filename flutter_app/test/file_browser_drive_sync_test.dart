@@ -57,6 +57,43 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('fileBrowserDriveSyncStatus')));
+    await tester.pumpAndSettle();
+    // The status row is the sync action; provider failure is surfaced, never
+    // silently treated as a successful upload.
+    expect(controller.lastError, isNotNull);
+  });
+
+  test('identity updates advance only the auth-generation fence', () async {
+    final env = MemoryExecutionEnv();
+    final controller = await makeDriveStatusController(
+      env: env,
+      status: DriveSyncStatus.synced,
+    );
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    expect(
+      () => controller.updateIdentity(
+        const CloudIdentity(
+          tenantId: 'tenant-test',
+          subject: 'subject-test',
+          deviceId: 'device-test',
+          authGeneration: 0,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    const next = CloudIdentity(
+      tenantId: 'tenant-test',
+      subject: 'subject-test',
+      deviceId: 'device-test',
+      authGeneration: 2,
+    );
+    controller.updateIdentity(next);
+    expect(controller.identity, next);
+    expect(controller.overallState.status, DriveSyncStatus.localOnly);
+    expect(controller.lastError, isNull);
+    expect(notifications, 1);
   });
 
   testWidgets('quota and inactive-plan states remain explicit in Files', (
@@ -87,6 +124,8 @@ void main() {
     );
     await pump(tester, env, controller);
     expect(find.text('Conflict — choose a version'), findsOneWidget);
+    await tester.tap(find.text('Conflict — choose a version'));
+    await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('driveConflictUseRemote')),
       findsOneWidget,
