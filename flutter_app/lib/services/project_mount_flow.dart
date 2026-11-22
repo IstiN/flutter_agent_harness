@@ -118,6 +118,12 @@ String? visibleFolderRoot(ExecutionEnv env, String? candidatePath) {
   return null;
 }
 
+/// Whether this host may open an arbitrary absolute folder without a
+/// security-scoped grant. Used by recent-folder navigation: only these
+/// hosts may re-root a plain env directly; sandboxed hosts keep their
+/// existing mount env so the allow-access gate remains reachable.
+bool get directFolderAccessAllowed => _directFolderAccess;
+
 /// Test seam for [_directFolderAccess] (tests simulate the sandbox).
 @visibleForTesting
 bool? debugDirectFolderAccess;

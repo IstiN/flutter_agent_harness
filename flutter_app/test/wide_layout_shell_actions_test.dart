@@ -33,6 +33,7 @@ import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
@@ -1546,6 +1547,62 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AppLauncherScreen), findsNothing);
     expect(find.byKey(const ValueKey('messengerSearchField')), findsOneWidget);
+  });
+
+  testWidgets('sandbox recent-folder chip preserves the allow-access gate', (
+    tester,
+  ) async {
+    debugDirectFolderAccess = false;
+    addTearDown(() => debugDirectFolderAccess = null);
+    final env = MemoryExecutionEnv(cwd: '/');
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    final entry = ChatListEntry(
+      id: ChatEntryId.local('design-session'),
+      kind: ChatListEntryKind.localAgent,
+      title: 'Outside project',
+      preview: 'Preview',
+      createdAt: DateTime.utc(2025),
+      lastActivity: DateTime.utc(2026),
+      folderName: 'project',
+      folderPath: '/outside/project',
+      localMessageCount: 1,
+    );
+    await pumpShell(
+      tester,
+      manager: manager,
+      localChatAdapterFactory: () => _StaticLocalChatListSource([entry]),
+      size: const Size(390, 844),
+    );
+    await tester.pumpAndSettle();
+
+    // Open the shell's own Files route through the narrow profile (not
+    // the chat dock or the launcher's separate route).
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('messengerPageIcon')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('narrowShellProfileRoute')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('narrowProfileFiles')));
+    await tester.pumpAndSettle();
+    final chip = find.byKey(
+      const ValueKey('fileBrowserRecentChip:/outside/project'),
+    );
+    expect(chip, findsOneWidget);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+
+    // Review: a sandboxed chip must NOT re-root an ungranted plain env
+    // (which hid this gate behind a bare listing error). It keeps the
+    // existing env + sessionFolder, so the grant flow remains available.
+    expect(
+      find.byKey(const ValueKey('filesSessionFolderGate')),
+      findsOneWidget,
+    );
+    expect(find.text('Could not list folder'), findsNothing);
   });
 
   testWidgets('docked Files and chat actions share the top centerline', (

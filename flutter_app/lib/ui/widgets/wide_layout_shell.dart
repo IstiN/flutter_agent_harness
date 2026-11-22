@@ -2526,6 +2526,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           builder: (_) => FilesAppPage(
             presentation: FilesAppPresentation(
               env: env,
+              initialPath: recentFolder,
               // The active session's folder rides along: the browser
               // gates on it (allow-access flow) instead of silently
               // listing the active mount when the env cannot open it.
@@ -2550,6 +2551,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       _appPresentation = null;
       _filesPresentation = FilesAppPresentation(
         env: env,
+        initialPath: recentFolder,
         // The active session's folder rides along (the gate seam — see
         // the narrow branch above).
         sessionFolder: recentFolder ?? service?.currentSessionCwd,
@@ -2576,16 +2578,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
 
   /// Without an active service we still have an env (post-onboarding
   /// empty manager creates one for the home screen), so the file browser
-  /// renders against the sandbox cwd. A recent-folder chip opens that
-  /// folder's own env (owner call). Kept separate from [_openFiles] so the
+  /// renders against the sandbox cwd. Direct-access hosts re-root a
+  /// recent-folder chip at that folder; sandboxed hosts keep their mount
+  /// env for the allow-access flow. Kept separate from [_openFiles] so the
   /// presentation branches remain below the CRAP ratchet.
-  Future<ExecutionEnv> _resolveFilesEnv(String? recentFolder) {
-    final service = widget.manager.active?.service;
-    return recentFolder != null
-        ? createFolderEnv(recentFolder)
-        : (service?.env != null
-              ? Future<ExecutionEnv>.value(service!.env)
-              : _resolveHomeEnv());
+  Future<ExecutionEnv> _resolveFilesEnv(String? recentFolder) async {
+    // Only non-sandboxed hosts may re-root a plain env at an arbitrary
+    // folder. A sandboxed host keeps its existing mount env: an ungranted
+    // recent folder then remains visible to FileBrowser's allow-access
+    // gate instead of failing the listing with no recovery (review).
+    if (recentFolder != null && directFolderAccessAllowed) {
+      return createFolderEnv(recentFolder);
+    }
+    return widget.manager.active?.service.env ?? await _resolveHomeEnv();
   }
 
   /// Cached env for routes that need a sandbox root but not an active

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -1048,13 +1049,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Future<void> _openFilesAt(String path) async {
     final service = widget.manager.active?.service;
     if (service == null) return;
-    final env = await createFolderEnv(path);
+    // Sandboxed hosts keep the granted mount env so an ungranted recent
+    // folder still reaches FileBrowser's allow-access gate; only direct-
+    // access hosts may re-root a plain env (same contract as the shell).
+    final env = directFolderAccessAllowed
+        ? await createFolderEnv(path)
+        : service.env;
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) => FilesAppPage(
           presentation: FilesAppPresentation(
             env: env,
+            initialPath: path,
             sessionFolder: path,
             fsRevision: service.fsRevision,
             onProjectMountChanged: service.refreshProjectMountPrompt,

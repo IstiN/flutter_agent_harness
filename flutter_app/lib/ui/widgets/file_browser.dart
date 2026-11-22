@@ -414,6 +414,10 @@ class _FileBrowserState extends State<FileBrowser> {
 
   String _childPath(String name) {
     final joined = _segments.isEmpty ? name : '${_segments.join('/')}/$name';
+    // Listing and file operations share the SAME namespace: direct-access
+    // absolute segments must keep the leading slash for previews AND
+    // uploads too, not just listDir (review: absolute-path sibling drift).
+    if (_segmentsAbsolute) return '/$joined';
     // The mount namespace prefix covers EVERY depth (gh-2131 round 3):
     // a subfolder's child path ('src/nested.txt') resolved against the
     // container cwd exactly like the root-level open did — subfolder

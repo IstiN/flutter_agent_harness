@@ -2257,19 +2257,23 @@ void main() {
     });
 
     testWidgets(
-      'direct access lists an absolute session folder outside the env cwd',
+      'direct access lists, opens and uploads in an absolute session folder',
       (tester) async {
         debugDirectFolderAccess = true;
         addTearDown(() => debugDirectFolderAccess = null);
-        final env = MemoryExecutionEnv(cwd: '/');
-        await env.createDir('Users/x/proj');
-        await env.writeFile('Users/x/proj/a.txt', 'hello');
+        final env = MemoryExecutionEnv(cwd: '/elsewhere');
+        await env.createDir('/Users/x/proj');
+        await env.writeFile('/Users/x/proj/a.txt', 'hello absolute');
+        final picker = _FakePicker([
+          _uploadFile('uploaded.txt', 'absolute upload'),
+        ]);
         await tester.pumpWidget(
           _wrap(
             FileBrowser(
               env: env,
               sessionFolder: '/Users/x/proj',
               initialPath: '/Users/x/proj',
+              uploadPicker: picker,
             ),
           ),
         );
@@ -2282,6 +2286,21 @@ void main() {
           find.byKey(const ValueKey('filesSessionFolderGate')),
           findsNothing,
         );
+
+        // Review regression: _childPath must share _envPath's leading
+        // slash — otherwise the upload silently lands under /elsewhere.
+        await tester.tap(find.byTooltip('Upload files here'));
+        await tester.pumpAndSettle();
+        expect(
+          (await env.readTextFile('/Users/x/proj/uploaded.txt')).getOrThrow(),
+          'absolute upload',
+        );
+
+        // …and a preview reads that same absolute namespace, not cwd.
+        await tester.tap(find.text('a.txt'));
+        await tester.pumpAndSettle();
+        expect(find.text('Could not load file'), findsNothing);
+        expect(find.text('hello absolute'), findsOneWidget);
       },
     );
 
