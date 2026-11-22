@@ -214,5 +214,18 @@
       "source": "reported",
       "model": "kimi-for-coding"
     }
+  ],
+  "pr-2365": [
+    {
+      "leg": "review",
+      "at": "2026-11-22T00:40:49Z",
+      "prompt": 87800,
+      "completion": 28292,
+      "total": 116092,
+      "cacheRead": 3134656,
+      "requests": 46,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
