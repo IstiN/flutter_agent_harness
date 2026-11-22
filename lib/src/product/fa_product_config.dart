@@ -201,6 +201,7 @@ final class FaProductConfig {
           )) {
         throw const FormatException('invalid declarative host themePack');
       }
+      _validateThemePackText(rawThemePack);
       themePack = rawThemePack.cast<String, Object?>();
     }
     if (themePack != null && themePackId == null) {
@@ -257,6 +258,25 @@ final class FaProductConfig {
       throw FormatException('$name must be a lowercase stable id');
     }
     return value;
+  }
+
+  static void _validateThemePackText(Object? value) {
+    if (value is String) {
+      _text(value, 'themePack');
+      return;
+    }
+    if (value is Map) {
+      for (final entry in value.entries) {
+        _validateThemePackText(entry.key);
+        _validateThemePackText(entry.value);
+      }
+      return;
+    }
+    if (value is Iterable) {
+      for (final item in value) {
+        _validateThemePackText(item);
+      }
+    }
   }
 
   static String _featureFlag(Object? value) {

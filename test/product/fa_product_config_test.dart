@@ -115,6 +115,29 @@ void main() {
         }),
         throwsFormatException,
       );
+      for (final themePack in [
+        {
+          'name': 'Host Theme',
+          'version': '1.0.0',
+          'colors': {
+            'dark': {'accent': '</script><script>alert(1)</script>'},
+          },
+        },
+        {
+          'name': 'Host Theme</script><script>alert(1)</script>',
+          'version': '1.0.0',
+          'colors': <String, Object?>{},
+        },
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson({
+            ..._valid(),
+            'themePackId': 'host-theme',
+            'themePack': themePack,
+          }),
+          throwsFormatException,
+        );
+      }
       expect(
         () => FaProductConfig.fromJson({
           ..._valid(),

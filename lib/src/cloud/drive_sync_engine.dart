@@ -108,7 +108,7 @@ final class DriveSyncEngine {
       ),
       expectedStorageRevision: snapshot.storageRevision,
     );
-    (await env.remove(path.absolute)).getOrThrow();
+    (await env.remove(path.absolute, force: true)).getOrThrow();
     return snapshot;
   }
 
@@ -296,7 +296,7 @@ final class DriveSyncEngine {
     DriveFileState current,
     RemoteDriveItem remote,
   ) async {
-    (await env.remove(path.absolute)).getOrThrow();
+    (await env.remove(path.absolute, force: true)).getOrThrow();
     return current.copyWith(
       remoteRevision: remote.revision,
       remoteSha256: null,

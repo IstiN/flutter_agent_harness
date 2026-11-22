@@ -56,6 +56,33 @@ void main() {
   );
 
   test(
+    'pull accepts a tombstone for a path never materialized locally',
+    () async {
+      final remote = FakeRemoteDriveProvider();
+      final missing = DrivePath.parse('/drive/notes/never-here.txt');
+      remote.history[scope.mountKey] = [
+        RemoteDriveItem(
+          path: missing,
+          revision: 'r1',
+          sha256: null,
+          size: 0,
+          modifiedAt: DateTime.utc(2026),
+          deleted: true,
+        ),
+      ];
+      final store = MemoryDriveSyncStore();
+      final engine = DriveSyncEngine(
+        provider: remote,
+        store: store,
+        env: MemoryExecutionEnv(),
+      );
+      final snapshot = await engine.pull(scope, identity);
+      expect(snapshot.files[missing.absolute]!.status, DriveSyncStatus.synced);
+      expect(snapshot.cursor, '1');
+    },
+  );
+
+  test(
     'crash after remote success before CAS retries the same operation without duplication',
     () async {
       final remote = FakeRemoteDriveProvider();

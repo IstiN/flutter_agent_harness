@@ -217,8 +217,11 @@ void stageBrandedShell({
   }
   index.writeAsStringSync(html);
 
+  final profileScript = jsonEncode(
+    _publicProfile(config),
+  ).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
   File('${root.path}/product_config.js').writeAsStringSync(
-    'window.__faProductProfile = ${jsonEncode(_publicProfile(config))};\n'
+    'window.__faProductProfile = $profileScript;\n'
     'window.__faProductStorageNamespace = ${jsonEncode(namespace)};\n',
   );
   File('${root.path}/product_config.json').writeAsStringSync(

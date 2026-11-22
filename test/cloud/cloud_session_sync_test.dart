@@ -43,6 +43,29 @@ void main() {
   );
 
   test(
+    'pull persists a page cursor and resumes instead of full-scanning',
+    () async {
+      final remote = FakeRemoteSessionProvider()..pageSize = 1;
+      final a = SessionHarness('a', remote);
+      await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's1'));
+      await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's2'));
+      await a.sync.flush(a.identity);
+      final b = SessionHarness('b', remote);
+      await b.sync.pull(b.identity);
+      expect(remote.listCursors, [null]);
+      expect((await b.store.load(b.scope.scopeKey)).cursor, '1');
+      expect(await b.sync.localMetadata('s1'), isNotNull);
+      expect(await b.sync.localMetadata('s2'), isNull);
+      await b.sync.pull(b.identity);
+      expect(remote.listCursors, [null, '1']);
+      expect((await b.store.load(b.scope.scopeKey)).cursor, isNull);
+      expect(await b.sync.localMetadata('s2'), isNotNull);
+      await b.sync.pull(b.identity);
+      expect(remote.listCursors, [null, '1', null]);
+    },
+  );
+
+  test(
     'fork → upload → pull → fork keeps parent and grandparent ancestry',
     () async {
       final remote = FakeRemoteSessionProvider();
@@ -358,6 +381,8 @@ final class FakeRemoteSessionProvider implements RemoteSessionProvider {
   int uploadCalls = 0;
   int successfulUploads = 0;
   bool blockDownloads = false;
+  int? pageSize;
+  final listCursors = <String?>[];
 
   Map<String, _SessionRemoteValue> _account(CloudSessionScope scope) =>
       records.putIfAbsent(scope.scopeKey, () => {});
@@ -412,12 +437,23 @@ final class FakeRemoteSessionProvider implements RemoteSessionProvider {
   Future<DriveResult<CloudSessionPage>> list(
     CloudSessionScope scope,
     String? cursor,
-  ) async => DriveResult.ok(
-    CloudSessionPage(
-      records: _account(scope).values.map((value) => value.record).toList(),
-      nextCursor: '1',
-    ),
-  );
+  ) async {
+    listCursors.add(cursor);
+    final all = _account(scope).values.map((value) => value.record).toList();
+    final size = pageSize;
+    if (size == null) return DriveResult.ok(CloudSessionPage(records: all));
+    final start = cursor == null ? 0 : int.parse(cursor);
+    final proposedEnd = start + size;
+    final end = proposedEnd < all.length ? proposedEnd : all.length;
+    final hasMore = end < all.length;
+    return DriveResult.ok(
+      CloudSessionPage(
+        records: all.sublist(start, end),
+        nextCursor: hasMore ? '$end' : null,
+        hasMore: hasMore,
+      ),
+    );
+  }
 
   @override
   Future<DriveResult<CloudSessionDownload>> download(

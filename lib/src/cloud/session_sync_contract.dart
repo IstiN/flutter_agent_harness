@@ -246,6 +246,8 @@ final class CloudSessionOperation {
   }
 }
 
+const _cloudSessionCursorUnset = Object();
+
 final class CloudSessionSnapshot {
   const CloudSessionSnapshot({
     required this.scopeKey,
@@ -275,14 +277,16 @@ final class CloudSessionSnapshot {
     List<CloudSessionOperation>? pending,
     Map<String, String>? remoteRevisions,
     Map<String, String>? localPaths,
-    String? cursor,
+    Object? cursor = _cloudSessionCursorUnset,
   }) => CloudSessionSnapshot(
     scopeKey: scopeKey,
     storageRevision: storageRevision,
     pending: pending ?? this.pending,
     remoteRevisions: remoteRevisions ?? this.remoteRevisions,
     localPaths: localPaths ?? this.localPaths,
-    cursor: cursor ?? this.cursor,
+    cursor: identical(cursor, _cloudSessionCursorUnset)
+        ? this.cursor
+        : cursor as String?,
   );
 
   Map<String, Object?> payloadJson() => {

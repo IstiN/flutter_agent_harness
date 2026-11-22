@@ -184,30 +184,30 @@ final class CloudSessionSynchronizer {
     return snapshot;
   }
 
-  /// Pulls parent documents before forks. Timeout/failure on one remote read
-  /// never rewrites or drops local pending bytes; successfully read documents
-  /// still advance and the first error is surfaced after the local CAS.
+  /// Pulls one bounded page of parent documents before forks. The durable
+  /// cursor resumes the next page; a completed scan clears it for the next
+  /// full reconciliation. Timeout/failure never drops local pending bytes.
   Future<CloudSessionSnapshot> pull(CloudIdentity identity) async {
     _checkIdentity(identity);
     await settle();
     var snapshot = await store.load(scope.scopeKey);
     snapshot = await _indexLocalPaths(snapshot);
-    final records = <CloudSessionRemoteRecord>[];
-    String? cursor;
-    do {
-      final page = await provider.list(scope, cursor);
-      if (!page.isOk) throw page.error!;
-      records.addAll(page.value!.records);
-      cursor = page.value!.hasMore ? page.value!.nextCursor : null;
-    } while (cursor != null);
-
-    final ordered = _parentsFirst(records.where((record) => !record.deleted));
+    final page = await provider.list(scope, snapshot.cursor);
+    if (!page.isOk) throw page.error!;
+    final value = page.value!;
+    final cursor = value.hasMore ? value.nextCursor : null;
+    if (value.hasMore && (cursor == null || cursor.isEmpty)) {
+      throw const DriveProviderException(
+        DriveErrorKind.invalidResponse,
+        'session page hasMore without a continuation cursor',
+      );
+    }
+    final ordered = _parentsFirst(
+      value.records.where((record) => !record.deleted),
+    );
     Object? firstReadError;
     for (final record in ordered) {
-      if (snapshot.pending.any((op) => op.sessionId == record.sessionId)) {
-        continue;
-      }
-      if (_alreadyMaterialized(snapshot, record)) continue;
+      if (_skipRemoteRecord(snapshot, record)) continue;
       try {
         final download = await provider
             .download(scope, record.sessionId)
@@ -233,6 +233,20 @@ final class CloudSessionSynchronizer {
     );
     if (firstReadError != null) throw firstReadError;
     return snapshot;
+  }
+
+  bool _skipRemoteRecord(
+    CloudSessionSnapshot snapshot,
+    CloudSessionRemoteRecord record,
+  ) {
+    if (snapshot.pending.any((op) => op.sessionId == record.sessionId)) {
+      return true;
+    }
+    if (_alreadyMaterialized(snapshot, record)) return true;
+    final parent = record.parentSessionId;
+    // A child on an earlier page than its parent is deferred, never flattened.
+    // The completed cursor cycle triggers a full reconciliation and joins it.
+    return parent != null && !snapshot.localPaths.containsKey(parent);
   }
 
   Future<SessionMetadata?> localMetadata(String sessionId) async {
