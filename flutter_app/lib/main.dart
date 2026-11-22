@@ -35,6 +35,7 @@ import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/product_config_loader.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -85,7 +86,10 @@ Future<RelayAgentService?> createRelayServiceIfHosted() async {
   return relay;
 }
 
-Future<void> main() => const FaAppBoot(routes: bootAppRoutes).run();
+Future<void> main() => FaAppBoot(
+  productConfig: loadInjectedProductConfig(),
+  routes: bootAppRoutes,
+).run();
 
 /// The routes stage: mounts [MyApp] and attaches the OpenRouter OAuth
 /// listeners. Lives beside [MyApp] — the boot module (issue #483) stays
@@ -111,6 +115,7 @@ Future<void> bootAppRoutes(
       imagePreviewStore: stores.imagePreviews,
       networkMode: stores.networkMode,
       networkSessions: stores.networkSessions,
+      productConfig: stores.productConfig,
       analytics: analytics,
     ),
   );
@@ -175,6 +180,7 @@ class MyApp extends StatelessWidget {
     this.analytics,
     this.networkMode,
     this.networkSessions,
+    this.productConfig = FaProductConfig.stock,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -248,6 +254,9 @@ class MyApp extends StatelessWidget {
   /// [networkMode].
   final NetworkSessionManager? networkSessions;
 
+  /// Host product identity; existing tests/hosts default to stock Fa.
+  final FaProductConfig productConfig;
+
   /// Fallback for [themeController] when none is injected (tests): a single
   /// shared in-memory controller so every [MyApp] build sees the same one.
   static final ThemeController _fallbackThemeController =
@@ -272,7 +281,10 @@ class MyApp extends StatelessWidget {
       builder: (context, _) {
         // The active theme pack (null → stock look). Stale ids (pack
         // removed elsewhere) resolve to the stock FaUiTheme, never a crash.
-        final uiTheme = packs?.byId(theme.packId)?.spec.toFaUiTheme();
+        final uiTheme = packs
+            ?.byId(productConfig.themePackId ?? theme.packId)
+            ?.spec
+            .toFaUiTheme();
         return FaUiThemeProvider(
           data: uiTheme ?? const FaUiTheme(),
           child: _materialApp(theme, uiTheme),
@@ -283,7 +295,7 @@ class MyApp extends StatelessWidget {
 
   Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
     return MaterialApp(
-      title: 'Fa',
+      title: productConfig.displayName,
       theme: buildFaTheme(
         direction: theme.visualDirection,
         brightness: Brightness.light,

@@ -233,13 +233,10 @@ final class FaProductConfig {
           RegExp('[^a-z]'),
           '',
         );
-        if (key == 'apikey' ||
-            key == 'token' ||
-            key == 'accesstoken' ||
-            key == 'refreshtoken' ||
-            key == 'password' ||
-            key == 'secret' ||
-            key == 'clientsecret' ||
+        if (key.contains('apikey') ||
+            key.contains('token') ||
+            key.contains('password') ||
+            key.contains('secret') ||
             key == 'credential' ||
             key == 'credentials') {
           throw FormatException('credential field forbidden: ${entry.key}');
