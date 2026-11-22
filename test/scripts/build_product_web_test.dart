@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import '../../scripts/build_product_web.dart';
@@ -119,6 +120,27 @@ void main() {
       }
     },
   );
+
+  test('staged profile publishes only safe runtime brand asset URLs', () async {
+    final output = '${temp.path}/runtime-brand-assets';
+    await buildFromRealIndex(output);
+    final script = File('$output/product_config.js').readAsStringSync();
+    final encoded = RegExp(
+      r'window.__faProductProfile = (.*);',
+    ).firstMatch(script)!.group(1)!;
+    final runtime = FaProductConfig.fromJson(
+      (jsonDecode(encoded) as Map).cast<String, Object?>(),
+    );
+
+    expect(runtime.brandAssets['icon192'], 'icons/Icon-192.png');
+    expect(runtime.brandAssets['icon512'], 'icons/Icon-512.png');
+    expect(runtime.brandAssets['favicon'], 'favicon.png');
+    expect(runtime.brandAssets['splash'], 'splash.png');
+    for (final path in runtime.brandAssets.values) {
+      expect(File('$output/$path').existsSync(), isTrue, reason: path);
+    }
+    expect(File('$output/icon-192.png').existsSync(), isFalse);
+  });
 
   test('real stock index leaves exactly one visible branded splash', () async {
     final output = '${temp.path}/real-index-splash';

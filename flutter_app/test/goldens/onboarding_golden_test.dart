@@ -80,6 +80,49 @@ void main() {
       await expectGolden(tester, 'onboarding_branded_p1_dark_phone');
     });
 
+    testWidgets('branded provider ghost desktop uses host name throughout', (
+      tester,
+    ) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 1,
+        size: goldenSizeDesktop,
+        productConfig: const FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIN',
+        ),
+      );
+      expect(find.text('AIN can take action for you.'), findsOneWidget);
+      expect(
+        find.text('AIN asks only when an action needs it.'),
+        findsOneWidget,
+      );
+      expect(find.text('Fa can take action for you.'), findsNothing);
+      await expectGolden(tester, 'onboarding_branded_p2_dark_desktop');
+    });
+
+    testWidgets('branded permissions page uses host name throughout', (
+      tester,
+    ) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 2,
+        productConfig: const FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIN',
+        ),
+      );
+      expect(
+        find.text(
+          'AIN asks only when an action needs it.\nYou can change access anytime.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Talk to AIN with your voice.'), findsOneWidget);
+      expect(find.text('Talk to Fa with your voice.'), findsNothing);
+      await expectGolden(tester, 'onboarding_branded_p3_dark_phone');
+    });
+
     testWidgets('branded ready page uses host Open action', (tester) async {
       await _pumpOnboardingPage(
         tester,

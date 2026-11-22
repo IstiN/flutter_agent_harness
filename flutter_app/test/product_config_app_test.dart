@@ -1,3 +1,8 @@
+import 'dart:convert';
+import 'dart:io';
+
+import '../../scripts/build_product_web.dart';
+
 import 'package:fa/main.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/theme_controller.dart';
@@ -121,4 +126,114 @@ void main() {
     expect(find.byType(ProductBrandMark), findsOneWidget);
     expect(find.byKey(const ValueKey('productBrandImage')), findsOneWidget);
   });
+  testWidgets('staged runtime profile reaches the published brand image', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('fa-brand-e2e-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final assets = Directory('${temp.path}/assets')..createSync();
+    for (final (name, size) in [
+      ('external-192.png', 192),
+      ('external-512.png', 512),
+      ('favicon.png', 64),
+      ('splash.png', 128),
+    ]) {
+      File('${assets.path}/$name').writeAsBytesSync(_png(size));
+    }
+    final profile = File('${temp.path}/product.json')
+      ..writeAsStringSync(
+        jsonEncode({
+          'productId': 'ain',
+          'displayName': 'AIN',
+          'brandAssets': {
+            'icon192': 'external-192.png',
+            'icon512': 'external-512.png',
+            'favicon': 'favicon.png',
+            'splash': 'splash.png',
+          },
+          'featureFlags': <Object?>[],
+        }),
+      );
+    final output = '${temp.path}/web';
+    await tester.runAsync(
+      () => buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: output,
+        builder: (path) async => _fixtureShell(Directory(path)),
+      ),
+    );
+    final script = File('$output/product_config.js').readAsStringSync();
+    final encoded = RegExp(
+      r'window.__faProductProfile = (.*);',
+    ).firstMatch(script)!.group(1)!;
+    final runtime = FaProductConfig.fromJson(
+      (jsonDecode(encoded) as Map).cast<String, Object?>(),
+    );
+
+    expect(runtime.brandAssets['icon192'], 'icons/Icon-192.png');
+    expect(
+      File('$output/${runtime.brandAssets['icon192']}').existsSync(),
+      isTrue,
+    );
+    expect(File('$output/external-192.png').existsSync(), isFalse);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ProductBrandMark(productConfig: runtime)),
+    );
+    final image = tester.widget<Image>(
+      find.byKey(const ValueKey('productBrandImage')),
+    );
+    expect((image.image as AssetImage).assetName, 'icons/Icon-192.png');
+  });
+
+  testWidgets('branded first run without privacy metadata hides the Fa link', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final config = FaProductConfig.fromJson({
+      'productId': 'ain',
+      'displayName': 'AIN',
+      'featureFlags': <Object?>[],
+    });
+    await tester.pumpWidget(
+      MyApp(
+        productConfig: config,
+        onboardingStore: OnboardingStore.inMemory(),
+        themeController: ThemeController.inMemory(FahThemeMode.dark),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('AIN'), findsOneWidget);
+    expect(find.text('Privacy Policy'), findsNothing);
+  });
+}
+
+List<int> _png(int size) {
+  final bytes = List<int>.filled(45, 0);
+  bytes.setRange(0, 8, [137, 80, 78, 71, 13, 10, 26, 10]);
+  bytes.setRange(8, 12, [0, 0, 0, 13]);
+  bytes.setRange(12, 16, ascii.encode('IHDR'));
+  bytes.setRange(16, 20, [size >> 24, size >> 16, size >> 8, size & 255]);
+  bytes.setRange(20, 24, [size >> 24, size >> 16, size >> 8, size & 255]);
+  bytes[24] = 8;
+  bytes[25] = 6;
+  bytes.setRange(37, 41, ascii.encode('IEND'));
+  return bytes;
+}
+
+Directory _fixtureShell(Directory directory) {
+  directory.createSync(recursive: true);
+  Directory('${directory.path}/icons').createSync();
+  File('${directory.path}/index.html').writeAsStringSync(
+    '<!DOCTYPE html><html><head><title>Fa</title></head><body>'
+    '<script src="fs_store.js"></script></body></html>',
+  );
+  File('${directory.path}/manifest.json').writeAsStringSync('{"name":"Fa"}');
+  File(
+    '${directory.path}/flutter_service_worker.js',
+  ).writeAsStringSync("var cacheName = 'flutter-app';");
+  return directory;
 }

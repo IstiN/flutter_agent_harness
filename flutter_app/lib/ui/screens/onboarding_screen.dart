@@ -601,9 +601,14 @@ class _PrivacyLink extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final product = ProductConfigScope.of(context);
+    final destination =
+        uri ??
+        (product.isStock ? Uri.parse('https://fa1.dev/privacy.html') : null);
+    if (destination == null) return const SizedBox.shrink();
     return TextButton(
       onPressed: () => url_launcher.launchUrl(
-        uri ?? Uri.parse('https://fa1.dev/privacy.html'),
+        destination,
         mode: url_launcher.LaunchMode.externalApplication,
       ),
       style: TextButton.styleFrom(
@@ -1961,7 +1966,7 @@ class _AccessGhost extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Fa can take action for you.',
+          '${ProductConfigScope.of(context).displayName} can take action for you.',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
@@ -1970,7 +1975,7 @@ class _AccessGhost extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Fa asks only when an action needs it.',
+          '${ProductConfigScope.of(context).displayName} asks only when an action needs it.',
           style: TextStyle(fontSize: 11, color: _onbGray(context)),
         ),
         const SizedBox(height: 14),

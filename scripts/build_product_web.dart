@@ -286,6 +286,16 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   'productId': config.productId,
   'displayName': config.displayName,
   'description': config.description,
+  // Public runtime URLs, never the host's external source paths. Every one
+  // of these files is emitted below (maskable slots use regular art fallback).
+  'brandAssets': const {
+    'icon192': 'icons/Icon-192.png',
+    'icon512': 'icons/Icon-512.png',
+    'maskable192': 'icons/Icon-maskable-192.png',
+    'maskable512': 'icons/Icon-maskable-512.png',
+    'favicon': 'favicon.png',
+    'splash': 'splash.png',
+  },
   'themePackId': config.themePackId,
   'themePack': config.themePack,
   'authEndpoint': config.authEndpoint?.toString(),
