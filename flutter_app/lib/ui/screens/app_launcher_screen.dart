@@ -13,6 +13,8 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ExecutionEnv;
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
@@ -1052,9 +1054,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     // Sandboxed hosts keep the granted mount env so an ungranted recent
     // folder still reaches FileBrowser's allow-access gate; only direct-
     // access hosts may re-root a plain env (same contract as the shell).
-    final env = directFolderAccessAllowed
-        ? await createFolderEnv(path)
-        : service.env;
+    final env = await _resolveRecentFilesEnv(path, service.env);
     if (!mounted) return;
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
@@ -1071,6 +1071,18 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         ),
       ),
     );
+  }
+
+  /// Keep the route's env decision below the app CRAP ratchet and, more
+  /// importantly, identical for every recent-folder jump: direct hosts
+  /// re-root; sandboxed hosts retain their granted mount/gate namespace.
+  Future<ExecutionEnv> _resolveRecentFilesEnv(
+    String path,
+    ExecutionEnv baseEnv,
+  ) {
+    return directFolderAccessAllowed
+        ? createFolderEnv(path)
+        : Future<ExecutionEnv>.value(baseEnv);
   }
 
   Future<void> _openFiles() async {
