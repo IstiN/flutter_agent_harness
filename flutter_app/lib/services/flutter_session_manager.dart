@@ -586,7 +586,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// root (macOS App Group + fallback) when more than one exists.
   Future<List<SessionMetadata>> _listAcrossRoots() {
     final roots = includeSharedSessionRoots
-        ? allSessionRoots(sessionsRoot)
+        ? allSessionRootsForEnv(env, sessionsRoot)
         : <String>[sessionsRoot];
     if (roots.length <= 1) return _repo.list();
     return mergeSessionsAcrossRoots(

@@ -33,7 +33,6 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
-import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
@@ -708,7 +707,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       BootSteps.begin('restore:manager');
       final manager = FlutterSessionManager(
         env: env,
-        sessionsRoot: defaultSessionsRoot(env.sessionCwd),
+        sessionsRoot: defaultSessionsRootForEnv(env),
         // #2138 HOLE-1: desktop builds ALWAYS enforce ownership — a
         // store-less manager drove live-leased sessions unchecked.
         leaseStore: defaultLeaseStore(env),
@@ -983,7 +982,7 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
       final env = widget.env ?? await createPlatformEnv();
       final manager = FlutterSessionManager(
         env: env,
-        sessionsRoot: defaultSessionsRoot(env.sessionCwd),
+        sessionsRoot: defaultSessionsRootForEnv(env),
         // #2138 HOLE-1: desktop builds ALWAYS enforce ownership.
         leaseStore: defaultLeaseStore(env),
       );
@@ -1121,7 +1120,7 @@ class SetupScreen extends StatelessWidget {
     final resolvedEnv = env ?? await createPlatformEnv();
     final manager = FlutterSessionManager(
       env: resolvedEnv,
-      sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+      sessionsRoot: defaultSessionsRootForEnv(resolvedEnv),
       // #2138 HOLE-1: desktop builds ALWAYS enforce ownership (null =
       // web, where no atomic publish exists — E5).
       leaseStore: defaultLeaseStore(resolvedEnv),
