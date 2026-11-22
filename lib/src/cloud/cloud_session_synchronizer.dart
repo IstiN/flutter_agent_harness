@@ -207,10 +207,7 @@ final class CloudSessionSynchronizer {
       if (snapshot.pending.any((op) => op.sessionId == record.sessionId)) {
         continue;
       }
-      if (snapshot.remoteRevisions[record.sessionId] == record.revision &&
-          snapshot.localPaths.containsKey(record.sessionId)) {
-        continue;
-      }
+      if (_alreadyMaterialized(snapshot, record)) continue;
       try {
         final download = await provider
             .download(scope, record.sessionId)
@@ -290,6 +287,13 @@ final class CloudSessionSynchronizer {
       expectedStorageRevision: snapshot.storageRevision,
     );
   }
+
+  bool _alreadyMaterialized(
+    CloudSessionSnapshot snapshot,
+    CloudSessionRemoteRecord record,
+  ) =>
+      snapshot.remoteRevisions[record.sessionId] == record.revision &&
+      snapshot.localPaths.containsKey(record.sessionId);
 
   Future<CloudSessionSnapshot> _indexLocalPaths(
     CloudSessionSnapshot snapshot,

@@ -523,6 +523,7 @@ void main() {
         initialPath: '/drive',
       );
       expect(find.text('Conflict — choose a version'), findsOneWidget);
+      expect(find.text('18 B'), findsOneWidget);
       await expectGolden(tester, 'files_drive_conflict');
     });
 
@@ -543,6 +544,7 @@ void main() {
         initialPath: '/drive',
       );
       expect(find.text('Drive quota exceeded'), findsOneWidget);
+      expect(find.text('18 B'), findsOneWidget);
       await expectGolden(tester, 'files_drive_quota_phone');
     });
 

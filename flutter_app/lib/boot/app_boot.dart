@@ -293,33 +293,12 @@ Future<BootStores> loadBootStores(
   final onboardingStore = await OnboardingStore.load(env);
   BootSteps.mark('storage:onboarding');
   BootSteps.begin('storage:themePacks');
-  final themePacks = await ThemePackStore.load(env);
-  for (final pack in hostThemePacks) {
-    themePacks.registerHostPack(pack);
-  }
-  final inlinePack = productConfig.themePack;
-  if (inlinePack != null) {
-    final validation = validateThemePack(inlinePack, const {});
-    final spec = validation.spec;
-    if (spec == null || spec.id != productConfig.themePackId) {
-      throw FormatException(
-        'invalid host theme pack: ${validation.reasons.join(', ')}',
-      );
-    }
-    themePacks.registerHostPack(
-      InstalledThemePack(spec: spec, wallpaperBytes: null),
-    );
-  }
-  final selectedPack = themePacks.byId(productConfig.themePackId);
-  if (productConfig.themePackId != null && selectedPack == null) {
-    throw const FormatException('declared host themePackId was not provided');
-  }
-  if (selectedPack != null) {
-    await themeController.setPack(
-      selectedPack.id,
-      hasWallpaper: selectedPack.wallpaperBytes != null,
-    );
-  }
+  final themePacks = await _configureBootTheme(
+    env,
+    themeController,
+    productConfig,
+    hostThemePacks,
+  );
   BootSteps.mark('storage:themePacks');
   final skillsAccessStore = SkillsAccessStore(env);
   BootSteps.begin('storage:mediaModels');
@@ -439,6 +418,42 @@ Future<KeyWallet> _loadNetworkWallet(ExecutionEnv env) async {
     debugPrint('[fah] network wallet file load failed: $e');
     return KeyWallet.load(MemoryWalletBackend());
   }
+}
+
+Future<ThemePackStore> _configureBootTheme(
+  ExecutionEnv env,
+  ThemeController themeController,
+  FaProductConfig productConfig,
+  Iterable<InstalledThemePack> hostThemePacks,
+) async {
+  final themePacks = await ThemePackStore.load(env);
+  for (final pack in hostThemePacks) {
+    themePacks.registerHostPack(pack);
+  }
+  final inlinePack = productConfig.themePack;
+  if (inlinePack != null) {
+    final validation = validateThemePack(inlinePack, const {});
+    final spec = validation.spec;
+    if (spec == null || spec.id != productConfig.themePackId) {
+      throw FormatException(
+        'invalid host theme pack: ${validation.reasons.join(', ')}',
+      );
+    }
+    themePacks.registerHostPack(
+      InstalledThemePack(spec: spec, wallpaperBytes: null),
+    );
+  }
+  final selectedPack = themePacks.byId(productConfig.themePackId);
+  if (productConfig.themePackId != null && selectedPack == null) {
+    throw const FormatException('declared host themePackId was not provided');
+  }
+  if (selectedPack != null) {
+    await themeController.setPack(
+      selectedPack.id,
+      hasWallpaper: selectedPack.wallpaperBytes != null,
+    );
+  }
+  return themePacks;
 }
 
 /// The telemetry stage: analytics (strictly optional), the fa_ui chat-event

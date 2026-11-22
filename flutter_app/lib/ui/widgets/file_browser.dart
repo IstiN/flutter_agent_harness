@@ -890,9 +890,7 @@ class _FileBrowserState extends State<FileBrowser> {
           child: Row(
             children: [
               FaIcon(
-                state.status == DriveSyncStatus.synced
-                    ? FaSemanticIcon.checkCircle
-                    : FaSemanticIcon.sync,
+                _driveStatusIcon(state.status),
                 size: 15,
                 color: colors.text.withValues(alpha: .65),
               ),
@@ -908,15 +906,7 @@ class _FileBrowserState extends State<FileBrowser> {
                   ),
                 ),
               ),
-              if (controller.pendingCount > 0)
-                Text(
-                  '${controller.pendingCount}',
-                  key: const ValueKey('fileBrowserDrivePending'),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colors.text.withValues(alpha: .65),
-                  ),
-                ),
+              ?_buildDrivePendingCount(controller),
             ],
           ),
         ),
@@ -924,7 +914,7 @@ class _FileBrowserState extends State<FileBrowser> {
     );
     return SizedBox(
       key: const ValueKey('fileBrowserDriveSyncStatus'),
-      height: conflict == null ? 28 : 76,
+      height: _driveStatusHeight(conflict),
       child: Column(
         children: [
           statusRow,
@@ -959,6 +949,26 @@ class _FileBrowserState extends State<FileBrowser> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  static FaSemanticIcon _driveStatusIcon(DriveSyncStatus status) =>
+      status == DriveSyncStatus.synced
+      ? FaSemanticIcon.checkCircle
+      : FaSemanticIcon.sync;
+
+  static double _driveStatusHeight(DrivePath? conflict) =>
+      conflict == null ? 28 : 76;
+
+  Widget? _buildDrivePendingCount(DriveSyncController controller) {
+    if (controller.pendingCount == 0) return null;
+    return Text(
+      '${controller.pendingCount}',
+      key: const ValueKey('fileBrowserDrivePending'),
+      style: TextStyle(
+        fontSize: 11,
+        color: FahColors.of(context).text.withValues(alpha: .65),
       ),
     );
   }
