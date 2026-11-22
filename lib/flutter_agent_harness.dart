@@ -387,3 +387,6 @@ export 'src/product/fa_product_config.dart';
 export 'src/cloud/drive_contract.dart';
 export 'src/cloud/drive_sync_store.dart';
 export 'src/cloud/drive_sync_engine.dart';
+export 'src/cloud/session_sync_contract.dart';
+export 'src/cloud/cloud_session_synchronizer.dart';
+export 'src/cloud/cloud_session_repo.dart';

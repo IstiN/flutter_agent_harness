@@ -104,6 +104,18 @@ final class Session {
   /// caller's in-memory message stays untouched.
   Session(this._storage, {this.customRecordScan, this._persistTransform});
 
+  /// Decorates the storage at open/create time while preserving the repo's
+  /// custom-record scan and persist transform. Callers must apply this before
+  /// returning the new Session to its consumer; append/seal generation state
+  /// intentionally starts with the wrapped instance.
+  Session decorateStorage(
+    SessionStorage Function(SessionStorage storage) decorate,
+  ) => Session(
+    decorate(_storage),
+    customRecordScan: customRecordScan,
+    persistTransform: _persistTransform,
+  );
+
   final SessionStorage _storage;
 
   final Message Function(Message message)? _persistTransform;
