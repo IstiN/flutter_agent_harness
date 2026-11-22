@@ -65,6 +65,10 @@ void main() {
       _valid(brandAssets: {'icon192': r'icons\secret.png'}),
       _valid(driveEndpoint: 'https://drive.example/#fragment'),
       _valid(apiEndpoint: 'http://api.example'),
+      _valid(apiEndpoint: 'https://user:pass@api.example/v1'),
+      _valid(
+        legalLinks: {'privacy': 'https://user:pass@legal.example/privacy'},
+      ),
       _valid(
         oauthCallback: 'https://other.example/callback',
         authEndpoint: null,

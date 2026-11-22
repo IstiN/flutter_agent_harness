@@ -28,6 +28,7 @@ Future<void> main(List<String> args) async {
 }
 
 typedef FlutterWebBuild = Future<void> Function(String outputPath);
+typedef FinalRename = Directory Function(Directory staging, String outputPath);
 
 Future<void> buildProductWeb({
   String? profilePath,
@@ -35,6 +36,7 @@ Future<void> buildProductWeb({
   String outputPath = 'flutter_app/build/web',
   bool validateOnly = false,
   FlutterWebBuild? builder,
+  FinalRename? finalRename,
 }) async {
   final build = builder ?? _flutterBuild;
   if (profilePath == null) {
@@ -56,9 +58,9 @@ Future<void> buildProductWeb({
 
   final output = Directory(outputPath).absolute;
   output.parent.createSync(recursive: true);
-  final staging = Directory(
-    '${output.path}.staging-${DateTime.now().microsecondsSinceEpoch}',
-  );
+  final publicationId = DateTime.now().microsecondsSinceEpoch;
+  final staging = Directory('${output.path}.staging-$publicationId');
+  final backup = Directory('${output.path}.backup-$publicationId');
   if (staging.existsSync()) staging.deleteSync(recursive: true);
   try {
     await build(staging.path);
@@ -67,8 +69,25 @@ Future<void> buildProductWeb({
       config: config,
       assets: assets,
     );
-    if (output.existsSync()) output.deleteSync(recursive: true);
-    staging.renameSync(output.path);
+    final hadOutput = output.existsSync();
+    if (hadOutput) output.renameSync(backup.path);
+    try {
+      if (finalRename == null) {
+        staging.renameSync(output.path);
+      } else {
+        finalRename(staging, output.path);
+      }
+    } catch (_) {
+      // A failed rename can leave a partial destination. Never sacrifice the
+      // sibling last-good build while removing it or restoring the backup.
+      if (output.existsSync()) output.deleteSync(recursive: true);
+      if (hadOutput && backup.existsSync()) backup.renameSync(output.path);
+      rethrow;
+    }
+    // Keep the last-good sibling until the complete staged shell is published.
+    if (hadOutput && backup.existsSync()) {
+      backup.deleteSync(recursive: true);
+    }
   } finally {
     if (staging.existsSync()) staging.deleteSync(recursive: true);
   }
@@ -205,15 +224,31 @@ void stageBrandedShell({
     );
   }
   const splashMarker = '<img id="fa-product-splash"';
-  html = html.replaceFirst(
-    '<body>',
-    '<body>\n  <img id="fa-product-splash" src="splash.png" alt="" '
-        'style="position:fixed;inset:0;margin:auto;max-width:40vmin;z-index:9999;pointer-events:none">'
-        '\n  <script>window.addEventListener("flutter-first-frame",function(){'
-        'var s=document.getElementById("fa-product-splash");if(s)s.remove();});</script>',
+  const brandedSplash =
+      '<img id="fa-product-splash" src="splash.png" alt="" '
+      'style="position:fixed;inset:0;margin:auto;max-width:40vmin;z-index:9999;pointer-events:none">'
+      '\n  <script>window.addEventListener("flutter-first-frame",function(){'
+      'var s=document.getElementById("fa-product-splash");if(s)s.remove();});</script>';
+  // Match the outer closing div by indentation so nested SVG/label elements do
+  // not truncate removal and leave stock markup visible above the branded art.
+  final stockSplash = RegExp(
+    r'^([ \t]*)<div\b(?=[^>]*\bid="fah-splash")[^>]*>.*?^\1</div>[ \t]*(?:\r?\n)?',
+    multiLine: true,
+    dotAll: true,
   );
-  if (html.contains(splashMarker)) {
-    // The marker above is intentionally checked after insertion for idempotency.
+  html = html.replaceFirst(stockSplash, '');
+  if (html.contains('id="fah-splash"')) {
+    throw const FormatException('stock splash could not be removed');
+  }
+  if (!html.contains(splashMarker)) {
+    html = html.replaceFirst('<body>', '<body>\n  $brandedSplash');
+  }
+  const brandedIcon = '<link rel="icon" type="image/png" href="favicon.png"/>';
+  final primaryIcon = RegExp(r'<link\b(?=[^>]*\brel="icon")[^>]*>');
+  if (primaryIcon.hasMatch(html)) {
+    html = html.replaceFirst(primaryIcon, brandedIcon);
+  } else {
+    html = html.replaceFirst('</head>', '  $brandedIcon\n</head>');
   }
   index.writeAsStringSync(html);
 

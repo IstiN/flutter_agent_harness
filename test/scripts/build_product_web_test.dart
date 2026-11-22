@@ -22,6 +22,20 @@ void main() {
     if (temp.existsSync()) temp.deleteSync(recursive: true);
   });
 
+  Future<String> buildFromRealIndex(String output) async {
+    final realIndex = File('flutter_app/web/index.html').readAsStringSync();
+    await buildProductWeb(
+      profilePath: profile.path,
+      assetsPath: assets.path,
+      outputPath: output,
+      builder: (path) async {
+        final shell = _fixtureShell(Directory(path));
+        File('${shell.path}/index.html').writeAsStringSync(realIndex);
+      },
+    );
+    return File('$output/index.html').readAsStringSync();
+  }
+
   test(
     'stock invocation is byte-compatible and creates no product globals',
     () async {
@@ -106,6 +120,33 @@ void main() {
     },
   );
 
+  test('real stock index leaves exactly one visible branded splash', () async {
+    final output = '${temp.path}/real-index-splash';
+    final html = await buildFromRealIndex(output);
+    final splashElements = RegExp(
+      r'<(?:img|div)\b[^>]*\bid="(?:fah-splash|fa-product-splash)"[^>]*>',
+    ).allMatches(html).toList();
+
+    expect(splashElements, hasLength(1));
+    expect(splashElements.single.group(0), contains('id="fa-product-splash"'));
+    expect(splashElements.single.group(0), contains('src="splash.png"'));
+    expect(html, isNot(contains('Loading flutter_agent_harness')));
+    expect(html, isNot(contains('<div class="fah-name">Fa</div>')));
+  });
+
+  test('real stock index uses the branded asset as its primary icon', () async {
+    final output = '${temp.path}/real-index-icon';
+    final html = await buildFromRealIndex(output);
+    final primaryIcon = RegExp(
+      r'<link\b(?=[^>]*\brel="icon")[^>]*>',
+    ).firstMatch(html);
+
+    expect(primaryIcon, isNotNull);
+    expect(primaryIcon!.group(0), contains('type="image/png"'));
+    expect(primaryIcon.group(0), contains('href="favicon.png"'));
+    expect(primaryIcon.group(0), isNot(contains('favicon.svg')));
+  });
+
   test('validate-only performs no build and writes no app', () async {
     final output = '${temp.path}/not-created';
     var called = false;
@@ -188,6 +229,51 @@ void main() {
         'known-good',
       );
       expect(File('${output.path}/product_config.js').existsSync(), isFalse);
+    },
+  );
+
+  test(
+    'an injected final-rename failure restores the last good build',
+    () async {
+      final output = Directory('${temp.path}/existing-web')..createSync();
+      File('${output.path}/sentinel.txt').writeAsStringSync('known-good');
+      Directory? staging;
+
+      await expectLater(
+        buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: output.path,
+          builder: (path) async {
+            staging = Directory(path);
+            _fixtureShell(Directory(path));
+          },
+          finalRename: (directory, outputPath) {
+            throw FileSystemException('injected final rename', outputPath);
+          },
+        ),
+        throwsA(
+          isA<FileSystemException>().having(
+            (error) => error.message,
+            'message',
+            'injected final rename',
+          ),
+        ),
+      );
+
+      expect(
+        File('${output.path}/sentinel.txt').readAsStringSync(),
+        'known-good',
+      );
+      expect(File('${output.path}/product_config.js').existsSync(), isFalse);
+      expect(staging, isNotNull);
+      expect(staging!.existsSync(), isFalse);
+      expect(
+        output.parent.listSync().where(
+          (entry) => entry.path.startsWith('${output.path}.backup-'),
+        ),
+        isEmpty,
+      );
     },
   );
 

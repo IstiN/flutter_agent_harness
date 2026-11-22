@@ -243,7 +243,12 @@ final class FaProductConfig {
   }
 
   static bool _secureEndpoint(Uri uri) {
-    if (!uri.hasScheme || uri.host.isEmpty || uri.hasFragment) return false;
+    if (!uri.hasScheme ||
+        uri.host.isEmpty ||
+        uri.hasFragment ||
+        uri.userInfo.isNotEmpty) {
+      return false;
+    }
     if (uri.scheme == 'https') return true;
     return uri.scheme == 'http' &&
         (uri.host == 'localhost' ||

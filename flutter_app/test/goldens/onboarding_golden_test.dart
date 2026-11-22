@@ -11,9 +11,11 @@ import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa_ui/fa_ui.dart' show ProviderEditorPage;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'golden_test_helper.dart';
 
@@ -25,6 +27,7 @@ Future<void> _pumpOnboardingPage(
   Size? size,
   ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
+  FaProductConfig? productConfig,
 }) {
   return pumpGolden(
     tester,
@@ -33,6 +36,7 @@ Future<void> _pumpOnboardingPage(
       initialPage: page,
       registry: registry,
       lastConnectionStore: lastConnectionStore,
+      productConfig: productConfig ?? FaProductConfig.stock,
     ),
     size: size ?? goldenSizePhone,
     theme: theme,
@@ -54,6 +58,40 @@ void main() {
     testWidgets('page 1 — Start with an idea (light, phone)', (tester) async {
       await _pumpOnboardingPage(tester, page: 0, theme: buildFahThemeLight());
       await expectGolden(tester, 'onboarding_p1_light_phone');
+    });
+
+    testWidgets('branded page 1 uses host mark and display name', (
+      tester,
+    ) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 0,
+        productConfig: const FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIN',
+        ),
+      );
+      expect(find.text('AIN'), findsOneWidget);
+      expect(find.byType(ProductBrandMark), findsNWidgets(2));
+      expect(
+        find.byKey(const ValueKey('productBrandMonogram')),
+        findsNWidgets(2),
+      );
+      await expectGolden(tester, 'onboarding_branded_p1_dark_phone');
+    });
+
+    testWidgets('branded ready page uses host Open action', (tester) async {
+      await _pumpOnboardingPage(
+        tester,
+        page: 3,
+        productConfig: const FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIN',
+        ),
+      );
+      expect(find.text('Open AIN'), findsOneWidget);
+      expect(find.text('Open Fa'), findsNothing);
+      await expectGolden(tester, 'onboarding_branded_p4_dark_phone');
     });
 
     testWidgets('page 2 — Choose provider (dark, phone)', (tester) async {
