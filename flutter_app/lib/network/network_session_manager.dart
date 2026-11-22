@@ -289,6 +289,7 @@ final class NetworkSessionManager extends ChangeNotifier {
       ),
     );
     _jwt = tokens.accessToken;
+    _accountLogin = null;
     _refreshRejectedAccount = null;
     _sessionExpired = false;
     notifyListeners();
@@ -333,6 +334,10 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// refresh. Refresh failures retain the wallet account for the UI, clear
   /// any stale in-memory JWT, and set [sessionExpired].
   Future<String?> ensureFreshJwt() {
+    // Dev sign-in is an in-memory credential, not the stored wallet
+    // account's refresh cycle. A previous rejected/expired wallet must not
+    // keep the freshly minted dev JWT unusable.
+    if (_accountLogin != null && hasJwt) return Future.value(_jwt);
     final account = _wallet.account;
     if (account == null) return Future.value(hasJwt ? _jwt : null);
     if (_refreshRejected(account)) return Future.value(null);
@@ -451,6 +456,7 @@ final class NetworkSessionManager extends ChangeNotifier {
     ).devLogin(login: login, password: password);
     _jwt = token;
     _accountLogin = login;
+    _refreshRejectedAccount = null;
     _sessionExpired = false;
     notifyListeners();
     await syncAccountNetworks();

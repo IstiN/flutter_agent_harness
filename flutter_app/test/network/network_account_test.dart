@@ -474,5 +474,31 @@ void main() {
       expect(manager.accountLogin, 'dev');
       expect(manager.accountDisplayName, isNull);
     });
+
+    test('dev signIn clears a previous terminal refresh rejection', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(
+          401,
+          body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+        );
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.saveAccount(
+        _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 11)),
+      );
+      final manager = await _manager(
+        wallet: wallet,
+        httpClient: httpClient,
+        clock: () => DateTime.utc(2026, 2, 1, 12),
+      );
+      expect(await manager.ensureFreshJwt(), isNull);
+      expect(manager.sessionExpired, isTrue);
+
+      httpClient.respond(200, body: '{"token":"dev-token"}');
+      await manager.signIn(login: 'dev', password: 'pw');
+
+      expect(await manager.ensureFreshJwt(), 'dev-token');
+      expect(await manager.accountClient(), isNotNull);
+      expect(manager.sessionExpired, isFalse);
+    });
   });
 }
