@@ -65,6 +65,49 @@ void main() {
     },
   );
 
+  test('open fallback pulls through pages until the id materializes', () async {
+    final remote = FakeRemoteSessionProvider()..pageSize = 1;
+    final a = SessionHarness('a', remote);
+    await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's1'));
+    await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's2'));
+    await a.sync.flush(a.identity);
+    final remoteS2 = await a.sync.localMetadata('s2');
+    final b = SessionHarness('b', remote);
+
+    final opened = await b.repo.open(remoteS2!);
+
+    expect((await opened.getMetadata()).id, 's2');
+    expect(remote.listCursors, [null, '1']);
+    expect(await b.sync.localMetadata('s2'), isNotNull);
+  });
+
+  test(
+    'kept fork materializes after its parent tombstone on an earlier page',
+    () async {
+      final remote = FakeRemoteSessionProvider()..pageSize = 1;
+      final a = SessionHarness('a', remote);
+      final parent = await a.repo.create(
+        JsonlSessionCreateOptions(cwd: '/work', id: 'parent'),
+      );
+      await parent.appendMessage(UserMessage.text('parent'));
+      final parentMeta = await parent.getMetadata();
+      await a.repo.fork(parentMeta, cwd: '/work', id: 'child');
+      await a.sync.flush(a.identity);
+      await a.sync.enqueueRemoteDelete(parentMeta);
+      await a.sync.flush(a.identity);
+
+      final b = SessionHarness('b', remote);
+      await b.sync.pull(b.identity);
+      expect(await b.sync.localMetadata('child'), isNull);
+      await b.sync.pull(b.identity);
+
+      final child = await b.sync.localMetadata('child');
+      expect(child, isNotNull);
+      expect(child!.parentSessionPath, isNull);
+      expect((await (await b.repo.open(child)).getMetadata()).id, 'child');
+    },
+  );
+
   test(
     'fork → upload → pull → fork keeps parent and grandparent ancestry',
     () async {

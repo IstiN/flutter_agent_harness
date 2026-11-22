@@ -196,6 +196,18 @@ final class CloudSessionSynchronizer {
     if (!page.isOk) throw page.error!;
     final value = page.value!;
     final cursor = _validatedPageCursor(value);
+    final tombstoneRevisions = <String, String>{
+      for (final record in value.records.where((record) => record.deleted))
+        record.sessionId: record.revision,
+    };
+    if (tombstoneRevisions.isNotEmpty) {
+      // Remember tombstones across pages. A kept child on a later page can
+      // then materialize as a local-only fork instead of waiting forever
+      // for a parent that will never have a non-deleted remote record.
+      snapshot = snapshot.copyWith(
+        remoteRevisions: {...snapshot.remoteRevisions, ...tombstoneRevisions},
+      );
+    }
     final ordered = _parentsFirst(
       value.records.where((record) => !record.deleted),
     );
@@ -250,9 +262,13 @@ final class CloudSessionSynchronizer {
     }
     if (_alreadyMaterialized(snapshot, record)) return true;
     final parent = record.parentSessionId;
-    // A child on an earlier page than its parent is deferred, never flattened.
-    // The completed cursor cycle triggers a full reconciliation and joins it.
-    return parent != null && !snapshot.localPaths.containsKey(parent);
+    // A child on an earlier page than its live parent is deferred, never
+    // flattened. A parent already seen as a tombstone (persisted in
+    // remoteRevisions, deliberately absent from localPaths) is the supported
+    // local-only exception: materialize the kept child with a null parent.
+    return parent != null &&
+        !snapshot.localPaths.containsKey(parent) &&
+        !snapshot.remoteRevisions.containsKey(parent);
   }
 
   Future<SessionMetadata?> localMetadata(String sessionId) async {

@@ -38,10 +38,16 @@ final class CloudSessionRepo implements SessionRepo {
       return _wrap(session, await session.getMetadata());
     } on SessionException catch (error) {
       if (error.code != SessionErrorCode.notFound) rethrow;
-      await synchronizer
+      var snapshot = await synchronizer
           .pull(synchronizer.scope.identity)
           .timeout(synchronizer.remoteReadTimeout);
-      final localMetadata = await synchronizer.localMetadata(metadata.id);
+      var localMetadata = await synchronizer.localMetadata(metadata.id);
+      while (localMetadata == null && snapshot.cursor != null) {
+        snapshot = await synchronizer
+            .pull(synchronizer.scope.identity)
+            .timeout(synchronizer.remoteReadTimeout);
+        localMetadata = await synchronizer.localMetadata(metadata.id);
+      }
       if (localMetadata == null) rethrow;
       final session = await local.open(
         localMetadata,
