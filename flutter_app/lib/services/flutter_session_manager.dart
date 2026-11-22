@@ -1078,24 +1078,7 @@ final class FlutterSessionManager extends ChangeNotifier {
       );
       return;
     }
-    if (singleProcessAppHost()) {
-      // iOS/Android have one primary app process. A different app bootId
-      // therefore belongs to the previous, now-dead process: its fresh
-      // heartbeat must not force a cold start into a fresh session.
-      final path = store.sidecarPath(metadata.path);
-      final found = await store.inspect(path);
-      final previous = found.lease;
-      if (found.state == LeaseState.live &&
-          previous != null &&
-          previous.host == 'app' &&
-          previous.bootId != _leaseBootId) {
-        debugPrint(
-          '[fah][lease] ${metadata.id}: replacing previous '
-          'single-process app lease',
-        );
-        await store.release(path, previous.bootId);
-      }
-    }
+    await _releasePreviousSingleProcessLease(store, metadata);
     final result = await store.acquire(
       sessionFilePath: metadata.path,
       sessionId: metadata.id,
@@ -1126,6 +1109,32 @@ final class FlutterSessionManager extends ChangeNotifier {
         );
         throw LeaseRefusedException(reason);
     }
+  }
+
+  /// Releases only a previous single-process app's lease. Live CLI leases
+  /// and other hosts remain strictly non-takeover ownership boundaries.
+  Future<void> _releasePreviousSingleProcessLease(
+    FileSessionLeaseStore store,
+    SessionMetadata metadata,
+  ) async {
+    if (!singleProcessAppHost()) return;
+    // iOS/Android have one primary app process. A different app bootId
+    // therefore belongs to the previous, now-dead process: its fresh
+    // heartbeat must not force a cold start into a fresh session.
+    final path = store.sidecarPath(metadata.path);
+    final found = await store.inspect(path);
+    final previous = found.lease;
+    if (found.state != LeaseState.live ||
+        previous == null ||
+        previous.host != 'app' ||
+        previous.bootId == _leaseBootId) {
+      return;
+    }
+    debugPrint(
+      '[fah][lease] ${metadata.id}: replacing previous '
+      'single-process app lease',
+    );
+    await store.release(path, previous.bootId);
   }
 
   /// Keeps our lease live while the managed session is open (5s cadence,
