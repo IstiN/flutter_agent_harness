@@ -57,6 +57,12 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   return createDesktopEnv();
 }
 
+/// A plain local env rooted at an arbitrary folder: the Files recent-folder
+/// quick-jump chips open previously used chat folders (owner call). The
+/// web stub returns an in-memory env instead.
+Future<ExecutionEnv> createFolderEnv(String cwd) async =>
+    LocalExecutionEnv(cwd: cwd);
+
 /// Only reached off-web (the caller's web branch returns first) — safe to
 /// touch `Platform`.
 bool _isMobilePlatform() => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
@@ -99,10 +105,10 @@ Future<ExecutionEnv> createMobileSandboxEnv({
   final mountEnv = ProjectMountEnv(LocalExecutionEnv(cwd: sandbox.path));
   final stored = await ProjectMountStore.load(mountEnv);
   if (stored != null) {
-    applyStoredMount(
+    await restoreProjectMount(
       mountEnv,
       stored,
-      granted: await ProjectFolderChannelOps().startAccessing(stored.bookmark),
+      const ProjectFolderChannelOps(),
     );
   }
   // The same user-granted /project seam as macOS, over the mobile sandbox.
@@ -266,12 +272,10 @@ Future<ExecutionEnv> mountedDesktopEnv(LocalExecutionEnv baseEnv) async {
   final mountEnv = ProjectMountEnv(baseEnv);
   final stored = await ProjectMountStore.load(baseEnv);
   if (stored == null) return mountEnv;
-  applyStoredMount(
+  await restoreProjectMount(
     mountEnv,
     stored,
-    granted:
-        await (defaultProjectFolderOps() ?? const ProjectFolderChannelOps())
-            .startAccessing(stored.bookmark),
+    defaultProjectFolderOps() ?? const ProjectFolderChannelOps(),
   );
   return mountEnv;
 }
@@ -289,6 +293,37 @@ void applyStoredMount(
   } else {
     mountEnv.mountUnavailable = stored.path;
   }
+}
+
+/// Restores a persisted mount. The richer resolved-path grant wins when
+/// the host provides it (iOS stale-bookmark container moves): mount and
+/// RE-PERSIST the resolved path/bookmark instead of the stale serialized
+/// ones; otherwise the legacy bool grant applies (see [applyStoredMount]).
+Future<void> restoreProjectMount(
+  ProjectMountEnv mountEnv,
+  ProjectMountStore stored,
+  ProjectFolderOps ops,
+) async {
+  final resolved = ops is ProjectFolderChannelOps
+      ? await ops.startAccessingResolved(stored.bookmark)
+      : null;
+  if (resolved != null) {
+    mountEnv.mountedRoot = resolved.path;
+    if (resolved.path != stored.path || resolved.bookmark != stored.bookmark) {
+      await ProjectMountStore.save(
+        mountEnv,
+        path: resolved.path,
+        bookmark: resolved.bookmark,
+        scoped: stored.scoped,
+      );
+    }
+    return;
+  }
+  applyStoredMount(
+    mountEnv,
+    stored,
+    granted: await ops.startAccessing(stored.bookmark),
+  );
 }
 
 /// `true` when running on a mobile OS that needs the WASM shell sandbox.

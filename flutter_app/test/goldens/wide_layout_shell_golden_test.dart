@@ -1762,10 +1762,11 @@ void main() {
           reason:
               'the Apps header must melt into the directory, not paint a card',
         );
-        expect(find.text('Files'), findsNothing);
+        // Owner: Files is a first-class destination on EVERY host.
+        expect(find.text('Files'), findsOneWidget);
         expect(
           find.byKey(const ValueKey('launcherCell:system:files')),
-          findsNothing,
+          findsOneWidget,
         );
         await expectGolden(tester, 'wide_layout_shell_apps$lightSuffix');
       },

@@ -1774,7 +1774,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           manager: widget.manager,
           controller: _appLauncherController,
           fullScreen: !_isNarrow,
-          showFilesTile: false,
+          // Files is a first-class tile again (owner call): the launcher
+          // pruned it on every host, so macOS AND mobile lost the app.
+          showFilesTile: true,
+          filesRecentFolders: _recentChatFolders,
           onProfile: _openNarrowProfile,
           onBack: _isNarrow
               ? null
@@ -2487,16 +2490,34 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     );
   }
 
-  Future<void> _openFiles() async {
+  /// Distinct chat folders, most recently active first (max 6) — the
+  /// Files quick-jump chips (owner call: replaces the Mount button).
+  List<String> _recentChatFolders() {
+    final entries = [..._chatController.localEntries]
+      ..sort(
+        (a, b) => (b.lastActivity ?? DateTime(0)).compareTo(
+          a.lastActivity ?? DateTime(0),
+        ),
+      );
+    final seen = <String>{};
+    final result = <String>[];
+    for (final entry in entries) {
+      final path = entry.folderPath;
+      if (path != null && path.isNotEmpty && seen.add(path)) {
+        result.add(path);
+        if (result.length == 6) break;
+      }
+    }
+    return result;
+  }
+
+  Future<void> _openFiles({String? recentFolder}) async {
     AppAnalytics.instance.filesOpened('sidebar');
     if (!mounted) return;
     final service = widget.manager.active?.service;
-    // Without an active service we still have an env (post-onboarding
-    // empty manager creates one for the home screen), so the file
-    // browser renders against the sandbox cwd.
-    final env = service?.env ?? await _resolveHomeEnv();
+    final env = await _resolveFilesEnv(recentFolder);
     if (!mounted) return;
-    if (_isNarrow) {
+    if (_filesUseFullPageRoute()) {
       final fsRevision = service?.fsRevision;
       // The SAME Files card every other entry uses — the shared chrome
       // band, never a legacy Scaffold + app-bar duplicate.
@@ -2505,12 +2526,19 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           builder: (_) => FilesAppPage(
             presentation: FilesAppPresentation(
               env: env,
+              initialPath: recentFolder,
               // The active session's folder rides along: the browser
               // gates on it (allow-access flow) instead of silently
               // listing the active mount when the env cannot open it.
-              sessionFolder: service?.currentSessionCwd,
+              sessionFolder: recentFolder ?? service?.currentSessionCwd,
               fsRevision: fsRevision,
               onProjectMountChanged: service?.refreshProjectMountPrompt,
+              recentFolders: _recentChatFolders(),
+              onOpenRecentFolder: (path) {
+                // Swap this Files route for the folder's own surface.
+                Navigator.of(context).maybePop();
+                unawaited(_openFiles(recentFolder: path));
+              },
             ),
           ),
         ),
@@ -2523,14 +2551,46 @@ class _WideLayoutShellState extends State<WideLayoutShell>
       _appPresentation = null;
       _filesPresentation = FilesAppPresentation(
         env: env,
+        initialPath: recentFolder,
         // The active session's folder rides along (the gate seam — see
         // the narrow branch above).
-        sessionFolder: service?.currentSessionCwd,
+        sessionFolder: recentFolder ?? service?.currentSessionCwd,
         fsRevision: service?.fsRevision,
         onProjectMountChanged: service?.refreshProjectMountPrompt,
+        recentFolders: _recentChatFolders(),
+        onOpenRecentFolder: (path) => unawaited(_openFiles(recentFolder: path)),
       );
     });
     _presentSurface();
+  }
+
+  /// Phones always get the FULL-SCREEN Files page (owner call), even in
+  /// landscape/wide windows where [_isNarrow] is false — EXCEPT Duo, whose
+  /// right dock is the whole point of that presentation.
+  bool _filesUseFullPageRoute() {
+    if (_isNarrow) return true;
+    if (kIsWeb) return false;
+    final isPhone =
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android;
+    return isPhone && !FaDuoControlRail.isActive(context);
+  }
+
+  /// Without an active service we still have an env (post-onboarding
+  /// empty manager creates one for the home screen), so the file browser
+  /// renders against the sandbox cwd. Direct-access hosts re-root a
+  /// recent-folder chip at that folder; sandboxed hosts keep their mount
+  /// env for the allow-access flow. Kept separate from [_openFiles] so the
+  /// presentation branches remain below the CRAP ratchet.
+  Future<ExecutionEnv> _resolveFilesEnv(String? recentFolder) async {
+    // Only non-sandboxed hosts may re-root a plain env at an arbitrary
+    // folder. A sandboxed host keeps its existing mount env: an ungranted
+    // recent folder then remains visible to FileBrowser's allow-access
+    // gate instead of failing the listing with no recovery (review).
+    if (recentFolder != null && directFolderAccessAllowed) {
+      return createFolderEnv(recentFolder);
+    }
+    return widget.manager.active?.service.env ?? await _resolveHomeEnv();
   }
 
   /// Cached env for routes that need a sandbox root but not an active

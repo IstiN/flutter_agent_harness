@@ -33,6 +33,7 @@ import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
 import 'package:fa/services/project_mount_env.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/ui/chats/chat_list_panel.dart';
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
@@ -799,18 +800,22 @@ void main() {
             final sidebar = tester.getRect(
               find.byKey(const ValueKey('desktopSidebarContainer')),
             );
-            final search = tester.getRect(
-              find.byKey(const ValueKey('messengerSearchField')),
-            );
+            // Apps has no sidebar search (owner call) — skip its
+            // centerline measurement, keep the toggle/brand checks.
+            if (label != 'Apps') {
+              final search = tester.getRect(
+                find.byKey(const ValueKey('messengerSearchField')),
+              );
+              expect(
+                search.center.dy,
+                closeTo(collapse.center.dy, .001),
+                reason: reason,
+              );
+            }
             final expandedCenter = tester.getRect(
               find.byKey(const ValueKey('glassCenterPanel')),
             );
             expect(collapse.center.dy, closeTo(35, .001), reason: reason);
-            expect(
-              search.center.dy,
-              closeTo(collapse.center.dy, .001),
-              reason: reason,
-            );
             // The panel's 8pt gutter contract on BOTH sides: 8pt card
             // margin + 8pt gutter between the toggle's right edge and the
             // panel's right edge (owner call: the open panel's toggle must
@@ -1544,6 +1549,62 @@ void main() {
     expect(find.byKey(const ValueKey('messengerSearchField')), findsOneWidget);
   });
 
+  testWidgets('sandbox recent-folder chip preserves the allow-access gate', (
+    tester,
+  ) async {
+    debugDirectFolderAccess = false;
+    addTearDown(() => debugDirectFolderAccess = null);
+    final env = MemoryExecutionEnv(cwd: '/');
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('design-session', _fakeService(env));
+    final entry = ChatListEntry(
+      id: ChatEntryId.local('design-session'),
+      kind: ChatListEntryKind.localAgent,
+      title: 'Outside project',
+      preview: 'Preview',
+      createdAt: DateTime.utc(2025),
+      lastActivity: DateTime.utc(2026),
+      folderName: 'project',
+      folderPath: '/outside/project',
+      localMessageCount: 1,
+    );
+    await pumpShell(
+      tester,
+      manager: manager,
+      localChatAdapterFactory: () => _StaticLocalChatListSource([entry]),
+      size: const Size(390, 844),
+    );
+    await tester.pumpAndSettle();
+
+    // Open the shell's own Files route through the narrow profile (not
+    // the chat dock or the launcher's separate route).
+    await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('messengerPageIcon')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('narrowShellProfileRoute')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('narrowProfileFiles')));
+    await tester.pumpAndSettle();
+    final chip = find.byKey(
+      const ValueKey('fileBrowserRecentChip:/outside/project'),
+    );
+    expect(chip, findsOneWidget);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+
+    // Review: a sandboxed chip must NOT re-root an ungranted plain env
+    // (which hid this gate behind a bare listing error). It keeps the
+    // existing env + sessionFolder, so the grant flow remains available.
+    expect(
+      find.byKey(const ValueKey('filesSessionFolderGate')),
+      findsOneWidget,
+    );
+    expect(find.text('Could not list folder'), findsNothing);
+  });
+
   testWidgets('docked Files and chat actions share the top centerline', (
     tester,
   ) async {
@@ -1630,7 +1691,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Files is absent from Apps and remains available from chat', (
+  testWidgets('Files tile lives in Apps and remains available from chat', (
     tester,
   ) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
@@ -1643,11 +1704,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('messengerPrimaryNav-apps')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Files'), findsNothing);
+    expect(find.text('Files'), findsOneWidget);
     expect(find.byKey(const ValueKey('appsDirectoryFiles')), findsNothing);
     expect(
       find.byKey(const ValueKey('launcherCell:system:files')),
-      findsNothing,
+      findsOneWidget,
     );
 
     await tester.tap(find.byKey(const ValueKey('chatFilter-all')));
@@ -1698,14 +1759,16 @@ void main() {
         FaIconActionButton.defaultDiameter,
         reason: label,
       );
-      expect(
-        tester
-                .getRect(find.byKey(const ValueKey('messengerSearchField')))
-                .right <=
-            newRect.left,
-        isTrue,
-        reason: label,
-      );
+      // Apps has no sidebar search (owner call) — nothing to measure.
+      if (label != 'Apps')
+        expect(
+          tester
+                  .getRect(find.byKey(const ValueKey('messengerSearchField')))
+                  .right <=
+              newRect.left,
+          isTrue,
+          reason: label,
+        );
       expect(
         find.descendant(
           of: collapse,
@@ -1804,21 +1867,28 @@ void main() {
         }
         final search = find.byKey(const ValueKey('messengerSearchField'));
         final newButton = find.byKey(const ValueKey('messengerNewButton'));
-        expect(search, findsOneWidget, reason: section);
+        // Apps has no sidebar search (owner call) — only Chats/Activity
+        // share the header search slot.
+        expect(
+          search,
+          section == 'apps' ? findsNothing : findsOneWidget,
+          reason: section,
+        );
         expect(newButton, findsOneWidget, reason: section);
         // One shared component: both slots are descendants of the ONE
         // MessengerSectionHeader the shell builds for every section.
-        expect(
-          find
-              .ancestor(
-                of: search,
-                matching: find.byType(MessengerSectionHeader),
-              )
-              .evaluate()
-              .length,
-          1,
-          reason: section,
-        );
+        if (section != 'apps')
+          expect(
+            find
+                .ancestor(
+                  of: search,
+                  matching: find.byType(MessengerSectionHeader),
+                )
+                .evaluate()
+                .length,
+            1,
+            reason: section,
+          );
         expect(
           find
               .ancestor(
@@ -1830,6 +1900,7 @@ void main() {
           1,
           reason: section,
         );
+        if (section == 'apps') continue;
         snapshots[section] = _HeaderSlotSnapshot(
           searchRect: tester.getRect(search),
           newRect: tester.getRect(newButton),

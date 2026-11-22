@@ -677,18 +677,27 @@ class _DevicesPageState extends State<DevicesPage> {
           final connecting =
               phase == DeviceConnectorPhase.preparing ||
               phase == DeviceConnectorPhase.connecting;
-          if (!connecting) {
+          final reconnecting = phase == DeviceConnectorPhase.reconnecting;
+          if (!connecting && !reconnecting) {
             return _deviceOptionsMenu(context) ?? const SizedBox.shrink();
           }
+          // Connecting AND reconnecting live in the header: the rail below
+          // keeps its geometry across phase flips (owner feedback — the
+          // body banner made the list jump and opened a second header gap).
+          final phaseColor = reconnecting ? colors.pending : colors.dim;
           return Row(
-            key: const ValueKey('devicesConnecting'),
+            key: ValueKey(
+              reconnecting ? 'devicesReconnecting' : 'devicesConnecting',
+            ),
             mainAxisSize: MainAxisSize.min,
             children: [
-              FaIcon(FaSemanticIcon.sync, size: 12, color: colors.dim),
+              FaIcon(FaSemanticIcon.sync, size: 12, color: phaseColor),
               const SizedBox(width: 6),
               Text(
-                context.l10n.networkDeviceConnecting,
-                style: TextStyle(color: colors.dim, fontSize: 11),
+                reconnecting
+                    ? context.l10n.networkDeviceReconnecting
+                    : context.l10n.networkDeviceConnecting,
+                style: TextStyle(color: phaseColor, fontSize: 11),
               ),
               const SizedBox(width: 8),
               _deviceOptionsMenu(context) ?? const SizedBox.shrink(),
@@ -725,19 +734,11 @@ class _DevicesPageState extends State<DevicesPage> {
   ) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      // Connecting lives in the header. Keeping the same list and its single
-      // glass inset mounted prevents a second header-height gap and the jump
-      // when the phase resolves.
-      if (phase == DeviceConnectorPhase.reconnecting ||
-          phase == DeviceConnectorPhase.signedOut)
+      // Connecting and reconnecting live in the header. Keeping the same
+      // list and its single glass inset mounted prevents a second
+      // header-height gap and the jump when the phase resolves.
+      if (phase == DeviceConnectorPhase.signedOut)
         SizedBox(height: MessengerGlassBodyInsets.topOf(context)),
-      if (phase == DeviceConnectorPhase.reconnecting)
-        _phaseLine(
-          context,
-          key: const ValueKey('devicesReconnecting'),
-          label: context.l10n.networkDeviceReconnecting,
-          color: colors.pending,
-        ),
       // A failed start leaves the phase signed-out while the section is
       // still mounted (enrollment/keychain/WS failure) — never blank:
       // say so, show the error, tap retries (issue #2062 field feedback).

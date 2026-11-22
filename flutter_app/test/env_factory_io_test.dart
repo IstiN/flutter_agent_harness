@@ -11,6 +11,9 @@ import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -191,6 +194,50 @@ void main() {
       expect(mountEnv.mountedRoot, isNull);
       expect(mountEnv.mountUnavailable, '/proj');
     });
+
+    test(
+      'restoreProjectMount mounts the RESOLVED path and re-persists it',
+      () async {
+        TestWidgetsFlutterBinding.ensureInitialized();
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        const channel = MethodChannel('fah/project_folder');
+        final calls = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              calls.add(call.method);
+              if (call.method == 'startAccessingResolved') {
+                return <String, String>{
+                  'path': '/resolved/container',
+                  'bookmark': 'fresh-bm',
+                };
+              }
+              return null;
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+        final (mountEnv, stored) = await _mountWithStoredMount();
+        await app_env.restoreProjectMount(
+          mountEnv,
+          stored,
+          const ProjectFolderChannelOps(),
+        );
+        // The iOS stale-bookmark case: the resolved container path wins
+        // over the serialized one, and the fresh grant is re-persisted so
+        // the next boot does not repeat the stale resolution.
+        expect(mountEnv.mountedRoot, '/resolved/container');
+        expect(mountEnv.mountUnavailable, isNull);
+        final persisted = (await ProjectMountStore.load(mountEnv))!;
+        expect(persisted.path, '/resolved/container');
+        expect(persisted.bookmark, 'fresh-bm');
+        expect(persisted.scoped, stored.scoped);
+        expect(calls, ['startAccessingResolved']);
+      },
+    );
     test(
       'mountedDesktopEnv without a stored mount is a plain wrapper',
       () async {

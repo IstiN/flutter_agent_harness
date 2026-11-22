@@ -210,10 +210,14 @@ class ChatMessageTile extends StatelessWidget {
     // shrink-wraps. Anchor the user's bubble to the right edge of THAT row;
     // otherwise a short message stays at the left edge with empty space to
     // its right (the compact overlay adds its own outer gutter as before).
-    if (isUser && !compact) {
-      return Align(alignment: Alignment.centerRight, child: withCopy);
-    }
-    return _withLeadingAvatar(context, isUser, withCopy);
+    // Non-compact bubbles ALSO get an explicit bottom gap (owner feedback:
+    // adjacent DM/assistant cards touched — this path had no outer margin).
+    final body = isUser && !compact
+        ? Align(alignment: Alignment.centerRight, child: withCopy)
+        : _withLeadingAvatar(context, isUser, withCopy);
+    return compact
+        ? body
+        : Padding(padding: const EdgeInsets.only(bottom: 10), child: body);
   }
 
   /// The bubble body: width budget (user bubbles keep the compact fixed

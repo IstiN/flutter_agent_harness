@@ -92,6 +92,7 @@ class ChatListPanel extends StatefulWidget {
     this.filterSelectedExtraHighlighted = true,
     this.onFilterSelected,
     this.searchController,
+    this.showSearch = true,
     this.searchFocusNode,
     this.searchHint,
     this.onSearch,
@@ -161,6 +162,11 @@ class ChatListPanel extends StatefulWidget {
   /// shell's vertical rail and phone dock own those destinations now, so
   /// both shell forms pass false. Standalone panels retain the default bar.
   final bool showFilterToolbar;
+
+  /// Whether the header renders its search field. False on the Apps
+  /// section (owner call): the launcher's header-reveal search is the
+  /// single apps search surface — no second field in the sidebar.
+  final bool showSearch;
   final NetworkSessionManager? networkManager;
 
   /// The same mount-rebased, cached resolver used by Local folder rows.
@@ -425,8 +431,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
   Widget _buildHeader() {
     return MessengerSectionHeader(
       title: widget.title ?? context.l10n.wideNavChats,
-      searchController: _effectiveSearchController,
-      searchFocusNode: _effectiveSearchFocusNode,
+      searchController: widget.showSearch ? _effectiveSearchController : null,
+      searchFocusNode: widget.showSearch ? _effectiveSearchFocusNode : null,
       searchCollapsed: _collapsibleSearch && !_compactSearchShown,
       onSearchReveal: _collapsibleSearch && !_compactSearchShown
           ? _revealSearch

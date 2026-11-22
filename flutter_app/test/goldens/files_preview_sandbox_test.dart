@@ -19,6 +19,8 @@ library;
 
 import 'dart:io';
 
+import 'package:fa/services/project_mount_flow.dart'
+    show debugDirectFolderAccess;
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
@@ -107,7 +109,10 @@ void main() {
   });
   // The glass direction's LiquidGlass chips render through the
   // deterministic fake — same contract as the files/wide-shell goldens.
+  // Golden SIMULATES the sandbox gate: real non-sandboxed hosts skip it.
   setUp(() => debugFaGlassAlwaysFake = true);
+  setUp(() => debugDirectFolderAccess = false);
+  tearDown(() => debugDirectFolderAccess = null);
   tearDown(() => debugFaGlassAlwaysFake = false);
 
   /// Pumps the Files panel over the mobile sandbox stack with the session

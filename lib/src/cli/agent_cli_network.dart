@@ -23,6 +23,11 @@ Future<void> _startNetworkPresenceFor(AgentCli cli) async {
         dmSink: (dm) => _deliverNetworkDm(cli, dm, mailbox: mailbox),
         onNotice: (message) =>
             cli.io.writeln(cli._style.dim('[network] $message')),
+        // Friendly title/cwd ride the live presence overlay even before
+        // the persisted catalog rediscovers this session (owner: named
+        // session rendered as `CLI · <uuid>` on the app's device page).
+        displayName: await session?.getSessionName(),
+        cwd: cli._env.cwd,
       ),
     );
   } on Object {
@@ -46,10 +51,7 @@ Future<void> _deliverNetworkDm(
   }
   // Keep the durable route in the fabric message for restart safety, but
   // give the model a short directory alias instead of a multi-line token.
-  manager.registerNetworkDmPeer(
-    name: dm.senderLabel,
-    address: dm.replyAddress,
-  );
+  manager.registerNetworkDmPeer(name: dm.senderLabel, address: dm.replyAddress);
   final mail = dm.mail;
   await messaging.send(
     AgentMessage(

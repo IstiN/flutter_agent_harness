@@ -16,16 +16,19 @@ typedef TilePlacement = ({int row, int col});
 /// A WxH live tile measures exactly the outer edges of the WxH block of
 /// icon slots it replaces, so widget edges always align with icon edges.
 abstract final class LauncherGridSpec {
-  /// App-icon square side, in logical pixels. A 64pt desktop icon matches
-  /// Launchpad's measured artwork instead of making the label grid giant.
-  static const double iconSize = 64;
+  /// App-icon square side, in logical pixels. 60pt tracks the macOS
+  /// Launchpad artwork (~5% down from the earlier oversized 64pt, owner
+  /// feedback) and lets a phone row hold five icons instead of four.
+  static const double iconSize = 60;
 
   /// Height of the centered 12–13pt label strip under the icon square.
   static const double labelHeight = 24;
 
   /// Gap between cells on compact screens; the full launcher uses a wider
   /// desktop gutter while preserving this icon-unit alignment contract.
-  static const double spacing = 16;
+  /// 12pt + 60pt icons fit five columns on a 390pt phone (5·60+4·12=348
+  /// inside the 358pt usable lane) instead of the cramped four.
+  static const double spacing = 12;
 
   /// Launchpad desktop pitch: 88pt horizontally and 108pt vertically.
   static const double desktopSpacing = 24;

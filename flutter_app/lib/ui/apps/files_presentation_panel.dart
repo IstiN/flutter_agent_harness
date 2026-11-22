@@ -20,6 +20,8 @@ final class FilesAppPresentation {
     this.sessionFolder,
     this.fsRevision,
     this.onProjectMountChanged,
+    this.recentFolders,
+    this.onOpenRecentFolder,
   });
 
   final ExecutionEnv env;
@@ -39,6 +41,12 @@ final class FilesAppPresentation {
 
   final ValueNotifier<int>? fsRevision;
   final void Function()? onProjectMountChanged;
+
+  /// Most-recent-first chat folders for the quick-jump chips (owner call).
+  final List<String>? recentFolders;
+
+  /// Opens a recent folder from its chip (the host swaps the Files root).
+  final void Function(String path)? onOpenRecentFolder;
 }
 
 /// Files presented like an app: a floating glass card (8pt margins,
@@ -101,6 +109,8 @@ final class FilesAppPanel extends StatelessWidget {
         inlinePreview: inlinePreview,
         fsRevision: presentation.fsRevision,
         onProjectMountChanged: presentation.onProjectMountChanged,
+        recentFolders: presentation.recentFolders,
+        onOpenRecentFolder: presentation.onOpenRecentFolder,
         showHeader: true,
         surfaceBorder: false,
         onClose: close,

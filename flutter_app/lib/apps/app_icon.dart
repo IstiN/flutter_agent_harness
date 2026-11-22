@@ -75,32 +75,6 @@ abstract final class AppIconPalette {
       ? const Color(0xFF2D3748)
       : const Color(0xFFFFFFFF);
 
-  /// SVGs commonly paint their own saturated background over the badge
-  /// gradient. Filter the artwork too, preserving whites/darks and hue while
-  /// removing the acid-green/hot-pink cast called out in visual review.
-  static const artworkFilter = ColorFilter.matrix(<double>[
-    .64585,
-    .32175,
-    .0324,
-    0,
-    0,
-    .09585,
-    .87175,
-    .0324,
-    0,
-    0,
-    .09585,
-    .32175,
-    .5824,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-  ]);
-
   static ShapeDecoration decoration({
     required String seed,
     required Brightness brightness,
@@ -136,8 +110,11 @@ abstract final class AppIconPalette {
   }
 }
 
-/// A continuous-corner, muted-color tile used by Launchpad-style surfaces.
+/// A continuous-corner tile used by Launchpad-style surfaces.
 /// [child] is normally the app artwork or an adaptive system glyph.
+///
+/// Uniform muted backplate (owner 2026-11-21: the bare-artwork variant
+/// looked inconsistent). Artwork keeps its original colors — no filter.
 class AppIconBadge extends StatelessWidget {
   const AppIconBadge({
     super.key,
@@ -156,7 +133,9 @@ class AppIconBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(size * .22);
+    // Muted continuous-corner backplate for EVERY tile (owner: the
+    // no-backplate experiment read as a messy launchpad) — but NO
+    // desaturating ColorFiltered: the artwork keeps its own colors.
     return Container(
       width: size,
       height: size,
@@ -168,11 +147,8 @@ class AppIconBadge extends StatelessWidget {
         size: size,
       ),
       child: ClipRSuperellipse(
-        borderRadius: radius,
-        child: ColorFiltered(
-          colorFilter: AppIconPalette.artworkFilter,
-          child: SizedBox.expand(child: child),
-        ),
+        borderRadius: BorderRadius.circular(size * .22),
+        child: SizedBox.expand(child: child),
       ),
     );
   }
@@ -203,6 +179,17 @@ abstract final class AppIconArtwork {
     '3d-game': (_dodgeGame, Color(0xFF35677A)),
     'neon-breakout-3d': (_breakout, Color(0xFF252D49)),
     'voxel-sandbox': (_voxelSandbox, Color(0xFF596B62)),
+    'health': (_health, Color(0xFFB0505E)),
+    'map': (_map, Color(0xFFB0594C)),
+    'weather': (_weather, Color(0xFF5B7FA6)),
+    'voice-notes': (_voiceNotes, Color(0xFF4A6FB3)),
+    'crypto': (_cryptoPrices, Color(0xFFB07A34)),
+    'fitness-trainer': (_fitnessTrainer, Color(0xFF5E7386)),
+    'english-teacher': (_languageTutor, Color(0xFF4F8A90)),
+    'yolo-hello': (_helloAnimation, Color(0xFFA87850)),
+    'stocks': (_stockPrices, Color(0xFF3F7A5C)),
+    'video-player': (_videoPlayer, Color(0xFF4A5F8A)),
+    'animation-showcase': (_animationShowcase, Color(0xFF6B4F8E)),
   };
 
   static String? svgFor(String appId) => _entries[appId]?.$1;
@@ -341,6 +328,100 @@ abstract final class AppIconArtwork {
   <path d="m32 20 10 6-10 6-10-6Z" fill="#7D7468"/><path d="m22 26 10 6v10l-10-6Z" fill="#665E55"/><path d="m32 32 10-6v10l-10 6Z" fill="#4E4A46"/>
   <path d="M8 20l24 14 24-14M32 34v24" fill="none" stroke="#E3EAE2" stroke-opacity=".3"/>
 </svg>''';
+  static const _health =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="heart" x1="14" y1="12" x2="48" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#FF9AA8"/><stop offset="1" stop-color="#C62B44"/></linearGradient></defs>
+  <path d="M32 54C22 45 8 36 8 24 8 15 15 9 23 9c4 0 7 2 9 5 2-3 5-5 9-5 8 0 15 6 15 15 0 12-14 21-24 30Z" fill="url(#heart)" stroke="#FFD9DE" stroke-opacity=".6"/>
+  <path d="M14 30h10l4-9 6 18 4-9h12" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 16c2-3 5-4 8-4" fill="none" stroke="#FFFFFF" stroke-opacity=".55" stroke-width="2" stroke-linecap="round"/>
+</svg>''';
+
+  static const _map =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="pin" x1="18" y1="8" x2="46" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#FF9B7E"/><stop offset="1" stop-color="#C23B32"/></linearGradient></defs>
+  <path d="M32 58C24 46 12 36 12 25 12 14 21 6 32 6s20 8 20 19c0 11-12 21-20 33Z" fill="url(#pin)" stroke="#FFD8CC" stroke-opacity=".6"/>
+  <circle cx="32" cy="25" r="8.5" fill="#FFF3EE" stroke="#B93A31" stroke-opacity=".45"/>
+  <path d="M18 14c3-4 8-6 12-6" fill="none" stroke="#FFFFFF" stroke-opacity=".5" stroke-width="2" stroke-linecap="round"/>
+</svg>''';
+
+  static const _weather =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="sun" x1="12" y1="8" x2="38" y2="36" gradientUnits="userSpaceOnUse"><stop stop-color="#FFE08A"/><stop offset="1" stop-color="#F0A63C"/></linearGradient><linearGradient id="cloud" x1="20" y1="28" x2="52" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#B9CCDE"/></linearGradient></defs>
+  <g stroke="#F3C25C" stroke-width="3" stroke-linecap="round"><path d="M24 4v5M8 12l4 4M40 12l-4 4M4 26h5"/></g>
+  <circle cx="24" cy="24" r="12" fill="url(#sun)" stroke="#FFE9B8" stroke-opacity=".8"/>
+  <path d="M22 56a10 10 0 0 1-2-20 13 13 0 0 1 25-3 9 9 0 0 1 9 9 8 8 0 0 1-3 14Z" fill="url(#cloud)" stroke="#F4F8FC" stroke-opacity=".8"/>
+</svg>''';
+
+  static const _voiceNotes =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="mic" x1="24" y1="6" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#A9C6FF"/><stop offset="1" stop-color="#3C62B8"/></linearGradient></defs>
+  <rect x="24" y="5" width="16" height="30" rx="8" fill="url(#mic)" stroke="#D9E6FF" stroke-opacity=".7"/>
+  <path d="M16 28a16 16 0 0 0 32 0" fill="none" stroke="#8FB0E8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M32 44v10" stroke="#8FB0E8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M22 58h20" stroke="#8FB0E8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M29 12v14" stroke="#EAF2FF" stroke-opacity=".7" stroke-width="2" stroke-linecap="round"/>
+</svg>''';
+
+  static const _cryptoPrices =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="coin" x1="12" y1="10" x2="52" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#FFC96B"/><stop offset="1" stop-color="#D5801F"/></linearGradient></defs>
+  <circle cx="32" cy="32" r="25" fill="url(#coin)" stroke="#FFE3B0" stroke-opacity=".8"/>
+  <circle cx="32" cy="32" r="19.5" fill="none" stroke="#FFF0D4" stroke-opacity=".45"/>
+  <g fill="none" stroke="#FFF8EC" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M26 20v24M22 24h12a6.5 6.5 0 0 1 0 13H22m0 0h14a6.5 6.5 0 0 1 0 13H22" transform="translate(0 -2)"/><path d="M28 13v5M36 13v5M28 46v5M36 46v5"/></g>
+</svg>''';
+
+  static const _fitnessTrainer =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="steel" x1="10" y1="20" x2="54" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#C9D6E4"/><stop offset="1" stop-color="#54687E"/></linearGradient></defs>
+  <g fill="url(#steel)" stroke="#E6EEF6" stroke-opacity=".5"><rect x="6" y="22" width="7" height="20" rx="3"/><rect x="15" y="17" width="8" height="30" rx="3.5"/><rect x="41" y="17" width="8" height="30" rx="3.5"/><rect x="51" y="22" width="7" height="20" rx="3"/></g>
+  <rect x="23" y="28" width="18" height="8" rx="3" fill="#8FA5BC" stroke="#DCE7F2" stroke-opacity=".6"/>
+  <path d="M17 22h4M43 22h4" stroke="#F4F8FC" stroke-opacity=".7" stroke-width="1.6" stroke-linecap="round"/>
+</svg>''';
+
+  static const _languageTutor =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="cap" x1="8" y1="16" x2="56" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#A8DCD8"/><stop offset="1" stop-color="#3C828C"/></linearGradient></defs>
+  <path d="m32 10 26 12-26 12L6 22Z" fill="url(#cap)" stroke="#DDF2F0" stroke-opacity=".65"/>
+  <path d="M18 28v12c0 5 6 9 14 9s14-4 14-9V28" fill="#4E939B" stroke="#C6E6E4" stroke-opacity=".5"/>
+  <path d="M56 24v14" stroke="#BFE2DF" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="56" cy="42" r="3.4" fill="#D9EFED" stroke="#4E8E96"/>
+  <path d="M14 20l18-8" stroke="#FFFFFF" stroke-opacity=".5" stroke-width="1.8" stroke-linecap="round"/>
+</svg>''';
+
+  static const _helloAnimation =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="palette" x1="10" y1="10" x2="54" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#F2D9AC"/><stop offset="1" stop-color="#B3814C"/></linearGradient></defs>
+  <path d="M32 6C16 6 5 17 5 31c0 15 12 27 27 27 4 0 7-3 7-7 0-3-2-4-2-7 0-3 2-5 6-5h6c6 0 10-4 10-9C59 16 46 6 32 6Z" fill="url(#palette)" stroke="#F7E8CC" stroke-opacity=".7"/>
+  <g><circle cx="19" cy="22" r="4.5" fill="#D95F5F"/><circle cx="33" cy="16" r="4.5" fill="#E9B94E"/><circle cx="45" cy="25" r="4.5" fill="#6C9BCF"/><circle cx="17" cy="38" r="4.5" fill="#7FA96B"/></g>
+  <path d="M12 20c3-6 9-10 15-11" fill="none" stroke="#FFFFFF" stroke-opacity=".5" stroke-width="1.8" stroke-linecap="round"/>
+</svg>''';
+
+  static const _stockPrices =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="barsUp" x1="14" y1="16" x2="48" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#9BE0B4"/><stop offset="1" stop-color="#2E7A4E"/></linearGradient></defs>
+  <path d="M10 54h44" stroke="#7E9C8C" stroke-opacity=".6" stroke-width="2" stroke-linecap="round"/>
+  <g fill="url(#barsUp)" stroke="#D8F2E2" stroke-opacity=".45"><rect x="13" y="36" width="8" height="15" rx="2.5"/><rect x="27" y="27" width="8" height="24" rx="2.5"/><rect x="41" y="16" width="8" height="35" rx="2.5"/></g>
+  <path d="m12 26 12-9 10 6 16-13" fill="none" stroke="#C9EFD7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M43 10h7v7" fill="none" stroke="#C9EFD7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>''';
+
+  static const _videoPlayer =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="frame" x1="6" y1="10" x2="58" y2="54" gradientUnits="userSpaceOnUse"><stop stop-color="#4C628C"/><stop offset="1" stop-color="#22304C"/></linearGradient><linearGradient id="play" x1="24" y1="20" x2="44" y2="44" gradientUnits="userSpaceOnUse"><stop stop-color="#A9C8F5"/><stop offset="1" stop-color="#4F7ECF"/></linearGradient></defs>
+  <rect x="5" y="11" width="54" height="42" rx="10" fill="url(#frame)" stroke="#C6D6F0" stroke-opacity=".5"/>
+  <path d="m27 22 16 10-16 10Z" fill="url(#play)" stroke="#E3EEFC" stroke-opacity=".7" stroke-linejoin="round"/>
+  <path d="M14 47h20" stroke="#9FD8C8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M11 16c2-2 5-3 8-3" stroke="#FFFFFF" stroke-opacity=".4" stroke-width="1.6" stroke-linecap="round"/>
+</svg>''';
+
+  static const _animationShowcase =
+      '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs><linearGradient id="stage" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop stop-color="#5C467E"/><stop offset="1" stop-color="#2A1F42"/></linearGradient><linearGradient id="tri" x1="24" y1="18" x2="44" y2="46" gradientUnits="userSpaceOnUse"><stop stop-color="#D9C2F5"/><stop offset="1" stop-color="#8B5FC0"/></linearGradient></defs>
+  <rect x="7" y="9" width="50" height="46" rx="12" fill="url(#stage)" stroke="#DCCBF0" stroke-opacity=".5"/>
+  <path d="m27 21 15 11-15 11Z" fill="url(#tri)" stroke="#F0E6FB" stroke-opacity=".7" stroke-linejoin="round"/>
+  <path d="M15 18a12 12 0 0 0 0 28" fill="none" stroke="#B79BD9" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="m49 12 1.8 4.2L55 18l-4.2 1.8L49 24l-1.8-4.2L43 18l4.2-1.8Z" fill="#EBDDF8"/>
+</svg>''';
 }
 
 /// Renders a JS app's manifest icon: an emoji (the common case), inline SVG
@@ -391,7 +472,17 @@ class AppIcon extends StatelessWidget {
       textAlign: TextAlign.center,
       style: TextStyle(fontSize: size * (framed ? .46 : .9), height: 1),
     );
-    return framed ? _maybeFramed(Center(child: text)) : text;
+    if (!framed) return text;
+    // Emoji-only manifests (no SVG artwork): a uniform muted-gradient
+    // squircle keeps the launchpad consistent (owner: "иконки бардак").
+    // The no-backplate rule applies to REAL artwork, which keeps its own
+    // colors — an emoji has none, so the tile supplies the identity.
+    return AppIconBadge(
+      seed: app.id,
+      accent: AppIconPalette.accentFor(app.id),
+      size: size,
+      child: Center(child: text),
+    );
   }
 
   Widget _maybeFramed(Widget child, {String? artwork, Color? accent}) {

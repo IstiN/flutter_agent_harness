@@ -29,7 +29,8 @@ import 'package:fa/services/project_folder_channel.dart';
 import 'package:fa/ui/widgets/session_search_field.dart'
     show kSearchFieldHeight;
 import 'package:fa/services/project_mount_env.dart';
-import 'package:fa/services/project_mount_flow.dart' show visibleFolderRoot;
+import 'package:fa/services/project_mount_flow.dart'
+    show debugDirectFolderAccess, visibleFolderRoot;
 import 'package:fa/services/project_mount_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -339,6 +340,12 @@ final class _ScriptedFolderOps implements ProjectFolderOps {
 
 void main() {
   group('FileBrowser session folder gate', () {
+    // These tests SIMULATE the sandbox: non-sandboxed hosts skip the
+    // gate entirely (owner call) — that path is covered in
+    // project_mount_test's direct-access test.
+    setUp(() => debugDirectFolderAccess = false);
+    tearDown(() => debugDirectFolderAccess = null);
+
     // The reported defect: a chat session in folder X with the app mount
     // at folder Y showed Y's listing under the Files title. A foreign
     // session folder must gate the listing instead.
@@ -2233,7 +2240,7 @@ void main() {
     });
   });
   group('FileBrowser iCloud sync', () {
-    testWidgets('unavailable container shows the guidance snackbar', (
+    testWidgets('unavailable container hides the sync button (owner call)', (
       tester,
     ) async {
       final env = await _seededEnv();
@@ -2243,11 +2250,88 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Sync sessions and apps with iCloud'));
+      // Unconfigured iCloud must not show a button that can only fail
+      // with guidance — the action stays hidden entirely.
+      expect(find.byKey(const ValueKey('fileBrowserICloudSync')), findsNothing);
+      expect(sync.syncCalls, isZero);
+    });
+
+    testWidgets(
+      'direct access lists, opens and uploads in an absolute session folder',
+      (tester) async {
+        debugDirectFolderAccess = true;
+        addTearDown(() => debugDirectFolderAccess = null);
+        final env = MemoryExecutionEnv(cwd: '/elsewhere');
+        await env.createDir('/Users/x/proj');
+        await env.writeFile('/Users/x/proj/a.txt', 'hello absolute');
+        final picker = _FakePicker([
+          _uploadFile('uploaded.txt', 'absolute upload'),
+        ]);
+        await tester.pumpWidget(
+          _wrap(
+            FileBrowser(
+              env: env,
+              sessionFolder: '/Users/x/proj',
+              initialPath: '/Users/x/proj',
+              uploadPicker: picker,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Owner regression: the segments leaked as a RELATIVE path and
+        // the panel reported "Could not open folder".
+        expect(find.text('a.txt'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('filesSessionFolderGate')),
+          findsNothing,
+        );
+
+        // Review regression: _childPath must share _envPath's leading
+        // slash — otherwise the upload silently lands under /elsewhere.
+        await tester.tap(find.byTooltip('Upload files here'));
+        await tester.pumpAndSettle();
+        expect(
+          (await env.readTextFile('/Users/x/proj/uploaded.txt')).getOrThrow(),
+          'absolute upload',
+        );
+
+        // …and a preview reads that same absolute namespace, not cwd.
+        await tester.tap(find.text('a.txt'));
+        await tester.pumpAndSettle();
+        expect(find.text('Could not load file'), findsNothing);
+        expect(find.text('hello absolute'), findsOneWidget);
+      },
+    );
+
+    testWidgets('recent folders render as quick-jump chips and open on tap', (
+      tester,
+    ) async {
+      final env = await _seededEnv();
+      final opened = <String>[];
+      await tester.pumpWidget(
+        _wrap(
+          FileBrowser(
+            env: env,
+            recentFolders: const ['/work/alpha', '/work/beta'],
+            onOpenRecentFolder: opened.add,
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('iCloud sync is unavailable'), findsOneWidget);
-      expect(sync.syncCalls, isZero);
+      expect(
+        find.byKey(const ValueKey('fileBrowserRecentFolders')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('fileBrowserRecentChip:/work/alpha')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('fileBrowserRecentChip:/work/beta')),
+      );
+      expect(opened, ['/work/beta']);
     });
 
     testWidgets('a finished merge reports the copied files and reloads', (

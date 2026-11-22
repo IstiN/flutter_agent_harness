@@ -6,11 +6,15 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/services/project_mount_flow.dart';
+import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ExecutionEnv;
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
@@ -74,6 +78,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.onProfile,
     this.onBack,
     this.onOpenSettings,
+    this.filesRecentFolders,
     this.controller,
   });
 
@@ -126,6 +131,10 @@ class AppLauncherScreen extends StatefulWidget {
   /// tile uses the same categorized sidebar/content surface as the rail
   /// instead of pushing the legacy dialog inside Apps.
   final Future<void> Function()? onOpenSettings;
+
+  /// Recent chat folders for the Files quick-jump chips (owner call);
+  /// supplied by the shell, which owns the chat list.
+  final List<String> Function()? filesRecentFolders;
 
   /// Shares section and search state with the Apps directory.
   final AppLauncherController? controller;
@@ -1036,6 +1045,46 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
   }
 
+  /// A recent-folder chip inside the full-page Files route: swap the route
+  /// for the SAME full-page surface rooted at [path] (never the shell's
+  /// right dock — that read as the window shrinking).
+  Future<void> _openFilesAt(String path) async {
+    final service = widget.manager.active?.service;
+    if (service == null) return;
+    // Sandboxed hosts keep the granted mount env so an ungranted recent
+    // folder still reaches FileBrowser's allow-access gate; only direct-
+    // access hosts may re-root a plain env (same contract as the shell).
+    final env = await _resolveRecentFilesEnv(path, service.env);
+    if (!mounted) return;
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => FilesAppPage(
+          presentation: FilesAppPresentation(
+            env: env,
+            initialPath: path,
+            sessionFolder: path,
+            fsRevision: service.fsRevision,
+            onProjectMountChanged: service.refreshProjectMountPrompt,
+            recentFolders: widget.filesRecentFolders?.call(),
+            onOpenRecentFolder: (next) => unawaited(_openFilesAt(next)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Keep the route's env decision below the app CRAP ratchet and, more
+  /// importantly, identical for every recent-folder jump: direct hosts
+  /// re-root; sandboxed hosts retain their granted mount/gate namespace.
+  Future<ExecutionEnv> _resolveRecentFilesEnv(
+    String path,
+    ExecutionEnv baseEnv,
+  ) {
+    return directFolderAccessAllowed
+        ? createFolderEnv(path)
+        : Future<ExecutionEnv>.value(baseEnv);
+  }
+
   Future<void> _openFiles() async {
     final service = widget.manager.active?.service;
     if (service == null) return;
@@ -1054,6 +1103,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             sessionFolder: service.currentSessionCwd,
             fsRevision: service.fsRevision,
             onProjectMountChanged: service.refreshProjectMountPrompt,
+            recentFolders: widget.filesRecentFolders?.call(),
+            // Stay FULL PAGE (owner: a chip tap must not shrink Files
+            // into the right dock) — replace this route with the same
+            // full-page surface rooted at the picked folder.
+            onOpenRecentFolder: (path) => unawaited(_openFilesAt(path)),
           ),
         ),
       ),
@@ -1172,7 +1226,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       onIconTap: widget.onProfile,
       leading: _buildBackButton(),
       actions: [
-        if (!_showsInlineSearch(context) && !_narrowSearchShown)
+        if (!_narrowSearchShown)
           FaIconActionButton(
             buttonKey: const ValueKey('appsNarrowSearchReveal'),
             onPressed: _onSearchReveal,
@@ -1222,23 +1276,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   Widget _buildNarrowSearch() {
-    final compact =
-        faWindowClassForWidth(MediaQuery.sizeOf(context).width) ==
-        FaWindowClass.small;
-    if (compact && !_narrowSearchShown) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: FaIconActionButton(
-          buttonKey: const ValueKey('appsNarrowSearchReveal'),
-          onPressed: _onSearchReveal,
-          tooltip: context.l10n.launcherSearchHint,
-          diameter: 32,
-          glyphSize: 21,
-          glass: false,
-          child: const FaIcon(FaSemanticIcon.search),
-        ),
-      );
-    }
     return Row(
       children: [
         Expanded(
@@ -1249,38 +1286,25 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             hintText: context.l10n.launcherSearchHint,
           ),
         ),
-        if (compact) ...[
-          const SizedBox(width: 8),
-          FaIconActionButton(
-            buttonKey: const ValueKey('appsSearchClose'),
-            onPressed: _onSearchClose,
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            diameter: 32,
-            glyphSize: 22,
-            glass: false,
-            child: const FaIcon(FaSemanticIcon.back),
-          ),
-        ],
+        const SizedBox(width: 8),
+        FaIconActionButton(
+          buttonKey: const ValueKey('appsSearchClose'),
+          onPressed: _onSearchClose,
+          tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+          diameter: 32,
+          glyphSize: 22,
+          glass: false,
+          child: const FaIcon(FaSemanticIcon.back),
+        ),
       ],
     );
   }
 
-  /// The inline search field's visibility (non-compact hosts always show
-  /// it; compact shows it after the header search-icon reveal). Extracted
-  /// from [_buildGridArea] for the CRAP 12 ratchet.
-  bool _showsInlineSearch(BuildContext context) =>
-      _narrowSearchShown ||
-      (!widget.fullScreen &&
-          faWindowClassForWidth(MediaQuery.sizeOf(context).width) !=
-              FaWindowClass.small);
-
-  /// Header clearance that lives inside the scroll view on the compact
-  /// icon-only chrome. Revealed search and desktop tabs keep their own fixed
-  /// clearance below the glass header.
-  double get _contentHeaderInset =>
-      !widget.fullScreen && !_showsInlineSearch(context)
-      ? MessengerFloatingPageScaffold.bodyTop
-      : 0;
+  /// Header clearance that lives INSIDE the scroll view on every path:
+  /// the grid/catalog travel under the glass header instead of
+  /// hard-clipping at a fixed spacer's bottom edge (owner feedback). The
+  /// revealed search overlay never changes this padding — no jump.
+  double get _contentHeaderInset => MessengerFloatingPageScaffold.bodyTop;
 
   Widget _buildGridArea(FahColors colors) {
     final error = _error;
@@ -1292,36 +1316,47 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     final contentHeaderInset = _contentHeaderInset;
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final content = Stack(
       children: [
-        if (contentHeaderInset == 0)
-          const SizedBox(height: MessengerFloatingPageScaffold.bodyTop),
-        if (_showsInlineSearch(context))
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: _buildNarrowSearch(),
-          ),
-        Expanded(
-          child: _tab == _LauncherTab.getWidgets
-              // The catalog inline (no bottom-sheet chrome) — install,
-              // update, preview and open widgets without leaving home.
-              // Shares the launcher's AppsStore so installs are visible to
-              // the tile menu (Remove) immediately.
-              ? Padding(
-                  // Catalog filter chrome stays below the floating header;
-                  // the default Apps grid instead carries this clearance in
-                  // its scroll padding and travels under the glass.
-                  padding: EdgeInsets.only(top: contentHeaderInset),
-                  child: WidgetsCatalogSheet(
-                    env: widget.manager.env,
-                    manager: widget.manager,
-                    appsStore: _appsStore,
-                    embedded: true,
-                  ),
-                )
-              : _buildLauncherBody(colors),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _tab == _LauncherTab.getWidgets
+                  // The catalog inline (no bottom-sheet chrome) — install,
+                  // update, preview and open widgets without leaving home.
+                  // Shares the launcher's AppsStore so installs are visible
+                  // to the tile menu (Remove) immediately.
+                  ? Padding(
+                      // Catalog filter chrome stays below the floating
+                      // header; the default Apps grid instead carries this
+                      // clearance in its scroll padding and travels under
+                      // the glass.
+                      padding: EdgeInsets.only(top: contentHeaderInset),
+                      child: WidgetsCatalogSheet(
+                        env: widget.manager.env,
+                        manager: widget.manager,
+                        appsStore: _appsStore,
+                        embedded: true,
+                      ),
+                    )
+                  : _buildLauncherBody(colors),
+            ),
+          ],
         ),
+        // Revealed search floats BELOW the glass header as an overlay:
+        // the grid's scroll padding never changes on reveal/close, so the
+        // icons do not jump (owner feedback).
+        if (_narrowSearchShown)
+          Positioned(
+            top: contentHeaderInset,
+            left: 0,
+            right: 0,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: _buildNarrowSearch(),
+            ),
+          ),
       ],
     );
     return MessengerFloatingPageScaffold(
@@ -1355,9 +1390,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// grid. Desktop fills the pane (the audit's dead flanks); the phone
   /// keeps its centered 760 stage.
   Widget _buildLauncherBody(FahColors colors) {
-    final body = _searchController.text.trim().isNotEmpty
+    final searching = _searchController.text.trim().isNotEmpty;
+    Widget body = searching
         ? _buildSearchResults(colors)
         : _buildDraggableGrid(colors);
+    // Search RESULTS clear the revealed search overlay (56pt); the icon
+    // grid keeps its fixed padding so reveal/close never shifts it.
+    if (searching && _narrowSearchShown) {
+      body = Padding(padding: const EdgeInsets.only(top: 56), child: body);
+    }
     if (widget.fullScreen) return body;
     return Center(child: SizedBox(width: 760, child: body));
   }
@@ -1623,16 +1664,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final fittedTracks =
         ((usableWidth + spacing) / (LauncherGridSpec.cellCrossExtent + spacing))
             .floor();
-    if (widget.fullScreen && _layout?.gridColumns == null) {
-      return fittedTracks.clamp(1, 24);
+    // Adaptive columns (owner feedback — no hard-coded per-class count):
+    // fit as many icon tracks as the lane actually holds on EVERY form
+    // factor; only an explicit user layout override pins the count.
+    final configured = _layout?.gridColumns;
+    if (configured == null) {
+      return widget.fullScreen
+          ? fittedTracks.clamp(1, 24)
+          : fittedTracks.clamp(1, LauncherLayoutStore.maxGridColumns);
     }
-    final configured =
-        _layout?.gridColumns ??
-        switch (faWindowClassForWidth(width)) {
-          FaWindowClass.small => 4,
-          FaWindowClass.medium => 6,
-          FaWindowClass.large => 8,
-        };
     final fits = fittedTracks.clamp(1, LauncherLayoutStore.maxGridColumns);
     return configured
         .clamp(

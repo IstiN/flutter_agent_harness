@@ -44,6 +44,17 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
     return pickResult(result);
   }
 
+  /// Opens the picker ALREADY AT [path] (the session-folder allow-access
+  /// flow): one click grants exactly the folder the chat lives in.
+  Future<({String path, String bookmark})?> pickDirectoryAt(String path) async {
+    if (!isSupported) return null;
+    final result = await _channel.invokeMapMethod<String, String>(
+      'pickDirectory',
+      <String, String>{'path': path},
+    );
+    return pickResult(result);
+  }
+
   /// The picked folder from a channel payload, or null on cancel or an
   /// incomplete `{path, bookmark}` record. Exposed for tests.
   @visibleForTesting
@@ -62,6 +73,30 @@ final class ProjectFolderChannelOps implements ProjectFolderOps {
     if (!isSupported) return false;
     final ok = await _channel.invokeMethod<bool>('startAccessing', bookmark);
     return ok ?? false;
+  }
+
+  /// Richer grant (channel ops only, deliberately NOT on the interface):
+  /// the RESOLVED folder path plus a refreshed bookmark. iOS can resolve a
+  /// STALE bookmark to a NEW AppGroup/container path after reinstall —
+  /// returning only bool made the host mount the OLD serialized path, so
+  /// `/project/sessions` listed 0 sessions while Files showed them (owner
+  /// iOS data-"loss"). Null = host has no richer handler; the caller falls
+  /// back to [startAccessing] + the persisted path.
+  Future<({String path, String bookmark})?> startAccessingResolved(
+    String bookmark,
+  ) async {
+    if (!isSupported) return null;
+    try {
+      final result = await _channel.invokeMapMethod<String, String>(
+        'startAccessingResolved',
+        bookmark,
+      );
+      return pickResult(result);
+    } on MissingPluginException {
+      // Host without the richer handler (older macOS runner) — the caller
+      // falls back to the legacy bool grant + persisted path.
+      return null;
+    }
   }
 
   @override

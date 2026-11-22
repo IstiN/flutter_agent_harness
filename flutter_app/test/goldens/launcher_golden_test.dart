@@ -564,8 +564,8 @@ void main() {
       expect(find.byKey(const ValueKey('appsTab-catalog')), findsNothing);
       expect(find.byKey(const ValueKey('appsFeatureCards')), findsNothing);
       expect(find.byKey(const ValueKey('appsBackButton')), findsNothing);
-      expect(LauncherGridSpec.iconSize, 64);
-      expect(LauncherGridSpec.cellMainExtent, 88);
+      expect(LauncherGridSpec.iconSize, 60);
+      expect(LauncherGridSpec.cellMainExtent, 84);
       for (final host in tester.elementList(find.byType(AppTileHost))) {
         final size = tester.getRect(find.byWidget(host.widget)).size;
         expect(size.height / size.width, lessThanOrEqualTo(1.0));

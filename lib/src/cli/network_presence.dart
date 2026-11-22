@@ -89,6 +89,8 @@ final class CliNetworkSession {
     this.mailboxPrefix,
     this.dmSink,
     this.onNotice,
+    this.displayName,
+    this.cwd,
   });
 
   /// Current persisted session id.
@@ -102,6 +104,15 @@ final class CliNetworkSession {
 
   /// Visible rejection/diagnostic callback.
   final CliNetworkNotice? onNotice;
+
+  /// Friendly session title (custom `--session` name or the derived one).
+  /// Published as presence metadata even when the persisted catalog has no
+  /// row for this session yet — otherwise the app falls back to the raw
+  /// UUID row title (owner: named session showed `CLI · <uuid>`).
+  final String? displayName;
+
+  /// Live working directory for the presence metadata path/subtitle.
+  final String? cwd;
 
   /// Agent name used in the contract address.
   String get agentName {
@@ -363,22 +374,12 @@ final class NetworkPresenceController
   }) async {
     final route = DeviceDmReplyRoute.parse(address);
     final connector = _connector;
-    final currentAddress = _agentAddress;
-    if (connector == null || currentAddress == null) {
+    if (connector == null || _agentAddress == null) {
       throw StateError(
         'network DM replies are unavailable before a CLI session starts',
       );
     }
-    final parts = parseDeviceDmChannelId(route.channel);
-    if (route.agentAddress != currentAddress ||
-        parts == null ||
-        agentAddress(parts.agentName, parts.deviceId) != currentAddress ||
-        route.network != (device.personalNetworkId ?? 'personal')) {
-      throw StateError(
-        'network DM reply route does not belong to the current CLI session; '
-        'use the address from a DM received by this session',
-      );
-    }
+    _validateDmReplyRoute(route);
     if (text.trim().isEmpty) {
       throw StateError('network DM reply text must not be empty');
     }
@@ -394,6 +395,34 @@ final class NetworkPresenceController
       // gets an actionable safe error instead of credentials or dial URLs.
       throw StateError(
         'network DM reply could not be queued; check the connection and retry',
+      );
+    }
+  }
+
+  /// Authorizes one parsed reply route against THIS session: the original
+  /// agent alias OR the authenticated sessionId, on our own network.
+  /// Split from [sendNetworkDmReply] so each guard stays unit-testable
+  /// (CRAP ratchet).
+  void _validateDmReplyRoute(DeviceDmReplyRoute route) {
+    final currentAddress = _agentAddress!;
+    final parts = parseDeviceDmChannelId(route.channel);
+    // A woken session answers through the ORIGINAL agent alias (its own
+    // mailbox prefix differs from the previously exposed agent): the
+    // authenticated sessionId match authorizes that route just like the
+    // alias match does — otherwise the accepted receipt/answer is refused
+    // and the sender's bubble stays queued forever (owner incident).
+    final aliasMatch =
+        route.agentAddress == currentAddress &&
+        parts != null &&
+        agentAddress(parts.agentName, parts.deviceId) == currentAddress;
+    final sessionMatch =
+        route.sessionId != null && route.sessionId == _session?.sessionId;
+    if (parts == null ||
+        (!aliasMatch && !sessionMatch) ||
+        route.network != (device.personalNetworkId ?? 'personal')) {
+      throw StateError(
+        'network DM reply route does not belong to the current CLI session; '
+        'use the address from a DM received by this session',
       );
     }
   }
@@ -460,6 +489,19 @@ final class NetworkPresenceController
     await _flushRoster();
   }
 
+  /// The live session's roster row, carrying its friendly title/cwd even
+  /// when the catalog has no entry yet (owner: `CLI · <uuid>` fallback).
+  DeviceRosterSession _liveRosterRow() {
+    final session = _session!;
+    return DeviceRosterSession(
+      id: session.sessionId,
+      state: 'live',
+      networks: _sessionNetworks,
+      title: session.displayName,
+      path: session.cwd,
+    );
+  }
+
   void _queueLiveRoster({bool fullSnapshot = false}) {
     final session = _session;
     if (!_rosterActive ||
@@ -481,32 +523,17 @@ final class NetworkPresenceController
         ),
       ],
       sessions: catalogStore == null
-          ? [
-              DeviceRosterSession(
-                id: session.sessionId,
-                state: 'live',
-                networks: _sessionNetworks,
-              ),
-            ]
+          ? [_liveRosterRow()]
           : fullSnapshot
           ? [
               for (final row in catalog) _catalogRosterRow(row),
-              if (current == null)
-                DeviceRosterSession(
-                  id: session.sessionId,
-                  state: 'live',
-                  networks: _sessionNetworks,
-                ),
+              if (current == null) _liveRosterRow(),
             ]
           : [
               if (current != null)
                 _catalogRosterRow(current)
               else
-                DeviceRosterSession(
-                  id: session.sessionId,
-                  state: 'live',
-                  networks: _sessionNetworks,
-                ),
+                _liveRosterRow(),
             ],
     );
   }
@@ -669,6 +696,9 @@ final class NetworkPresenceController
       idFactory: idFactory,
       onLog: onLog,
     );
+    // Presence metadata is published even WITHOUT a catalog store: the
+    // live overlay below is the only title source for unlisted sessions.
+    connector.presence.sessionMetadata = _presenceSessionMetadata;
     if (catalogStore != null) {
       // REST patches and heartbeat presence share the SAME complete catalog;
       // a heartbeat can therefore never clobber sleepers back to live-only.
@@ -679,17 +709,6 @@ final class NetworkPresenceController
       connector.presence.liveLeases = () => <String>{
         if (_session case final session?) session.sessionId,
       };
-      connector.presence.sessionMetadata = () =>
-          <String, ConnectorSessionMetadata>{
-            for (final row in normalizeSessionCatalog(_catalogEntries))
-              row.id: ConnectorSessionMetadata(
-                title: row.displayName,
-                snippet: row.snippet,
-                path: row.cwd,
-                cwd: row.cwdSlug,
-                lastActivity: row.lastActiveAt,
-              ),
-          };
     }
     _registry = registry;
     _connector = connector;
@@ -777,12 +796,50 @@ final class NetworkPresenceController
     );
   }
 
+  /// Catalog metadata plus the LIVE overlay for the current session: a
+  /// new/unlisted named session still publishes its friendly title and cwd
+  /// instead of degrading to the app's raw-UUID row (owner issue B).
+  Map<String, ConnectorSessionMetadata> _presenceSessionMetadata() {
+    final catalog = normalizeSessionCatalog(_catalogEntries);
+    final session = _session;
+    final current = session == null
+        ? null
+        : catalog.where((row) => row.id == session.sessionId).firstOrNull;
+    return <String, ConnectorSessionMetadata>{
+      for (final row in catalog)
+        row.id: ConnectorSessionMetadata(
+          title: row.displayName,
+          snippet: row.snippet,
+          path: row.cwd,
+          cwd: row.cwdSlug,
+          lastActivity: row.lastActiveAt,
+        ),
+      if (session != null)
+        session.sessionId: ConnectorSessionMetadata(
+          title: (session.displayName?.isNotEmpty ?? false)
+              ? session.displayName
+              : current?.displayName,
+          snippet: current?.snippet,
+          path: session.cwd ?? current?.cwd,
+          cwd: current?.cwdSlug,
+          lastActivity: current?.lastActiveAt,
+        ),
+    };
+  }
+
   bool _isCurrentDmSession(InboundMail mail, NetworkEnvelope envelope) {
     final session = _session;
+    // An explicitly authenticated matching sessionId is sufficient even
+    // when the original was addressed to an EARLIER agent alias: a woken
+    // session publishes its own prefix (S@device), while the redelivered
+    // original still targets the previously exposed agent (A@device).
+    // Requiring to==_agentAddress in that case made the woken CLI emit
+    // another QUEUED forever and never deliver/ACCEPT (owner: bubble stuck
+    // on the clock while the agent was visibly working).
     return session != null &&
         session.dmSink != null &&
-        envelope.to == _agentAddress &&
-        (mail.sessionId == null || mail.sessionId == session.sessionId);
+        (mail.sessionId == session.sessionId ||
+            (mail.sessionId == null && envelope.to == _agentAddress));
   }
 
   Future<bool> _wakeCatalogSession(

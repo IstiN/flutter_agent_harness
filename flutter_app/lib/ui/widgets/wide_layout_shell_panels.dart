@@ -113,17 +113,17 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
       _WideShellSection.activity: context.l10n.wideNavActivity,
       _WideShellSection.apps: context.l10n.appsGridTitle,
     };
+    // Apps has NO sidebar search (owner call: the launcher's header-reveal
+    // search is the single apps search surface; a second field here was
+    // redundant and confusing).
     final searchControllers = <_WideShellSection, TextEditingController>{
       _WideShellSection.activity: _activitySearchController,
-      _WideShellSection.apps: _appLauncherController.searchController,
     };
     final searchHints = <_WideShellSection, String>{
       _WideShellSection.activity: context.l10n.activitySearchHint,
-      _WideShellSection.apps: context.l10n.launcherSearchHint,
     };
     final searchCallbacks = <_WideShellSection, ValueChanged<String>>{
       _WideShellSection.activity: _activityController.setSearch,
-      _WideShellSection.apps: (_) {},
     };
     final bodyBuilders = <_WideShellSection, Widget Function(double)>{
       _WideShellSection.activity: _buildActivitySidebarBody,
@@ -160,6 +160,7 @@ extension _WideLayoutShellPanels on _WideLayoutShellState {
       // the rail-independent collapsed desktop sidebar retains its toolbar.
       showFilterToolbar: collapsed,
       searchController: searchControllers[_section],
+      showSearch: _section != _WideShellSection.apps,
       searchFocusNode: _section == _WideShellSection.apps
           ? _appLauncherController.searchFocusNode
           : null,

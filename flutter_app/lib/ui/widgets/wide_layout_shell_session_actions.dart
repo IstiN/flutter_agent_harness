@@ -89,6 +89,32 @@ final class _NewSessionFolderDialogState
               leading: const Icon(Icons.drive_file_rename_outline),
             ),
           ),
+        // Explicit Create/Cancel (owner feedback: tapping a folder row
+        // being the only way to actually create was not obvious). Create
+        // uses the current folder with the typed name — same as the
+        // current-folder option, now visible as a primary action.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
+          // OverflowBar (not a Row): narrow Duo dialogs wrap the buttons
+          // instead of overflowing the right edge.
+          child: OverflowBar(
+            alignment: MainAxisAlignment.end,
+            spacing: 8,
+            children: [
+              FaButton(
+                key: const ValueKey('newSessionCancel'),
+                variant: FaButtonVariant.ghost,
+                label: l10n.commonCancel,
+                onPressed: () => Navigator.pop(context),
+              ),
+              FaButton(
+                key: const ValueKey('newSessionCreate'),
+                label: l10n.networkCreate,
+                onPressed: () => _select(_NewSessionFolderAction.current),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -150,14 +176,15 @@ final class _NewSandboxFolderDialogState
         ),
       ),
       actions: [
-        TextButton(
+        FaButton(
+          variant: FaButtonVariant.ghost,
+          label: l10n.commonCancel,
           onPressed: () => Navigator.pop(context),
-          child: Text(l10n.commonCancel),
         ),
-        FilledButton(
+        FaButton(
           key: const ValueKey('newSessionCreateSandboxFolder'),
+          label: l10n.newSessionCreate,
           onPressed: _submit,
-          child: Text(l10n.newSessionCreate),
         ),
       ],
     );

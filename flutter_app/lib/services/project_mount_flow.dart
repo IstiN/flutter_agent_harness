@@ -22,12 +22,17 @@ Future<String?> pickAndApplyProjectMount({
   required void Function() onApplied,
   ProjectFolderOps? ops,
   void Function()? onAccessDenied,
+  String? initialPath,
 }) async {
   final mountEnv = _resolveMountEnv(env);
   if (mountEnv == null || !projectMountBackendAvailable(env)) return null;
   final resolvedOps = ops ?? _defaultOps();
   if (resolvedOps == null) return null;
-  final picked = await resolvedOps.pickDirectory();
+  // Allow-access for a KNOWN session folder opens the picker AT that
+  // folder (owner call): one click grants exactly it, no navigation.
+  final picked = resolvedOps is ProjectFolderChannelOps && initialPath != null
+      ? await resolvedOps.pickDirectoryAt(initialPath)
+      : await resolvedOps.pickDirectory();
   if (picked == null) return null;
   final ok = await resolvedOps.startAccessing(picked.bookmark);
   if (!ok) {
@@ -101,12 +106,40 @@ String? currentMountedPath(ExecutionEnv env) =>
 String? visibleFolderRoot(ExecutionEnv env, String? candidatePath) {
   final candidate = _normalizeFolderPath(candidatePath);
   if (candidate == null) return null;
+  // Owner call: a NON-sandboxed host (macOS debug / NoSandbox entitlements,
+  // Windows, Linux) reads any absolute folder directly — no Allow-access
+  // gate, the session's folder opens immediately.
+  if (_directFolderAccess) return candidate;
   for (final root in <String?>[env.cwd, currentMountedPath(env)]) {
     final visible = _normalizeFolderPath(root);
     if (visible == null) continue;
     if (_isSameFolderPath(visible, candidate)) return visible;
   }
   return null;
+}
+
+/// Whether this host may open an arbitrary absolute folder without a
+/// security-scoped grant. Used by recent-folder navigation: only these
+/// hosts may re-root a plain env directly; sandboxed hosts keep their
+/// existing mount env so the allow-access gate remains reachable.
+bool get directFolderAccessAllowed => _directFolderAccess;
+
+/// Test seam for [_directFolderAccess] (tests simulate the sandbox).
+@visibleForTesting
+bool? debugDirectFolderAccess;
+
+/// Whether this host may read ANY absolute folder without a grant:
+/// non-sandboxed macOS (no APP_SANDBOX_CONTAINER_ID), Windows, Linux.
+/// iOS/Android are always sandboxed; the web has no filesystem access.
+bool get _directFolderAccess {
+  final override = debugDirectFolderAccess;
+  if (override != null) return override;
+  if (kIsWeb) return false;
+  if (Platform.isMacOS) {
+    return Platform.environment['APP_SANDBOX_CONTAINER_ID'] == null;
+  }
+  if (Platform.isIOS || Platform.isAndroid) return false;
+  return true;
 }
 
 /// Whether [candidate] names the same folder as [root] after a relocation
