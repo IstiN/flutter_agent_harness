@@ -195,13 +195,7 @@ final class CloudSessionSynchronizer {
     final page = await provider.list(scope, snapshot.cursor);
     if (!page.isOk) throw page.error!;
     final value = page.value!;
-    final cursor = value.hasMore ? value.nextCursor : null;
-    if (value.hasMore && (cursor == null || cursor.isEmpty)) {
-      throw const DriveProviderException(
-        DriveErrorKind.invalidResponse,
-        'session page hasMore without a continuation cursor',
-      );
-    }
+    final cursor = _validatedPageCursor(value);
     final ordered = _parentsFirst(
       value.records.where((record) => !record.deleted),
     );
@@ -233,6 +227,18 @@ final class CloudSessionSynchronizer {
     );
     if (firstReadError != null) throw firstReadError;
     return snapshot;
+  }
+
+  static String? _validatedPageCursor(CloudSessionPage page) {
+    if (!page.hasMore) return null;
+    final cursor = page.nextCursor;
+    if (cursor == null || cursor.isEmpty) {
+      throw const DriveProviderException(
+        DriveErrorKind.invalidResponse,
+        'session page hasMore without a continuation cursor',
+      );
+    }
+    return cursor;
   }
 
   bool _skipRemoteRecord(
