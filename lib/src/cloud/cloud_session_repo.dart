@@ -38,15 +38,27 @@ final class CloudSessionRepo implements SessionRepo {
       return _wrap(session, await session.getMetadata());
     } on SessionException catch (error) {
       if (error.code != SessionErrorCode.notFound) rethrow;
-      var snapshot = await synchronizer
-          .pull(synchronizer.scope.identity)
-          .timeout(synchronizer.remoteReadTimeout);
-      var localMetadata = await synchronizer.localMetadata(metadata.id);
-      while (localMetadata == null && snapshot.cursor != null) {
+      var snapshot = await synchronizer.store.load(synchronizer.scope.scopeKey);
+      SessionMetadata? localMetadata;
+      // A resumed partial cycle may already have materialized the parent on
+      // an earlier page, so permit its reconciliation pass. Otherwise each
+      // extra full cycle must make progress; a no-progress cycle proves the
+      // id absent and stops the recovery without unbounded full scans.
+      var cycleMadeProgress = snapshot.cursor != null;
+      while (localMetadata == null) {
+        if (snapshot.cursor == null) cycleMadeProgress = false;
+        final pathCount = snapshot.localPaths.length;
+        final revisionCount = snapshot.remoteRevisions.length;
         snapshot = await synchronizer
             .pull(synchronizer.scope.identity)
             .timeout(synchronizer.remoteReadTimeout);
+        cycleMadeProgress =
+            cycleMadeProgress ||
+            snapshot.localPaths.length > pathCount ||
+            snapshot.remoteRevisions.length > revisionCount;
         localMetadata = await synchronizer.localMetadata(metadata.id);
+        if (localMetadata != null || snapshot.cursor != null) continue;
+        if (!cycleMadeProgress) break;
       }
       if (localMetadata == null) rethrow;
       final session = await local.open(

@@ -82,6 +82,54 @@ void main() {
   });
 
   test(
+    'open recovery stops after one no-progress reconciliation cycle',
+    () async {
+      final remote = FakeRemoteSessionProvider()..pageSize = 1;
+      final a = SessionHarness('a', remote);
+      await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's1'));
+      await a.repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's2'));
+      await a.sync.flush(a.identity);
+      final missing = await a.sync.localMetadata('s2');
+      remote.records[a.scope.scopeKey]!.remove('s2');
+      final b = SessionHarness('b', remote);
+
+      await expectLater(
+        b.repo.open(missing!),
+        throwsA(isA<SessionException>()),
+      );
+
+      expect(remote.listCursors, [null, null]);
+    },
+  );
+
+  test('open retries a deferred child after its live parent arrives', () async {
+    final remote = FakeRemoteSessionProvider()..pageSize = 1;
+    final a = SessionHarness('a', remote);
+    final parent = await a.repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', id: 'parent'),
+    );
+    final parentMeta = await parent.getMetadata();
+    await a.repo.fork(parentMeta, cwd: '/work', id: 'child');
+    await a.sync.flush(a.identity);
+    final account = remote.records[a.scope.scopeKey]!;
+    final parentValue = account['parent']!;
+    final childValue = account['child']!;
+    account
+      ..clear()
+      ..['child'] = childValue
+      ..['parent'] = parentValue;
+    final remoteChild = await a.sync.localMetadata('child');
+    final b = SessionHarness('b', remote);
+
+    final opened = await b.repo.open(remoteChild!);
+
+    expect((await opened.getMetadata()).id, 'child');
+    expect(await b.sync.localMetadata('child'), isNotNull);
+    expect(await b.sync.localMetadata('parent'), isNotNull);
+    expect(remote.listCursors, [null, '1', null]);
+  });
+
+  test(
     'kept fork materializes after its parent tombstone on an earlier page',
     () async {
       final remote = FakeRemoteSessionProvider()..pageSize = 1;
