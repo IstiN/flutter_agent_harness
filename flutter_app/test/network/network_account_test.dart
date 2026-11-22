@@ -185,6 +185,99 @@ void main() {
       expect(wallet.account, isNotNull);
     });
 
+    test(
+      'invalid refresh is fenced until explicit OAuth re-authentication',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(
+            401,
+            body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+          )
+          ..respond(200, body: _initiateBody)
+          ..respond(200, body: _exchangeBody)
+          ..respond(200, body: _profileBody);
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.saveAccount(
+          _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 11)),
+        );
+        final manager = await _manager(
+          wallet: wallet,
+          httpClient: httpClient,
+          clock: () => DateTime.utc(2026, 2, 1, 12),
+        );
+
+        expect(await manager.accountClient(), isNull);
+        for (var i = 0; i < 5; i++) {
+          expect(await manager.accountClient(), isNull);
+        }
+        expect(
+          httpClient.requests.where((r) => r.url.path == '/api/auth/refresh'),
+          hasLength(1),
+        );
+        expect(manager.hasAccount, isTrue);
+        expect(manager.hasJwt, isFalse);
+        expect(manager.sessionExpired, isTrue);
+
+        await manager.signInWithProvider('google');
+        expect(manager.hasJwt, isTrue);
+        expect(manager.sessionExpired, isFalse);
+        expect(await manager.accountClient(), isNotNull);
+        expect(
+          httpClient.requests.where((r) => r.url.path == '/api/auth/refresh'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'a forced-refresh 401 fences even a declared-fresh access token',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(
+            401,
+            body: '{"error":{"code":"unauthorized","message":"revoked"}}',
+          );
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.saveAccount(
+          _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 13)),
+        );
+        final manager = await _manager(
+          wallet: wallet,
+          httpClient: httpClient,
+          clock: () => DateTime.utc(2026, 2, 1, 12),
+        );
+        expect(await manager.refreshAccountJwt(), isNull);
+        expect(await manager.ensureFreshJwt(), isNull);
+        expect(await manager.ensureFreshJwt(), isNull);
+        expect(httpClient.requests, hasLength(1));
+        expect(manager.sessionExpired, isTrue);
+        expect(manager.hasAccount, isTrue);
+      },
+    );
+
+    test('a transient refresh failure remains retryable', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(503, body: 'offline')
+        ..respond(
+          200,
+          body:
+              '{"accessToken":"[REDACTED:Sensitive-Value]","refreshToken":"[REDACTED:Sensitive-Value]","expiresIn":3600}',
+        );
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.saveAccount(
+        _account(accessExpiresAt: DateTime.utc(2026, 2, 1, 11)),
+      );
+      final manager = await _manager(
+        wallet: wallet,
+        httpClient: httpClient,
+        clock: () => DateTime.utc(2026, 2, 1, 12),
+      );
+      expect(await manager.accountClient(), isNull);
+      expect(await manager.accountClient(), isNotNull);
+      expect(httpClient.requests, hasLength(2));
+      expect(manager.sessionExpired, isFalse);
+    });
+
     test('restoreAccount: a dead refresh token flips sessionExpired '
         'without HTTP', () async {
       final httpClient = FakeHttpClient();

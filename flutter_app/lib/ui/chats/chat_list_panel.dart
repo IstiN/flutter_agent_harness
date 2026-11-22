@@ -1606,8 +1606,7 @@ Future<void> showChatNetworksDialog(
                           ? Text(
                               context.l10n.networkSessionExpired,
                               key: const ValueKey('sessionExpiredNote'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              softWrap: true,
                               style: TextStyle(color: colors.error),
                             )
                           : null,
