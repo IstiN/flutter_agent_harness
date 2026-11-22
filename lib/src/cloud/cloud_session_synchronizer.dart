@@ -207,7 +207,8 @@ final class CloudSessionSynchronizer {
       if (snapshot.pending.any((op) => op.sessionId == record.sessionId)) {
         continue;
       }
-      if (snapshot.remoteRevisions[record.sessionId] == record.revision) {
+      if (snapshot.remoteRevisions[record.sessionId] == record.revision &&
+          snapshot.localPaths.containsKey(record.sessionId)) {
         continue;
       }
       try {
@@ -293,10 +294,9 @@ final class CloudSessionSynchronizer {
   Future<CloudSessionSnapshot> _indexLocalPaths(
     CloudSessionSnapshot snapshot,
   ) async {
-    final paths = {...snapshot.localPaths};
-    for (final metadata in await localRepo.list()) {
-      paths[metadata.id] = metadata.path;
-    }
+    final paths = <String, String>{
+      for (final metadata in await localRepo.list()) metadata.id: metadata.path,
+    };
     if (_samePaths(paths, snapshot.localPaths)) return snapshot;
     return store.save(
       snapshot.copyWith(localPaths: paths),

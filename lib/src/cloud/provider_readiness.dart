@@ -79,18 +79,15 @@ final class CloudProviderErrorMapper {
     String? providerOperationId,
   }) {
     final code = providerCode?.toLowerCase();
-    final kind = switch ((statusCode, code)) {
-      (401, _) => DriveErrorKind.providerReauthRequired,
-      (402, _) => DriveErrorKind.inactivePlan,
-      (403, 'inactive_plan' || 'plan_required') => DriveErrorKind.inactivePlan,
-      (403, _) => DriveErrorKind.featureDenied,
-      (404, _) => DriveErrorKind.notFound,
-      (409, _) || (412, _) => DriveErrorKind.preconditionFailed,
-      (413, _) || (507, _) => DriveErrorKind.quotaExceeded,
-      (429, _) => DriveErrorKind.rateLimited,
-      (>= 500 && <= 599, _) => DriveErrorKind.transient,
-      _ => DriveErrorKind.permanent,
-    };
+    final inactivePlan =
+        statusCode == 403 &&
+        const {'inactive_plan', 'plan_required'}.contains(code);
+    final kind = inactivePlan
+        ? DriveErrorKind.inactivePlan
+        : _httpErrorKinds[statusCode] ??
+              (statusCode >= 500 && statusCode <= 599
+                  ? DriveErrorKind.transient
+                  : DriveErrorKind.permanent);
     return DriveProviderException(
       kind,
       message ?? 'provider HTTP $statusCode',
@@ -166,6 +163,18 @@ final class CloudProviderErrorMapper {
       );
     }
   }
+
+  static const _httpErrorKinds = <int, DriveErrorKind>{
+    401: DriveErrorKind.providerReauthRequired,
+    402: DriveErrorKind.inactivePlan,
+    403: DriveErrorKind.featureDenied,
+    404: DriveErrorKind.notFound,
+    409: DriveErrorKind.preconditionFailed,
+    412: DriveErrorKind.preconditionFailed,
+    413: DriveErrorKind.quotaExceeded,
+    429: DriveErrorKind.rateLimited,
+    507: DriveErrorKind.quotaExceeded,
+  };
 
   static Duration? _retryAfter(String? value) {
     final seconds = value == null ? null : int.tryParse(value);

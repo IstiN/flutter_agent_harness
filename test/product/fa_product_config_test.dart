@@ -266,19 +266,22 @@ Map<String, Object?> _valid({
   List<Object?> featureFlags = const ['cloudSync'],
   Object? apiKey,
   Object? extension,
-}) => {
-  'productId': productId,
-  'displayName': displayName,
-  'description': 'A host-owned workspace',
-  'brandAssets': brandAssets,
-  'themePackId': 'host-theme',
-  'authEndpoint': authEndpoint,
-  'apiEndpoint': apiEndpoint,
-  'driveEndpoint': driveEndpoint,
-  'sessionEndpoint': sessionEndpoint,
-  'oauthCallback': oauthCallback,
-  'legalLinks': legalLinks,
-  'featureFlags': featureFlags,
-  if (apiKey case final key?) 'apiKey': key,
-  if (extension case final value?) 'extension': value,
-};
+}) {
+  final json = <String, Object?>{
+    'productId': productId,
+    'displayName': displayName,
+    'description': 'A host-owned workspace',
+    'brandAssets': brandAssets,
+    'themePackId': 'host-theme',
+    'authEndpoint': authEndpoint,
+    'apiEndpoint': apiEndpoint,
+    'driveEndpoint': driveEndpoint,
+    'sessionEndpoint': sessionEndpoint,
+    'oauthCallback': oauthCallback,
+    'legalLinks': legalLinks,
+    'featureFlags': featureFlags,
+  };
+  if (apiKey case final key?) json['apiKey'] = key;
+  if (extension case final value?) json['extension'] = value;
+  return json;
+}

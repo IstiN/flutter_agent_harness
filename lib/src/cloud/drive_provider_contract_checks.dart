@@ -43,26 +43,27 @@ Future<List<DriveProviderContractCheck>> runRemoteDriveProviderContract({
   RemoteDriveItem? uploaded;
   await check('declared conditional/revision/hash capabilities', () async {
     final capabilities = provider.capabilities;
-    if (!capabilities.conditionalWrites ||
-        !capabilities.revisions ||
-        !capabilities.hashes) {
-      throw StateError('MVP/stub provider: complete contract not declared');
-    }
+    _require(
+      capabilities.conditionalWrites &&
+          capabilities.revisions &&
+          capabilities.hashes,
+      'MVP/stub provider: complete contract not declared',
+    );
     return 'complete write capabilities declared';
   });
   if (checks.single.passed) {
     await check('conditional create upload', () async {
       final result = await provider.upload(first);
-      if (!result.isOk) throw result.error!;
-      uploaded = result.value;
-      if (uploaded?.revision == null) throw StateError('missing revision');
+      uploaded = _resultValue(result);
+      _require(uploaded?.revision != null, 'missing revision');
       return 'revision ${uploaded!.revision}';
     });
     await check('same operation replay returns the original result', () async {
       final result = await provider.upload(first);
-      if (!result.isOk || result.value!.revision != uploaded?.revision) {
-        throw StateError('idempotent replay changed the result');
-      }
+      _require(
+        result.isOk && result.value!.revision == uploaded?.revision,
+        'idempotent replay changed the result',
+      );
       return 'same revision and no duplicate mutation';
     });
     await check('same key with different payload is rejected', () async {
@@ -74,9 +75,10 @@ Future<List<DriveProviderContractCheck>> runRemoteDriveProviderContract({
           operationId: first.operationId,
         ),
       );
-      if (result.error?.kind != DriveErrorKind.operationFingerprintMismatch) {
-        throw StateError('provider accepted key/payload substitution');
-      }
+      _require(
+        result.error?.kind == DriveErrorKind.operationFingerprintMismatch,
+        'provider accepted key/payload substitution',
+      );
       return 'operationFingerprintMismatch';
     });
     await check('stale base revision is a precondition conflict', () async {
@@ -89,17 +91,19 @@ Future<List<DriveProviderContractCheck>> runRemoteDriveProviderContract({
           baseRevision: null,
         ),
       );
-      if (result.error?.kind != DriveErrorKind.preconditionFailed) {
-        throw StateError('stale write did not return preconditionFailed');
-      }
+      _require(
+        result.error?.kind == DriveErrorKind.preconditionFailed,
+        'stale write did not return preconditionFailed',
+      );
       return 'no silent overwrite';
     });
     await check('download bytes match revision hash', () async {
       final result = await provider.download(scope, path);
-      if (!result.isOk) throw result.error!;
-      if (cryptoSha256(result.value!.bytes) != uploaded?.sha256) {
-        throw StateError('downloaded hash mismatch');
-      }
+      final download = _resultValue(result);
+      _require(
+        cryptoSha256(download.bytes) == uploaded?.sha256,
+        'downloaded hash mismatch',
+      );
       return 'sha256 verified';
     });
     await check('conditional delete honors the current revision', () async {
@@ -111,9 +115,17 @@ Future<List<DriveProviderContractCheck>> runRemoteDriveProviderContract({
           baseRevision: uploaded?.revision,
         ),
       );
-      if (!result.isOk) throw result.error!;
-      return 'tombstone ${result.value!.revision}';
+      return 'tombstone ${_resultValue(result).revision}';
     });
   }
   return checks;
+}
+
+void _require(bool condition, String message) {
+  if (!condition) throw StateError(message);
+}
+
+T _resultValue<T>(DriveResult<T> result) {
+  _require(result.isOk, '${result.error}');
+  return result.value as T;
 }

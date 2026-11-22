@@ -133,6 +133,37 @@ void main() {
   });
 
   test(
+    'valid delta payload parses items and permits an exhausted null cursor',
+    () {
+      final changes = CloudProviderErrorMapper.changesFromJson(
+        {
+          'nextCursor': 'next-2',
+          'hasMore': false,
+          'items': [
+            {
+              'path': '/drive/a.txt',
+              'revision': 'r1',
+              'sha256': null,
+              'size': 0,
+              'modifiedAt': '2026-01-01T00:00:00Z',
+              'deleted': false,
+            },
+          ],
+        },
+        aliases: {'/drive'},
+      );
+      expect(changes.nextCursor, 'next-2');
+      expect(changes.items.single.path.absolute, '/drive/a.txt');
+      final exhausted = CloudProviderErrorMapper.changesFromJson({
+        'nextCursor': null,
+        'hasMore': false,
+        'items': <Object?>[],
+      });
+      expect(exhausted.nextCursor, isNull);
+    },
+  );
+
+  test(
     'stub provider performs no live work and returns featureDenied',
     () async {
       const provider = StubRemoteDriveProvider('stub');

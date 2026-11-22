@@ -33,6 +33,12 @@ void main() {
         'hello',
       );
       expect(metadata.path, isNot((await session.getMetadata()).path));
+      await b.env.remove(metadata.path);
+      final reopened = await b.repo.open(metadata);
+      expect(
+        (await reopened.getEntries()).whereType<MessageRecord>(),
+        hasLength(1),
+      );
     },
   );
 

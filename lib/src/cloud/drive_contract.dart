@@ -117,6 +117,13 @@ final class DrivePath {
       RegExp(r'^/[A-Za-z][A-Za-z0-9_-]{0,63}$').hasMatch(root);
 
   static void _validateSegment(String segment) {
+    _validatePortableSegment(segment);
+    final lower = segment.toLowerCase();
+    _validateDeviceName(lower);
+    _validateSensitiveName(segment, lower);
+  }
+
+  static void _validatePortableSegment(String segment) {
     if (segment.isEmpty || segment == '.' || segment == '..') {
       throw const FormatException('empty/dotted drive path segment');
     }
@@ -126,23 +133,31 @@ final class DrivePath {
     if (segment.endsWith('.') || segment.endsWith(' ')) {
       throw const FormatException('non-portable drive path segment');
     }
-    final lower = segment.toLowerCase();
+  }
+
+  static void _validateDeviceName(String lower) {
     final stem = lower.split('.').first;
     if (const ['con', 'prn', 'aux', 'nul', 'com1', 'lpt1'].contains(stem)) {
       throw const FormatException('reserved device name in drive path');
     }
+  }
+
+  static void _validateSensitiveName(String segment, String lower) {
+    const exact = {
+      '.env',
+      '.dap',
+      '.git',
+      'logs',
+      'log',
+      'wallets',
+      'wallet',
+      'oauth',
+      'saved_keys',
+      'saved-keys',
+    };
     final sensitive =
-        lower == '.env' ||
+        exact.contains(lower) ||
         lower.startsWith('.env.') ||
-        lower == '.dap' ||
-        lower == '.git' ||
-        lower == 'logs' ||
-        lower == 'log' ||
-        lower == 'wallets' ||
-        lower == 'wallet' ||
-        lower == 'oauth' ||
-        lower == 'saved_keys' ||
-        lower == 'saved-keys' ||
         lower.endsWith('.pem') ||
         lower.endsWith('.key') ||
         lower.contains('secret') ||
@@ -390,6 +405,17 @@ enum DriveSyncStatus {
 }
 
 /// Serializable state suitable for the existing Files/Recent Surfaces model.
+const _errorStatuses = <DriveErrorKind, DriveSyncStatus>{
+  DriveErrorKind.inactivePlan: DriveSyncStatus.planInactive,
+  DriveErrorKind.featureDenied: DriveSyncStatus.planInactive,
+  DriveErrorKind.quotaExceeded: DriveSyncStatus.quotaExceeded,
+  DriveErrorKind.providerReauthRequired: DriveSyncStatus.providerReauthRequired,
+  DriveErrorKind.preconditionFailed: DriveSyncStatus.conflict,
+  DriveErrorKind.permanent: DriveSyncStatus.permanentError,
+  DriveErrorKind.invalidResponse: DriveSyncStatus.permanentError,
+  DriveErrorKind.operationFingerprintMismatch: DriveSyncStatus.permanentError,
+};
+
 final class DriveSyncState {
   const DriveSyncState({
     required this.status,
@@ -428,19 +454,9 @@ final class DriveSyncState {
   final DateTime? lastSyncedAt;
 
   DriveSyncState fromError(DriveProviderException error, {DateTime? now}) {
-    final status = switch (error.kind) {
-      DriveErrorKind.inactivePlan ||
-      DriveErrorKind.featureDenied => DriveSyncStatus.planInactive,
-      DriveErrorKind.quotaExceeded => DriveSyncStatus.quotaExceeded,
-      DriveErrorKind.providerReauthRequired =>
-        DriveSyncStatus.providerReauthRequired,
-      DriveErrorKind.preconditionFailed => DriveSyncStatus.conflict,
-      DriveErrorKind.permanent ||
-      DriveErrorKind.invalidResponse ||
-      DriveErrorKind.operationFingerprintMismatch =>
-        DriveSyncStatus.permanentError,
-      _ => dirty ? DriveSyncStatus.syncing : DriveSyncStatus.permanentError,
-    };
+    final status =
+        _errorStatuses[error.kind] ??
+        (dirty ? DriveSyncStatus.syncing : DriveSyncStatus.permanentError);
     return DriveSyncState(
       status: status,
       dirty: dirty,

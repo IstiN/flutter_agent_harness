@@ -143,9 +143,7 @@ final class DriveSyncEngine {
             authGeneration: identity.authGeneration,
           ),
         );
-        result = deleted.isOk
-            ? DriveResult.ok(deleted.value)
-            : DriveResult.failure(deleted.error);
+        result = deleted;
       } else {
         result = await provider.upload(
           DriveUploadRequest(
@@ -239,66 +237,104 @@ final class DriveSyncEngine {
     CloudIdentity identity,
   ) async {
     _checkIdentity(scope, identity);
-    var snapshot = await store.load(scope.mountKey);
+    final snapshot = await store.load(scope.mountKey);
     final result = await provider.changes(
       DriveChangesRequest(scope: scope, cursor: snapshot.cursor),
     );
     if (!result.isOk) throw result.error!;
     final files = {...snapshot.files};
     for (final remote in result.value!.items) {
-      final path = remote.path;
-      final current = files[path.absolute] ?? _emptyFile(path);
-      final hasLocal = snapshot.pending.any(
-        (operation) => operation.path.absolute == path.absolute,
-      );
-      if (hasLocal && remote.revision != current.remoteRevision) {
-        files[path.absolute] = current.copyWith(
-          remoteRevision: remote.revision,
-          remoteSha256: remote.sha256,
-          status: DriveSyncStatus.conflict,
-          dirty: true,
-          providerDetails: 'remote delta raced a local edit',
-        );
-        continue;
-      }
-      if (remote.deleted) {
-        (await env.remove(path.absolute)).getOrThrow();
-        files[path.absolute] = current.copyWith(
-          remoteRevision: remote.revision,
-          remoteSha256: null,
-          status: DriveSyncStatus.synced,
-          dirty: false,
-          lastSyncedAt: now(),
-        );
-        continue;
-      }
-      if (remote.sha256 == current.localSha256 &&
-          remote.revision == current.remoteRevision) {
-        continue;
-      }
-      final download = await provider.download(scope, path);
-      if (!download.isOk) throw download.error!;
-      if (download.value!.item.sha256 != null &&
-          cryptoSha256(download.value!.bytes) != download.value!.item.sha256) {
-        throw const DriveProviderException(
-          DriveErrorKind.invalidResponse,
-          'downloaded bytes do not match provider hash',
-        );
-      }
-      await _writeLocal(path, download.value!.bytes);
-      files[path.absolute] = current.copyWith(
-        localSha256: cryptoSha256(download.value!.bytes),
-        remoteRevision: remote.revision,
-        remoteSha256: remote.sha256,
-        status: DriveSyncStatus.synced,
-        dirty: false,
-        lastSyncedAt: now(),
-      );
+      final update = await _pullRemoteItem(scope, snapshot, remote);
+      if (update != null) files[update.key] = update.value;
     }
     return store.save(
       snapshot.copyWith(files: files, cursor: result.value!.nextCursor),
       expectedStorageRevision: snapshot.storageRevision,
     );
+  }
+
+  Future<MapEntry<String, DriveFileState>?> _pullRemoteItem(
+    DriveMountScope scope,
+    DriveWorkspaceSnapshot snapshot,
+    RemoteDriveItem remote,
+  ) async {
+    final path = remote.path;
+    final current = snapshot.files[path.absolute] ?? _emptyFile(path);
+    final hasLocal = snapshot.pending.any(
+      (operation) => operation.path.absolute == path.absolute,
+    );
+    if (hasLocal && remote.revision != current.remoteRevision) {
+      return MapEntry(
+        path.absolute,
+        current.copyWith(
+          remoteRevision: remote.revision,
+          remoteSha256: remote.sha256,
+          status: DriveSyncStatus.conflict,
+          dirty: true,
+          providerDetails: 'remote delta raced a local edit',
+        ),
+      );
+    }
+    if (remote.deleted) {
+      return MapEntry(
+        path.absolute,
+        await _pullRemoteDelete(path, current, remote),
+      );
+    }
+    if (remote.sha256 == current.localSha256 &&
+        remote.revision == current.remoteRevision) {
+      return null;
+    }
+    return MapEntry(
+      path.absolute,
+      await _pullRemoteDownload(scope, path, current, remote),
+    );
+  }
+
+  Future<DriveFileState> _pullRemoteDelete(
+    DrivePath path,
+    DriveFileState current,
+    RemoteDriveItem remote,
+  ) async {
+    (await env.remove(path.absolute)).getOrThrow();
+    return current.copyWith(
+      remoteRevision: remote.revision,
+      remoteSha256: null,
+      status: DriveSyncStatus.synced,
+      dirty: false,
+      lastSyncedAt: now(),
+    );
+  }
+
+  Future<DriveFileState> _pullRemoteDownload(
+    DriveMountScope scope,
+    DrivePath path,
+    DriveFileState current,
+    RemoteDriveItem remote,
+  ) async {
+    final result = await provider.download(scope, path);
+    if (!result.isOk) throw result.error!;
+    final download = result.value!;
+    _validateDownloadHash(download);
+    await _writeLocal(path, download.bytes);
+    return current.copyWith(
+      localSha256: cryptoSha256(download.bytes),
+      remoteRevision: remote.revision,
+      remoteSha256: remote.sha256,
+      status: DriveSyncStatus.synced,
+      dirty: false,
+      lastSyncedAt: now(),
+    );
+  }
+
+  static void _validateDownloadHash(RemoteDriveDownload download) {
+    final expected = download.item.sha256;
+    if (expected != null && cryptoSha256(download.bytes) != expected) {
+      throw const DriveProviderException(
+        DriveErrorKind.invalidResponse,
+        'downloaded bytes do not match provider hash',
+      );
+    }
   }
 
   Future<DriveWorkspaceSnapshot> resolveConflictKeepLocal(

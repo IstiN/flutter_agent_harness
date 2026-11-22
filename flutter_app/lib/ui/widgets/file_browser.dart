@@ -851,13 +851,6 @@ class _FileBrowserState extends State<FileBrowser> {
           label: context.l10n.filesUploadTooltip,
           onPressed: _upload,
         ),
-      if (widget.driveSyncController case final controller?)
-        FaHeaderAction(
-          key: const ValueKey('fileBrowserDriveSync'),
-          icon: _driveIcon(controller.overallState.status),
-          label: 'Drive: ${_driveStatusText(controller.overallState.status)}',
-          onPressed: () => unawaited(_syncDrive(controller)),
-        ),
       if (_iCloudSync != null && _iCloudAvailable)
         FaHeaderAction(
           key: const ValueKey('fileBrowserICloudSync'),
@@ -887,8 +880,8 @@ class _FileBrowserState extends State<FileBrowser> {
   Widget _buildDriveSyncStatus(DriveSyncController controller) {
     final state = controller.overallState;
     final colors = FahColors.of(context);
-    return SizedBox(
-      key: const ValueKey('fileBrowserDriveSyncStatus'),
+    final conflict = controller.firstConflict;
+    final statusRow = SizedBox(
       height: 28,
       child: InkWell(
         onTap: () => unawaited(_syncDrive(controller)),
@@ -896,8 +889,10 @@ class _FileBrowserState extends State<FileBrowser> {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              Icon(
-                _driveIcon(state.status),
+              FaIcon(
+                state.status == DriveSyncStatus.synced
+                    ? FaSemanticIcon.checkCircle
+                    : FaSemanticIcon.sync,
                 size: 15,
                 color: colors.text.withValues(alpha: .65),
               ),
@@ -927,41 +922,69 @@ class _FileBrowserState extends State<FileBrowser> {
         ),
       ),
     );
+    return SizedBox(
+      key: const ValueKey('fileBrowserDriveSyncStatus'),
+      height: conflict == null ? 28 : 76,
+      child: Column(
+        children: [
+          statusRow,
+          if (conflict != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FaButton(
+                      key: const ValueKey('driveConflictUseRemote'),
+                      label: context.l10n.driveConflictUseRemote,
+                      dense: true,
+                      variant: FaButtonVariant.secondary,
+                      onPressed: () => unawaited(
+                        _resolveDriveConflict(controller, keepLocal: false),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FaButton(
+                      key: const ValueKey('driveConflictKeepLocal'),
+                      label: context.l10n.driveConflictKeepLocal,
+                      dense: true,
+                      onPressed: () => unawaited(
+                        _resolveDriveConflict(controller, keepLocal: true),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resolveDriveConflict(
+    DriveSyncController controller, {
+    required bool keepLocal,
+  }) async {
+    final conflict = controller.firstConflict;
+    if (conflict == null) return;
+    try {
+      if (keepLocal) {
+        await controller.resolveKeepLocal(conflict);
+        await controller.flush();
+      } else {
+        await controller.resolveAcceptRemote(conflict);
+      }
+      await _load();
+    } on Object catch (error) {
+      if (mounted) _showSnack('$error', error: true);
+    }
   }
 
   Future<void> _syncDrive(DriveSyncController controller) async {
     try {
-      final conflict = controller.firstConflict;
-      if (conflict != null) {
-        final keepLocal = await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Drive conflict'),
-            content: Text(
-              'Keep the local ${conflict.name ?? 'file'} or use the remote version?',
-            ),
-            actions: [
-              TextButton(
-                key: const ValueKey('driveConflictUseRemote'),
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Use remote'),
-              ),
-              FilledButton(
-                key: const ValueKey('driveConflictKeepLocal'),
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Keep local'),
-              ),
-            ],
-          ),
-        );
-        if (keepLocal == null) return;
-        if (keepLocal) {
-          await controller.resolveKeepLocal(conflict);
-        } else {
-          await controller.resolveAcceptRemote(conflict);
-        }
-        if (keepLocal) await controller.flush();
-      } else {
+      if (controller.firstConflict == null) {
         await controller.synchronize();
       }
       if (!mounted) return;
@@ -973,26 +996,16 @@ class _FileBrowserState extends State<FileBrowser> {
     }
   }
 
-  static IconData _driveIcon(DriveSyncStatus status) => switch (status) {
-    DriveSyncStatus.localOnly => Icons.cloud_off_outlined,
-    DriveSyncStatus.syncing => Icons.cloud_sync_outlined,
-    DriveSyncStatus.synced => Icons.cloud_done_outlined,
-    DriveSyncStatus.conflict => Icons.cloud_sync_outlined,
-    DriveSyncStatus.planInactive => Icons.cloud_off_outlined,
-    DriveSyncStatus.quotaExceeded => Icons.cloud_off_outlined,
-    DriveSyncStatus.providerReauthRequired => Icons.cloud_off_outlined,
-    DriveSyncStatus.permanentError => Icons.cloud_off_outlined,
-  };
-
-  static String _driveStatusText(DriveSyncStatus status) => switch (status) {
-    DriveSyncStatus.localOnly => 'Local only',
-    DriveSyncStatus.syncing => 'Syncing',
-    DriveSyncStatus.synced => 'Synced',
-    DriveSyncStatus.conflict => 'Conflict — choose a version',
-    DriveSyncStatus.planInactive => 'Drive plan inactive',
-    DriveSyncStatus.quotaExceeded => 'Drive quota exceeded',
-    DriveSyncStatus.providerReauthRequired => 'Drive sign-in required',
-    DriveSyncStatus.permanentError => 'Drive sync error',
+  String _driveStatusText(DriveSyncStatus status) => switch (status) {
+    DriveSyncStatus.localOnly => context.l10n.driveStatusLocalOnly,
+    DriveSyncStatus.syncing => context.l10n.driveStatusSyncing,
+    DriveSyncStatus.synced => context.l10n.driveStatusSynced,
+    DriveSyncStatus.conflict => context.l10n.driveStatusConflict,
+    DriveSyncStatus.planInactive => context.l10n.driveStatusPlanInactive,
+    DriveSyncStatus.quotaExceeded => context.l10n.driveStatusQuotaExceeded,
+    DriveSyncStatus.providerReauthRequired =>
+      context.l10n.driveStatusReauthRequired,
+    DriveSyncStatus.permanentError => context.l10n.driveStatusPermanentError,
   };
 
   /// Recent chat folders as quick-jump chips (owner call). Falls back to

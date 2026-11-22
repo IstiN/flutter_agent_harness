@@ -752,6 +752,36 @@ class AppLocalizationsRu extends AppLocalizations {
   String get filesCloseTooltip => 'Закрыть файлы';
 
   @override
+  String get driveStatusLocalOnly => 'Только локально';
+
+  @override
+  String get driveStatusSyncing => 'Синхронизация';
+
+  @override
+  String get driveStatusSynced => 'Синхронизировано';
+
+  @override
+  String get driveStatusConflict => 'Конфликт — выберите версию';
+
+  @override
+  String get driveStatusPlanInactive => 'Тариф Drive неактивен';
+
+  @override
+  String get driveStatusQuotaExceeded => 'Квота Drive исчерпана';
+
+  @override
+  String get driveStatusReauthRequired => 'Требуется вход в Drive';
+
+  @override
+  String get driveStatusPermanentError => 'Ошибка синхронизации Drive';
+
+  @override
+  String get driveConflictUseRemote => 'Взять удалённую';
+
+  @override
+  String get driveConflictKeepLocal => 'Оставить локальную';
+
+  @override
   String get filesEmptyFileName => '(пустое имя файла)';
 
   @override

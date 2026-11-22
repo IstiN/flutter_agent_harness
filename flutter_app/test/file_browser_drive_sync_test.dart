@@ -47,7 +47,6 @@ void main() {
       status: DriveSyncStatus.syncing,
     );
     await pump(tester, env, controller);
-    expect(find.byKey(const ValueKey('fileBrowserDriveSync')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('fileBrowserDriveSyncStatus')),
       findsOneWidget,
@@ -87,9 +86,7 @@ void main() {
       status: DriveSyncStatus.conflict,
     );
     await pump(tester, env, controller);
-    await tester.tap(find.byKey(const ValueKey('fileBrowserDriveSync')));
-    await tester.pumpAndSettle();
-    expect(find.text('Drive conflict'), findsOneWidget);
+    expect(find.text('Conflict — choose a version'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('driveConflictUseRemote')),
       findsOneWidget,
