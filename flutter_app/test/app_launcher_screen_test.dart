@@ -11,6 +11,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_state_paths.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
+import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
@@ -183,6 +184,7 @@ Future<_Harness> _pumpLauncher(
   bool revealSearch = false,
   bool fullScreen = false,
   VoidCallback? onBack,
+  List<String> Function()? filesRecentFolders,
 }) async {
   if (surface != null) {
     tester.view.physicalSize = surface;
@@ -214,6 +216,7 @@ Future<_Harness> _pumpLauncher(
     onOpenNetworks: onOpenNetworks,
     fullScreen: fullScreen,
     onBack: onBack,
+    filesRecentFolders: filesRecentFolders,
   );
   await tester.pumpWidget(
     MaterialApp(
@@ -602,6 +605,34 @@ void main() {
       expect(find.byType(FileBrowser), findsOneWidget);
     });
 
+    testWidgets('sandbox recent-folder chip preserves the allow-access gate', (
+      tester,
+    ) async {
+      debugDirectFolderAccess = false;
+      addTearDown(() => debugDirectFolderAccess = null);
+      await _pumpLauncher(
+        tester,
+        filesRecentFolders: () => const ['/outside/project'],
+      );
+      await tester.tap(_cell(LauncherLayoutStore.filesKey));
+      await tester.pumpAndSettle();
+      final chip = find.byKey(
+        const ValueKey('fileBrowserRecentChip:/outside/project'),
+      );
+      expect(chip, findsOneWidget);
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+
+      // Launcher-route twin of the shell regression: this tap funnels
+      // through _openFilesAt, so it independently pins the second env
+      // decision copy (review F2 follow-up).
+      expect(
+        find.byKey(const ValueKey('filesSessionFolderGate')),
+        findsOneWidget,
+      );
+      expect(find.text('Could not list folder'), findsNothing);
+    });
+
     testWidgets('a new app created mid-session appears after fsRevision bump', (
       tester,
     ) async {
@@ -831,9 +862,7 @@ void main() {
       );
     });
 
-    testWidgets('narrower phone fits fewer columns adaptively', (
-      tester,
-    ) async {
+    testWidgets('narrower phone fits fewer columns adaptively', (tester) async {
       await _pumpLauncher(tester, surface: const Size(320, 700));
       // Adaptive fit (owner feedback — no fixed per-class count): the
       // 320pt lane holds 4 tracks ((320-32+12)/72 ≈ 4.2), so files wraps
