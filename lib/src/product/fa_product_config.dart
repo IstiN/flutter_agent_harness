@@ -15,6 +15,7 @@ final class FaProductConfig {
     this.description = '',
     this.brandAssets = const {},
     this.themePackId,
+    this.themePack,
     this.authEndpoint,
     this.apiEndpoint,
     this.driveEndpoint,
@@ -22,6 +23,8 @@ final class FaProductConfig {
     this.oauthCallback,
     this.legalLinks = const {},
     this.featureFlags = const {},
+    this.driveAliases = const {},
+    this.storageSchemaVersion = 1,
   }) : _stock = false;
 
   const FaProductConfig._stock()
@@ -30,6 +33,7 @@ final class FaProductConfig {
       description = 'Fa — Flutter Agent Harness: coding agent in your browser.',
       brandAssets = const {},
       themePackId = null,
+      themePack = null,
       authEndpoint = null,
       apiEndpoint = null,
       driveEndpoint = null,
@@ -37,6 +41,8 @@ final class FaProductConfig {
       oauthCallback = null,
       legalLinks = const {},
       featureFlags = const {},
+      driveAliases = const {},
+      storageSchemaVersion = 1,
       _stock = true;
 
   /// Default Fa identity. No profile file is required to retain this behavior.
@@ -50,6 +56,7 @@ final class FaProductConfig {
   /// normalized relative path inside the host's external asset directory.
   final Map<String, String> brandAssets;
   final String? themePackId;
+  final Map<String, Object?>? themePack;
   final Uri? authEndpoint;
   final Uri? apiEndpoint;
   final Uri? driveEndpoint;
@@ -57,6 +64,8 @@ final class FaProductConfig {
   final Uri? oauthCallback;
   final Map<String, Uri> legalLinks;
   final Set<String> featureFlags;
+  final Set<String> driveAliases;
+  final int storageSchemaVersion;
   final bool _stock;
 
   bool get isStock => _stock;
@@ -155,12 +164,67 @@ final class FaProductConfig {
         flags.add(_featureFlag(flag));
       }
     }
+    final aliases = <String>{};
+    final rawAliases = json['driveAliases'];
+    if (rawAliases != null) {
+      if (rawAliases is! List) throw const FormatException('driveAliases list');
+      for (final alias in rawAliases) {
+        if (alias is! String ||
+            !RegExp(r'^/[a-z][a-z0-9_-]{0,63}$').hasMatch(alias) ||
+            const {
+              '/drive',
+              '/.dap',
+              '/.env',
+              '/logs',
+              '/oauth',
+            }.contains(alias)) {
+          throw const FormatException('invalid drive alias');
+        }
+        aliases.add(alias);
+      }
+    }
+    final schema = json['storageSchemaVersion'] ?? 1;
+    if (schema is! int || schema < 1 || schema > 100) {
+      throw const FormatException('storageSchemaVersion must be 1..100');
+    }
+    final rawThemePack = json['themePack'];
+    Map<String, Object?>? themePack;
+    if (rawThemePack != null) {
+      if (rawThemePack is! Map ||
+          rawThemePack['name'] is! String ||
+          rawThemePack['version'] is! String ||
+          rawThemePack['colors'] is! Map ||
+          rawThemePack.containsKey('wallpaper') ||
+          rawThemePack.keys.any(
+            (key) =>
+                const {'code', 'script', 'js', 'url', 'asset'}.contains(key),
+          )) {
+        throw const FormatException('invalid declarative host themePack');
+      }
+      themePack = rawThemePack.cast<String, Object?>();
+    }
+    if (themePack != null && themePackId == null) {
+      throw const FormatException('themePack requires themePackId');
+    }
+    if (themePack != null) {
+      final slug = (themePack['name']! as String)
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+          .replaceAll(RegExp(r'^-|-$'), '');
+      if (slug != themePackId) {
+        throw const FormatException(
+          'themePackId must match the theme name slug',
+        );
+      }
+    }
     final config = FaProductConfig(
       productId: productId,
       displayName: displayName,
       description: description,
       brandAssets: Map.unmodifiable(assets),
       themePackId: themePackId,
+      themePack: themePack,
       authEndpoint: endpoint('authEndpoint'),
       apiEndpoint: endpoint('apiEndpoint'),
       driveEndpoint: endpoint('driveEndpoint'),
@@ -168,6 +232,8 @@ final class FaProductConfig {
       oauthCallback: endpoint('oauthCallback'),
       legalLinks: Map.unmodifiable(legal),
       featureFlags: Set.unmodifiable(flags),
+      driveAliases: Set.unmodifiable(aliases),
+      storageSchemaVersion: schema,
     );
     if (config.oauthCallback != null && config.authEndpoint == null) {
       throw const FormatException('oauthCallback requires authEndpoint');

@@ -88,6 +88,10 @@ void main() {
         File('$output/flutter_service_worker.js').readAsStringSync(),
         contains('fa-product:host-product:schema:1:web-app'),
       );
+      expect(
+        File('$output/flutter_service_worker.js').readAsStringSync(),
+        contains('key.startsWith("fa-product:host-product:")'),
+      );
       for (final path in [
         'icons/Icon-192.png',
         'icons/Icon-512.png',
@@ -215,6 +219,13 @@ Map<String, Object?> _profile() => {
   'displayName': 'Host & Workspace',
   'description': 'A host-owned & private workspace',
   'themePackId': 'host-theme',
+  'themePack': {
+    'name': 'Host Theme',
+    'version': '1.0.0',
+    'colors': {
+      'dark': {'accent': '#2E7D32'},
+    },
+  },
   'authEndpoint': 'https://auth.example/authorize',
   'apiEndpoint': 'https://api.example/v1',
   'driveEndpoint': 'https://drive.example/v1',
@@ -263,8 +274,13 @@ Directory _fixtureShell(Directory directory) {
 <script src="flutter_bootstrap.js" async></script>
 </body></html>''');
   File('${directory.path}/manifest.json').writeAsStringSync('{"name":"Fa"}');
-  File(
-    '${directory.path}/flutter_service_worker.js',
-  ).writeAsStringSync("var cacheName = 'flutter-app';\n");
+  File('${directory.path}/flutter_service_worker.js').writeAsStringSync(
+    "var cacheName = 'flutter-app';\n"
+    "self.addEventListener('activate', function() {\n"
+    "  caches.keys().then(function(keys) { keys.forEach(function(key) {\n"
+    "    if (key !== cacheName) { return caches.delete(key); }\n"
+    "  }); });\n"
+    "});\n",
+  );
   return directory;
 }

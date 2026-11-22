@@ -89,6 +89,72 @@ void main() {
       );
     }
 
+    test('declarative host theme pack is public metadata, not code', () {
+      final config = FaProductConfig.fromJson({
+        ..._valid(),
+        'themePackId': 'host-theme',
+        'themePack': {
+          'name': 'Host Theme',
+          'version': '1.0.0',
+          'colors': {
+            'dark': {'accent': '#2E7D32'},
+          },
+        },
+      });
+      expect(config.themePack!['version'], '1.0.0');
+      expect(config.themePackId, 'host-theme');
+      expect(
+        () => FaProductConfig.fromJson({
+          ..._valid(),
+          'themePackId': null,
+          'themePack': {
+            'name': 'Host Theme',
+            'version': '1.0.0',
+            'colors': <String, Object?>{},
+          },
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => FaProductConfig.fromJson({
+          ..._valid(),
+          'themePackId': 'wrong-slug',
+          'themePack': {
+            'name': 'Host Theme',
+            'version': '1.0.0',
+            'colors': <String, Object?>{},
+          },
+        }),
+        throwsFormatException,
+      );
+    });
+
+    test('schema upgrades and explicit drive aliases remain namespaced', () {
+      final config = FaProductConfig.fromJson({
+        ..._valid(),
+        'storageSchemaVersion': 2,
+        'driveAliases': ['/health', '/research-docs'],
+      });
+      expect(config.storageSchemaVersion, 2);
+      expect(
+        config.storageNamespace(config.storageSchemaVersion),
+        'fa-product:host-product:schema:2',
+      );
+      expect(config.driveAliases, {'/health', '/research-docs'});
+      expect(
+        () =>
+            FaProductConfig.fromJson({..._valid(), 'storageSchemaVersion': 0}),
+        throwsFormatException,
+      );
+      expect(
+        () => FaProductConfig.fromJson({
+          ..._valid(),
+          'driveAliases': ['/drive'],
+        }),
+        throwsFormatException,
+      );
+    });
+
     test(
       'loopback HTTP is allowed for deterministic local development only',
       () {

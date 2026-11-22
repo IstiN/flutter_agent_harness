@@ -44,6 +44,7 @@ import 'package:fa/services/settings_env.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/theme_packs.dart';
 import 'package:fa/services/web/sandbox_url_strategy.dart';
 import 'package:fa/services/office/office_boot.dart';
 import 'package:fa/services/office/office_fetch_bridge.dart';
@@ -146,6 +147,7 @@ final class FaAppBoot {
     required this.routes,
     Future<ExecutionEnv> Function()? createEnv,
     this.productConfig = FaProductConfig.stock,
+    this.hostThemePacks = const [],
   }) : createEnv = createEnv ?? createPlatformEnv;
 
   /// The routes stage: mounts the app UI (`runApp`) and attaches the
@@ -157,6 +159,7 @@ final class FaAppBoot {
   final Future<ExecutionEnv> Function() createEnv;
 
   final FaProductConfig productConfig;
+  final Iterable<InstalledThemePack> hostThemePacks;
 
   /// Runs the boot stages in the historical `main()` order:
   /// window → services → storage → telemetry → routes.
@@ -202,7 +205,11 @@ final class FaAppBoot {
     // From here the in-app log also persists to logs/app.log in the sandbox.
     AppLog.attach(env);
     BootSteps.mark('env');
-    final stores = await loadBootStores(env, productConfig: productConfig);
+    final stores = await loadBootStores(
+      env,
+      productConfig: productConfig,
+      hostThemePacks: hostThemePacks,
+    );
     BootSteps.mark('storage');
     final analytics = await bootTelemetry();
     BootSteps.mark('telemetry');
@@ -258,6 +265,7 @@ Future<void> bootServices() async {
 Future<BootStores> loadBootStores(
   ExecutionEnv env, {
   FaProductConfig productConfig = FaProductConfig.stock,
+  Iterable<InstalledThemePack> hostThemePacks = const [],
 }) async {
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
@@ -286,6 +294,32 @@ Future<BootStores> loadBootStores(
   BootSteps.mark('storage:onboarding');
   BootSteps.begin('storage:themePacks');
   final themePacks = await ThemePackStore.load(env);
+  for (final pack in hostThemePacks) {
+    themePacks.registerHostPack(pack);
+  }
+  final inlinePack = productConfig.themePack;
+  if (inlinePack != null) {
+    final validation = validateThemePack(inlinePack, const {});
+    final spec = validation.spec;
+    if (spec == null || spec.id != productConfig.themePackId) {
+      throw FormatException(
+        'invalid host theme pack: ${validation.reasons.join(', ')}',
+      );
+    }
+    themePacks.registerHostPack(
+      InstalledThemePack(spec: spec, wallpaperBytes: null),
+    );
+  }
+  final selectedPack = themePacks.byId(productConfig.themePackId);
+  if (productConfig.themePackId != null && selectedPack == null) {
+    throw const FormatException('declared host themePackId was not provided');
+  }
+  if (selectedPack != null) {
+    await themeController.setPack(
+      selectedPack.id,
+      hasWallpaper: selectedPack.wallpaperBytes != null,
+    );
+  }
   BootSteps.mark('storage:themePacks');
   final skillsAccessStore = SkillsAccessStore(env);
   BootSteps.begin('storage:mediaModels');

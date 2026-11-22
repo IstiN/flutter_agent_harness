@@ -16,6 +16,12 @@ window.__fahFsUseStorageNamespace = function(namespace) {
   if (window.__fahFsDbPromise) {
     window.__fahFsDbPromise.then(function(db) { db.close(); });
   }
+  ['__fahDriveDbPromise', '__fahCloudSessionDbPromise'].forEach(function(key) {
+    if (window[key]) {
+      window[key].then(function(db) { db.close(); });
+    }
+    window[key] = null;
+  });
   window.__faProductStorageNamespace = namespace || null;
   window.__fahFsDbPromise = null;
 };

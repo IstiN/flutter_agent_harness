@@ -179,7 +179,7 @@ void stageBrandedShell({
     throw ArgumentError('stock Fa must use the unmodified build path');
   }
   final root = Directory(stagingPath);
-  final namespace = config.storageNamespace(1)!;
+  final namespace = config.storageNamespace(config.storageSchemaVersion)!;
   final index = File('${root.path}/index.html');
   var html = index.readAsStringSync();
   html = html.replaceFirst(
@@ -241,7 +241,7 @@ void stageBrandedShell({
   }
   assets.required('favicon').copySync('${root.path}/favicon.png');
   assets.required('splash').copySync('${root.path}/splash.png');
-  _namespaceServiceWorker(root, namespace);
+  _namespaceServiceWorker(root, namespace, 'fa-product:${config.productId}:');
 }
 
 Map<String, Object?> _publicProfile(FaProductConfig config) => {
@@ -249,6 +249,7 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   'displayName': config.displayName,
   'description': config.description,
   'themePackId': config.themePackId,
+  'themePack': config.themePack,
   'authEndpoint': config.authEndpoint?.toString(),
   'apiEndpoint': config.apiEndpoint?.toString(),
   'driveEndpoint': config.driveEndpoint?.toString(),
@@ -259,6 +260,8 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
       entry.key: entry.value.toString(),
   },
   'featureFlags': config.featureFlags.toList()..sort(),
+  'driveAliases': config.driveAliases.toList()..sort(),
+  'storageSchemaVersion': config.storageSchemaVersion,
 };
 
 Map<String, Object?> _manifest(FaProductConfig config) => {
@@ -289,12 +292,24 @@ Map<String, Object?> _manifest(FaProductConfig config) => {
   ],
 };
 
-void _namespaceServiceWorker(Directory root, String namespace) {
+void _namespaceServiceWorker(
+  Directory root,
+  String namespace,
+  String productPrefix,
+) {
   final file = File('${root.path}/flutter_service_worker.js');
   if (!file.existsSync()) {
     throw const FormatException('Flutter service worker missing');
   }
   var source = file.readAsStringSync();
+  // Flutter's current no-op worker unregisters itself and owns no Cache
+  // Storage entries. There is no cache namespace to rewrite in that shape.
+  if (!source.contains('cacheName') &&
+      !source.contains('CACHE_NAME') &&
+      !source.contains('caches.delete') &&
+      source.contains('registration.unregister')) {
+    return;
+  }
   final cache = jsonEncode('$namespace:web-app');
   final patterns = [
     RegExp(r"(cacheName\s*=\s*)'flutter-app'"),
@@ -311,6 +326,24 @@ void _namespaceServiceWorker(Directory root, String namespace) {
     throw const FormatException(
       'unrecognized Flutter service-worker cache namespace seam',
     );
+  }
+  if (source.contains('caches.delete')) {
+    final prefix = jsonEncode(productPrefix);
+    var guards = 0;
+    for (final pattern in [
+      RegExp(r'if \(key !== cacheName\)'),
+      RegExp(r'if \(key !== CACHE_NAME\)'),
+    ]) {
+      source = source.replaceAllMapped(pattern, (match) {
+        guards++;
+        return 'if (key !== ${pattern.pattern.contains('CACHE_NAME') ? 'CACHE_NAME' : 'cacheName'} && key.startsWith($prefix))';
+      });
+    }
+    if (guards != 1) {
+      throw const FormatException(
+        'service worker could delete another product cache',
+      );
+    }
   }
   file.writeAsStringSync(source);
 }

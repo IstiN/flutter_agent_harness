@@ -295,6 +295,31 @@ void main() {
     expect(remote.itemAt(scope, path).deleted, isTrue);
     expect((await engine.env.exists(path.absolute)).getOrThrow(), isFalse);
   });
+
+  test('reusable external-provider contract passes a complete fake', () async {
+    final remote = FakeRemoteDriveProvider();
+    final checks = await runRemoteDriveProviderContract(
+      provider: remote,
+      scope: scope,
+      allowMutations: true,
+    );
+    expect(checks, hasLength(7));
+    expect(
+      checks.where((check) => !check.passed),
+      isEmpty,
+      reason: checks
+          .map((check) => '${check.name}: ${check.details}')
+          .join('\n'),
+    );
+    await expectLater(
+      runRemoteDriveProviderContract(
+        provider: remote,
+        scope: scope,
+        allowMutations: false,
+      ),
+      throwsStateError,
+    );
+  });
 }
 
 DriveSyncEngine _engine(

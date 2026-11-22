@@ -180,6 +180,34 @@ void main() {
     );
 
     test(
+      'branded declarative theme pack registers and applies at boot',
+      () async {
+        final config = FaProductConfig.fromJson({
+          'productId': 'host-product',
+          'displayName': 'Host Workspace',
+          'themePackId': 'host-theme',
+          'themePack': {
+            'name': 'Host Theme',
+            'version': '1.0.0',
+            'colors': {
+              'dark': {'accent': '#2E7D32'},
+            },
+          },
+        });
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+        );
+        expect(stores.themeController.packId, 'host-theme');
+        expect(stores.themePacks.byId('host-theme')!.spec.name, 'Host Theme');
+        expect(
+          stores.themePacks.byId('host-theme')!.spec.dark!.accent,
+          isNotNull,
+        );
+      },
+    );
+
+    test(
       'faNetwork feature refuses to inherit stock endpoints implicitly',
       () async {
         final config = FaProductConfig.fromJson({

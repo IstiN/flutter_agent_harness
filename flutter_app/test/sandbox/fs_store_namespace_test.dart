@@ -48,6 +48,8 @@ console.log(window.__fahFsDatabaseName());
     () {
       expect(fsStore, contains('window.__fahFsUseStorageNamespace'));
       expect(fsStore, contains('db.close();'));
+      expect(fsStore, contains("'__fahDriveDbPromise'"));
+      expect(fsStore, contains("'__fahCloudSessionDbPromise'"));
       expect(fsStore, contains('window.__fahFsDbPromise = null;'));
     },
   );

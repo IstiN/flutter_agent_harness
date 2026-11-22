@@ -331,6 +331,7 @@ final class DriveProviderException implements Exception {
     this.retryAfter,
     this.providerOperationId,
     this.statusCode,
+    this.cause,
   });
 
   final DriveErrorKind kind;
@@ -338,6 +339,7 @@ final class DriveProviderException implements Exception {
   final Duration? retryAfter;
   final String? providerOperationId;
   final int? statusCode;
+  final Object? cause;
 
   bool get retryable =>
       kind == DriveErrorKind.transient || kind == DriveErrorKind.rateLimited;
