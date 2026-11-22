@@ -68,7 +68,7 @@ void main() {
     expect(find.text('📦'), findsOneWidget);
   });
 
-  testWidgets('framed icon uses a colorful continuous-corner badge', (
+  testWidgets('framed curated artwork has no generated outer badge', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -82,13 +82,31 @@ void main() {
     await tester.pumpAndSettle();
     final badge = tester.widget<AppIconBadge>(find.byType(AppIconBadge));
     expect(badge.size, 76);
+    expect(
+      find.descendant(
+        of: find.byType(AppIconBadge),
+        matching: find.byType(Container),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('generated text fallback keeps its own continuous-corner tile', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: AppIcon(app: _app('🧮'), env: env, size: 76, framed: true),
+        ),
+      ),
+    );
     final container = tester.widget<Container>(
-      find
-          .descendant(
-            of: find.byType(AppIconBadge),
-            matching: find.byType(Container),
-          )
-          .first,
+      find.descendant(
+        of: find.byType(AppIconBadge),
+        matching: find.byType(Container),
+      ),
     );
     final decoration = container.decoration! as ShapeDecoration;
     expect(decoration.gradient, isA<LinearGradient>());

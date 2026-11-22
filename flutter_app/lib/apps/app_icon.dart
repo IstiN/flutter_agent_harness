@@ -113,8 +113,9 @@ abstract final class AppIconPalette {
 /// A continuous-corner tile used by Launchpad-style surfaces.
 /// [child] is normally the app artwork or an adaptive system glyph.
 ///
-/// Uniform muted backplate (owner 2026-11-21: the bare-artwork variant
-/// looked inconsistent). Artwork keeps its original colors — no filter.
+/// Owner direction: NO generated gradient backplate behind real artwork.
+/// The artwork keeps its own rounded-square silhouette and original colors;
+/// generated text/emoji fallbacks supply their own tile instead.
 class AppIconBadge extends StatelessWidget {
   const AppIconBadge({
     super.key,
@@ -133,19 +134,9 @@ class AppIconBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Muted continuous-corner backplate for EVERY tile (owner: the
-    // no-backplate experiment read as a messy launchpad) — but NO
-    // desaturating ColorFiltered: the artwork keeps its own colors.
-    return Container(
+    return SizedBox(
       width: size,
       height: size,
-      decoration: AppIconPalette.decoration(
-        seed: seed,
-        artwork: artwork,
-        accent: accent,
-        brightness: Theme.of(context).brightness,
-        size: size,
-      ),
       child: ClipRSuperellipse(
         borderRadius: BorderRadius.circular(size * .22),
         child: SizedBox.expand(child: child),
@@ -481,7 +472,14 @@ class AppIcon extends StatelessWidget {
       seed: app.id,
       accent: AppIconPalette.accentFor(app.id),
       size: size,
-      child: Center(child: text),
+      child: Container(
+        decoration: AppIconPalette.decoration(
+          seed: app.id,
+          brightness: Theme.of(context).brightness,
+          size: size,
+        ),
+        child: Center(child: text),
+      ),
     );
   }
 
