@@ -382,3 +382,6 @@ export 'src/cli/network_presence.dart';
 
 // ── product workspace ──
 export 'src/product/fa_product_config.dart';
+
+// ── cloud drive ──
+export 'src/cloud/drive_contract.dart';
