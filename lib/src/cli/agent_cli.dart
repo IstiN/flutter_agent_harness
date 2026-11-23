@@ -260,8 +260,11 @@ import '../memory_config.dart';
 import '../power_config.dart';
 import '../power_runner.dart';
 import '../messaging/agent_message.dart';
+import '../messaging/chain_loop_guard.dart';
+import '../messaging/chain_state_store.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/inbox_wake_policy.dart';
+import '../messaging/messaging_config.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/scheduled_messages.dart';
 import '../messaging/scheduled_receipts.dart';
@@ -385,6 +388,7 @@ part 'agent_cli_plugin_records.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
+part 'agent_cli_chain_gate.dart';
 part 'agent_cli_herdr.dart';
 part 'agent_cli_handoff.dart';
 part 'agent_cli_network.dart';
@@ -817,6 +821,10 @@ class AgentCli {
     _a2aManager = wired.a2aManager!;
     _subagentHeartbeat = wired.subagentHeartbeat!;
     _taskConfig = wired.taskConfig!;
+    // Issue #2226: the persisted chain state (budget spend + windows)
+    // restores once the messages root exists — a restart never grants a
+    // fresh budget mid-chain.
+    _startChainStateRestore();
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same
@@ -2666,32 +2674,34 @@ class AgentCli {
   set sessionLoadsInFlightForTest(int value) => _sessionLoadsInFlight = value;
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
-  /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
-  /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old
-  /// seam name working for REG tests.
+  /// real runs. The streak lives in [_inboxWakePolicy] — this proxy keeps
+  /// the old seam name working for REG tests.
   @visibleForTesting
   int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
   @visibleForTesting
   set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
 
-  /// Consecutive inbox-triggered runs without any user input — capped so
-  /// two chatty instances cannot ping-pong forever (mail still accumulates
-  /// and is delivered at the next real turn). User-kind messages reset the
-  /// streak when delivered: they ARE the user talking, so an attach-driven
-  /// session never exhausts the cap. gh-1180: scheduled self-mail is
-  /// EXEMPT (see [_inboxWakePolicy]). Single-sourced from the policy
-  /// (review): one tuned threshold, one declaration.
-  static const _maxInboxWakeStreak = InboxWakePolicy.defaultMaxInboxWakeStreak;
+  /// The idle inbox-wake lane policy (gh-1180, issue #2226): user-kind
+  /// mail always wakes; delivered scheduled self-mail is exempt; foreign
+  /// chatter is bounded by the smart chain guard (ON by default) and —
+  /// only when `messaging.wakeChatterCap` says so — the LEGACY cap.
+  /// Built (with its persistence) in [AgentCliChainGate]; `late final`
+  /// lazy so it can read [config].
+  late final InboxWakePolicy _inboxWakePolicy = _buildInboxWakePolicy();
 
-  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
-  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
-  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
-  /// wakes forever, cadence-floored against a disguised busy-spin; and
-  /// foreign agent-to-agent chatter stays capped at
-  /// [_maxInboxWakeStreak] consecutive wakes without user input.
-  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy(
-    maxStreak: _maxInboxWakeStreak,
-  );
+  /// The lane of the wake run in flight — the chain guard books the
+  /// run's turn usage only for chatter-lane runs (issue #2226 budget).
+  InboxWakeLane? _activeChainWakeLane;
+
+  /// The chain guard + its persistence (built in [AgentCliChainGate]).
+  (ChainStateStore, ChainLoopGuard)? _chainState;
+
+  /// Completes when the boot-time chain-state restore landed.
+  Future<void> _chainStateRestored = Future.value();
+
+  /// Test seam: the chain guard's spend counter (issue #2226).
+  @visibleForTesting
+  int get chainSpendForTest => _chainState?.$2.tokensSpent ?? 0;
 
   /// Test seam for the persisted wake-receipt trail (gh-1180 AC4): reads
   /// the non-nullable [_scheduledReceipts] the production wake path

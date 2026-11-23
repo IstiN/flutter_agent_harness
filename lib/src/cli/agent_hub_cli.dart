@@ -631,6 +631,91 @@ extension AgentCliHubDriver on AgentCli {
   }
 
   // ----------------------------------------------------------------------
+  // /chain (issue #2226)
+  // ----------------------------------------------------------------------
+
+  /// `/chain` — the autonomous agent↔agent chain gate: bare prints the
+  /// status (paused? spend? pending count); `continue` resets the budget
+  /// and overrides the pause verdict; `stop` drops the pending agent-kind
+  /// fabric mail with a tombstone receipt (user-kind mail stays queued —
+  /// it is the user talking, never chain chatter).
+  Future<void> handleChainCommand(String rest) async {
+    final guard = _inboxWakePolicy.chainGuard;
+    final sub = rest.trim();
+    switch (sub) {
+      case '':
+        final pending = await _subagentManager.pendingInboxCount(
+          _subagentManager.selfId,
+        );
+        final spend = guard == null
+            ? null
+            : '${guard.tokensSpent}'
+                  '${guard.budgetTokens > 0 ? '/${guard.budgetTokens}' : ''} tok';
+        io.writeln(
+          'chain: ${guard == null
+              ? 'unguarded'
+              : guard.paused
+              ? 'PAUSED'
+              : 'running'}'
+          '${spend == null ? '' : ' · spend $spend'} · pending mail $pending',
+        );
+        final pause = guard?.pause;
+        if (pause != null) {
+          io.writeln(_style.dim('evidence: ${pause.evidence}'));
+          io.writeln(
+            _style.dim('/chain continue - resume · /chain stop - drop mail'),
+          );
+        }
+      case 'continue':
+        guard?.continueChain();
+        await _persistChainState();
+        io.writeln(
+          'chain resumed — the budget re-armed and the verdict is '
+          'overridden; queued mail wakes on the next tick',
+        );
+      case 'stop':
+        final fabric = _subagentManager.messaging;
+        final mailbox = _subagentManager.mailboxOf(_subagentManager.selfId);
+        final drained = await fabric?.drain(mailbox) ?? const <AgentMessage>[];
+        // User-kind mail IS the user talking — it stays queued. A fresh
+        // id on the copy: the file layer dedupes a re-send by id against
+        // the consumed `read/` record, so the original id would vanish.
+        for (final message in drained) {
+          if (message.kind == AgentMessageKind.user) {
+            await fabric?.send(
+              AgentMessage(
+                id: newMessageId(),
+                fromId: message.fromId,
+                toId: message.toId,
+                text: message.text,
+                kind: message.kind,
+                sentAt: message.sentAt,
+              ),
+            );
+          }
+        }
+        final dropped = [
+          for (final message in drained)
+            if (message.kind != AgentMessageKind.user) message,
+        ];
+        guard?.stopChain();
+        await _persistChainState();
+        await _scheduledReceipts.append('chain_stopped', {
+          'reason': 'user',
+          'dropped': dropped.length,
+          'ids': [for (final message in dropped) message.id],
+        });
+        io.writeln(
+          'chain stopped — ${dropped.length} pending message(s) dropped '
+          '(tombstone in receipts.jsonl)'
+          '${drained.length == dropped.length ? '' : '; user mail kept'}',
+        );
+      default:
+        io.writeln('usage: /chain [continue|stop]');
+    }
+  }
+
+  // ----------------------------------------------------------------------
   // /mail and /reply (E2)
   // ----------------------------------------------------------------------
 

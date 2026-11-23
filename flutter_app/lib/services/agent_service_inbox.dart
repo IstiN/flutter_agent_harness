@@ -166,10 +166,34 @@ extension AgentServiceInbox on AgentService {
           'lane': decision.lane.name,
           'ids': ids,
         });
-        await _scheduledReceipts.append('wake_refused', {
-          'lane': decision.lane.name,
-          'reason': decision.refusalReason,
-        });
+        if (decision.pauseReason == 'loop' ||
+            decision.pauseReason == 'budget') {
+          // Issue #2226 AC5: the pause renders the digest card lines on
+          // the app surface too (the log is the app's shared surface —
+          // the pending-mail markers stay visible in the agents section),
+          // and the receipts distinguish chain_paused:<reason> from the
+          // legacy wake_refused (AC8).
+          for (final line in chainPauseDigestLines(
+            reason: decision.pauseReason == 'loop'
+                ? ChainPauseReason.loop
+                : ChainPauseReason.budget,
+            evidence: decision.refusalReason ?? '',
+            pendingCount: pending.length,
+          )) {
+            AppLog.i('inbox', line);
+          }
+          await _scheduledReceipts.append('chain_paused', {
+            'reason': decision.pauseReason,
+            'evidence': decision.refusalReason,
+            'pending': pending.length,
+          });
+        } else {
+          // The legacy cap keeps the gh-1180 receipt shape.
+          await _scheduledReceipts.append('wake_refused', {
+            'lane': decision.lane.name,
+            'reason': decision.refusalReason,
+          });
+        }
       }
       return;
     }

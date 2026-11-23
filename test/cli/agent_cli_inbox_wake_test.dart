@@ -32,17 +32,19 @@ void main() {
 
   tearDown(() => io.close());
 
-  AgentCli buildCli(FakeStreamFunction fake) => AgentCli(
-    config: AgentCliConfig(
-      model: testModel,
-      apiKey: '[REDACTED:Sensitive-Value]',
-      env: env,
-      sessionRoot: '/sessions',
-      providerKind: 'openai-completions',
-    ),
-    io: io,
-    streamFunction: fake.call,
-  );
+  AgentCli buildCli(FakeStreamFunction fake, {MessagingConfig? messaging}) =>
+      AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          messaging: messaging,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
 
   /// Waits for the session to exist; returns (sessionId, 0 calls).
   Future<(String, int)> boot(FakeStreamFunction fake, AgentCli cli) async {
@@ -136,7 +138,10 @@ void main() {
         textTurn('on watch'),
         textTurn('still on watch'),
       ]);
-      final cli = buildCli(fake);
+      final cli = buildCli(
+        fake,
+        messaging: const MessagingConfig(wakeChatterCap: 10),
+      );
       final run = cli.run();
       final (id, baseline) = await boot(fake, cli);
       // Ten agent-to-agent wakes already burned (the attach-driven REG
@@ -164,7 +169,10 @@ void main() {
   test('gh-1180 AC4: a scheduled-self wake leaves a persisted receipt trail '
       '(wake_attempted + turn_started, correlated by message id)', () async {
     final fake = FakeStreamFunction([textTurn('on watch'), textTurn('ok')]);
-    final cli = buildCli(fake);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(wakeChatterCap: 10),
+    );
     final run = cli.run();
     final (id, baseline) = await boot(fake, cli);
     cli.inboxWakeStreakForTest = 10;
@@ -195,7 +203,10 @@ void main() {
     'the streak cap, and the refusal is receipted once, not every tick',
     () async {
       final fake = FakeStreamFunction([textTurn('unused')]);
-      final cli = buildCli(fake);
+      final cli = buildCli(
+        fake,
+        messaging: const MessagingConfig(wakeChatterCap: 10),
+      );
       final run = cli.run();
       final (id, baseline) = await boot(fake, cli);
       cli.inboxWakeStreakForTest = 10;
@@ -234,7 +245,10 @@ void main() {
       'per episode — not one per 2 s watcher tick (~43k duplicate '
       'lines/day in receipts.jsonl)', () async {
     final fake = FakeStreamFunction([textTurn('unused')]);
-    final cli = buildCli(fake);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(wakeChatterCap: 10),
+    );
     final run = cli.run();
     final (id, baseline) = await boot(fake, cli);
     cli.inboxWakeStreakForTest = 10;
@@ -271,7 +285,10 @@ void main() {
     'streak, so a repeat refusal is never silent AND never unreceipted',
     () async {
       final fake = FakeStreamFunction([textTurn('ack'), textTurn('ack again')]);
-      final cli = buildCli(fake);
+      final cli = buildCli(
+        fake,
+        messaging: const MessagingConfig(wakeChatterCap: 10),
+      );
       final run = cli.run();
       final (id, baseline) = await boot(fake, cli);
       cli.inboxWakeStreakForTest = 10;
@@ -335,4 +352,153 @@ void main() {
           'lazy ScheduledMessageQueue initializer having run',
     );
   });
+
+  // -------------------------------------------------------------------
+  // Issue #2226: cap OFF by default, the chain guard gates, pauses are
+  // visible with continue/stop.
+  // -------------------------------------------------------------------
+
+  test('#2226 AC1: a productive 12-wake money-project chain is NEVER '
+      'interrupted with defaults — no refusals, no chain_paused', () async {
+    final fake = FakeStreamFunction([
+      for (var round = 1; round <= 14; round++) textTurn('ack round $round'),
+    ]);
+    final cli = buildCli(fake, messaging: const MessagingConfig());
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    for (var round = 1; round <= 12; round++) {
+      await sendForeignMail(
+        id,
+        'build fixed: blocker resolved, bear_naive recalculated, commit '
+        'abc000$round delivered, package r$round ready for audit',
+      );
+      final expected = baseline + round;
+      await waitForTrue(() async => fake.calls >= expected && !cli.isBusy);
+    }
+
+    expect(fake.calls, baseline + 12, reason: 'every mail woke the agent');
+    final trail = await receipts();
+    expect(trail.where((event) => event['event'] == 'wake_refused'), isEmpty);
+    expect(trail.where((event) => event['event'] == 'chain_paused'), isEmpty);
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('#2226 AC2+AC5: a looping chain pauses with a loop-verdict digest '
+      'card and a chain_paused receipt — then /chain continue resumes the '
+      'queued mail (never silent, never dropped)', () async {
+    final fake = FakeStreamFunction([
+      textTurn('ack 1'),
+      textTurn('ack 2'),
+      textTurn('resumed'),
+    ]);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(
+        loopDetection: ChainLoopDetectionConfig(
+          similarityThreshold: 0.5,
+          stuckRounds: 2,
+        ),
+      ),
+    );
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    // Three identical no-state exchanges: two allowed (arming + stuck 1),
+    // the third hits the stuckRounds-2 verdict.
+    for (var round = 1; round <= 2; round++) {
+      await sendForeignMail(id, 'are you there? please confirm.');
+      await waitForTrue(() async => fake.calls >= baseline + round);
+    }
+    await sendForeignMail(id, 'are you there? please confirm.');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => io.out.toString().contains('chain paused'));
+
+    expect(
+      io.out.toString().contains('/chain continue'),
+      isTrue,
+      reason: 'the digest card names both choices',
+    );
+    final paused = (await receipts()).where(
+      (event) => event['event'] == 'chain_paused',
+    );
+    expect(paused, hasLength(1));
+    expect(paused.first['reason'], 'loop');
+
+    // The user answers the digest: the chain resumes and the queued mail
+    // wakes on the next tick.
+    io.sendLine('/chain continue');
+    await waitForTrue(() async => fake.calls == baseline + 3 && !cli.isBusy);
+    expect('chain resumed'.allMatches(io.out.toString()), isNotEmpty);
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('#2226: /chain stop drops the pending agent-kind mail with a '
+      'tombstone receipt — and never touches user-kind mail', () async {
+    final fake = FakeStreamFunction([
+      textTurn('ack 1'),
+      textTurn('answering the user mail'),
+    ]);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(
+        loopDetection: ChainLoopDetectionConfig(
+          similarityThreshold: 0.5,
+          stuckRounds: 1,
+        ),
+      ),
+    );
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    // Pause immediately: the first exchange arms (its wake settles), the
+    // second identical one loops.
+    await sendForeignMail(id, 'echo ping');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls >= baseline + 1 && !cli.isBusy);
+    await sendForeignMail(id, 'echo ping');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => io.out.toString().contains('chain paused'));
+
+    // User-kind mail arrives while paused: stop must KEEP it queued.
+    await FileMessagingRepository(
+      env: env,
+      root: '/sessions/--work--/messages',
+    ).send(
+      AgentMessage(
+        id: newMessageId(),
+        fromId: 'the user',
+        toId: '$id/main',
+        text: 'stop everything',
+        kind: AgentMessageKind.user,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+
+    io.sendLine('/chain stop');
+    await waitForTrue(() async => io.out.toString().contains('chain stopped'));
+
+    final stopped = (await receipts()).where(
+      (event) => event['event'] == 'chain_stopped',
+    );
+    expect(stopped, hasLength(1));
+    expect(
+      stopped.first['dropped'],
+      1,
+      reason: 'only the agent-kind echo mail was dropped',
+    );
+    expect(stopped.first['reason'], 'user');
+
+    // The pending inbox now holds ONLY the user mail — a further tick
+    // wakes on it (user input always wakes), proving nothing was lost.
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls >= baseline + 2 && !cli.isBusy);
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }
