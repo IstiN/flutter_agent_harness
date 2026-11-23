@@ -562,7 +562,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   void _onNetworkSessionsChanged() {
     _chatController.updateNetworkNames(_networkNames());
     final manager = widget.networkSessions;
-    final enabled = manager?.hasJwt == true;
+    final enabled = manager?.hasAccount == true;
     if (enabled && !_networkInboxEnabled) {
       // Sign-in after boot: bring the device online without waiting for
       // the Devices page to be opened.
@@ -780,7 +780,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     widget.networkSessions?.addListener(_onNetworkSessionsChanged);
     _subscribeToActiveService();
     _subscribeToNamesStore();
-    _networkInboxEnabled = widget.networkSessions?.hasJwt == true;
+    _networkInboxEnabled = widget.networkSessions?.hasAccount == true;
     _activityController = ActivityController(
       manager: widget.manager,
       namesStore: widget.sessionNamesStore ?? _namesStore,
