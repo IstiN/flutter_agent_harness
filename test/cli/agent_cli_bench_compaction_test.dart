@@ -189,6 +189,10 @@ void main() {
     io: io,
     environment: environment,
     streamFunction: stream.call,
+    // Issue #2384: the ledger reconciliation ages read this seam — the
+    // seeded rule (createdAt 2026-01-01) must be deterministically STALE
+    // regardless of the host clock (review round 1, PR #2386).
+    ledgerClock: () => DateTime.utc(2026, 11, 1),
   );
 
   /// The agent-turn requests (the compaction judge/checkpoint calls are

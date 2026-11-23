@@ -180,6 +180,49 @@ void main() {
     expect(find.text(owed), findsOneWidget);
   });
 
+  testWidgets(
+    'surplus tail + aged line together leave the last open row clean',
+    (tester) async {
+      // The heavy-zombie shape (issue #2384): open > 12 AND stale ≥ 1 —
+      // the block renders open lines, the surplus tail, THEN the aged
+      // line. The last open row's tail must strip clean (no internal
+      // ids/records, no glued surplus wording) regardless of strip-order
+      // assumptions (review round 1, PR #2386).
+      const lastOwed = 'rotate the staging keys before midnight';
+      final openRows = [
+        for (var i = 0; i < 13; i++)
+          i == 12
+              ? '- [open] open-ask: $lastOwed (id 01-last, record 0050_last)'
+              : '- [open] open-ask: filler ask number $i '
+                    '(id 01-f$i, record 0060_$i)',
+      ].join(' ');
+      final service = _Service([
+        FaChatMessage(
+          role: 'user',
+          content:
+              '<system-notice>obligations ledger (engine-maintained; '
+              'verbatim quotes with their source record): '
+              '$openRows '
+              '… and 5 more open obligations (read the ledger record for '
+              'the full list) '
+              '… and 3 aged obligations — run ledger '
+              'reconciliation</system-notice>',
+        ),
+      ]);
+      await _pump(tester, service);
+
+      // 13 itemized + 5 surplus + 3 aged.
+      expect(find.text('Open obligations · 21'), findsOneWidget);
+      // Internal ids/records never leak into row text.
+      expect(find.textContaining('(id '), findsNothing);
+      // The surplus wording never glues into a task row (it renders as
+      // the structured "more in the session ledger" summary instead).
+      expect(find.textContaining('more open obligations'), findsNothing);
+      // The LAST row survives with its own text only.
+      expect(find.text(lastOwed), findsOneWidget);
+    },
+  );
+
   testWidgets('a malformed ledger keeps the ordinary notice fallback', (
     tester,
   ) async {

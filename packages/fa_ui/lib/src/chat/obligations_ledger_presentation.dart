@@ -68,8 +68,13 @@ FaObligationsLedger? parseFaObligationsLedger(String content) {
     final end = i + 1 < starts.length ? starts[i + 1].start : text.length;
     final task = text
         .substring(match.end, end)
-        .replaceFirst(_surplusTail, '')
+        // Peel outermost suffix first: when BOTH summary lines render
+        // (open > 12 AND stale ≥ 1) the aged line closes the string, and
+        // stripping it first re-exposes the surplus line for its own
+        // $-anchored match — the reverse order leaves the last row with
+        // glued tails and leaked internal ids (review round 1, #2386).
         .replaceFirst(_agedTail, '')
+        .replaceFirst(_surplusTail, '')
         .replaceFirst(_technicalTail, '')
         .trim();
     if (task.isEmpty) continue;
