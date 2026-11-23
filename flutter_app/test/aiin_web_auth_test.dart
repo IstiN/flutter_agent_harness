@@ -65,6 +65,24 @@ void main() {
     );
   });
 
+  test('AIIN postMessage origin must exactly match the app origin', () {
+    expect(
+      acceptsAinOAuthMessageOrigin(
+        'https://www.aiin.by',
+        'https://www.aiin.by',
+      ),
+      isTrue,
+    );
+    expect(
+      acceptsAinOAuthMessageOrigin(
+        'https://attacker.example',
+        'https://www.aiin.by',
+      ),
+      isFalse,
+    );
+    expect(acceptsAinOAuthMessageOrigin('', ''), isFalse);
+  });
+
   test('web connect: popup gets the hosted /login URL, callback state must '
       'match ours, exchange registers the key', () async {
     final coordinator = AiinWebAuthCoordinator();

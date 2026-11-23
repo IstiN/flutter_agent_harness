@@ -136,7 +136,15 @@ bool _linksAttached = false;
 void attachAiinOAuthLinks() {
   if (_linksAttached) return;
   _linksAttached = true;
-  html.window.onMessage.listen((event) => _completeFromData(event.data));
+  html.window.onMessage.listen((event) {
+    if (!acceptsAinOAuthMessageOrigin(
+      event.origin,
+      html.window.location.origin,
+    )) {
+      return;
+    }
+    _completeFromData(event.data);
+  });
   try {
     final channel = html.BroadcastChannel('aiin_oauth');
     channel.onMessage.listen((event) => _completeFromData(event.data));

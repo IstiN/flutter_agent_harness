@@ -21,6 +21,10 @@ const aiinWebCallbackUrl = '$productionSiteOrigin/oauth/aiin.html';
 String aiinOAuthCallbackForProduct(FaProductConfig config) =>
     config.oauthCallback?.toString() ?? aiinWebCallbackUrl;
 
+/// Only a same-origin hosted callback may deliver the temporary OAuth code.
+bool acceptsAinOAuthMessageOrigin(String eventOrigin, String appOrigin) =>
+    eventOrigin.isNotEmpty && eventOrigin == appOrigin;
+
 /// One-click AIIN sign-in for the web build, mirroring the OpenRouter flow.
 /// The app opens the HOSTED AIIN sign-in page
 /// (`auth.aiin.by/login?client_redirect_uri=…&state=…`) in a named popup —
