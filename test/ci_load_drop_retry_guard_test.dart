@@ -83,14 +83,18 @@ void main() {
 
     test('AC1/AC2: the core shard step is wrapped and keeps its flags', () {
       final runs = wrappedRuns('test-core');
-      expect(runs, hasLength(1), reason: 'exactly the dart test shard step');
+      // #2227: the jsr delegate trio step rides the wrapper too — pick the
+      // shard step out by its own reporter log name (trio pins live in
+      // ci_jsr_trio_load_drop_guard_test.dart).
+      expect(runs, hasLength(2), reason: 'shard step + jsr delegate trio step');
+      final shardRun = runs.firstWhere((run) => run.contains('dart-shard-'));
       expectWrapped(
-        runs.single,
+        shardRun,
         'build/test-results/dart-shard-\${{ matrix.shard }}.json',
       );
-      expect(runs.single, contains('--exclude-tags integration'));
+      expect(shardRun, contains('--exclude-tags integration'));
       expect(
-        runs.single,
+        shardRun,
         contains('junit_from_dart_json.py'),
         reason:
             'the junit conversion stays in the same step after the '
@@ -116,7 +120,9 @@ void main() {
     });
 
     test('AC3: junit steps convert the MAIN log only', () {
-      final coreRun = wrappedRuns('test-core').single;
+      final coreRun = wrappedRuns(
+        'test-core',
+      ).firstWhere((run) => run.contains('dart-shard-'));
       expect(
         coreRun,
         contains('junit_from_dart_json.py'),

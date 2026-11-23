@@ -1031,10 +1031,26 @@ jobs:
       # single unit-lcov producer now).
       - name: dart test --tags integration (jsr delegate trio → unit lcov)
         if: matrix.shard == 0 && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
-        run: >-
-          dart test --tags integration --coverage=coverage
-          test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart
-          test/cli/agent_cli_jsr_test.dart
+        run: |
+          mkdir -p build/test-results
+          # Issue #2227: the trio rides NO quarantine filter (gh-1033: the
+          # CLI coverage ratchet needs these hits on every core/shared PR),
+          # so the #2331 loopback-ws load-drop family reached this leg
+          # unhealed — a dropped loader ws reds the gate on an arbitrary
+          # victim file while every test that ran was green (4/4 jsr_cli
+          # reds were loader drops, never assertions). Same one-shot
+          # wrapper as the sharded legs: a dropped file reruns ONCE (the
+          # rerun inherits --coverage=coverage, so healed hits land in
+          # this shard's coverage dir); real failures carry no ws-drop
+          # signature and stay loud. No junit consumer reads these logs —
+          # the trio feeds the lcov merge only.
+          bash scripts/load_drop_retry.sh \
+            "build/test-results/cli-trio-lcov.json" \
+            "build/test-results/cli-trio-lcov.retry.json" \
+            -- \
+            dart test --tags integration --coverage=coverage \
+            --file-reporter="json:build/test-results/cli-trio-lcov.json" \
+            "test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart"
 
       - name: Format coverage to lcov
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
