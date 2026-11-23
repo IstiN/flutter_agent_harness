@@ -258,9 +258,15 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   first-created) same-tag release exists that is published or
   pipeline-created (well-formed marker / Bot author / machine account),
   every draft carrying THIS job's exact ownership marker is deleted by id
-  and the caller attaches into the winner by tag — the deterministic
-  election makes the gh-1801 tolerance contract ("the loser uploads into
-  the winner's release") actually true. Human (unmarked) drafts never win
+  and the caller attaches into the winner by tag — on the
+  `release_attach_or_create.sh` path the create CARRIED the assets, so a
+  lost election falls through to the E3 attach block in the SAME run (a
+  body-marker probe tells our surviving draft from the winner; the
+  winner path re-uploads nothing), while `release_lazy_draft.sh`'s loser
+  is asset-free and the train's attach steps upload by tag — the
+  deterministic election makes the gh-1801 tolerance contract ("the
+  loser uploads into the winner's release") actually true. Human
+  (unmarked) drafts never win
   and are never touched (E1); the script is best-effort (warn + green —
   the sweeper is the backstop) except for a malformed identity, which
   fails loud like the marker-stamping scripts. Pinned by
@@ -302,7 +308,10 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
 - **Orphaned twin lifecycle** (gh-2372) — a MARKED draft whose tag
   already carries a PUBLISHED release is a proven twin orphan (nothing
   can publish or attach into it — uploads resolve the published object by
-  tag). The sweeper reclaims such drafts IMMEDIATELY, fresh or stale, as
+  tag; MARKED means the well-formed `run/<id>/job/<name>` marker — a body
+  that merely mentions `release-draft-owner: run/<digits>/` without the
+  `/job/` segment is prose, not ownership, and stays in its buckets, E1).
+  The sweeper reclaims such drafts IMMEDIATELY, fresh or stale, as
   routine hygiene (gh-236 convention: own issue section + summary
   counter, never a finding, the clean-sweep auto-close names them) so a
   residual twin can never re-file the recurring sweep issue; unmarked

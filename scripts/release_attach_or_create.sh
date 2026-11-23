@@ -157,11 +157,29 @@ if gh release create "$tag" \
   # created its own draft inside the view→create race window (GitHub
   # does not enforce one release per tag for drafts — the v1.0.760 /
   # v1.0.763 twin rot). The older (first-created) same-tag release must
-  # win: self-delete OUR twin when we lost — these assets then upload
-  # into the winner by tag on a rerun-attach, and nothing rots for 24h
-  # until the sweeper. Best-effort.
+  # win: self-delete OUR twin when we lost. The create CARRIED the
+  # assets — when the election deletes our twin they die with it, so a
+  # lost election re-attaches them into the winner IN THE SAME RUN via
+  # the E3 attach block below (gh-2372 review: exiting green with the
+  # assets buried in the deleted draft left them to a rerun-attach).
+  # Best-effort.
   bash "$(dirname "$0")/release_draft_twin_dedupe.sh" "$tag"
-  echo "✅ created draft release $tag with ${#assets[@]} asset(s) — publish is provenance-owned (gh-1801)"
+  # Does the tag resolve to OUR draft (body carries our exact marker —
+  # we won the election, or the dedupe blipped and kept it) or to the
+  # winner? A view blip yields an empty body and falls through to the
+  # attach: with our draft gone, only the winner can serve the assets.
+  resolved_body=$(gh release view "$tag" --repo "$repo" --json body --jq .body 2>/dev/null || echo "")
+  if printf '%s' "$resolved_body" | grep -qF -- "$marker"; then
+    echo "✅ created draft release $tag with ${#assets[@]} asset(s) — publish is provenance-owned (gh-1801)"
+    exit 0
+  fi
+  # Lost the twin election — the resolved release is the winner and our
+  # twin (with the create's freshly uploaded assets) is gone. The E3
+  # attach block lands THIS leg's assets on the winner in the same run;
+  # a published winner keeps the gh-2042 gate contract (fa-* refuse /
+  # RELEASE_GATE_PUBLISHED_SKIP pre-stage skip), same as a lost create.
+  upload_all
+  echo "✅ lost the twin election — attached ${#assets[@]} asset(s) into the winner for $tag (gh-2372)"
   exit 0
 fi
 

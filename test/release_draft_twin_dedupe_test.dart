@@ -83,6 +83,10 @@ TwinRun runTwinFixture(
   String githubJob = 'build-macos-cli-arm64',
   String? identity = 'run/222/job/build-macos-cli-arm64',
   bool deleteFails = false,
+  List<String> viewSeq = const [],
+  String? winnerBody,
+  String? releaseState,
+  List<String> resolvedAssets = const [],
 }) {
   final dir = Directory(
     '${_fixtureRoot.path}/twin-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -90,18 +94,74 @@ TwinRun runTwinFixture(
   final bin = Directory('${dir.path}/bin')..createSync(recursive: true);
   final realGit = _resolveRealGit();
 
-  File(
-    '${dir.path}/releases.json',
-  ).writeAsStringSync(roster.map((r) => r['id']).toList().isEmpty ? '[]' : '');
   File('${dir.path}/releases.json').writeAsStringSync(_rosterJson(roster));
   if (deleteFails) File('${dir.path}/delete-fails').writeAsStringSync('x');
+  // Post-create view world (gh-2372 rework): the scripted plain-view
+  // sequence models the race window (missing = the pre-create view, the
+  // sibling's object is not visible yet) and the structured answers model
+  // the release the tag resolves to AFTER the create + dedupe (the
+  // election winner — body/state/assets the fall-through attach reads).
+  if (viewSeq.isNotEmpty) {
+    File(
+      '${dir.path}/view-seq.txt',
+    ).writeAsStringSync(viewSeq.map((w) => '$w\n').join());
+  }
+  if (winnerBody != null) {
+    File('${dir.path}/release-body.txt').writeAsStringSync(winnerBody);
+  }
+  if (releaseState != null) {
+    File('${dir.path}/release-state.txt').writeAsStringSync(releaseState);
+  }
+  if (resolvedAssets.isNotEmpty) {
+    File(
+      '${dir.path}/asset-names.txt',
+    ).writeAsStringSync(resolvedAssets.map((a) => '$a\n').join());
+  }
 
   File('${bin.path}/gh').writeAsStringSync(r'''
 #!/usr/bin/env bash
 echo "$*" >> "$GH_LOG_FILE"
 if [ "$1" = "release" ] && [ "$2" = "view" ]; then
-  echo "release not found (stub: race window — the sibling's draft is not visible)" >&2
-  exit 1
+  # Scripted plain-view sequence (one word per call, popped off the top):
+  # "missing" models the race window (the pre-create view), "exists" a
+  # resolving release. An exhausted/absent sequence falls through to the
+  # structured answers below — the post-create attach flow asks
+  # body / isDraft+assets / assets about the release the tag resolves to.
+  if [ -s "$GH_STUB_DIR/view-seq.txt" ]; then
+    w=$(head -1 "$GH_STUB_DIR/view-seq.txt")
+    sed -i.bak '1d' "$GH_STUB_DIR/view-seq.txt" && rm -f "$GH_STUB_DIR/view-seq.txt.bak"
+    [ "$w" = "exists" ] && exit 0
+    echo "release not found (stub: race window — the sibling's draft is not visible)" >&2
+    exit 1
+  fi
+  case " $*" in
+    *--json\ body*)
+      if [ -s "$GH_STUB_DIR/release-body.txt" ]; then
+        cat "$GH_STUB_DIR/release-body.txt"
+      else
+        echo ""
+      fi
+      ;;
+    *--json\ isDraft,assets*)
+      st="true"
+      [ -s "$GH_STUB_DIR/release-state.txt" ] && st="$(cat "$GH_STUB_DIR/release-state.txt")"
+      objs=""
+      if [ -s "$GH_STUB_DIR/asset-names.txt" ]; then
+        while IFS= read -r n; do
+          [ -n "$n" ] && objs="$objs{\"name\":\"$n\"},"
+        done < "$GH_STUB_DIR/asset-names.txt"
+      fi
+      objs="${objs%,}"
+      printf '{"isDraft":%s,"assets":[%s]}\n' "$st" "$objs"
+      ;;
+    *--json\ assets*) cat "$GH_STUB_DIR/asset-names.txt" 2>/dev/null || echo "" ;;
+    *)
+      if [ -s "$GH_STUB_DIR/release-state.txt" ]; then exit 0; fi
+      echo "release not found (stub: race window — the sibling's draft is not visible)" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
 fi
 if [ "$1" = "release" ] && [ "$2" = "create" ]; then
   prev=""
@@ -336,22 +396,73 @@ void main() {
   );
 
   test(
-    'gh-2372: the attach-or-create path self-dedupes its twin the same way',
+    'gh-2372 rework: the attach-path LOSER lands its assets on the winner IN THE SAME RUN — the self-delete must not bury the create-carried uploads',
     () {
       final r = runTwinFixture(
         'scripts/release_attach_or_create.sh',
         args: const [tag, 'fa-fake.tar.gz'],
-        name: 'attach-loser',
+        name: 'attach-loser-same-run',
         tag: tag,
         roster: [
           release(500, tag: tag, draft: true, marker: winnerMarker),
           release(1001, tag: tag, draft: true, marker: mine),
         ],
+        // The race window: the pre-create view misses (the sibling's
+        // object is not visible yet), so the script takes the create path.
+        viewSeq: const ['missing'],
+        // After create + dedupe the tag resolves to the WINNER (sibling
+        // draft, zero assets on it).
+        winnerBody: 'Release $tag\n<!-- release-draft-owner: $winnerMarker -->',
+        resolvedAssets: const [],
       );
       expect(r.exitCode, 0, reason: r.output);
       expect(
         r.log.join('\n'),
         contains('api -X DELETE repos/OWNER/REPO/releases/1001'),
+        reason: 'our twin is self-deleted — the election loser',
+      );
+      expect(
+        r.log.join('\n'),
+        contains('release upload $tag fa-fake.tar.gz'),
+        reason:
+            'the create carried the assets onto OUR twin — once the twin is '
+            'self-deleted they exist on the winner only if this leg '
+            're-attaches them in the SAME run (the gh-1801 tolerance '
+            'contract docs/ci.md claims); before the rework they silently '
+            'waited for a rerun-attach',
+      );
+      expect(r.output, contains('lost the twin election'));
+      expect(
+        r.output,
+        isNot(contains('✅ created draft release $tag')),
+        reason: 'our draft is gone — reporting a created draft would be a lie',
+      );
+    },
+  );
+
+  test(
+    'gh-2372 rework: the attach-path WINNER (our draft survived the dedupe) keeps the create-carried assets — no double attach',
+    () {
+      final r = runTwinFixture(
+        'scripts/release_attach_or_create.sh',
+        args: const [tag, 'fa-fake.tar.gz'],
+        name: 'attach-winner-keeps',
+        tag: tag,
+        roster: [release(1001, tag: tag, draft: true, marker: mine)],
+        viewSeq: const ['missing'],
+        // The tag resolves to OUR OWN draft (its body carries our marker).
+        winnerBody: 'Release $tag\n<!-- release-draft-owner: $mine -->',
+        resolvedAssets: const ['fa-fake.tar.gz'],
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.log.where((l) => l.contains('-X DELETE')), isEmpty);
+      expect(
+        r.log.where((l) => l.contains('release upload')),
+        isEmpty,
+        reason:
+            'the create already carried the assets onto our draft — the '
+            'fall-through attach must not re-run for our own release '
+            '(the happy path stays free of a full asset re-upload)',
       );
       expect(r.output, contains('✅ created draft release $tag'));
     },
@@ -416,6 +527,30 @@ void main() {
           reason: '${entry.key}: the dedupe runs before the create-path exit',
         );
       }
+      // gh-2372 rework: the attach create CARRIED the assets — after the
+      // dedupe self-deletes our lost twin, the SAME run must re-attach
+      // them into the winner (the E3 upload_all block), not exit green
+      // with the assets buried in the deleted draft. The E3 block's own
+      // upload_all only covers a FAILED create — the fall-through must
+      // live INSIDE the create-success branch (before the E3 comment).
+      final attachAfterCreate = attach.substring(
+        attach.indexOf('gh release create "\$tag"'),
+      );
+      final dedupeAt = attachAfterCreate.indexOf(
+        'release_draft_twin_dedupe.sh',
+      );
+      final e3At = attachAfterCreate.indexOf('# E3 idempotency');
+      expect(dedupeAt, greaterThan(-1));
+      expect(e3At, greaterThan(dedupeAt));
+      expect(
+        attachAfterCreate.indexOf('upload_all', dedupeAt),
+        inInclusiveRange(dedupeAt, e3At),
+        reason:
+            'attach: after the create-success dedupe the loser must fall '
+            'through to upload_all — the assets it just uploaded die with '
+            'the self-deleted twin otherwise (the E3 upload_all only '
+            'covers a FAILED create)',
+      );
     },
   );
 }

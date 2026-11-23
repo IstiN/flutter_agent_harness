@@ -210,6 +210,55 @@ void main() {
   );
 
   test(
+    'gh-2372 rework: a MALFORMED prose-mention marker (run/<id>/ without /job/) on a published tag is NOT ownership — the draft stays human/kept (E1)',
+    () {
+      final run = runSweeper('twin-prose-mention', {
+        'issues.tsv': '',
+        'runs.tsv': '',
+        'releases.json': jsonEncode([
+          publishedRelease('v9.9.9', 111, 'run/1/job/release-macos'),
+          {
+            'tag_name': 'v9.9.9',
+            'id': 222,
+            'draft': true,
+            'created_at': '${staleDate}Z',
+            'author': {'login': 'IstiN', 'type': 'User'},
+            'body':
+                'Release v9.9.9\n'
+                '<!-- release-draft-owner: run/123/ -->',
+          },
+        ]),
+      });
+      expect(
+        run.log.where((l) => l.contains('-X DELETE')),
+        isEmpty,
+        reason:
+            'a body that merely mentions `release-draft-owner: run/<digits>/` '
+            'without the /job/ segment is NOT ownership (the script header: '
+            'prose mentions and malformed markers stay in their buckets, E1) '
+            '— the twin pre-check must never delete it, permanently losing a '
+            'possibly human-owned draft',
+      );
+      expect(
+        run.stdoutText,
+        contains('twins= human-kept=v9.9.9'),
+        reason:
+            'the malformed-mention draft falls back to the human bucket: '
+            'listed, kept — never counted as a twin reclaim',
+      );
+      expect(
+        run.body,
+        isNotNull,
+        reason: 'a kept human draft is still a stale-draft finding',
+      );
+      expect(
+        run.body,
+        contains('Kept (human drafts, listed not deleted — E1)'),
+      );
+    },
+  );
+
+  test(
     'gh-2372: an UNMARKED author-bot stale draft on a published tag keeps the bot-bucket finding (ownership unproven)',
     () {
       final run = runSweeper('twin-bot-unmarked', {

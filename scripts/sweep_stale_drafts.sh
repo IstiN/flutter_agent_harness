@@ -201,12 +201,18 @@ drafts=$(printf '%s' "$roster" | jq -r --argjson maxage "$max_age" --arg assigne
         author: (.author.login // "unknown"),
         # Exact creating run parsed from the ownership marker ("" for
         # non-marker drafts) — the creating run executed on main, so a
-        # tag-ref run lookup cannot find it (gh-2008). The array wrapper
-        # keeps exactly one value: a bare capture(...)? on a non-matching
-        # body yields an EMPTY stream, and an empty field would drop the
-        # whole draft row from the object stream.
+        # tag-ref run lookup cannot find it (gh-2008). The capture
+        # requires the WELL-FORMED run/<id>/job/<name> shape — the same
+        # class the bucket rule above, release_draft_guard.sh and
+        # release_draft_twin_dedupe.sh match: a body that merely MENTIONS
+        # `release-draft-owner: run/<digits>/` without the /job/ segment
+        # is prose, not ownership (E1) — its run stays "" so the twin
+        # pre-check and the early-reclaim gates never act on it. The
+        # array wrapper keeps exactly one value: a bare capture(...)? on a
+        # non-matching body yields an EMPTY stream, and an empty field
+        # would drop the whole draft row from the object stream.
         run: ([ (.body // "")
-                | capture("release-draft-owner: run/(?<run>[0-9]+)/")?
+                | capture("release-draft-owner: run/(?<run>[0-9]+)/job/")?
                 | .run ]
               | .[0] // "") } ]
   | sort_by(.created)[]
