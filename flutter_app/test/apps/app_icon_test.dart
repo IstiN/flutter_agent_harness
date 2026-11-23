@@ -102,12 +102,17 @@ void main() {
         ),
       ),
     );
-    final containerFinder = find.byWidgetPredicate(
-      (widget) => widget is Container && widget.child is AppIconBadge,
+    final decorationFinder = find.byWidgetPredicate(
+      (widget) => widget is DecoratedBox && widget.child is AppIconBadge,
     );
-    expect(containerFinder, findsOneWidget);
-    final container = tester.widget<Container>(containerFinder);
-    final decoration = container.decoration! as ShapeDecoration;
+    expect(decorationFinder, findsOneWidget);
+    expect(
+      tester.getSize(decorationFinder),
+      tester.getSize(find.byType(AppIconBadge)),
+      reason: 'the outer decoration must not add border padding to the slot',
+    );
+    final decorationBox = tester.widget<DecoratedBox>(decorationFinder);
+    final decoration = decorationBox.decoration as ShapeDecoration;
     expect(decoration.gradient, isA<LinearGradient>());
     expect(decoration.shape, isA<RoundedSuperellipseBorder>());
     expect(decoration.shadows, isNotEmpty);

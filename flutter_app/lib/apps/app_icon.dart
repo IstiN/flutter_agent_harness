@@ -456,7 +456,9 @@ class AppIcon extends StatelessWidget {
     // The no-backplate rule applies to REAL artwork, which keeps its own
     // colors — an emoji has none, so the tile supplies the identity. Keep
     // the decoration outside the clip so its shadow remains visible.
-    return Container(
+    return DecoratedBox(
+      // Unlike Container, DecoratedBox does not add ShapeDecoration's
+      // border padding to the fixed launcher icon slot.
       decoration: AppIconPalette.decoration(
         seed: app.id,
         brightness: Theme.of(context).brightness,
