@@ -1444,7 +1444,8 @@ void main() {
         );
 
         // The persisted account is present but its async JWT restore has not
-        // completed. Devices must not depend on that transient hasJwt=false.
+        // completed. Devices and the local-chat surface stay visible while
+        // the account-bound inbox honestly reports its unavailable state.
         expect(
           find.byKey(const ValueKey('messengerPrimaryNav-devices')),
           findsOneWidget,

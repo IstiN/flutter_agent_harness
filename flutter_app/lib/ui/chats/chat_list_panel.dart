@@ -594,8 +594,8 @@ class _ChatListPanelState extends State<ChatListPanel> {
       widget.controller.networkFilter.kind != ChatNetworkFilterKind.my;
 
   Widget _buildNetworkBanner(FahColors colors) {
-    return SizedBox(
-      height: 50,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 50),
       child: Material(
         color: colors.panelAlt,
         child: Padding(
@@ -1606,8 +1606,7 @@ Future<void> showChatNetworksDialog(
                           ? Text(
                               context.l10n.networkSessionExpired,
                               key: const ValueKey('sessionExpiredNote'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              softWrap: true,
                               style: TextStyle(color: colors.error),
                             )
                           : null,
