@@ -120,6 +120,17 @@ final class ChainLoopDetectionConfig {
         'messaging.loopDetection must be a map, got: $node',
       );
     }
+    _checkLoopKeys(node);
+    return ChainLoopDetectionConfig(
+      enabled: _parseLoopEnabled(node['enabled']),
+      similarityThreshold: _parseLoopThreshold(node['similarityThreshold']),
+      stuckRounds: _parseLoopRounds(node['stuckRounds']),
+    );
+  }
+
+  /// Strict key vocabulary for the `messaging.loopDetection` map
+  /// (unchanged: an unknown key is a hard config error).
+  static void _checkLoopKeys(Map node) {
     for (final key in node.keys) {
       if (!const {
         'enabled',
@@ -129,7 +140,11 @@ final class ChainLoopDetectionConfig {
         throw ConfigException('unknown "messaging.loopDetection" key: $key');
       }
     }
-    final threshold = node['similarityThreshold'];
+  }
+
+  /// Parses `similarityThreshold` (null = the default 0.92; a number
+  /// outside 0..1 is a hard config error).
+  static double _parseLoopThreshold(Object? threshold) {
     if (threshold != null &&
         (threshold is! num || threshold < 0 || threshold > 1)) {
       throw ConfigException(
@@ -137,24 +152,28 @@ final class ChainLoopDetectionConfig {
         'between 0 and 1',
       );
     }
-    final rounds = node['stuckRounds'];
+    return threshold == null ? 0.92 : (threshold as num).toDouble();
+  }
+
+  /// Parses `stuckRounds` (null = the default 4; a non-int or < 1 is a
+  /// hard config error).
+  static int _parseLoopRounds(Object? rounds) {
     if (rounds != null && (rounds is! int || rounds < 1)) {
       throw ConfigException(
         '"messaging.loopDetection.stuckRounds" must be a positive integer',
       );
     }
-    final enabled = node['enabled'];
+    return rounds == null ? 4 : rounds as int;
+  }
+
+  /// Parses `enabled` (null = the default true; a non-bool is a hard
+  /// config error).
+  static bool _parseLoopEnabled(Object? enabled) {
     if (enabled != null && enabled is! bool) {
       throw ConfigException(
         '"messaging.loopDetection.enabled" must be a boolean',
       );
     }
-    return ChainLoopDetectionConfig(
-      enabled: enabled ?? true,
-      similarityThreshold: threshold == null
-          ? 0.92
-          : (threshold as num).toDouble(),
-      stuckRounds: rounds ?? 4,
-    );
+    return enabled == null ? true : enabled as bool;
   }
 }
