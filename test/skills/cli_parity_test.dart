@@ -107,6 +107,10 @@ const _nonSettingsCommands = <String, String>{
   '/jsr': 'jsr widget CLI passthrough, changes no persisted setting',
   '/mail': 'deferred-panel history view + send, not config.yaml',
   '/reply': 'fabric message send, not config.yaml',
+  '/chain':
+      'agent↔agent chain gate control (issue #2226): pause status + '
+      'continue/stop, changes no persisted setting (the wake-gating '
+      'knobs live in the messaging: section, edited in the file)',
   '/key': 'OS secure store only — key values never live in config.yaml',
   '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
   '/power': 'read-only sleep-prevention level/held state',

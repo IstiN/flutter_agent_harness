@@ -668,17 +668,33 @@
   as `_mainInboxMessages`, children via the executor) — messages land as
   sender-attributed user messages, so they persist in the session and read
   like a chat. Idle wake: an inbox watcher (2s CLI / 3s app) starts a turn
-  when mail arrives while idle — two Fa instances chat live; a 10-run
-  streak cap without user input breaks agent-to-agent ping-pong loops.
-  The lanes live in `InboxWakePolicy` (gh-1180): user-kind mail always
-  wakes and resets the streak (gating it would deadlock:
+  when mail arrives while idle — two Fa instances chat live. The wake
+  gate lives in `InboxWakePolicy` (gh-1180, reworked by issue #2226):
+  user-kind mail always wakes (gating it would deadlock:
   no run → no reset → no run); a delivered `schedule_message`
-  self-reminder (`[scheduled] ` prefix, from == to) is EXEMPT from the
-  cap — a deliberate agent-chosen cadence (night watch, periodic sweep)
-  wakes forever, with a 30s cadence floor so a zero-delay re-schedule
-  spin is still bounded like chatter; foreign agent chatter stays
-  capped. A refused wake is never silent: one dim `[mail] wake refused`
-  line per episode and a `wake_refused` receipt.
+  self-reminder (`[scheduled] ` prefix, from == to) is EXEMPT from every
+  bound — a deliberate agent-chosen cadence (night watch, periodic sweep)
+  wakes forever, with a 30s cadence floor bounding a zero-delay
+  re-schedule spin when the legacy cap is on. Foreign agent chatter is
+  bounded by the SMART chain guard (issue #2226, on by default):
+  `ChainLoopGuard` fuses masked-text shingle similarity (ids/numbers
+  masked) with fresh-state signals (new ids/commits each round) — a
+  LOOPING chain (near-identical + no new state across
+  `messaging.loopDetection.stuckRounds` exchanges) pauses, while
+  templated-but-productive updates never trigger. The raw 10-wake streak
+  counter is LEGACY and OFF by default (`messaging.wakeChatterCap: 0`;
+  a positive value re-enables the pre-#2226 behavior verbatim). An
+  autonomous-chain token budget (`messaging.chainBudgetTokens`, default
+  400000, persisted in `<messagesRoot>/_chain/state.json` so a restart
+  never grants a fresh budget) bounds runaway spend; exhaustion pauses
+  the chain exactly like a loop verdict. Every pause (loop | budget |
+  legacy cap) is never silent: a digest card naming the evidence,
+  the queued-mail count, and the choices — `/chain continue` (reset the
+  budget, override the verdict) or `/chain stop` (drop the pending
+  agent-kind mail with a tombstone receipt; user-kind mail always
+  stays). Any delivered user input also resets the whole gate. Receipts
+  distinguish `wake_refused` (legacy cap) from `chain_paused`
+  (loop | budget).
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.

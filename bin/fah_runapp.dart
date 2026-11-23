@@ -1814,6 +1814,8 @@ Future<void> _runApp(List<String> args) async {
         // `fabric:` config section; the OS hostname enables `name@machine`
         // addressing (null when the platform cannot name the host).
         agentCapabilities: saved.fabric?.capabilities ?? const [],
+        // Wake-gating knobs (issue #2226): the `messaging:` section.
+        messaging: saved.messaging,
         machineName: _localMachineName(),
         promptTemplateDirs: promptTemplateDirs,
         initialMode: effective.mode!,

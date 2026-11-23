@@ -141,6 +141,8 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
+          // The legacy cap under test (issue #2226: OFF by default now).
+          messaging: const MessagingConfig(wakeChatterCap: 10),
         ),
         io: io,
         streamFunction: fake.call,

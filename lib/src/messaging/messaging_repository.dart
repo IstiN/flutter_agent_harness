@@ -252,6 +252,16 @@ final class ChannelDeliveryException implements Exception {
   String toString() => message;
 }
 
+/// Selective consumption for operations that must queue replacement mail
+/// before consuming the originals. Implementations leave every pending
+/// message whose id is not in [messageIds] untouched, including messages
+/// that arrive after the caller's snapshot.
+abstract interface class SelectiveMessagingRepository
+    implements MessagingRepository {
+  /// Consumes only the pending messages named by [messageIds], oldest first.
+  Future<List<AgentMessage>> drainById(String agentId, Set<String> messageIds);
+}
+
 /// Isolated messaging backend for agent inboxes.
 abstract interface class MessagingRepository {
   /// Delivers [message] to the recipient's inbox. Implementations must

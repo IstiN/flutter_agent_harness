@@ -1610,6 +1610,7 @@ void main() {
         env: env,
         streamFunction: recording,
         sessionsRoot: '/sessions',
+        messagingConfig: const MessagingConfig(wakeChatterCap: 10),
       );
       addTearDown(service.dispose);
       await service.initialize();
@@ -1711,6 +1712,7 @@ void main() {
         env: env,
         streamFunction: recording,
         sessionsRoot: '/sessions',
+        messagingConfig: const MessagingConfig(wakeChatterCap: 10),
       );
       addTearDown(service.dispose);
       await service.initialize();
@@ -1787,6 +1789,7 @@ void main() {
         env: env,
         streamFunction: recording,
         sessionsRoot: '/sessions',
+        messagingConfig: const MessagingConfig(wakeChatterCap: 10),
       );
       addTearDown(service.dispose);
       await service.initialize();
@@ -1920,6 +1923,7 @@ void main() {
         env: env,
         streamFunction: failing,
         sessionsRoot: '/sessions',
+        messagingConfig: const MessagingConfig(wakeChatterCap: 10),
       );
       addTearDown(service.dispose);
       await service.initialize();

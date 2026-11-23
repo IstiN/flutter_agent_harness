@@ -30,6 +30,7 @@ import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
+import '../messaging/messaging_config.dart';
 import '../redact/redaction_types.dart';
 import '../logging/log_settings.dart';
 import '../agent/image_registry.dart';
@@ -663,6 +664,7 @@ final class CliConfig {
     this.skillToggles = const {},
     this.memory,
     this.fabric,
+    this.messaging,
     this.cube,
     this.tools,
     this.redact,
@@ -863,6 +865,11 @@ final class CliConfig {
       fabric: map['fabric'] == null
           ? null
           : FabricConfig.fromYaml(map['fabric']),
+      // The messaging section (issue #2226 wake-gating knobs) is strict
+      // too.
+      messaging: map['messaging'] == null
+          ? null
+          : MessagingConfig.fromYaml(map['messaging']),
       // The links section (issue #691) is strict on shape, tolerant on
       // unknown keys (notes, never boot failures — AC7).
       links: map['links'] == null
@@ -1041,6 +1048,11 @@ final class CliConfig {
   /// the agent messaging fabric (issue #27 phase 2): capabilities peers
   /// see in `agent_directory`. Parsed strictly.
   final FabricConfig? fabric;
+
+  /// Optional `messaging:` section — the wake-gating knobs (issue #2226):
+  /// the legacy chatter cap (OFF by default), the autonomous-chain token
+  /// budget, and the smart loop-detection thresholds. Parsed strictly.
+  final MessagingConfig? messaging;
 
   /// Optional `memory:` section — long-term memory storage path overrides
   /// (git-backed project memory). Null = the historical `.fah/memory`
@@ -1300,6 +1312,7 @@ final class CliConfig {
     Map<String, bool>? skillToggles,
     MemoryConfig? memory,
     FabricConfig? fabric,
+    MessagingConfig? messaging,
     CubeSettings? cube,
     ToolsConfig? tools,
     RedactionConfig? redact,
@@ -1361,6 +1374,7 @@ final class CliConfig {
       providerNetworks: providerNetworks ?? this.providerNetworks,
       memory: memory ?? this.memory,
       fabric: fabric ?? this.fabric,
+      messaging: messaging ?? this.messaging,
       cube: cube ?? this.cube,
       tools: tools ?? this.tools,
       redact: redact ?? this.redact,

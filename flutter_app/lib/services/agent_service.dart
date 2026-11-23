@@ -206,8 +206,14 @@ class AgentService extends ChangeNotifier
     /// budget in MB.
     this.trajectoryRequestBlobMaxMb = 50,
 
-    /// `trajectory.requestBlobTtlDays` — blob age bound in days.
+    /// `trajectory.requestBlobTtlDays` — the blob age bound in days.
     this.trajectoryRequestBlobTtlDays = 30,
+
+    /// The `messaging:` section override (issue #2226): the wake-gating
+    /// knobs. Defaults apply when absent; the production boot reads the
+    /// config file inside [_withEnv].
+    @visibleForTesting
+    MessagingConfig messagingConfig = const MessagingConfig(),
   }) : _resolveSecretName = null,
        _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -230,6 +236,9 @@ class AgentService extends ChangeNotifier
          mode: initialApprovalMode ?? ApprovalMode.write,
        ) {
     maybeCurrent = this;
+    // Issue #2226: the wake-gating knobs (test seam — production boots
+    // read the section inside [_withEnv]).
+    _inboxWakePolicy = _policyFor(messagingConfig);
     // Issue #522: the deletion gate reads the shared live-session
     // heartbeats — the app must not delete a session a CLI owns.
     _repo =
@@ -395,6 +404,11 @@ class AgentService extends ChangeNotifier
 
     /// Overrides the `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
+
+    /// Overrides the `messaging:` section (issue #2226) — the wake-gating
+    /// knobs. Null = the config file read inside [_withEnv] (absent
+    /// section = the defaults).
+    @visibleForTesting MessagingConfig? messagingConfig,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -445,6 +459,7 @@ class AgentService extends ChangeNotifier
       secretsEnv: secretsEnv,
       sessionKeys: sessionKeys,
       config: config,
+      messagingConfigOverride: messagingConfig,
       // gh-1409 (review round 2, BLOCKING): publish the boot discovery's
       // enabled skills — the pin registry's source set — instead of
       // dropping them (they rode only the prompt suffix before, so the
@@ -513,6 +528,11 @@ class AgentService extends ChangeNotifier
     required this.env,
     required AgentConfig config,
     required String sessionsRoot,
+
+    /// The `messaging:` override (issue #2226): tests inject it so the
+    /// wake-gate knobs are deterministic; production leaves it null and
+    /// the config-file read inside the body wins.
+    @visibleForTesting MessagingConfig? messagingConfigOverride,
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
@@ -712,6 +732,15 @@ class AgentService extends ChangeNotifier
     for (final warning in appConfig?.warnings ?? const <String>[]) {
       AppLog.i('config', warning);
     }
+    // Issue #2226: the wake-gating knobs — the SAME `messaging:` section
+    // the CLI boots with (both hosts resolve identical sections; a bad
+    // section already warned above and reads as the defaults). The test
+    // override wins over the file.
+    _inboxWakePolicy = _policyFor(
+      messagingConfigOverride ??
+          appConfig?.messaging ??
+          const MessagingConfig(),
+    );
     // AC5: the SAME global the CLI publishes — re-set every creation so
     // a config edit applies to the next session; AC4's pipeline config.
     // FA_PROVIDER_TIMEOUT_SECONDS folds in over the yaml section (issue
@@ -1887,14 +1916,29 @@ class AgentService extends ChangeNotifier
   /// invariants), so it is off by default.
   static bool enableInboxWatcher = false;
 
-  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
-  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
-  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
-  /// wakes forever, cadence-floored against a disguised busy-spin; and
-  /// foreign agent-to-agent chatter stays capped at
-  /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
-  /// without user input.
-  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
+  /// The idle inbox-wake lane policy (gh-1180, issue #2226): user-kind
+  /// mail always wakes; delivered scheduled self-mail is exempt from
+  /// every bound; and foreign agent-to-agent chatter is bounded by the
+  /// smart chain guard (loop detection + the autonomous-chain budget,
+  /// ON by default) and — only when `messaging.wakeChatterCap` says so —
+  /// the LEGACY streak cap. Both constructors reassign this from the
+  /// resolved config (the app reads the `messaging:` section like the
+  /// CLI; tests inject [messagingConfig]).
+  InboxWakePolicy _inboxWakePolicy = AgentService._policyFor(
+    const MessagingConfig(),
+  );
+
+  /// The one policy construction (issue #2226): cap + chain guard from
+  /// the messaging section.
+  static InboxWakePolicy _policyFor(MessagingConfig config) => InboxWakePolicy(
+    maxStreak: config.wakeChatterCap,
+    chainGuard: ChainLoopGuard(
+      similarityThreshold: config.loopDetection.similarityThreshold,
+      stuckRounds: config.loopDetection.stuckRounds,
+      budgetTokens: config.chainBudgetTokens,
+      enabled: config.loopDetection.enabled,
+    ),
+  );
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs — the same seam name the CLI keeps; the streak lives in

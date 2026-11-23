@@ -36,6 +36,7 @@ import 'package:yaml/yaml.dart';
 
 import '../cli/cli_config.dart' show parseProviderTimeouts;
 import '../exceptions.dart';
+import '../messaging/messaging_config.dart';
 import '../model_roles/model_roles.dart';
 import '../providers/provider_common.dart';
 import '../redact/redaction_types.dart';
@@ -59,6 +60,7 @@ final class AppFahSections {
     this.redact,
     this.providerTimeouts,
     this.subagents,
+    this.messaging,
     this.loadMode = AgentLoadMode.defaultMode,
     this.mcpConfigured = false,
     this.warnings = const [],
@@ -88,6 +90,12 @@ final class AppFahSections {
   /// threshold, and the reply auto-spill kill switch, or null (absent
   /// section — the structured defaults apply).
   final SubagentsConfig? subagents;
+
+  /// The `messaging:` section (issue #2226): the wake-gating knobs — the
+  /// legacy chatter cap (OFF by default), the autonomous-chain token
+  /// budget, and the smart loop-detection thresholds. Null (absent
+  /// section — the defaults apply).
+  final MessagingConfig? messaging;
 
   /// The resolved tool-load preset: `FA_AGENT_MODE` env > `agent.mode`
   /// config (the app has no `--omp` flag; the CLI's flag rung is its own).
@@ -139,6 +147,7 @@ AppFahSections parseAppConfigSections({
   final redact = _parseRedactSection(user, userSource, warnings);
   final providerTimeouts = _parseTimeoutsSection(user, userSource, warnings);
   final subagents = _parseSubagentsSection(user, userSource, warnings);
+  final messaging = _parseMessagingSection(user, userSource, warnings);
   final loadMode = _resolveLoadMode(envMode, user, userSource, warnings);
   // Inventory #2 interim: `mcp:` stays CLI-only on mobile — say so instead
   // of silently ignoring it.
@@ -157,6 +166,7 @@ AppFahSections parseAppConfigSections({
     redact: redact,
     providerTimeouts: providerTimeouts,
     subagents: subagents,
+    messaging: messaging,
     loadMode: loadMode,
     mcpConfigured: mcpConfigured,
     warnings: warnings,
@@ -322,6 +332,25 @@ SubagentsConfig? _parseSubagentsSection(
     return SubagentsConfig.fromYaml(node);
   } on ConfigException catch (error) {
     warnings.add('invalid subagents section in $userSource: ${error.message}');
+    return null;
+  }
+}
+
+/// The `messaging:` section (issue #2226) — the CLI's own strict parser
+/// ([MessagingConfig.fromYaml]); a bad section warns and falls back to
+/// the defaults (AC7), never poisoning the other sections. Both hosts
+/// must honor the wake-gating knobs, not just the CLI.
+MessagingConfig? _parseMessagingSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  final node = user?['messaging'];
+  if (node == null) return null;
+  try {
+    return MessagingConfig.fromYaml(node);
+  } on ConfigException catch (error) {
+    warnings.add('$userSource messaging section skipped: ${error.message}');
     return null;
   }
 }

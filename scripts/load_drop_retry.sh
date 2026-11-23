@@ -108,6 +108,7 @@ SPAM_LIMIT="${LOAD_DROP_RETRY_SPAM_LIMIT:-8}"
 FIFO=""
 WATCHDOG_PID=""
 RUNNER_RC=""
+WDOG_FIFO=""
 
 cleanup() {
   if [ -n "$WATCHDOG_PID" ]; then
@@ -115,6 +116,9 @@ cleanup() {
   fi
   if [ -n "$FIFO" ]; then
     rm -f "$FIFO" 2>/dev/null || true
+  fi
+  if [ -n "$WDOG_FIFO" ]; then
+    rm -f "$WDOG_FIFO" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -142,6 +146,27 @@ run_streamed() {
   [ "${1:-}" = "--append" ] && { append=true; shift; }
   local segment=""
   [ -n "${1:-}" ] && segment="$1"
+  # Watchdog spam baseline, computed HERE — before tee starts: a fresh
+  # first invocation has no console yet, and the per-command
+  # `2>/dev/null` cannot suppress a failing `wc -c <` redirect, so the
+  # error leaked to stderr on every green run (review round 2 digest).
+  # Computing it pre-tee also closes the small undercount window (bytes
+  # tee already wrote were excluded from the spam count). A fresh
+  # (non-append) run TRUNCATES the console, so its baseline is 0; an
+  # --append rerun shares the console with earlier attempts, whose spam
+  # must never insta-kill this attempt before its first poll.
+  local baseline=0
+  if $append && [ -f "$CONSOLE" ]; then
+    baseline=$(wc -c < "$CONSOLE")
+  fi
+  # Watchdog-private timer fifo (review round 2, IMPORTANT): an O_RDWR
+  # open holds both ends itself, so the fd never EOFs and never delivers
+  # data — `read -t` BLOCKS silently for the whole timeout at zero CPU.
+  # The previous /dev/zero form never blocks: the builtin busy-spins a
+  # full core for the attempt's whole lifetime. NEVER the console fifo —
+  # reading that would steal the runner's output from tee.
+  WDOG_FIFO="${CONSOLE}.wdg.fifo"
+  mkfifo "$WDOG_FIFO"
   FIFO="${CONSOLE}.fifo"
   mkfifo "$FIFO"
   if $append; then
@@ -163,15 +188,20 @@ run_streamed() {
   if [ "$SPAM_LIMIT" -gt 0 ]; then
     (
       # `read -t` is the poll timer: a BUILTIN — killing this subshell
-      # mid-wait forks no `sleep` child for the job harness to report. The
-      # spam count covers ONLY bytes appended during THIS run: the reruns
-      # (--append) share the console with earlier attempts, whose wedge
-      # spam must never insta-kill a healthy rerun before its first poll.
-      exec 3< /dev/zero
-      baseline=$(wc -c < "$CONSOLE" 2>/dev/null) || baseline=0
+      # mid-wait forks no `sleep` child for the job harness to report.
+      # The timer fd is the watchdog-private O_RDWR fifo opened above
+      # (see run_streamed): `read -t 1` BLOCKS for the whole second at
+      # zero CPU instead of busy-spining /dev/zero, which never blocks
+      # and never yields a newline (review round 2, IMPORTANT: ~1 core
+      # pinned per attempt). The spam count covers ONLY bytes appended
+      # during THIS run (the baseline computed pre-tee in the parent
+      # scope): the reruns (--append) share the console with earlier
+      # attempts, whose wedge spam must never insta-kill a healthy
+      # rerun before its first poll.
+      exec 3<>"$WDOG_FIFO"
       while kill -0 "$runner_pid" 2>/dev/null; do
         n=$(tail -c +"$((baseline + 1))" "$CONSOLE" 2>/dev/null |
-          grep -cE 'Attempt:[0-9]+ waiting for isolate') || n=0
+          grep -cE 'Attempt:[0-9]+ waiting for isolate' 2>/dev/null) || n=0
         if [ "${n:-0}" -ge "$SPAM_LIMIT" ]; then
           echo "load_drop_retry: exit-handshake wedge — $n 'waiting for isolate' spam lines; SIGKILL the wedged runner's process group (results are already in the reporter, coverage is per-suite incremental; gh-2381)" >&2
           kill -9 -- "-$runner_pid" 2>/dev/null || true
@@ -191,17 +221,21 @@ run_streamed() {
   fi
   # Drain window: on the wedge path the group kill closed every write end
   # and tee EOFs on its own; on the normal path orphan-held writers can
-  # keep tee alive indefinitely — cap the drain and kill it.
-  exec 3< /dev/zero
+  # keep tee alive indefinitely — cap the drain and kill it. The drain
+  # waits on the same blocking timer fifo (≤1 s bounded; same zero-CPU
+  # form as the watchdog).
+  exec 3<>"$WDOG_FIFO"
   local i
   for i in 1 2 3 4 5; do
     kill -0 "$tee_pid" 2>/dev/null || break
     read -t 0.2 -u 3 || true
   done
+  exec 3<&- || true
   kill "$tee_pid" 2>/dev/null || true
   wait "$tee_pid" 2>/dev/null || true
-  rm -f "$FIFO" 2>/dev/null || true
+  rm -f "$FIFO" "$WDOG_FIFO" 2>/dev/null || true
   FIFO=""
+  WDOG_FIFO=""
 }
 
 # Attempt 1 — the command exactly as the step defines it (its own

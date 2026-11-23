@@ -172,6 +172,7 @@ final class AgentCliConfig {
     this.hubFabric,
     this.dapDisplayNameResolver,
     this.agentCapabilities = const [],
+    this.messaging,
     this.machineName,
     this.persistAbortedPartials = false,
     this.wireDump = false,
@@ -1074,6 +1075,11 @@ final class AgentCliConfig {
   /// sub-lines of this instance's `agent_directory` entry so peers can
   /// discover what this agent can do.
   final List<AgentCapability> agentCapabilities;
+
+  /// The `messaging:` section (issue #2226): the wake-gating knobs — the
+  /// legacy chatter cap (OFF by default), the autonomous-chain token
+  /// budget, and the smart loop-detection thresholds. Null = defaults.
+  final MessagingConfig? messaging;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
   /// cadence, the `--wait-for-jobs` ceiling, and the per-call foreground

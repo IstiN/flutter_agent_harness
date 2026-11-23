@@ -86,7 +86,10 @@ const _replyTimeout = Duration(seconds: 10);
 
 /// The DAP/1 hub as a [MessagingRepository].
 final class HubMessagingRepository
-    implements MessagingRepository, RoutingMessagingRepository {
+    implements
+        MessagingRepository,
+        RoutingMessagingRepository,
+        SelectiveMessagingRepository {
   /// Builds a repository for the hub at [url]. [identity] defaults to a
   /// fresh one — hosts that need a stable address persist the seeds and
   /// pass them back (see `lib/io.dart`). [token] is the pairing token for
@@ -874,6 +877,19 @@ final class HubMessagingRepository
   Future<List<AgentMessage>> drain(String agent) async {
     final drained = List.of(_inbox);
     _inbox.clear();
+    return drained;
+  }
+
+  @override
+  Future<List<AgentMessage>> drainById(
+    String agent,
+    Set<String> messageIds,
+  ) async {
+    final drained = [
+      for (final message in _inbox)
+        if (messageIds.contains(message.id)) message,
+    ];
+    _inbox.removeWhere((message) => messageIds.contains(message.id));
     return drained;
   }
 

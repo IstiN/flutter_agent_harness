@@ -1,6 +1,8 @@
 library;
 
 import 'agent_message.dart';
+import 'chain_loop_guard.dart';
+import 'messaging_config.dart';
 
 /// Why a wake was refused (null when the wake is allowed).
 final class InboxWakeDecision {
@@ -9,6 +11,7 @@ final class InboxWakeDecision {
     required this.wake,
     required this.countsAgainstCap,
     this.refusalReason,
+    this.pauseReason,
   });
 
   /// Which lane the pending batch was classified into.
@@ -22,6 +25,12 @@ final class InboxWakeDecision {
 
   /// Why the wake was refused — persisted in the wake receipts.
   final String? refusalReason;
+
+  /// The pause bound that fired (issue #2226): `cap` (the legacy streak),
+  /// `loop` / `budget` (the smart chain guard). Receipts distinguish
+  /// `wake_refused` (legacy cap) from `chain_paused:<reason>`; hosts use
+  /// it to pick the digest card.
+  final String? pauseReason;
 }
 
 /// The wake lane a pending batch was classified into (gh-1180).
@@ -39,38 +48,82 @@ enum InboxWakeLane {
   chatter,
 }
 
-/// The idle inbox-wake lane policy (gh-1180).
+const _useDefaultChainGuard = Object();
+
+ChainLoopGuard _defaultChainLoopGuard() {
+  const config = MessagingConfig();
+  const detection = ChainLoopDetectionConfig();
+  return ChainLoopGuard(
+    similarityThreshold: detection.similarityThreshold,
+    stuckRounds: detection.stuckRounds,
+    budgetTokens: config.chainBudgetTokens,
+    enabled: detection.enabled,
+  );
+}
+
+/// The idle inbox-wake lane policy (gh-1180, reworked by issue #2226).
 ///
 /// The hosts' idle inbox watchers (CLI, app) start a turn when mail
-/// arrives while idle. Two protections share that gate:
+/// arrives while idle. Three protections share that gate:
 ///
-/// - the agent-chatter anti-storm cap: at most [maxStreak] consecutive
-///   wakes without user input, so two chatty instances cannot ping-pong
-///   forever;
 /// - the user-input guarantee: mail of kind [AgentMessageKind.user] IS
 ///   the user talking and must always wake — its delivery resets the
 ///   streak, so gating it on the counter would deadlock
-///   (no run → no reset → no run).
+///   (no run → no reset → no run);
+/// - the smart chain guard ([chainGuard], issue #2226): the DEFAULT
+///   bound — loop detection (content-similarity + no-progress signals)
+///   and an autonomous-chain token budget pause a looping or runaway
+///   chain with a user-facing digest, while productive long
+///   collaborations (fresh ids/state every round) never trigger;
+/// - the LEGACY chatter cap ([maxStreak]): the raw consecutive-wake
+///   counter, now **OFF by default** (0) — volume is not looping, and
+///   the money-project incident (10 productive exchanges refused) is the
+///   pinned regression. A positive `messaging.wakeChatterCap` re-enables
+///   the pre-#2226 behavior verbatim.
 ///
-/// gh-1180 adds the missing third lane: a delivered `schedule_message`
-/// self-reminder (`[scheduled] ` prefix, from == to == the recipient's
-/// own mailbox) is a DELIBERATE, agent-chosen cadence — a night watch,
-/// a periodic sweep, a delayed follow-up — not chatter. It is EXEMPT
-/// from the cap so a self-chain wakes forever, with one guard: wakes
-/// arriving faster than [scheduledSelfCadenceFloor] are a busy-spin
-/// disguised as self-scheduling (a zero-delay re-schedule loop) and
-/// count against the ordinary cap, bounding the storm exactly like
-/// foreign chatter.
+/// gh-1180's third lane: a delivered `schedule_message` self-reminder
+/// (`[scheduled] ` prefix, from == to == the recipient's own mailbox) is
+/// a DELIBERATE, agent-chosen cadence — a night watch, a periodic sweep,
+/// a delayed follow-up — not chatter. It is EXEMPT from every bound so a
+/// self-chain wakes forever, with one guard when the legacy cap is on:
+/// wakes arriving faster than [scheduledSelfCadenceFloor] are a
+/// busy-spin disguised as self-scheduling (a zero-delay re-schedule
+/// loop) and count against the ordinary cap, bounding the storm exactly
+/// like foreign chatter. With the cap OFF (default) the spin is bounded
+/// by the chain guard's budget instead.
+///
+/// Configured hosts should construct through [InboxWakePolicy.forConfig].
+/// Bare cap-off construction gets a fresh guard from [MessagingConfig]'s
+/// defaults; only explicit `chainGuard: null` selects an unbounded gate.
 final class InboxWakePolicy {
+  /// [chainGuard] accepts a [ChainLoopGuard] or null. Its widened static
+  /// type is intentional: Dart otherwise cannot distinguish an omitted
+  /// nullable argument from an explicit null. Omitted installs the safe
+  /// defaults when the legacy cap is off; explicit null remains the visible
+  /// unbounded opt-out, and a bare positive cap keeps its legacy behavior.
   InboxWakePolicy({
-    this.maxStreak = defaultMaxInboxWakeStreak,
+    int maxStreak = defaultMaxInboxWakeStreak,
     this.scheduledSelfCadenceFloor = defaultScheduledSelfCadenceFloor,
+    Object? chainGuard = _useDefaultChainGuard,
     this.clock,
-  });
+  }) : maxStreak = maxStreak,
+       chainGuard = identical(chainGuard, _useDefaultChainGuard)
+           ? maxStreak == 0
+                 ? _defaultChainLoopGuard()
+                 : null
+           : chainGuard as ChainLoopGuard?;
 
-  /// The anti-storm cap for foreign agent-to-agent chatter (unchanged
-  /// behavior — the old `_maxInboxWakeStreak`).
-  static const int defaultMaxInboxWakeStreak = 10;
+  /// The one construction from a `messaging:` section (issue #2226): the
+  /// guard rides [chainGuard], the legacy cap from `wakeChatterCap`.
+  factory InboxWakePolicy.forConfig(
+    MessagingConfig config,
+    ChainLoopGuard guard,
+  ) => InboxWakePolicy(maxStreak: config.wakeChatterCap, chainGuard: guard);
+
+  /// The legacy anti-storm cap for foreign agent-to-agent chatter.
+  /// `0` (the issue #2226 default) disables the cap entirely; hosts
+  /// wire `messaging.wakeChatterCap` here (10 was the pre-#2226 value).
+  static const int defaultMaxInboxWakeStreak = 0;
 
   /// Wakes closer together than this are a spin, not a cadence (gh-1180
   /// E5): the exemption must not open a busy-spin.
@@ -78,8 +131,17 @@ final class InboxWakePolicy {
     seconds: 30,
   );
 
-  /// Consecutive chatter wakes allowed without user input.
+  /// Consecutive chatter wakes allowed without user input. `0` (the
+  /// issue #2226 default) disables the cap — [chainGuard] is the bound.
   final int maxStreak;
+
+  /// The smart chain guard (issue #2226): loop detection + the
+  /// autonomous-chain token budget. Bare construction with the cap off
+  /// installs [MessagingConfig]'s defaults. Explicit `chainGuard: null`
+  /// keeps bare cap gating (an intentional no-bound opt-out when
+  /// [maxStreak] is 0). The guard rides THIS policy's user-input reset so
+  /// the two cannot drift apart.
+  final ChainLoopGuard? chainGuard;
 
   /// Minimum spacing between two EXEMPT scheduled-self wakes; anything
   /// faster counts against the cap. Mutable so a host test can collapse
@@ -101,9 +163,12 @@ final class InboxWakePolicy {
   /// A delivered user-kind message (or a typed line) IS the user talking.
   /// Ends the refusal episode too (see [announceRefusal]): the two pieces
   /// of episode state live side by side so they cannot drift apart.
+  /// The chain guard resets with it (issue #2226: the human is watching —
+  /// streaks reset, the budget re-arms, pause verdicts clear).
   void resetStreak() {
     streak = 0;
     _refusalAnnounced = false;
+    chainGuard?.resetFromUserInput();
   }
 
   /// Whether THIS call may announce the current refusal: true exactly
@@ -164,10 +229,25 @@ final class InboxWakePolicy {
           countsAgainstCap: false,
         );
       }
-      // A storm disguised as self-scheduling (gh-1180 E5): bounded like
-      // chatter. The shared streak keeps foreign-chatter accounting
-      // intact — a spin is abuse of the same budget.
-      if (streak >= maxStreak) {
+      // A storm disguised as self-scheduling (gh-1180 E5): with the cap
+      // ON it consumes the legacy streak, exactly like foreign chatter.
+      // With the cap OFF it instead consults the chain guard's sticky
+      // pause/budget (an empty batch deliberately skips loop similarity).
+      // The host books each ALLOWED rapid-spin run's usage, so even a pure
+      // scheduled-self loop reaches this bound without chatter traffic.
+      if (maxStreak == 0) {
+        final pause = chainGuard?.evaluate(const []);
+        if (pause != null) {
+          return InboxWakeDecision(
+            lane: InboxWakeLane.scheduledSelf,
+            wake: false,
+            countsAgainstCap: false,
+            refusalReason: pause.evidence,
+            pauseReason: pause.reason.name,
+          );
+        }
+      }
+      if (maxStreak > 0 && streak >= maxStreak) {
         return InboxWakeDecision(
           lane: InboxWakeLane.scheduledSelf,
           wake: false,
@@ -177,6 +257,7 @@ final class InboxWakePolicy {
               '${scheduledSelfCadenceFloor.inSeconds}s cadence floor with '
               'the chatter cap exhausted (busy-spin guard) — re-schedule '
               'with a slower delay or send user input to reset',
+          pauseReason: 'cap',
         );
       }
       streak++;
@@ -188,8 +269,21 @@ final class InboxWakePolicy {
       );
     }
     // Foreign agent-to-agent chatter — and a PLUGIN-ONLY batch (no
-    // fabric mail pending, see [pluginPending]): the cap.
-    if (streak >= maxStreak) {
+    // fabric mail pending, see [pluginPending]): the smart chain guard
+    // first (issue #2226 — the loop verdict / budget exhaustion pause
+    // with a digest, never booking the streak), then the LEGACY cap
+    // (default 0 = off; positive `messaging.wakeChatterCap` re-enables).
+    final pause = chainGuard?.evaluate(pending);
+    if (pause != null) {
+      return InboxWakeDecision(
+        lane: InboxWakeLane.chatter,
+        wake: false,
+        countsAgainstCap: false,
+        refusalReason: pause.evidence,
+        pauseReason: pause.reason.name,
+      );
+    }
+    if (maxStreak > 0 && streak >= maxStreak) {
       return InboxWakeDecision(
         lane: InboxWakeLane.chatter,
         wake: false,
@@ -198,6 +292,7 @@ final class InboxWakePolicy {
             'inbox-wake streak cap reached ($streak consecutive '
             'agent-kind wakes without user input) — mail stays queued '
             'until the next user input',
+        pauseReason: 'cap',
       );
     }
     streak++;

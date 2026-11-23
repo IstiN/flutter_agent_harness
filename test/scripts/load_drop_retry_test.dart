@@ -131,6 +131,13 @@ if [ "\$N" -ge 2 ]; then
 fi
 case "\$MODE" in
   ok) exit 0 ;;
+  slow-ok)
+    # gh-2381 review round 2 (AC25): a HEALTHY run whose whole duration
+    # the exit-handshake watchdog lives through — the wrapper tree must
+    # spend near-zero CPU waiting (the watchdog poll timer must block,
+    # never busy-spin).
+    sleep 3
+    exit 0 ;;
   drop-closed-header)
     echo '$droppedClosedHeader'
     exit 1 ;;
@@ -562,10 +569,20 @@ void main() {
 
   test('AC22 unfinished tests alone (started, never finished, exit 70) '
       'trigger the abandonment rerun', () async {
-    final r = await runWrapper(tmp.path, mode: 'unfinished-exit70');
+    // Targets-consistent fixture (review round 2 digest): the in-flight
+    // suite IS an invocation target — real in-flight suites always are.
+    // The suite is loaded (a suite event exists), so the never-loaded
+    // complement is empty and the rerun triggers on the --unfinished
+    // projection ALONE.
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'unfinished-exit70',
+      targets: 'test/inflight_test.dart',
+    );
     expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
-    expect(invocations(tmp.path), hasLength(2));
-    expect(invocations(tmp.path)[1], contains('test/inflight_test.dart'));
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2));
+    expect(calls[1], contains('test/inflight_test.dart'));
   });
 
   test('AC23 never-loaded targets (a planned suite with no suite event) '
@@ -599,4 +616,79 @@ void main() {
     );
     expect(invocations(tmp.path), hasLength(2));
   });
+
+  test(
+    'AC25 the watchdog poll timer never busy-spins: a healthy 3s run '
+    'consumes near-zero wrapper-tree CPU and leaks no redirect error',
+    () async {
+      // gh-2381 review round 2 (IMPORTANT, both rounds): the watchdog's
+      // `read -t 1 -u 3` timer read /dev/zero, which never blocks — the
+      // builtin looped on instant read() syscalls for the attempt's whole
+      // lifetime, pinning ~1 core (measured 3.21 CPU-s over a 3 s wall run
+      // on the round-2 head). The timer must BLOCK: a healthy run's
+      // wrapper tree (bash + watchdog subshell + tail/grep polls) spends
+      // near-zero CPU while the runner sleeps. Measured with
+      // /usr/bin/time over the wrapper process tree (user + sys, children
+      // reaped before the wrapper exits — the watchdog subshell is killed
+      // and reaped by then). The same fresh-invocation run also pins the
+      // round-2 digest stderr leak: the spam baseline is computed before
+      // tee starts, so `wc -c <` never hits a not-yet-created console.
+      if (!File('/usr/bin/time').existsSync()) {
+        return; // no measurement tool on this host — nothing to assert
+      }
+      final stub = File('${tmp.path}/stub_runner.sh')
+        ..writeAsStringSync(stubRunner(tmp.path));
+      final watch = Stopwatch()..start();
+      final r = await Process.run(
+        '/usr/bin/time',
+        [
+          '-f',
+          '%U %S',
+          '-o',
+          '${tmp.path}/cpu.txt',
+          'bash',
+          scriptPath,
+          '${tmp.path}/main.json',
+          '${tmp.path}/retry.json',
+          '--',
+          'bash',
+          stub.path,
+          '--exclude-tags',
+          'integration',
+          '--concurrency=4',
+          '--file-reporter=json:${tmp.path}/main.json',
+          'test/cli/first_test.dart test/cli/second_test.dart',
+        ],
+        environment: {'MODE': 'slow-ok', 'LOAD_DROP_RETRY_BACKOFF_S': '0'},
+      );
+      watch.stop();
+      final wall = watch.elapsedMilliseconds / 1000;
+      expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+      expect(invocations(tmp.path), hasLength(1), reason: 'green single run');
+      expect(
+        wall,
+        greaterThanOrEqualTo(2.5),
+        reason: 'the stub slept ~3s — the watchdog lived through it',
+      );
+      final cpuLine = File('${tmp.path}/cpu.txt').readAsLinesSync().last.trim();
+      final parts = cpuLine.split(RegExp(r'\s+'));
+      final cpu = double.parse(parts[0]) + double.parse(parts[1]);
+      expect(
+        cpu,
+        lessThan(wall * 0.5),
+        reason:
+            'wrapper-tree CPU $cpu s over $wall s wall — a busy-spinning '
+            'poll timer pins ~1 core (CPU ≈ wall); a blocking timer is '
+            'near-zero. time output: "$cpuLine"',
+      );
+      expect(
+        r.stderr.toString(),
+        isNot(contains('No such file or directory')),
+        reason:
+            'the fresh first invocation computes its spam baseline '
+            'before tee starts — no failing `wc -c <` redirect error '
+            'leaks to stderr',
+      );
+    },
+  );
 }
