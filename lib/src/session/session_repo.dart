@@ -644,22 +644,18 @@ final class JsonlSessionRepo implements SessionRepo {
       final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
       final id = _sessionIdFromPath(path);
-      // #2320: knowledge the walk already collected can protect this
-      // header-only primary from the trash (see [_sweepKnowledgeProtects]).
-      if (_sweepKnowledgeProtects(
-        _sessionPathKey(path),
-        partPrimaries: partPrimaries,
+      // The accumulated sweep guards (#2320 knowledge, #522 liveness,
+      // #2083 resume target, gh-1660 age) — see [_sweepEntryExempt].
+      if (_sweepEntryExempt(
+        entry: entry,
+        pathKey: _sessionPathKey(path),
         id: id,
+        live: live,
         namedIds: namedIds,
+        partPrimaries: partPrimaries,
+        exemptSessionId: exemptSessionId,
+        cutoff: cutoff,
       )) {
-        continue;
-      }
-      if (id != null && live.containsKey(id)) continue;
-      if (id == exemptSessionId) continue;
-      if (cutoff != null &&
-          !DateTime.fromMillisecondsSinceEpoch(
-            entry.mtimeMs,
-          ).isBefore(cutoff)) {
         continue;
       }
       await _softDelete(
@@ -673,21 +669,41 @@ final class JsonlSessionRepo implements SessionRepo {
     return removed;
   }
 
-  /// The #2320 knowledge guards for one header-only sweep candidate, split
-  /// out of [cleanupEmptySessions] for the CRAP ratchet (CC 3, fully
-  /// covered by the session_deletion suites). True — the file survives —
-  /// when a `.part-NN` sibling shows the chain holds the records (the
-  /// 623 MB class; [pathKey] is the separator-normalized primary path),
-  /// or when the persisted session-names sidecar knows a deliberate
-  /// `fa --session <name>` anchor for [id]: a named session is never
-  /// litter, whatever its age.
-  static bool _sweepKnowledgeProtects(
-    String pathKey, {
-    required Set<String> partPrimaries,
+  /// One sweep candidate's exemption decision — all the guards
+  /// [cleanupEmptySessions] has accumulated — split out of the loop for
+  /// the CRAP ratchet (the loop body keeps only the read/emptiness
+  /// logic). True — the file survives — when:
+  ///
+  /// - a `.part-NN` sibling shows the chain holds the records (the
+  ///   623 MB class; [pathKey] is the separator-normalized primary path),
+  ///   or the persisted session-names sidecar knows a deliberate
+  ///   `fa --session <name>` anchor for [id]: a named session is never
+  ///   litter, whatever its age (#2320);
+  /// - a live presence row owns [id] (issue #522: empty does not mean
+  ///   deletable while live);
+  /// - it is the boot's [exemptSessionId] — the resolved `fa --resume`
+  ///   target is often header-only itself (issue #2083);
+  /// - or the gh-1660 age guard [cutoff] still shelters the file (its
+  ///   mtime is not older than the cutoff).
+  ///
+  /// The guards are pure predicates, so their order is semantics-neutral.
+  static bool _sweepEntryExempt({
+    required FileInfo entry,
+    required String pathKey,
     required String? id,
+    required Map<String, SessionPresence> live,
     required Set<String> namedIds,
-  }) =>
-      partPrimaries.contains(pathKey) || (id != null && namedIds.contains(id));
+    required Set<String> partPrimaries,
+    required String? exemptSessionId,
+    required DateTime? cutoff,
+  }) {
+    if (partPrimaries.contains(pathKey)) return true;
+    if (id != null && live.containsKey(id)) return true;
+    if (id == exemptSessionId) return true;
+    if (id != null && namedIds.contains(id)) return true;
+    return cutoff != null &&
+        !DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs).isBefore(cutoff);
+  }
 
   /// The `.trash` directory under the sessions root (issue #522): deleted
   /// session files land here — `<root>/.trash/<timestamp>_<name>` — and
