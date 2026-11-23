@@ -6,6 +6,17 @@ the CI legs already emit) and prints the suite paths of every failed test,
 one per line, sorted and deduped — the exact rerun targets for
 ``FA_GATE_PTY_RETRIES`` (scripts/ci_fast_gate.sh, integration-mock stage).
 
+Two gh-2381 projections read the SAME log for the load_drop_retry wrapper:
+``--unfinished`` prints the suite paths of tests that STARTED but never
+reported a ``testDone`` (the engine-abandonment evidence: run 45200064457
+shard 2/3 lost its queue mid-run when the resume_tail coverage gather
+crashed — three tests were in flight, ten suites never loaded, and the
+abandoned pty2 children wedged the VM exit handshake), and ``--loaded``
+prints every path from a ``suite`` event (the never-loaded complement
+source: an invocation target absent from this list AND from the console
+drop signature was silently skipped). The DEFAULT projection stays
+failure/error-only — the ci_fast_gate flake-budget contract is unchanged.
+
 Design notes:
 - ``result`` ``failure`` AND ``error`` both count; ``success``/``skip`` do
   not. Hidden tests count too — a suite that fails to load reports its
@@ -28,12 +39,14 @@ import sys
 FAILURE_RESULTS = {"failure", "error"}
 
 
-def failed_paths(log_path: str) -> set[str]:
-    """Suite paths of the failed tests in one dart json file-reporter log."""
+def _scan(log_path: str) -> tuple[set[str], set[str], set[str]]:
+    """One pass over the log → (failed, unfinished, loaded) suite paths."""
     suites: dict[int, str] = {}
     # testID -> (suiteID, name); kept until the matching testDone lands.
     pending: dict[int, tuple[int | None, str]] = {}
     failed: set[str] = set()
+    unfinished: set[str] = set()
+    loaded: set[str] = set()
 
     def resolve(suite_id: int | None, name: str) -> str | None:
         if suite_id is not None and suite_id in suites:
@@ -59,6 +72,7 @@ def failed_paths(log_path: str) -> set[str]:
                     suite = event.get("suite") or {}
                     if suite.get("path"):
                         suites[suite.get("id")] = suite["path"]
+                        loaded.add(suite["path"])
                 elif kind == "testStart":
                     test = event.get("test") or {}
                     if "id" in test:
@@ -79,19 +93,40 @@ def failed_paths(log_path: str) -> set[str]:
     except OSError as exc:
         print(f"gate_failed_targets: cannot read {log_path}: {exc}",
               file=sys.stderr)
-    return failed
+    # Whatever never got a testDone is the abandoned in-flight set.
+    for suite_id, name in pending.values():
+        path = resolve(suite_id, name)
+        if path:
+            unfinished.add(path)
+    return failed, unfinished, loaded
+
+
+def failed_paths(log_path: str) -> set[str]:
+    """Suite paths of the failed tests in one dart json file-reporter log."""
+    return _scan(log_path)[0]
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
+    mode = "--finished-failed"
+    paths = []
+    for arg in argv[1:]:
+        if arg in ("--unfinished", "--loaded"):
+            mode = arg
+        else:
+            paths.append(arg)
+    if not paths:
         print(
-            "usage: gate_failed_targets.py <dart-test-json-log> [...]",
+            "usage: gate_failed_targets.py [--unfinished|--loaded] "
+            "<dart-test-json-log> [...]",
             file=sys.stderr,
         )
         return 2
     failed: set[str] = set()
-    for log_path in argv[1:]:
-        failed |= failed_paths(log_path)
+    for log_path in paths:
+        scanned = _scan(log_path)
+        failed |= scanned[0] if mode == "--finished-failed" else (
+            scanned[1] if mode == "--unfinished" else scanned[2]
+        )
     for path in sorted(failed):
         print(path)
     return 0
