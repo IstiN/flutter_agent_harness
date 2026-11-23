@@ -118,6 +118,9 @@ run_streamed() {
   local runner_pid=$!
   if [ "${SPAM_LIMIT:-8}" -gt 0 ] 2>/dev/null; then
     (
+      # `read -t 1` is the poll timer: a BUILTIN — killing this subshell
+      # mid-wait forks no `sleep` child for the job harness to report.
+      exec 3< /dev/zero
       while kill -0 "$runner_pid" 2>/dev/null; do
         n=$(grep -cE 'Attempt:[0-9]+ waiting for isolate' "$CONSOLE" 2>/dev/null) || n=0
         if [ "${n:-0}" -ge "$SPAM_LIMIT" ]; then
@@ -125,7 +128,7 @@ run_streamed() {
           kill -9 "$runner_pid" 2>/dev/null || true
           break
         fi
-        sleep 1
+        read -t 1 -u 3 || true
       done
     ) &
     WATCHDOG_PID=$!
@@ -134,6 +137,9 @@ run_streamed() {
   RUNNER_RC=$?
   if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
+    # The watcher may sit in its `sleep 1` poll — killing the subshell
+    # leaves the sleep alive (a leaked child the job harness reports).
+    pkill -P "$WATCHDOG_PID" 2>/dev/null || true
     WATCHDOG_PID=""
   fi
   wait "$tee_pid" 2>/dev/null || true
@@ -228,6 +234,7 @@ done
 
 set +e
 CMD=("${RETRY_CMD[@]}")
+TARGETS="$RERUN_TARGETS"   # the rerun drives the transient/failed inventory
 run_streamed --append
 RC=$RUNNER_RC
 set -e
