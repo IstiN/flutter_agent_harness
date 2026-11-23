@@ -153,6 +153,14 @@ if gh release create "$tag" \
   --draft \
   --notes-file "$notes" \
   "${assets[@]}"; then
+  # gh-2372: the create SUCCEEDED, but a same-run sibling leg may have
+  # created its own draft inside the view→create race window (GitHub
+  # does not enforce one release per tag for drafts — the v1.0.760 /
+  # v1.0.763 twin rot). The older (first-created) same-tag release must
+  # win: self-delete OUR twin when we lost — these assets then upload
+  # into the winner by tag on a rerun-attach, and nothing rots for 24h
+  # until the sweeper. Best-effort.
+  bash "$(dirname "$0")/release_draft_twin_dedupe.sh" "$tag"
   echo "✅ created draft release $tag with ${#assets[@]} asset(s) — publish is provenance-owned (gh-1801)"
   exit 0
 fi

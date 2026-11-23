@@ -242,6 +242,29 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   failing (a failing create would fire the guard against the winner's
   in-flight draft), and the create stamps the ownership marker the guard
   verifies.
+- **Twin-draft self-dedupe** (gh-2372) — the view→create race above is
+  NOT benign for drafts: GitHub does not enforce one release per tag for
+  DRAFT objects, so two sibling legs of one run racing the window
+  (production: the same second — v1.0.760's build-macos-cli twin vs its
+  published build-extension sibling; v1.0.763's build-extension twin)
+  BOTH create successfully. The train publishes exactly one; the twin
+  rots 24h+ and re-files the recurring sweep issue with the misleading
+  "a `gh release create` step died" prose (nothing died — every creating
+  job succeeded, and `release_draft_dedupe.sh` matches only the TRAIN's
+  own-run twins, so child-run twins were invisible to every guard). After
+  a successful draft create, `release_lazy_draft.sh` and
+  `release_attach_or_create.sh` now run
+  `scripts/release_draft_twin_dedupe.sh <tag>`: when an OLDER (lower id =
+  first-created) same-tag release exists that is published or
+  pipeline-created (well-formed marker / Bot author / machine account),
+  every draft carrying THIS job's exact ownership marker is deleted by id
+  and the caller attaches into the winner by tag — the deterministic
+  election makes the gh-1801 tolerance contract ("the loser uploads into
+  the winner's release") actually true. Human (unmarked) drafts never win
+  and are never touched (E1); the script is best-effort (warn + green —
+  the sweeper is the backstop) except for a malformed identity, which
+  fails loud like the marker-stamping scripts. Pinned by
+  `test/release_draft_twin_dedupe_test.dart`.
 - **Daily sweeper** — the `sweep-drafts` job in `daily-publish.yml` runs
   `scripts/sweep_stale_drafts.sh` on **every** daily invocation (leg
   results and change-gating never gate hygiene): drafts older than 24h
@@ -276,6 +299,16 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   stuck draft points at its broken step. The test stub enforces the
   workflow-declared token permissions, so a dropped grant fails CI instead
   of silently degrading the issue to "no run on ref".
+- **Orphaned twin lifecycle** (gh-2372) — a MARKED draft whose tag
+  already carries a PUBLISHED release is a proven twin orphan (nothing
+  can publish or attach into it — uploads resolve the published object by
+  tag). The sweeper reclaims such drafts IMMEDIATELY, fresh or stale, as
+  routine hygiene (gh-236 convention: own issue section + summary
+  counter, never a finding, the clean-sweep auto-close names them) so a
+  residual twin can never re-file the recurring sweep issue; unmarked
+  author-bot drafts on a published tag keep the bot-bucket finding (no
+  marker → no ownership proof). Pinned by
+  `test/release_fresh_twin_reclaim_test.dart`.
 - **Artefact-cache lifecycle** (gh-236) — the machine loop writes every fa
   leg's session/output snapshots into a per-ticket DRAFT release
   `ai-gh-<n>` / `ai-pr-<n>` (dmtools-agents factory: `timerAutoCommitAndSave.js`
