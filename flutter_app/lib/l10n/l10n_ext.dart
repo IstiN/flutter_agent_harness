@@ -21,12 +21,14 @@ extension L10nX on BuildContext {
 /// falls back to English instead of reaching intl; anything else resolves
 /// against [AppLocalizations.supportedLocales], so an in-app override or
 /// a changed supported set cannot drift between surfaces.
-Locale resolveAppLocale(Locale? deviceLocale) {
+Locale resolveAppLocale(Locale? deviceLocale, {String? localeOverride}) {
+  if (localeOverride == 'ru' || localeOverride == 'en') {
+    return Locale(localeOverride!);
+  }
   if (deviceLocale == null || deviceLocale.languageCode.isEmpty) {
     return const Locale('en');
   }
-  return basicLocaleListResolution(
-    [deviceLocale],
-    AppLocalizations.supportedLocales,
-  );
+  return basicLocaleListResolution([
+    deviceLocale,
+  ], AppLocalizations.supportedLocales);
 }

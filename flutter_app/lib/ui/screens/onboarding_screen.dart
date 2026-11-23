@@ -1,5 +1,3 @@
-// l10n:ignore-file — onboarding marketing copy mirrors the EN reference
-// prototype pixel-perfectly; localization is a deliberate follow-up.
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
@@ -10,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa_ui/fa_ui.dart' as faui;
+import 'package:fa/l10n/app_localizations.dart' show AppLocalizations;
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart' show AgentConfig;
 import 'package:fa/services/analytics.dart';
@@ -112,9 +111,27 @@ List<BoxShadow> _onbCardShadow(BuildContext context) =>
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   /// Step labels in page order.
-  static const _labels = ['Ask', 'Think', 'Act', 'Make it yours'];
+  List<String> get _labels => [
+    context.l10n.onboardingStepAsk,
+    context.l10n.onboardingStepThink,
+    context.l10n.onboardingStepAct,
+    context.l10n.onboardingStepMakeItYours,
+  ];
 
-  static final _pageCount = _labels.length;
+  static const _pageCount = 4;
+
+  final _p2Key = GlobalKey<_P2State>();
+
+  faui.AddProviderPreset? get _defaultProvider {
+    final key = widget.productConfig.defaultProviderKey;
+    if (key == null || widget.registry == null) return null;
+    for (final preset in faui.defaultAddProviderPresets) {
+      if (preset.key == key && faui.addProviderPresetEnabled(preset)) {
+        return preset;
+      }
+    }
+    return null;
+  }
 
   late final PageController _pc = PageController(
     initialPage: widget.initialPage,
@@ -208,13 +225,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   String get _primaryLabel {
+    final l10n = context.l10n;
     if (_page == 2) {
-      return 'Continue without access';
+      return l10n.onboardingContinueWithoutAccess;
     }
     if (_page == _pageCount - 1) {
-      return 'Open ${widget.productConfig.displayName}';
+      return l10n.onboardingOpenProduct(widget.productConfig.displayName);
     }
-    return 'Continue';
+    return l10n.onboardingNext;
   }
 
   @override
@@ -222,6 +240,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final wide = MediaQuery.sizeOf(context).width >= 920;
     final last = _page == _pageCount - 1;
     final gated = _page == 1 && _providerGateActive;
+    final defaultProvider = _defaultProvider;
     return ProductConfigScope(
       productConfig: widget.productConfig,
       child: Scaffold(
@@ -253,7 +272,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     _P1(wide: wide),
                     _P2(
+                      key: _p2Key,
                       wide: wide,
+                      defaultProvider: defaultProvider,
                       registry: widget.registry,
                       lastConnectionStore: widget.lastConnectionStore,
                       configuredKey: _configuredProviderKey,
@@ -275,8 +296,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 pageCount: _pageCount,
                 wide: wide,
                 primaryLabel: _primaryLabel,
-                primaryEnabled: !gated && !(last && _providerGateActive),
-                onPrimary: last ? () => _finish(skipped: false) : _next,
+                primaryEnabled:
+                    (!gated || defaultProvider != null) &&
+                    !(last && _providerGateActive),
+                onPrimary:
+                    _page == 1 && _providerGateActive && defaultProvider != null
+                    ? () => _p2Key.currentState?.configureDefault()
+                    : last
+                    ? () => _finish(skipped: false)
+                    : _next,
                 onBack: _page > 0 ? _back : null,
                 privacyPolicy: widget.productConfig.legalLinks['privacy'],
               ),
@@ -382,7 +410,7 @@ class _SkipButton extends StatelessWidget {
     return TextButton(
       onPressed: onTap,
       child: Text(
-        'Skip',
+        context.l10n.onboardingSkip,
         style: TextStyle(
           fontSize: 13,
           color: _onbGray(context),
@@ -510,8 +538,9 @@ class _Footer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final counter = Text(
-      '${page + 1} of $pageCount',
+      l10n.onboardingPageCounter(page + 1, pageCount),
       style: TextStyle(
         fontSize: 12.5,
         fontWeight: FontWeight.w600,
@@ -521,7 +550,7 @@ class _Footer extends StatelessWidget {
     final back = TextButton(
       onPressed: onBack,
       child: Text(
-        'Back',
+        l10n.askBack,
         style: TextStyle(
           fontSize: 13.5,
           color: _onbGray(context),
@@ -565,7 +594,7 @@ class _Footer extends StatelessWidget {
       child: Column(
         children: [
           Text(
-            '${page + 1} of $pageCount',
+            l10n.onboardingPageCounter(page + 1, pageCount),
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
@@ -617,7 +646,7 @@ class _PrivacyLink extends StatelessWidget {
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
       child: Text(
-        'Privacy Policy',
+        context.l10n.onboardingPrivacyPolicy,
         style: TextStyle(
           fontSize: 11,
           color: _onbGrayLight(context),
@@ -836,13 +865,14 @@ class _P1 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(height: wide ? 20 : 12),
         _TitleBlock(
-          'Start with an idea.',
-          'Ask a question, automate a task, or describe an app you want to use.',
+          l10n.onboardingP1Title,
+          l10n.onboardingP1Subtitle,
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 18),
@@ -860,6 +890,7 @@ class _P1 extends StatelessWidget {
   }
 
   Widget _wideBody(BuildContext context) {
+    final l10n = context.l10n;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -883,16 +914,38 @@ class _P1 extends StatelessWidget {
                         flex: 11,
                         child: _AppsGrid(
                           columns: 3,
-                          kinds: const [
-                            (_AppKind.calendar, 'Calendar', null),
-                            (_AppKind.notes, 'Notes', null),
-                            (_AppKind.utilities, 'Utilities', null),
-                            (_AppKind.files, 'Files', null),
-                            (_AppKind.calculator, 'Calculator', null),
-                            (_AppKind.maps, 'Maps', null),
-                            (_AppKind.focusTimer, 'Focus Timer', '1'),
-                            (_AppKind.settings, 'Settings', null),
-                            (_AppKind.addApp, 'Add app', null),
+                          // Mock app-tile labels (the focus timer badge
+                          // is a notification count, not copy).
+                          kinds: [
+                            (
+                              _AppKind.calendar,
+                              l10n.onboardingPermissionCalendar,
+                              null,
+                            ),
+                            (_AppKind.notes, l10n.onboardingMockupNotes, null),
+                            (
+                              _AppKind.utilities,
+                              l10n.onboardingMockupUtilities,
+                              null,
+                            ),
+                            (_AppKind.files, l10n.filesPanelTitle, null),
+                            (
+                              _AppKind.calculator,
+                              l10n.onboardingMockupCalculator,
+                              null,
+                            ),
+                            (_AppKind.maps, l10n.onboardingMockupMaps, null),
+                            (
+                              _AppKind.focusTimer,
+                              l10n.onboardingMockupFocusTimer,
+                              '1',
+                            ),
+                            (_AppKind.settings, l10n.settingsTitle, null),
+                            (
+                              _AppKind.addApp,
+                              l10n.onboardingMockupAddApp,
+                              null,
+                            ),
                           ],
                         ),
                       ),
@@ -916,6 +969,7 @@ class _P1 extends StatelessWidget {
   }
 
   Widget _narrowBody(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       children: [
         _card(
@@ -964,7 +1018,7 @@ class _P1 extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Your idea',
+                            l10n.onboardingMockupYourIdea,
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
@@ -973,7 +1027,7 @@ class _P1 extends StatelessWidget {
                           ),
                           SizedBox(height: 4),
                           Text(
-                            'Build a focus timer with work and break sessions.',
+                            l10n.onboardingMockupFocusRequest,
                             style: TextStyle(
                               fontSize: 12,
                               color: _onbGray(context),
@@ -1021,7 +1075,7 @@ class _IdeaPill extends StatelessWidget {
           Icon(Icons.auto_awesome, size: 15, color: _onbPrimary(context)),
           SizedBox(width: 8),
           Text(
-            'Build a focus timer\nwith work and break sessions.',
+            context.l10n.onboardingMockupFocusRequestPill,
             style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w500,
@@ -1039,10 +1093,14 @@ class _IdeaPill extends StatelessWidget {
 class _MiniSteps extends StatelessWidget {
   const _MiniSteps();
 
-  static const _labels = ['Think', 'Act', 'Yours'];
-
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final labels = [
+      l10n.onboardingStepThink,
+      l10n.onboardingStepAct,
+      l10n.onboardingMiniStepYours,
+    ];
     return SizedBox(
       width: 150,
       height: 40,
@@ -1056,7 +1114,7 @@ class _MiniSteps extends StatelessWidget {
           ),
           Row(
             children: [
-              for (var i = 0; i < _labels.length; i++)
+              for (var i = 0; i < labels.length; i++)
                 Expanded(
                   child: Column(
                     children: [
@@ -1078,9 +1136,12 @@ class _MiniSteps extends StatelessWidget {
                       ),
                       const SizedBox(height: 5),
                       Text(
-                        _labels[i],
+                        labels[i],
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 9.5,
+                          height: 1.15,
                           fontWeight: i == 0
                               ? FontWeight.w700
                               : FontWeight.w500,
@@ -1141,19 +1202,31 @@ class _FeaturesRow extends StatelessWidget {
   const _FeaturesRow({required this.wide});
   final bool wide;
 
-  static const _items = [
-    (Icons.chat_bubble, 'Answers questions', Color(0xFF5B63F0)),
-    (Icons.apps_rounded, 'Uses your apps', Color(0xFF2EBD9E)),
-    (Icons.auto_awesome, 'Builds new apps', Color(0xFF5B63F0)),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final items = [
+      (
+        Icons.chat_bubble,
+        l10n.onboardingFeatureAnswers,
+        const Color(0xFF5B63F0),
+      ),
+      (
+        Icons.apps_rounded,
+        l10n.onboardingFeatureUsesApps,
+        const Color(0xFF2EBD9E),
+      ),
+      (
+        Icons.auto_awesome,
+        l10n.onboardingFeatureBuildsApps,
+        const Color(0xFF5B63F0),
+      ),
+    ];
     if (wide) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          for (final (icon, label, color) in _items) ...[
+          for (final (icon, label, color) in items) ...[
             Icon(icon, size: 18, color: color),
             const SizedBox(width: 8),
             Text(
@@ -1171,7 +1244,7 @@ class _FeaturesRow extends StatelessWidget {
     }
     return Row(
       children: [
-        for (final (icon, label, color) in _items) ...[
+        for (final (icon, label, color) in items) ...[
           Expanded(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
@@ -1199,7 +1272,7 @@ class _FeaturesRow extends StatelessWidget {
               ),
             ),
           ),
-          if (label != _items.last.$2) const SizedBox(width: 8),
+          if (label != items.last.$2) const SizedBox(width: 8),
         ],
       ],
     );
@@ -1212,12 +1285,15 @@ class _ProviderGhost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Choose how ${ProductConfigScope.of(context).displayName} thinks.',
+          l10n.onboardingChooseHowThinks(
+            ProductConfigScope.of(context).displayName,
+          ),
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
@@ -1226,37 +1302,40 @@ class _ProviderGhost extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Connect a provider to start chatting.',
+          l10n.onboardingConnectProviderToStart,
           style: TextStyle(fontSize: 11.5, color: _onbGray(context)),
         ),
         const SizedBox(height: 16),
+        // Provider names are brands (never translated); badges and the
+        // one-line descriptions are copy.
         _ghostRow(
           context,
           Icons.autorenew,
           'OpenRouter',
-          'Recommended',
-          'Access 100+ models from top AI providers.',
+          l10n.onboardingBadgeRecommended,
+          l10n.onboardingGhostOpenRouterDesc,
+          recommended: true,
         ),
         _ghostRow(
           context,
           Icons.cruelty_free,
           'Ollama',
-          'Local',
-          'Run open-source models on your device.',
+          l10n.onboardingBadgeLocal,
+          l10n.onboardingGhostOllamaDesc,
         ),
         _ghostRow(
           context,
           Icons.auto_awesome,
           'Google Gemini',
           null,
-          "Google's latest models with advanced reasoning.",
+          l10n.onboardingGhostGeminiDesc,
         ),
         _ghostRow(
           context,
           Icons.code,
-          'Custom provider',
+          l10n.onboardingGhostCustomProvider,
           null,
-          'Connect any OpenAI-compatible API.',
+          l10n.onboardingGhostCustomDesc,
         ),
       ],
     );
@@ -1267,8 +1346,9 @@ class _ProviderGhost extends StatelessWidget {
     IconData icon,
     String name,
     String? badge,
-    String desc,
-  ) {
+    String desc, {
+    bool recommended = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
@@ -1295,7 +1375,7 @@ class _ProviderGhost extends StatelessWidget {
                     ),
                     if (badge != null) ...[
                       const SizedBox(width: 6),
-                      _Badge(badge),
+                      _Badge(badge, recommended: recommended),
                     ],
                   ],
                 ),
@@ -1318,12 +1398,16 @@ class _ProviderGhost extends StatelessWidget {
 }
 
 class _Badge extends StatelessWidget {
-  const _Badge(this.text);
+  const _Badge(this.text, {this.recommended = false});
   final String text;
+
+  /// The "Recommended" badge takes the blue tint; every other badge the
+  /// green one. A flag, not a string compare — the text is localized.
+  final bool recommended;
 
   @override
   Widget build(BuildContext context) {
-    final rec = text == 'Recommended';
+    final rec = recommended;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
       decoration: BoxDecoration(
@@ -1348,7 +1432,9 @@ class _Badge extends StatelessWidget {
 
 class _P2 extends StatefulWidget {
   const _P2({
+    super.key,
     required this.wide,
+    this.defaultProvider,
     this.registry,
     this.lastConnectionStore,
     this.configuredKey,
@@ -1358,6 +1444,10 @@ class _P2 extends StatefulWidget {
   });
 
   final bool wide;
+
+  /// Branded first-run default. It is selected immediately, but its real
+  /// connect flow still has to complete before the provider gate unlocks.
+  final faui.AddProviderPreset? defaultProvider;
 
   /// The shared provider registry; null renders the list inert (tests).
   final faui.ProviderRegistry? registry;
@@ -1397,13 +1487,16 @@ class _P2State extends State<_P2> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(height: widget.wide ? 20 : 12),
         _TitleBlock(
-          'Choose how ${ProductConfigScope.of(context).displayName} thinks.',
-          'Connect a provider to start chatting.\nYou can switch models anytime.',
+          l10n.onboardingChooseHowThinks(
+            ProductConfigScope.of(context).displayName,
+          ),
+          l10n.onboardingP2Subtitle,
           compact: !widget.wide,
         ),
         SizedBox(height: widget.wide ? 24 : 18),
@@ -1448,7 +1541,7 @@ class _P2State extends State<_P2> {
                 SizedBox(width: 6),
                 Flexible(
                   child: Text(
-                    'API keys stay in your system Keychain.\nContent is sent only to providers you connect.',
+                    l10n.onboardingP2KeysNote,
                     style: TextStyle(
                       fontSize: 11,
                       color: _onbGray(context),
@@ -1481,6 +1574,9 @@ class _P2State extends State<_P2> {
         )) ...[
           _ProviderCard(
             preset: preset,
+            selected:
+                widget.configuredKey == null &&
+                widget.defaultProvider?.key == preset.key,
             configured: widget.configuredKey == preset.key,
             onTap: _busy ? null : () => _configure(preset),
           ),
@@ -1495,6 +1591,13 @@ class _P2State extends State<_P2> {
         ],
       ],
     );
+  }
+
+  /// The footer's default-provider action: the same real flow as a card
+  /// tap, never a visual-only bypass of the connection gate.
+  Future<void> configureDefault() async {
+    final preset = widget.defaultProvider;
+    if (preset != null) await _configure(preset);
   }
 
   /// Routes a preset tap to the provider's real config flow (the same
@@ -1545,7 +1648,8 @@ class _P2State extends State<_P2> {
   void _showFlowError(Object e) {
     debugPrint('[onboarding] provider flow failed: $e');
     if (mounted) {
-      faui.showFahErrorSnack(context, 'Could not open the provider setup: $e');
+      final l10n = context.l10n;
+      faui.showFahErrorSnack(context, l10n.onboardingFlowError('$e'));
     }
   }
 
@@ -1789,21 +1893,54 @@ class _NetworkCard extends StatelessWidget {
   }
 }
 
+/// Built-in provider preset key → the card description in the app's ARB.
+///
+/// The shared fa_ui catalog carries English-only descriptions, so the
+/// onboarding card resolves the same copy from [AppLocalizations] by preset
+/// key (the English values mirror the fa_ui preset text exactly). Names are
+/// brands and stay as the preset declares them.
+final _presetDescriptions = <String, String Function(AppLocalizations l10n)>{
+  'aiin': (l10n) => l10n.onboardingProviderDescAin,
+  'openrouter': (l10n) => l10n.onboardingProviderDescOpenrouter,
+  'chatgpt': (l10n) => l10n.onboardingProviderDescChatgpt,
+  'copilot': (l10n) => l10n.onboardingProviderDescCopilot,
+  'codemie': (l10n) => l10n.onboardingProviderDescCodemie,
+  'openai': (l10n) => l10n.onboardingProviderDescOpenai,
+  'anthropic': (l10n) => l10n.onboardingProviderDescAnthropic,
+  'google': (l10n) => l10n.onboardingProviderDescGoogle,
+  'dial': (l10n) => l10n.onboardingProviderDescDial,
+  'kimi': (l10n) => l10n.onboardingProviderDescKimi,
+  'minimax': (l10n) => l10n.onboardingProviderDescMinimax,
+  'zai': (l10n) => l10n.onboardingProviderDescZai,
+  'ollama': (l10n) => l10n.onboardingProviderDescOllama,
+  'custom': (l10n) => l10n.onboardingProviderDescCustom,
+};
+
+/// The one-line description under a provider card's name. A preset the map
+/// does not know (a host-added one) keeps its own description.
+String _presetDescription(BuildContext context, faui.AddProviderPreset preset) {
+  final l10n = context.l10n;
+  return (_presetDescriptions[preset.key] ?? (_) => preset.description)(l10n);
+}
+
 class _ProviderCard extends StatelessWidget {
   const _ProviderCard({
     required this.preset,
+    required this.selected,
     required this.configured,
     required this.onTap,
   });
 
   final faui.AddProviderPreset preset;
+  final bool selected;
   final bool configured;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final active = selected || configured;
     return Material(
-      color: configured ? _onbSelBg(context) : _onbCard(context),
+      color: active ? _onbSelBg(context) : _onbCard(context),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1813,8 +1950,8 @@ class _ProviderCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: configured ? _onbPrimary(context) : _onbBorder(context),
-              width: configured ? 1.5 : 1,
+              color: active ? _onbPrimary(context) : _onbBorder(context),
+              width: active ? 1.5 : 1,
             ),
           ),
           child: Row(
@@ -1836,7 +1973,7 @@ class _ProviderCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      preset.description,
+                      _presetDescription(context, preset),
                       style: TextStyle(fontSize: 12, color: _onbGray(context)),
                     ),
                   ],
@@ -1851,6 +1988,12 @@ class _ProviderCard extends StatelessWidget {
                     shape: BoxShape.circle,
                   ),
                   child: Icon(Icons.check, size: 13, color: Colors.white),
+                )
+              else if (selected)
+                Icon(
+                  Icons.radio_button_checked,
+                  size: 20,
+                  color: _onbPrimary(context),
                 )
               else
                 Icon(
@@ -1885,7 +2028,7 @@ class _RequestCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'Your request',
+            context.l10n.onboardingYourRequest,
             style: TextStyle(
               fontSize: 11,
               color: _onbGray(context),
@@ -1900,7 +2043,7 @@ class _RequestCard extends StatelessWidget {
               SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Build a focus timer with work and break sessions.',
+                  context.l10n.onboardingMockupFocusRequest,
                   style: TextStyle(
                     fontSize: 11.5,
                     color: _onbInk(context),
@@ -1939,7 +2082,7 @@ class _RequestConfirmedCard extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'Build a focus timer with work and break sessions.',
+              context.l10n.onboardingMockupFocusRequest,
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -1961,12 +2104,14 @@ class _AccessGhost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final product = ProductConfigScope.of(context).displayName;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '${ProductConfigScope.of(context).displayName} can take action for you.',
+          l10n.onboardingProductCanAct(product),
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
@@ -1975,14 +2120,14 @@ class _AccessGhost extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '${ProductConfigScope.of(context).displayName} asks only when an action needs it.',
+          l10n.onboardingProductAsksOnly(product),
           style: TextStyle(fontSize: 11, color: _onbGray(context)),
         ),
         const SizedBox(height: 14),
-        for (final (icon, label) in const [
-          (Icons.calendar_month, 'Calendar & Reminders'),
-          (Icons.notifications, 'Notifications'),
-          (Icons.mic, 'Microphone'),
+        for (final (icon, label) in [
+          (Icons.calendar_month, l10n.onboardingPermCalendarTitle),
+          (Icons.notifications, l10n.onboardingPermissionNotifications),
+          (Icons.mic, l10n.onboardingPermissionMicrophone),
         ])
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -2002,7 +2147,7 @@ class _AccessGhost extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  'Ask when needed',
+                  l10n.onboardingAskWhenNeeded,
                   style: TextStyle(
                     fontSize: 9.5,
                     color: _onbPrimary(context),
@@ -2027,13 +2172,14 @@ class _P3 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(height: wide ? 20 : 12),
         _TitleBlock(
-          'Give access only when it helps.',
-          '${ProductConfigScope.of(context).displayName} asks only when an action needs it.\nYou can change access anytime.',
+          l10n.onboardingP3Title,
+          l10n.onboardingP3Subtitle(ProductConfigScope.of(context).displayName),
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 16),
@@ -2055,8 +2201,8 @@ class _P3 extends StatelessWidget {
                             icon: Icons.calendar_month,
                             tint: Color(0xFFEF4444),
                             tintBg: Color(0xFFFDECEC),
-                            title: 'Calendar & Reminders',
-                            desc: 'Check your schedule and create events.',
+                            title: l10n.onboardingPermCalendarTitle,
+                            desc: l10n.onboardingPermCalendarDesc,
                             vertical: true,
                           ),
                         ),
@@ -2066,8 +2212,8 @@ class _P3 extends StatelessWidget {
                             icon: Icons.notifications,
                             tint: Color(0xFF3B82F6),
                             tintBg: Color(0xFFEAF2FE),
-                            title: 'Notifications',
-                            desc: 'Send reminders and task updates.',
+                            title: l10n.onboardingPermissionNotifications,
+                            desc: l10n.onboardingPermNotificationsDesc,
                             vertical: true,
                           ),
                         ),
@@ -2077,9 +2223,10 @@ class _P3 extends StatelessWidget {
                             icon: Icons.mic,
                             tint: Color(0xFF8B5CF6),
                             tintBg: Color(0xFFF1EDFE),
-                            title: 'Microphone',
-                            desc:
-                                'Talk to ${ProductConfigScope.of(context).displayName} with your voice.',
+                            title: l10n.onboardingPermissionMicrophone,
+                            desc: l10n.onboardingPermMicrophoneDesc(
+                              ProductConfigScope.of(context).displayName,
+                            ),
                             vertical: true,
                           ),
                         ),
@@ -2095,29 +2242,30 @@ class _P3 extends StatelessWidget {
         else ...[
           const _FlowCard(),
           const SizedBox(height: 10),
-          const _PermCard(
+          _PermCard(
             icon: Icons.calendar_month,
             tint: Color(0xFFEF4444),
             tintBg: Color(0xFFFDECEC),
-            title: 'Calendar & Reminders',
-            desc: 'Check your schedule and create events.',
+            title: l10n.onboardingPermCalendarTitle,
+            desc: l10n.onboardingPermCalendarDesc,
           ),
           const SizedBox(height: 8),
-          const _PermCard(
+          _PermCard(
             icon: Icons.notifications,
             tint: Color(0xFF3B82F6),
             tintBg: Color(0xFFEAF2FE),
-            title: 'Notifications',
-            desc: 'Send reminders and task updates.',
+            title: l10n.onboardingPermissionNotifications,
+            desc: l10n.onboardingPermNotificationsDesc,
           ),
           const SizedBox(height: 8),
           _PermCard(
             icon: Icons.mic,
             tint: Color(0xFF8B5CF6),
             tintBg: Color(0xFFF1EDFE),
-            title: 'Microphone',
-            desc:
-                'Talk to ${ProductConfigScope.of(context).displayName} with your voice.',
+            title: l10n.onboardingPermissionMicrophone,
+            desc: l10n.onboardingPermMicrophoneDesc(
+              ProductConfigScope.of(context).displayName,
+            ),
           ),
         ],
         SizedBox(height: wide ? 18 : 12),
@@ -2136,7 +2284,7 @@ class _P3 extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Nothing is enabled by default.',
+                    l10n.onboardingNothingEnabledByDefault,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -2145,7 +2293,7 @@ class _P3 extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'You can manage access anytime in Settings.',
+                    l10n.onboardingManageAccessInSettings,
                     style: TextStyle(fontSize: 11, color: _onbGray(context)),
                   ),
                 ],
@@ -2175,13 +2323,14 @@ class _P4 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(height: wide ? 20 : 12),
         _TitleBlock(
-          'Your sandbox is ready.',
-          'Use apps yourself, let ${ProductConfigScope.of(context).displayName} use them for you,\nor ask ${ProductConfigScope.of(context).displayName} to make something new.',
+          l10n.onboardingP4Title,
+          l10n.onboardingP4Subtitle(ProductConfigScope.of(context).displayName),
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 16),
@@ -2201,7 +2350,7 @@ class _P4 extends StatelessWidget {
         ],
         SizedBox(height: wide ? 22 : 14),
         Text(
-          'Try these ideas to get started',
+          l10n.onboardingTryIdeas,
           style: TextStyle(fontSize: 12, color: _onbGray(context)),
         ),
         const SizedBox(height: 8),

@@ -327,6 +327,8 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   'driveEndpoint': config.driveEndpoint?.toString(),
   'sessionEndpoint': config.sessionEndpoint?.toString(),
   'oauthCallback': config.oauthCallback?.toString(),
+  'defaultProviderKey': config.defaultProviderKey,
+  'localeStorageKey': config.localeStorageKey,
   'legalLinks': {
     for (final entry in config.legalLinks.entries)
       entry.key: entry.value.toString(),

@@ -42,6 +42,35 @@ void main() {
       },
     );
 
+    test(
+      'onboarding provider and host locale defaults are public metadata',
+      () {
+        final config = FaProductConfig.fromJson({
+          ..._valid(),
+          'defaultProviderKey': 'aiin',
+          'localeStorageKey': 'ain_lang',
+        });
+        expect(config.defaultProviderKey, 'aiin');
+        expect(config.localeStorageKey, 'ain_lang');
+        expect(
+          () => FaProductConfig.fromJson({
+            ..._valid(),
+            'defaultProviderKey': '../provider',
+          }),
+          throwsFormatException,
+        );
+        expect(
+          () => FaProductConfig.fromJson({
+            ..._valid(),
+            'localeStorageKey': 'invalid key',
+          }),
+          throwsFormatException,
+        );
+        expect(FaProductConfig.stock.defaultProviderKey, isNull);
+        expect(FaProductConfig.stock.localeStorageKey, isNull);
+      },
+    );
+
     test('cloud remains off without the explicit flag or an endpoint', () {
       expect(
         FaProductConfig.fromJson(

@@ -3220,4 +3220,349 @@ class AppLocalizationsRu extends AppLocalizations {
   String chatSubagentFilterDone(Object count) {
     return 'Завершённые ($count)';
   }
+
+  @override
+  String get onboardingStepAsk => 'Спросите';
+
+  @override
+  String get onboardingStepThink => 'Подумайте';
+
+  @override
+  String get onboardingStepAct => 'Действуйте';
+
+  @override
+  String get onboardingStepMakeItYours => 'Настройте под себя';
+
+  @override
+  String get onboardingMiniStepYours => 'Своё';
+
+  @override
+  String onboardingPageCounter(Object page, Object total) {
+    return '$page из $total';
+  }
+
+  @override
+  String get onboardingPrivacyPolicy => 'Политика конфиденциальности';
+
+  @override
+  String get onboardingContinueWithoutAccess => 'Продолжить без доступа';
+
+  @override
+  String onboardingOpenProduct(Object product) {
+    return 'Открыть $product';
+  }
+
+  @override
+  String get onboardingP1Title => 'Начните с идеи.';
+
+  @override
+  String get onboardingP1Subtitle =>
+      'Задайте вопрос, автоматизируйте задачу или опишите приложение, которым хотите пользоваться.';
+
+  @override
+  String get onboardingFeatureAnswers => 'Отвечает на вопросы';
+
+  @override
+  String get onboardingFeatureUsesApps => 'Использует ваши приложения';
+
+  @override
+  String get onboardingFeatureBuildsApps => 'Создаёт новые приложения';
+
+  @override
+  String get onboardingMockupYourIdea => 'Ваша идея';
+
+  @override
+  String get onboardingMockupFocusRequest =>
+      'Соберите фокус-таймер с рабочими сессиями и перывами.';
+
+  @override
+  String get onboardingMockupFocusRequestPill =>
+      'Соберите фокус-таймер\nс рабочими сессиями и перывами.';
+
+  @override
+  String get onboardingMockupFocusTimer => 'Фокус-таймер';
+
+  @override
+  String get onboardingMockupNotes => 'Заметки';
+
+  @override
+  String get onboardingMockupUtilities => 'Утилиты';
+
+  @override
+  String get onboardingMockupCalculator => 'Калькулятор';
+
+  @override
+  String get onboardingMockupMaps => 'Карты';
+
+  @override
+  String get onboardingMockupAddApp => 'Добавить приложение';
+
+  @override
+  String get onboardingMockupHabitGarden => 'Сад привычек';
+
+  @override
+  String onboardingMockupCreateWithFa(String product) {
+    return 'Создать с $product';
+  }
+
+  @override
+  String get onboardingMockupBadgeDemo => 'Демо';
+
+  @override
+  String get onboardingMockupJustNow => 'Только что';
+
+  @override
+  String get onboardingMockupTimeMorning => '9:41';
+
+  @override
+  String get onboardingMockupTimeDesignReview => '10:00';
+
+  @override
+  String get onboardingMockupTimeLunch => '12:30';
+
+  @override
+  String get onboardingMockupTimeSync => '15:00';
+
+  @override
+  String get onboardingMockupUnderstanding => 'Разбираем ваш запрос…';
+
+  @override
+  String get onboardingMockupAskAnything => 'Спросите что угодно…';
+
+  @override
+  String get onboardingMockupActive => 'Активно';
+
+  @override
+  String get onboardingMockupStartSession => 'Начать сессию';
+
+  @override
+  String get onboardingMockupWorkBreak => 'Работа 25 мин • Перыв 5 мин';
+
+  @override
+  String get onboardingMockupFocusTime => 'Время фокуса';
+
+  @override
+  String get onboardingMockupSunny => 'Солнечно';
+
+  @override
+  String get onboardingMockupUpcoming => 'Ближайшие';
+
+  @override
+  String get onboardingMockupDesignReview => 'Дизайн-ревью';
+
+  @override
+  String get onboardingMockupLunchWithTeam => 'Обед с командой';
+
+  @override
+  String get onboardingMockupProjectSync => 'Встреча по проекту';
+
+  @override
+  String get onboardingMockupCustomize => 'Настроить';
+
+  @override
+  String onboardingChooseHowThinks(Object product) {
+    return 'Выберите, как думает $product.';
+  }
+
+  @override
+  String get onboardingConnectProviderToStart =>
+      'Подключите провайдера, чтобы начать чат.';
+
+  @override
+  String get onboardingBadgeRecommended => 'Рекомендуем';
+
+  @override
+  String get onboardingBadgeLocal => 'Локально';
+
+  @override
+  String get onboardingGhostOpenRouterDesc =>
+      'Доступ к 100+ моделям от ведущих AI-провайдеров.';
+
+  @override
+  String get onboardingGhostOllamaDesc =>
+      'Запускайте открытые модели на своём устройстве.';
+
+  @override
+  String get onboardingGhostGeminiDesc =>
+      'Новейшие модели Google с улучшенными возможностями рассуждения.';
+
+  @override
+  String get onboardingGhostCustomProvider => 'Свой провайдер';
+
+  @override
+  String get onboardingGhostCustomDesc =>
+      'Подключите любой API, совместимый с OpenAI.';
+
+  @override
+  String get onboardingP2Subtitle =>
+      'Подключите провайдера, чтобы начать чат.\nМодели можно менять в любой момент.';
+
+  @override
+  String get onboardingP2KeysNote =>
+      'Ключи API хранятся в системной связке ключей.\nКонтент отправляется только подключённым вами провайдерам.';
+
+  @override
+  String get onboardingYourRequest => 'Ваш запрос';
+
+  @override
+  String onboardingFlowError(Object error) {
+    return 'Не удалось открыть настройку провайдера: $error';
+  }
+
+  @override
+  String onboardingProductCanAct(Object product) {
+    return '$product может действовать за вас.';
+  }
+
+  @override
+  String onboardingProductAsksOnly(Object product) {
+    return '$product спрашивает разрешение только тогда, когда оно нужно для действия.';
+  }
+
+  @override
+  String get onboardingPermCalendarTitle => 'Календарь и напоминания';
+
+  @override
+  String get onboardingPermCalendarDesc =>
+      'Проверяйте расписание и создавайте события.';
+
+  @override
+  String get onboardingPermNotificationsDesc =>
+      'Отправка напоминаний и обновлений задач.';
+
+  @override
+  String onboardingPermMicrophoneDesc(Object product) {
+    return 'Общайтесь с $product голосом.';
+  }
+
+  @override
+  String get onboardingAskWhenNeeded => 'Спрашивать при необходимости';
+
+  @override
+  String get onboardingPermLater => 'Позже';
+
+  @override
+  String get onboardingNoAccessNeeded => 'Доступ не нужен';
+
+  @override
+  String get onboardingNoAccessNeededCaption => 'доступ не нужен';
+
+  @override
+  String get onboardingP3Title => 'Дайте доступ только там, где он нужен.';
+
+  @override
+  String onboardingP3Subtitle(Object product) {
+    return '$product спрашивает разрешение только тогда, когда оно нужно для действия.\nДоступ можно изменить в любой момент.';
+  }
+
+  @override
+  String get onboardingNothingEnabledByDefault =>
+      'По умолчанию ничего не включено.';
+
+  @override
+  String get onboardingManageAccessInSettings =>
+      'Управлять доступом можно в любой момент в Настройках.';
+
+  @override
+  String get onboardingWhatYouGet => 'Что вы получите';
+
+  @override
+  String get onboardingFocus => 'Фокус';
+
+  @override
+  String get onboardingP4Title => 'Ваша песочница готова.';
+
+  @override
+  String onboardingP4Subtitle(Object product) {
+    return 'Пользуйтесь приложениями сами, позвольте $product делать это за вас,\nили попросите $product создать что-нибудь новое.';
+  }
+
+  @override
+  String get onboardingTryIdeas => 'Попробуйте эти идеи для начала';
+
+  @override
+  String get onboardingSuggestPlanDay => 'Спланировать мой день';
+
+  @override
+  String get onboardingSuggestWorkoutTracker => 'Создать трекер тренировок';
+
+  @override
+  String get onboardingSuggestExpenseApp => 'Создать приложение для расходов';
+
+  @override
+  String get onboardingTimelineFocusCreated => 'Фокус-таймер создан';
+
+  @override
+  String onboardingTimelineFaBuilt(String product) {
+    return '$product собрал это приложение и добавил его в ваше рабочее пространство.';
+  }
+
+  @override
+  String get onboardingTimelineYouAsked => 'Вы попросили';
+
+  @override
+  String onboardingTimelineFaDelivered(String product) {
+    return '$product выполнил';
+  }
+
+  @override
+  String get onboardingTimelineFaDeliveredDesc =>
+      'Фокус-таймер — сессии 25/5 с рабочими циклами и перывами.';
+
+  @override
+  String get onboardingCompleted => 'Выполнено';
+
+  @override
+  String get onboardingOpenFocusTimer => 'Открыть фокус-таймер';
+
+  @override
+  String get onboardingNavyAppCardDesc =>
+      'Сессии фокуса 25/5 с рабочими циклами и перывами.';
+
+  @override
+  String get onboardingProviderDescAin =>
+      'ain.by — войдите, ключ зарегистрируется автоматически';
+
+  @override
+  String get onboardingProviderDescOpenrouter =>
+      'OAuth или API-ключ — 300+ моделей';
+
+  @override
+  String get onboardingProviderDescChatgpt => 'Вход в аккаунт через OAuth';
+
+  @override
+  String get onboardingProviderDescCopilot =>
+      'Вход в аккаунт по коду устройства';
+
+  @override
+  String get onboardingProviderDescCodemie => 'Вход через корпоративный SSO';
+
+  @override
+  String get onboardingProviderDescOpenai => 'api.openai.com — API-ключ';
+
+  @override
+  String get onboardingProviderDescAnthropic => 'api.anthropic.com — API-ключ';
+
+  @override
+  String get onboardingProviderDescGoogle => 'Модели Gemini — API-ключ';
+
+  @override
+  String get onboardingProviderDescDial =>
+      'EPAM DIAL Core — API-ключ + развёртывание';
+
+  @override
+  String get onboardingProviderDescKimi => 'Модели Kimi Code — API-ключ';
+
+  @override
+  String get onboardingProviderDescMinimax => 'Модели MiniMax — API-ключ';
+
+  @override
+  String get onboardingProviderDescZai => 'Модели GLM — API-ключ';
+
+  @override
+  String get onboardingProviderDescOllama => 'api.ollama.com — API-ключ';
+
+  @override
+  String get onboardingProviderDescCustom =>
+      'Любой эндпоинт, совместимый с OpenAI';
 }

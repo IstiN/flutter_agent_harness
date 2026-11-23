@@ -16,6 +16,21 @@ void main() {
     expect(resolveAppLocale(const Locale('ru', 'RU')).languageCode, 'ru');
   });
 
+  test('a host handoff overrides the device locale', () {
+    expect(
+      resolveAppLocale(const Locale('en'), localeOverride: 'ru'),
+      const Locale('ru'),
+    );
+    expect(
+      resolveAppLocale(const Locale('ru'), localeOverride: 'en'),
+      const Locale('en'),
+    );
+    expect(
+      resolveAppLocale(const Locale('ru'), localeOverride: 'invalid'),
+      const Locale('ru'),
+    );
+  });
+
   test('an unsupported device locale resolves to English, not itself', () {
     expect(resolveAppLocale(const Locale('fr')).languageCode, 'en');
   });

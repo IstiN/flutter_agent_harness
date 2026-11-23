@@ -36,10 +36,13 @@ Future<void> _pumpOnboarding(
   ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
   NetworkModeController? networkMode,
+  Locale? locale,
+  FaProductConfig? productConfig,
 }) {
   return tester.pumpWidget(
     MaterialApp(
       theme: buildFahTheme(),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: SessionKeysScope(
@@ -51,6 +54,7 @@ Future<void> _pumpOnboarding(
           registry: registry,
           lastConnectionStore: lastConnectionStore,
           networkMode: networkMode,
+          productConfig: productConfig ?? FaProductConfig.stock,
         ),
       ),
     ),
@@ -646,6 +650,215 @@ void main() {
       expect(find.text('Your sandbox is ready.'), findsOneWidget);
       expect(find.text('Open Fa'), findsOneWidget);
       expect(find.text('Skip'), findsOneWidget);
+    });
+  });
+
+  // The branded (host product) onboarding under the Russian locale: every
+  // page's copy resolves from the ARB, the host display name is interpolated
+  // exactly where the English interpolates it, and provider cards carry
+  // Russian descriptions under unchanged brand names. Provider selection and
+  // the gate are covered by the group above — these only pin the RU copy.
+  group('OnboardingScreen (branded default provider)', () {
+    final branded = FaProductConfig(
+      productId: 'default-provider-test',
+      displayName: 'Branded',
+      // A key-based default makes the real routing observable in a widget
+      // test without launching a native browser or an OAuth server.
+      defaultProviderKey: 'openrouter',
+    );
+
+    testWidgets('default is selected; Continue opens its real flow only', (
+      tester,
+    ) async {
+      final registry = ProviderRegistry.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: LastConnectionStore.inMemory(),
+        productConfig: branded,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+      expect(find.text('Choose how Branded thinks.'), findsOneWidget);
+      expect(find.text('Skip'), findsNothing);
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(registry.providers, isEmpty);
+
+      // Cancelling the real flow restores the default's visual selection,
+      // but does not fabricate a configured connection or unlock the gate.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ProviderEditorPage),
+          matching: find.byType(BackButton),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Branded thinks.'), findsOneWidget);
+      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+      expect(registry.providers, isEmpty);
+      expect(find.text('Skip'), findsNothing);
+
+      // The footer action remains the real flow, never a page-advance bypass.
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(find.text('Give access only when it helps.'), findsNothing);
+    });
+
+    testWidgets('an unknown product default leaves the gate unchanged', (
+      tester,
+    ) async {
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        productConfig: FaProductConfig(
+          productId: 'invalid-default-test',
+          displayName: 'Branded',
+          defaultProviderKey: 'not-a-real-preset',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+      expect(find.text('Skip'), findsNothing);
+      expect(find.text('Give access only when it helps.'), findsNothing);
+    });
+  });
+
+  group('OnboardingScreen (branded, ru)', () {
+    final ain = FaProductConfig(
+      productId: 'ain',
+      displayName: 'AIN',
+      legalLinks: {'privacy': Uri.parse('https://legal.ain.test/privacy')},
+    );
+
+    Future<void> pumpRu(WidgetTester tester, {int initialPage = 0}) =>
+        _pumpOnboarding(
+          tester,
+          initialPage: initialPage,
+          locale: const Locale('ru'),
+          productConfig: ain,
+        );
+
+    testWidgets('page 1 and the chrome are fully Russian', (tester) async {
+      await pumpRu(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Начните с идеи.'), findsOneWidget);
+      expect(find.text('Ваша идея'), findsOneWidget);
+      // Header steps, Skip, footer counter, primary button and privacy link.
+      expect(find.text('Спросите'), findsOneWidget);
+      expect(find.text('Настройте под себя'), findsOneWidget);
+      expect(find.text('Пропустить'), findsOneWidget);
+      expect(find.text('1 из 4'), findsOneWidget);
+      expect(find.text('Далее'), findsOneWidget);
+      expect(find.text('Политика конфиденциальности'), findsOneWidget);
+      // The host brand itself is never translated, and no English leaks.
+      expect(find.text('AIN'), findsOneWidget);
+      expect(find.text('Start with an idea.'), findsNothing);
+      expect(find.text('Skip'), findsNothing);
+      expect(find.text('1 of 4'), findsNothing);
+    });
+
+    testWidgets('page 2 title/body and provider descriptions are Russian', (
+      tester,
+    ) async {
+      await pumpRu(tester, initialPage: 1);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Выберите, как думает AIN.'), findsOneWidget);
+      expect(
+        find.text(
+          'Подключите провайдера, чтобы начать чат.\n'
+          'Модели можно менять в любой момент.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Ключи API хранятся в системной связке ключей.\n'
+          'Контент отправляется только подключённым вами провайдерам.',
+        ),
+        findsOneWidget,
+      );
+      // Card descriptions are localized under unchanged brand names.
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('OAuth или API-ключ — 300+ моделей'), findsOneWidget);
+      expect(find.text('Custom'), findsOneWidget);
+      expect(find.text('Любой эндпоинт, совместимый с OpenAI'), findsOneWidget);
+      expect(find.text('Choose how AIN thinks.'), findsNothing);
+      expect(find.text('OAuth or API key — 300+ models'), findsNothing);
+      expect(find.text('Any OpenAI-compatible endpoint'), findsNothing);
+    });
+
+    testWidgets('page 3 permission copy is Russian and names the host', (
+      tester,
+    ) async {
+      await pumpRu(tester, initialPage: 2);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Дайте доступ только там, где он нужен.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'AIN спрашивает разрешение только тогда, когда оно нужно для '
+          'действия.\nДоступ можно изменить в любой момент.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Календарь и напоминания'), findsOneWidget);
+      expect(
+        find.text('Проверяйте расписание и создавайте события.'),
+        findsOneWidget,
+      );
+      expect(find.text('Общайтесь с AIN голосом.'), findsOneWidget);
+      expect(find.text('Talk to AIN with your voice.'), findsNothing);
+      expect(find.text('Спрашивать при необходимости'), findsNWidgets(3));
+      expect(find.text('Разрешить'), findsNWidgets(3));
+      expect(find.text('Позже'), findsNWidgets(3));
+      expect(find.text('По умолчанию ничего не включено.'), findsOneWidget);
+      expect(find.text('Продолжить без доступа'), findsOneWidget);
+      expect(find.text('Continue without access'), findsNothing);
+    });
+
+    testWidgets('page 4 is Russian with the branded Open action', (
+      tester,
+    ) async {
+      // The timeline/mockup column exists only on the wide layout.
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await pumpRu(tester, initialPage: 3);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ваша песочница готова.'), findsOneWidget);
+      expect(
+        find.text(
+          'Пользуйтесь приложениями сами, позвольте AIN делать это за вас,\n'
+          'или попросите AIN создать что-нибудь новое.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Попробуйте эти идеи для начала'), findsOneWidget);
+      expect(
+        find.text(
+          'AIN собрал это приложение и добавил его в ваше рабочее пространство.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('AIN выполнил'), findsOneWidget);
+      expect(find.text('Открыть AIN'), findsOneWidget);
+      expect(find.text('Open AIN'), findsNothing);
+      expect(find.text('Your sandbox is ready.'), findsNothing);
     });
   });
 

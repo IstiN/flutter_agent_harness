@@ -31,6 +31,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/l10n/locale_override.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
@@ -294,6 +295,7 @@ class MyApp extends StatelessWidget {
   }
 
   Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
+    final localeOverride = loadAppLocaleOverride(productConfig);
     return MaterialApp(
       title: productConfig.displayName,
       theme: buildFaTheme(
@@ -317,7 +319,7 @@ class MyApp extends StatelessWidget {
       // app never boots. Fall back to English for a bogus device
       // locale.
       localeResolutionCallback: (deviceLocale, supported) =>
-          resolveAppLocale(deviceLocale),
+          resolveAppLocale(deviceLocale, localeOverride: localeOverride),
       navigatorObservers: analytics != null
           ? [FirebaseAnalyticsObserver(analytics: analytics!)]
           : const <NavigatorObserver>[],
