@@ -239,11 +239,24 @@ stage_test_core() {
   # dir; format_coverage merges the per-isolate files. Keep this list in
   # sync with ci.yml (test-core shard 0); gh-1538 retired the nightly.yml
   # full-quality copy — the pre-merge gate is the single unit-lcov producer.
-  dart test ${conc:+--concurrency=$conc} --tags integration \
-    test/cli/jsr_cli_test.dart \
-    test/cli/cli_args_jsr_test.dart \
-    test/cli/agent_cli_jsr_test.dart \
-    --coverage=coverage
+  # Issue #2227: the trio rides NO quarantine filter (gh-1033: the CLI
+  # coverage ratchet needs these hits pre-merge), so the #2331 loopback-ws
+  # load-drop family reaches this leg unhealed — a dropped loader ws reds
+  # the gate on an arbitrary victim file while every test that ran was
+  # green. Same one-shot wrapper as the sharded legs: a dropped file
+  # reruns ONCE (the rerun inherits --coverage=coverage — healed hits land
+  # in the same coverage/ dir format_coverage merges); real failures carry
+  # no ws-drop signature and stay loud. Keep the target list in sync with
+  # ci.yml (test-core shard 0).
+  mkdir -p build/test-results
+  bash scripts/load_drop_retry.sh \
+    "build/test-results/cli-trio-lcov.json" \
+    "build/test-results/cli-trio-lcov.retry.json" \
+    -- \
+    dart test ${conc:+--concurrency=$conc} --tags integration \
+    --coverage=coverage \
+    --file-reporter="json:build/test-results/cli-trio-lcov.json" \
+    "test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart"
 }
 
 stage_integration_mock() {
