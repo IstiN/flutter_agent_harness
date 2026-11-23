@@ -296,8 +296,18 @@ neither is ever written as a session record, so every hide path (judge,
 deterministic fallback, LRU re-hide, agent hide, checkpoint fold) walks
 records it cannot see and cannot sink them:
 
-- **The obligations block** (issue #1380) — unchanged, ahead of the
-  working set.
+- **The obligations block** (issue #1380; reconciliation per #2384) —
+  unchanged, ahead of the working set. Fresh open entries itemize as
+  before; a pending-wait whose scheduled message fired (a `delivered`
+  receipt on the trail) auto-closes at the next ledger pass (boot or
+  flush), open entries past `obligationStaleAfterDays` age to `stale`,
+  and aged entries collapse into ONE summary line
+  (`… and N aged obligations — run ledger reconciliation`) instead of
+  riding as itemized `[open]` quotes — the 117-entry zombie class cost
+  ~18k tokens per compaction before #2384. On every snapshot append the
+  file's latest snapshot wins for entries the writer did not mutate
+  since seed, so an external cleanup is never buried by a stale
+  in-memory re-assert.
 - **The working-set block** (`lib/src/compaction/working_set.dart`) —
   `goal:` first, then `recently touched files` once a compaction
   boundary exists (structured hide/checkpoint OR a classic

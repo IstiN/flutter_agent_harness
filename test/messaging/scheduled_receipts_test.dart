@@ -82,6 +82,35 @@ void main() {
       expect(errors.single, contains('receipt write failed'));
     },
   );
+
+  group('deliveredIds (issue #2384 AC1 — fired-timer evidence)', () {
+    test(
+      'collects only the delivered event ids, tolerates a torn tail line',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        const path = '/sessions/--work--/messages/_scheduled/receipts.jsonl';
+        final log = ScheduledReceiptLog(env: env, path: () => path);
+        await log.append('scheduled', {'id': 'a1', 'dueMs': 1});
+        await log.append('delivered', {'id': 'a1', 'lagMs': 5});
+        await log.append('delivered', {'id': 'a2', 'lagMs': 7});
+        await log.append('delivery_failed', {'id': 'a3', 'error': 'x'});
+        await log.append('wake_refused', {'lane': 'idle', 'reason': 'cap'});
+        await log.append('delivered', {'id': 'a4', 'lagMs': 9});
+        // A torn tail line (crash mid-append) must not break the reader.
+        await env.appendFile(path, '{"event": "delivered", "id": "to');
+        expect(await log.deliveredIds(), {'a1', 'a2', 'a4'});
+      },
+    );
+
+    test('a missing or empty trail yields an empty set', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/sessions/--work--/messages/_scheduled/receipts.jsonl',
+      );
+      expect(await log.deliveredIds(), isEmpty);
+    });
+  });
 }
 
 /// An env whose `appendFile` reports a backend error (disk full, denied…).

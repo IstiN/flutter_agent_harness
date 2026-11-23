@@ -189,6 +189,10 @@ void main() {
     io: io,
     environment: environment,
     streamFunction: stream.call,
+    // Issue #2384: the ledger reconciliation ages read this seam — the
+    // seeded rule (createdAt 2026-01-01) must be deterministically STALE
+    // regardless of the host clock (review round 1, PR #2386).
+    ledgerClock: () => DateTime.utc(2026, 11, 1),
   );
 
   /// The agent-turn requests (the compaction judge/checkpoint calls are
@@ -283,7 +287,14 @@ void main() {
           },
       ].join('\n');
       expect(projectedText, contains('obligations ledger'));
-      expect(projectedText, contains(_ledgerText));
+      // Issue #2384: the seeded rule (createdAt 2026-01-01) is AGED — the
+      // projection carries it as the ONE reconciliation summary line, not
+      // an itemized [open] quote re-injected after every compaction.
+      expect(
+        projectedText,
+        contains('aged obligations — run ledger reconciliation'),
+      );
+      expect(projectedText, isNot(contains(_ledgerText)));
       expect(projectedText, contains(_toolResultMarker));
 
       // Every agent-turn request after the trigger crossing stayed under

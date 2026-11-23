@@ -13,6 +13,11 @@ block a release again.
 
 ## Unreleased
 
+- fix(2384): obligations-ledger zombies — fired-receipt auto-close and
+  stale age-out at the boot/flush ledger passes, aged entries collapse to
+  one reconciliation line in the injection, and the writer merges with the
+  file's latest snapshot on every append (file wins for entries memory
+  did not mutate since seed — external cleanups are never buried).
 - feat(messaging): issue #2226 — the blunt inbox-wake streak cap is
   LEGACY and OFF by default (`messaging.wakeChatterCap: 0`; a positive
   value re-enables the old 10-wake behavior verbatim), replaced by smart

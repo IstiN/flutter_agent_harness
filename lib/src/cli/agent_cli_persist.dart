@@ -76,26 +76,39 @@ extension AgentCliPersist on AgentCli {
     await _appendObligationsSnapshot(session, payload);
   }
 
+  /// The discovery listing for the empty-id close path (issue #1380;
+  /// aged entries suffixed per issue #2384 AC2). Pure over the ledger +
+  /// clock — extracted so [closeObligation] stays under the CRAP ratchet.
+  String _obligationsListing(ObligationsLedger ledger) {
+    final open = ledger.open;
+    final stale = ledger.stale;
+    if (open.isEmpty && stale.isEmpty) return 'no open obligations.';
+    final now = ledgerClock?.call() ?? DateTime.now();
+    return [
+      'open obligations (close with {"id": "..."}):',
+      for (final e in open)
+        '- ${e.id} [${e.kind.jsonName}] ${capLedgerText(e.text) ?? ''}',
+      // Aged entries stay addressable (issue #2384 AC2): the same
+      // close path discharges them — verify or close, their choice.
+      for (final e in stale)
+        '- ${e.id} [${e.kind.jsonName}] ${capLedgerText(e.text) ?? ''} '
+            '— aged ${now.difference(e.createdAt).inDays} days — '
+            'verify or close',
+    ].join('\n');
+  }
+
   /// The `obligation_mark_done` close path (issue #1380 lifecycle): marks
   /// an entry done/superseded and persists the snapshot. An empty [id] is
   /// the discovery mode — returns the open-obligation listing (ids,
-  /// statuses, clipped quotes) without closing anything. Unlike the
+  /// statuses, clipped quotes; aged entries suffixed with their age per
+  /// issue #2384 AC2) without closing anything. Unlike the
   /// passive ingest above, failures are RETURNED — the agent must see
   /// that its close did not land.
   Future<String> closeObligation(String id, String status) async {
     final session = _session;
     if (session == null) return 'no session is open — the ledger is empty';
     final writer = await _obligationsWriterFor(session);
-    if (id.isEmpty) {
-      final open = writer.ledger.open;
-      if (open.isEmpty) return 'no open obligations.';
-      return [
-        'open obligations (close with {"id": "..."}):',
-        for (final e in open)
-          '- ${e.id} [${e.kind.jsonName}] '
-              '${capLedgerText(e.text) ?? ''}',
-      ].join('\n');
-    }
+    if (id.isEmpty) return _obligationsListing(writer.ledger);
     final parsed = switch (status) {
       'done' => ObligationStatus.done,
       'superseded' => ObligationStatus.superseded,
@@ -153,7 +166,13 @@ extension AgentCliPersist on AgentCli {
     final ledger = await _latestObligationsFromScan(session);
     final writer = ObligationsLedgerWriter(initial: ledger);
     _obligationsWriterSession = session;
-    return _obligationsWriter = writer;
+    _obligationsWriter = writer;
+    // Issue #2384: the boot reconciliation pass — a resumed session's
+    // zombies resolve HERE (fired waits auto-close, aged opens go
+    // stale), not on the next explicit close. Forced: a reconciliation
+    // that moved something is a deliberate write, not a coalescable one.
+    await _reconcileObligationsLedger(writer, force: true);
+    return writer;
   }
 
   /// The latest snapshot payload over the session's full file chain (the
@@ -322,6 +341,30 @@ extension AgentCliPersist on AgentCli {
         'timer exists';
   }
 
+  /// The reconciliation pass (issue #2384 AC1 + AC2): auto-closes
+  /// pending-waits whose scheduled message provably fired (a `delivered`
+  /// receipt on the trail the wake path also writes) and ages open entries
+  /// past `obligationStaleAfterDays` to stale. A moved state lands as a
+  /// snapshot — [force] on the boot/teardown boundaries, window-gated on
+  /// the trailing flush (a refused append coalesces and rides the next
+  /// flush; the pass is idempotent, nothing is lost).
+  Future<void> _reconcileObligationsLedger(
+    ObligationsLedgerWriter writer, {
+    bool force = false,
+  }) async {
+    final fired = await _scheduledReceipts.deliveredIds();
+    final payload = writer.reconcile(
+      // The gh-1590 clock seam: reconciliation ages read the same pinned
+      // clock the persist windows do, so tests stay deterministic.
+      now: ledgerClock?.call() ?? DateTime.now(),
+      firedScheduledIds: fired,
+    );
+    if (payload == null) return;
+    final session = _session;
+    if (session == null) return;
+    await _appendObligationsSnapshot(session, payload, force: force);
+  }
+
   /// Appends one `obligations_ledger` snapshot (gh-1590): rate-bounded
   /// like the other latest-snapshot-wins ledgers — the gate refuses
   /// inside the persist window ([ledgerSnapshotPersistInterval], the
@@ -341,6 +384,20 @@ extension AgentCliPersist on AgentCli {
     if (payload.isEmpty) return false;
     if (!force && !_obligationsPersistThrottle.shouldPersistNow()) {
       return false;
+    }
+    // Issue #2384 AC3 — the FILE wins for entries memory did not mutate
+    // since seed: an external cleanup snapshot (statuses flipped, entries
+    // added by a concurrent process) must survive this append instead of
+    // being buried by the writer's stale in-memory belief. Memory keeps
+    // only what it mutated (a close the file has not taken yet). The
+    // scan runs on the LANDING path only — the gate above already
+    // decided this snapshot is worth writing.
+    final writer = _obligationsWriter;
+    if (writer != null && identical(_obligationsWriterSession, session)) {
+      final merged = writer.mergeFromFile(
+        await _latestObligationsFromScan(session),
+      );
+      if (merged != null) payload = merged;
     }
     // Serialize ONCE — the dedupe key must be the exact payload that
     // gets appended.
@@ -363,14 +420,17 @@ extension AgentCliPersist on AgentCli {
     }
   }
 
-  /// The trailing flush leg for a coalesced ingest (gh-1590): re-runs
-  /// the persist with the writer's CURRENT full payload — the window has
-  /// elapsed, so the gate passes naturally.
+  /// The trailing flush leg for a coalesced ingest (gh-1590): re-runs the
+  /// persist with the writer's CURRENT full payload — the window has
+  /// elapsed, so the gate passes naturally. The reconciliation pass
+  /// (issue #2384) rides every flush: it is the "next ledger pass" the
+  /// fired-receipt auto-close and the stale age-out wait for.
   Future<void> _flushCoalescedObligations() async {
     if ((_session, _obligationsWriter) case (
       final Session session,
       final ObligationsLedgerWriter writer,
     )) {
+      await _reconcileObligationsLedger(writer);
       await _appendObligationsSnapshot(session, writer.ledger.toPayload());
     }
   }
@@ -378,13 +438,16 @@ extension AgentCliPersist on AgentCli {
   /// gh-1590: the shutdown flush for the obligations ledger — a
   /// coalesced ingest lands NOW (the deduper suppresses a no-op) and
   /// the throttle's trailing Timer leg disarms: a pending Timer must
-  /// never hold the isolate at process exit.
-  Future<void> _flushObligationsLedger() {
+  /// never hold the isolate at process exit. The reconciliation pass
+  /// (issue #2384) runs first — the final state the flush lands is a
+  /// reconciled one.
+  Future<void> _flushObligationsLedger() async {
     _obligationsPersistThrottle.dispose();
     final session = _session;
     final writer = _obligationsWriter;
-    if (session == null || writer == null) return Future.value();
-    return _appendObligationsSnapshot(
+    if (session == null || writer == null) return;
+    await _reconcileObligationsLedger(writer, force: true);
+    await _appendObligationsSnapshot(
       session,
       writer.ledger.toPayload(),
       force: true,
