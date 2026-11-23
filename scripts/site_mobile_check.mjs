@@ -513,6 +513,10 @@ async function main() {
     for (const p of ['index.html', 'privacy.html']) {
       const goldenPath = path.join(GOLDENS, `${p.replace(/[/.]/g, '_')}.png`);
       const ctx = await browser.newContext({ reducedMotion: 'reduce' });
+      // The browser-wide context handler above is fire-and-forget: awaiting
+      // the route HERE closes the registration race before the first page.
+      // dl.js then keeps its deterministic progressive-enhancement fallback.
+      await ctx.route('https://api.github.com/**', (route) => route.abort());
       const page = await ctx.newPage();
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.goto(`${BASE}/${p}`, { waitUntil: 'load' });
@@ -597,6 +601,7 @@ async function main() {
         reducedMotion: 'reduce',
         viewport: { width: w, height: h },
       });
+      await ctxG.route('https://api.github.com/**', (route) => route.abort());
       const pageG = await ctxG.newPage();
       await pageG.goto(`${BASE}/index.html`, { waitUntil: 'load' });
       await pageG.waitForTimeout(500);

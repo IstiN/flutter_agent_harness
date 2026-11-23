@@ -110,42 +110,24 @@ abstract final class AppIconPalette {
   }
 }
 
-/// A continuous-corner tile used by Launchpad-style surfaces.
+/// A continuous-corner clip used by Launchpad-style surfaces.
 /// [child] is normally the app artwork or an adaptive system glyph.
 ///
-/// Uniform muted backplate (owner 2026-11-21: the bare-artwork variant
-/// looked inconsistent). Artwork keeps its original colors — no filter.
+/// Owner direction: NO generated gradient backplate behind real artwork.
+/// The artwork keeps its own rounded-square silhouette and original colors;
+/// generated text/emoji fallbacks supply their own tile outside this clip so
+/// their shadows remain visible.
 class AppIconBadge extends StatelessWidget {
-  const AppIconBadge({
-    super.key,
-    required this.seed,
-    required this.size,
-    required this.child,
-    this.artwork,
-    this.accent,
-  });
+  const AppIconBadge({super.key, required this.size, required this.child});
 
-  final String seed;
   final double size;
   final Widget child;
-  final String? artwork;
-  final Color? accent;
 
   @override
   Widget build(BuildContext context) {
-    // Muted continuous-corner backplate for EVERY tile (owner: the
-    // no-backplate experiment read as a messy launchpad) — but NO
-    // desaturating ColorFiltered: the artwork keeps its own colors.
-    return Container(
+    return SizedBox(
       width: size,
       height: size,
-      decoration: AppIconPalette.decoration(
-        seed: seed,
-        artwork: artwork,
-        accent: accent,
-        brightness: Theme.of(context).brightness,
-        size: size,
-      ),
       child: ClipRSuperellipse(
         borderRadius: BorderRadius.circular(size * .22),
         child: SizedBox.expand(child: child),
@@ -454,11 +436,7 @@ class AppIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final curated = AppIconArtwork.svgFor(app.id);
     if (curated != null) {
-      return _maybeFramed(
-        _svg(curated),
-        artwork: curated,
-        accent: AppIconArtwork.accentFor(app.id),
-      );
+      return _maybeFramed(_svg(curated));
     }
     if (_isInlineSvg) return _maybeFramed(_svg(app.icon));
     if (_isSvgFile) {
@@ -476,24 +454,26 @@ class AppIcon extends StatelessWidget {
     // Emoji-only manifests (no SVG artwork): a uniform muted-gradient
     // squircle keeps the launchpad consistent (owner: "иконки бардак").
     // The no-backplate rule applies to REAL artwork, which keeps its own
-    // colors — an emoji has none, so the tile supplies the identity.
-    return AppIconBadge(
-      seed: app.id,
-      accent: AppIconPalette.accentFor(app.id),
-      size: size,
-      child: Center(child: text),
+    // colors — an emoji has none, so the tile supplies the identity. Keep
+    // the decoration outside the clip so its shadow remains visible.
+    return DecoratedBox(
+      // Unlike Container, DecoratedBox does not add ShapeDecoration's
+      // border padding to the fixed launcher icon slot.
+      decoration: AppIconPalette.decoration(
+        seed: app.id,
+        brightness: Theme.of(context).brightness,
+        size: size,
+      ),
+      child: AppIconBadge(
+        size: size,
+        child: Center(child: text),
+      ),
     );
   }
 
-  Widget _maybeFramed(Widget child, {String? artwork, Color? accent}) {
+  Widget _maybeFramed(Widget child) {
     if (!framed) return child;
-    return AppIconBadge(
-      seed: app.id,
-      artwork: artwork ?? app.icon,
-      size: size,
-      accent: accent,
-      child: child,
-    );
+    return AppIconBadge(size: size, child: child);
   }
 
   Future<String> _loadSvgFile() async {
