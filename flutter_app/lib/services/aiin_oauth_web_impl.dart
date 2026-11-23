@@ -136,7 +136,24 @@ bool _linksAttached = false;
 void attachAiinOAuthLinks() {
   if (_linksAttached) return;
   _linksAttached = true;
-  html.window.onMessage.listen((event) => _completeFromData(event.data));
+  String? callbackOrigin;
+  try {
+    callbackOrigin = Uri.parse(
+      AiinWebAuthCoordinator.instance.callbackUrl,
+    ).origin;
+  } on Object {
+    // An invalid injected callback cannot authorize a message sender.
+  }
+  html.window.onMessage.listen((event) {
+    if (!acceptsAiinOAuthMessageOrigin(
+      event.origin,
+      html.window.location.origin,
+      callbackOrigin: callbackOrigin,
+    )) {
+      return;
+    }
+    _completeFromData(event.data);
+  });
   try {
     final channel = html.BroadcastChannel('aiin_oauth');
     channel.onMessage.listen((event) => _completeFromData(event.data));

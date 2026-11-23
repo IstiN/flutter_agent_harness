@@ -51,6 +51,7 @@ Build from any host checkout:
 dart run scripts/build_product_web.dart \
   --profile /path/to/product.json \
   --assets /path/to/assets \
+  --base-href /agent/ \
   --output /path/to/output-web
 ```
 
@@ -59,7 +60,9 @@ dart run scripts/build_product_web.dart \
 icons. Favicon and splash are required. Absolute/parent/backslash paths,
 credential-shaped fields (including nested metadata), non-HTTPS endpoints
 (except loopback development), malformed metadata and invalid assets fail
-BEFORE Flutter runs. Output is staged and atomically renamed only after HTML,
+BEFORE Flutter runs. `--base-href` must be an absolute path ending in `/`;
+invalid values also fail BEFORE Flutter runs. Output is staged and atomically
+renamed only after HTML,
 manifest, splash, `product_config.{js,json}`, icons and service-worker
 namespaces all succeed.
 
