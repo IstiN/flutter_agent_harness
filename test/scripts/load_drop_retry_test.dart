@@ -68,7 +68,7 @@ done
 echo "\$*" >> "$tmp/argv.log"
 if [ -f "$tmp/attempt2" ]; then
   case "\$MODE" in
-    drop-always)
+    drop-always|wedge-abandon-rerun-red)
       echo '$droppedClosedHeader'
       exit 1 ;;
   esac
@@ -113,6 +113,32 @@ case "\$MODE" in
     printf '%s\n' '${reporterFixture(failingSuitePath: "test/rep_only_test.dart", failingCase: "reporter-only failure", loadingPath: "test/cli/dropped_test.dart")}' > "\$main"
     echo '$droppedClosedHeader'
     exit 1 ;;
+  wedge-abandon|wedge-abandon-rerun-red)
+    printf '%s\n' '{"type":"suite","suite":{"id":1,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"suite","suite":{"id":2,"path":"test/countdown_test.dart","platform":"vm"}}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":10,"name":"healthy case","suiteID":1,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":10,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":11,"name":"ten jobs","suiteID":2,"groupIDs":[]},"time":6}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":3,"time":12}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":true}' >> "\$main"
+    echo 'Attempt:1 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:2 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:3 waiting for isolate _waitForExitCode to check in'
+    sleep 300
+    exit 0 ;;
+  unfinished-exit70)
+    printf '%s\n' '{"type":"suite","suite":{"id":3,"path":"test/inflight_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":20,"name":"in flight","suiteID":3,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":1,"time":1}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":false}' >> "\$main"
+    exit 70 ;;
+  never-loaded-only)
+    printf '%s\n' '{"type":"suite","suite":{"id":4,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":30,"name":"healthy","suiteID":4,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":30,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":2,"time":6}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":true}' >> "\$main"
+    exit 0 ;;
   *) echo "unknown MODE \$MODE" >&2; exit 3 ;;
 esac
 ''';
@@ -138,7 +164,12 @@ Future<ProcessResult> runWrapper(
       '--file-reporter=json:$tmp/main.json',
       targets,
     ],
-    environment: {'MODE': mode},
+    environment: {
+      'MODE': mode,
+      // Bounded spam budget: the wedge modes emit 3 lines; the real default
+      // budget is only relevant on a genuine 1/s VM-exit spam.
+      'LOAD_DROP_RETRY_SPAM_LIMIT': '2',
+    },
   );
 }
 
@@ -280,6 +311,85 @@ void main() {
       calls[1],
       contains('test/cli/dropped_test.dart'),
       reason: 'console-derived ws drop stays a rerun target',
+    );
+  });
+
+  // ── gh-2381: the engine-abandonment wedge (run 45200064457, shard 2/3).
+  //    The coverage-gather crash killed Engine.run() mid-queue: three tests
+  //    in flight (their tearDowns never ran — live pty2 children), ten
+  //    queued suites never loaded, and the process hung forever at exit
+  //    (`Attempt:N waiting for isolate _waitForExitCode to check in`,
+  //    40-minute timeout-kill, shard conclusion `cancelled`). The wrapper
+  //    must (a) SIGKILL the wedged runner once the exit-handshake spam is
+  //    sustained — the evidence is already in the reporter — and (b) rerun
+  //    the abandoned inventory ONCE so the shard heals green instead of
+  //    burning the budget.
+  test('AC10 the exit-handshake wedge is killed and the abandoned '
+      'inventory reruns once (heals)', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-abandon',
+      targets:
+          'test/healthy_test.dart test/countdown_test.dart test/never_loaded_test.dart',
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(
+      r.stderr,
+      contains('exit-handshake'),
+      reason: 'the wedge kill is named loudly in the leg log',
+    );
+    expect(r.stderr, contains('healed'));
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2), reason: 'exactly one rerun');
+    // The abandoned inventory: the in-flight suites + the never-loaded
+    // invocation targets; healthy completed suites never rerun.
+    expect(calls[1], contains('test/countdown_test.dart'));
+    expect(calls[1], contains('test/never_loaded_test.dart'));
+    expect(
+      calls[1],
+      isNot(contains('test/healthy_test.dart')),
+      reason: 'the suite that finished its tests is done',
+    );
+    expect(
+      calls[1],
+      contains('--file-reporter=json:${tmp.path}/retry.json'),
+    );
+  });
+
+  test('AC11 the wedge rerun that fails again stays red — one retry, '
+      'never a loop', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-abandon-rerun-red',
+      targets:
+          'test/healthy_test.dart test/countdown_test.dart test/never_loaded_test.dart',
+    );
+    expect(r.exitCode, isNot(0), reason: 'stderr: ${r.stderr}');
+    expect(invocations(tmp.path), hasLength(2));
+  });
+
+  test('AC12 unfinished tests alone (no spam, non-zero exit) trigger the '
+      'abandonment rerun', () async {
+    final r = await runWrapper(tmp.path, mode: 'unfinished-exit70');
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(invocations(tmp.path), hasLength(2));
+    expect(invocations(tmp.path)[1], contains('test/inflight_test.dart'));
+  });
+
+  test('AC13 never-loaded targets alone (a planned suite with no suite '
+      'event and no results) trigger the abandonment rerun', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'never-loaded-only',
+      targets: 'test/healthy_test.dart test/never_loaded_test.dart',
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2));
+    expect(calls[1], contains('test/never_loaded_test.dart'));
+    expect(
+      calls[1],
+      isNot(contains('test/healthy_test.dart')),
     );
   });
 }

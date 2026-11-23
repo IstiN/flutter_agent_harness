@@ -182,4 +182,120 @@ void main() {
     final out = await runOnLog('');
     expect(out, isEmpty);
   });
+
+  // ── gh-2381: the engine-abandonment evidence (run 45200064457, shard 2/3:
+  //    testStart 101 vs testDone 98; the resume_tail coverage-gather crash
+  //    killed Engine.run() mid-queue and left three tests in flight). The
+  //    wrapper needs these two extra projections off the same log.
+  group('gh-2381 — unfinished and loaded projections', () {
+    /// The REAL abandonment shape from run 45200064457: two suites loaded
+    /// (one finished both tests, one has a test started at t=28169 that
+    /// never finished), plus `allSuites` counting 26 planned.
+    String abandonedLog() => [
+          '{"type":"start","pid":1}',
+          '{"type":"allSuites","count":26,"time":12}',
+          '{"type":"suite","suite":{"id":126,"platform":"vm",'
+              '"path":"test/integration/resume_tail_grid_pty_test.dart"}}',
+          '{"type":"suite","suite":{"id":128,"platform":"vm",'
+              '"path":"test/integration/shell_job_countdown_pty_test.dart"}}',
+          '{"type":"suite","suite":{"id":135,"platform":"vm",'
+              '"path":"test/integration/ssh_shift_gate_test.dart"}}',
+          '{"type":"testStart","test":{"id":133,"name":"ten background bash '
+              'jobs start, count down on camera, drain to 0 running (#573 '
+              'review)","suiteID":128,"groupIDs":[132],'
+              '"metadata":{"skip":false}},"time":28169}',
+          '{"type":"testStart","test":{"id":138,"name":"SSH session env: the '
+              'first Enter submits and Ctrl+C quits","suiteID":135,'
+              '"groupIDs":[137],"metadata":{"skip":false}},"time":31113}',
+          '{"type":"testStart","test":{"id":131,"name":"resume tail + single '
+              'lost summary at 80 x 24","suiteID":126,"groupIDs":[],'
+              '"metadata":{"skip":false}},"time":27430}',
+          '{"type":"testDone","testID":131,"result":"success","hidden":false,'
+              '"skipped":false,"time":30498}',
+          '{"type":"done","success":true}',
+        ].join('\n');
+
+    test('--unfinished lists the suite paths of started-but-never-finished '
+        'tests', () async {
+      final dir = await Directory.systemTemp.createTemp('gate_targets_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/log.json')
+        ..writeAsStringSync(abandonedLog());
+      final (out, code) = await runScript([file.path, '--unfinished']);
+      expect(code, 0);
+      expect(
+        out,
+        'test/integration/shell_job_countdown_pty_test.dart\n'
+        'test/integration/ssh_shift_gate_test.dart\n',
+        reason:
+            'both in-flight tests belong to suites whose tearDowns never '
+            'ran — exactly the rerun targets (sorted, deduped)',
+      );
+    });
+
+    test('--unfinished dedupes several in-flight tests of one suite',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('gate_targets_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/log.json')..writeAsStringSync(jsonLog(
+        suites: [suite(9, 'test/integration/multi_test.dart')],
+        tests: [
+          testEntry(10, 9, 'one in flight'),
+          testEntry(11, 9, 'two in flight'),
+        ],
+      ));
+      final (out, code) = await runScript([file.path, '--unfinished']);
+      expect(code, 0);
+      expect(out, 'test/integration/multi_test.dart\n');
+    });
+
+    test('--unfinished stays clean-empty on a fully finished log', () async {
+      final dir = await Directory.systemTemp.createTemp('gate_targets_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/log.json')..writeAsStringSync(jsonLog(
+        suites: [suite(0, 'test/integration/a_test.dart')],
+        tests: [testEntry(1, 0, 'a case')],
+        testDones: [done(1, 'success')],
+      ));
+      final (out, code) = await runScript([file.path, '--unfinished']);
+      expect(code, 0);
+      expect(out, isEmpty);
+    });
+
+    test('--loaded lists every suite event path (the never-loaded '
+        'complement source)', () async {
+      final dir = await Directory.systemTemp.createTemp('gate_targets_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/log.json')
+        ..writeAsStringSync(abandonedLog());
+      final (out, code) = await runScript([file.path, '--loaded']);
+      expect(code, 0);
+      expect(
+        out,
+        'test/integration/resume_tail_grid_pty_test.dart\n'
+        'test/integration/shell_job_countdown_pty_test.dart\n'
+        'test/integration/ssh_shift_gate_test.dart\n',
+      );
+    });
+
+    test('the DEFAULT projection still reports only failures (the '
+        'ci_fast_gate flake-budget contract is unchanged)', () async {
+      final dir = await Directory.systemTemp.createTemp('gate_targets_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/log.json')
+        ..writeAsStringSync(abandonedLog());
+      final (out, code) = await runScript([file.path]);
+      expect(code, 0);
+      expect(out, isEmpty, reason: 'no failure/error results in this log');
+    });
+
+    test('--unfinished with a missing log is a clean empty result',
+        () async {
+      final (out, code) = await runScript(
+        ['/nonexistent/log.json', '--unfinished'],
+      );
+      expect(code, 0);
+      expect(out, isEmpty);
+    });
+  });
 }
