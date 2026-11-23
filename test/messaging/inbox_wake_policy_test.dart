@@ -51,7 +51,7 @@ void main() {
 
   test('AC2 REG: foreign agent chatter is capped at 10 consecutive wakes — '
       '15 wakes produce 10 turns and 5 refusals with a reason', () async {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     var turns = 0;
     var refusals = 0;
     var lastReason = '';
@@ -72,7 +72,7 @@ void main() {
 
   test('AC3: user-kind mail always wakes — even with the streak exhausted — '
       'and the reset lets capped chatter flow again', () async {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     // Burn the cap on foreign chatter.
     for (var fire = 0; fire < 10; fire++) {
       expect(policy.wakeDecisionFor([mail('f$fire')]).wake, isTrue);
@@ -95,7 +95,7 @@ void main() {
       'recovers at a deliberate cadence', () async {
     // Real-clock policy: consecutive calls land microseconds apart —
     // far inside the 30s cadence floor — exactly a 0-delay spin.
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     var turns = 0;
     var refused = false;
     for (var fire = 0; fire < 25 && !refused; fire++) {
@@ -116,7 +116,7 @@ void main() {
     // A deliberate cadence (>= floor since the last self wake) is exempt
     // again: a policy whose clock jumps past the floor between wakes.
     var now = DateTime.utc(2026, 10, 3, 12);
-    final cadenced = InboxWakePolicy(clock: () => now);
+    final cadenced = InboxWakePolicy(maxStreak: 10, clock: () => now);
     expect(cadenced.wakeDecisionFor([scheduledSelf('a')]).wake, isTrue);
     now = now.add(const Duration(minutes: 10));
     expect(cadenced.wakeDecisionFor([scheduledSelf('b')]).wake, isTrue);
@@ -157,7 +157,7 @@ void main() {
   test('a refusal announcement is once per EPISODE: announceRefusal() fires '
       'once, then stays quiet while the gate keeps refusing (review: the '
       'host gates its visible line AND its refusal receipts on this)', () {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     for (var fire = 0; fire < 10; fire++) {
       expect(policy.wakeDecisionFor([mail('f$fire')]).wake, isTrue);
     }
@@ -176,7 +176,7 @@ void main() {
       'capped episode announces (and receipts) again, so a repeat refusal '
       'can never be silent (review thread 2: the documented reset path '
       'must exist next to the streak)', () {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     for (var fire = 0; fire < 10; fire++) {
       policy.wakeDecisionFor([mail('f$fire')]);
     }
@@ -185,14 +185,17 @@ void main() {
     policy.resetStreak();
     // A rapid self-spin burns the freshly reset cap (allowed self wakes
     // do not clear the episode themselves — see the next test).
-    final spin = InboxWakePolicy(scheduledSelfCadenceFloor: Duration.zero);
+    final spin = InboxWakePolicy(
+      maxStreak: 10,
+      scheduledSelfCadenceFloor: Duration.zero,
+    );
     expect(policy.announceRefusal(), isTrue, reason: 'episode #2 announced');
     expect(spin.announceRefusal(), isTrue);
   });
 
   test('an allowed cap-consuming wake ends the refusal episode (the '
       'successful non-exempt wake reset lives in the policy now)', () {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     for (var fire = 0; fire < 10; fire++) {
       policy.wakeDecisionFor([mail('f$fire')]);
     }
@@ -215,7 +218,7 @@ void main() {
   test('a plugin-only batch (empty pending, pluginPending: true) is '
       'classified EXPLICITLY as chatter: it consumes the anti-storm cap '
       '(review thread 4: the contract is stated, not an accident)', () {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     for (var fire = 0; fire < 10; fire++) {
       final decision = policy.wakeDecisionFor(const [], pluginPending: true);
       expect(decision.wake, isTrue);
@@ -230,7 +233,7 @@ void main() {
   test('pluginPending is ignored when fabric mail is pending — the fabric '
       'lanes own that classification (a non-empty batch is never silently '
       're-laned by the flag)', () {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     final decision = policy.wakeDecisionFor([
       scheduledSelf('self-1'),
     ], pluginPending: true);
@@ -240,7 +243,7 @@ void main() {
 
   test('mixed batches: a user message anywhere in the pending batch wins '
       '(user lane, always wakes)', () async {
-    final policy = InboxWakePolicy();
+    final policy = InboxWakePolicy(maxStreak: 10);
     for (var fire = 0; fire < 10; fire++) {
       policy.wakeDecisionFor([mail('f$fire')]);
     }
@@ -251,5 +254,169 @@ void main() {
     ]);
     expect(decision.wake, isTrue);
     expect(decision.lane, InboxWakeLane.userInput);
+  });
+
+  // -------------------------------------------------------------------
+  // Issue #2226: the streak cap is OFF by default; the chain guard gates.
+  // -------------------------------------------------------------------
+
+  test('#2226 AC6: the default policy has NO chatter cap — 25 consecutive '
+      'foreign wakes are uninterrupted (the money-project regression)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 1; fire <= 25; fire++) {
+      final decision = policy.wakeDecisionFor([
+        mail(
+          'm$fire',
+          text:
+              'build fixed: commit abc000$fire delivered; package r$fire '
+              'is ready for audit',
+        ),
+      ]);
+      expect(
+        decision.wake,
+        isTrue,
+        reason: 'wake $fire must pass — the raw counter is legacy now',
+      );
+      expect(decision.pauseReason, isNull);
+    }
+  });
+
+  test('#2226 review: a bare policy gets the configured smart defaults, '
+      'while explicit null and a positive legacy cap keep their semantics', () {
+    final policy = InboxWakePolicy();
+    final guard = policy.chainGuard;
+    expect(guard, isNotNull, reason: 'bare construction must not be unbounded');
+    expect(guard!.budgetTokens, MessagingConfig.defaultChainBudgetTokens);
+    expect(guard.enabled, isTrue);
+    expect(guard.stuckRounds, const ChainLoopDetectionConfig().stuckRounds);
+    expect(
+      guard.similarityThreshold,
+      const ChainLoopDetectionConfig().similarityThreshold,
+    );
+    expect(
+      InboxWakePolicy(chainGuard: null).chainGuard,
+      isNull,
+      reason: 'an explicit null remains the visible unbounded opt-out',
+    );
+    expect(
+      InboxWakePolicy(maxStreak: 10).chainGuard,
+      isNull,
+      reason: 'a bare positive cap retains the exact pre-#2226 behavior',
+    );
+  });
+
+  test('#2226 AC7: a rapid scheduled-self spin uses the chain budget when '
+      'the legacy cap is off, and user input re-arms it', () {
+    var now = DateTime.utc(2026, 11, 23, 12);
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 4,
+      budgetTokens: 10,
+    );
+    final policy = InboxWakePolicy(chainGuard: guard, clock: () => now);
+
+    expect(policy.wakeDecisionFor([scheduledSelf('first')]).wake, isTrue);
+    now = now.add(const Duration(seconds: 1));
+    final spin = policy.wakeDecisionFor([scheduledSelf('spin')]);
+    expect(spin.wake, isTrue);
+    expect(spin.lane, InboxWakeLane.scheduledSelf);
+    expect(spin.countsAgainstCap, isTrue);
+    guard.recordSpend(10); // The host books the allowed spin's turn usage.
+
+    now = now.add(const Duration(seconds: 1));
+    final paused = policy.wakeDecisionFor([scheduledSelf('exhausted')]);
+    expect(paused.wake, isFalse);
+    expect(paused.pauseReason, 'budget');
+    expect(paused.lane, InboxWakeLane.scheduledSelf);
+    expect(paused.countsAgainstCap, isFalse);
+
+    policy.resetStreak();
+    now = now.add(const Duration(seconds: 1));
+    expect(guard.tokensSpent, 0);
+    expect(
+      policy.wakeDecisionFor([scheduledSelf('recovered')]).wake,
+      isTrue,
+      reason: 'the user reset clears the budget pause and re-arms the spin',
+    );
+  });
+
+  test('#2226 AC7: a positive legacy cap remains the rapid-self bound, '
+      'not a disguised chain-budget verdict', () {
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 4,
+      budgetTokens: 1,
+    )..recordSpend(1);
+    final policy = InboxWakePolicy(maxStreak: 1, chainGuard: guard);
+
+    expect(policy.wakeDecisionFor([scheduledSelf('first')]).wake, isTrue);
+    expect(
+      policy.wakeDecisionFor([scheduledSelf('rapid')]).wake,
+      isTrue,
+      reason: 'the cap-enabled rapid lane does not consult the token budget',
+    );
+    final refused = policy.wakeDecisionFor([scheduledSelf('capped')]);
+    expect(refused.wake, isFalse);
+    expect(refused.pauseReason, 'cap');
+    expect(refused.refusalReason, contains('chatter cap exhausted'));
+  });
+
+  test('#2226: an explicit maxStreak re-enables the legacy cap verbatim', () {
+    final policy = InboxWakePolicy(maxStreak: 10);
+    for (var fire = 0; fire < 10; fire++) {
+      expect(policy.wakeDecisionFor([mail('f$fire')]).wake, isTrue);
+    }
+    final refused = policy.wakeDecisionFor([mail('f-11')]);
+    expect(refused.wake, isFalse);
+    expect(
+      refused.pauseReason,
+      'cap',
+      reason: 'the legacy cap receipts as wake_refused, not chain_paused',
+    );
+  });
+
+  test('#2226: the chain guard pauses a LOOPING chain with a loop verdict — '
+      'wake false, no cap consumed (TDD)', () {
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 2,
+      budgetTokens: 0,
+    );
+    final policy = InboxWakePolicy(chainGuard: guard);
+    // Two identical no-state exchanges arm + count one stuck round; the
+    // third hits the verdict.
+    expect(policy.wakeDecisionFor([mail('you there?')]).wake, isTrue);
+    expect(policy.wakeDecisionFor([mail('you there?')]).wake, isTrue);
+    final paused = policy.wakeDecisionFor([mail('you there?')]);
+    expect(paused.wake, isFalse);
+    expect(paused.pauseReason, 'loop');
+    expect(
+      paused.countsAgainstCap,
+      isFalse,
+      reason: 'a guard pause never books the streak',
+    );
+    expect(paused.refusalReason, contains('similar'));
+  });
+
+  test('#2226: the chain guard pauses on budget exhaustion with a budget '
+      'verdict, and a user-input reset re-arms it', () {
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 4,
+      budgetTokens: 100,
+    );
+    final policy = InboxWakePolicy(chainGuard: guard);
+    guard.recordSpend(100);
+    final paused = policy.wakeDecisionFor([mail('status?')]);
+    expect(paused.wake, isFalse);
+    expect(paused.pauseReason, 'budget');
+    // The user answers the digest with input: everything resets.
+    policy.resetStreak();
+    expect(
+      policy.wakeDecisionFor([mail('status?')]).wake,
+      isTrue,
+      reason: 'the reset re-armed the budget',
+    );
+    expect(guard.tokensSpent, 0);
   });
 }

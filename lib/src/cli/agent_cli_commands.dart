@@ -32,6 +32,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
   '/images': (cli, rest) async => cli._printImagesSurface(),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
+  '/chain': (cli, rest) async => cli.handleChainCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
   '/browser': (cli, rest) async => cli._browserSlash(rest),

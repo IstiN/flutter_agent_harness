@@ -371,6 +371,9 @@ extension AgentCliMessagingFlow on AgentCli {
   /// mail needs no wake — the per-turn steering poll already delivers it.
   Future<void> _wakeOnInboxMail() async {
     if (_exited || isBusy || _inboxWakeRunning) return;
+    // Issue #2226: the boot-time chain-state restore must land before the
+    // first gated decision, or a restart mid-chain under-counts spend.
+    await _chainStateRestored;
     // The boot race gate (the goal_builder incident): a session load is
     // in flight — the agent is half-loaded (`_session` may be null, the
     // boot cap has not run). Starting the wake run HERE made the
@@ -395,32 +398,29 @@ extension AgentCliMessagingFlow on AgentCli {
       pluginPending: pluginPending,
     );
     if (!decision.wake) {
-      // gh-1180 AC4: the refusal is receipted AND visible — a silent
-      // drop here was exactly the 2h04m blind window. Both receipts ride
-      // the policy's once-per-EPISODE gate (review T1): the gate holds
-      // until user input arrives, so per-tick appends would grow
-      // receipts.jsonl by ~43k duplicate lines/day. The episode latch
-      // lives in the policy next to the streak (review T2) and re-arms
-      // on the same resets — a user input or an allowed non-exempt
-      // wake — so a repeat episode is announced and receipted again.
-      if (_inboxWakePolicy.announceRefusal()) {
-        io.writeln(
-          _style.dim('[mail] wake refused — ${decision.refusalReason}'),
-        );
-        await _scheduledReceipts.append('wake_attempted', {
-          'lane': decision.lane.name,
-          'ids': [for (final message in pending) message.id],
-        });
-        await _scheduledReceipts.append('wake_refused', {
-          'lane': decision.lane.name,
-          'reason': decision.refusalReason,
-        });
-      }
+      await _onRefusedWake(decision, pending);
       return;
     }
+    await _startWakeupRun(decision, pending);
+  }
+
+  /// The allowed-wake arm of [_wakeOnInboxMail] (CRAP refactor, behavior
+  /// identical): starts the mail run and books its budget lane.
+  Future<void> _startWakeupRun(
+    InboxWakeDecision decision,
+    List<AgentMessage> pending,
+  ) async {
     // The policy books cap-consuming wakes itself (its streak is the one
     // source of truth; the legacy seam proxies it).
     _inboxWakeRunning = true;
+    // Issue #2226: chatter and cap-off rapid self-spins feed the chain
+    // budget. A deliberate scheduled cadence remains exempt, and a positive
+    // legacy cap remains a distinct bound rather than hidden budget spend.
+    _activeChainWakeBooksSpend =
+        decision.lane == InboxWakeLane.chatter ||
+        (decision.lane == InboxWakeLane.scheduledSelf &&
+            decision.countsAgainstCap &&
+            _inboxWakePolicy.maxStreak == 0);
     final count = pending.length;
     io.writeln(
       _style.dim(
@@ -445,7 +445,61 @@ extension AgentCliMessagingFlow on AgentCli {
       'for hub peers) when a response is expected, or just incorporate the '
       'information.</system-notice>',
     );
-    unawaited(_settled.whenComplete(() => _inboxWakeRunning = false));
+    unawaited(
+      _settled.whenComplete(() {
+        _inboxWakeRunning = false;
+        _activeChainWakeBooksSpend = false;
+      }),
+    );
+  }
+
+  /// The refusal arm of [_wakeOnInboxMail] (CRAP refactor, behavior
+  /// identical): gh-1180 AC4 + issue #2226 AC5 — every refusal is
+  /// receipted AND visible; the #2226 pauses additionally render the
+  /// full digest card (never a silent drop, never a bare one-liner).
+  /// Both ride the policy's once-per-EPISODE gate (review T1): the gate
+  /// holds until user input arrives, so per-tick appends would grow
+  /// receipts.jsonl by ~43k duplicate lines/day. The episode latch
+  /// lives in the policy next to the streak (review T2) and re-arms on
+  /// the same resets — a user input or an allowed non-exempt wake — so
+  /// a repeat episode is announced and receipted again.
+  Future<void> _onRefusedWake(
+    InboxWakeDecision decision,
+    List<AgentMessage> pending,
+  ) async {
+    if (!_inboxWakePolicy.announceRefusal()) return;
+    final pauseReason = decision.pauseReason;
+    if (pauseReason == 'loop' || pauseReason == 'budget') {
+      for (final line in chainPauseDigestLines(
+        reason: pauseReason == 'loop'
+            ? ChainPauseReason.loop
+            : ChainPauseReason.budget,
+        evidence: decision.refusalReason ?? '',
+        pendingCount: pending.length,
+      )) {
+        io.writeln(_style.dim(line));
+      }
+      await _scheduledReceipts.append('wake_attempted', {
+        'lane': decision.lane.name,
+        'ids': [for (final message in pending) message.id],
+      });
+      await _scheduledReceipts.append('chain_paused', {
+        'reason': pauseReason,
+        'evidence': decision.refusalReason,
+        'pending': pending.length,
+      });
+      return;
+    }
+    // The legacy cap keeps the gh-1180 one-liner + receipt shape.
+    io.writeln(_style.dim('[mail] wake refused — ${decision.refusalReason}'));
+    await _scheduledReceipts.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': [for (final message in pending) message.id],
+    });
+    await _scheduledReceipts.append('wake_refused', {
+      'lane': decision.lane.name,
+      'reason': decision.refusalReason,
+    });
   }
 
   /// Receive-side healing: a sender running an older binary (or any tool
