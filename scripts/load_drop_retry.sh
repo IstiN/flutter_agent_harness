@@ -103,6 +103,15 @@ trap cleanup EXIT
 # leaves the runner's exit code in RUNNER_RC. Single-writer named pipe: the
 # runner's stdout+stderr feed a background tee, and `$!` IS the runner pid
 # — an exact kill target with no pgrep topology guessing.
+#
+# The runner rides `setsid` (own process group) so the watchdog's wedge
+# kill takes the WHOLE tree down: a killed dart test leaves its spawned
+# children (pty CLIs, `dart run` chains, sleeps) holding the fifo's write
+# end — without the group kill, `tee` never sees EOF and this wrapper
+# hangs exactly like the wedge it is killing. After the runner exits, tee
+# gets a short drain window (an orphan-held write end can keep it alive
+# forever) and is then killed; the evidence is complete the moment the
+# runner's writes land.
 run_streamed() {
   local append=false
   [ "${1:-}" = "--append" ] && append=true
@@ -114,7 +123,11 @@ run_streamed() {
     tee "$CONSOLE" < "$FIFO" &
   fi
   local tee_pid=$!
-  "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
+  else
+    "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
+  fi
   local runner_pid=$!
   if [ "${SPAM_LIMIT:-8}" -gt 0 ] 2>/dev/null; then
     (
@@ -124,7 +137,8 @@ run_streamed() {
       while kill -0 "$runner_pid" 2>/dev/null; do
         n=$(grep -cE 'Attempt:[0-9]+ waiting for isolate' "$CONSOLE" 2>/dev/null) || n=0
         if [ "${n:-0}" -ge "$SPAM_LIMIT" ]; then
-          echo "load_drop_retry: exit-handshake wedge — $n 'waiting for isolate' spam lines; SIGKILL the wedged runner (results are already in the reporter, coverage is per-suite incremental; gh-2381)" >&2
+          echo "load_drop_retry: exit-handshake wedge — $n 'waiting for isolate' spam lines; SIGKILL the wedged runner's process group (results are already in the reporter, coverage is per-suite incremental; gh-2381)" >&2
+          kill -9 -- "-$runner_pid" 2>/dev/null || true
           kill -9 "$runner_pid" 2>/dev/null || true
           break
         fi
@@ -137,11 +151,18 @@ run_streamed() {
   RUNNER_RC=$?
   if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
-    # The watcher may sit in its `sleep 1` poll — killing the subshell
-    # leaves the sleep alive (a leaked child the job harness reports).
-    pkill -P "$WATCHDOG_PID" 2>/dev/null || true
     WATCHDOG_PID=""
   fi
+  # Drain window: on the wedge path the group kill closed every write end
+  # and tee EOFs on its own; on the normal path orphan-held writers can
+  # keep tee alive indefinitely — cap the drain and kill it.
+  exec 3< /dev/zero
+  local i
+  for i in 1 2 3 4 5; do
+    kill -0 "$tee_pid" 2>/dev/null || break
+    read -t 0.2 -u 3 || true
+  done
+  kill "$tee_pid" 2>/dev/null || true
   wait "$tee_pid" 2>/dev/null || true
   rm -f "$FIFO" 2>/dev/null || true
   FIFO=""
@@ -231,6 +252,7 @@ for arg in "${CMD[@]}"; do
     *) RETRY_CMD+=("$arg") ;;
   esac
 done
+RETRY_CMD+=("--file-reporter=json:$RETRY_LOG")
 
 set +e
 CMD=("${RETRY_CMD[@]}")

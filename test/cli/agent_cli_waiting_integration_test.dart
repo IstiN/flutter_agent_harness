@@ -243,9 +243,32 @@ void main() async {
       expect(ps.stdout.toString(), isNot(contains('sleep $s1')));
       expect(ps.stdout.toString(), isNot(contains('sleep $s2')));
       // AC1: running.json no longer lists the id (verified-gone stop).
-      final recorded =
+      // The settle-side leave is an UNAWAITED chain (`_waiting.jobSettled`
+      // → `_withRegistryLock` → tmp+rename write): `pumpEventQueue()`
+      // cannot wait for file-IO completions, so under CI-leg load the
+      // removal lands a beat after this read — the hostile-env red in run
+      // 45208045955 (gh-2381): the assertion observed the pre-removal
+      // manifest on an otherwise-green stop. gh-2378's house shape: a
+      // bounded load-tolerant wait for the mutation's OBSERVABLE effect,
+      // then a LOUD fail naming what never landed — never a silent pass,
+      // never an unbounded sleep.
+      Future<String> manifestText() async =>
           (await localEnv.readTextFile(manifest)).valueOrNull ?? '';
-      expect(recorded, isNot(contains('sh-2260-prev')));
+      var recorded = await manifestText();
+      final settleDeadline = DateTime.now().add(const Duration(seconds: 20));
+      while (recorded.contains('sh-2260-prev') &&
+          DateTime.now().isBefore(settleDeadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        recorded = await manifestText();
+      }
+      expect(
+        recorded,
+        isNot(contains('sh-2260-prev')),
+        reason:
+            'the settle-side leave never landed in running.json within '
+            '20s — a verified-gone stop must clear the record; final '
+            'manifest content: $recorded',
+      );
     },
   );
 

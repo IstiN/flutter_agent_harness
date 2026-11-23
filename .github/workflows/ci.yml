@@ -1455,6 +1455,15 @@ jobs:
           # shards (occ1 + occ5 hit THIS leg at --concurrency=4 — the cap
           # alone does not kill the class). One-shot rerun of the dropped
           # file only; see scripts/load_drop_retry.sh.
+          # gh-2381: the same wrapper also heals the engine-abandonment
+          # wedge — a coverage-gather crash that killed Engine.run()
+          # mid-queue (run 45200064457 shard 2/3) leaves tests in flight
+          # (tearDowns never run → live pty2 children → the VM exit
+          # handshake wedges on `Attempt:N waiting for isolate
+          # _waitForExitCode` and burns the whole 40-minute budget). The
+          # wrapper SIGKILLs the wedged runner on sustained exit-handshake
+          # spam and reruns the abandoned inventory (unfinished tests +
+          # never-loaded targets) ONCE; a real failure keeps the shard red.
           bash scripts/load_drop_retry.sh \
             "build/test-results/integration-shard-${{ matrix.shard }}.json" \
             "build/test-results/integration-shard-${{ matrix.shard }}.retry.json" \

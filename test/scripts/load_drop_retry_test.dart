@@ -350,10 +350,7 @@ void main() {
       isNot(contains('test/healthy_test.dart')),
       reason: 'the suite that finished its tests is done',
     );
-    expect(
-      calls[1],
-      contains('--file-reporter=json:${tmp.path}/retry.json'),
-    );
+    expect(calls[1], contains('--file-reporter=json:${tmp.path}/retry.json'));
   });
 
   test('AC11 the wedge rerun that fails again stays red — one retry, '
@@ -387,9 +384,6 @@ void main() {
     final calls = invocations(tmp.path);
     expect(calls, hasLength(2));
     expect(calls[1], contains('test/never_loaded_test.dart'));
-    expect(
-      calls[1],
-      isNot(contains('test/healthy_test.dart')),
-    );
+    expect(calls[1], isNot(contains('test/healthy_test.dart')));
   });
 }
