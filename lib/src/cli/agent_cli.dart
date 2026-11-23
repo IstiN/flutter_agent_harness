@@ -1897,6 +1897,13 @@ class AgentCli {
   var _abortRequested = false;
   Future<void> _settled = Future<void>.value();
 
+  /// Set while a settle-edge composer-queue drain chain is in flight (see
+  /// `_drainComposerQueueAfterRun` in agent_cli_input.dart): the settle
+  /// edge fires for EVERY turn a drain starts, and without the guard each
+  /// of those settles would start a second concurrent drain loop racing
+  /// the first for `controller.drainQueue()`.
+  bool _drainingComposerQueue = false;
+
   /// The pending approval-prompt answer, if a tool call is waiting on the
   /// user. While set, [_handleLine] routes typed lines here instead of
   /// steering them into the agent.
