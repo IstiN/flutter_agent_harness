@@ -51,6 +51,13 @@ const int obligationsBlockBudgetChars = 6000;
 /// ones the current context needs.
 const int maxRenderedOpenEntries = 12;
 
+/// The stale bound (issue #2384 AC2): an open entry older than this many
+/// days moves to [ObligationStatus.stale] at the next ledger pass — the
+/// injection then collapses it into the one reconciliation line instead
+/// of itemizing it. The September pipeline zombies were ~60 days old when
+/// observed; two weeks is generous headroom above any live cadence.
+const int obligationStaleAfterDays = 14;
+
 /// User messages longer than this never open entries (classifier
 /// precision guard): a 10 KB paste that happens to contain "please" is
 /// content, not an obligation.
@@ -92,8 +99,20 @@ enum ObligationKind {
 /// change, so "you said X then Y" stays auditable (E2). Open entries are
 /// closed explicitly (`obligation_mark_done`); the owner overriding a
 /// rule supersedes the old entry (kept, auditable).
+///
+/// Statuses only ever move FORWARD along `open → stale → done/superseded`
+/// (issue #2384 AC2): [stale] is the age-out marker the reconciliation
+/// pass stamps on entries past [obligationStaleAfterDays] — it never
+/// re-opens, and the reconciliation never closes an entry by aging alone
+/// (only a fired trigger or an explicit `obligation_mark_done` closes).
 enum ObligationStatus {
   open('open'),
+
+  /// Aged out by the reconciliation pass (issue #2384 AC2): past the
+  /// stale bound with no renewal. Still owed — the injection collapses
+  /// stale entries into one reconciliation line — but visibly flagged for
+  /// verify-or-close instead of silently riding as `[open]`.
+  stale('stale'),
 
   /// Explicitly discharged.
   done('done'),
@@ -109,6 +128,7 @@ enum ObligationStatus {
 
   /// Tolerant parse (E6): unknown or missing names default to [open].
   static ObligationStatus fromName(Object? name) => switch (name) {
+    'stale' => stale,
     'done' => done,
     'superseded' => superseded,
     _ => open,
@@ -241,6 +261,21 @@ final class ObligationsLedger {
       if (e.status == ObligationStatus.open) e,
   ];
 
+  /// The aged-out entries (issue #2384 AC2), oldest first.
+  List<ObligationEntry> get stale => [
+    for (final e in entries)
+      if (e.status == ObligationStatus.stale) e,
+  ];
+
+  /// The discharged entries (explicit closes only — aged entries are
+  /// still owed and never join this trail), oldest first.
+  List<ObligationEntry> get closed => [
+    for (final e in entries)
+      if (e.status == ObligationStatus.done ||
+          e.status == ObligationStatus.superseded)
+        e,
+  ];
+
   /// Parses the snapshot payload of an `obligations_ledger` record
   /// (tolerantly — E6). Anything that is not an entry list parses as an
   /// empty ledger; junk maps (empty text AND empty sourceRecordId —
@@ -304,16 +339,36 @@ String _obligationLine(ObligationEntry e) =>
     '- [${e.status.jsonName}] ${e.kind.jsonName}: '
     '${capLedgerText(e.text) ?? ''} (id ${e.id}, record ${e.sourceRecordId})';
 
+/// The closed entries that still fit the [maxChars] budget (E1: the
+/// budget eats them OLDEST first once the open block plus heading no
+/// longer fit). Extracted so [renderObligationsBlock] stays under the
+/// CRAP ratchet.
+List<ObligationEntry> _closedTrailWithinBudget(
+  List<ObligationEntry> closed,
+  int used,
+  int maxChars,
+) {
+  final keptNewestFirst = <ObligationEntry>[];
+  for (final e in closed.reversed) {
+    final cost = _obligationLine(e).length + 1;
+    if (used + cost > maxChars) break;
+    used += cost;
+    keptNewestFirst.add(e);
+  }
+  return keptNewestFirst.reversed.toList();
+}
+
 /// The block the projection appends at level 0 (issue #1380 A1): every
 /// open obligation is visible — or explicitly counted — after any
 /// hide/compact/flatten depth.
 ///
-/// Layout: up to [maxRenderedOpenEntries] open lines (newest last), a
-/// counting tail when more are open, then closed entries oldest-last
-/// while the budget allows — the budget eats closed entries OLDEST first
-/// (E1) and never touches open lines. Every line's text is display-clipped
-/// (AC2 lives at the record level). Empty ledger renders as an empty
-/// string — no block.
+/// Layout: up to [maxRenderedOpenEntries] fresh open lines (newest last),
+/// a counting tail when more are open, the ONE aged summary line when
+/// stale entries exist (issue #2384 AC4 — aged entries are counted, never
+/// itemized), then closed entries oldest-last while the budget allows —
+/// the budget eats closed entries OLDEST first (E1) and never touches
+/// open lines. Every line's text is display-clipped (AC2 lives at the
+/// record level). Empty ledger renders as an empty string — no block.
 String renderObligationsBlock(
   ObligationsLedger ledger, {
   int maxChars = obligationsBlockBudgetChars,
@@ -323,10 +378,8 @@ String renderObligationsBlock(
       'obligations ledger (engine-maintained; verbatim quotes with their '
       'source record — still owed unless marked done/superseded):';
   final open = ledger.open;
-  final closed = [
-    for (final e in ledger.entries)
-      if (e.status != ObligationStatus.open) e,
-  ];
+  final stale = ledger.stale;
+  final closed = ledger.closed;
 
   // Open entries: newest last, capped with an honest counting tail.
   final renderedOpen = open.length > maxRenderedOpenEntries
@@ -334,9 +387,6 @@ String renderObligationsBlock(
       : open;
   final surplus = open.length - renderedOpen.length;
 
-  // Closed entries trail oldest-last; the budget eats them from the top
-  // (oldest first) once the open block plus heading no longer fit.
-  final keptClosedNewestFirst = <ObligationEntry>[];
   var used =
       heading.length + 32; // envelope tags, separators, surplus-tail line
   if (surplus > 0) {
@@ -345,17 +395,23 @@ String renderObligationsBlock(
                 'the ledger record for the full list)'
             .length;
   }
+  // The aged summary line always renders when stale entries exist — one
+  // line is the whole point (issue #2384 AC4): N aged entries cost one
+  // counting line, not N itemized quotes re-injected every compaction.
+  final agedLine = stale.isEmpty
+      ? null
+      : '… and ${stale.length} aged obligations — run ledger reconciliation';
+  if (agedLine != null) used += agedLine.length + 1;
   for (final e in renderedOpen) {
     used += _obligationLine(e).length + 1;
   }
-  for (final e in closed.reversed) {
-    final cost = _obligationLine(e).length + 1;
-    if (used + cost > maxChars) break;
-    used += cost;
-    keptClosedNewestFirst.add(e);
+  final keptClosed = _closedTrailWithinBudget(closed, used, maxChars);
+  if (renderedOpen.isEmpty &&
+      keptClosed.isEmpty &&
+      surplus == 0 &&
+      agedLine == null) {
+    return '';
   }
-  final keptClosed = keptClosedNewestFirst.reversed.toList();
-  if (renderedOpen.isEmpty && keptClosed.isEmpty && surplus == 0) return '';
   return [
     '<system-notice>',
     heading,
@@ -363,6 +419,7 @@ String renderObligationsBlock(
     if (surplus > 0)
       '… and $surplus more open obligations (read the ledger record for '
           'the full list)',
+    ?agedLine,
     for (final e in keptClosed) _obligationLine(e),
     '</system-notice>',
   ].join('\n');
@@ -429,6 +486,13 @@ final class ObligationsLedgerWriter {
 
   ObligationsLedger _ledger;
 
+  /// Entry ids whose status THIS writer set since it was seeded
+  /// (issue #2384 AC3): [mergeFromFile] lets the FILE win for every entry
+  /// NOT in this set — an external cleanup snapshot must not be buried by
+  /// the next writer append — while a locally-mutated status (a close the
+  /// file has not taken yet) stays memory-authoritative.
+  final Set<String> _mutatedIds = {};
+
   ObligationsLedger get ledger => _ledger;
 
   /// Classifies [text] (a persisted user message's text) into the ledger.
@@ -466,7 +530,88 @@ final class ObligationsLedgerWriter {
   List<Map<String, Object?>>? markStatus(String id, ObligationStatus status) {
     final next = _ledger.withStatus(id, status);
     if (identical(next, _ledger)) return null;
+    _mutatedIds.add(id);
     _ledger = next;
+    return _ledger.toPayload();
+  }
+
+  /// The reconciliation pass (issue #2384 AC1 + AC2), run at the ledger
+  /// boundaries — writer boot and the persist flushes. Two forward-only
+  /// transitions:
+  ///
+  /// - AC1: a `pending-wait` whose scheduled message provably FIRED (its
+  ///   record id carries a `delivered` receipt) auto-closes to [done] —
+  ///   the receipt is the engine-side evidence the wait resolved; the
+  ///   entry never needs an explicit `obligation_mark_done`.
+  /// - AC2: every OPEN entry older than [staleAfterDays] ages to [stale]
+  ///   (no renewal) — visible age-out, never a silent close: aging alone
+  ///   never reaches [done]/[superseded] (owner rules are user asks and
+  ///   only `obligation_mark_done` discharges them).
+  ///
+  /// Idempotent: re-running against the same state returns null (no
+  /// payload to append). Returns the payload when anything moved.
+  List<Map<String, Object?>>? reconcile({
+    required DateTime now,
+    Set<String> firedScheduledIds = const {},
+    int staleAfterDays = obligationStaleAfterDays,
+  }) {
+    var changed = false;
+    for (final entry in _ledger.entries) {
+      if (entry.kind == ObligationKind.pendingWait &&
+          firedScheduledIds.contains(entry.sourceRecordId) &&
+          (entry.status == ObligationStatus.open ||
+              entry.status == ObligationStatus.stale)) {
+        _ledger = _ledger.withStatus(entry.id, ObligationStatus.done);
+        // The move is a MEMORY write (issue #2384 AC3): until the snapshot
+        // lands, the merge must keep it against an older file snapshot.
+        _mutatedIds.add(entry.id);
+        changed = true;
+        continue;
+      }
+      final age = now.difference(entry.createdAt).inDays;
+      if (entry.status == ObligationStatus.open && age > staleAfterDays) {
+        _ledger = _ledger.withStatus(entry.id, ObligationStatus.stale);
+        _mutatedIds.add(entry.id);
+        changed = true;
+      }
+    }
+    return changed ? _ledger.toPayload() : null;
+  }
+
+  /// Merges the FILE's latest snapshot into memory (issue #2384 AC3):
+  /// the file wins for entries memory did NOT mutate since seed — an
+  /// external cleanup snapshot (statuses flipped, entries added) survives
+  /// the next writer append instead of being buried by a stale re-assert.
+  /// Entries memory mutated keep the memory status (a close the file has
+  /// not taken yet must not regress to open), and memory-only entries
+  /// (created here, or coalesced behind the persist window) stay.
+  ///
+  /// Returns the merged payload when memory changed (adopt or flip), null
+  /// when memory already agrees with the file.
+  List<Map<String, Object?>>? mergeFromFile(ObligationsLedger file) {
+    final memoryById = {for (final e in _ledger.entries) e.id: e};
+    final fileIds = <String>{};
+    var changed = false;
+    final merged = <ObligationEntry>[];
+    for (final fileEntry in file.entries) {
+      fileIds.add(fileEntry.id);
+      final memoryEntry = memoryById[fileEntry.id];
+      if (memoryEntry == null) {
+        merged.add(fileEntry); // a foreign/external entry — adopt it
+        changed = true;
+      } else if (_mutatedIds.contains(fileEntry.id) ||
+          memoryEntry.status == fileEntry.status) {
+        merged.add(memoryEntry);
+      } else {
+        merged.add(fileEntry); // file authority — external cleanup wins
+        changed = true;
+      }
+    }
+    for (final memoryEntry in _ledger.entries) {
+      if (!fileIds.contains(memoryEntry.id)) merged.add(memoryEntry);
+    }
+    if (!changed) return null;
+    _ledger = ObligationsLedger(merged);
     return _ledger.toPayload();
   }
 

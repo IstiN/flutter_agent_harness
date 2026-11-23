@@ -68,4 +68,30 @@ final class ScheduledReceiptLog {
     _tail = next;
     return next;
   }
+
+  /// The scheduled-message ids whose delivery LANDED — the `delivered`
+  /// events of the trail (issue #2384 AC1: the fired-timer evidence the
+  /// obligations ledger pass consumes to auto-close a pending-wait).
+  /// Tolerant: a missing/empty trail, an unreadable file, or a torn line
+  /// contributes nothing — the pass then falls back to age-out (AC2).
+  Future<Set<String>> deliveredIds() async {
+    final text = (await _env.readTextFile(_path())).valueOrNull;
+    if (text == null || text.isEmpty) return const {};
+    final ids = <String>{};
+    for (final line in text.split('\n')) {
+      if (line.isEmpty) continue;
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(line);
+      } on FormatException {
+        continue; // torn tail line — the trail is append-only JSONL
+      }
+      if (decoded is Map &&
+          decoded['event'] == 'delivered' &&
+          decoded['id'] is String) {
+        ids.add(decoded['id'] as String);
+      }
+    }
+    return ids;
+  }
 }
