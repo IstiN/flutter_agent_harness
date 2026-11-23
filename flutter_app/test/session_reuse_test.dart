@@ -108,6 +108,14 @@ void main() {
       );
     }
 
+    void useMergedRoots() {
+      manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        sessionRootsResolver: (_, _) => const ['/sessions', '/legacy/sessions'],
+      );
+    }
+
     test('empty store creates a new session', () async {
       final result = await boot();
 
@@ -271,6 +279,73 @@ void main() {
       expect(result.id, older.id);
       expect(manager2.activeId, older.id);
     });
+
+    test('boot picks a reusable session from the merged legacy root', () async {
+      final legacyRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/legacy/sessions',
+      );
+      final legacy = await _persistSession(
+        legacyRepo,
+        userText: 'pre-upgrade chat',
+      );
+      useMergedRoots();
+
+      final result = await boot();
+
+      expect(result.id, legacy.id);
+      expect(result.service.messages.single.content, 'pre-upgrade chat');
+    });
+
+    test(
+      'boot resolves the app-root last-active id in the legacy root',
+      () async {
+        final legacyRepo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: '/legacy/sessions',
+        );
+        final legacy = await _persistSession(
+          legacyRepo,
+          userText: 'the pre-upgrade work',
+        );
+        await _persistSession(repo, userText: 'a newer app-root chat');
+        (await env.writeFile(
+          '/sessions/${FlutterSessionManager.lastActiveFile}',
+          '{"version":1,"id":"${legacy.id}"}',
+        )).getOrThrow();
+        useMergedRoots();
+
+        final result = await boot();
+
+        expect(result.id, legacy.id);
+        expect(result.service.messages.single.content, 'the pre-upgrade work');
+      },
+    );
+
+    test('boot falls back to the legacy last-active marker', () async {
+      final legacyRepo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/legacy/sessions',
+      );
+      final older = await _persistSession(
+        legacyRepo,
+        userText: 'the conversation left active',
+      );
+      await _persistSession(legacyRepo, userText: 'a newer legacy chat');
+      (await env.writeFile(
+        '/legacy/sessions/${FlutterSessionManager.lastActiveFile}',
+        '{"version":1,"id":"${older.id}"}',
+      )).getOrThrow();
+      useMergedRoots();
+
+      final result = await boot();
+
+      expect(result.id, older.id);
+      expect(
+        result.service.messages.single.content,
+        'the conversation left active',
+      );
+    });
   });
 
   group('oversized session guards (macOS boot GC-storm regression)', () {
@@ -334,26 +409,23 @@ void main() {
       expect(booted.id, small.id);
     });
 
-    test(
-      'openSession opens an oversized session windowed (issue #381: no '
-      'refusal, the gate only guards the full-open fallback)',
-      () async {
-        await _persistSession(repo, userText: 'x' * 2048);
-        // The sidebar passes metadata straight from the repo listing, which
-        // carries the filesystem size.
-        final big = (await repo.list()).single;
-        final manager = limitedManager();
-        // The old freeze-era gate threw SessionTooLargeException here; the
-        // windowed loader opens the tail instead.
-        final managed = await manager.openSession(
-          big,
-          config: _config,
-          serviceFactory: () async => _fakeService(env),
-        );
-        expect(managed.id, big.id);
-        expect(manager.active?.id, big.id);
-      },
-    );
+    test('openSession opens an oversized session windowed (issue #381: no '
+        'refusal, the gate only guards the full-open fallback)', () async {
+      await _persistSession(repo, userText: 'x' * 2048);
+      // The sidebar passes metadata straight from the repo listing, which
+      // carries the filesystem size.
+      final big = (await repo.list()).single;
+      final manager = limitedManager();
+      // The old freeze-era gate threw SessionTooLargeException here; the
+      // windowed loader opens the tail instead.
+      final managed = await manager.openSession(
+        big,
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      );
+      expect(managed.id, big.id);
+      expect(manager.active?.id, big.id);
+    });
   });
 
   group('rekeyActiveSession (hosted session-switch adoption)', () {
