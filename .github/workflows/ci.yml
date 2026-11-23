@@ -1003,10 +1003,11 @@ jobs:
           # to a spawning test VM dies mid-handshake ("Failed to load …:
           # Connection closed before full header was received / Connection
           # reset by peer") — an arbitrary victim file, 6/6 occurrences on
-          # this leg family. The wrapper re-runs ONLY that dropped file once
-          # (gh-1026 rerun-only-failed discipline); real failures carry no
-          # ws-drop signature and stay loud. junit below still reads the
-          # attempt-1 main log — a healed rerun writes to …retry.json.
+          # this leg family. The wrapper re-runs ONLY the failed inventory
+          # (gh-1026 rerun-only-failed discipline), bounded ≤2 reruns with a
+          # drain backoff; real failures carry no ws-drop signature and stay
+          # loud. junit below still reads the attempt-1 main log — a healed
+          # rerun writes to …retry.json.rerunK.
           bash scripts/load_drop_retry.sh \
             "build/test-results/dart-shard-${{ matrix.shard }}.json" \
             "build/test-results/dart-shard-${{ matrix.shard }}.retry.json" \
@@ -1453,8 +1454,9 @@ jobs:
           mkdir -p build/test-results
           # Issue #2331: same loopback-ws loader-drop family as the core
           # shards (occ1 + occ5 hit THIS leg at --concurrency=4 — the cap
-          # alone does not kill the class). One-shot rerun of the dropped
-          # file only; see scripts/load_drop_retry.sh.
+          # alone does not kill the class). Rerun of the failed inventory
+          # only — bounded (≤2) with drain backoff; see
+          # scripts/load_drop_retry.sh.
           bash scripts/load_drop_retry.sh \
             "build/test-results/integration-shard-${{ matrix.shard }}.json" \
             "build/test-results/integration-shard-${{ matrix.shard }}.retry.json" \
