@@ -500,5 +500,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2381": [
+    {
+      "leg": "dev",
+      "at": "2026-11-23T17:14:50Z",
+      "prompt": 1858163,
+      "completion": 152019,
+      "total": 2010182,
+      "cacheRead": 37779584,
+      "requests": 252,
+      "source": "",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
