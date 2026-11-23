@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/services/aiin_web_auth.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -44,6 +45,26 @@ MockClient _mockBackend({int exchangeStatus = 200}) => MockClient(
     );
 
 void main() {
+  test('stock product retains the hosted AIIN callback', () {
+    expect(
+      aiinOAuthCallbackForProduct(FaProductConfig.stock),
+      'https://fa1.dev/oauth/aiin.html',
+    );
+  });
+
+  test('branded product uses its own registered AIIN callback', () {
+    final config = FaProductConfig(
+      productId: 'aiin',
+      displayName: 'AIIN Agent',
+      authEndpoint: Uri.parse('https://auth.aiin.by'),
+      oauthCallback: Uri.parse('https://www.aiin.by/agent/oauth/ain.html'),
+    );
+    expect(
+      aiinOAuthCallbackForProduct(config),
+      'https://www.aiin.by/agent/oauth/ain.html',
+    );
+  });
+
   test('web connect: popup gets the hosted /login URL, callback state must '
       'match ours, exchange registers the key', () async {
     final coordinator = AiinWebAuthCoordinator();

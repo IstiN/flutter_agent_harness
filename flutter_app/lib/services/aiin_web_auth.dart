@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 
 import 'package:fa/network/production_origins.dart';
+import 'package:fa/services/product_config_loader.dart';
 import 'package:fa/services/aiin_oauth_web_stub.dart'
     if (dart.library.html) 'package:fa/services/aiin_oauth_web_impl.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -14,6 +15,11 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// The hosted callback page handing the OAuth code back to the app
 /// (postMessage / BroadcastChannel / localStorage — see the page source).
 const aiinWebCallbackUrl = '$productionSiteOrigin/oauth/aiin.html';
+
+/// Branded hosts return the temporary code to their own registered callback;
+/// stock Fa retains the hosted callback for backward compatibility.
+String aiinOAuthCallbackForProduct(FaProductConfig config) =>
+    config.oauthCallback?.toString() ?? aiinWebCallbackUrl;
 
 /// One-click AIIN sign-in for the web build, mirroring the OpenRouter flow.
 /// The app opens the HOSTED AIIN sign-in page
@@ -38,8 +44,10 @@ final class AiinWebAuthCoordinator {
     this.timeout = const Duration(minutes: 5),
   });
 
-  /// The shared coordinator with the Fa defaults.
-  static final instance = AiinWebAuthCoordinator();
+  /// The shared coordinator with the injected product's OAuth callback.
+  static final instance = AiinWebAuthCoordinator(
+    callbackUrl: aiinOAuthCallbackForProduct(loadInjectedProductConfig()),
+  );
 
   /// The redirect URI the hosted page redirects back to (allowlisted on
   /// the AIIN service).

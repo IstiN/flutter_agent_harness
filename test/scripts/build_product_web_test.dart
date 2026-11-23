@@ -23,12 +23,13 @@ void main() {
     if (temp.existsSync()) temp.deleteSync(recursive: true);
   });
 
-  Future<String> buildFromRealIndex(String output) async {
+  Future<String> buildFromRealIndex(String output, {String? baseHref}) async {
     final realIndex = File('flutter_app/web/index.html').readAsStringSync();
     await buildProductWeb(
       profilePath: profile.path,
       assetsPath: assets.path,
       outputPath: output,
+      baseHref: baseHref,
       builder: (path) async {
         final shell = _fixtureShell(Directory(path));
         File('${shell.path}/index.html').writeAsStringSync(realIndex);
@@ -167,6 +168,31 @@ void main() {
     expect(primaryIcon!.group(0), contains('type="image/png"'));
     expect(primaryIcon.group(0), contains('href="favicon.png"'));
     expect(primaryIcon.group(0), isNot(contains('favicon.svg')));
+  });
+
+  test('branded build applies a validated subpath base href', () async {
+    final output = '${temp.path}/real-index-base-href';
+    final html = await buildFromRealIndex(output, baseHref: '/agent/');
+
+    expect(html, contains('<base href="/agent/">'));
+    expect(html, isNot(contains(r'$FLUTTER_BASE_HREF')));
+  });
+
+  test('invalid base href fails before Flutter or an output app', () async {
+    var called = false;
+    final output = '${temp.path}/invalid-base-href';
+    await expectLater(
+      buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: output,
+        baseHref: 'https://evil.example/',
+        builder: (path) async => called = true,
+      ),
+      throwsFormatException,
+    );
+    expect(called, isFalse);
+    expect(Directory(output).existsSync(), isFalse);
   });
 
   test('validate-only performs no build and writes no app', () async {
