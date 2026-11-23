@@ -33,6 +33,23 @@
 #     instead of a duplicate, auto-closed again once a sweep comes up
 #     clean (same convention as nightly.yml / daily_publish_report.sh).
 #
+# ── orphaned twin drafts are lifecycle-managed hygiene (gh-2372) ───────────
+# A MARKED pipeline draft whose tag ALREADY carries a PUBLISHED release is
+# a proven orphan twin of the same-run sibling view→create race (v1.0.760:
+# the build-extension draft won + was published, the build-macos-cli twin
+# rotted 43h and was swept with the misleading "a `gh release create` step
+# died" prose; v1.0.763's twin rotted while counted "fresh"). No run can
+# ever publish or attach into such a draft — uploads resolve the published
+# object by tag — and release_draft_twin_dedupe.sh now self-deletes the
+# loser at create time, so any twin the sweep still sees is a best-effort
+# leftover. The sweep reclaims these drafts IMMEDIATELY (fresh or stale)
+# as routine hygiene (gh-236 convention: visible in the summary, never a
+# stale-draft finding — a residual twin must not re-file the recurring
+# issue), and the clean-sweep auto-close names the reclaims. Ownership
+# proof stays required: an UNMARKED author-bot draft on a published tag
+# keeps the bot-bucket finding (no marker → no ownership → existing
+# behavior).
+#
 # ── artefact-cache drafts have their own lifecycle (gh-236) ────────────────
 # The machine loop (dmtools-agents factory: timerAutoCommitAndSave.js →
 # releaseArtefacts.uploadRawFile → github_get_or_create_draft_release, tag
@@ -136,8 +153,10 @@ gh label create "$label" --repo "$repo" --color B60205 \
 
 # ── inventory ──────────────────────────────────────────────────────────────
 # gh api --paginate emits one JSON array per page; the jq stream filter
-# flattens them all. Bucketing happens in jq so the whole rule is
-# reviewable in one place:
+# flattens them all. The roster is fetched ONCE and read twice: the draft
+# rows below, plus (gh-2372) the set of tags that already carry a PUBLISHED
+# release — the twin-orphan criterion. Bucketing happens in jq so the whole
+# rule is reviewable in one place:
 #   artifacts (machine account + ai-(gh|pr)-<n> tag — gh-236)
 #                    -> lifecycle-managed: reclaim at cycle end / 24h
 #                    backstop / keep in flight; NEVER a sweep finding
@@ -149,7 +168,13 @@ gh label create "$label" --repo "$repo" --color B60205 \
 #                    reclaim: a marked draft whose owner run completed and
 #                    whose tag's train failed with release-provenance
 #                    SKIPPED (publish point unreachable) is deleted NOW
-drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max_age" --arg assignee "$assignee" '
+roster=$(gh api --paginate "repos/$repo/releases")
+# gh-2372: the tags that already carry a PUBLISHED release. Multi-page
+# safe: the filter runs per page-array, so the joins are re-joined in bash.
+published_tags=$(printf '%s' "$roster" \
+  | jq -r '[.[] | select(.draft == false) | (.tag_name // "")] | join(" ")' \
+  | tr '\n' ' ')
+drafts=$(printf '%s' "$roster" | jq -r --argjson maxage "$max_age" --arg assignee "$assignee" '
   [ .[] | select(.draft == true)
     | { stale: ((now - (.created_at | fromdateiso8601)) > $maxage),
         bucket: (
@@ -176,12 +201,18 @@ drafts=$(gh api --paginate "repos/$repo/releases" | jq -r --argjson maxage "$max
         author: (.author.login // "unknown"),
         # Exact creating run parsed from the ownership marker ("" for
         # non-marker drafts) — the creating run executed on main, so a
-        # tag-ref run lookup cannot find it (gh-2008). The array wrapper
-        # keeps exactly one value: a bare capture(...)? on a non-matching
-        # body yields an EMPTY stream, and an empty field would drop the
-        # whole draft row from the object stream.
+        # tag-ref run lookup cannot find it (gh-2008). The capture
+        # requires the WELL-FORMED run/<id>/job/<name> shape — the same
+        # class the bucket rule above, release_draft_guard.sh and
+        # release_draft_twin_dedupe.sh match: a body that merely MENTIONS
+        # `release-draft-owner: run/<digits>/` without the /job/ segment
+        # is prose, not ownership (E1) — its run stays "" so the twin
+        # pre-check and the early-reclaim gates never act on it. The
+        # array wrapper keeps exactly one value: a bare capture(...)? on a
+        # non-matching body yields an EMPTY stream, and an empty field
+        # would drop the whole draft row from the object stream.
         run: ([ (.body // "")
-                | capture("release-draft-owner: run/(?<run>[0-9]+)/")?
+                | capture("release-draft-owner: run/(?<run>[0-9]+)/job/")?
                 | .run ]
               | .[0] // "") } ]
   | sort_by(.created)[]
@@ -216,9 +247,35 @@ art_swept_tags=""
 art_swept_count=0
 art_kept_tags=""
 art_kept_count=0
+# gh-2372: orphaned twin drafts (marked draft, tag already published) —
+# lifecycle-managed hygiene like the artefact caches above: reclaimed at
+# ANY age, visible in the summary, never a stale-draft finding.
+twins=""
+twin_tags=""
+twin_count=0
 
 while IFS=$'\t' read -r bucket tag id created author stale marker_run; do
   [ -n "$bucket" ] || continue
+  # ── gh-2372 twin pre-check (before the bucket dispatch) ────────────────
+  # A MARKED draft whose tag already carries a PUBLISHED release is a
+  # proven orphan twin of the sibling create race: nothing can ever
+  # publish or attach into it (uploads resolve the published object by
+  # tag), and release_draft_twin_dedupe.sh now self-deletes the loser at
+  # create time — anything the sweep still sees is a best-effort
+  # leftover. Reclaimed at ANY age as routine hygiene, never a finding.
+  # The artifacts bucket is excluded (lifecycle-managed above); unmarked
+  # drafts have no ownership proof and stay in their buckets (E1).
+  twin_published=false
+  case " $published_tags " in *" $tag "*) twin_published=true ;; esac
+  if [ "$twin_published" = "true" ] && [ -n "$marker_run" ] \
+    && [ "$bucket" != "artifacts" ] && [ "$tag" != "(untagged)" ]; then
+    gh api -X DELETE "repos/$repo/releases/$id" >/dev/null
+    twin_count=$((twin_count + 1))
+    twin_tags="$twin_tags $tag"
+    run_url="${GITHUB_SERVER_URL:-https://github.com}/$repo/actions/runs/$marker_run"
+    twins="$twins- \`$tag\` — created $created by @$author; creating run: $run_url\n  - reclaimed as an orphaned twin draft: the tag already carries a PUBLISHED release, so no run could ever publish or attach into this one (the same-run sibling create race won — gh-2372; self-deduped at create by release_draft_twin_dedupe.sh, this sweep is the backstop). Routine hygiene (gh-236 convention) — not a stale-draft finding.\n"
+    continue
+  fi
   case "$bucket" in
     artifacts)
       # gh-236: the machine loop's per-ticket artefact-cache draft
@@ -407,6 +464,13 @@ if [ "$stale_count" -gt 0 ]; then
       printf '%b' "$art_reclaimed"
       printf '%b' "$art_swept"
     fi
+    # gh-2372: orphaned twin reclaims ride the filed issue for visibility —
+    # own section, hygiene prose, never part of the finding counters.
+    if [ "$twin_count" -gt 0 ]; then
+      echo
+      echo "**Orphaned twin drafts (gh-2372 — lifecycle-managed hygiene, not release failures):** $twin_count reclaimed"
+      printf '%b' "$twins"
+    fi
     echo
     echo "**Fresh drafts (<$((max_age / 3600))h):** $fresh_count — untouched (an in-flight run may own them)"
     if [ "$art_kept_count" -gt 0 ]; then
@@ -454,8 +518,15 @@ else
   existing=$(find_open_issue)
   issue_action="none needed"
   if [ -n "$existing" ]; then
+    # gh-2372: a twin-only sweep is clean (hygiene reclaims are not
+    # findings) but the auto-close still names them — the reclaim must
+    # never be invisible.
+    close_note=""
+    if [ "$twin_count" -gt 0 ]; then
+      close_note=" Reclaimed $twin_count orphaned twin draft(s) (gh-2372) — routine hygiene, not a finding."
+    fi
     gh issue close "$existing" --repo "$repo" \
-      --comment "✅ sweep found nothing stale — auto-closing." >/dev/null
+      --comment "✅ sweep found nothing stale — auto-closing.$close_note" >/dev/null
     issue_action="auto-closed #$existing (clean sweep)"
   fi
 fi
@@ -464,7 +535,7 @@ fi
 {
   echo "### Release-draft sweeper"
   echo
-  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • reclaimed early: **$reclaimed_count** • artefact-cache (gh-236): **$art_reclaimed_count** reclaimed at cycle end, **$art_swept_count** swept, **$art_kept_count** kept • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
+  echo "Deleted **$deleted_count** stale pipeline-created draft(s) • reclaimed early: **$reclaimed_count** • twin reclaims (gh-2372): **$twin_count** • artefact-cache (gh-236): **$art_reclaimed_count** reclaimed at cycle end, **$art_swept_count** swept, **$art_kept_count** kept • failed tag trains named: **$failed_trains** • kept human drafts: **$(printf '%s' "$humans" | grep -c . || true)** • fresh (<$((max_age / 3600))h): **$fresh_count** • issue lifecycle: $issue_action"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
-echo "sweeper: deleted=${deleted_tags# } reclaimed-early=${reclaimed_tags# } human-kept=${human_tags# } fresh=$fresh_count art-reclaimed=${art_reclaimed_tags# } art-swept=${art_swept_tags# } art-kept=$art_kept_count issue=$issue_action"
+echo "sweeper: deleted=${deleted_tags# } reclaimed-early=${reclaimed_tags# } twins=${twin_tags# } human-kept=${human_tags# } fresh=$fresh_count art-reclaimed=${art_reclaimed_tags# } art-swept=${art_swept_tags# } art-kept=$art_kept_count issue=$issue_action"
