@@ -444,6 +444,17 @@ const fileOnlyConfigKeys = <String, String>{
       'Per-provider proxy bindings (issue #1921) are network '
       'infrastructure (proxy URLs with env-secret references), '
       'provisioned per environment in the file.',
+
+  // Wake-gating knobs (issue #2226): the legacy chatter cap (default
+  // OFF), the autonomous-chain token budget, and the loop-detection
+  // thresholds — operational anti-storm policy tuned in the file; both
+  // hosts READ the section and only SHOW pause digests (never a settings
+  // UI write).
+  'messaging':
+      'Wake-gating knobs (issue #2226) — the legacy inbox-wake chatter '
+      'cap (default OFF), the autonomous agent↔agent chain token budget, '
+      'and the loop-detection thresholds; operational policy tuned in '
+      'the file, read by both hosts at boot.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,
