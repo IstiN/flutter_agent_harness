@@ -77,6 +77,8 @@ const _coverage = <String, String>{
   'lib/ui/widgets/subagent_mark.dart': 'test/goldens/widgets_golden_test.dart',
   'lib/ui/widgets/media_player.dart': 'test/goldens/chat_golden_test.dart',
   'lib/ui/widgets/fa_mark.dart': 'test/goldens/chat_golden_test.dart',
+  'lib/ui/widgets/product_brand.dart':
+      'test/goldens/onboarding_golden_test.dart',
   'lib/ui/widgets/model_mark.dart': 'test/goldens/widgets_golden_test.dart',
   'lib/ui/widgets/quick_model_chip.dart':
       'test/goldens/chat_header_widths_golden_test.dart',

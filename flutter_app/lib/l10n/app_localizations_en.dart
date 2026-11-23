@@ -750,6 +750,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesCloseTooltip => 'Close files';
 
   @override
+  String get driveStatusLocalOnly => 'Local only';
+
+  @override
+  String get driveStatusSyncing => 'Syncing';
+
+  @override
+  String get driveStatusSynced => 'Synced';
+
+  @override
+  String get driveStatusConflict => 'Conflict — choose a version';
+
+  @override
+  String get driveStatusPlanInactive => 'Drive plan inactive';
+
+  @override
+  String get driveStatusQuotaExceeded => 'Drive quota exceeded';
+
+  @override
+  String get driveStatusReauthRequired => 'Drive sign-in required';
+
+  @override
+  String get driveStatusPermanentError => 'Drive sync error';
+
+  @override
+  String get driveConflictUseRemote => 'Use remote';
+
+  @override
+  String get driveConflictKeepLocal => 'Keep local';
+
+  @override
   String get filesEmptyFileName => '(empty file name)';
 
   @override

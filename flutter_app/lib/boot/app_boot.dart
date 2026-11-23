@@ -43,6 +43,7 @@ import 'package:fa/services/settings_env.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/theme_packs.dart';
 import 'package:fa/services/web/sandbox_url_strategy.dart';
 import 'package:fa/services/office/office_boot.dart';
 import 'package:fa/services/office/office_fetch_bridge.dart';
@@ -75,6 +76,7 @@ final class BootStores {
     required this.networkMode,
     required this.networkSessions,
     required this.quotas,
+    this.productConfig = FaProductConfig.stock,
   });
 
   /// The shared execution env (also on [BootStores] so the routes stage
@@ -118,14 +120,17 @@ final class BootStores {
   final KeyWallet networkWallet;
 
   /// The local ↔ network mode navigation state machine (issue #955).
-  final NetworkModeController networkMode;
+  final NetworkModeController? networkMode;
 
   /// The fa_network session owner (join/resume/leave, issue #955).
-  final NetworkSessionManager networkSessions;
+  final NetworkSessionManager? networkSessions;
 
   /// The provider quota view (issue #823): meters in the providers list
   /// and the chat header's remaining badge.
   final QuotaStore quotas;
+
+  /// Immutable host product identity; stock by default on every existing host.
+  final FaProductConfig productConfig;
 }
 
 /// The process-wide boot watchdog (gh-1507): one instance, installed once
@@ -140,6 +145,8 @@ final class FaAppBoot {
   const FaAppBoot({
     required this.routes,
     Future<ExecutionEnv> Function()? createEnv,
+    this.productConfig = FaProductConfig.stock,
+    this.hostThemePacks = const [],
   }) : createEnv = createEnv ?? createPlatformEnv;
 
   /// The routes stage: mounts the app UI (`runApp`) and attaches the
@@ -149,6 +156,9 @@ final class FaAppBoot {
 
   /// Overridable for tests; production resolves the real platform env.
   final Future<ExecutionEnv> Function() createEnv;
+
+  final FaProductConfig productConfig;
+  final Iterable<InstalledThemePack> hostThemePacks;
 
   /// Runs the boot stages in the historical `main()` order:
   /// window → services → storage → telemetry → routes.
@@ -194,7 +204,11 @@ final class FaAppBoot {
     // From here the in-app log also persists to logs/app.log in the sandbox.
     AppLog.attach(env);
     BootSteps.mark('env');
-    final stores = await loadBootStores(env);
+    final stores = await loadBootStores(
+      env,
+      productConfig: productConfig,
+      hostThemePacks: hostThemePacks,
+    );
     BootSteps.mark('storage');
     final analytics = await bootTelemetry();
     BootSteps.mark('telemetry');
@@ -247,7 +261,11 @@ Future<void> bootServices() async {
 /// The storage stage: every persisted store the app boots with, loaded over
 /// the (injected) platform env. Unit tests pass a fake [env] — no plugin
 /// channels involved.
-Future<BootStores> loadBootStores(ExecutionEnv env) async {
+Future<BootStores> loadBootStores(
+  ExecutionEnv env, {
+  FaProductConfig productConfig = FaProductConfig.stock,
+  Iterable<InstalledThemePack> hostThemePacks = const [],
+}) async {
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
   const keychain = KeychainStore();
@@ -274,7 +292,12 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   final onboardingStore = await OnboardingStore.load(env);
   BootSteps.mark('storage:onboarding');
   BootSteps.begin('storage:themePacks');
-  final themePacks = await ThemePackStore.load(env);
+  final themePacks = await _configureBootTheme(
+    env,
+    themeController,
+    productConfig,
+    hostThemePacks,
+  );
   BootSteps.mark('storage:themePacks');
   final skillsAccessStore = SkillsAccessStore(env);
   BootSteps.begin('storage:mediaModels');
@@ -303,20 +326,32 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   final networkWallet = await _loadNetworkWallet(env);
   BootSteps.mark('storage:networkWallet');
   BootSteps.begin('storage:networkMode');
-  final networkMode = NetworkModeController(await NetworkModeStore.load(env));
+  NetworkModeController? networkMode;
+  NetworkSessionManager? networkSessions;
+  if (productConfig.isStock ||
+      productConfig.featureFlags.contains('faNetwork')) {
+    if (!productConfig.isStock &&
+        (productConfig.apiEndpoint == null ||
+            productConfig.authEndpoint == null)) {
+      throw const FormatException(
+        'faNetwork requires product authEndpoint and apiEndpoint',
+      );
+    }
+    networkMode = NetworkModeController(await NetworkModeStore.load(env));
+    networkSessions = NetworkSessionManager(
+      baseUrl: productConfig.apiEndpoint ?? Uri.parse(faNetworkBaseUrl),
+      authBaseUrl: productConfig.authEndpoint ?? Uri.parse(faAuthBaseUrl),
+      wallet: networkWallet,
+      httpClient: createPlatformHttpClient(),
+      pendingStore: FilePendingOAuthStore(env),
+    );
+    // A mobile browser handoff can relaunch the process after the dialog and
+    // its in-flight Future are gone. Resume that callback BEFORE the ordinary
+    // wallet restore; a fresh process has no account to restore otherwise.
+    // Both paths remain fire-and-forget — boot never blocks on the network.
+    unawaited(_restoreNetworkAccountAtBoot(networkSessions));
+  }
   BootSteps.mark('storage:networkMode');
-  final networkSessions = NetworkSessionManager(
-    baseUrl: Uri.parse(faNetworkBaseUrl),
-    authBaseUrl: Uri.parse(faAuthBaseUrl),
-    wallet: networkWallet,
-    httpClient: createPlatformHttpClient(),
-    pendingStore: FilePendingOAuthStore(env),
-  );
-  // A mobile browser handoff can relaunch the process after the dialog and
-  // its in-flight Future are gone. Resume that callback BEFORE the ordinary
-  // wallet restore; a fresh process has no account to restore otherwise.
-  // Both paths remain fire-and-forget — boot never blocks on the network.
-  unawaited(_restoreNetworkAccountAtBoot(networkSessions));
   // Provider quota (issue #823): the shared store reads keys through the
   // persisted registry; the changes stream drives the app surfaces.
   QuotaStore.instance.attachRegistry(registry);
@@ -337,6 +372,7 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
     networkMode: networkMode,
     networkSessions: networkSessions,
     quotas: QuotaStore.instance,
+    productConfig: productConfig,
   );
 }
 
@@ -381,6 +417,42 @@ Future<KeyWallet> _loadNetworkWallet(ExecutionEnv env) async {
     debugPrint('[fah] network wallet file load failed: $e');
     return KeyWallet.load(MemoryWalletBackend());
   }
+}
+
+Future<ThemePackStore> _configureBootTheme(
+  ExecutionEnv env,
+  ThemeController themeController,
+  FaProductConfig productConfig,
+  Iterable<InstalledThemePack> hostThemePacks,
+) async {
+  final themePacks = await ThemePackStore.load(env);
+  for (final pack in hostThemePacks) {
+    themePacks.registerHostPack(pack);
+  }
+  final inlinePack = productConfig.themePack;
+  if (inlinePack != null) {
+    final validation = validateThemePack(inlinePack, const {});
+    final spec = validation.spec;
+    if (spec == null || spec.id != productConfig.themePackId) {
+      throw FormatException(
+        'invalid host theme pack: ${validation.reasons.join(', ')}',
+      );
+    }
+    themePacks.registerHostPack(
+      InstalledThemePack(spec: spec, wallpaperBytes: null),
+    );
+  }
+  final selectedPack = themePacks.byId(productConfig.themePackId);
+  if (productConfig.themePackId != null && selectedPack == null) {
+    throw const FormatException('declared host themePackId was not provided');
+  }
+  if (selectedPack != null) {
+    await themeController.setPack(
+      selectedPack.id,
+      hasWallpaper: selectedPack.wallpaperBytes != null,
+    );
+  }
+  return themePacks;
 }
 
 /// The telemetry stage: analytics (strictly optional), the fa_ui chat-event

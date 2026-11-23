@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
+import 'package:fa/services/cloud/drive_sync_controller.dart';
 import 'package:fa/ui/apps/presentation_panel_card.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -22,6 +23,7 @@ final class FilesAppPresentation {
     this.onProjectMountChanged,
     this.recentFolders,
     this.onOpenRecentFolder,
+    this.driveSyncController,
   });
 
   final ExecutionEnv env;
@@ -47,6 +49,8 @@ final class FilesAppPresentation {
 
   /// Opens a recent folder from its chip (the host swaps the Files root).
   final void Function(String path)? onOpenRecentFolder;
+
+  final DriveSyncController? driveSyncController;
 }
 
 /// Files presented like an app: a floating glass card (8pt margins,
@@ -111,6 +115,7 @@ final class FilesAppPanel extends StatelessWidget {
         onProjectMountChanged: presentation.onProjectMountChanged,
         recentFolders: presentation.recentFolders,
         onOpenRecentFolder: presentation.onOpenRecentFolder,
+        driveSyncController: presentation.driveSyncController,
         showHeader: true,
         surfaceBorder: false,
         onClose: close,

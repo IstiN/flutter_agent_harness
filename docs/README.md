@@ -34,6 +34,7 @@ docs must be listed in this index (pinned by
 - [docs/goals/](goals/) — goal cards (codex_gpt_auth, copilot_provider, widget-publishing-github) moved from the root `goal/` (gh-2185 AC5)
 - [docs/knowledgebase/](knowledgebase/) — dated issue-implementation notes moved from the root `knowledgebase/` (gh-2185 AC5)
 
+- [docs/product-cloud.md](product-cloud.md) — external branded profiles, provider-neutral drive/session sync, account fences and provider readiness (gh-2364)
 - [docs/compaction.md](compaction.md) — compaction policy (AutoCompactor, branch summaries)
 - [docs/memory-churn.md](memory-churn.md) — long-term memory policy: durable facts, supersede, churn pitfalls
 - [docs/dap.md](dap.md) — DAP hub (debug adapters, fa_network bridging caveats §14)

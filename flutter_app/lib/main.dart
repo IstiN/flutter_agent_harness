@@ -24,6 +24,7 @@ import 'package:fa/services/asr_service.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -34,6 +35,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/product_config_loader.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -84,7 +86,10 @@ Future<RelayAgentService?> createRelayServiceIfHosted() async {
   return relay;
 }
 
-Future<void> main() => const FaAppBoot(routes: bootAppRoutes).run();
+Future<void> main() => FaAppBoot(
+  productConfig: loadInjectedProductConfig(),
+  routes: bootAppRoutes,
+).run();
 
 /// The routes stage: mounts [MyApp] and attaches the OpenRouter OAuth
 /// listeners. Lives beside [MyApp] — the boot module (issue #483) stays
@@ -110,6 +115,7 @@ Future<void> bootAppRoutes(
       imagePreviewStore: stores.imagePreviews,
       networkMode: stores.networkMode,
       networkSessions: stores.networkSessions,
+      productConfig: stores.productConfig,
       analytics: analytics,
     ),
   );
@@ -174,6 +180,7 @@ class MyApp extends StatelessWidget {
     this.analytics,
     this.networkMode,
     this.networkSessions,
+    this.productConfig = FaProductConfig.stock,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -247,6 +254,9 @@ class MyApp extends StatelessWidget {
   /// [networkMode].
   final NetworkSessionManager? networkSessions;
 
+  /// Host product identity; existing tests/hosts default to stock Fa.
+  final FaProductConfig productConfig;
+
   /// Fallback for [themeController] when none is injected (tests): a single
   /// shared in-memory controller so every [MyApp] build sees the same one.
   static final ThemeController _fallbackThemeController =
@@ -271,7 +281,10 @@ class MyApp extends StatelessWidget {
       builder: (context, _) {
         // The active theme pack (null → stock look). Stale ids (pack
         // removed elsewhere) resolve to the stock FaUiTheme, never a crash.
-        final uiTheme = packs?.byId(theme.packId)?.spec.toFaUiTheme();
+        final uiTheme = packs
+            ?.byId(productConfig.themePackId ?? theme.packId)
+            ?.spec
+            .toFaUiTheme();
         return FaUiThemeProvider(
           data: uiTheme ?? const FaUiTheme(),
           child: _materialApp(theme, uiTheme),
@@ -282,7 +295,7 @@ class MyApp extends StatelessWidget {
 
   Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
     return MaterialApp(
-      title: 'Fa',
+      title: productConfig.displayName,
       theme: buildFaTheme(
         direction: theme.visualDirection,
         brightness: Brightness.light,
@@ -327,6 +340,7 @@ class MyApp extends StatelessWidget {
         transformersJsEngine: transformersJsEngine,
         networkMode: networkMode,
         networkSessions: networkSessions,
+        productConfig: productConfig,
       ),
     );
   }
@@ -492,7 +506,10 @@ class BootstrapScreen extends StatefulWidget {
     this.transformersJsEngine,
     this.networkMode,
     this.networkSessions,
+    this.productConfig = FaProductConfig.stock,
   });
+
+  final FaProductConfig productConfig;
 
   /// The shared execution env handed to [AgentService.create].
   final ExecutionEnv? env;
@@ -818,6 +835,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       transformersJsEngine: widget.transformersJsEngine,
       networkMode: widget.networkMode,
       networkSessions: widget.networkSessions,
+      productConfig: widget.productConfig,
     );
   }
 
@@ -828,6 +846,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       lastConnectionStore: widget.lastConnectionStore,
       networkMode: widget.networkMode,
       networkSessions: widget.networkSessions,
+      productConfig: widget.productConfig,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
     );
   }
@@ -1076,7 +1095,10 @@ class SetupScreen extends StatelessWidget {
     this.isWeb,
     this.networkMode,
     this.networkSessions,
+    this.productConfig = FaProductConfig.stock,
   });
+
+  final FaProductConfig productConfig;
 
   /// The shared execution env handed to [AgentService.create].
   final ExecutionEnv? env;
@@ -1196,7 +1218,25 @@ class SetupScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(context.l10n.setupAppBarTitle)),
+      appBar: AppBar(
+        title: productConfig.isStock
+            ? Text(context.l10n.setupAppBarTitle)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ProductBrandMark(productConfig: productConfig, size: 24),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      context.l10n.setupAppBarTitle.replaceAll(
+                        'Fa',
+                        productConfig.displayName,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),

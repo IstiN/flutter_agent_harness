@@ -1430,6 +1430,66 @@ abstract class AppLocalizations {
   /// **'Close files'**
   String get filesCloseTooltip;
 
+  /// No description provided for @driveStatusLocalOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Local only'**
+  String get driveStatusLocalOnly;
+
+  /// No description provided for @driveStatusSyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing'**
+  String get driveStatusSyncing;
+
+  /// No description provided for @driveStatusSynced.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced'**
+  String get driveStatusSynced;
+
+  /// No description provided for @driveStatusConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Conflict — choose a version'**
+  String get driveStatusConflict;
+
+  /// No description provided for @driveStatusPlanInactive.
+  ///
+  /// In en, this message translates to:
+  /// **'Drive plan inactive'**
+  String get driveStatusPlanInactive;
+
+  /// No description provided for @driveStatusQuotaExceeded.
+  ///
+  /// In en, this message translates to:
+  /// **'Drive quota exceeded'**
+  String get driveStatusQuotaExceeded;
+
+  /// No description provided for @driveStatusReauthRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Drive sign-in required'**
+  String get driveStatusReauthRequired;
+
+  /// No description provided for @driveStatusPermanentError.
+  ///
+  /// In en, this message translates to:
+  /// **'Drive sync error'**
+  String get driveStatusPermanentError;
+
+  /// No description provided for @driveConflictUseRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Use remote'**
+  String get driveConflictUseRemote;
+
+  /// No description provided for @driveConflictKeepLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep local'**
+  String get driveConflictKeepLocal;
+
   /// No description provided for @filesEmptyFileName.
   ///
   /// In en, this message translates to:
