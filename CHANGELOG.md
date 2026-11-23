@@ -13,6 +13,26 @@ block a release again.
 
 ## Unreleased
 
+- feat(messaging): issue #2226 — the blunt inbox-wake streak cap is
+  LEGACY and OFF by default (`messaging.wakeChatterCap: 0`; a positive
+  value re-enables the old 10-wake behavior verbatim), replaced by smart
+  loop detection: `ChainLoopGuard` fuses masked-text shingle similarity
+  with fresh-state signals (new ids/commits/numbers each round) so the
+  money-project shape — templated-but-productive exchanges — never
+  pauses, while a genuinely looping chain (near-identical + no new state
+  across `messaging.loopDetection.stuckRounds`) does. An autonomous
+  agent↔agent chain token budget (`messaging.chainBudgetTokens`,
+  default 400000, persisted per messages root so a restart never grants
+  a fresh budget) bounds runaway spend. Every pause (loop | budget |
+  legacy cap) renders a digest card on BOTH hosts naming the evidence
+  and the queued-mail count, with `/chain continue` (reset the budget,
+  override the verdict) and `/chain stop` (drop the pending agent-kind
+  mail with a tombstone receipt; user-kind mail always stays); receipts
+  distinguish `wake_refused` (legacy cap) from `chain_paused`
+  (loop | budget). Scheduled self-reminders stay exempt; delivery
+  semantics (at-least-once, dedup, ordering) untouched — the pause gates
+  WAKES only.
+
 - gh-2364: external branded web profiles and namespace-safe boot, durable
   provider-neutral drive and append-only JSONL-session sync with explicit
   conflicts/account fences, browser CAS stores and external-provider contracts.

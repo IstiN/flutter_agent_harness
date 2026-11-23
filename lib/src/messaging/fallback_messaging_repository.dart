@@ -40,7 +40,10 @@ abstract interface class RoutingMessagingRepository {
 /// fallback (file) fabric. See the library docs for the routing rules.
 // ignore_for_file: prefer_initializing_formals
 final class FallbackMessagingRepository
-    implements MessagingRepository, RoutingMessagingRepository {
+    implements
+        MessagingRepository,
+        RoutingMessagingRepository,
+        SelectiveMessagingRepository {
   FallbackMessagingRepository({
     required MessagingRepository primary,
     required MessagingRepository fallback,
@@ -244,6 +247,30 @@ final class FallbackMessagingRepository
     final fileMessages = await _fallback.drain(agentId);
     if (!_isPrimaryMailbox(agentId)) return fileMessages;
     final hubMessages = await _safeInbox(agentId, consume: true);
+    return _merge(hubMessages, fileMessages);
+  }
+
+  @override
+  Future<List<AgentMessage>> drainById(
+    String agentId,
+    Set<String> messageIds,
+  ) async {
+    final includePrimary = _isPrimaryMailbox(agentId);
+    final fallback = _fallback;
+    final primary = _primary;
+    if (fallback is! SelectiveMessagingRepository ||
+        (includePrimary && primary is! SelectiveMessagingRepository)) {
+      throw StateError('the messaging fabric cannot drain pending mail by id');
+    }
+    if (messageIds.isEmpty) return const [];
+    await _flushQueued();
+    final fileMessages = await fallback.drainById(agentId, messageIds);
+    if (!includePrimary) return fileMessages;
+    // Unlike the passive steering drain, an explicit destructive command
+    // must not report success when one side failed. User copies are already
+    // queued, so propagating this failure is crash-safe and retryable.
+    final hubMessages = await (primary as SelectiveMessagingRepository)
+        .drainById(agentId, messageIds);
     return _merge(hubMessages, fileMessages);
   }
 

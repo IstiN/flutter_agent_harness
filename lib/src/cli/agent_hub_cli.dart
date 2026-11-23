@@ -631,6 +631,128 @@ extension AgentCliHubDriver on AgentCli {
   }
 
   // ----------------------------------------------------------------------
+  // /chain (issue #2226)
+  // ----------------------------------------------------------------------
+
+  /// `/chain` — the autonomous agent↔agent chain gate: bare prints the
+  /// status (paused? spend? pending count); `continue` resets the budget
+  /// and overrides the pause verdict; `stop` drops the pending agent-kind
+  /// fabric mail with a tombstone receipt (user-kind mail stays queued —
+  /// it is the user talking, never chain chatter). Pure dispatch; the
+  /// effects live in [_printChainStatus], [_continueChain] and
+  /// [_stopChainAndDropMail].
+  Future<void> handleChainCommand(String rest) async {
+    switch (rest.trim()) {
+      case '':
+        await _printChainStatus();
+      case 'continue':
+        await _continueChain();
+      case 'stop':
+        await _stopChainAndDropMail();
+      default:
+        io.writeln('usage: /chain [continue|stop]');
+    }
+  }
+
+  /// The bare `/chain` status: gate state, budget spend and pending mail
+  /// count; when paused, the verdict evidence and the escapes.
+  Future<void> _printChainStatus() async {
+    final guard = _inboxWakePolicy.chainGuard;
+    final pending = await _subagentManager.pendingInboxCount(
+      _subagentManager.selfId,
+    );
+    final spend = guard == null
+        ? null
+        : '${guard.tokensSpent}'
+              '${guard.budgetTokens > 0 ? '/${guard.budgetTokens}' : ''} tok';
+    io.writeln(
+      'chain: ${guard == null
+          ? 'unguarded'
+          : guard.paused
+          ? 'PAUSED'
+          : 'running'}'
+      '${spend == null ? '' : ' · spend $spend'} · pending mail $pending',
+    );
+    final pause = guard?.pause;
+    if (pause != null) {
+      io.writeln(_style.dim('evidence: ${pause.evidence}'));
+      io.writeln(
+        _style.dim('/chain continue - resume · /chain stop - drop mail'),
+      );
+    }
+  }
+
+  /// `/chain continue`: resets the budget and overrides the pause verdict.
+  Future<void> _continueChain() async {
+    _inboxWakePolicy.chainGuard?.continueChain();
+    await _persistChainState();
+    io.writeln(
+      'chain resumed — the budget re-armed and the verdict is '
+      'overridden; queued mail wakes on the next tick',
+    );
+  }
+
+  /// `/chain stop`: drops the pending agent-kind fabric mail with a
+  /// tombstone receipt; user-kind mail stays queued (it is the user
+  /// talking, never chain chatter).
+  Future<void> _stopChainAndDropMail() async {
+    final guard = _inboxWakePolicy.chainGuard;
+    final fabric = _subagentManager.messaging;
+    final mailbox = _subagentManager.mailboxOf(_subagentManager.selfId);
+    final pending = await fabric?.peek(mailbox) ?? const <AgentMessage>[];
+    var drained = const <AgentMessage>[];
+    if (fabric != null && pending.isNotEmpty) {
+      if (fabric is! SelectiveMessagingRepository) {
+        io.writeln(
+          'chain stop refused: this messaging fabric cannot preserve '
+          'user mail atomically; pending mail was left untouched',
+        );
+        return;
+      }
+      // Queue fresh-id user copies BEFORE consuming the snapshot. A
+      // crash now leaves at least one copy pending (the fabric's normal
+      // at-least-once behavior) instead of a drain→send data-loss gap.
+      for (final message in pending) {
+        if (message.kind == AgentMessageKind.user) {
+          await fabric.send(
+            AgentMessage(
+              id: newMessageId(),
+              fromId: message.fromId,
+              fromName: message.fromName,
+              toId: message.toId,
+              text: message.text,
+              kind: message.kind,
+              hops: message.hops,
+              sentAt: message.sentAt,
+            ),
+          );
+        }
+      }
+      // Consume ONLY the original snapshot. The replacement copies and
+      // any mail that arrived after peek remain pending, in order.
+      drained = await fabric.drainById(mailbox, {
+        for (final message in pending) message.id,
+      });
+    }
+    final dropped = [
+      for (final message in drained)
+        if (message.kind != AgentMessageKind.user) message,
+    ];
+    guard?.stopChain();
+    await _persistChainState();
+    await _scheduledReceipts.append('chain_stopped', {
+      'reason': 'user',
+      'dropped': dropped.length,
+      'ids': [for (final message in dropped) message.id],
+    });
+    io.writeln(
+      'chain stopped — ${dropped.length} pending message(s) dropped '
+      '(tombstone in receipts.jsonl)'
+      '${drained.length == dropped.length ? '' : '; user mail kept'}',
+    );
+  }
+
+  // ----------------------------------------------------------------------
   // /mail and /reply (E2)
   // ----------------------------------------------------------------------
 
