@@ -132,7 +132,9 @@ class _FaAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FaBrandTile(size: size, dark: true);
+    final product = ProductConfigScope.of(context);
+    if (product.isStock) return FaBrandTile(size: size, dark: true);
+    return ProductBrandMark(productConfig: product, size: size);
   }
 }
 

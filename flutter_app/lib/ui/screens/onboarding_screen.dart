@@ -23,6 +23,8 @@ import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/ui/network/join_sheet.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 part 'onboarding_mockups.dart';
 
@@ -41,9 +43,11 @@ class OnboardingScreen extends StatefulWidget {
     this.lastConnectionStore,
     this.networkMode,
     this.networkSessions,
+    this.productConfig = FaProductConfig.stock,
   });
 
   final OnboardingStore? onboardingStore;
+  final FaProductConfig productConfig;
 
   final int initialPage;
   final void Function({required bool skipped})? onFinished;
@@ -204,8 +208,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   String get _primaryLabel {
-    if (_page == 2) return 'Continue without access';
-    if (_page == _pageCount - 1) return 'Open Fa';
+    if (_page == 2) {
+      return 'Continue without access';
+    }
+    if (_page == _pageCount - 1) {
+      return 'Open ${widget.productConfig.displayName}';
+    }
     return 'Continue';
   }
 
@@ -214,59 +222,66 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final wide = MediaQuery.sizeOf(context).width >= 920;
     final last = _page == _pageCount - 1;
     final gated = _page == 1 && _providerGateActive;
-    return Scaffold(
-      backgroundColor: _onbBg(context),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _Header(
-              page: _page,
-              labels: _labels,
-              wide: wide,
-              // The provider step is mandatory — no skipping past it.
-              onSkip: _providerGateActive ? null : () => _finish(skipped: true),
-            ),
-            Expanded(
-              child: PageView(
-                controller: _pc,
-                // A fling must not bypass the mandatory provider step —
-                // it would reach "Open Fa" without a provider. The step is
-                // button-driven only while the gate is up. The gate blocks
-                // GESTURE scrolling only (drag/fling/wheel); semantics
-                // scroll actions and programmatic jumps are intentionally
-                // not vetoed — it is a UX guardrail, not a hard boundary.
-                physics: gated ? const NeverScrollableScrollPhysics() : null,
-                onPageChanged: (p) => setState(() => _page = p),
-                children: [
-                  _P1(wide: wide),
-                  _P2(
-                    wide: wide,
-                    registry: widget.registry,
-                    lastConnectionStore: widget.lastConnectionStore,
-                    configuredKey: _configuredProviderKey,
-                    onConfigured: _providerDone,
-                    networkSelected: _networkSelected,
-                    onJoinNetwork:
-                        widget.networkMode != null &&
-                            widget.networkSessions != null
-                        ? _joinNetwork
-                        : null,
-                  ),
-                  _P3(wide: wide),
-                  _P4(wide: wide),
-                ],
+    return ProductConfigScope(
+      productConfig: widget.productConfig,
+      child: Scaffold(
+        backgroundColor: _onbBg(context),
+        body: SafeArea(
+          child: Column(
+            children: [
+              _Header(
+                productConfig: widget.productConfig,
+                page: _page,
+                labels: _labels,
+                wide: wide,
+                // The provider step is mandatory — no skipping past it.
+                onSkip: _providerGateActive
+                    ? null
+                    : () => _finish(skipped: true),
               ),
-            ),
-            _Footer(
-              page: _page,
-              pageCount: _pageCount,
-              wide: wide,
-              primaryLabel: _primaryLabel,
-              primaryEnabled: !gated && !(last && _providerGateActive),
-              onPrimary: last ? () => _finish(skipped: false) : _next,
-              onBack: _page > 0 ? _back : null,
-            ),
-          ],
+              Expanded(
+                child: PageView(
+                  controller: _pc,
+                  // A fling must not bypass the mandatory provider step —
+                  // it would reach "Open Fa" without a provider. The step is
+                  // button-driven only while the gate is up. The gate blocks
+                  // GESTURE scrolling only (drag/fling/wheel); semantics
+                  // scroll actions and programmatic jumps are intentionally
+                  // not vetoed — it is a UX guardrail, not a hard boundary.
+                  physics: gated ? const NeverScrollableScrollPhysics() : null,
+                  onPageChanged: (p) => setState(() => _page = p),
+                  children: [
+                    _P1(wide: wide),
+                    _P2(
+                      wide: wide,
+                      registry: widget.registry,
+                      lastConnectionStore: widget.lastConnectionStore,
+                      configuredKey: _configuredProviderKey,
+                      onConfigured: _providerDone,
+                      networkSelected: _networkSelected,
+                      onJoinNetwork:
+                          widget.networkMode != null &&
+                              widget.networkSessions != null
+                          ? _joinNetwork
+                          : null,
+                    ),
+                    _P3(wide: wide),
+                    _P4(wide: wide),
+                  ],
+                ),
+              ),
+              _Footer(
+                page: _page,
+                pageCount: _pageCount,
+                wide: wide,
+                primaryLabel: _primaryLabel,
+                primaryEnabled: !gated && !(last && _providerGateActive),
+                onPrimary: last ? () => _finish(skipped: false) : _next,
+                onBack: _page > 0 ? _back : null,
+                privacyPolicy: widget.productConfig.legalLinks['privacy'],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -279,12 +294,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
 class _Header extends StatelessWidget {
   const _Header({
+    required this.productConfig,
     required this.page,
     required this.labels,
     required this.wide,
     required this.onSkip,
   });
 
+  final FaProductConfig productConfig;
   final int page;
   final List<String> labels;
   final bool wide;
@@ -300,7 +317,7 @@ class _Header extends StatelessWidget {
       child: wide
           ? Row(
               children: [
-                const _Logo(),
+                _Logo(productConfig: productConfig),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -314,7 +331,7 @@ class _Header extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const _Logo(),
+                    _Logo(productConfig: productConfig),
                     const Spacer(),
                     if (onSkip != null) _SkipButton(onTap: onSkip!),
                   ],
@@ -328,7 +345,9 @@ class _Header extends StatelessWidget {
 }
 
 class _Logo extends StatelessWidget {
-  const _Logo();
+  const _Logo({required this.productConfig});
+
+  final FaProductConfig productConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -336,10 +355,13 @@ class _Logo extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        FaBrandTile(size: 30, dark: false),
-        SizedBox(width: 8),
+        if (productConfig.isStock)
+          const FaBrandTile(size: 30, dark: false)
+        else
+          ProductBrandMark(productConfig: productConfig),
+        const SizedBox(width: 8),
         Text(
-          'Fa',
+          productConfig.displayName,
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
@@ -465,6 +487,7 @@ class _Steps extends StatelessWidget {
 
 class _Footer extends StatelessWidget {
   const _Footer({
+    this.privacyPolicy,
     required this.page,
     required this.pageCount,
     required this.wide,
@@ -474,6 +497,7 @@ class _Footer extends StatelessWidget {
     this.primaryEnabled = true,
   });
 
+  final Uri? privacyPolicy;
   final int page;
   final int pageCount;
   final bool wide;
@@ -505,7 +529,7 @@ class _Footer extends StatelessWidget {
         ),
       ),
     );
-    const privacy = _PrivacyLink();
+    final privacy = _PrivacyLink(privacyPolicy);
     if (wide) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(28, 10, 28, 22),
@@ -531,7 +555,7 @@ class _Footer extends StatelessWidget {
             ),
             // Pinned to the footer center: the Back button appearing on
             // later pages must not shift the link horizontally.
-            const Center(child: privacy),
+            Center(child: privacy),
           ],
         ),
       );
@@ -571,13 +595,20 @@ class _Footer extends StatelessWidget {
 
 /// Link to the published privacy policy (fa1.dev/privacy.html).
 class _PrivacyLink extends StatelessWidget {
-  const _PrivacyLink();
+  const _PrivacyLink(this.uri);
+
+  final Uri? uri;
 
   @override
   Widget build(BuildContext context) {
+    final product = ProductConfigScope.of(context);
+    final destination =
+        uri ??
+        (product.isStock ? Uri.parse('https://fa1.dev/privacy.html') : null);
+    if (destination == null) return const SizedBox.shrink();
     return TextButton(
       onPressed: () => url_launcher.launchUrl(
-        Uri.parse('https://fa1.dev/privacy.html'),
+        destination,
         mode: url_launcher.LaunchMode.externalApplication,
       ),
       style: TextButton.styleFrom(
@@ -1186,7 +1217,7 @@ class _ProviderGhost extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Choose how Fa thinks.',
+          'Choose how ${ProductConfigScope.of(context).displayName} thinks.',
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
@@ -1371,7 +1402,7 @@ class _P2State extends State<_P2> {
       children: [
         SizedBox(height: widget.wide ? 20 : 12),
         _TitleBlock(
-          'Choose how Fa thinks.',
+          'Choose how ${ProductConfigScope.of(context).displayName} thinks.',
           'Connect a provider to start chatting.\nYou can switch models anytime.',
           compact: !widget.wide,
         ),
@@ -1935,7 +1966,7 @@ class _AccessGhost extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Fa can take action for you.',
+          '${ProductConfigScope.of(context).displayName} can take action for you.',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
@@ -1944,7 +1975,7 @@ class _AccessGhost extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          'Fa asks only when an action needs it.',
+          '${ProductConfigScope.of(context).displayName} asks only when an action needs it.',
           style: TextStyle(fontSize: 11, color: _onbGray(context)),
         ),
         const SizedBox(height: 14),
@@ -2002,7 +2033,7 @@ class _P3 extends StatelessWidget {
         SizedBox(height: wide ? 20 : 12),
         _TitleBlock(
           'Give access only when it helps.',
-          'Fa asks only when an action needs it.\nYou can change access anytime.',
+          '${ProductConfigScope.of(context).displayName} asks only when an action needs it.\nYou can change access anytime.',
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 16),
@@ -2016,7 +2047,7 @@ class _P3 extends StatelessWidget {
                   children: [
                     const _FlowDiagram(),
                     const SizedBox(height: 16),
-                    const Row(
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
@@ -2047,7 +2078,8 @@ class _P3 extends StatelessWidget {
                             tint: Color(0xFF8B5CF6),
                             tintBg: Color(0xFFF1EDFE),
                             title: 'Microphone',
-                            desc: 'Talk to Fa with your voice.',
+                            desc:
+                                'Talk to ${ProductConfigScope.of(context).displayName} with your voice.',
                             vertical: true,
                           ),
                         ),
@@ -2079,12 +2111,13 @@ class _P3 extends StatelessWidget {
             desc: 'Send reminders and task updates.',
           ),
           const SizedBox(height: 8),
-          const _PermCard(
+          _PermCard(
             icon: Icons.mic,
             tint: Color(0xFF8B5CF6),
             tintBg: Color(0xFFF1EDFE),
             title: 'Microphone',
-            desc: 'Talk to Fa with your voice.',
+            desc:
+                'Talk to ${ProductConfigScope.of(context).displayName} with your voice.',
           ),
         ],
         SizedBox(height: wide ? 18 : 12),
@@ -2148,7 +2181,7 @@ class _P4 extends StatelessWidget {
         SizedBox(height: wide ? 20 : 12),
         _TitleBlock(
           'Your sandbox is ready.',
-          'Use apps yourself, let Fa use them for you,\nor ask Fa to make something new.',
+          'Use apps yourself, let ${ProductConfigScope.of(context).displayName} use them for you,\nor ask ${ProductConfigScope.of(context).displayName} to make something new.',
           compact: !wide,
         ),
         SizedBox(height: wide ? 24 : 16),

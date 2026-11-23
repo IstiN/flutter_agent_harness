@@ -10,6 +10,7 @@ library;
 
 import 'dart:io';
 
+import 'package:fa/services/cloud/drive_sync_controller.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/file_preview.dart';
 import 'package:fa_ui/fa_ui.dart'
@@ -21,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';
 import '../fake_media_controllers.dart';
+import '../drive_sync_test_helper.dart';
 
 /// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs
 /// (folder/file/refresh/chevron icons) render instead of tofu boxes.
@@ -374,10 +376,16 @@ Future<void> _pumpBrowser(
   MemoryExecutionEnv env, {
   Size size = goldenSizeDesktop,
   ThemeData? theme,
+  DriveSyncController? driveSyncController,
+  String? initialPath,
 }) {
   return pumpGolden(
     tester,
-    FileBrowser(env: env),
+    FileBrowser(
+      env: env,
+      initialPath: initialPath,
+      driveSyncController: driveSyncController,
+    ),
     size: size,
     theme: theme,
     wrap: (child) => Scaffold(body: child),
@@ -402,9 +410,7 @@ void main() {
       await expectGolden(tester, 'files_listing');
     });
 
-    testWidgets('compact 300px panel across visual directions', (
-      tester,
-    ) async {
+    testWidgets('compact 300px panel across visual directions', (tester) async {
       // Glass (the default app theme) in both brightnesses, plus one
       // opaque direction per brightness — the panel must look right in all
       // four visual languages.
@@ -496,6 +502,50 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('0:00 / 0:09'), findsOneWidget);
       await expectGolden(tester, 'files_preview_audio');
+    });
+
+    testWidgets('drive conflict keeps both choices visible on desktop', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('/drive/README.md', '# Shared workspace');
+      await env.writeFile('/drive/notes.md', 'local draft');
+      await env.writeFile('/drive/research.md', 'conditional revisions');
+      final controller = await makeDriveStatusController(
+        env: env,
+        status: DriveSyncStatus.conflict,
+        details: 'remote r2 raced local draft',
+      );
+      await _pumpBrowser(
+        tester,
+        env,
+        driveSyncController: controller,
+        initialPath: '/drive',
+      );
+      expect(find.text('Conflict — choose a version'), findsOneWidget);
+      expect(find.text('18 B'), findsOneWidget);
+      await expectGolden(tester, 'files_drive_conflict');
+    });
+
+    testWidgets('drive quota state is legible on a phone', (tester) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('/drive/README.md', '# Shared workspace');
+      await env.writeFile('/drive/notes.md', 'offline draft');
+      final controller = await makeDriveStatusController(
+        env: env,
+        status: DriveSyncStatus.quotaExceeded,
+        details: 'account quota exhausted; local edit retained',
+      );
+      await _pumpBrowser(
+        tester,
+        env,
+        size: goldenSizePhone,
+        driveSyncController: controller,
+        initialPath: '/drive',
+      );
+      expect(find.text('Drive quota exceeded'), findsOneWidget);
+      expect(find.text('18 B'), findsOneWidget);
+      await expectGolden(tester, 'files_drive_quota_phone');
     });
 
     testWidgets('empty folder state', (tester) async {

@@ -13,6 +13,10 @@ block a release again.
 
 ## Unreleased
 
+- gh-2364: external branded web profiles and namespace-safe boot, durable
+  provider-neutral drive and append-only JSONL-session sync with explicit
+  conflicts/account fences, browser CAS stores and external-provider contracts.
+
 - CLI: network DM acceptance notices + session display names in presence.
 - fa_ui: chat message spacing; narrow trajectory drops the stacked chat
   header (single chrome, close returns to the transcript).

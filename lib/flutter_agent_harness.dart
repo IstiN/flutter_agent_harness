@@ -379,3 +379,17 @@ export 'src/network/connector/device_dm_keys.dart';
 // ── network DM delivery (#2214; append-only) ──
 export 'src/network/connector/device_dm.dart';
 export 'src/cli/network_presence.dart';
+
+// ── product workspace ──
+export 'src/product/fa_product_config.dart';
+export 'src/product/product_storage_coordinator.dart';
+
+// ── cloud drive ──
+export 'src/cloud/drive_contract.dart';
+export 'src/cloud/drive_sync_store.dart';
+export 'src/cloud/drive_sync_engine.dart';
+export 'src/cloud/session_sync_contract.dart';
+export 'src/cloud/cloud_session_synchronizer.dart';
+export 'src/cloud/cloud_session_repo.dart';
+export 'src/cloud/provider_readiness.dart';
+export 'src/cloud/drive_provider_contract_checks.dart';
