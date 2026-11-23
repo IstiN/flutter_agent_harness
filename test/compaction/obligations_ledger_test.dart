@@ -713,6 +713,7 @@ void main() {
   group('ObligationStatus persisted-name contract (issue #1999)', () {
     test('statuses round-trip through pinned payload spellings', () {
       expect(ObligationStatus.open.jsonName, 'open');
+      expect(ObligationStatus.stale.jsonName, 'stale');
       expect(ObligationStatus.done.jsonName, 'done');
       expect(ObligationStatus.superseded.jsonName, 'superseded');
       for (final status in ObligationStatus.values) {
@@ -724,6 +725,291 @@ void main() {
       expect(ObligationStatus.fromName(null), ObligationStatus.open);
       expect(ObligationStatus.fromName('bogus'), ObligationStatus.open);
       expect(ObligationStatus.fromName(42), ObligationStatus.open);
+    });
+  });
+
+  group('zombie reconciliation (issue #2384)', () {
+    // The pinned "now" every test reconciles against: 2026-10-13 12:00 UTC.
+    final now = DateTime.utc(2026, 10, 13, 12);
+    final zombieDay = DateTime.utc(2026, 8, 14); // ~60 days before `now`
+    final freshDay = DateTime.utc(2026, 10, 12); // ~1 day before `now`
+
+    ObligationEntry entry(
+      String id, {
+      required ObligationKind kind,
+      required DateTime createdAt,
+      ObligationStatus status = ObligationStatus.open,
+      String sourceRecordId = '',
+    }) {
+      return ObligationEntry(
+        id: id,
+        kind: kind,
+        text: 'quote of $id',
+        sourceRecordId: sourceRecordId.isEmpty ? 'rec-$id' : sourceRecordId,
+        createdAt: createdAt,
+        status: status,
+      );
+    }
+
+    test('AC1: a pending-wait whose timer FIRED auto-closes to done at the '
+        'next pass, and the injection no longer lists it', () {
+      final writer = ObligationsLedgerWriter(
+        initial: ObligationsLedger([
+          entry(
+            'wait-1',
+            kind: ObligationKind.pendingWait,
+            sourceRecordId: 'sched-fired',
+            createdAt: zombieDay,
+          ),
+        ]),
+      );
+      final payload = writer.reconcile(
+        now: now,
+        firedScheduledIds: {'sched-fired'},
+      );
+      expect(payload, isNotNull, reason: 'the close must persist');
+      expect(writer.ledger.entries.single.status, ObligationStatus.done);
+      expect(writer.ledger.open, isEmpty);
+      final block = renderObligationsBlock(writer.ledger);
+      expect(block, isNot(contains('[open] pending-wait')));
+    });
+
+    test(
+      'AC1: an unfired pending-wait stays open; the receipt-less aged wait '
+      'ages out as the backstop (never a silent done), and a later pass '
+      'that finally sees the receipt still closes it (stale→done forward)',
+      () {
+        final writer = ObligationsLedgerWriter(
+          initial: ObligationsLedger([
+            entry(
+              'wait-armed',
+              kind: ObligationKind.pendingWait,
+              sourceRecordId: 'sched-armed',
+              createdAt: freshDay,
+            ),
+            // The fired-into-dead-mailbox class: the wait is old and no
+            // receipt ever landed — AC2's age-out is the backstop.
+            entry(
+              'wait-lost',
+              kind: ObligationKind.pendingWait,
+              sourceRecordId: 'sched-lost',
+              createdAt: zombieDay,
+            ),
+          ]),
+        );
+        // A foreign receipt id closes nothing — but the 60-day wait still
+        // ages (the backstop move is the payload's only change).
+        final firstPass = writer.reconcile(
+          now: now,
+          firedScheduledIds: {'sched-other'},
+        );
+        expect(firstPass, isNotNull, reason: 'the stale backstop moved');
+        ObligationStatus statusOf(String id) =>
+            writer.ledger.entries.firstWhere((e) => e.id == id).status;
+        expect(statusOf('wait-armed'), ObligationStatus.open);
+        expect(statusOf('wait-lost'), ObligationStatus.stale);
+        // The receipt arriving late still discharges the wait — forward
+        // only, stale→done.
+        final payload = writer.reconcile(
+          now: now,
+          firedScheduledIds: {'sched-lost'},
+        );
+        expect(payload, isNotNull);
+        expect(statusOf('wait-lost'), ObligationStatus.done);
+      },
+    );
+
+    test('AC2: open entries past the bound age to stale; fresh stay open; '
+        'the pass is idempotent and never regresses closed entries', () {
+      final writer = ObligationsLedgerWriter(
+        initial: ObligationsLedger([
+          entry(
+            'old-rule',
+            kind: ObligationKind.ownerRule,
+            createdAt: zombieDay,
+          ),
+          entry('fresh-ask', kind: ObligationKind.openAsk, createdAt: freshDay),
+          entry(
+            'old-wait',
+            kind: ObligationKind.pendingWait,
+            sourceRecordId: 'sched-quiet',
+            createdAt: zombieDay,
+          ),
+          entry(
+            'done-1',
+            kind: ObligationKind.agentCommitment,
+            createdAt: zombieDay,
+            status: ObligationStatus.done,
+          ),
+          // A legacy entry with the epoch fallback createdAt (the tolerant
+          // parse default) — 56 years old, the clearest zombie there is.
+          entry(
+            'legacy',
+            kind: ObligationKind.openAsk,
+            createdAt: DateTime.utc(1970),
+          ),
+        ]),
+      );
+      final payload = writer.reconcile(now: now, firedScheduledIds: const {});
+      expect(payload, isNotNull);
+      ObligationStatus statusOf(String id) =>
+          writer.ledger.entries.firstWhere((e) => e.id == id).status;
+      expect(statusOf('old-rule'), ObligationStatus.stale);
+      expect(statusOf('old-wait'), ObligationStatus.stale);
+      expect(statusOf('legacy'), ObligationStatus.stale);
+      expect(statusOf('fresh-ask'), ObligationStatus.open, reason: 'AC5');
+      expect(statusOf('done-1'), ObligationStatus.done);
+      // Idempotent: a second identical pass moves nothing.
+      expect(writer.reconcile(now: now), isNull);
+      // Forward-only: nothing regressed.
+      expect(writer.ledger.stale, hasLength(3));
+    });
+
+    test(
+      'AC2 border: an owner-rule ages to stale but is NEVER auto-closed, '
+      'even with a matching receipt id (receipts close pending-waits only)',
+      () {
+        final writer = ObligationsLedgerWriter(
+          initial: ObligationsLedger([
+            entry(
+              'rule-1',
+              kind: ObligationKind.ownerRule,
+              sourceRecordId: 'sched-fired-too',
+              createdAt: zombieDay,
+            ),
+          ]),
+        );
+        writer.reconcile(now: now, firedScheduledIds: {'sched-fired-too'});
+        expect(writer.ledger.entries.single.status, ObligationStatus.stale);
+      },
+    );
+
+    test('AC4: aged entries render as ONE summary line, never itemized; '
+        'fresh entries render exactly as before (AC5)', () {
+      final ledger = ObligationsLedger([
+        entry(
+          'stale-a',
+          kind: ObligationKind.ownerRule,
+          createdAt: zombieDay,
+        ).withStatus(ObligationStatus.stale),
+        entry(
+          'stale-b',
+          kind: ObligationKind.pendingWait,
+          sourceRecordId: 'sched-quiet',
+          createdAt: zombieDay,
+        ).withStatus(ObligationStatus.stale),
+        entry(
+          'stale-c',
+          kind: ObligationKind.openAsk,
+          createdAt: zombieDay,
+        ).withStatus(ObligationStatus.stale),
+        entry('fresh-1', kind: ObligationKind.openAsk, createdAt: freshDay),
+      ]);
+      final block = renderObligationsBlock(ledger);
+      expect(
+        RegExp(
+          'aged obligations — run ledger reconciliation',
+        ).allMatches(block),
+        hasLength(1),
+      );
+      expect(block, contains('… and 3 aged obligations'));
+      // The aged quotes are NOT itemized.
+      expect(block, isNot(contains('quote of stale-a')));
+      expect(block, isNot(contains('quote of stale-b')));
+      expect(block, isNot(contains('quote of stale-c')));
+      // The fresh obligation renders as today (itemized, [open]).
+      expect(block, contains('[open] open-ask: quote of fresh-1'));
+    });
+
+    test(
+      'an all-stale ledger still renders the block (heading + aged line)',
+      () {
+        final block = renderObligationsBlock(
+          ObligationsLedger([
+            entry(
+              's-1',
+              kind: ObligationKind.ownerRule,
+              createdAt: zombieDay,
+            ).withStatus(ObligationStatus.stale),
+          ]),
+        );
+        expect(block, startsWith('<system-notice>'));
+        expect(block, contains('… and 1 aged obligations'));
+      },
+    );
+
+    test('AC3 merge: the file wins for unmutated entries; memory keeps what '
+        'it mutated; foreign and memory-only entries survive', () {
+      final memoryLedger = ObligationsLedger([
+        entry('flip-me', kind: ObligationKind.openAsk, createdAt: freshDay),
+        entry('mine', kind: ObligationKind.openAsk, createdAt: freshDay),
+        entry('added-here', kind: ObligationKind.openAsk, createdAt: freshDay),
+      ]);
+      final writer = ObligationsLedgerWriter(initial: memoryLedger);
+      // Memory mutated one entry (the close path ran before the file took
+      // it) and created one entry (an ingest coalesced behind the window).
+      expect(writer.markStatus('mine', ObligationStatus.done), isNotNull);
+      final fileLedger = ObligationsLedger([
+        // The external cleanup flipped this one to done.
+        entry(
+          'flip-me',
+          kind: ObligationKind.openAsk,
+          createdAt: freshDay,
+        ).withStatus(ObligationStatus.done),
+        entry('mine', kind: ObligationKind.openAsk, createdAt: freshDay),
+        // A concurrent process added a brand-new entry.
+        entry(
+          'foreign',
+          kind: ObligationKind.agentCommitment,
+          createdAt: freshDay,
+        ),
+      ]);
+      final merged = writer.mergeFromFile(fileLedger);
+      expect(merged, isNotNull, reason: 'the external cleanup must adopt');
+      ObligationStatus statusOf(String id) =>
+          writer.ledger.entries.firstWhere((e) => e.id == id).status;
+      expect(
+        statusOf('flip-me'),
+        ObligationStatus.done,
+        reason: 'file wins for the unmutated entry — no burying',
+      );
+      expect(
+        statusOf('mine'),
+        ObligationStatus.done,
+        reason: 'memory wins for what it mutated (a close not yet taken)',
+      );
+      expect(
+        statusOf('foreign'),
+        ObligationStatus.open,
+        reason: 'the foreign entry is adopted, not erased',
+      );
+      expect(
+        statusOf('added-here'),
+        ObligationStatus.open,
+        reason: 'memory-only entries survive',
+      );
+      expect(writer.ledger.entries, hasLength(4));
+      // The file's audit order leads; memory-only entries trail.
+      expect(writer.ledger.entries.map((e) => e.id).toList(), [
+        'flip-me',
+        'mine',
+        'foreign',
+        'added-here',
+      ]);
+      // Idempotent: re-merging the same file moves nothing.
+      expect(
+        writer.mergeFromFile(ObligationsLedger(writer.ledger.entries)),
+        isNull,
+      );
+    });
+
+    test('AC3 merge: an already-agreeing file returns null (no churn)', () {
+      final ledger = ObligationsLedger([
+        entry('a', kind: ObligationKind.openAsk, createdAt: freshDay),
+      ]);
+      final writer = ObligationsLedgerWriter(initial: ledger);
+      expect(writer.mergeFromFile(ledger), isNull);
+      expect(identical(writer.ledger, ledger), isTrue);
     });
   });
 }

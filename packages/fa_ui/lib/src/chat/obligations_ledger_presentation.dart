@@ -42,6 +42,12 @@ final _surplus = RegExp(r'… and (\d+) more open obligations');
 final _surplusTail = RegExp(
   r'\s*… and \d+ more open obligations(?:\s*\([^)]*\))?\s*$',
 );
+// Issue #2384: aged obligations collapse into ONE engine summary line —
+// never itemized, so the parser strips it off the last row's text and
+// counts it into the open total (aged entries are still owed).
+final _agedTail = RegExp(
+  r'\s*… and (\d+) aged obligations — run ledger reconciliation\s*$',
+);
 final _technicalTail = RegExp(r'\s*\(id\s+[^)]+,\s*record\s+[^)]+\)\s*$');
 
 /// Parses the current engine ledger envelope without exposing internal ids.
@@ -63,6 +69,7 @@ FaObligationsLedger? parseFaObligationsLedger(String content) {
     final task = text
         .substring(match.end, end)
         .replaceFirst(_surplusTail, '')
+        .replaceFirst(_agedTail, '')
         .replaceFirst(_technicalTail, '')
         .trim();
     if (task.isEmpty) continue;
@@ -72,6 +79,7 @@ FaObligationsLedger? parseFaObligationsLedger(String content) {
   if (parsed.isEmpty) return null;
 
   final surplus = int.tryParse(_surplus.firstMatch(text)?.group(1) ?? '') ?? 0;
+  final aged = int.tryParse(_agedTail.firstMatch(text)?.group(1) ?? '') ?? 0;
   final grouped = <String, FaObligationEntry>{};
   for (final entry in parsed.reversed) {
     final key = '${entry.status}\u0000${entry.kind}\u0000${entry.text}';
@@ -87,7 +95,7 @@ FaObligationsLedger? parseFaObligationsLedger(String content) {
   }
   return FaObligationsLedger(
     entries: List.unmodifiable(grouped.values),
-    openTotal: openCount + surplus,
+    openTotal: openCount + surplus + aged,
     surplus: surplus,
   );
 }

@@ -157,6 +157,29 @@ void main() {
     expect(find.textContaining('01-repeat'), findsNothing);
   });
 
+  testWidgets('the aged reconciliation line stays a summary, not a row', (
+    tester,
+  ) async {
+    const owed = 'please file the incident report before the release cut';
+    final service = _Service([
+      FaChatMessage(
+        role: 'user',
+        content:
+            '<system-notice>obligations ledger (engine-maintained; '
+            'verbatim quotes with their source record): '
+            '- [open] open-ask: $owed (id 01-owed, record 0040_owed) '
+            '… and 3 aged obligations — run ledger '
+            'reconciliation</system-notice>',
+      ),
+    ]);
+    await _pump(tester, service);
+
+    // Aged entries count into the open total but never itemize.
+    expect(find.text('Open obligations · 4'), findsOneWidget);
+    expect(find.textContaining('aged obligations'), findsNothing);
+    expect(find.text(owed), findsOneWidget);
+  });
+
   testWidgets('a malformed ledger keeps the ordinary notice fallback', (
     tester,
   ) async {
