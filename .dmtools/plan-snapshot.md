@@ -41,7 +41,8 @@ the #2260 AC1 hostile-env flake. Mode: plan (sp=4).
     test/ci_jsr_trio_load_drop_guard_test.dart
     test/ci_watchdog_tag_retrigger_guard_test.dart` — 27 pass.
 - [x] T8 — no-regression: full non-integration suite.
-  - verify: `dart test --exclude-tags integration,browser-ext,llm` green.
+  - verify: `dart test --exclude-tags integration,browser-ext,llm` —
+    15006 passed, 16 skipped, 0 failed (exit 0).
 
 ## Decisions
 
