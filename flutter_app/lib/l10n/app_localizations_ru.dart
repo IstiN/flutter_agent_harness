@@ -3273,11 +3273,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get onboardingMockupFocusRequest =>
-      'Соберите фокус-таймер с рабочими сессиями и перывами.';
+      'Соберите фокус-таймер с рабочими сессиями и перерывами.';
 
   @override
   String get onboardingMockupFocusRequestPill =>
-      'Соберите фокус-таймер\nс рабочими сессиями и перывами.';
+      'Соберите фокус-таймер\nс рабочими сессиями и перерывами.';
 
   @override
   String get onboardingMockupFocusTimer => 'Фокус-таймер';
@@ -3336,7 +3336,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get onboardingMockupStartSession => 'Начать сессию';
 
   @override
-  String get onboardingMockupWorkBreak => 'Работа 25 мин • Перыв 5 мин';
+  String get onboardingMockupWorkBreak => 'Работа 25 мин • Перерыв 5 мин';
 
   @override
   String get onboardingMockupFocusTime => 'Время фокуса';
@@ -3507,7 +3507,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get onboardingTimelineFaDeliveredDesc =>
-      'Фокус-таймер — сессии 25/5 с рабочими циклами и перывами.';
+      'Фокус-таймер — сессии 25/5 с рабочими циклами и перерывами.';
 
   @override
   String get onboardingCompleted => 'Выполнено';
@@ -3517,11 +3517,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get onboardingNavyAppCardDesc =>
-      'Сессии фокуса 25/5 с рабочими циклами и перывами.';
+      'Сессии фокуса 25/5 с рабочими циклами и перерывами.';
 
   @override
   String get onboardingProviderDescAin =>
-      'ain.by — войдите, ключ зарегистрируется автоматически';
+      'aiin.by — войдите, ключ зарегистрируется автоматически';
 
   @override
   String get onboardingProviderDescOpenrouter =>
