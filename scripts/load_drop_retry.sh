@@ -74,6 +74,10 @@ TARGETS="${!#}"           # final arg: quoted, space-separated target list
 CONSOLE="${MAIN_LOG}.console"
 BACKOFF=${LOAD_DROP_RETRY_BACKOFF_S:-5}
 MAX_RERUNS=${LOAD_DROP_RETRY_MAX_RERUNS:-2}
+# Operator knobs are consumed by bash integer tests/arithmetic below. A
+# sleep-style "5s" or other garbage must not disable the retry loop itself.
+[[ "$BACKOFF" =~ ^[0-9]+$ ]] || BACKOFF=5
+[[ "$MAX_RERUNS" =~ ^[0-9]+$ ]] || MAX_RERUNS=2
 
 # Attempt 1 — the command exactly as the step defines it (its own
 # --file-reporter=json:<main-log> is part of CMD; dart accumulates repeated

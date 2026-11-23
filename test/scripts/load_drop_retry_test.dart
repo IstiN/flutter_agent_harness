@@ -389,4 +389,38 @@ void main() {
           'rerun (14s) — the drain ladder',
     );
   });
+
+  test(
+    'AC13 non-integer retry knobs fall back to the documented defaults',
+    () async {
+      for (final invalid in ['5s', 'abc']) {
+        final caseDir = Directory('${tmp.path}/knobs-$invalid')..createSync();
+        Directory('${caseDir.path}/bin').createSync();
+        File('${caseDir.path}/bin/sleep').writeAsStringSync(
+          '#!/usr/bin/env bash\necho "\$*" >> ${caseDir.path}/sleep.log\n',
+        );
+        Process.runSync('chmod', ['755', '${caseDir.path}/bin/sleep']);
+        final r = await runWrapper(
+          caseDir.path,
+          mode: 'drop-then-drop-other',
+          env: {
+            'LOAD_DROP_RETRY_BACKOFF_S': invalid,
+            'LOAD_DROP_RETRY_MAX_RERUNS': invalid,
+          },
+          pathPrefix: '${caseDir.path}/bin',
+        );
+        expect(
+          r.exitCode,
+          0,
+          reason: 'knobs=$invalid must not disable healing: ${r.stderr}',
+        );
+        expect(r.stderr, contains('rerun 2/2'));
+        expect(invocations(caseDir.path), hasLength(3));
+        expect(File('${caseDir.path}/sleep.log').readAsLinesSync(), [
+          '5',
+          '10',
+        ], reason: 'knobs=$invalid uses BACKOFF=5 and doubles it normally');
+      }
+    },
+  );
 }
