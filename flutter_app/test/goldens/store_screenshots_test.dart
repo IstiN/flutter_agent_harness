@@ -293,6 +293,7 @@ Future<void> _expectStore(
   _Device device,
   Locale locale,
   String screen, {
+  String? fileBasename,
   bool disposeAfter = false,
 }) async {
   // App Store devices land in test/goldens/goldens/store/<lang>/<device>/; the
@@ -309,7 +310,8 @@ Future<void> _expectStore(
           '${_playImagesDir(locale.languageCode)}/tenInchScreenshots/'
           '${_playOrder[screen]}_$screen.png';
     default:
-      golden = 'store/${locale.languageCode}/${device.name}/$screen.png';
+      golden =
+          'store/${locale.languageCode}/${device.name}/${fileBasename ?? screen}.png';
   }
   await expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
   if (_isWideDevice(device) || disposeAfter) {
@@ -880,7 +882,17 @@ Future<void> _appsShot(
     expect(find.text(lang == 'ru' ? 'Мир 07' : 'World 07'), findsOneWidget);
   }
   await tester.pump();
-  await _expectStore(tester, device, locale, golden);
+  await _expectStore(
+    tester,
+    device,
+    locale,
+    golden,
+    // Failure artifacts are flat: keep locale/device in the basename so
+    // these six dashboard captures and two promos never overwrite each other.
+    fileBasename: golden == 'store_apps'
+        ? 'store_apps_${lang}_${device.name}'
+        : 'store_promo_$lang',
+  );
 }
 
 /// The square marketing promo (App Review / social artwork): the same
