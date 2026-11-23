@@ -130,16 +130,6 @@
       ]
     },
     {
-      "file": "test/cli/jsr_cli_test.dart",
-      "test": "loading test/cli/jsr_cli_test.dart",
-      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/2227",
-      "since": "2026-11-18",
-      "runs": [
-        44167780049,
-        44149246706
-      ]
-    },
-    {
       "file": "test/integration/agents_render_gate_test.dart",
       "test": "loading test/integration/agents_render_gate_test.dart",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/2277",
