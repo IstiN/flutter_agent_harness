@@ -47,8 +47,13 @@
   the v1.0.756 curated Unreleased body (131k) HTTP-422'd the draft
   create in three attach legs. This is the durable fix for the
   release-body-422 reports (issues #2238, #2242): the v1.0.740–v1.0.750
-  GH-release drift was the same root (an uncapped notes body, back then
-  patched by archiving the CHANGELOG tail, which regrew by v1.0.756). The version scheme is `1.0.<counter>` (gh-785: App Store
+  GH-release drift was the same root, ridden out with manual
+  trimmed-body draft creates (#2238's "Workaround applied" v1.0.740
+  rescue; the #2242 ledger) while the uncapped curated `## Unreleased`
+  window kept growing by ordinary curation — 126.5k chars at v1.0.740 →
+  131k by v1.0.756 — re-crossing the API cap until the cap helper
+  landed (no CHANGELOG-tail archive was involved; the only tail
+  archive ever is gh-1452, the pub.dev 256 KiB cap era). The version scheme is `1.0.<counter>` (gh-785: App Store
   Connect approved 1.0.0 and enforces a monotonic
   `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
   train can never upload again). Release checklist: push to main (or the
