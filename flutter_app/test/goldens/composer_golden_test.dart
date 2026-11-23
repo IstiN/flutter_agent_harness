@@ -258,11 +258,20 @@ void main() {
         () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
       await tester.pumpAndSettle();
-      // Decode the chip thumbnail on the real event loop, then re-pump:
-      // the snapshot must never catch the image mid-load.
-      final composerContext = tester.element(find.byType(app.ChatComposer));
+      // Decode the ACTUAL chip thumbnail on the real event loop, then
+      // re-pump. Clipboard staging copies its byte list, and MemoryImage's
+      // cache key uses Uint8List identity: warming MemoryImage(png) here
+      // used to warm a different key and left this snapshot racing decode.
+      final composer = find.byType(app.ChatComposer);
+      final composerContext = tester.element(composer);
+      final thumbnail = find.descendant(
+        of: composer,
+        matching: find.byType(Image),
+      );
+      expect(thumbnail, findsOneWidget);
+      final thumbnailProvider = tester.widget<Image>(thumbnail).image;
       await tester.runAsync(
-        () => precacheImage(MemoryImage(png), composerContext),
+        () => precacheImage(thumbnailProvider, composerContext),
       );
       await tester.pumpAndSettle();
       // Determinism: no cursor blink phase in the snapshot.
