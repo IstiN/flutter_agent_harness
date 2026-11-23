@@ -148,53 +148,12 @@ extension AgentServiceInbox on AgentService {
     // The lane decision (gh-1180): user-kind mail always wakes; delivered
     // scheduled self-mail is EXEMPT from the cap (deliberate agent-chosen
     // cadence — the night-watch lane); foreign agent-to-agent chatter
-    // stays capped (anti-storm).
+    // stays bounded by the chain gate.
     final pending = await manager.pendingInbox(manager.selfId);
     if (pending.isEmpty) return;
     final decision = _inboxWakePolicy.wakeDecisionFor(pending);
-    // gh-1180 AC4 on the app host (review T3): a refused wake is
-    // receipted, not a silent drop. Both events ride the policy's
-    // once-per-EPISODE gate — the 3 s tick would otherwise duplicate the
-    // same rows for as long as the gate holds. The refusal surfaces
-    // through the trail (+ the platform log); the [error] banner would
-    // misreport a healthy-but-held gate as a failed run.
     if (!decision.wake) {
-      if (_inboxWakePolicy.announceRefusal()) {
-        AppLog.i('inbox', 'wake refused — ${decision.refusalReason}');
-        final ids = [for (final message in pending) message.id];
-        await _scheduledReceipts.append('wake_attempted', {
-          'lane': decision.lane.name,
-          'ids': ids,
-        });
-        if (decision.pauseReason == 'loop' ||
-            decision.pauseReason == 'budget') {
-          // Issue #2226 AC5: the pause renders the digest card lines on
-          // the app surface too (the log is the app's shared surface —
-          // the pending-mail markers stay visible in the agents section),
-          // and the receipts distinguish chain_paused:<reason> from the
-          // legacy wake_refused (AC8).
-          for (final line in chainPauseDigestLines(
-            reason: decision.pauseReason == 'loop'
-                ? ChainPauseReason.loop
-                : ChainPauseReason.budget,
-            evidence: decision.refusalReason ?? '',
-            pendingCount: pending.length,
-          )) {
-            AppLog.i('inbox', line);
-          }
-          await _scheduledReceipts.append('chain_paused', {
-            'reason': decision.pauseReason,
-            'evidence': decision.refusalReason,
-            'pending': pending.length,
-          });
-        } else {
-          // The legacy cap keeps the gh-1180 receipt shape.
-          await _scheduledReceipts.append('wake_refused', {
-            'lane': decision.lane.name,
-            'reason': decision.refusalReason,
-          });
-        }
-      }
+      await _onRefusedWake(decision, pending);
       return;
     }
     final count = pending.length;
@@ -222,6 +181,52 @@ extension AgentServiceInbox on AgentService {
       );
     } finally {
       _inboxWakeRunning = false;
+    }
+  }
+
+  /// The refused-wake surface (gh-1180 AC4, issue #2226 AC5): a refused
+  /// wake is receipted, not a silent drop. Both events ride the policy's
+  /// once-per-EPISODE gate — the 3 s tick would otherwise duplicate the
+  /// same rows for as long as the gate holds. The refusal surfaces
+  /// through the trail (+ the platform log); the [error] banner would
+  /// misreport a healthy-but-held gate as a failed run. A chain pause
+  /// additionally renders the digest card lines (the log is the app's
+  /// shared surface — the pending-mail markers stay visible in the
+  /// agents section), and the receipts distinguish `chain_paused:<reason>`
+  /// from the legacy `wake_refused` (AC8).
+  Future<void> _onRefusedWake(
+    InboxWakeDecision decision,
+    List<AgentMessage> pending,
+  ) async {
+    if (!_inboxWakePolicy.announceRefusal()) return;
+    AppLog.i('inbox', 'wake refused — ${decision.refusalReason}');
+    final ids = [for (final message in pending) message.id];
+    await _scheduledReceipts.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': ids,
+    });
+    final reason = decision.pauseReason;
+    if (reason == 'loop' || reason == 'budget') {
+      for (final line in chainPauseDigestLines(
+        reason: reason == 'loop'
+            ? ChainPauseReason.loop
+            : ChainPauseReason.budget,
+        evidence: decision.refusalReason ?? '',
+        pendingCount: pending.length,
+      )) {
+        AppLog.i('inbox', line);
+      }
+      await _scheduledReceipts.append('chain_paused', {
+        'reason': reason,
+        'evidence': decision.refusalReason,
+        'pending': pending.length,
+      });
+    } else {
+      // The legacy cap keeps the gh-1180 receipt shape.
+      await _scheduledReceipts.append('wake_refused', {
+        'lane': decision.lane.name,
+        'reason': decision.refusalReason,
+      });
     }
   }
 
