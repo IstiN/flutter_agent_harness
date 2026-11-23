@@ -11,6 +11,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/session_listing.dart';
+import 'package:fa/services/session_lease_host_stub.dart'
+    if (dart.library.io) 'package:fa/services/session_lease_host_io.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/subagent_parent_resolver.dart';
 
@@ -149,8 +151,11 @@ final class FlutterSessionManager extends ChangeNotifier {
     this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
     this.leaseStore,
     this.includeSharedSessionRoots = true,
+    List<String> Function(ExecutionEnv env, String defaultRoot)?
+    sessionRootsResolver,
     SubagentParentResolver? parentResolver,
-  }) : _repo =
+  }) : _sessionRootsResolver = sessionRootsResolver ?? allSessionRootsForEnv,
+       _repo =
            repo ??
            // Issue #199: record parsing rides background isolates on IO
            // platforms (null = inline chunked parsing on web).
@@ -207,6 +212,12 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// its production sessions into the listing (AgentService has the same
   /// flag for the same reason).
   final bool includeSharedSessionRoots;
+
+  /// Resolves the read roots merged into session listing and boot resume.
+  /// Production uses [allSessionRootsForEnv]; tests can inject a hermetic
+  /// mobile-style app-root + legacy-root layout on every platform.
+  final List<String> Function(ExecutionEnv env, String defaultRoot)
+  _sessionRootsResolver;
 
   /// The sidecar path of the lease this manager holds, if driving leased.
   String? _heldLeasePath;
@@ -279,16 +290,22 @@ final class FlutterSessionManager extends ChangeNotifier {
   }
 
   /// Reads the persisted last-active session id (null when none/unreadable).
+  /// The app-owned marker wins; a pre-upgrade legacy marker is the fallback
+  /// and is migrated on the next [_rememberActive] write.
   Future<String?> _readLastActiveId() async {
-    try {
-      final result = await env.readTextFile(_lastActivePath);
-      final raw = result.valueOrNull;
-      if (raw == null) return null;
-      final decoded = jsonDecode(raw);
-      return decoded is Map ? decoded['id'] as String? : null;
-    } on Object {
-      return null;
+    for (final root in _sessionReadRoots()) {
+      try {
+        final result = await env.readTextFile('$root/$lastActiveFile');
+        final raw = result.valueOrNull;
+        if (raw == null) continue;
+        final decoded = jsonDecode(raw);
+        final id = decoded is Map ? decoded['id'] : null;
+        if (id is String && id.isNotEmpty) return id;
+      } on Object {
+        // A missing or malformed marker in one root must not hide another.
+      }
     }
+    return null;
   }
 
   /// All managed sessions, newest first.
@@ -582,12 +599,16 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
   }
 
+  /// Every root whose sessions and last-active marker participate in boot
+  /// continuity. The default root is always first and owns new writes.
+  List<String> _sessionReadRoots() => includeSharedSessionRoots
+      ? _sessionRootsResolver(env, sessionsRoot)
+      : <String>[sessionsRoot];
+
   /// The local listing: the default repo, or a merge across every session
-  /// root (macOS App Group + fallback) when more than one exists.
+  /// root (app-owned + mounted legacy; macOS App Group + fallback).
   Future<List<SessionMetadata>> _listAcrossRoots() {
-    final roots = includeSharedSessionRoots
-        ? allSessionRoots(sessionsRoot)
-        : <String>[sessionsRoot];
+    final roots = _sessionReadRoots();
     if (roots.length <= 1) return _repo.list();
     return mergeSessionsAcrossRoots(
       roots: roots,
@@ -892,7 +913,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   }
 
   /// The persisted sessions, newest first — the caller's cached list
-  /// when provided (a redundant [_repo.list] walks every session
+  /// when provided (a redundant merged-root list walks every session
   /// directory); null when storage itself fails (boot must not die on
   /// it: create fresh).
   Future<List<SessionMetadata>?> _listPersistedSessions(
@@ -900,7 +921,7 @@ final class FlutterSessionManager extends ChangeNotifier {
   ) async {
     if (cachedSessionList != null) return cachedSessionList;
     try {
-      return await _repo.list();
+      return await _listAcrossRoots();
     } on Object {
       // Storage-level failure — boot must not die on it; create fresh.
       return null;
@@ -966,12 +987,12 @@ final class FlutterSessionManager extends ChangeNotifier {
     // switched back to an older chat (or a fresh empty session may have been
     // minted after it) — reopen the conversation they actually left.
     final lastActiveId = await _readLastActiveId();
-    // Cache the session list once — findReusableSession also needs it,
-    // and a redundant _repo.list() scans all session directories.
+    // Cache the merged list once — findReusableSession also needs it,
+    // and a redundant list scans every app-owned and legacy directory.
     List<SessionMetadata>? cachedList;
     if (lastActiveId != null) {
       try {
-        cachedList = await _repo.list();
+        cachedList = await _listAcrossRoots();
         final metadata = cachedList
             .where((m) => m.id == lastActiveId)
             .firstOrNull;
@@ -1076,12 +1097,13 @@ final class FlutterSessionManager extends ChangeNotifier {
       );
       return;
     }
+    await _releasePreviousSingleProcessLease(store, metadata);
     final result = await store.acquire(
       sessionFilePath: metadata.path,
       sessionId: metadata.id,
       host: 'app',
       bootId: _leaseBootId,
-      pid: 0,
+      pid: appHostPid(),
     );
     switch (result) {
       case LeaseAcquired():
@@ -1106,6 +1128,32 @@ final class FlutterSessionManager extends ChangeNotifier {
         );
         throw LeaseRefusedException(reason);
     }
+  }
+
+  /// Releases only a previous single-process app's lease. Live CLI leases
+  /// and other hosts remain strictly non-takeover ownership boundaries.
+  Future<void> _releasePreviousSingleProcessLease(
+    FileSessionLeaseStore store,
+    SessionMetadata metadata,
+  ) async {
+    if (!singleProcessAppHost()) return;
+    // iOS/Android have one primary app process. A different app bootId
+    // therefore belongs to the previous, now-dead process: its fresh
+    // heartbeat must not force a cold start into a fresh session.
+    final path = store.sidecarPath(metadata.path);
+    final found = await store.inspect(path);
+    final previous = found.lease;
+    if (found.state != LeaseState.live ||
+        previous == null ||
+        previous.host != 'app' ||
+        previous.bootId == _leaseBootId) {
+      return;
+    }
+    debugPrint(
+      '[fah][lease] ${metadata.id}: replacing previous '
+      'single-process app lease',
+    );
+    await store.release(path, previous.bootId);
   }
 
   /// Keeps our lease live while the managed session is open (5s cadence,

@@ -82,6 +82,11 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// request. No membership sync or live network session is involved.
   Future<String?>? _jwtRefreshInFlight;
 
+  /// The credential whose refresh was authoritatively rejected. Further
+  /// account reads stay offline until OAuth persists a new credential; this
+  /// prevents Devices/background reconnect loops from hammering /refresh.
+  WalletAccount? _refreshRejectedAccount;
+
   /// The live sessions by network id.
   final Map<String, NetworkSession> sessions = {};
 
@@ -284,6 +289,8 @@ final class NetworkSessionManager extends ChangeNotifier {
       ),
     );
     _jwt = tokens.accessToken;
+    _accountLogin = null;
+    _refreshRejectedAccount = null;
     _sessionExpired = false;
     notifyListeners();
     await syncAccountNetworks();
@@ -327,8 +334,13 @@ final class NetworkSessionManager extends ChangeNotifier {
   /// refresh. Refresh failures retain the wallet account for the UI, clear
   /// any stale in-memory JWT, and set [sessionExpired].
   Future<String?> ensureFreshJwt() {
+    // Dev sign-in is an in-memory credential, not the stored wallet
+    // account's refresh cycle. A previous rejected/expired wallet must not
+    // keep the freshly minted dev JWT unusable.
+    if (_accountLogin != null && hasJwt) return Future.value(_jwt);
     final account = _wallet.account;
     if (account == null) return Future.value(hasJwt ? _jwt : null);
+    if (_refreshRejected(account)) return Future.value(null);
 
     final now = _clock().toUtc();
     if (account.accessExpiresAt.isAfter(now)) {
@@ -352,6 +364,7 @@ final class NetworkSessionManager extends ChangeNotifier {
   }
 
   Future<String?> _refreshAccount(WalletAccount account) {
+    if (_refreshRejected(account)) return Future.value(null);
     final inFlight = _jwtRefreshInFlight;
     if (inFlight != null) return inFlight;
     final refresh = _refreshExpiredAccount(account);
@@ -371,6 +384,7 @@ final class NetworkSessionManager extends ChangeNotifier {
     final now = _clock().toUtc();
     final refreshExpiry = account.refreshExpiresAt;
     if (refreshExpiry != null && !refreshExpiry.isAfter(now)) {
+      _refreshRejectedAccount = account;
       _sessionExpired = true;
       notifyListeners();
       return null;
@@ -382,17 +396,26 @@ final class NetworkSessionManager extends ChangeNotifier {
       );
       await _wallet.saveAccount(account.withTokens(tokens));
       _jwt = tokens.accessToken;
+      _refreshRejectedAccount = null;
       _sessionExpired = false;
       notifyListeners();
       return _jwt;
     } on Object catch (e) {
       _jwt = null;
+      if (_terminalRefreshFailure(e)) _refreshRejectedAccount = account;
       _sessionExpired = true;
       AppLog.i('fa_network', 'account refresh FAILED: $e');
       notifyListeners();
       return null;
     }
   }
+
+  bool _refreshRejected(WalletAccount account) =>
+      _refreshRejectedAccount?.refreshToken == account.refreshToken;
+
+  static bool _terminalRefreshFailure(Object error) =>
+      error is FaNetworkException &&
+      const {400, 401, 403}.contains(error.statusCode);
 
   /// Syncs the signed-in account's fa_network memberships
   /// (`GET /api/networks/mine`) into the wallet — networks created via
@@ -433,6 +456,7 @@ final class NetworkSessionManager extends ChangeNotifier {
     ).devLogin(login: login, password: password);
     _jwt = token;
     _accountLogin = login;
+    _refreshRejectedAccount = null;
     _sessionExpired = false;
     notifyListeners();
     await syncAccountNetworks();
@@ -444,6 +468,7 @@ final class NetworkSessionManager extends ChangeNotifier {
   Future<void> signOut() async {
     _jwt = null;
     _accountLogin = null;
+    _refreshRejectedAccount = null;
     _sessionExpired = false;
     await _wallet.clearAccount();
     notifyListeners();
@@ -458,7 +483,10 @@ final class NetworkSessionManager extends ChangeNotifier {
 
   /// Re-reads wallet-driven UI after an out-of-band wallet mutation
   /// (e.g. a wallet import replacing the contents in place).
-  void walletExternallyUpdated() => notifyListeners();
+  void walletExternallyUpdated() {
+    _refreshRejectedAccount = null;
+    notifyListeners();
+  }
 
   /// Ensures the wallet identity exists (the join sheet pre-creates it
   /// with the human's chosen display name; [join] itself also creates it

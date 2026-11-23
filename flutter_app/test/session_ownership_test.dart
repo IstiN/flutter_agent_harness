@@ -6,6 +6,8 @@ import 'dart:convert';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/session_lease_host_stub.dart'
+    if (dart.library.io) 'package:fa/services/session_lease_host_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -65,6 +67,7 @@ void main() {
   late JsonlSessionRepo repo;
 
   setUp(() {
+    debugSingleProcessAppHost = null;
     env = MemoryExecutionEnv(cwd: '/work');
     store = FileSessionLeaseStore(env: env, now: () => _now);
     repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
@@ -101,6 +104,46 @@ void main() {
       }),
     );
   }
+
+  test(
+    'single-process app cold start replaces only its previous lease',
+    () async {
+      debugSingleProcessAppHost = true;
+      final meta = await persisted('ios-restart');
+      await seedLease(meta.path, host: 'app', pid: 0, bootId: 'previous-app');
+      final mgr = manager(lease: store);
+
+      await mgr.openSession(
+        meta,
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      );
+
+      final fresh = await store.inspect(meta.path);
+      expect(fresh.state, LeaseState.live);
+      expect(fresh.lease!.host, 'app');
+      expect(fresh.lease!.bootId, isNot('previous-app'));
+      expect(fresh.lease!.pid, greaterThan(0));
+      await mgr.closeSession(meta.id);
+    },
+  );
+
+  test('single-process app still respects a live CLI lease', () async {
+    debugSingleProcessAppHost = true;
+    final meta = await persisted('cli-still-live');
+    await seedLease(meta.path);
+    final mgr = manager(lease: store);
+
+    await expectLater(
+      mgr.openSession(
+        meta,
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      ),
+      throwsA(isA<SessionDrivenElsewhereException>()),
+    );
+    expect((await store.inspect(meta.path)).lease!.bootId, 'owner-boot');
+  });
 
   test(
     'AC4: a free session is acquired on open-for-drive and released on close',
