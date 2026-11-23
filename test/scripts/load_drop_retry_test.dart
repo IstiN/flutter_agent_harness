@@ -88,6 +88,12 @@ if [ -f "$tmp/attempt2" ]; then
     drop-always|wedge-abandon-rerun-red)
       echo '$droppedClosedHeader'
       exit 1 ;;
+    wedge-slow-rerun)
+      # AC14: the rerun writes its retry reporter BEFORE exiting — a slow
+      # enough start that a stale-spam watchdog poll would land mid-run.
+      printf '%s\n' '{"type":"done","success":true}' > "$main"
+      sleep 2
+      exit 0 ;;
   esac
   case "\$*" in
     *b_two_test*|*ok_test*|*rep_only_test*) exit 1 ;;
@@ -130,7 +136,7 @@ case "\$MODE" in
     printf '%s\n' '${reporterFixture(failingSuitePath: "test/rep_only_test.dart", failingCase: "reporter-only failure", loadingPath: "test/cli/dropped_test.dart")}' > "\$main"
     echo '$droppedClosedHeader'
     exit 1 ;;
-  wedge-abandon|wedge-abandon-rerun-red)
+  wedge-abandon|wedge-abandon-rerun-red|wedge-slow-rerun)
     printf '%s\n' '{"type":"suite","suite":{"id":1,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
     printf '%s\n' '{"type":"suite","suite":{"id":2,"path":"test/countdown_test.dart","platform":"vm"}}' >> "\$main"
     printf '%s\n' '{"type":"testStart","test":{"id":10,"name":"healthy case","suiteID":1,"groupIDs":[]},"time":0}' >> "\$main"
@@ -402,5 +408,26 @@ void main() {
     expect(calls, hasLength(2));
     expect(calls[1], contains('test/never_loaded_test.dart'));
     expect(calls[1], isNot(contains('test/healthy_test.dart')));
+  });
+
+  test('AC14 the rerun is never insta-killed by attempt-1 spam already in '
+      'the shared console (gh-2381 review: --append baseline)', () async {
+    // AC10's shape, but the rerun is deliberately SLOW to start (it writes
+    // the retry reporter before exiting): with the whole-console spam count
+    // the rerun's watchdog poll sees attempt-1's wedge lines, counts
+    // >= limit instantly and SIGKILLs a perfectly healthy rerun (exit 137 —
+    // the real-artifact verification caught this race); with the per-run
+    // baseline the rerun's own (spam-free) window is clean and the shard
+    // heals.
+    final r = await runWrapper(tmp.path, mode: 'wedge-slow-rerun');
+    final stderrText = r.stderr.toString();
+    expect(r.exitCode, 0, reason: 'stderr: $stderrText');
+    expect(stderrText, contains('healed'));
+    expect(
+      RegExp('exit-handshake wedge').allMatches(stderrText),
+      hasLength(1),
+      reason: 'exactly ONE wedge kill — attempt 1 only',
+    );
+    expect(invocations(tmp.path), hasLength(2));
   });
 }

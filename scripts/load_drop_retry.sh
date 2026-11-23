@@ -133,9 +133,14 @@ run_streamed() {
     (
       # `read -t 1` is the poll timer: a BUILTIN — killing this subshell
       # mid-wait forks no `sleep` child for the job harness to report.
+      # The spam count covers ONLY bytes appended during THIS run: the
+      # rerun (--append) shares the console with attempt 1, whose wedge
+      # spam must never insta-kill the rerun before its first poll.
       exec 3< /dev/zero
+      baseline=$(wc -c < "$CONSOLE" 2>/dev/null) || baseline=0
       while kill -0 "$runner_pid" 2>/dev/null; do
-        n=$(grep -cE 'Attempt:[0-9]+ waiting for isolate' "$CONSOLE" 2>/dev/null) || n=0
+        n=$(tail -c +"$((baseline + 1))" "$CONSOLE" 2>/dev/null |
+          grep -cE 'Attempt:[0-9]+ waiting for isolate') || n=0
         if [ "${n:-0}" -ge "$SPAM_LIMIT" ]; then
           echo "load_drop_retry: exit-handshake wedge — $n 'waiting for isolate' spam lines; SIGKILL the wedged runner's process group (results are already in the reporter, coverage is per-suite incremental; gh-2381)" >&2
           kill -9 -- "-$runner_pid" 2>/dev/null || true
