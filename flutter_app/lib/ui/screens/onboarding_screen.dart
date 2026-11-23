@@ -1135,19 +1135,25 @@ class _MiniSteps extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 5),
-                      Text(
-                        labels[i],
-                        maxLines: 2,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 9.5,
-                          height: 1.15,
-                          fontWeight: i == 0
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: i == 0
-                              ? _onbInk(context)
-                              : _onbGrayLight(context),
+                      // A RU label ("Действуйте") is wider than the 50px
+                      // column: scale it down instead of wrapping mid-word.
+                      // EN labels fit at scale 1.0 and render top-centred,
+                      // so the stock frame stays pixel-identical (goldens).
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.topCenter,
+                        child: Text(
+                          labels[i],
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: i == 0
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: i == 0
+                                ? _onbInk(context)
+                                : _onbGrayLight(context),
+                          ),
                         ),
                       ),
                     ],
@@ -1990,10 +1996,24 @@ class _ProviderCard extends StatelessWidget {
                   child: Icon(Icons.check, size: 13, color: Colors.white),
                 )
               else if (selected)
-                Icon(
-                  Icons.radio_button_checked,
-                  size: 20,
-                  color: _onbPrimary(context),
+                // Painted radio dot, not an Icons.* glyph: the styleguide
+                // ratchet freezes this file's Material icon count.
+                Container(
+                  key: const ValueKey('onboardingProviderSelected'),
+                  width: 20,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: _onbPrimary(context), width: 2),
+                  ),
+                  child: Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _onbPrimary(context),
+                    ),
+                  ),
                 )
               else
                 Icon(

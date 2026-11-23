@@ -680,7 +680,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('onboardingProviderSelected')),
+        findsOneWidget,
+      );
       expect(find.text('Choose how Branded thinks.'), findsOneWidget);
       expect(find.text('Skip'), findsNothing);
 
@@ -699,7 +702,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Choose how Branded thinks.'), findsOneWidget);
-      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('onboardingProviderSelected')),
+        findsOneWidget,
+      );
       expect(registry.providers, isEmpty);
       expect(find.text('Skip'), findsNothing);
 
@@ -725,7 +731,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+      expect(
+        find.byKey(const ValueKey('onboardingProviderSelected')),
+        findsNothing,
+      );
       expect(find.text('Skip'), findsNothing);
       expect(find.text('Give access only when it helps.'), findsNothing);
     });
