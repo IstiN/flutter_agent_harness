@@ -2,16 +2,17 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// Issue #2331 — the sharded dart test legs ride the one-shot loopback-ws
+/// Issue #2331 — the sharded dart test legs ride the bounded loopback-ws
 /// load-drop retry (`scripts/load_drop_retry.sh`).
 ///
 /// Family: under CI-leg load the dart test loader's loopback WebSocket to a
 /// freshly spawned test VM dies mid-handshake (`Failed to load "x_test.dart": Connection closed before full header was received` or
-/// `Connection reset by peer, uri=http://127.0.0.1:…/ws`). Six occurrences (issue card), all in
+/// `Connection reset by peer, uri=http://127.0.0.1:…/ws`). Ten occurrences (issue card), all in
 /// the `test-core` (×4) and `pty-integration-linux` (×3) shards on
 /// ubuntu-24.04-arm; the victim file is arbitrary, every test that ran was
-/// green. The wrapper re-runs ONLY the dropped file(s) once (the gh-1026
-/// rerun-only-failed discipline); a concurrency cap was rejected: the PTY
+/// green. The wrapper re-runs ONLY the failed inventory — bounded (≤2
+/// reruns, drain backoff; the gh-1026 rerun-only-failed discipline); a
+/// concurrency cap was rejected: the PTY
 /// leg dropped twice AT its explicit `--concurrency=4`, and lowering it
 /// collides with the gh-1300 shard-duration budgets (420 s/shard, down-only
 /// ratchet).

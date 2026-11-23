@@ -1,19 +1,38 @@
 #!/usr/bin/env bash
-# load_drop_retry.sh — one-shot retry for sharded dart test legs: the
-# loopback-ws load drops (issue #2331) and the engine-abandonment wedge
-# (gh-2381).
+# load_drop_retry.sh — bounded loopback-ws load-drop retry for sharded
+# dart test legs (issue #2331).
 #
-# Family 1 (issue #2331): under CI-leg load the dart test loader's
-# loopback WebSocket (127.0.0.1:…/ws) to a freshly spawned test VM can die
-# mid-handshake —
+# Family: under CI-leg load the dart test loader's loopback WebSocket
+# (127.0.0.1:…/ws) to a freshly spawned test VM can die mid-handshake —
 #   Failed to load "<file>": Connection closed before full header was
 #   received, uri = http://127.0.0.1:…/ws
 #   Failed to load "<file>": Connection reset by peer, uri=http://127.0.0.1:…/ws
 # The victim file is arbitrary (whatever is loading when the socket dies),
-# never an assertion failure (6/6 occurrences on the card). The shard reds
+# never an assertion failure (10/10 occurrences on the card). The shard reds
 # even though every test that ran was green.
 #
-# Family 2 (gh-2381, run 45200064457 shard 2/3): the same load class can
+# This wrapper runs the shard's dart test command as given, and on failure
+# that carries BOTH the `Failed to load "<path>"` marker AND a ws-drop
+# signature, re-runs the failed inventory (the gh-1026
+# rerun-only-failed-files discipline): the ws-dropped files PLUS every
+# failed suite the failing attempt's reporter log records (the repo's
+# scripts/gate_failed_targets.py). A co-occurring real failure — assertion
+# failure or compile-error load failure — is therefore IN the rerun and
+# keeps the shard red; an attempt whose only failures are ws drops heals.
+# Without the ws-drop signature the wrapper never reruns at all: real
+# failures stay loud, nothing is rerun blind, nothing is masked.
+#
+# Bounded retry (not one-shot; PR #2347 shipped the one-shot ancestor):
+# every RED attempt whose OWN output carries the signature buys one more
+# rerun of THAT attempt's failed inventory, up to
+# $LOAD_DROP_RETRY_MAX_RERUNS (default 2 — three attempts total), after a
+# drain backoff of $LOAD_DROP_RETRY_BACKOFF_S seconds (default 5, doubling
+# per rerun). Detection reads only the failing attempt's own console
+# segment — a healed file's old signature line can never re-arm the loop.
+# The bound is hard: a drop-always runner reds after the last rerun with
+# that attempt's exit code.
+#
+# Family 2 (gh-2381, run 45200064457 PTY shard 2/3): the same load class can
 # kill the VM-service connection DURING a post-suite coverage gather; the
 # test_core engine's run loop dies with the suite queue still pending —
 # tests left IN FLIGHT (their tearDowns never run → live pty2 children)
@@ -22,45 +41,39 @@
 # testDone 98). The abandoned pty2 `_waitForExitCode` isolates then block
 # the VM's exit handshake forever (`Attempt:N waiting for isolate
 # _waitForExitCode to check in`) and the shard burns its WHOLE budget
-# before the timeout kill lands `cancelled`.
-#
-# This wrapper runs the shard's dart test command as given, and on a run
-# carrying a TRANSIENT signature — the ws-drop text above, a started-but-
-# never-finished test in the reporter, or an invocation target with no
-# suite event at all — re-runs the transient inventory ONCE (the gh-1026
-# rerun-only-failed discipline): transient targets PLUS every failed suite
-# the attempt-1 reporter records (via the repo's
-# scripts/gate_failed_targets.py). A co-occurring real failure — assertion
-# failure or compile-error load failure — is therefore IN the rerun and
-# keeps the shard red; an attempt 1 whose only losses are transient heals.
-# Without a transient signature the wrapper never reruns at all: real
-# failures stay loud, nothing is rerun blind, nothing is masked.
-#
-# The exit-handshake wedge gets a watchdog instead of a 40-minute burn:
-# sustained `Attempt:N waiting for isolate …` console spam means the run's
-# results are already in the file-reporter (it flushes per event) and
-# coverage is per-suite incremental, so the wedged runner is SIGKILLed and
-# the normal evidence-driven decision proceeds. The spam budget is
-# LOAD_DROP_RETRY_SPAM_LIMIT (default 8 lines; 0 disables the watchdog).
-# The pattern is anchored on the `Attempt:` prefix — test-failure text that
-# QUOTES the phrase (pty_harness's shutdownPty StateError) never matches.
+# before the timeout kill lands `cancelled`. The wrapper heals this shape
+# inside the SAME bounded budget: the gh-2381 projections
+# (gate_failed_targets.py --unfinished/--loaded) treat unfinished tests and
+# never-loaded invocation targets as transient losses (trusted ONLY when
+# the attempt's reporter log exists — a missing log never widens the
+# inventory), and an exit-handshake WATCHDOG bounds the burn: sustained
+# `Attempt:N waiting for isolate` spam on THIS attempt's fresh console
+# output means the results are already recorded (the reporter flushes per
+# event; coverage is per-suite incremental), so the wedged runner's
+# process group is SIGKILLed and the loop's evidence-driven decision
+# proceeds. The spam budget is $LOAD_DROP_RETRY_SPAM_LIMIT (default 8
+# lines; 0 disables the watchdog); the pattern is anchored on the
+# `Attempt:` prefix so test-failure text that QUOTES the phrase
+# (pty_harness's shutdownPty StateError) never trips the kill.
 #
 # Usage:
 #   scripts/load_drop_retry.sh <main-log> <retry-log> -- <cmd...> "<targets>"
+#   (interface unchanged from the PR #2347 one-shot — callers need nothing)
 #
 #   <main-log>   the path of the caller's own --file-reporter=json:<main-log>
 #                (passed as part of <cmd...>) that junit/duration consumers
 #                read — attempt-1 evidence is never clobbered; also names
 #                the <main-log>.console capture;
-#   <retry-log>  where the rerun's reporter writes (kept separate so the
-#                main log is never overwritten);
+#   <retry-log>  base path for the reruns' reporter logs: rerun k writes
+#                <retry-log>.rerunK (kept separate so the main log is never
+#                overwritten; rerun evidence only — no consumer reads it);
 #   <cmd...>     the full dart test invocation INCLUDING its own
 #                --file-reporter flag; the FINAL argument is the quoted,
-#                newline/space-separated target list (word-split here).
+#                space-separated target list (word-split here).
 #
-# Exit: 0 when the run (or the single rerun) is green; the failing exit
-# code otherwise. Coverage consumers are safe: the rerun inherits
-# --coverage=coverage, so a healed file's hits land in the same coverage/
+# Exit: 0 when the run (or a rerun) is green; the failing exit code
+# otherwise. Coverage consumers are safe: every rerun inherits
+# --coverage=coverage, so healed files' hits land in the same coverage/
 # dir the gate merges.
 set -euo pipefail
 # TARGETS/RERUN_TARGETS expand unquoted below (word-split by design — the
@@ -83,7 +96,15 @@ TARGETS="${!#}"           # final arg: quoted, space-separated target list
 [ -n "$TARGETS" ] || usage
 
 CONSOLE="${MAIN_LOG}.console"
+BACKOFF=${LOAD_DROP_RETRY_BACKOFF_S:-5}
+MAX_RERUNS=${LOAD_DROP_RETRY_MAX_RERUNS:-2}
+# Operator knobs are consumed by bash integer tests/arithmetic below. A
+# sleep-style "5s" or other garbage must not disable the retry loop itself.
+[[ "$BACKOFF" =~ ^[0-9]+$ ]] || BACKOFF=5
+[[ "$MAX_RERUNS" =~ ^[0-9]+$ ]] || MAX_RERUNS=2
 SPAM_LIMIT="${LOAD_DROP_RETRY_SPAM_LIMIT:-8}"
+[[ "$SPAM_LIMIT" =~ ^[0-9]+$ ]] || SPAM_LIMIT=8
+
 FIFO=""
 WATCHDOG_PID=""
 RUNNER_RC=""
@@ -112,13 +133,23 @@ trap cleanup EXIT
 # gets a short drain window (an orphan-held write end can keep it alive
 # forever) and is then killed; the evidence is complete the moment the
 # runner's writes land.
+# run_streamed [--append] [segment-file] — the optional second argument is
+# the failing-attempt segment file the rerun loop greps for its signature:
+# one tee feeds the accumulated console AND the fresh per-attempt segment
+# (their #2331 loop contract) plus the live CI log, from the same stream.
 run_streamed() {
   local append=false
-  [ "${1:-}" = "--append" ] && append=true
+  [ "${1:-}" = "--append" ] && { append=true; shift; }
+  local segment=""
+  [ -n "${1:-}" ] && segment="$1"
   FIFO="${CONSOLE}.fifo"
   mkfifo "$FIFO"
   if $append; then
-    tee -a "$CONSOLE" < "$FIFO" &
+    if [ -n "$segment" ]; then
+      tee -a "$CONSOLE" "$segment" < "$FIFO" &
+    else
+      tee -a "$CONSOLE" < "$FIFO" &
+    fi
   else
     tee "$CONSOLE" < "$FIFO" &
   fi
@@ -129,13 +160,13 @@ run_streamed() {
     "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
   fi
   local runner_pid=$!
-  if [ "${SPAM_LIMIT:-8}" -gt 0 ] 2>/dev/null; then
+  if [ "$SPAM_LIMIT" -gt 0 ]; then
     (
-      # `read -t 1` is the poll timer: a BUILTIN — killing this subshell
-      # mid-wait forks no `sleep` child for the job harness to report.
-      # The spam count covers ONLY bytes appended during THIS run: the
-      # rerun (--append) shares the console with attempt 1, whose wedge
-      # spam must never insta-kill the rerun before its first poll.
+      # `read -t` is the poll timer: a BUILTIN — killing this subshell
+      # mid-wait forks no `sleep` child for the job harness to report. The
+      # spam count covers ONLY bytes appended during THIS run: the reruns
+      # (--append) share the console with earlier attempts, whose wedge
+      # spam must never insta-kill a healthy rerun before its first poll.
       exec 3< /dev/zero
       baseline=$(wc -c < "$CONSOLE" 2>/dev/null) || baseline=0
       while kill -0 "$runner_pid" 2>/dev/null; do
@@ -181,94 +212,104 @@ run_streamed
 RC=$RUNNER_RC
 set -e
 
-# Detection: which TRANSIENT family fired, if any. The ws-drop text gates
-# family 1; the gh-2381 projections gate family 2 off the SAME reporter
-# log. A real assertion failure alone pairs with neither — that shape is
-# deterministic runner territory: exit loudly, no rerun.
-if grep -qE 'Connection closed before full header was received|Connection reset by peer' \
-    "$CONSOLE"; then
-  DROPPED=$(awk '/Failed to load/ && (/Connection closed before full header was received/ || /Connection reset by peer/)' \
-    "$CONSOLE" |
-    sed -E -e 's/.*Failed to load "([^"]+)".*/\1/' -e 't' -e 's/.*Failed to load ([^:"]+):.*/\1/' |
-    sort -u)
-else
+RERUNS=0
+SEGMENT="$CONSOLE"     # the FAILING attempt's own output (detection input)
+REPORTER="$MAIN_LOG"   # that attempt's reporter log (rerun inventory input)
+
+while [ "$RC" -ne 0 ] && [ "$RERUNS" -lt "$MAX_RERUNS" ]; do
+  # Detection gates WHETHER this wrapper reruns at all, on TWO transient
+  # families read from the FAILING attempt's OWN segment — a healed
+  # attempt-1 line living in the accumulated console can never re-arm the
+  # loop:
+  #   family 1 (#2331) — the loopback-ws drop signature;
+  #   family 2 (gh-2381) — the engine-abandonment evidence: the attempt's
+  #   reporter log records a started-but-never-finished test
+  #   (--unfinished) or an invocation target with NO suite event at all
+  #   (--loaded complement), i.e. Engine.run() died mid-queue. Trusted
+  #   ONLY when the reporter log exists and is non-empty: a missing log
+  #   (crash before the reporter flushed) degrades to the console evidence
+  #   alone — never "every target is suspicious" (no-blind-rerun).
+  # A real assertion failure, compile error, or timeout never pairs
+  # `Failed to load "…"` with ws text nor leaves an abandoned inventory —
+  # with neither transient the failure is deterministic runner territory:
+  # exit here, loud, no rerun.
+  HAS_REPORTER=false
+  if [ -s "$REPORTER" ]; then HAS_REPORTER=true; fi
   DROPPED=""
-fi
+  if grep -qE 'Connection closed before full header was received|Connection reset by peer' \
+    "$SEGMENT"; then
+    DROPPED=$(awk '/Failed to load/ && (/Connection closed before full header was received/ || /Connection reset by peer/)' \
+      "$SEGMENT" |
+      sed -E -e 's/.*Failed to load "([^"]+)".*/\1/' -e 't' -e 's/.*Failed to load ([^:"]+):.*/\1/' |
+      sort -u)
+  fi
+  REPORTER_FAILED=""
+  REPORTER_UNFINISHED=""
+  REPORTER_LOADED=""
+  if $HAS_REPORTER; then
+    REPORTER_FAILED=$(python3 scripts/gate_failed_targets.py "$REPORTER")
+    REPORTER_UNFINISHED=$(python3 scripts/gate_failed_targets.py --unfinished "$REPORTER")
+    REPORTER_LOADED=$(python3 scripts/gate_failed_targets.py --loaded "$REPORTER")
+  fi
+  NEVER_LOADED=""
+  if $HAS_REPORTER; then
+    for t in $TARGETS; do
+      if printf '%s\n' "$REPORTER_LOADED" | grep -Fxq -- "$t"; then continue; fi
+      if printf '%s\n' "$DROPPED" | grep -Fxq -- "$t"; then continue; fi
+      NEVER_LOADED="$NEVER_LOADED$t"$'\n'
+    done
+    NEVER_LOADED=$(printf '%s' "$NEVER_LOADED" | sed '/^$/d' | sort -u)
+  fi
+  TRANSIENT=$(printf '%s\n%s\n%s\n' "$DROPPED" "$REPORTER_UNFINISHED" \
+    "$NEVER_LOADED" | sed '/^$/d' | sort -u)
+  if [ -z "$TRANSIENT" ]; then
+    echo "load_drop_retry: failure carries no loopback-ws drop signature (no abandoned inventory either) — not rerunning" >&2
+    exit "$RC"
+  fi
+  # WHAT to rerun is the FULL failed inventory of the failing attempt, not
+  # just the transient files (PR #2347 review round 1, blocking): union
+  # the transient targets with every failed suite the attempt's reporter
+  # recorded (gate_failed_targets.py — failure AND error results, load
+  # failures via the hidden `loading <path>` tests; missing/unparsable log
+  # = clean empty). A co-occurring real failure is therefore IN the rerun
+  # and fails it — the shard stays red; an attempt whose ONLY losses are
+  # transient heals.
+  RERUN_TARGETS=$(printf '%s\n%s\n' "$TRANSIENT" "$REPORTER_FAILED" | sed '/^$/d' | sort -u)
+  if [ -z "$RERUN_TARGETS" ]; then
+    echo "load_drop_retry: transient signature present but no failed-file inventory — not rerunning blind" >&2
+    exit "$RC"
+  fi
 
-# gh-2381 projections off the attempt-1 reporter. They are trusted ONLY
-# when the log exists and is non-empty — a missing log (crash before the
-# reporter flushed) must degrade to the family-1 console evidence alone,
-# never to "every target is suspicious" (the no-blind-rerun rule).
-REPORTER_FAILED=""
-REPORTER_UNFINISHED=""
-REPORTER_LOADED=""
-HAS_REPORTER=false
-if [ -s "$MAIN_LOG" ]; then
-  HAS_REPORTER=true
-  REPORTER_FAILED=$(python3 scripts/gate_failed_targets.py "$MAIN_LOG")
-  REPORTER_UNFINISHED=$(python3 scripts/gate_failed_targets.py --unfinished "$MAIN_LOG")
-  REPORTER_LOADED=$(python3 scripts/gate_failed_targets.py --loaded "$MAIN_LOG")
-fi
+  RERUNS=$((RERUNS + 1))
+  echo "🔁 load-drop retry (#2331): rerun $RERUNS/$MAX_RERUNS after ${BACKOFF}s drain backoff:" >&2
+  printf '%s\n' "$RERUN_TARGETS" | sed 's/^/   /' >&2
+  if [ "$BACKOFF" -gt 0 ]; then sleep "$BACKOFF"; fi
+  BACKOFF=$((BACKOFF * 2))
 
-# Invocation targets the engine never even loaded (planned by allSuites,
-# absent from the suite events — the ten vanished suites of run 45200064457).
-NEVER_LOADED=""
-if $HAS_REPORTER; then
-  for t in $TARGETS; do
-    if printf '%s\n' "$REPORTER_LOADED" | grep -Fxq -- "$t"; then continue; fi
-    if printf '%s\n' "$DROPPED" | grep -Fxq -- "$t"; then continue; fi
-    NEVER_LOADED="$NEVER_LOADED$t"$'\n'
+  RETRY_CMD=()
+  for arg in "${CMD[@]}"; do
+    case "$arg" in
+      --file-reporter=*) ;;            # rerun writes its own evidence log
+      *) RETRY_CMD+=("$arg") ;;
+    esac
   done
-  NEVER_LOADED=$(printf '%s' "$NEVER_LOADED" | sed '/^$/d' | sort -u)
-fi
 
-# The transient inventory: every loss this wrapper exists to heal.
-TRANSIENT=$(printf '%s\n%s\n%s\n' "$DROPPED" "$REPORTER_UNFINISHED" \
-  "$NEVER_LOADED" | sed '/^$/d' | sort -u)
-
-if [ "$RC" -eq 0 ] && [ -z "$TRANSIENT" ] && [ -z "$REPORTER_FAILED" ]; then
-  exit 0
-fi
-
-if [ -z "$TRANSIENT" ]; then
-  # Real failures only — deterministic, a rerun cannot heal them.
-  echo "load_drop_retry: failure carries no transient signature (no loopback-ws drop, no abandoned inventory) — not rerunning" >&2
-  exit "$RC"
-fi
-
-# WHAT to rerun is the FULL attempt-1 failed inventory, not just the
-# transient files (PR #2347 review round 1, blocking): union the transient
-# targets with every failed suite the attempt-1 reporter records. A
-# co-occurring real failure is therefore IN the rerun and fails it — the
-# shard stays red; an attempt 1 whose ONLY losses are transient heals.
-RERUN_TARGETS=$(printf '%s\n%s\n' "$TRANSIENT" "$REPORTER_FAILED" | sed '/^$/d' | sort -u)
-if [ -z "$RERUN_TARGETS" ]; then
-  echo "load_drop_retry: transient signature present but no failed-file inventory — not rerunning blind" >&2
-  exit "$RC"
-fi
-
-echo "🔁 load-drop retry (#2331/gh-2381): rerunning transient/failed file(s) ONCE:" >&2
-printf '%s\n' "$RERUN_TARGETS" | sed 's/^/   /' >&2
-
-RETRY_CMD=()
-for arg in "${CMD[@]}"; do
-  case "$arg" in
-    --file-reporter=*) ;;            # rerun writes to RETRY_LOG instead
-    *) RETRY_CMD+=("$arg") ;;
-  esac
+  SEGMENT="${CONSOLE}.rerun$RERUNS"
+  REPORTER="${RETRY_LOG}.rerun$RERUNS"
+  RETRY_CMD+=("--file-reporter=json:$REPORTER")
+  set +e
+  CMD=("${RETRY_CMD[@]}")
+  TARGETS="$RERUN_TARGETS"  # the rerun drives the transient/failed inventory
+  run_streamed --append "$SEGMENT"
+  RC=$RUNNER_RC
+  set -e
 done
-RETRY_CMD+=("--file-reporter=json:$RETRY_LOG")
-
-set +e
-CMD=("${RETRY_CMD[@]}")
-TARGETS="$RERUN_TARGETS"   # the rerun drives the transient/failed inventory
-run_streamed --append
-RC=$RUNNER_RC
-set -e
 
 if [ "$RC" -eq 0 ]; then
-  echo "✅ load-drop retry: healed — transient loss(es) green on the rerun" >&2
+  if [ "$RERUNS" -gt 0 ]; then
+    echo "✅ load-drop retry: healed — dropped file(s) green on rerun $RERUNS" >&2
+  fi
   exit 0
 fi
-echo "❌ load-drop retry: rerun still red (exit $RC) — failing loudly" >&2
+echo "❌ load-drop retry: still red after $RERUNS rerun(s) (exit $RC) — failing loudly" >&2
 exit "$RC"
