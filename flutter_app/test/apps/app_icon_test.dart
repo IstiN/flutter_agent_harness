@@ -68,7 +68,7 @@ void main() {
     expect(find.text('📦'), findsOneWidget);
   });
 
-  testWidgets('framed icon uses a colorful continuous-corner badge', (
+  testWidgets('framed curated artwork has no generated outer badge', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -82,17 +82,47 @@ void main() {
     await tester.pumpAndSettle();
     final badge = tester.widget<AppIconBadge>(find.byType(AppIconBadge));
     expect(badge.size, 76);
-    final container = tester.widget<Container>(
-      find
-          .descendant(
-            of: find.byType(AppIconBadge),
-            matching: find.byType(Container),
-          )
-          .first,
+    expect(
+      find.descendant(
+        of: find.byType(AppIconBadge),
+        matching: find.byType(Container),
+      ),
+      findsNothing,
     );
-    final decoration = container.decoration! as ShapeDecoration;
+  });
+
+  testWidgets('generated text fallback keeps its shadow outside the clip', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: AppIcon(app: _app('🧮'), env: env, size: 76, framed: true),
+        ),
+      ),
+    );
+    final decorationFinder = find.byWidgetPredicate(
+      (widget) => widget is DecoratedBox && widget.child is AppIconBadge,
+    );
+    expect(decorationFinder, findsOneWidget);
+    expect(
+      tester.getSize(decorationFinder),
+      tester.getSize(find.byType(AppIconBadge)),
+      reason: 'the outer decoration must not add border padding to the slot',
+    );
+    final decorationBox = tester.widget<DecoratedBox>(decorationFinder);
+    final decoration = decorationBox.decoration as ShapeDecoration;
     expect(decoration.gradient, isA<LinearGradient>());
     expect(decoration.shape, isA<RoundedSuperellipseBorder>());
+    expect(decoration.shadows, isNotEmpty);
+    expect(
+      find.descendant(
+        of: find.byType(AppIconBadge),
+        matching: find.byType(Container),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('curated catalog artwork replaces placeholder SVG by app id', (

@@ -1941,9 +1941,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     if (LauncherLayoutStore.isFolderKey(key)) {
       return AppIconBadge(
-        seed: key,
         size: size,
-        accent: const Color(0xFF64748B),
         child: _folderMiniIcons(
           colors,
           LauncherLayoutStore.folderIdOf(key),
@@ -1954,16 +1952,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final artwork = AppIconArtwork.svgFor(key);
     if (artwork != null) {
       return AppIconBadge(
-        seed: key,
         size: size,
-        accent: AppIconArtwork.accentFor(key),
         child: SvgPicture.string(artwork, fit: BoxFit.contain),
       );
     }
     return AppIconBadge(
-      seed: key,
       size: size,
-      accent: colors.indigo,
       child: Center(
         child: Icon(
           Icons.widgets_rounded,
