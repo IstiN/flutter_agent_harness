@@ -20,6 +20,23 @@
 ///   - point the rerun's --file-reporter at the retry log while the main
 ///     log keeps its attempt-1 evidence for junit/duration consumers.
 /// Fixture-tested here with a stubbed runner — no CI, no real dart test.
+///
+/// gh-2381 extends the same one-shot discipline to the engine-abandonment
+/// wedge (run 45200064457, PTY shard 2/3): a coverage-gather crash kills
+/// the test_core engine mid-queue — tests left IN FLIGHT (tearDowns never
+/// run → live pty2 children → the `Attempt:N waiting for isolate
+/// _waitForExitCode` exit-handshake wedge, whole 40-minute budget burned,
+/// job concluded `cancelled`) and whole suites never loaded (allSuites 26
+/// planned, 16 loaded). The wrapper now
+///   - SIGKILLs the wedged runner on sustained `Attempt:N waiting for
+///     isolate` console spam (results are already in the file-reporter,
+///     coverage is per-suite incremental) — never again a 40-minute burn;
+///   - treats unfinished tests and never-loaded invocation targets as
+///     transient losses in the same rerun inventory, so the leg HEALS
+///     green instead of sitting cancelled; the reporter must exist for
+///     the new projections to fire (a missing log never reruns blind);
+///   - keeps real assertion failures loud — they join the rerun and fail
+///     it again (AC11), never masked by a healed transient.
 library;
 
 import 'dart:io';
