@@ -111,6 +111,17 @@ gh release create "$tag" \
   --title "$tag" \
   --draft \
   --notes-file "$notes_file" || create_rc=$?
+if [ "$create_rc" -eq 0 ]; then
+  # gh-2372: the create SUCCEEDED, but a same-run sibling leg may have
+  # created its own draft inside the view→create race window (GitHub
+  # does not enforce one release per tag for drafts — the v1.0.760 /
+  # v1.0.763 twin rot). The older (first-created) same-tag release must
+  # win: self-delete OUR twin when we lost, so the caller attaches into
+  # the winner and nothing rots for 24h until the sweeper. Best-effort.
+  bash "$(dirname "$0")/release_draft_twin_dedupe.sh" "$tag"
+  echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
+  exit 0
+fi
 if [ "$create_rc" -ne 0 ]; then
   # gh-1801's `|| true` tolerated ONLY the view→create race — a sibling
   # leg creating the release between our view and create. gh-237 (run
@@ -128,4 +139,3 @@ if [ "$create_rc" -ne 0 ]; then
   echo "::error::the draft create for $tag failed (rc $create_rc) and no concurrent release appeared — nothing to attach to; fix the create failure above (e.g. the release body exceeding the 125,000-character API cap, gh-237)" >&2
   exit 1
 fi
-echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
