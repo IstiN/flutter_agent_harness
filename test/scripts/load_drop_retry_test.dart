@@ -27,6 +27,25 @@
 ///   - point each rerun's --file-reporter at `<retry-log>.rerunK` while
 ///     the main log keeps attempt-1 evidence for junit/duration consumers.
 /// Fixture-tested here with a stubbed runner — no CI, no real dart test.
+///
+/// gh-2381 (merged on top of the #2379 bounded loop) extends the same
+/// discipline to the engine-abandonment wedge (run 45200064457, PTY shard
+/// 2/3): a coverage-gather crash kills the test_core engine mid-queue —
+/// tests left IN FLIGHT (tearDowns never run → live pty2 children → the
+/// `Attempt:N waiting for isolate _waitForExitCode` exit-handshake wedge,
+/// whole 40-minute budget burned, job concluded `cancelled`) and whole
+/// suites never loaded (allSuites 26 planned, 16 loaded). The wrapper now
+///   - SIGKILLs the wedged runner's process group on sustained
+///     `Attempt:N waiting for isolate` spam counted over THIS attempt's
+///     fresh console bytes (AC24: a rerun sharing the console is never
+///     insta-killed by attempt-1 spam) — never again a 40-minute burn;
+///   - treats unfinished tests and never-loaded invocation targets as
+///     transient losses in the SAME bounded rerun inventory (AC20-AC23),
+///     so the leg heals green; the projections are trusted ONLY when the
+///     attempt's reporter log exists (a missing log never widens the
+///     inventory);
+///   - keeps real assertion failures loud — they join the rerun and fail
+///     it again (AC21), never masked by a healed transient.
 library;
 
 import 'dart:io';
@@ -79,6 +98,17 @@ done
 echo "\$*" >> "$tmp/argv.log"
 if [ "\$N" -ge 2 ]; then
   case "\$MODE" in
+    wedge-abandon-rerun-red)
+      echo '$droppedClosedHeader'
+      exit 1 ;;
+    wedge-slow-rerun)
+      # gh-2381 AC24: the rerun writes its retry reporter BEFORE exiting —
+      # a slow enough start that a stale-spam watchdog poll would land
+      # mid-run (the whole-console spam count insta-killed a healthy
+      # rerun; the per-run baseline must not).
+      printf '%s\n' '{"type":"done","success":true}' > "\$main"
+      sleep 2
+      exit 0 ;;
     drop-then-drop-other)
       if [ "\$N" -eq 2 ]; then
         echo 'Failed to load "test/cli/b_drop_test.dart": Connection reset by peer, uri=http://127.0.0.1:3/c/ws'
@@ -101,6 +131,13 @@ if [ "\$N" -ge 2 ]; then
 fi
 case "\$MODE" in
   ok) exit 0 ;;
+  slow-ok)
+    # gh-2381 review round 2 (AC25): a HEALTHY run whose whole duration
+    # the exit-handshake watchdog lives through — the wrapper tree must
+    # spend near-zero CPU waiting (the watchdog poll timer must block,
+    # never busy-spin).
+    sleep 3
+    exit 0 ;;
   drop-closed-header)
     echo '$droppedClosedHeader'
     exit 1 ;;
@@ -143,6 +180,50 @@ case "\$MODE" in
   backoff-drop-once)
     echo 'Failed to load "test/cli/a_drop_test.dart": Connection reset by peer, uri=http://127.0.0.1:6/f/ws'
     exit 1 ;;
+  wedge-abandon|wedge-abandon-rerun-red)
+    # gh-2381 AC20/AC21: the engine-abandonment wedge — the reporter
+    # records healthy + a suite whose test STARTED but never finished,
+    # then sustained exit-handshake spam and the process never exits.
+    printf '%s\n' '{"type":"suite","suite":{"id":1,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"suite","suite":{"id":2,"path":"test/countdown_test.dart","platform":"vm"}}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":10,"name":"healthy case","suiteID":1,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":10,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":11,"name":"ten jobs","suiteID":2,"groupIDs":[]},"time":6}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":3,"time":12}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":true}' >> "\$main"
+    echo 'Attempt:1 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:2 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:3 waiting for isolate _waitForExitCode to check in'
+    sleep 300
+    exit 0 ;;
+  wedge-slow-rerun)
+    printf '%s\n' '{"type":"suite","suite":{"id":1,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":10,"name":"healthy case","suiteID":1,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":10,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":true}' >> "\$main"
+    echo 'Attempt:1 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:2 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:3 waiting for isolate _waitForExitCode to check in'
+    sleep 300
+    exit 0 ;;
+  unfinished-exit70)
+    # gh-2381 AC22: the engine died mid-queue (coverage-gather crash) but
+    # the process EXITED (no pty2 children to wedge the handshake) — the
+    # reporter shows a test started, never finished, exit 70 (software).
+    printf '%s\n' '{"type":"suite","suite":{"id":3,"path":"test/inflight_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":20,"name":"in flight","suiteID":3,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":1,"time":1}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":false}' >> "\$main"
+    exit 70 ;;
+  never-loaded-exit70)
+    # gh-2381 AC23: whole suites never loaded — the invocation planned
+    # them, the reporter has a suite event for the healthy one only.
+    printf '%s\n' '{"type":"suite","suite":{"id":4,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":30,"name":"healthy","suiteID":4,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":30,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":2,"time":6}' >> "\$main"
+    printf '%s\n' '{"type":"done","success":false}' >> "\$main"
+    exit 70 ;;
   *) echo "unknown MODE \$MODE" >&2; exit 3 ;;
 esac
 ''';
@@ -421,6 +502,193 @@ void main() {
           '10',
         ], reason: 'knobs=$invalid uses BACKOFF=5 and doubles it normally');
       }
+    },
+  );
+
+  // ── gh-2381: the engine-abandonment wedge (run 45200064457, PTY shard
+  //    2/3). A coverage-gather crash killed Engine.run() mid-queue: three
+  //    tests in flight (their tearDowns never ran — live pty2 children),
+  //    ten queued suites never loaded, and the process hung forever at
+  //    exit (`Attempt:N waiting for isolate _waitForExitCode to check in`,
+  //    40-minute timeout-kill, shard conclusion `cancelled`). The wrapper
+  //    must (a) SIGKILL the wedged runner's process group once the
+  //    exit-handshake spam is sustained on the attempt's OWN fresh console
+  //    output — the evidence is already in the reporter — and (b) treat
+  //    the abandoned inventory (unfinished tests + never-loaded targets)
+  //    as transient losses in the same bounded rerun budget so the leg
+  //    HEALS green instead of burning the shard.
+  test('AC20 the exit-handshake wedge is killed and the abandoned '
+      'inventory reruns once (heals)', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-abandon',
+      targets:
+          'test/healthy_test.dart test/countdown_test.dart test/never_loaded_test.dart',
+      env: {'LOAD_DROP_RETRY_SPAM_LIMIT': '2'},
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(r.stderr, contains('exit-handshake wedge'));
+    expect(r.stderr, contains('healed'));
+    expect(
+      RegExp('exit-handshake wedge').allMatches(r.stderr.toString()),
+      hasLength(1),
+      reason: 'exactly ONE wedge kill — attempt 1 only',
+    );
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2), reason: 'exactly one rerun');
+    expect(calls[1], contains('test/countdown_test.dart'));
+    expect(calls[1], contains('test/never_loaded_test.dart'));
+    expect(
+      calls[1],
+      isNot(contains('test/healthy_test.dart')),
+      reason: 'the suite that finished its tests is done',
+    );
+    expect(calls[1], contains('--file-reporter=json:${tmp.path}/retry.json'));
+    expect(
+      calls[1],
+      isNot(contains('--file-reporter=json:${tmp.path}/main.json')),
+    );
+  });
+
+  test('AC21 the wedge rerun that fails again stays red — bounded, never '
+      'masked by a healed transient', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-abandon-rerun-red',
+      targets:
+          'test/healthy_test.dart test/countdown_test.dart test/never_loaded_test.dart',
+      env: {
+        'LOAD_DROP_RETRY_SPAM_LIMIT': '2',
+        'LOAD_DROP_RETRY_MAX_RERUNS': '1',
+      },
+    );
+    expect(r.exitCode, isNot(0), reason: 'stderr: ${r.stderr}');
+    expect(r.stderr, contains('still red'));
+    expect(invocations(tmp.path), hasLength(2));
+  });
+
+  test('AC22 unfinished tests alone (started, never finished, exit 70) '
+      'trigger the abandonment rerun', () async {
+    // Targets-consistent fixture (review round 2 digest): the in-flight
+    // suite IS an invocation target — real in-flight suites always are.
+    // The suite is loaded (a suite event exists), so the never-loaded
+    // complement is empty and the rerun triggers on the --unfinished
+    // projection ALONE.
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'unfinished-exit70',
+      targets: 'test/inflight_test.dart',
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2));
+    expect(calls[1], contains('test/inflight_test.dart'));
+  });
+
+  test('AC23 never-loaded targets (a planned suite with no suite event) '
+      'join the abandonment rerun', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'never-loaded-exit70',
+      targets: 'test/healthy_test.dart test/never_loaded_test.dart',
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    final calls = invocations(tmp.path);
+    expect(calls, hasLength(2));
+    expect(calls[1], contains('test/never_loaded_test.dart'));
+    expect(calls[1], isNot(contains('test/healthy_test.dart')));
+  });
+
+  test('AC24 the rerun is never insta-killed by attempt-1 spam already in '
+      'the shared console (the --append baseline)', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-slow-rerun',
+      env: {'LOAD_DROP_RETRY_SPAM_LIMIT': '2'},
+    );
+    final stderrText = r.stderr.toString();
+    expect(r.exitCode, 0, reason: 'stderr: $stderrText');
+    expect(stderrText, contains('healed'));
+    expect(
+      RegExp('exit-handshake wedge').allMatches(stderrText),
+      hasLength(1),
+      reason: 'exactly ONE wedge kill — attempt 1 only',
+    );
+    expect(invocations(tmp.path), hasLength(2));
+  });
+
+  test(
+    'AC25 the watchdog poll timer never busy-spins: a healthy 3s run '
+    'consumes near-zero wrapper-tree CPU and leaks no redirect error',
+    () async {
+      // gh-2381 review round 2 (IMPORTANT, both rounds): the watchdog's
+      // `read -t 1 -u 3` timer read /dev/zero, which never blocks — the
+      // builtin looped on instant read() syscalls for the attempt's whole
+      // lifetime, pinning ~1 core (measured 3.21 CPU-s over a 3 s wall run
+      // on the round-2 head). The timer must BLOCK: a healthy run's
+      // wrapper tree (bash + watchdog subshell + tail/grep polls) spends
+      // near-zero CPU while the runner sleeps. Measured with
+      // /usr/bin/time over the wrapper process tree (user + sys, children
+      // reaped before the wrapper exits — the watchdog subshell is killed
+      // and reaped by then). The same fresh-invocation run also pins the
+      // round-2 digest stderr leak: the spam baseline is computed before
+      // tee starts, so `wc -c <` never hits a not-yet-created console.
+      if (!File('/usr/bin/time').existsSync()) {
+        return; // no measurement tool on this host — nothing to assert
+      }
+      final stub = File('${tmp.path}/stub_runner.sh')
+        ..writeAsStringSync(stubRunner(tmp.path));
+      final watch = Stopwatch()..start();
+      final r = await Process.run(
+        '/usr/bin/time',
+        [
+          '-f',
+          '%U %S',
+          '-o',
+          '${tmp.path}/cpu.txt',
+          'bash',
+          scriptPath,
+          '${tmp.path}/main.json',
+          '${tmp.path}/retry.json',
+          '--',
+          'bash',
+          stub.path,
+          '--exclude-tags',
+          'integration',
+          '--concurrency=4',
+          '--file-reporter=json:${tmp.path}/main.json',
+          'test/cli/first_test.dart test/cli/second_test.dart',
+        ],
+        environment: {'MODE': 'slow-ok', 'LOAD_DROP_RETRY_BACKOFF_S': '0'},
+      );
+      watch.stop();
+      final wall = watch.elapsedMilliseconds / 1000;
+      expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+      expect(invocations(tmp.path), hasLength(1), reason: 'green single run');
+      expect(
+        wall,
+        greaterThanOrEqualTo(2.5),
+        reason: 'the stub slept ~3s — the watchdog lived through it',
+      );
+      final cpuLine = File('${tmp.path}/cpu.txt').readAsLinesSync().last.trim();
+      final parts = cpuLine.split(RegExp(r'\s+'));
+      final cpu = double.parse(parts[0]) + double.parse(parts[1]);
+      expect(
+        cpu,
+        lessThan(wall * 0.5),
+        reason:
+            'wrapper-tree CPU $cpu s over $wall s wall — a busy-spinning '
+            'poll timer pins ~1 core (CPU ≈ wall); a blocking timer is '
+            'near-zero. time output: "$cpuLine"',
+      );
+      expect(
+        r.stderr.toString(),
+        isNot(contains('No such file or directory')),
+        reason:
+            'the fresh first invocation computes its spam baseline '
+            'before tee starts — no failing `wc -c <` redirect error '
+            'leaks to stderr',
+      );
     },
   );
 }

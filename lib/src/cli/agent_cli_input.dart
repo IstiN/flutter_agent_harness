@@ -239,7 +239,33 @@ extension AgentCliInput on AgentCli {
         // Waiting-row refresh (issue #450): the busy→idle edge is where
         // the waiting row takes over from the busy row (E3/E4).
         unawaited(_waiting.push());
+        // Composer-queue drain on the SAME every-trigger settle edge: the
+        // queue is drained by `_handleTuiQueue` only under
+        // `_handleTuiSubmit` — a run started by the INBOX WAKE (hub mail),
+        // a shell-job settle, or a scheduled message has no pending submit
+        // future, so a line typed while it streamed sat in
+        // `⏵ queued (1)` forever (dap_chatter_loop CONTRACT-2, CI red on
+        // 3f16ab28: the run settled at #548 and the typed СТОП never
+        // submitted). Drain here once per settle chain; the guard keeps a
+        // drain's own turns from re-entering.
+        _drainComposerQueueAfterRun();
         if (!_exited) _writeIdlePrompt();
+      }),
+    );
+  }
+
+  /// One settle-edge queue-drain chain at a time. The drain consumes
+  /// `controller.drainQueue()` — a concurrent second drain (a pending
+  /// `_handleTuiSubmit` drain racing this one) can only ever see an
+  /// already-emptied queue and no-op, so the guard is about not STARTING
+  /// duplicate chains, not about mutual exclusion of the drain call.
+  void _drainComposerQueueAfterRun() {
+    final controller = _tuiController;
+    if (controller == null || _exited || _drainingComposerQueue) return;
+    _drainingComposerQueue = true;
+    unawaited(
+      _drainTuiQueue(controller).whenComplete(() {
+        _drainingComposerQueue = false;
       }),
     );
   }
