@@ -126,12 +126,9 @@ void main() {
     PluginPickOption? pickOption,
     PluginAskLine? askLine,
     Map<String, String>? environment,
-    bool deadHub = false,
   }) {
     final env = environment ?? <String, String>{};
-    final plugin = deadHub
-        ? _DeadHubPlugin(environment: env, home: tempHome.path)
-        : hub.HubPlugin(environment: env, home: tempHome.path);
+    final plugin = _DeadHubPlugin(environment: env, home: tempHome.path);
     final host = HubPluginHost(plugin, environment: env, home: tempHome.path);
     final io = _CapturingIo();
     final context = PluginContext(
@@ -142,20 +139,6 @@ void main() {
     );
     host.register(context);
     return (context.slashCommands['/dap']!, io, env, plugin);
-  }
-
-  /// The host connects in the background at register time; wait (max
-  /// ~5 s) until the vendored plugin accepted its start so status-backed
-  /// commands do not race the boot dial.
-  Future<void> settleBoot(hub.HubPlugin plugin) async {
-    for (var i = 0; i < 500; i++) {
-      try {
-        await plugin.status();
-        return;
-      } on StateError {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-    }
   }
 
   /// Hermetic `/dap start` harness: probe/spawner/connect are all
@@ -221,10 +204,9 @@ void main() {
     test(
       'no args prints the disconnected status with a master secret',
       () async {
-        final (slash, io, _, plugin) = registerHost(
+        final (slash, io, _, _) = registerHost(
           environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
         );
-        await settleBoot(plugin);
         await slash([]);
         expect(io.text, contains('hub disconnected'));
       },
@@ -260,11 +242,10 @@ void main() {
     });
 
     test('status choice prints the disconnected line', () async {
-      final (slash, io, _, plugin) = registerHost(
+      final (slash, io, _, _) = registerHost(
         environment: const {'DAP_MASTER_SECRET': 'test-master-secret'},
         pickOption: (title, options, {initialKey}) async => 'status',
       );
-      await settleBoot(plugin);
       await slash([]);
       expect(io.text, contains('hub disconnected'));
     });
@@ -278,13 +259,11 @@ void main() {
     });
 
     test('secret choice sets the session secret and reconnects', () async {
-      final (slash, io, env, plugin) = registerHost(
+      final (slash, io, env, _) = registerHost(
         environment: {'DAP_HUB_URL': 'ws://127.0.0.1:9/ws'},
         pickOption: (title, options, {initialKey}) async => 'secret',
-        deadHub: true,
         askLine: (prompt, {secret = false}) async => 'picked-secret',
       );
-      await settleBoot(plugin);
       await slash([]);
       expect(env['DAP_MASTER_SECRET'], 'picked-secret');
       expect(io.text, contains('master secret set for this session'));
@@ -459,8 +438,7 @@ void main() {
         tools.firstWhere((t) => t.name == name);
 
     test('dap_status reports the disconnected state', () async {
-      final (tools, plugin) = registerToolsHost();
-      await settleBoot(plugin);
+      final (tools, _) = registerToolsHost();
       final result = await toolByName(
         tools,
         'dap_status',
@@ -473,8 +451,7 @@ void main() {
     });
 
     test('dap_peers surfaces the not-connected error', () async {
-      final (tools, plugin) = registerToolsHost();
-      await settleBoot(plugin);
+      final (tools, _) = registerToolsHost();
       await expectLater(
         toolByName(tools, 'dap_peers').execute(const {}, null, null),
         throwsA(isA<StateError>()),
