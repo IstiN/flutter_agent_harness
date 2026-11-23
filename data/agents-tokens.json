@@ -585,5 +585,18 @@
       "source": "reported",
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2385": [
+    {
+      "leg": "review",
+      "at": "2026-11-23T19:35:44Z",
+      "prompt": 75778,
+      "completion": 28553,
+      "total": 104331,
+      "cacheRead": 2437184,
+      "requests": 44,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
