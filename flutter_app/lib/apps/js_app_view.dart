@@ -791,11 +791,10 @@ class _JsAppViewState extends State<JsAppView> {
 
   /// The panel chrome's title-band metrics for the current frame.
   ///
-  /// Phone (safe-area insets, no Duo rail): the band IS the canonical
-  /// narrow header bar — full status-bar clearance plus
-  /// [FaFloatingHeaderBar.barExtent], exactly the chat floating glass
-  /// header's strip on the same frame (59 + 103 = 162 on an iPhone), so
-  /// the opened app reads as the same chrome system as chats and Apps.
+  /// Phone (safe-area insets, no Duo rail): the band keeps the chat
+  /// action/title row on the same centerline, but reserves only that painted
+  /// row — full status-bar clearance plus [FaFloatingHeaderBar.actionBarExtent]
+  /// (59 + 61 = 120 on an iPhone), not the chat header's empty lower row.
   /// Desktop and the Duo vertical rail keep the 56pt Material toolbar:
   /// the desktop title band has no platform inset (`titlebarTop` 0) and
   /// the Duo rail is its own chrome system.
@@ -807,7 +806,7 @@ class _JsAppViewState extends State<JsAppView> {
         ? statusBarTop
         : math.max(0.0, statusBarTop - 8);
     final toolbarHeight = phoneBar
-        ? FaFloatingHeaderBar.barExtent
+        ? FaFloatingHeaderBar.actionBarExtent
         : kToolbarHeight;
     return (
       phoneBar: phoneBar,
@@ -821,7 +820,7 @@ class _JsAppViewState extends State<JsAppView> {
     // The card floats 8pt below the window top, so only the remainder of
     // the platform safe area is needed above the toolbar. Compact macOS
     // window controls are cleared horizontally by [trafficLightLeading].
-    // On a phone the band becomes the canonical narrow bar instead: full
+    // On a phone the band becomes the compact single-row narrow bar: full
     // status-bar clearance + FaFloatingHeaderBar (see _panelBarMetrics).
     final (:phoneBar, :titlebarTop, :toolbarHeight) = _panelBarMetrics();
     final glass =
@@ -916,9 +915,9 @@ class _JsAppViewState extends State<JsAppView> {
     );
   }
 
-  /// The phone panel band: the chat floating glass header's canonical
-  /// strip (FaFloatingHeaderBar) with this app's title and chrome actions
-  /// on the same centerline — 36pt circles in a 40pt band at top 9.
+  /// The phone panel band: only the chat floating glass header's action
+  /// strip, with this app's title and chrome actions on the same centerline
+  /// — 36pt circles in a 40pt band at top 9. No unused avatar/title rows.
   Widget _buildPhonePanelBand(
     JsAppPanelChrome chrome,
     FahColors colors,
@@ -931,15 +930,15 @@ class _JsAppViewState extends State<JsAppView> {
   }) {
     final onBack = chrome.onBack;
     return Padding(
-      // Geometry-test handle: the padded band rect (status bar + 103) is
-      // the strip the golden asserts equal to the chat header's.
+      // Geometry-test handle: the padded band rect (status bar + 61)
+      // contains exactly the painted action/title row plus 6pt outer air.
       key: const ValueKey('appPanelChromeBand'),
       padding: const EdgeInsets.symmetric(
         horizontal: FaFloatingHeaderBar.padHorizontal,
         vertical: FaFloatingHeaderBar.padVertical,
       ),
       child: SizedBox(
-        height: FaFloatingHeaderBar.contentHeight,
+        height: FaFloatingHeaderBar.actionContentHeight,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -1188,7 +1187,7 @@ class _JsAppViewState extends State<JsAppView> {
     final theme = Theme.of(context);
     final fullChrome = widget.app.isFullChrome;
     final duoRailWidth = FaDuoControlRail.widthOf(context);
-    // The panel chrome's bar metrics (phone: canonical narrow bar; desktop
+    // The panel chrome's bar metrics (phone: compact action bar; desktop
     // and Duo: the 56pt toolbar) — the canvas inset must track the exact
     // PreferredSize the app bar reports (see _panelBarMetrics).
     final panelBar = widget.panelChrome == null

@@ -9,6 +9,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaDuoControlRail,
+        FaFloatingHeaderBar,
         FaHeaderCircularAction,
         FaRouteHeader,
         FaSurface,
@@ -442,6 +443,39 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       await _pumpView(tester, width: 390, embeddedInPanel: false);
       expect(tester.getTopLeft(find.text('Demo')).dx, lessThan(72));
+    },
+  );
+
+  _testOnPlatform(
+    'iPhone panel reserves only its painted action row above the canvas',
+    TargetPlatform.iOS,
+    (tester) async {
+      await _pumpView(tester, width: 390, embeddedInPanel: true, topInset: 59);
+
+      final band = tester.getRect(
+        find.byKey(const ValueKey('appPanelChromeBand')),
+      );
+      expect(band.height, FaFloatingHeaderBar.actionBarExtent);
+      final action = tester.getRect(find.byKey(const ValueKey('appFull')));
+      expect(
+        band.bottom - action.center.dy,
+        FaFloatingHeaderBar.padVertical + FaFloatingHeaderBar.pillHeight / 2,
+        reason: 'only the 40pt action slot and its 6pt bottom air remain',
+      );
+      final canvas = tester.widget<Padding>(
+        find.byKey(const ValueKey('appCanvasHeaderInset')),
+      );
+      expect(
+        canvas.padding.resolve(TextDirection.ltr).top,
+        59 + FaFloatingHeaderBar.actionBarExtent,
+      );
+      final boundary = tester.getRect(
+        find.descendant(
+          of: find.byKey(const ValueKey('appCanvasHeaderInset')),
+          matching: find.byType(RepaintBoundary),
+        ),
+      );
+      expect(boundary.top, band.bottom);
     },
   );
 }
