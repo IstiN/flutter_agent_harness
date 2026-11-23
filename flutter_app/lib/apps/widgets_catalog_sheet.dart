@@ -873,14 +873,12 @@ class _CatalogIcon extends StatelessWidget {
     );
   }
 
-  /// The SVG sits on the same continuous-corner gradient as the launcher;
-  /// its own first non-neutral color drives the tile's accent.
+  /// The SVG uses the same continuous-corner clip as the launcher and keeps
+  /// its own colors; no generated backplate sits behind the real artwork.
   Widget _iconTile(AsyncSnapshot<String?> snapshot) {
     final markup = snapshot.data;
     if (markup == null || markup.trim().isEmpty) return _fallback();
     return AppIconBadge(
-      seed: entry.id,
-      artwork: markup,
       size: 64,
       child: SvgPicture.string(markup, fit: BoxFit.contain),
     );
@@ -889,7 +887,6 @@ class _CatalogIcon extends StatelessWidget {
   Widget _fallback([String? locale]) {
     final label = entry.displayName(locale);
     return AppIconBadge(
-      seed: entry.id,
       size: 64,
       child: Builder(
         builder: (context) => Center(

@@ -194,6 +194,28 @@ void main() {
     },
   );
 
+  test('golden captures never race the live release resolver (REG)', () {
+    final script = read('scripts/site_mobile_check.mjs');
+    // dl.js resolves asynchronously and reveals #macos-dl-sub. Independent
+    // bake/check page loads therefore used to capture different DOM states.
+    // Golden contexts must stay on the documented progressive-enhancement
+    // fallback; behavioral resolution remains covered by recorded fixtures.
+    expect(
+      script,
+      contains(
+        "await ctx.route('https://api.github.com/**', (route) => route.abort());",
+      ),
+      reason: 'full-page desktop goldens must block live release metadata',
+    );
+    expect(
+      script,
+      contains(
+        "await ctxG.route('https://api.github.com/**', (route) => route.abort());",
+      ),
+      reason: 'first-viewport goldens must block live release metadata',
+    );
+  });
+
   test('release leg attaches stable-named DMG copies (AC1)', () {
     final workflow = read('.github/workflows/build-macos.yml');
     expect(
