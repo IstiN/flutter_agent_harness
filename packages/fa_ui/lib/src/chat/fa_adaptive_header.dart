@@ -80,7 +80,8 @@ typedef FaHeaderActionBandBuilder =
 /// leading circle, a 4pt gap, the 40pt title pill) whose action band
 /// (top 9, height 40) shares the circle's centerline. Every other narrow
 /// header bar sizes itself from these constants instead of private
-/// literals, and the goldens assert the four strips stay equal
+/// literals; compact hosts that render only the action/title band use the
+/// single-row extent rather than reserving the chat header's empty lower row
 /// (`narrow_ios_header_heights_golden_test.dart`).
 abstract final class FaFloatingHeaderBar {
   /// Horizontal air around the bar's content column.
@@ -107,6 +108,10 @@ abstract final class FaFloatingHeaderBar {
   /// shares the leading circle's centerline (11 + 36/2 == 9 + 40/2).
   static const double actionBandTop = 9;
 
+  /// Content column for a compact header with only the action/title band:
+  /// 9 + 40. Unlike [contentHeight], it has no avatar/lower-title rows.
+  static const double actionContentHeight = actionBandTop + pillHeight;
+
   /// The content column's height: 11 + 36 + 4 + 40.
   static const double contentHeight =
       iconTop + actionDimension + iconTitleGap + pillHeight;
@@ -115,6 +120,12 @@ abstract final class FaFloatingHeaderBar {
   /// iPhone (status bar 59) the chat header's measured
   /// `_glassHeaderExtent` is `59 + barExtent` = 162.
   static const double barExtent = padVertical + contentHeight + padVertical;
+
+  /// Compact single-row strip extent below the safe area: 6 + 49 + 6.
+  /// The action/title band stays on the canonical centerline and leaves
+  /// exactly [padVertical] below it instead of a 48pt dead canvas gap.
+  static const double actionBarExtent =
+      padVertical + actionContentHeight + padVertical;
 }
 
 /// The ONE circular chrome for icon actions (the painter behind
