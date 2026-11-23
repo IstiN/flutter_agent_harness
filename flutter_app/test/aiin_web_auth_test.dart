@@ -65,22 +65,47 @@ void main() {
     );
   });
 
-  test('AIIN postMessage origin must exactly match the app origin', () {
+  test('AIIN postMessage origin matches the app or configured callback', () {
     expect(
-      acceptsAinOAuthMessageOrigin(
+      acceptsAiinOAuthMessageOrigin(
         'https://www.aiin.by',
         'https://www.aiin.by',
+        callbackOrigin: 'https://www.aiin.by',
       ),
       isTrue,
     );
     expect(
-      acceptsAinOAuthMessageOrigin(
+      acceptsAiinOAuthMessageOrigin(
+        'https://fa1.dev',
+        'http://localhost:8080',
+        callbackOrigin: 'https://fa1.dev',
+      ),
+      isTrue,
+    );
+    expect(
+      acceptsAiinOAuthMessageOrigin(
         'https://attacker.example',
-        'https://www.aiin.by',
+        'http://localhost:8080',
+        callbackOrigin: 'https://fa1.dev',
       ),
       isFalse,
     );
-    expect(acceptsAinOAuthMessageOrigin('', ''), isFalse);
+    expect(
+      acceptsAiinOAuthMessageOrigin(
+        'https://fa1.dev.attacker.example',
+        'http://localhost:8080',
+        callbackOrigin: 'https://fa1.dev',
+      ),
+      isFalse,
+    );
+    expect(
+      acceptsAiinOAuthMessageOrigin(
+        'https://fa1.dev',
+        'http://localhost:8080',
+      ),
+      isFalse,
+    );
+    expect(acceptsAiinOAuthMessageOrigin('', ''), isFalse);
   });
 
   test('web connect: popup gets the hosted /login URL, callback state must '

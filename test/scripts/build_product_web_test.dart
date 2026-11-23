@@ -75,6 +75,22 @@ void main() {
   );
 
   test(
+    'stock --base-href without a profile is rejected before building',
+    () async {
+      var called = false;
+      await expectLater(
+        buildProductWeb(
+          outputPath: '${temp.path}/stock-base-href',
+          baseHref: '/agent/',
+          builder: (path) async => called = true,
+        ),
+        throwsFormatException,
+      );
+      expect(called, isFalse);
+    },
+  );
+
+  test(
     'branded build validates and atomically stages the complete static shell',
     () async {
       final output = '${temp.path}/branded-web';

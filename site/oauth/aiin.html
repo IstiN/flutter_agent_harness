@@ -46,8 +46,11 @@
         ts: Date.now()
       };
 
-      // The opener may be served from localhost (dev) or fa1.dev (prod);
-      // the payload carries no secrets — only the short-lived code.
+      // The opener may be served from localhost (dev), fa1.dev (stock), or
+      // a branded app origin. The receiver accepts only its own origin or the
+      // exact configured callback origin and verifies the one-time state;
+      // the wildcard target is required for the cross-origin dev hand-off.
+      // No access/refresh tokens are included in this payload.
       var delivered = false;
       if (window.opener) {
         try { window.opener.postMessage(payload, '*'); delivered = true; }
