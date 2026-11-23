@@ -23,6 +23,7 @@ Future<void> main(List<String> args) async {
     profilePath: value('--profile'),
     assetsPath: value('--assets'),
     outputPath: value('--output') ?? 'flutter_app/build/web',
+    baseHref: value('--base-href'),
     validateOnly: validateOnly,
   );
 }
@@ -34,6 +35,7 @@ Future<void> buildProductWeb({
   String? profilePath,
   String? assetsPath,
   String outputPath = 'flutter_app/build/web',
+  String? baseHref,
   bool validateOnly = false,
   FlutterWebBuild? builder,
   FinalRename? finalRename,
@@ -43,6 +45,9 @@ Future<void> buildProductWeb({
     if (assetsPath != null) {
       throw const FormatException('--assets requires --profile');
     }
+    if (baseHref != null) {
+      throw const FormatException('--base-href requires --profile');
+    }
     if (!validateOnly) await build(outputPath);
     return;
   }
@@ -51,6 +56,12 @@ Future<void> buildProductWeb({
   }
   final config = await loadExternalProductConfig(profilePath);
   final assets = await validateProductAssets(config, assetsPath);
+  if (baseHref != null &&
+      !RegExp(r'^/(?:[A-Za-z0-9._~-]+/)*$').hasMatch(baseHref)) {
+    throw const FormatException(
+      '--base-href must be an absolute path ending in /',
+    );
+  }
   if (validateOnly) {
     stdout.writeln('valid product profile: ${config.productId}');
     return;
@@ -69,6 +80,9 @@ Future<void> buildProductWeb({
       config: config,
       assets: assets,
     );
+    if (baseHref != null) {
+      _stageBaseHref(staging.path, baseHref);
+    }
     final hadOutput = output.existsSync();
     if (hadOutput) output.renameSync(backup.path);
     try {
@@ -280,6 +294,16 @@ void stageBrandedShell({
   assets.required('favicon').copySync('${root.path}/favicon.png');
   assets.required('splash').copySync('${root.path}/splash.png');
   _namespaceServiceWorker(root, namespace, 'fa-product:${config.productId}:');
+}
+
+void _stageBaseHref(String stagingPath, String baseHref) {
+  final index = File('$stagingPath/index.html');
+  final html = index.readAsStringSync();
+  final marker = RegExp(r'<base href="[^"]*">');
+  if (marker.allMatches(html).length != 1) {
+    throw const FormatException('expected exactly one HTML base href');
+  }
+  index.writeAsStringSync(html.replaceFirst(marker, '<base href="$baseHref">'));
 }
 
 Map<String, Object?> _publicProfile(FaProductConfig config) => {
