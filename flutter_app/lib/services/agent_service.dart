@@ -439,7 +439,7 @@ class AgentService extends ChangeNotifier
       // silently not existing (the C4 empty-expansion retry loop).
       ..registerSecretNames({...secrets.keys, ...knownKeyNames});
     final resolvedSessionsRoot =
-        sessionsRoot ?? defaultSessionsRoot(resolvedEnv.sessionCwd);
+        sessionsRoot ?? defaultSessionsRootForEnv(resolvedEnv);
     return AgentService._withEnv(
       env: secretsEnv,
       secretsEnv: secretsEnv,
@@ -2237,7 +2237,7 @@ class AgentService extends ChangeNotifier
   Future<List<SessionMetadata>> listSessions() async {
     try {
       final roots = _includeSharedSessionRoots
-          ? allSessionRoots(sessionsRoot)
+          ? allSessionRootsForEnv(env, sessionsRoot)
           : <String>[sessionsRoot];
       if (roots.length <= 1) {
         return await _repo.list();

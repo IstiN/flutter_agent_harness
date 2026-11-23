@@ -117,11 +117,14 @@ final class FakeTransport implements ConnectorTransport {
 Future<NetworkSessionManager> _manager({
   required FakeHttpClient httpClient,
   String? jwt,
+  KeyWallet? wallet,
+  DateTime Function()? clock,
 }) async => NetworkSessionManager(
   baseUrl: testBase,
-  wallet: await KeyWallet.load(MemoryWalletBackend()),
+  wallet: wallet ?? await KeyWallet.load(MemoryWalletBackend()),
   httpClient: httpClient,
   jwtToken: jwt,
+  clock: clock,
 );
 
 /// Builds the service with every seam faked (the outbox is always
@@ -138,6 +141,8 @@ Future<
 buildService({
   String? jwt = 'jwt-1',
   required FakeHttpClient httpClient,
+  KeyWallet? wallet,
+  DateTime Function()? clock,
   FakeTransport? transport,
   MemoryDeviceTokenStore? tokenStore,
   OutboxStore? outbox,
@@ -150,7 +155,12 @@ buildService({
   Duration rosterDebounce = const Duration(milliseconds: 500),
   bool? mobileQueueOnly,
 }) async {
-  final manager = await _manager(httpClient: httpClient, jwt: jwt);
+  final manager = await _manager(
+    httpClient: httpClient,
+    jwt: jwt,
+    wallet: wallet,
+    clock: clock,
+  );
   final usedTransport = transport ?? FakeTransport();
   final usedTokens = tokenStore ?? MemoryDeviceTokenStore();
   final service = DeviceConnectorService(
@@ -1227,6 +1237,50 @@ void main() {
       ]);
     });
   });
+
+  test(
+    'an invalid account refresh does not loop on repeated Devices starts',
+    () async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.saveAccount(
+        WalletAccount(
+          provider: 'google',
+          login: 'a@b.dev',
+          displayName: 'Alice',
+          accessToken: '[REDACTED:Sensitive-Value]',
+          refreshToken: '[REDACTED:Sensitive-Value]',
+          accessExpiresAt: DateTime.utc(2026, 2, 1, 11),
+        ),
+      );
+      final http = FakeHttpClient()
+        ..respond(
+          401,
+          body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+        );
+      final (service, manager, _, transport, _) = await buildService(
+        jwt: null,
+        wallet: wallet,
+        httpClient: http,
+        clock: () => DateTime.utc(2026, 2, 1, 12),
+      );
+      addTearDown(service.dispose);
+
+      await service.start();
+      await service.start();
+      await service.start();
+
+      expect(service.phase, DeviceConnectorPhase.signedOut);
+      expect(manager.hasAccount, isTrue);
+      expect(manager.sessionExpired, isTrue);
+      expect(
+        http.requests.where(
+          (request) => request.url.path == '/api/auth/refresh',
+        ),
+        hasLength(1),
+      );
+      expect(transport.dials, isEmpty);
+    },
+  );
 
   test('an enrollment failure leaves the service stopped with a logged '
       'reason', () async {

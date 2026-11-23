@@ -18,6 +18,7 @@ import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/chats/chat_list_controller.dart';
 import 'package:fa/ui/chats/chat_list_entry.dart';
+import 'package:fa/ui/chats/chat_list_panel.dart' show showChatNetworksDialog;
 import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/local_sessions_panel.dart';
 import 'package:fa/ui/chats/messenger_drilldown_panel.dart';
@@ -592,6 +593,58 @@ void main() {
     await expectGolden(tester, 'chats_networks_panel');
     await session.close();
   });
+
+  testWidgets(
+    'chats networks panel: expired session keeps re-authentication visible',
+    (tester) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await wallet.createIfMissing(displayName: 'Me');
+      await wallet.saveAccount(
+        WalletAccount(
+          provider: 'google',
+          login: 'a@b.dev',
+          displayName: 'Alice',
+          accessToken: '[REDACTED:Sensitive-Value]',
+          refreshToken: '[REDACTED:Sensitive-Value]',
+          accessExpiresAt: DateTime.utc(2020),
+        ),
+      );
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: wallet,
+        httpClient: FakeHttpClient()
+          ..respond(
+            401,
+            body: '{"error":{"code":"unauthorized","message":"bad refresh"}}',
+          ),
+        wsConnector: FakeWsConnector(),
+      );
+      addTearDown(manager.disconnectAll);
+      expect(await manager.accountClient(), isNull);
+      expect(manager.sessionExpired, isTrue);
+
+      await pumpGolden(
+        tester,
+        Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => showChatNetworksDialog(context, manager: manager),
+            child: const Text('Networks'),
+          ),
+        ),
+        size: const Size(360, 560),
+        theme: buildFaTheme(
+          direction: FaVisualDirection.glass,
+          brightness: Brightness.dark,
+        ),
+        wrap: (child) => Scaffold(body: child),
+      );
+      await tester.tap(find.text('Networks'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('sessionExpiredNote')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chatNetworksSignIn')), findsOneWidget);
+      await expectGolden(tester, 'chats_networks_session_expired');
+    },
+  );
 
   testWidgets('chats networks panel: the empty wallet offers join + '
       'sign-in instead of a dead-end title (gh-2131)', (tester) async {

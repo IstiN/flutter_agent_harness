@@ -1,6 +1,10 @@
 import 'dart:io' show Directory, File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show ExecutionEnv;
+
+import 'package:fa/services/project_mount_env.dart';
 
 /// The shared Fa App Group identifier used for cross-process storage on macOS.
 const String _kSharedAppGroupId = 'group.dev.fa1.shared';
@@ -29,6 +33,53 @@ String defaultSessionsRoot(String cwd) {
     return groupDir ?? '$home/.fah/sessions';
   }
   return '$cwd/sessions';
+}
+
+/// Resolves the write root for this host without letting a mobile project
+/// mount move the app's session database between folders.
+String defaultSessionsRootForEnv(ExecutionEnv env) {
+  if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
+    return mobileDefaultSessionsRoot(
+      sessionCwd: env.sessionCwd,
+      appStorageCwd: env.appStorageCwd,
+    );
+  }
+  return defaultSessionsRoot(env.sessionCwd);
+}
+
+/// Lists the app-owned mobile database plus a still-mounted legacy folder.
+/// Non-mobile hosts keep their existing shared-root contract.
+List<String> allSessionRootsForEnv(ExecutionEnv env, String defaultRoot) {
+  if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
+    return mobileSessionRootCandidates(
+      defaultRoot: defaultRoot,
+      sessionCwd: env.sessionCwd,
+      exists: (path) => Directory(path).existsSync(),
+    );
+  }
+  return allSessionRoots(defaultRoot);
+}
+
+/// Mobile sessions belong to the app container, not the currently mounted
+/// project. [sessionCwd] remains in each session's metadata as its workspace.
+@visibleForTesting
+String mobileDefaultSessionsRoot({
+  required String sessionCwd,
+  required String appStorageCwd,
+}) => '$appStorageCwd/sessions';
+
+/// Mobile candidates: stable app storage first, then a mounted legacy root
+/// only when it still exists. No folder is created merely to list sessions.
+@visibleForTesting
+List<String> mobileSessionRootCandidates({
+  required String defaultRoot,
+  required String sessionCwd,
+  required bool Function(String path) exists,
+}) {
+  final roots = <String>[defaultRoot];
+  final legacyRoot = '$sessionCwd/sessions';
+  if (legacyRoot != defaultRoot && exists(legacyRoot)) roots.add(legacyRoot);
+  return roots;
 }
 
 /// Returns all candidate session roots on macOS so listing sessions discovers
