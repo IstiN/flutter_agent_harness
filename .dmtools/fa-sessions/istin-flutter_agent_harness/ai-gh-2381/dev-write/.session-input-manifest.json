@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-23T20:31:52.609Z",
+  "ticketKey": "pr-2383",
+  "headSha": "3f16ab28ce082d0097c9bb969671fa5b4dc1fcd4",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:0ddabc53be69215f",
+      "size": 113
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:4ce93c960fb8431f",
+      "size": 57461
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:53aae778653e016b",
+      "size": 86489
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:eb369a2bd25b5dbd",
+      "size": 552
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:196f8b5d5ea18ea4",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:eda071ae3c9c4f60",
+      "size": 15726
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:5027c81dc88346ac",
+      "size": 3806
+    },
+    "request.md": {
+      "hash": "fnv1a64:e9920e46f4403410",
+      "size": 3468
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:63d632f9c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c96f66edfa18855b",
+      "size": 3543
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e9920e46f4403410",
+      "size": 3468
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:5a6f109a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the watchdog poll timer busy-spins ~1 core for the entire lifetime of every attempt**\n\nThe new watchdog uses `read -t 1 -u 3` with fd 3 opened from `/dev/zero` as its 1-second poll timer (`scripts/load_drop_retry.sh:170` + `:181`, reused at `:195`/`:199` for the drain loop). `read` on `/dev/zero` never blocks and never yields a newline, so the builtin loops on instant `read()` syscalls for the full second — this is a hot poll loop, not a timer.\n\nMeasured on this checkout (the real script, stubbed runner):\n\n- 30 s wall run with a sleeping stub: **30.25 CPU-seconds consumed** (8.20 user + 22.05 sys) ≈ one full core pinned for the whole run.\n- Sampled at 3 s elapsed: the wrapper bash at **99.3% CPU** (`ps -o pcpu`), while the stub itself slept at ~0%.\n\nWhy it matters: this watchdog now runs on every attempt of every wrapped leg — the PTY integration shards (ci.yml:1470), the core unit shards (ci.yml:1011), the jsr trio (ci.yml:1047), and the local fast gate (ci_fast_gate.sh:252). A healthy shard run pays one pinned core for its full duration (a 5-min shard ≈ 5 core-minutes stolen), and the PTY legs are precisely the load-sensitive class (FA_PTY_BUDGET_SCALE, \"SM dispatch waves pack the hosted pool\") whose flakes this PR heals — the fix adds sustained CPU contention to the conditions that induce the failure.\n\nThe intent behind `/dev/zero` (\"killing this subshell mid-wait forks no `sleep` child for the job harness to report\") can be kept with a true zero-CPU, zero-child timer: open a watchdog-private FIFO `O_RDWR` — `exec 3<>\"${CONSOLE}.wdg.fifo\"` — an O_RDWR fifo never EOFs (the process's own write end holds it), so `read -t 1 -u 3` blocks silently until the timeout. Verified in this sandbox: 3 × `read -t 1` polls = 3009 ms elapsed, **0.00 CPU** (`/usr/bin/time`: 0% of wall). Add the fifo to the existing `cleanup` trap. (Do NOT point fd 3 at the console fifo itself — reading it would steal the runner's output from `tee`.)\n\nAlternatively `sleep 1` would also work but forks the child you deliberately avoided, so the fifo timer is the closer match to the stated constraint. The ≤1 s drain loop at `:195` is bounded and can keep the `/dev/zero` form or take the same fix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:178ef81b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the watchdog poll timer busy-spins ~1 core for the entire lifetime of every attempt** (re-verified on head 1f77b0fa0e — unchanged since round 1; same finding as F1)\n\nThe watchdog uses `read -t 1 -u 3` with fd 3 opened from `/dev/zero` as its 1-second poll timer (`scripts/load_drop_retry.sh:170` + `:181`, reused at `:195`/`:199` for the drain loop). `read` on `/dev/zero` never blocks and never yields a newline, so the builtin loops on instant `read()` syscalls for the full second — a hot poll loop, not a timer.\n\nRe-measured on the current head (this re-review run, real script, sleeping stub):\n\n- **5 s wall run → 5.22 CPU-seconds consumed (2.11 user + 3.11 sys) = 100% of one core pinned** by the wrapper tree (`/usr/bin/time`), while the stub slept at ~0%.\n- Round-1 measurements on the same commit: 30 s wall → 30.25 CPU-s; sampled at 3 s → 99.3% CPU. Identical behavior, no fixing hunk.\n\nWhy it matters: this watchdog runs on every attempt of every wrapped leg — the PTY integration shards (ci.yml:1470), the core unit shards (ci.yml:1011), the jsr trio (ci.yml:1047), and the local fast gate (ci_fast_gate.sh:252). A healthy shard run pays one pinned core for its full duration (a 5-min shard ≈ 5 core-minutes stolen), and the PTY legs are precisely the load-sensitive class (FA_PTY_BUDGET_SCALE, \"SM dispatch waves pack the hosted pool\") whose flakes this PR heals — the fix adds sustained CPU contention to the conditions that induce the failure.\n\nThe intent behind `/dev/zero` (\"killing this subshell mid-wait forks no `sleep` child for the job harness to report\") can be kept with a true zero-CPU, zero-child timer: open a watchdog-private FIFO `O_RDWR` — `exec 3<>\"${CONSOLE}.wdg.fifo\"` — an O_RDWR fifo never EOFs (the process's own write end holds it), so `read -t 1 -u 3` blocks silently until the timeout. Verified in this sandbox: 3 × `read -t 1` polls = 3009 ms elapsed, **0.00 CPU** (`/usr/bin/time`: 0% of wall). Add the fifo to the existing `cleanup` trap. (Do NOT point fd 3 at the console fifo itself — reading it would steal the runner's output from `tee`.)\n\nAlternatively `sleep 1` would also work but forks the child you deliberately avoided, so the fifo timer is the closer match to the stated constraint. The ≤1 s drain loop at `:195` is bounded and can keep the `/dev/zero` form or take the same fix."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:353c15c7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ IMPORTANT — the watchdog poll timer busy-spins ~1 core for the entire lifetime of every attempt\n\nFixed on this head. The `/dev/zero` fd-3 timer is gone; the watchdog now blocks on your\nzero-CPU, zero-child sketch exactly as verified in the thread.\n\n## What changed (`scripts/load_drop_retry.sh`)\n\n- **Timer fifo** (`scripts/load_drop_retry.sh:168-169` + `:201`): `run_streamed` creates a\n  watchdog-private fifo `mkfifo \"${CONSOLE}.wdg.fifo\"` and the watchdog subshell opens it\n  `exec 3<>\"$WDOG_FIFO\"` (O_RDWR — the process's own write end holds it, so it never EOFs).\n  `read -t 1 -u 3` now **blocks silently for the whole second at zero CPU** instead of spinning\n  on instant `read()` syscalls. Your \"do NOT point fd 3 at the console fifo\" constraint is\n  respected — the timer fifo is a separate file, and the console fifo keeps its single reader\n  (`tee`).\n- **Cleanup** (`scripts/load_drop_retry.sh:120-122` + `:236-238`): the fifo is removed by the\n  existing `cleanup` trap AND at the end of every `run_streamed` call, so no fifo node is ever\n  left behind on any path (normal, wedge-kill, or trap exit).\n- **Drain loop** (`scripts/load_drop_retry.sh:227-233`): the ≤1 s drain window takes the same\n  fifo fix (fd 3 opened on the same timer fifo, closed after the loop), so no `/dev/zero`\n  `read -t` form remains in the script.\n- The `read -t`-as-builtin rationale is preserved: killing the watchdog subshell mid-wait still\n  forks no `sleep` child for the job harness to report — the fifo replaces only the timer's\n  data source.\n\n## Measured on this fix (real script, sleeping stub, `/usr/bin/time` over the wrapper tree)\n\n- Before (round-2 head): 3 s wall → **3.21 CPU-s** (1.36 user + 1.85 sys) ≈ 107% of one core.\n- After: 3 s wall → **0.02 CPU-s** (0.01 + 0.01). No `sleep` child forked, no stray children.\n\n## Regression test (TDD)\n\n`test/scripts/load_drop_retry_test.dart` **AC25** runs the real wrapper under\n`/usr/bin/time` with a 3-s sleeping stub and asserts (a) wrapper-tree CPU < 50% of wall\n(the busy-spin fails it at ~100%, the fix passes at ~0.6%), and (b) the run exits green with a\nsingle invocation. It failed on the pre-fix head (3.22 CPU-s / 3.23 s wall) and passes now.\n\nAlso healed the two digest items from your ranked list while in the file:\n\n- **`load_drop_retry.sh:171` stderr leak** — the spam baseline is now computed in\n  `run_streamed`'s parent scope *before* `tee` starts (`:149-161`): a fresh first invocation has\n  no `wc -c <` redirect to fail (AC25 asserts no `No such file or directory` on stderr), and the\n  baseline-after-start undercount window is closed. Note the fresh (non-append) run truncates the\n  console, so its baseline is 0; the `--append` rerun baseline is the pre-append size — the AC24\n  no-insta-kill contract is unchanged and still green.\n- **`grep: write error: Broken pipe`** noise when the watchdog subshell is killed mid-pipeline —\n  the spam-count `grep` in the watchdog now silences its own stderr (`:204`); reproduced the\n  noise on the old head, gone on this one."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:eca42335",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Re: ⚠️ IMPORTANT — the watchdog poll timer busy-spins ~1 core (re-verified, unchanged since round 1)\n\nFixed on this head — same fix as thread `PRRT_kwDOTXdlLc66_Dfo` (this is the re-verification of\nthe same F1 finding); the fixing commit covers both.\n\n## What changed (`scripts/load_drop_retry.sh`)\n\n- **Timer fifo** (`scripts/load_drop_retry.sh:168-169` + `:201`): the watchdog subshell opens a\n  watchdog-private fifo `exec 3<>\"$WDOG_FIFO\"` (`${CONSOLE}.wdg.fifo`, created by `run_streamed`\n  before the subshell starts). An O_RDWR open holds both ends itself, so `read -t 1 -u 3` blocks\n  silently until the timeout — **zero CPU, zero child processes** (the `read -t` builtin stays,\n  so a mid-wait kill still forks no `sleep` child for the job harness). Your \"never the console\n  fifo\" constraint is honored: the timer fifo is a separate file created solely for this fd.\n- **Cleanup** (`scripts/load_drop_retry.sh:120-122` + `:236-238`): the fifo is removed by the\n  existing `cleanup` trap and at the end of every `run_streamed` call — nothing left behind.\n- **Drain loop** (`scripts/load_drop_retry.sh:227-233`): the `:195`/`:199`-adjacent drain loop\n  you cited takes the same fifo form, so no `/dev/zero` `read -t` remains anywhere in the script.\n\n## Re-measured on this fix (real script, sleeping stub, `/usr/bin/time` over the wrapper tree)\n\n- Your round-2 measurement: 5 s wall → 5.22 CPU-s = 100% of one core pinned.\n- This head: 3 s wall → **0.02 CPU-s** (0.01 user + 0.01 sys) — the timer is now a blocking\n  poll; the watchdog wakes once per second as designed.\n\n## Regression test (TDD)\n\n`test/scripts/load_drop_retry_test.dart` **AC25** drives the real wrapper under `/usr/bin/time`\nwith a sleeping stub and fails on any busy-spin (asserts wrapper-tree CPU < 50% of wall; the\npre-fix head measured 3.22 CPU-s / 3.23 s wall = failure, this head passes at ~0.6%), plus a\ngreen single-invocation run. It also pins the digest's line-171 stderr leak (spam baseline\ncomputed pre-tee in the parent scope — no `wc -c <` redirect error on a fresh first invocation)\nand the broken-pipe `grep` noise (grep stderr silenced in the watchdog)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:7b7bdda9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2381 healing design is sound and evidence-driven — I verified against the real test-core reporter that compile errors and nonexistent targets always emit `suite` events (so `NEVER_LOADED` only arms on genuine engine abandonment), and all 33 changed-file tests pass locally. One important issue gates: the new watchdog's `/dev/zero` `read -t` poll timer is a busy-loop that pins ~1 core for the entire lifetime of every attempt (measured 99.3% CPU), adding sustained contention to the exact load-sensitive PTY legs this PR heals.\n\n**Key Issues**:\n- ⚠️ `scripts/load_drop_retry.sh:170` — watchdog timer busy-spins ~1 core per attempt (thread with measurements + verified zero-CPU fix sketch)\n\nRanked digest (below thread threshold):\n- `scripts/load_drop_retry.sh:171` — stderr noise on every fresh first invocation: `wc -c < \"$CONSOLE\"` redirect error leaks (`2>/dev/null` cannot apply to the failing redirect; reproduced twice in sandbox smoke runs) — compute the baseline in `run_streamed`'s parent scope before starting `tee` (also removes the small baseline-after-start undercount window)\n- `scripts/load_drop_retry.sh` — occasional `grep: write error: Broken pipe` stderr noise when the watchdog subshell is killed mid-pipeline (observed once); cosmetic\n- `test/scripts/load_drop_retry_test.dart` AC22 — the in-flight suite `test/inflight_test.dart` is not among the invocation targets; real in-flight suites always are, so a targets-consistent fixture would pin the tighter contract (wrapper tolerates it fine)\n\n**Next Steps**:\n1. Replace the watchdog's `/dev/zero` fd-3 timer with a private O_RDWR fifo (`exec 3<>\"${CONSOLE}.wdg.fifo\"` + cleanup) — zero CPU, still no child processes (verified in sandbox); add the fifo to the cleanup trap\n2. Move the watchdog baseline computation ahead of the `tee` start to silence the line-171 stderr leak"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:e36351b9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review of head 1f77b0fa0e)\n\n**Summary**: Re-review of the same head as round 1 — no new hunks landed, so the round-1 ⚠️ finding (F1, the watchdog's `/dev/zero` `read -t` poll timer busy-spinning ~1 core for the whole lifetime of every attempt) is still open; re-measured on this checkout: 5 s wall → 5.22 CPU-s = 100% of one core pinned. Everything else stands verified (suite-event reporter behavior checked against the real test-core reporter, all 33 changed-file tests pass locally).\n\n**Key Issues**:\n- ⚠️ `scripts/load_drop_retry.sh:170` — F1 re-confirmed, watchdog timer busy-spins ~1 core per attempt (thread with fresh measurements + verified zero-CPU fix sketch)\n\nRanked digest (below thread threshold, unchanged from round 1):\n- `scripts/load_drop_retry.sh:171` — stderr noise on every fresh first invocation: `wc -c < \"$CONSOLE\"` redirect error leaks (`2>/dev/null` cannot apply to the failing redirect; reproduced again in this run) — compute the baseline in `run_streamed`'s parent scope before starting `tee` (also removes the small baseline-after-start undercount window)\n- `scripts/load_drop_retry.sh` — occasional `grep: write error: Broken pipe` stderr noise when the watchdog subshell is killed mid-pipeline; cosmetic\n- `test/scripts/load_drop_retry_test.dart` AC22 — the in-flight suite `test/inflight_test.dart` is not among the invocation targets; real in-flight suites always are, so a targets-consistent fixture would pin the tighter contract (wrapper tolerates it fine)\n\n**Next Steps**:\n1. Replace the watchdog's `/dev/zero` fd-3 timer with a private O_RDWR fifo (`exec 3<>\"${CONSOLE}.wdg.fifo\"` + cleanup) — zero CPU, still no child processes (verified in sandbox); add the fifo to the cleanup trap\n2. Move the watchdog baseline computation ahead of the `tee` start to silence the line-171 stderr leak"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-23:36711436",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review of rework head 99889e9563)\n\n**Summary**: F1 (the watchdog poll timer busy-spinning ~1 core for the entire lifetime of every attempt) is verified FIXED on this head — the `/dev/zero` fd-3 timer is replaced by a watchdog-private O_RDWR fifo that blocks silently, re-measured on this checkout: 5 s wall → 0.05 CPU-s (was 5.22 CPU-s / 100%), and a 60 s healthy run → 0.39 CPU-s (0% CPU). Both round-2 digest items are healed too (the `wc -c <` stderr leak — fresh first invocation stderr is now clean — plus the silenced grep broken-pipe noise), and all 34 changed-file tests pass locally, including the new AC25 busy-spin regression pin.\n\n**Key Issues**: none — no open 🚨/⚠️/💡 findings remain.\n\nRegistry: F1 → **fixed** (hunk cited in `findingReview`); the round-2 confirmation is closed same-as-F1.\n\n**Next Steps**:\n1. Merge-ready from the review side; the ride-along hunks in `pr_new_hunks.txt` (dep-bump workflows, CHANGELOG #2226, site/skills tests) are main-reviewed content landing via the merge branch — they cancel out of the PR diff vs `main` and need no re-review here."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-23:fd792bfd",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-23",
+      "updatedAt": "2026-11-23",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 99889e956362e34fe0a236cc79459aeefb1440b3 — stale base at 2026-11-23T20:08:34.553Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
