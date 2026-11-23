@@ -448,9 +448,14 @@ extension AgentCliMessagingFlow on AgentCli {
     // The policy books cap-consuming wakes itself (its streak is the one
     // source of truth; the legacy seam proxies it).
     _inboxWakeRunning = true;
-    // Issue #2226: the in-flight run's lane — its turn usage books
-    // against the chain budget when this was a chatter-lane wake.
-    _activeChainWakeLane = decision.lane;
+    // Issue #2226: chatter and cap-off rapid self-spins feed the chain
+    // budget. A deliberate scheduled cadence remains exempt, and a positive
+    // legacy cap remains a distinct bound rather than hidden budget spend.
+    _activeChainWakeBooksSpend =
+        decision.lane == InboxWakeLane.chatter ||
+        (decision.lane == InboxWakeLane.scheduledSelf &&
+            decision.countsAgainstCap &&
+            _inboxWakePolicy.maxStreak == 0);
     final count = pending.length;
     io.writeln(
       _style.dim(
@@ -478,7 +483,7 @@ extension AgentCliMessagingFlow on AgentCli {
     unawaited(
       _settled.whenComplete(() {
         _inboxWakeRunning = false;
-        _activeChainWakeLane = null;
+        _activeChainWakeBooksSpend = false;
       }),
     );
   }

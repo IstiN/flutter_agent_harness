@@ -48,6 +48,19 @@ enum InboxWakeLane {
   chatter,
 }
 
+const _useDefaultChainGuard = Object();
+
+ChainLoopGuard _defaultChainLoopGuard() {
+  const config = MessagingConfig();
+  const detection = ChainLoopDetectionConfig();
+  return ChainLoopGuard(
+    similarityThreshold: detection.similarityThreshold,
+    stuckRounds: detection.stuckRounds,
+    budgetTokens: config.chainBudgetTokens,
+    enabled: detection.enabled,
+  );
+}
+
 /// The idle inbox-wake lane policy (gh-1180, reworked by issue #2226).
 ///
 /// The hosts' idle inbox watchers (CLI, app) start a turn when mail
@@ -78,13 +91,27 @@ enum InboxWakeLane {
 /// loop) and count against the ordinary cap, bounding the storm exactly
 /// like foreign chatter. With the cap OFF (default) the spin is bounded
 /// by the chain guard's budget instead.
+///
+/// Configured hosts should construct through [InboxWakePolicy.forConfig].
+/// Bare cap-off construction gets a fresh guard from [MessagingConfig]'s
+/// defaults; only explicit `chainGuard: null` selects an unbounded gate.
 final class InboxWakePolicy {
+  /// [chainGuard] accepts a [ChainLoopGuard] or null. Its widened static
+  /// type is intentional: Dart otherwise cannot distinguish an omitted
+  /// nullable argument from an explicit null. Omitted installs the safe
+  /// defaults when the legacy cap is off; explicit null remains the visible
+  /// unbounded opt-out, and a bare positive cap keeps its legacy behavior.
   InboxWakePolicy({
-    this.maxStreak = defaultMaxInboxWakeStreak,
+    int maxStreak = defaultMaxInboxWakeStreak,
     this.scheduledSelfCadenceFloor = defaultScheduledSelfCadenceFloor,
-    this.chainGuard,
+    Object? chainGuard = _useDefaultChainGuard,
     this.clock,
-  });
+  }) : maxStreak = maxStreak,
+       chainGuard = identical(chainGuard, _useDefaultChainGuard)
+           ? maxStreak == 0
+                 ? _defaultChainLoopGuard()
+                 : null
+           : chainGuard as ChainLoopGuard?;
 
   /// The one construction from a `messaging:` section (issue #2226): the
   /// guard rides [chainGuard], the legacy cap from `wakeChatterCap`.
@@ -109,9 +136,11 @@ final class InboxWakePolicy {
   final int maxStreak;
 
   /// The smart chain guard (issue #2226): loop detection + the
-  /// autonomous-chain token budget. Null keeps bare cap gating (and no
-  /// bound at all when [maxStreak] is 0). The guard rides THIS policy's
-  /// user-input reset so the two cannot drift apart.
+  /// autonomous-chain token budget. Bare construction with the cap off
+  /// installs [MessagingConfig]'s defaults. Explicit `chainGuard: null`
+  /// keeps bare cap gating (an intentional no-bound opt-out when
+  /// [maxStreak] is 0). The guard rides THIS policy's user-input reset so
+  /// the two cannot drift apart.
   final ChainLoopGuard? chainGuard;
 
   /// Minimum spacing between two EXEMPT scheduled-self wakes; anything
@@ -200,11 +229,24 @@ final class InboxWakePolicy {
           countsAgainstCap: false,
         );
       }
-      // A storm disguised as self-scheduling (gh-1180 E5): bounded like
-      // chatter. The shared streak keeps foreign-chatter accounting
-      // intact — a spin is abuse of the same budget. With the cap OFF
-      // (issue #2226 default) the spin is bounded by the chain guard's
-      // budget instead, not here.
+      // A storm disguised as self-scheduling (gh-1180 E5): with the cap
+      // ON it consumes the legacy streak, exactly like foreign chatter.
+      // With the cap OFF it instead consults the chain guard's sticky
+      // pause/budget (an empty batch deliberately skips loop similarity).
+      // The host books each ALLOWED rapid-spin run's usage, so even a pure
+      // scheduled-self loop reaches this bound without chatter traffic.
+      if (maxStreak == 0) {
+        final pause = chainGuard?.evaluate(const []);
+        if (pause != null) {
+          return InboxWakeDecision(
+            lane: InboxWakeLane.scheduledSelf,
+            wake: false,
+            countsAgainstCap: false,
+            refusalReason: pause.evidence,
+            pauseReason: pause.reason.name,
+          );
+        }
+      }
       if (maxStreak > 0 && streak >= maxStreak) {
         return InboxWakeDecision(
           lane: InboxWakeLane.scheduledSelf,
@@ -215,6 +257,7 @@ final class InboxWakePolicy {
               '${scheduledSelfCadenceFloor.inSeconds}s cadence floor with '
               'the chatter cap exhausted (busy-spin guard) — re-schedule '
               'with a slower delay or send user input to reset',
+          pauseReason: 'cap',
         );
       }
       streak++;

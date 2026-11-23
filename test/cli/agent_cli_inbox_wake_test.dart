@@ -5,6 +5,15 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+Usage chainUsage(int tokens) => Usage(
+  input: tokens,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: tokens,
+  cost: const UsageCost(),
+);
+
 /// Async-condition waitForIt: polls a future predicate until true.
 Future<void> waitForTrue(Future<bool> Function() condition) async {
   for (var i = 0; i < 5000; i++) {
@@ -32,19 +41,23 @@ void main() {
 
   tearDown(() => io.close());
 
-  AgentCli buildCli(FakeStreamFunction fake, {MessagingConfig? messaging}) =>
-      AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: '[REDACTED:Sensitive-Value]',
-          env: env,
-          sessionRoot: '/sessions',
-          providerKind: 'openai-completions',
-          messaging: messaging,
-        ),
-        io: io,
-        streamFunction: fake.call,
-      );
+  AgentCli buildCli(
+    FakeStreamFunction fake, {
+    MessagingConfig? messaging,
+    MessagingRepository? hubFabric,
+  }) => AgentCli(
+    config: AgentCliConfig(
+      model: testModel,
+      apiKey: '[REDACTED:Sensitive-Value]',
+      env: env,
+      sessionRoot: '/sessions',
+      providerKind: 'openai-completions',
+      messaging: messaging,
+      hubFabric: hubFabric,
+    ),
+    io: io,
+    streamFunction: fake.call,
+  );
 
   /// Waits for the session to exist; returns (sessionId, 0 calls).
   Future<(String, int)> boot(FakeStreamFunction fake, AgentCli cli) async {
@@ -358,6 +371,126 @@ void main() {
   // visible with continue/stop.
   // -------------------------------------------------------------------
 
+  test('#2226 AC4 REG: boot restores persisted chain spend before any wake '
+      'policy access — a restart cannot mint a fresh budget', () async {
+    final fake = FakeStreamFunction([
+      textTurn('book this wake', usage: chainUsage(150)),
+    ]);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(chainBudgetTokens: 150),
+    );
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    await sendForeignMail(id, 'a productive status update');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+    expect(cli.chainSpendForTest, 150);
+    final store = ChainStateStore(
+      env: env,
+      path: () => '/sessions/--work--/messages/_chain/state.json',
+    );
+    await waitForTrue(() async => (await store.load())?.tokensSpent == 150);
+
+    io.sendLine('/exit');
+    await run;
+    await io.close();
+    io = FakeCliIO();
+
+    final restartedFake = FakeStreamFunction([]);
+    final restarted = buildCli(
+      restartedFake,
+      messaging: const MessagingConfig(chainBudgetTokens: 150),
+    );
+    final restartedRun = restarted.run();
+    await waitForTrue(() async => restarted.chainSpendForTest == 150);
+    expect(
+      restarted.chainSpendForTest,
+      150,
+      reason: 'the constructor must eagerly build and restore the guard',
+    );
+
+    final sessions = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    String? restartedId;
+    await waitForTrue(() async {
+      final others = [
+        for (final session in await sessions.list(cwd: '/work'))
+          if (session.id != id) session.id,
+      ];
+      if (others.isEmpty) return false;
+      restartedId = others.first;
+      return true;
+    });
+    await sendForeignMail(restartedId!, 'first exchange after restart');
+    await restarted.inboxWakeTickForTest();
+    await waitForTrue(() async => io.out.toString().contains('chain paused'));
+    expect(
+      restartedFake.calls,
+      0,
+      reason: 'the restored 150/150 budget must arm before the next wake',
+    );
+    expect(
+      (await receipts()).where(
+        (event) =>
+            event['event'] == 'chain_paused' && event['reason'] == 'budget',
+      ),
+      hasLength(1),
+    );
+
+    io.sendLine('/exit');
+    await restartedRun;
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('#2226 AC7 REG: scheduled-self spins book and enforce their own '
+      'budget with the legacy cap off, then continue recovers', () async {
+    final fake = FakeStreamFunction([
+      textTurn('deliberate first reminder'),
+      textTurn('rapid spin', usage: chainUsage(10)),
+      textTurn('recovered'),
+    ]);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(chainBudgetTokens: 10),
+    );
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    await sendScheduledSelfMail(id, 'first reminder');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+    expect(cli.chainSpendForTest, 0, reason: 'the exempt cadence is unbilled');
+
+    await sendScheduledSelfMail(id, 'zero-delay spin');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls == baseline + 2 && !cli.isBusy);
+    expect(
+      cli.chainSpendForTest,
+      10,
+      reason: 'a rapid spin must feed the budget even when the cap is off',
+    );
+
+    await sendScheduledSelfMail(id, 'spin past budget');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => io.out.toString().contains('chain paused'));
+    expect(fake.calls, baseline + 2, reason: 'the exhausted spin cannot wake');
+    expect(
+      (await receipts()).where(
+        (event) =>
+            event['event'] == 'chain_paused' && event['reason'] == 'budget',
+      ),
+      hasLength(1),
+    );
+
+    await cli.handleChainCommand('continue');
+    expect(cli.chainSpendForTest, 0);
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls == baseline + 3 && !cli.isBusy);
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
   test('#2226 AC1: a productive 12-wake money-project chain is NEVER '
       'interrupted with defaults — no refusals, no chain_paused', () async {
     final fake = FakeStreamFunction([
@@ -464,20 +597,22 @@ void main() {
     await cli.inboxWakeTickForTest();
     await waitForTrue(() async => io.out.toString().contains('chain paused'));
 
-    // User-kind mail arrives while paused: stop must KEEP it queued.
+    // User-kind mail arrives while paused: stop must KEEP its complete
+    // routing envelope queued, including relay attribution and hop budget.
+    final userMail = AgentMessage(
+      id: newMessageId(),
+      fromId: 'relay/main',
+      fromName: 'Alice Example',
+      toId: '$id/main',
+      text: 'stop everything',
+      kind: AgentMessageKind.user,
+      hops: 3,
+      sentAt: DateTime.now().toUtc().toIso8601String(),
+    );
     await FileMessagingRepository(
       env: env,
       root: '/sessions/--work--/messages',
-    ).send(
-      AgentMessage(
-        id: newMessageId(),
-        fromId: 'the user',
-        toId: '$id/main',
-        text: 'stop everything',
-        kind: AgentMessageKind.user,
-        sentAt: DateTime.now().toUtc().toIso8601String(),
-      ),
-    );
+    ).send(userMail);
 
     io.sendLine('/chain stop');
     await waitForTrue(() async => io.out.toString().contains('chain stopped'));
@@ -493,6 +628,17 @@ void main() {
     );
     expect(stopped.first['reason'], 'user');
 
+    final preserved = await cli.subagentManager.pendingInbox('main');
+    expect(preserved, hasLength(1));
+    expect(preserved.single.id, isNot(userMail.id));
+    expect(preserved.single.fromId, userMail.fromId);
+    expect(preserved.single.fromName, 'Alice Example');
+    expect(preserved.single.toId, userMail.toId);
+    expect(preserved.single.text, userMail.text);
+    expect(preserved.single.kind, AgentMessageKind.user);
+    expect(preserved.single.hops, 3);
+    expect(preserved.single.sentAt, userMail.sentAt);
+
     // The pending inbox now holds ONLY the user mail — a further tick
     // wakes on it (user input always wakes), proving nothing was lost.
     await cli.inboxWakeTickForTest();
@@ -501,4 +647,105 @@ void main() {
     io.sendLine('/exit');
     await run;
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('#2226 AC5 crash boundary: /chain stop queues the user copy before '
+      'the original-id drain, so a mid-command crash cannot lose it', () async {
+    final hub = _CrashAfterAgentDrainFabric();
+    final fake = FakeStreamFunction([textTurn('unused')]);
+    final cli = buildCli(fake, hubFabric: hub);
+    final run = cli.run();
+    final (id, _) = await boot(fake, cli);
+    cli.sessionLoadsInFlightForTest = 1;
+    final mailbox = '$id/main';
+    hub.messages.addAll([
+      AgentMessage(
+        id: newMessageId(),
+        fromId: 'peer/main',
+        toId: mailbox,
+        text: 'chain chatter',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+      AgentMessage(
+        id: newMessageId(),
+        fromId: 'relay/main',
+        fromName: 'Alice Example',
+        toId: mailbox,
+        text: 'keep my input',
+        kind: AgentMessageKind.user,
+        hops: 2,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    ]);
+
+    // The injected repository dies AFTER its destructive drain. The old
+    // drain→re-send sequence has no pending user copy at this boundary.
+    await expectLater(cli.handleChainCommand('stop'), throwsStateError);
+
+    final pending = await cli.subagentManager.pendingInbox('main');
+    expect(
+      pending,
+      hasLength(1),
+      reason: 'user mail must remain pending even when the command dies',
+    );
+    expect(pending.single.kind, AgentMessageKind.user);
+    expect(pending.single.text, 'keep my input');
+    expect(pending.single.fromName, 'Alice Example');
+    expect(pending.single.hops, 2);
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
+}
+
+/// A hub primary whose consume operation fails after mutating its inbox,
+/// modeling the process-failure boundary in `/chain stop`.
+final class _CrashAfterAgentDrainFabric
+    implements MessagingRepository, SelectiveMessagingRepository {
+  final messages = <AgentMessage>[];
+
+  @override
+  Future<void> send(AgentMessage message) async => messages.add(message);
+
+  @override
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {}
+
+  @override
+  Future<void> touch(String agentId, {bool busy = false}) async {}
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) async => List.of(messages);
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) async {
+    final drained = List<AgentMessage>.of(messages);
+    messages.clear();
+    if (drained.isNotEmpty) {
+      throw StateError('simulated crash after destructive drain');
+    }
+    return drained;
+  }
+
+  /// The selective consume operation used by the crash-safe stop path.
+  @override
+  Future<List<AgentMessage>> drainById(
+    String agentId,
+    Set<String> messageIds,
+  ) async {
+    final drained = [
+      for (final message in messages)
+        if (messageIds.contains(message.id)) message,
+    ];
+    messages.removeWhere((message) => messageIds.contains(message.id));
+    if (drained.isNotEmpty) {
+      throw StateError('simulated crash after selective drain');
+    }
+    return drained;
+  }
+
+  @override
+  Future<List<MailboxEntry>> directory() async => const [];
 }

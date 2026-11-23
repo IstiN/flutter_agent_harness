@@ -676,23 +676,40 @@ extension AgentCliHubDriver on AgentCli {
       case 'stop':
         final fabric = _subagentManager.messaging;
         final mailbox = _subagentManager.mailboxOf(_subagentManager.selfId);
-        final drained = await fabric?.drain(mailbox) ?? const <AgentMessage>[];
-        // User-kind mail IS the user talking — it stays queued. A fresh
-        // id on the copy: the file layer dedupes a re-send by id against
-        // the consumed `read/` record, so the original id would vanish.
-        for (final message in drained) {
-          if (message.kind == AgentMessageKind.user) {
-            await fabric?.send(
-              AgentMessage(
-                id: newMessageId(),
-                fromId: message.fromId,
-                toId: message.toId,
-                text: message.text,
-                kind: message.kind,
-                sentAt: message.sentAt,
-              ),
+        final pending = await fabric?.peek(mailbox) ?? const <AgentMessage>[];
+        var drained = const <AgentMessage>[];
+        if (fabric != null && pending.isNotEmpty) {
+          if (fabric is! SelectiveMessagingRepository) {
+            io.writeln(
+              'chain stop refused: this messaging fabric cannot preserve '
+              'user mail atomically; pending mail was left untouched',
             );
+            return;
           }
+          // Queue fresh-id user copies BEFORE consuming the snapshot. A
+          // crash now leaves at least one copy pending (the fabric's normal
+          // at-least-once behavior) instead of a drain→send data-loss gap.
+          for (final message in pending) {
+            if (message.kind == AgentMessageKind.user) {
+              await fabric.send(
+                AgentMessage(
+                  id: newMessageId(),
+                  fromId: message.fromId,
+                  fromName: message.fromName,
+                  toId: message.toId,
+                  text: message.text,
+                  kind: message.kind,
+                  hops: message.hops,
+                  sentAt: message.sentAt,
+                ),
+              );
+            }
+          }
+          // Consume ONLY the original snapshot. The replacement copies and
+          // any mail that arrived after peek remain pending, in order.
+          drained = await fabric.drainById(mailbox, {
+            for (final message in pending) message.id,
+          });
         }
         final dropped = [
           for (final message in drained)

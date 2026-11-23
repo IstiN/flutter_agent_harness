@@ -2689,9 +2689,10 @@ class AgentCli {
   /// lazy so it can read [config].
   late final InboxWakePolicy _inboxWakePolicy = _buildInboxWakePolicy();
 
-  /// The lane of the wake run in flight — the chain guard books the
-  /// run's turn usage only for chatter-lane runs (issue #2226 budget).
-  InboxWakeLane? _activeChainWakeLane;
+  /// Whether the wake run in flight feeds the autonomous-chain budget:
+  /// chatter always does; scheduled-self does only for a rapid spin while
+  /// the legacy cap is off. Exempt cadence and cap-bounded spins do not.
+  bool _activeChainWakeBooksSpend = false;
 
   /// The chain guard + its persistence (built in [AgentCliChainGate]).
   (ChainStateStore, ChainLoopGuard)? _chainState;

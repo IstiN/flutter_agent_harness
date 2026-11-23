@@ -1,2 +1,0 @@
-Warning: no LCOV coverage data found; coverage and CRAP scores will be reported as N/A.
-Hint: rerun with --run-tests to generate coverage and real CRAP scores automatically (or `flutter test --coverage` / set `coverage.run_tests: true` in crap4dart.yaml).

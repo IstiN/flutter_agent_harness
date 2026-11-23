@@ -1161,9 +1161,9 @@ extension ApprovalCommands on AgentCli {
         // gh-1762: the provider's real output tokens recalibrate the
         // char→token factor for the next message's live estimate (AC4).
         _meter.calibrate(message.usage.output);
-        // Issue #2226: a chatter-lane wake run books its usage against
-        // the autonomous-chain budget.
-        if (_activeChainWakeLane == InboxWakeLane.chatter) {
+        // Issue #2226: chatter and cap-off rapid-self wake runs book their
+        // usage against the autonomous-chain budget (AC7).
+        if (_activeChainWakeBooksSpend) {
           _chainState?.$2.recordSpend(message.usage.totalTokens);
           unawaited(_persistChainState());
         }

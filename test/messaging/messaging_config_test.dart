@@ -22,18 +22,14 @@ void main() {
     expect(config.loopDetection.stuckRounds, 4);
   });
 
-  test('an absent section arrives as null from the parser and defaults', () {
-    // The CLI/app parsers call MessagingConfig.fromYaml(map['messaging']) —
-    // an absent section is a null node, never a foreign map.
+  test('an absent section or literal null node parses to defaults', () {
+    // The CLI/app parsers call MessagingConfig.fromYaml(map['messaging']).
+    // Both an absent section and a literal null node arrive through this
+    // same null path, never as a foreign map.
     final config = MessagingConfig.fromYaml(null);
     expect(config.wakeChatterCap, 0);
     expect(config.chainBudgetTokens, 400000);
     expect(config.loopDetection.enabled, isTrue);
-  });
-
-  test('a null node parses to defaults', () {
-    final config = MessagingConfig.fromYaml(null);
-    expect(config.wakeChatterCap, 0);
   });
 
   test('#2226 AC6: an explicit wakeChatterCap re-enables the legacy cap', () {

@@ -23,7 +23,8 @@ import 'messaging_repository.dart';
 ///
 /// Message file names start with a UTC timestamp prefix so directory order
 /// is arrival order. Agent ids are sanitized for filesystem safety.
-final class FileMessagingRepository implements MessagingRepository {
+final class FileMessagingRepository
+    implements MessagingRepository, SelectiveMessagingRepository {
   FileMessagingRepository({
     required ExecutionEnv env,
     required String root,
@@ -347,9 +348,24 @@ final class FileMessagingRepository implements MessagingRepository {
       _readAll(_inboxDir(agentId));
 
   @override
-  Future<List<AgentMessage>> drain(String agentId) async {
+  Future<List<AgentMessage>> drain(String agentId) => _drain(agentId);
+
+  @override
+  Future<List<AgentMessage>> drainById(
+    String agentId,
+    Set<String> messageIds,
+  ) => _drain(agentId, messageIds);
+
+  Future<List<AgentMessage>> _drain(
+    String agentId, [
+    Set<String>? messageIds,
+  ]) async {
     final inbox = _inboxDir(agentId);
-    final messages = await _readAll(inbox);
+    final pending = await _readAll(inbox);
+    final messages = [
+      for (final message in pending)
+        if (messageIds == null || messageIds.contains(message.id)) message,
+    ];
     if (messages.isEmpty) return messages;
     (await _env.createDir(_readDir(agentId))).getOrThrow();
     for (var i = 0; i < messages.length; i++) {
@@ -629,7 +645,8 @@ Future<int> _moveInboxFiles(
 /// root (macOS App Group) to `~/.fah/sessions`, the mailboxes must move with
 /// it — a fabric pinned to the old root would let an attached app write into
 /// inboxes no running process ever drains.
-final class SwappableMessagingRepository implements MessagingRepository {
+final class SwappableMessagingRepository
+    implements MessagingRepository, SelectiveMessagingRepository {
   SwappableMessagingRepository(MessagingRepository initial) : _inner = initial;
 
   MessagingRepository _inner;
@@ -661,6 +678,15 @@ final class SwappableMessagingRepository implements MessagingRepository {
 
   @override
   Future<List<AgentMessage>> drain(String agentId) => _inner.drain(agentId);
+
+  @override
+  Future<List<AgentMessage>> drainById(String agentId, Set<String> messageIds) {
+    final inner = _inner;
+    if (inner is! SelectiveMessagingRepository) {
+      throw StateError('the active messaging repository cannot drain by id');
+    }
+    return inner.drainById(agentId, messageIds);
+  }
 
   @override
   Future<List<MailboxEntry>> directory() => _inner.directory();

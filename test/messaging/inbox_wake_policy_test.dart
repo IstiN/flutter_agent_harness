@@ -264,7 +264,14 @@ void main() {
       'foreign wakes are uninterrupted (the money-project regression)', () {
     final policy = InboxWakePolicy();
     for (var fire = 1; fire <= 25; fire++) {
-      final decision = policy.wakeDecisionFor([mail('m$fire')]);
+      final decision = policy.wakeDecisionFor([
+        mail(
+          'm$fire',
+          text:
+              'build fixed: commit abc000$fire delivered; package r$fire '
+              'is ready for audit',
+        ),
+      ]);
       expect(
         decision.wake,
         isTrue,
@@ -272,6 +279,86 @@ void main() {
       );
       expect(decision.pauseReason, isNull);
     }
+  });
+
+  test('#2226 review: a bare policy gets the configured smart defaults, '
+      'while explicit null and a positive legacy cap keep their semantics', () {
+    final policy = InboxWakePolicy();
+    final guard = policy.chainGuard;
+    expect(guard, isNotNull, reason: 'bare construction must not be unbounded');
+    expect(guard!.budgetTokens, MessagingConfig.defaultChainBudgetTokens);
+    expect(guard.enabled, isTrue);
+    expect(guard.stuckRounds, const ChainLoopDetectionConfig().stuckRounds);
+    expect(
+      guard.similarityThreshold,
+      const ChainLoopDetectionConfig().similarityThreshold,
+    );
+    expect(
+      InboxWakePolicy(chainGuard: null).chainGuard,
+      isNull,
+      reason: 'an explicit null remains the visible unbounded opt-out',
+    );
+    expect(
+      InboxWakePolicy(maxStreak: 10).chainGuard,
+      isNull,
+      reason: 'a bare positive cap retains the exact pre-#2226 behavior',
+    );
+  });
+
+  test('#2226 AC7: a rapid scheduled-self spin uses the chain budget when '
+      'the legacy cap is off, and user input re-arms it', () {
+    var now = DateTime.utc(2026, 11, 23, 12);
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 4,
+      budgetTokens: 10,
+    );
+    final policy = InboxWakePolicy(chainGuard: guard, clock: () => now);
+
+    expect(policy.wakeDecisionFor([scheduledSelf('first')]).wake, isTrue);
+    now = now.add(const Duration(seconds: 1));
+    final spin = policy.wakeDecisionFor([scheduledSelf('spin')]);
+    expect(spin.wake, isTrue);
+    expect(spin.lane, InboxWakeLane.scheduledSelf);
+    expect(spin.countsAgainstCap, isTrue);
+    guard.recordSpend(10); // The host books the allowed spin's turn usage.
+
+    now = now.add(const Duration(seconds: 1));
+    final paused = policy.wakeDecisionFor([scheduledSelf('exhausted')]);
+    expect(paused.wake, isFalse);
+    expect(paused.pauseReason, 'budget');
+    expect(paused.lane, InboxWakeLane.scheduledSelf);
+    expect(paused.countsAgainstCap, isFalse);
+
+    policy.resetStreak();
+    now = now.add(const Duration(seconds: 1));
+    expect(guard.tokensSpent, 0);
+    expect(
+      policy.wakeDecisionFor([scheduledSelf('recovered')]).wake,
+      isTrue,
+      reason: 'the user reset clears the budget pause and re-arms the spin',
+    );
+  });
+
+  test('#2226 AC7: a positive legacy cap remains the rapid-self bound, '
+      'not a disguised chain-budget verdict', () {
+    final guard = ChainLoopGuard(
+      similarityThreshold: 0.92,
+      stuckRounds: 4,
+      budgetTokens: 1,
+    )..recordSpend(1);
+    final policy = InboxWakePolicy(maxStreak: 1, chainGuard: guard);
+
+    expect(policy.wakeDecisionFor([scheduledSelf('first')]).wake, isTrue);
+    expect(
+      policy.wakeDecisionFor([scheduledSelf('rapid')]).wake,
+      isTrue,
+      reason: 'the cap-enabled rapid lane does not consult the token budget',
+    );
+    final refused = policy.wakeDecisionFor([scheduledSelf('capped')]);
+    expect(refused.wake, isFalse);
+    expect(refused.pauseReason, 'cap');
+    expect(refused.refusalReason, contains('chatter cap exhausted'));
   });
 
   test('#2226: an explicit maxStreak re-enables the legacy cap verbatim', () {
