@@ -34,7 +34,6 @@ import 'package:fa/services/leftover_model_cleanup.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/image_preview_store.dart';
-import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
@@ -661,7 +660,7 @@ Future<void> bootExtensionRelay({
   final resolvedEnv = env ?? await createPlatformEnv();
   final manager = FlutterSessionManager(
     env: resolvedEnv,
-    sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
+    sessionsRoot: defaultSessionsRootForEnv(resolvedEnv),
     // #2138 HOLE-1: desktop builds ALWAYS enforce ownership (null = web,
     // where no atomic publish exists — E5).
     leaseStore: defaultLeaseStore(resolvedEnv),

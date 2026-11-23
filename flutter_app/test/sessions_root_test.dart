@@ -88,6 +88,51 @@ void main() {
     }, skip: Platform.isMacOS ? 'macOS lists extra candidates' : null);
   });
 
+  group('mobile session roots survive project mount changes', () {
+    test('default root is app-owned, never the mounted project', () {
+      expect(
+        mobileDefaultSessionsRoot(
+          sessionCwd: '/File Provider/Fa',
+          appStorageCwd: '/app/Documents/fah_sandbox',
+        ),
+        '/app/Documents/fah_sandbox/sessions',
+      );
+    });
+
+    test('without a mount the default is the only root', () {
+      final roots = mobileSessionRootCandidates(
+        defaultRoot: '/app/Documents/fah_sandbox/sessions',
+        sessionCwd: '/app/Documents/fah_sandbox',
+        exists: (_) => true,
+      );
+      expect(roots, ['/app/Documents/fah_sandbox/sessions']);
+    });
+
+    test('an existing mounted legacy root is merged, not substituted', () {
+      final roots = mobileSessionRootCandidates(
+        defaultRoot: '/app/Documents/fah_sandbox/sessions',
+        sessionCwd: '/File Provider/Fa',
+        exists: (path) => path == '/File Provider/Fa/sessions',
+      );
+      expect(roots, [
+        '/app/Documents/fah_sandbox/sessions',
+        '/File Provider/Fa/sessions',
+      ]);
+    });
+
+    test(
+      'an inaccessible or absent legacy root fails closed to app storage',
+      () {
+        final roots = mobileSessionRootCandidates(
+          defaultRoot: '/app/Documents/fah_sandbox/sessions',
+          sessionCwd: '/File Provider/Fa',
+          exists: (_) => false,
+        );
+        expect(roots, ['/app/Documents/fah_sandbox/sessions']);
+      },
+    );
+  });
+
   // issue #701 CRAP descent #12: faCliProbe's full branch matrix — the
   // platform gate, ~/.fah, the fixed install locations and every PATH
   // dir — driven through the injected seam (faCliProbe) so it runs
