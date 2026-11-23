@@ -240,28 +240,29 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The chrome band = status bar + the canonical narrow bar (the chat
-      // header's strip), and the JS canvas starts EXACTLY there — not
-      // another status bar lower (the old 166pt inset with a dead glass
-      // band under the toolbar) nor the old 56pt Material band.
+      // The chrome band = status bar + the compact single-row app bar. The
+      // JS canvas starts EXACTLY there: no second safe area and no 48pt
+      // empty lower row beneath the painted action/title band.
       final canvas = tester.widget<Padding>(
         find.byKey(const ValueKey('appCanvasHeaderInset')),
       );
       expect(
         canvas.padding.resolve(TextDirection.ltr).top,
-        _iPhoneTopInset + FaFloatingHeaderBar.barExtent,
-        reason: 'status bar (59) + canonical bar (103), applied once',
+        _iPhoneTopInset + FaFloatingHeaderBar.actionBarExtent,
+        reason: 'status bar (59) + compact action bar (61), applied once',
       );
       final toolbarAction = _globalRect(find.byKey(const ValueKey('appFull')));
       expect(toolbarAction.top, greaterThanOrEqualTo(_iPhoneTopInset));
       expect(
         toolbarAction.bottom,
-        lessThanOrEqualTo(_iPhoneTopInset + FaFloatingHeaderBar.barExtent),
+        lessThanOrEqualTo(
+          _iPhoneTopInset + FaFloatingHeaderBar.actionBarExtent,
+        ),
       );
       final canvasContent = _globalRect(find.text('Demo'));
       expect(
         canvasContent.top,
-        _iPhoneTopInset + FaFloatingHeaderBar.barExtent,
+        _iPhoneTopInset + FaFloatingHeaderBar.actionBarExtent,
       );
       await expectGolden(tester, 'narrow_ios_top_app_view');
       await disposeGoldenShell(tester);
@@ -522,7 +523,7 @@ void main() {
     );
 
     testWidgets(
-      'narrow_header_heights_app_view: toolbar band matches the chat bar',
+      'narrow_header_heights_app_view: compact action bar has no dead gap',
       (tester) async {
         await seedIphone(tester);
         final manager = await pumpShell(tester);
@@ -554,22 +555,27 @@ void main() {
         final band = _globalRect(
           find.byKey(const ValueKey('appPanelChromeBand')),
         );
-        expectCanonicalBar(band, 'app view toolbar band');
-        // The canvas starts EXACTLY at the band's bottom edge — the same
-        // line the chat header extent reserves on this frame.
+        expect(band.height, FaFloatingHeaderBar.actionBarExtent);
+        // The canvas starts EXACTLY at the compact band's bottom edge;
+        // chats keep their separate two-row canonical extent.
         final canvas = tester.widget<Padding>(
           find.byKey(const ValueKey('appCanvasHeaderInset')),
         );
         expect(
           canvas.padding.resolve(TextDirection.ltr).top,
-          _iPhoneTopInset + FaFloatingHeaderBar.barExtent,
-          reason: 'canvas inset = status bar + canonical bar, applied once',
+          _iPhoneTopInset + FaFloatingHeaderBar.actionBarExtent,
+          reason: 'canvas inset = status bar + compact bar, applied once',
         );
         final action = _globalRect(find.byKey(const ValueKey('appFull')));
         expect(
           action.center.dy,
           closeTo(band.top + 6 + 9 + 20, .5),
-          reason: 'actions ride the same 94 centerline as the chat header',
+          reason: 'actions keep the canonical 94 centerline',
+        );
+        expect(
+          band.bottom - action.center.dy,
+          FaFloatingHeaderBar.padVertical + FaFloatingHeaderBar.pillHeight / 2,
+          reason: 'only the 40pt action slot and its 6pt bottom air remain',
         );
         final canvasContent = _globalRect(find.text('Demo'));
         expect(canvasContent.top, band.bottom);
