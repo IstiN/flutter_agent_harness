@@ -95,6 +95,26 @@ void main() {
     for (final entry in jsonDecode(text!) as List) (entry as Map)['id'],
   ];
 
+  /// Bounded load-tolerant wait for a registry mutation's observable
+  /// effect — the same `_waitFor` shape as the shell-job drain suite:
+  /// 5ms polls up to 20s, then a LOUD fail naming the unreached state
+  /// (never a silent pass, never an unbounded sleep).
+  Future<void> waitForManifestId(
+    LocalExecutionEnv env,
+    String logs,
+    String id,
+  ) async {
+    for (var i = 0; i < 4000; i++) {
+      final text = (await env.readTextFile('$logs/running.json')).valueOrNull;
+      if (text != null && manifestIds(text).contains(id)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    fail(
+      'timed out waiting: the settle-side registry mutation never landed '
+      '$id in $logs/running.json',
+    );
+  }
+
   test('AC1: jobStarted queues behind a held lock — the holder\'s '
       'concurrent remove of another entry survives (issue #2266)', () async {
     final (cli, env, io, logs, lock) = await lockFixture('ac1');
@@ -170,21 +190,29 @@ void main() {
     await cli.waitingJobStartedForTest(job);
     expect(cli.waitingRegistryNoticeForTest, isNotNull);
 
-    // The holder releases; the next mutation runs under the lock and
-    // clears the notice.
+    // The holder releases; the settle-side mutation runs under the lock
+    // and clears the notice.
     await lock.delete();
-    final settleJob = cli.shellJobsRegistryForTest.adoptRunningEntry(
+    // Adoption fires its own UNAWAITED add chain (onStart →
+    // _waiting.jobStarted, issue #450). Awaiting the same add a second
+    // time only adds a duplicate lock contender: under CI load the
+    // duplicate's shrunken 150ms bound can expire behind the first
+    // chain's in-lock pid-start ps probe and RE-surface the timeout
+    // notice the first chain already cleared (the drilled Core-shard
+    // red — the #2355 timing family, a new shape). The adoption chain IS
+    // the production settle path (issue #2275): wait bounded for its
+    // observable effect — the manifest write lands AFTER the notice
+    // clear inside the same critical section, so sh-c present means the
+    // notice is clear. A real deadlock (the chain never lands sh-c)
+    // still fails LOUDLY at the bound.
+    cli.shellJobsRegistryForTest.adoptRunningEntry(
       id: 'sh-c',
       command: 'probe.sh',
       pid: 424243,
     );
-    await cli.waitingJobStartedForTest(settleJob);
+    await waitForManifestId(env, logs, 'sh-c');
 
     expect(cli.waitingRegistryNoticeForTest, isNull);
-    final ids = manifestIds(
-      (await env.readTextFile('$logs/running.json')).valueOrNull,
-    );
-    expect(ids, contains('sh-c'));
   });
 
   test('REG: a non-occupancy lock refusal surfaces its real fs cause '
