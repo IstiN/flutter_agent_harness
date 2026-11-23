@@ -91,7 +91,7 @@ void main() {
     );
   });
 
-  testWidgets('generated text fallback keeps its own continuous-corner tile', (
+  testWidgets('generated text fallback keeps its shadow outside the clip', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -102,15 +102,22 @@ void main() {
         ),
       ),
     );
-    final container = tester.widget<Container>(
+    final containerFinder = find.byWidgetPredicate(
+      (widget) => widget is Container && widget.child is AppIconBadge,
+    );
+    expect(containerFinder, findsOneWidget);
+    final container = tester.widget<Container>(containerFinder);
+    final decoration = container.decoration! as ShapeDecoration;
+    expect(decoration.gradient, isA<LinearGradient>());
+    expect(decoration.shape, isA<RoundedSuperellipseBorder>());
+    expect(decoration.shadows, isNotEmpty);
+    expect(
       find.descendant(
         of: find.byType(AppIconBadge),
         matching: find.byType(Container),
       ),
+      findsNothing,
     );
-    final decoration = container.decoration! as ShapeDecoration;
-    expect(decoration.gradient, isA<LinearGradient>());
-    expect(decoration.shape, isA<RoundedSuperellipseBorder>());
   });
 
   testWidgets('curated catalog artwork replaces placeholder SVG by app id', (

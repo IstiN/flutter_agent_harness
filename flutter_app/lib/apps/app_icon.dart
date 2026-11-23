@@ -110,27 +110,18 @@ abstract final class AppIconPalette {
   }
 }
 
-/// A continuous-corner tile used by Launchpad-style surfaces.
+/// A continuous-corner clip used by Launchpad-style surfaces.
 /// [child] is normally the app artwork or an adaptive system glyph.
 ///
 /// Owner direction: NO generated gradient backplate behind real artwork.
 /// The artwork keeps its own rounded-square silhouette and original colors;
-/// generated text/emoji fallbacks supply their own tile instead.
+/// generated text/emoji fallbacks supply their own tile outside this clip so
+/// their shadows remain visible.
 class AppIconBadge extends StatelessWidget {
-  const AppIconBadge({
-    super.key,
-    required this.seed,
-    required this.size,
-    required this.child,
-    this.artwork,
-    this.accent,
-  });
+  const AppIconBadge({super.key, required this.size, required this.child});
 
-  final String seed;
   final double size;
   final Widget child;
-  final String? artwork;
-  final Color? accent;
 
   @override
   Widget build(BuildContext context) {
@@ -445,11 +436,7 @@ class AppIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final curated = AppIconArtwork.svgFor(app.id);
     if (curated != null) {
-      return _maybeFramed(
-        _svg(curated),
-        artwork: curated,
-        accent: AppIconArtwork.accentFor(app.id),
-      );
+      return _maybeFramed(_svg(curated));
     }
     if (_isInlineSvg) return _maybeFramed(_svg(app.icon));
     if (_isSvgFile) {
@@ -467,31 +454,24 @@ class AppIcon extends StatelessWidget {
     // Emoji-only manifests (no SVG artwork): a uniform muted-gradient
     // squircle keeps the launchpad consistent (owner: "иконки бардак").
     // The no-backplate rule applies to REAL artwork, which keeps its own
-    // colors — an emoji has none, so the tile supplies the identity.
-    return AppIconBadge(
-      seed: app.id,
-      accent: AppIconPalette.accentFor(app.id),
-      size: size,
-      child: Container(
-        decoration: AppIconPalette.decoration(
-          seed: app.id,
-          brightness: Theme.of(context).brightness,
-          size: size,
-        ),
+    // colors — an emoji has none, so the tile supplies the identity. Keep
+    // the decoration outside the clip so its shadow remains visible.
+    return Container(
+      decoration: AppIconPalette.decoration(
+        seed: app.id,
+        brightness: Theme.of(context).brightness,
+        size: size,
+      ),
+      child: AppIconBadge(
+        size: size,
         child: Center(child: text),
       ),
     );
   }
 
-  Widget _maybeFramed(Widget child, {String? artwork, Color? accent}) {
+  Widget _maybeFramed(Widget child) {
     if (!framed) return child;
-    return AppIconBadge(
-      seed: app.id,
-      artwork: artwork ?? app.icon,
-      size: size,
-      accent: accent,
-      child: child,
-    );
+    return AppIconBadge(size: size, child: child);
   }
 
   Future<String> _loadSvgFile() async {
