@@ -695,6 +695,53 @@ void main() {
     io.sendLine('/exit');
     await run;
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('#2226 CRAP units: /chain dispatch pins the status, usage and '
+      'paused-evidence shapes', () async {
+    final fake = FakeStreamFunction([textTurn('ack 1'), textTurn('ack 2')]);
+    final cli = buildCli(
+      fake,
+      messaging: const MessagingConfig(
+        loopDetection: ChainLoopDetectionConfig(
+          similarityThreshold: 0.5,
+          stuckRounds: 1,
+        ),
+      ),
+    );
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+
+    // Bare status on a RUNNING gate: state, spend and pending count.
+    await cli.handleChainCommand('');
+    expect(
+      io.out.toString(),
+      contains('chain: running'),
+      reason: 'an unpaused gate reports running',
+    );
+
+    // Unknown subcommand: the usage line.
+    await cli.handleChainCommand('bogus');
+    expect(io.out.toString(), contains('usage: /chain [continue|stop]'));
+
+    // Pause the gate (two identical exchanges arm the loop verdict),
+    // then the bare status shows PAUSED with evidence and the escapes.
+    await sendForeignMail(id, 'echo ping');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => fake.calls >= baseline + 1 && !cli.isBusy);
+    await sendForeignMail(id, 'echo ping');
+    await cli.inboxWakeTickForTest();
+    await waitForTrue(() async => io.out.toString().contains('chain paused'));
+    await cli.handleChainCommand('');
+    expect(io.out.toString(), contains('chain: PAUSED'));
+    expect(io.out.toString(), contains('evidence: '));
+    expect(
+      io.out.toString(),
+      contains('/chain continue - resume · /chain stop - drop mail'),
+    );
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }
 
 /// A hub primary whose consume operation fails after mutating its inbox,
