@@ -5,10 +5,30 @@
 // the sandbox envelope rides one key and every session file its own record,
 // so an oversized or torn write damages one record instead of the whole
 // history.
+window.__fahFsDatabaseName = function() {
+  // null/undefined is the stock compatibility sentinel: NEVER rename the
+  // legacy store. Branded builds inject their product/schema namespace.
+  var ns = window.__faProductStorageNamespace;
+  return ns ? 'fah_web_fs:' + ns : 'fah_web_fs';
+};
+window.__fahFsUseStorageNamespace = function(namespace) {
+  // Account/auth coordinators call this only after fencing old writes.
+  if (window.__fahFsDbPromise) {
+    window.__fahFsDbPromise.then(function(db) { db.close(); });
+  }
+  ['__fahDriveDbPromise', '__fahCloudSessionDbPromise'].forEach(function(key) {
+    if (window[key]) {
+      window[key].then(function(db) { db.close(); });
+    }
+    window[key] = null;
+  });
+  window.__faProductStorageNamespace = namespace || null;
+  window.__fahFsDbPromise = null;
+};
 window.__fahFsOpen = function() {
   if (!window.__fahFsDbPromise) {
     window.__fahFsDbPromise = new Promise(function(resolve, reject) {
-      var req = indexedDB.open('fah_web_fs', 1);
+      var req = indexedDB.open(window.__fahFsDatabaseName(), 1);
       req.onupgradeneeded = function() {
         var db = req.result;
         if (!db.objectStoreNames.contains('snapshots')) {

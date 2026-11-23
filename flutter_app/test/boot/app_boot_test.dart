@@ -155,7 +155,72 @@ void main() {
       expect(stores.imagePreviews, isNotNull);
       // The fa_ui key chain is wired to the app resolver.
       expect(FaUiHost.keyResolver, isNotNull);
+      expect(stores.productConfig.isStock, isTrue);
+      expect(stores.networkMode, isNotNull);
+      expect(stores.networkSessions, isNotNull);
     });
+
+    test(
+      'branded profile without faNetwork inherits no stock backend',
+      () async {
+        final config = FaProductConfig.fromJson({
+          'productId': 'host-product',
+          'displayName': 'Host Workspace',
+          'featureFlags': <Object?>[],
+        });
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+        );
+        addTearDown(() => FaUiHost.keyResolver = null);
+        expect(stores.productConfig, same(config));
+        expect(stores.networkMode, isNull);
+        expect(stores.networkSessions, isNull);
+      },
+    );
+
+    test(
+      'branded declarative theme pack registers and applies at boot',
+      () async {
+        final config = FaProductConfig.fromJson({
+          'productId': 'host-product',
+          'displayName': 'Host Workspace',
+          'themePackId': 'host-theme',
+          'themePack': {
+            'name': 'Host Theme',
+            'version': '1.0.0',
+            'colors': {
+              'dark': {'accent': '#2E7D32'},
+            },
+          },
+        });
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+        );
+        expect(stores.themeController.packId, 'host-theme');
+        expect(stores.themePacks.byId('host-theme')!.spec.name, 'Host Theme');
+        expect(
+          stores.themePacks.byId('host-theme')!.spec.dark!.accent,
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'faNetwork feature refuses to inherit stock endpoints implicitly',
+      () async {
+        final config = FaProductConfig.fromJson({
+          'productId': 'host-product',
+          'displayName': 'Host Workspace',
+          'featureFlags': ['faNetwork'],
+        });
+        await expectLater(
+          loadBootStores(MemoryExecutionEnv(), productConfig: config),
+          throwsFormatException,
+        );
+      },
+    );
   });
 
   group('bootTelemetry (telemetry stage)', () {

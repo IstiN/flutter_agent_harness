@@ -58,6 +58,14 @@ class ThemePackStore extends ChangeNotifier {
   /// The pack with [id], or null (also the stale-id fallback after removal).
   InstalledThemePack? byId(String? id) => id == null ? null : _packs[id];
 
+  /// Registers a host-owned, already validated pack for this boot. This is a
+  /// native/embedder API, not a JS/agent install path; user packs still enter
+  /// only through [installFromZip].
+  void registerHostPack(InstalledThemePack pack) {
+    _packs[pack.id] = pack;
+    notifyListeners();
+  }
+
   /// Scans [rootDir] and loads every valid pack. Broken directories (half
   /// written, tampered) are skipped, never fatal — the app must boot.
   static Future<ThemePackStore> load(ExecutionEnv env) async {
