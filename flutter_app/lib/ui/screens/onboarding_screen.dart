@@ -235,11 +235,30 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return l10n.onboardingNext;
   }
 
+  bool get _isLastPage => _page == _pageCount - 1;
+
+  /// The provider step keeps the footer locked while the gate is up.
+  bool get _stepGated => _page == 1 && _providerGateActive;
+
+  /// A preselected branded default unlocks the footer so **Continue** can
+  /// launch that provider's real connection flow; the gate itself stays
+  /// intact (cancelling leaves the step locked, nothing is fabricated).
+  bool get _primaryEnabled =>
+      (!_stepGated || _defaultProvider != null) &&
+      !(_isLastPage && _providerGateActive);
+
+  VoidCallback get _onPrimary {
+    if (_stepGated && _defaultProvider != null) {
+      return () => _p2Key.currentState?.configureDefault();
+    }
+    return _isLastPage ? () => _finish(skipped: false) : _next;
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 920;
-    final last = _page == _pageCount - 1;
-    final gated = _page == 1 && _providerGateActive;
+    final last = _isLastPage;
+    final gated = _stepGated;
     final defaultProvider = _defaultProvider;
     return ProductConfigScope(
       productConfig: widget.productConfig,
@@ -296,15 +315,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 pageCount: _pageCount,
                 wide: wide,
                 primaryLabel: _primaryLabel,
-                primaryEnabled:
-                    (!gated || defaultProvider != null) &&
-                    !(last && _providerGateActive),
-                onPrimary:
-                    _page == 1 && _providerGateActive && defaultProvider != null
-                    ? () => _p2Key.currentState?.configureDefault()
-                    : last
-                    ? () => _finish(skipped: false)
-                    : _next,
+                primaryEnabled: _primaryEnabled,
+                onPrimary: _onPrimary,
                 onBack: _page > 0 ? _back : null,
                 privacyPolicy: widget.productConfig.legalLinks['privacy'],
               ),
