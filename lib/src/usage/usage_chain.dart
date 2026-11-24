@@ -63,10 +63,14 @@ final class UsageChainSegment {
     this.model,
     this.openedAt,
     this.closedAt,
+    this.traceLines = const [],
   });
 
   /// The segment's provider requests.
   final List<FoldRequest> requests;
+
+  /// Optional compact request and tool-result diagnostics in chain order.
+  final List<String> traceLines;
 
   /// The segment's LAST-SEEN model id (gh-1460): the model that served the
   /// final request — stamped into the `fa-tokens:` segment-close line so
@@ -91,6 +95,7 @@ final class UsageChainScan {
     required this.recordCount,
     required this.chainHash,
     this.usageIncomplete = false,
+    this.emptyTrailingSegment = false,
   });
 
   /// Segments in chain order (always at least one).
@@ -108,16 +113,28 @@ final class UsageChainScan {
   /// output unknown). Consumers must never read such a fold as complete
   /// accounting.
   final bool usageIncomplete;
+
+  /// Whether the last marker opened a segment with no contributing records.
+  final bool emptyTrailingSegment;
 }
 
 /// Scans raw session-chain JSONL lines into [UsageChainScan].
 final class UsageChainScanner {
   /// Creates a [UsageChainScanner].
-  const UsageChainScanner();
+  const UsageChainScanner({this.captureTrace = false, this.redactToolName});
+
+  /// Collect compact diagnostics without changing the folded totals.
+  final bool captureTrace;
+
+  /// Redacts tool names before they are encoded into diagnostic lines.
+  final String Function(String)? redactToolName;
 
   /// Scans [lines] (the session file's raw lines, header included).
   UsageChainScan scan(Iterable<String> lines) {
-    final state = _ScanState();
+    final state = _ScanState(
+      captureTrace: captureTrace,
+      redactToolName: redactToolName,
+    );
     for (final raw in lines) {
       final line = raw.trimRight();
       if (line.isEmpty) continue;
@@ -142,11 +159,11 @@ final class UsageChainScanner {
       // current segment (its closedAt, or firstRecordAt fallback).
       state.current().noteRecordAt(timestamp);
       if (type == 'custom') {
-        _handleSummary(decoded, state);
+        _handleSummary(decoded, timestamp, state);
         continue;
       }
       if (type != 'message') continue;
-      _handleAssistantMessage(decoded, state);
+      _handleMessage(decoded, timestamp, state);
     }
     return state.finish();
   }
@@ -180,14 +197,18 @@ final class UsageChainScanner {
   /// message its request produces. A summary superseded by another summary
   /// means the earlier request never finalized (gh-1643) — it is flushed
   /// as a fallback, never silently dropped.
-  void _handleSummary(Map<String, dynamic> decoded, _ScanState state) {
+  void _handleSummary(
+    Map<String, dynamic> decoded,
+    DateTime? timestamp,
+    _ScanState state,
+  ) {
     if (decoded['customType'] == modelRequestSummaryCustomType) {
       final superseded = state.pending;
       if (superseded != null) {
-        state.segments.last.requests.add(superseded.fallback());
+        state.current().addRequest(superseded.fallback(), superseded.at);
         state.usageIncomplete = true;
       }
-      state.pending = _PendingSummary.fromData(decoded['data']);
+      state.pending = _PendingSummary.fromData(decoded['data'], timestamp);
     }
   }
 
@@ -195,14 +216,23 @@ final class UsageChainScanner {
   /// produce a [FoldRequest], priced from the provider-reported usage or —
   /// when the provider omitted usage — estimated from the paired request
   /// summary.
-  void _handleAssistantMessage(Map<String, dynamic> decoded, _ScanState state) {
+  void _handleMessage(
+    Map<String, dynamic> decoded,
+    DateTime? timestamp,
+    _ScanState state,
+  ) {
     final message = decoded['message'];
-    if (message is! Map || message['role'] != 'assistant') return;
+    if (message is! Map) return;
+    if (message['role'] == 'toolResult') {
+      state.current().addToolResult(message);
+      return;
+    }
+    if (message['role'] != 'assistant') return;
     final request = _foldAssistant(
       message.cast<String, dynamic>(),
       state.pending,
     );
-    state.current().addRequest(request);
+    state.current().addRequest(request, state.pending?.at ?? timestamp);
     state.pending = null;
   }
 
@@ -278,6 +308,10 @@ final class UsageChainScanner {
 /// policy. Extracted from [UsageChainScanner.scan] so the per-record-type
 /// handlers stay small enough for the CRAP ratchet.
 final class _ScanState {
+  _ScanState({required this.captureTrace, this.redactToolName});
+
+  final bool captureTrace;
+  final String Function(String)? redactToolName;
   final BytesBuilder _bytes = BytesBuilder(copy: false);
   final List<_ScanSegment> segments = [];
   _PendingSummary? pending;
@@ -291,7 +325,9 @@ final class _ScanState {
   /// The current segment, creating the first lazily so a chain with no
   /// markers still folds as ONE segment.
   _ScanSegment current() {
-    if (segments.isEmpty) segments.add(_ScanSegment());
+    if (segments.isEmpty) {
+      segments.add(_ScanSegment(captureTrace, redactToolName));
+    }
     return segments.last;
   }
 
@@ -309,11 +345,13 @@ final class _ScanState {
   /// and never silent zeros (gh-1643: the estimate rides the fallback).
   void closeSegment(DateTime? boundaryAt) {
     if (pending case final summary?) {
-      segments.last.requests.add(summary.fallback());
+      segments.last.addRequest(summary.fallback(), summary.at);
       usageIncomplete = true;
       pending = null;
     }
-    segments.add(_ScanSegment()..setOpenedAt(boundaryAt));
+    segments.add(
+      _ScanSegment(captureTrace, redactToolName)..setOpenedAt(boundaryAt),
+    );
   }
 
   /// Builds the scan result. A dangling summary still counts — with its
@@ -327,11 +365,15 @@ final class _ScanState {
   /// reports a zero-count segment labeled "reported".
   UsageChainScan finish() {
     if (pending case final summary?) {
-      segments.lastOrNull?.requests.add(summary.fallback());
+      segments.lastOrNull?.addRequest(summary.fallback(), summary.at);
       usageIncomplete = true;
       pending = null;
     }
-    if (segments.isEmpty) segments.add(_ScanSegment());
+    if (segments.isEmpty) {
+      segments.add(_ScanSegment(captureTrace, redactToolName));
+    }
+    final emptyTrailingSegment =
+        segments.length > 1 && !segments.last.hasContent;
     while (segments.length > 1 && !segments.last.hasContent) {
       segments.removeLast();
     }
@@ -343,19 +385,24 @@ final class _ScanState {
             model: segment.lastModel,
             openedAt: segment.openedAt ?? segment.firstRecordAt,
             closedAt: segment.closedAt,
+            traceLines: segment.traceLines,
           ),
       ],
       recordCount: recordCount,
       chainHash: 'sha256:${sha256.convert(_bytes.toBytes())}',
       usageIncomplete: usageIncomplete,
+      emptyTrailingSegment: emptyTrailingSegment,
     );
   }
 }
 
 /// Mutable scan state for one segment.
 final class _ScanSegment {
-  _ScanSegment();
+  _ScanSegment(this.captureTrace, this.redactToolName);
 
+  final bool captureTrace;
+  final String Function(String)? redactToolName;
+  final List<String> traceLines = [];
   DateTime? openedAt;
   final List<FoldRequest> requests = [];
   DateTime? firstRecordAt;
@@ -374,11 +421,26 @@ final class _ScanSegment {
 
   /// Adds a request and, when it observed a real model, records it as the
   /// segment's last-seen model.
-  void addRequest(FoldRequest request) {
+  void addRequest(FoldRequest request, DateTime? timestamp) {
     requests.add(request);
+    if (captureTrace) {
+      traceLines.add(
+        'usage_request: ${jsonEncode({'t': timestamp?.toIso8601String(), 'in': request.input, 'out': request.output, 'cr': request.cacheRead, 'source': request.source.wire})}',
+      );
+    }
     if (request.model.isNotEmpty && request.model != unknownUsageModel) {
       lastModel = request.model;
     }
+  }
+
+  void addToolResult(Map message) {
+    if (!captureTrace) return;
+    final name = message['toolName'];
+    final content = message['content'];
+    if (name is! String || content is! List) return;
+    final bytes = utf8.encode(jsonEncode(content)).length;
+    final safeName = redactToolName?.call(name) ?? name;
+    traceLines.add('tool_result:${Uri.encodeComponent(safeName)}:$bytes');
   }
 
   void setOpenedAt(DateTime? at) {
@@ -399,7 +461,10 @@ extension on _ScanSegment? {
 /// A `model_request_summary` record waiting for the assistant message its
 /// request produces (the summary always lands first on the chain).
 final class _PendingSummary {
-  _PendingSummary(this.inputChars, this.systemPromptChars);
+  _PendingSummary(this.inputChars, this.systemPromptChars, this.at);
+
+  /// Request submission timestamp from the summary record.
+  final DateTime? at;
 
   /// Σ `chars` of the summary's outbound request messages — the estimated
   /// input-token basis.
@@ -409,7 +474,7 @@ final class _PendingSummary {
   /// known input volume, counted by the dangling-request fallback.
   final int systemPromptChars;
 
-  factory _PendingSummary.fromData(Object? data) {
+  factory _PendingSummary.fromData(Object? data, DateTime? timestamp) {
     var chars = 0;
     var systemChars = 0;
     if (data is Map) {
@@ -431,7 +496,7 @@ final class _PendingSummary {
         chars += dropped['chars'] as int? ?? 0;
       }
     }
-    return _PendingSummary(chars, systemChars);
+    return _PendingSummary(chars, systemChars, timestamp);
   }
 
   /// The request never produced an assistant message (gh-1643): count its
@@ -464,6 +529,14 @@ final class UsageChainFolder {
     UsageChainScanner scanner = const UsageChainScanner(),
   }) {
     final scan = scanner.scan(lines);
+    return foldScan(sessionId: sessionId, scan: scan);
+  }
+
+  /// Folds an already scanned chain, including any collected diagnostics.
+  UsageLedger foldScan({
+    required String sessionId,
+    required UsageChainScan scan,
+  }) {
     final segments = <UsageSegment>[
       for (var i = 0; i < scan.segments.length; i++)
         folder.foldSegment(
