@@ -88,39 +88,6 @@ ServerSentEvent? _decodeSseLine(String line, _SseDecoderState state) {
   return null;
 }
 
-int _nextLineBreakIndex(String text) {
-  final carriageReturnIndex = text.indexOf('\r');
-  final newlineIndex = text.indexOf('\n');
-  if (carriageReturnIndex == -1) {
-    return newlineIndex;
-  }
-  if (newlineIndex == -1) {
-    return carriageReturnIndex;
-  }
-  return carriageReturnIndex < newlineIndex
-      ? carriageReturnIndex
-      : newlineIndex;
-}
-
-({String line, String rest})? _consumeLine(String text) {
-  final lineBreakIndex = _nextLineBreakIndex(text);
-  if (lineBreakIndex == -1) {
-    return null;
-  }
-
-  var nextIndex = lineBreakIndex + 1;
-  if (text[lineBreakIndex] == '\r' &&
-      nextIndex < text.length &&
-      text[nextIndex] == '\n') {
-    nextIndex += 1;
-  }
-
-  return (
-    line: text.substring(0, lineBreakIndex),
-    rest: text.substring(nextIndex),
-  );
-}
-
 /// Decodes a stream of text chunks into [ServerSentEvent]s.
 ///
 /// Handles LF, CRLF, and lone-CR line endings, events split across chunks,
@@ -179,15 +146,35 @@ class SseDecoder extends StreamTransformerBase<String, ServerSentEvent> {
     _SseDecoderState state,
   ) {
     final events = <ServerSentEvent>[];
-    var consumed = _consumeLine(buffer);
-    while (consumed != null) {
-      buffer = consumed.rest;
-      final event = _decodeSseLine(consumed.line, state);
+    final len = buffer.length;
+    var start = 0;
+    while (start < len) {
+      final lf = buffer.indexOf('\n', start);
+      final cr = buffer.indexOf('\r', start);
+      int lineBreakIndex;
+      if (cr == -1) {
+        lineBreakIndex = lf;
+      } else if (lf == -1) {
+        lineBreakIndex = cr;
+      } else {
+        lineBreakIndex = cr < lf ? cr : lf;
+      }
+      if (lineBreakIndex == -1) break;
+      final line = buffer.substring(start, lineBreakIndex);
+      start = lineBreakIndex + 1;
+      if (buffer.codeUnitAt(lineBreakIndex) == 0x0d &&
+          start < len &&
+          buffer.codeUnitAt(start) == 0x0a) {
+        start += 1;
+      }
+      final event = _decodeSseLine(line, state);
       if (event != null) {
         events.add(event);
       }
-      consumed = _consumeLine(buffer);
     }
-    return (buffer, events);
+    final rest = start == 0
+        ? buffer
+        : (start >= len ? '' : buffer.substring(start));
+    return (rest, events);
   }
 }

@@ -18,10 +18,8 @@
 library;
 
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-
 import '../compaction/token_estimation.dart' show estimateTokens;
 import '../context.dart' show messageFromJson;
 import 'usage_fold.dart';
@@ -308,11 +306,14 @@ final class UsageChainScanner {
 /// policy. Extracted from [UsageChainScanner.scan] so the per-record-type
 /// handlers stay small enough for the CRAP ratchet.
 final class _ScanState {
-  _ScanState({required this.captureTrace, this.redactToolName});
+  _ScanState({required this.captureTrace, this.redactToolName}) {
+    _hashSink = sha256.startChunkedConversion(_digestSink);
+  }
 
   final bool captureTrace;
   final String Function(String)? redactToolName;
-  final BytesBuilder _bytes = BytesBuilder(copy: false);
+  final _DigestSink _digestSink = _DigestSink();
+  late final ByteConversionSink _hashSink;
   final List<_ScanSegment> segments = [];
   _PendingSummary? pending;
   var recordCount = 0;
@@ -331,12 +332,12 @@ final class _ScanState {
     return segments.last;
   }
 
-  /// Hashes and counts a consumed record line.
+  /// Hashes and counts a consumed record line incrementally (never buffers
+  /// the whole JSONL transcript into memory).
   void noteRecord(String line) {
     recordCount += 1;
-    _bytes
-      ..add(utf8.encode(line))
-      ..add(const [10]);
+    _hashSink.add(utf8.encode(line));
+    _hashSink.add(const [10]);
   }
 
   /// A segment boundary: a summary whose request never produced an
@@ -377,6 +378,7 @@ final class _ScanState {
     while (segments.length > 1 && !segments.last.hasContent) {
       segments.removeLast();
     }
+    _hashSink.close();
     return UsageChainScan(
       segments: [
         for (final segment in segments)
@@ -389,11 +391,23 @@ final class _ScanState {
           ),
       ],
       recordCount: recordCount,
-      chainHash: 'sha256:${sha256.convert(_bytes.toBytes())}',
+      chainHash: 'sha256:${_digestSink.digest}',
       usageIncomplete: usageIncomplete,
       emptyTrailingSegment: emptyTrailingSegment,
     );
   }
+}
+
+final class _DigestSink implements Sink<Digest> {
+  late Digest digest;
+
+  @override
+  void add(Digest data) {
+    digest = data;
+  }
+
+  @override
+  void close() {}
 }
 
 /// Mutable scan state for one segment.
