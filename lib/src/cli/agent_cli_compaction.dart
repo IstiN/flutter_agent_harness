@@ -26,6 +26,56 @@ extension EffectiveContextWindow on AgentCli {
   ).window;
 }
 
+/// GOAL #2394: the live compaction settings live beside the effective
+/// window they scale from (same library — a pure move out of the
+/// size-gated agent_cli.dart).
+extension EffectiveCompactionSettings on AgentCli {
+  /// Compaction settings for the live model: the config override when the
+  /// user pinned one, else pi's fixed defaults SCALED to the model window
+  /// (`CompactionSettings.forWindow`) — the same rule the Flutter app
+  /// applies. The fixed 20k-keep defaults are right for 128k windows but
+  /// structurally prevent compaction on small models: with keep 20000 on
+  /// an 8k-window model the compactor always "keeps" the whole transcript
+  /// (nothing is older than the kept region), so an over-window guard can
+  /// never be satisfied by compacting.
+  ///
+  /// Resolved through the shared host wiring (gh-1077): the CLI path and
+  /// the app path must agree on window/reserve semantics, and the parity
+  /// test pins that agreement — the window here is
+  /// [effectiveContextWindow] under the owner cap, no overhead subtracted
+  /// (the CLI carries no fixed request overhead).
+  CompactionSettings get _effectiveCompactionSettings {
+    final wiring = resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+      settingsOverride: config.compactionSettings,
+      tuning: config.compactionTuning,
+    );
+    // An explicit settings pin — or the gh-2098 `compaction:` tuning
+    // keys, a user pin too — beats the bench env (gh-1604):
+    // `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a bench run
+    // — it must never silently rewrite a user-pinned section, including
+    // `enabled: false` (the knob cannot re-enable compaction the user
+    // switched off). Unset env = byte-identical base.
+    final pinned =
+        config.compactionSettings != null ||
+        (config.compactionTuning?.isNotEmpty ?? false);
+    if (pinned) return wiring.settings;
+    return resolveBenchCompactionSettings(
+      wiring.settings,
+      window: _effectiveContextWindow,
+      env: environment,
+    );
+  }
+
+  /// Test seam (gh-1604 rework): the compaction settings the live gates
+  /// use — the explicit config pin when present, else the host defaults
+  /// with the bench env knob composed.
+  @visibleForTesting
+  CompactionSettings get effectiveCompactionSettingsForTest =>
+      _effectiveCompactionSettings;
+}
+
 extension MemoryLlmSlotResolution on AgentCli {
   /// Resolves the LLM slot for long-term-memory work PER CALL: the `memory`
   /// role, else `smol`, else the main model. The roles resolver is mutable
@@ -550,10 +600,13 @@ extension AgentCliCompactionRun on AgentCli {
     // hand-over alone — in the [soft, hard) band, muted by the hysteresis
     // for N user turns after any run. The pre-flight and the over-window
     // guard stay hard-only: the hard guard is never suppressed.
+    _handOverTrigger.tune(
+      hysteresisTurns: config.compactionTuning?.handOverHysteresisTurns,
+    );
     final soft =
         !hard &&
         postRun &&
-        handOverTrigger.softReached(
+        _handOverTrigger.softReached(
           tokens: tokens,
           window: _effectiveContextWindow,
           settings: _effectiveCompactionSettings,
@@ -1029,11 +1082,9 @@ extension AgentCliCompactionRun on AgentCli {
       // GOAL #2394 (AC1/AC2): the last main request as sent (S0) — a
       // snapshot valid for the session's model selects the merged
       // hand-over (cache-affine prefix); the budget knob is
-      // `compaction.handOver.maxTokens`.
+      // `compaction.handOver.maxTokens` (null → the adapter's default).
       requestSnapshot: _agent.requestSnapshots.validFor(_agent.state.model),
-      handOverMaxTokens:
-          config.compactionTuning?.handOverMaxTokens ??
-          handOverMaxTokensDefault,
+      handOverMaxTokens: config.compactionTuning?.handOverMaxTokens,
       // GOAL #2394 (AC11): the post-run soft line armed this run.
       softTriggered: softTriggered,
       memoryExtractionHook: (text) async {
@@ -1075,7 +1126,7 @@ extension AgentCliCompactionRun on AgentCli {
     // GOAL #2394 (D8): any run — success or failure alike — starts the
     // hysteresis window; a run that appended records moved the
     // projection the snapshot described, so S0 is stale.
-    handOverTrigger.recordRun();
+    _handOverTrigger.recordRun();
     if (hooks.reportedPass) {
       _agent.invalidateRequestSnapshot('compaction run appended records');
     }

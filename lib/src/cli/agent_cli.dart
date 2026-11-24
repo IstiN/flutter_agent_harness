@@ -131,8 +131,6 @@ import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
-import '../compaction/structured/hand_over_ladder.dart'
-    show handOverMaxTokensDefault;
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../cube/cube.dart';
@@ -1667,12 +1665,9 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
-  /// GOAL #2394 (D8/D9): the post-run soft trigger's hysteresis and the
-  /// `compacting` gate — ONE holder (agent_cli.dart sits at the size
-  /// gate; the compaction extension reads it).
-  late final handOverTrigger = HandOverTriggerState(
-    turns: config.compactionTuning?.handOverHysteresisTurns,
-  );
+  // GOAL #2394 (D8/D9): the post-run soft trigger's hysteresis and the
+  // `compacting` gate; the compaction extension tunes and reads it.
+  final _handOverTrigger = HandOverTriggerState();
 
   /// gh-1762: the live token-rate meter — fed by the agent event tap
   /// (text/thinking/tool-call-arg deltas + per-response usage), read by
@@ -2726,51 +2721,6 @@ class AgentCli {
   /// writes through. Mirrors the app host's `scheduledReceiptsForTest`.
   @visibleForTesting
   ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
-
-  /// Compaction settings for the live model: the config override when the
-  /// user pinned one, else pi's fixed defaults SCALED to the model window
-  /// (`CompactionSettings.forWindow`) — the same rule the Flutter app
-  /// applies. The fixed 20k-keep defaults are right for 128k windows but
-  /// structurally prevent compaction on small models: with keep 20000 on
-  /// an 8k-window model the compactor always "keeps" the whole transcript
-  /// (nothing is older than the kept region), so an over-window guard can
-  /// never be satisfied by compacting.
-  ///
-  /// Resolved through the shared host wiring (gh-1077): the CLI path and
-  /// the app path must agree on window/reserve semantics, and the parity
-  /// test pins that agreement — the window here is
-  /// [effectiveContextWindow] under the owner cap, no overhead subtracted
-  /// (the CLI carries no fixed request overhead).
-  CompactionSettings get _effectiveCompactionSettings {
-    final wiring = resolveCompactionHostWiring(
-      mainModel: _agent.state.model,
-      contextWindowCap: config.contextWindowCap,
-      settingsOverride: config.compactionSettings,
-      tuning: config.compactionTuning,
-    );
-    // An explicit settings pin — or the gh-2098 `compaction:` tuning
-    // keys, a user pin too — beats the bench env (gh-1604):
-    // `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a bench run
-    // — it must never silently rewrite a user-pinned section, including
-    // `enabled: false` (the knob cannot re-enable compaction the user
-    // switched off). Unset env = byte-identical base.
-    final pinned =
-        config.compactionSettings != null ||
-        (config.compactionTuning?.isNotEmpty ?? false);
-    if (pinned) return wiring.settings;
-    return resolveBenchCompactionSettings(
-      wiring.settings,
-      window: _effectiveContextWindow,
-      env: environment,
-    );
-  }
-
-  /// Test seam (gh-1604 rework): the compaction settings the live gates
-  /// use — the explicit config pin when present, else the host defaults
-  /// with the bench env knob composed.
-  @visibleForTesting
-  CompactionSettings get effectiveCompactionSettingsForTest =>
-      _effectiveCompactionSettings;
 
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;

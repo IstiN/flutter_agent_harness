@@ -109,6 +109,12 @@ final class HandOverTriggerState {
   /// The `compacting` gate — one run at a time, prompts wait.
   final CompactingGate gate = CompactingGate();
 
+  /// Applies `compaction.handOver.hysteresisTurns` (null → the default)
+  /// to the ONE counter — a host that re-resolves its settings per run
+  /// calls this before every [softReached].
+  void tune({int? hysteresisTurns}) =>
+      hysteresis.turns = hysteresisTurns ?? handOverHysteresisTurnsDefault;
+
   /// A user turn started (hosts call it at every user prompt).
   void onTurn() => hysteresis.onTurn();
 

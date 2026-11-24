@@ -1122,7 +1122,7 @@ class AutoCompactorFactory {
     this.messageCap,
     this.messageCapMargin = kMessageCapDefaultMargin,
     this.requestSnapshot,
-    this.handOverMaxTokens = handOverMaxTokensDefault,
+    this.handOverMaxTokens,
     this.softTriggered = false,
   });
 
@@ -1174,8 +1174,8 @@ class AutoCompactorFactory {
   final RequestSnapshot? requestSnapshot;
 
   /// GOAL #2394 (AC4): the merged call's output budget
-  /// (`compaction.handOver.maxTokens`).
-  final int handOverMaxTokens;
+  /// (`compaction.handOver.maxTokens`); null → [handOverMaxTokensDefault].
+  final int? handOverMaxTokens;
 
   /// GOAL #2394 (AC11): the host armed this run on the post-run soft
   /// line — the merged pass waives the hard gate; any other mode keeps
@@ -1509,7 +1509,7 @@ class AutoCompactorFactory {
               stream: sources.mainStream,
               model: snapshot.model,
               cachePolicy: CompactionCachePolicy.sessionAffine(),
-              maxTokens: handOverMaxTokens,
+              maxTokens: handOverMaxTokens ?? handOverMaxTokensDefault,
               prefixLength: snapshot.prefixLength,
               onDelta: hooks.onDelta,
               onUsage: _usageLedger?.add,

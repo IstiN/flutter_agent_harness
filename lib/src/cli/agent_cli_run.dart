@@ -134,8 +134,8 @@ extension AgentCliRun on AgentCli {
     // GOAL #2394 (D8/D9): a user turn advanced the hysteresis clock; a
     // post-run hand-over still in flight is AWAITED here so its records
     // land before this turn's pre-flight measures the transcript.
-    if (!isAutoContinue) handOverTrigger.onTurn();
-    await handOverTrigger.gate.wait();
+    if (!isAutoContinue) _handOverTrigger.onTurn();
+    await _handOverTrigger.gate.wait();
     // Wall-clock catch-up (issue #259): records that came due while the
     // host slept (or while no tick ran) are delivered HERE, at turn start —
     // awaited before the prompt so this turn's first steering poll already
@@ -364,7 +364,7 @@ extension AgentCliRun on AgentCli {
     try {
       // GOAL #2394 (D9): the post-run call runs under the `compacting`
       // gate — a prompt arriving meanwhile waits for it.
-      await handOverTrigger.gate.run(() => _maybeAutoCompact(postRun: true));
+      await _handOverTrigger.gate.run(() => _maybeAutoCompact(postRun: true));
     } on CancelledException {
       // Abort during the POST-RUN compaction window (issue #1085 round-4
       // review): the turn has already settled and reported its outcome —
