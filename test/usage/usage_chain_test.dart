@@ -16,6 +16,86 @@ UsageLedger foldChain(List<String> lines, {String sessionId = 'sess-1'}) =>
     const UsageChainFolder().foldChain(sessionId: sessionId, lines: lines);
 
 void main() {
+  test(
+    'trace preserves request and tool-result order, including fallbacks',
+    () {
+      final toolContent = [
+        {'type': 'text', 'text': 'héllo\n'},
+      ];
+      final toolLine = jsonEncode({
+        'id': 'tool',
+        'parentId': null,
+        'timestamp': '2024-01-01T00:04:00.000Z',
+        'type': 'message',
+        'message': {
+          'role': 'toolResult',
+          'toolName': 'read:unsafe\nname',
+          'content': toolContent,
+        },
+      });
+      final lines = [
+        sessionHeaderLine('s'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(
+          3,
+          usage: reportedUsage(input: 10, output: 4, cacheRead: 3),
+        ),
+        toolLine,
+        requestSummaryLine(5),
+        requestSummaryLine(6),
+        assistantLine(7, usage: omittedUsage),
+      ];
+      final scan = const UsageChainScanner(captureTrace: true).scan(lines);
+      final segment = scan.segments.single;
+      expect(segment.traceLines, hasLength(4));
+      final first =
+          jsonDecode(segment.traceLines[0].split('usage_request: ').last)
+              as Map<String, dynamic>;
+      expect(first['t'], '2024-01-01T00:02:00.000Z');
+      expect(first['in'], 10);
+      expect(first['out'], 4);
+      expect(first['cr'], 3);
+      expect(first['source'], 'reported');
+      expect(
+        segment.traceLines[1],
+        'tool_result:read%3Aunsafe%0Aname:'
+        '${utf8.encode(jsonEncode(toolContent)).length}',
+      );
+      final fallback =
+          jsonDecode(segment.traceLines[2].split('usage_request: ').last)
+              as Map<String, dynamic>;
+      expect(fallback['t'], '2024-01-01T00:05:00.000Z');
+      expect(fallback['source'], 'estimated');
+      expect(scan.usageIncomplete, isTrue);
+      expect(
+        const UsageChainScanner().scan(lines).segments.single.traceLines,
+        isEmpty,
+      );
+      final redacted = UsageChainScanner(
+        captureTrace: true,
+        redactToolName: (name) => name.replaceAll('unsafe\nname', '[redacted]'),
+      ).scan(lines);
+      expect(
+        redacted.segments.single.traceLines[1],
+        startsWith('tool_result:read%3A%5Bredacted%5D:'),
+      );
+    },
+  );
+
+  test('an empty resumed segment does not claim the previous trace', () {
+    final scan = const UsageChainScanner(captureTrace: true).scan([
+      sessionHeaderLine('s'),
+      segmentMarkerLine(1),
+      requestSummaryLine(2),
+      assistantLine(3),
+      segmentMarkerLine(4),
+    ]);
+    expect(scan.emptyTrailingSegment, isTrue);
+    expect(scan.segments, hasLength(1));
+    expect(scan.segments.single.traceLines, hasLength(1));
+  });
+
   group('AC1: fresh session fold', () {
     test(
       'segments[0] equals the sums over the model_request_summary records',

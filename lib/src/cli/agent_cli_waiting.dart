@@ -140,11 +140,11 @@ final class _WaitingCoordinator {
   String? registryNotice;
 
   /// Whether the registry lock's exclusive-create capability is PROVEN:
-  /// true only after a refusal from `createFileExclusive` is corroborated
-  /// by an occupied lock path (a decorator can advertise the capability
-  /// over a delegate that lacks it and answer `notSupported` — that
-  /// verdict is incapability, the degraded mode). Evidence, never a
-  /// timeout guess (issue #2266 AC3).
+  /// true after an existing-path refusal from `createFileExclusive` or
+  /// a refusal corroborated by an occupied lock path (a decorator can
+  /// advertise the capability over a delegate that lacks it and answer
+  /// `notSupported` — that verdict is incapability, the degraded mode).
+  /// Evidence, never a timeout guess (issue #2266 AC3).
   bool _lockExclusiveProven = false;
 
   /// Settled ids whose remove landed before their add could claim the
@@ -157,10 +157,6 @@ final class _WaitingCoordinator {
   /// add for a settled id is dropped. Same-isolate bookkeeping — the
   /// cross-process RMW race stays under the fs lock.
   final _settledBeforeAdd = <String>{};
-
-  /// The latest exclusive-create refusal, retained until the immediately
-  /// following occupancy probe distinguishes contention from a broken fs.
-  FileError? _lastRegistryLockClaimError;
 
   /// The queued-wait bound. Sits ABOVE the stale-steal threshold so a
   /// crashed holder's lock is always stolen before this fires; only a
@@ -806,14 +802,16 @@ final class _WaitingCoordinator {
   Future<bool> _acquireRegistryLock() async {
     final deadline = _clock().add(_lockWaitBound);
     for (;;) {
-      if (await _claimRegistryLock()) return true;
+      final (acquired, claimError) = await _claimRegistryLock();
+      if (acquired) return true;
       final info = await _cli._env.fileInfo(_manifestLockPath);
-      final claimError = _lastRegistryLockClaimError;
       if (claimError != null) {
-        // Only an occupied path verifies that the refusal was contention.
-        // Otherwise surface the real fs failure instead of inventing a
-        // rival and paying the full queued-wait bound.
-        if (!info.isOk) throw claimError;
+        if (info.isErr) {
+          // A rival may release the lock after exclusive create refused it.
+          if (!claimError.pathExistsAtFailure) throw claimError;
+          final infoError = info.errorOrNull!;
+          if (infoError.code != FileErrorCode.notFound) throw infoError;
+        }
         _lockExclusiveProven = true;
       }
       final stale =
@@ -836,24 +834,23 @@ final class _WaitingCoordinator {
   /// no-op claim of the degraded mode). A `notSupported` answer is a
   /// decorator advertising over an incapable delegate: that verdict
   /// resolves to incapability and falls through to the plain create.
-  Future<bool> _claimRegistryLock() async {
+  Future<(bool, FileError?)> _claimRegistryLock() async {
     final env = _cli._env;
-    _lastRegistryLockClaimError = null;
     if (env case final ExclusiveCreateFileSystem exclusive) {
       final claimed = await exclusive.createFileExclusive(_manifestLockPath);
-      if (claimed.isOk) return true;
+      if (claimed.isOk) return (true, null);
       final refusal = claimed.errorOrNull!;
       if (refusal.code != FileErrorCode.notSupported) {
-        // The following occupancy probe decides whether this is a rival's
-        // lock or a non-contention fs failure with its own cause to report.
-        _lastRegistryLockClaimError = refusal;
-        return false;
+        return (false, refusal);
       }
       // A decorator advertising the capability over an incapable
       // delegate answers notSupported: fall through to the plain
       // create, the degraded mode's claim.
     }
-    return (await env.createDir(_manifestLockPath, recursive: false)).isOk;
+    return (
+      (await env.createDir(_manifestLockPath, recursive: false)).isOk,
+      null,
+    );
   }
 
   /// Test seam: replaces the boot process probe. Null (default) reads
