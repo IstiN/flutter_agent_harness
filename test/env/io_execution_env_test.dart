@@ -48,6 +48,22 @@ void main() {
       expect((await fs.exists('d')).valueOrNull, isFalse);
     });
 
+    test(
+      'exclusive-create refusal retains evidence of an existing path',
+      () async {
+        expect((await fs.createFileExclusive('lock')).isOk, isTrue);
+        final refusal = (await fs.createFileExclusive('lock')).errorOrNull!;
+        expect((await fs.remove('lock')).isOk, isTrue);
+        expect(refusal.pathExistsAtFailure, isTrue);
+        expect(
+          (await fs.createFileExclusive(
+            'missing/lock',
+          )).errorOrNull!.pathExistsAtFailure,
+          isFalse,
+        );
+      },
+    );
+
     test('entry names stay bare under Windows-style separators', () async {
       // Windows: dart:io yields entity paths that mix the forward slashes
       // the env joined with platform backslashes — `name` must still be a

@@ -23,6 +23,15 @@ import 'process_probe_io.dart';
 
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
+  if (error is PathExistsException) {
+    return FileError(
+      FileErrorCode.unknown,
+      '${error.message}${_osErrorDetail(error.osError)}',
+      path: path,
+      cause: error,
+      pathExistsAtFailure: true,
+    );
+  }
   if (error is PathNotFoundException) {
     return FileError(
       FileErrorCode.notFound,
