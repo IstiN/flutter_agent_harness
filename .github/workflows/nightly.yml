@@ -167,7 +167,7 @@ jobs:
       matrix:
         include:
           - target: macos
-            runner: macos-latest
+            runner: [self-hosted, macos-m5]
             cmd: flutter build macos --release
             # Host rows carry no sqlite3_targets: the prewarm step below
             # runs only on the android/ios rows (`if: matrix.target ==
@@ -176,7 +176,7 @@ jobs:
             # prewarm in flutter-pub-get. (The script's grammar is
             # <abi>-<os> — `arm64-macos`, not `macos-arm64`.)
           - target: ios
-            runner: macos-latest
+            runner: [self-hosted, macos-m5]
             cmd: flutter build ios --release --no-codesign
             # gh-2072: the iOS device binary (arm64)
             sqlite3_targets: arm64-ios
@@ -211,7 +211,7 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
+          cache: ${{ matrix.target != 'macos' && matrix.target != 'ios' }}
 
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         if: matrix.target == 'android'
