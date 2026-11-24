@@ -45,24 +45,24 @@ int tuiRuneCellWidth(int rune) {
 /// cell — no grapheme iteration, no table lookups) and a bounded whole-line
 /// memo, since incremental wrapping re-measures the same rows many times.
 int tuiTextWidth(String text) {
-  final cached = _widthCache[text];
+  final n = text.length;
+  if (n == 0) return 0;
+  final cached = n <= 512 ? _widthCache[text] : null;
   if (cached != null) return cached;
   var width = 0;
   var i = 0;
-  final units = text.codeUnits;
-  while (i < units.length) {
-    final unit = units[i];
+  while (i < n) {
+    final unit = text.codeUnitAt(i);
     if (unit < 0x20 || unit > 0x7e) break;
     i++;
     width++;
   }
-  if (i < units.length) {
+  if (i < n) {
     // The prefix consumed only single-unit ASCII, so [i] is a char boundary.
     for (final grapheme in text.substring(i).characters) {
       width += tuiGraphemeWidth(grapheme);
     }
   }
-  // Memo short lines only (rows are what gets re-measured); insertion-order
   // map evicts the oldest entry when full.
   if (text.length <= 512) {
     if (_widthCache.length >= _widthCacheCapacity) {
@@ -118,6 +118,8 @@ const _wideSingletons = <int>{
   0x2329, 0x232a, // East Asian brackets
 };
 
+/// Sorted non-overlapping inclusive wide ranges (binary-searched in
+/// [_inRanges]). Keep sorted by low bound!
 const _wideRanges = <(int, int)>[
   (0x1100, 0x115f), // Hangul Jamo
   (0x2194, 0x2199), (0x21a9, 0x21aa), // arrows
@@ -132,9 +134,7 @@ const _wideRanges = <(int, int)>[
   (0xf900, 0xfaff), // CJK compat ideographs
   (0xfe10, 0xfe19), (0xfe30, 0xfe6f),
   (0xff00, 0xff60), (0xffe0, 0xffe6), // fullwidth forms
-  (0x3030, 0x303d), (0x3297, 0x3299),
-  (0x1f000, 0x1faff), // emoji planes (✅ 🎉 …)
-  (0x1f1e6, 0x1f1ff), // regional indicators (flags)
+  (0x1f000, 0x1faff), // emoji planes (✅ 🎉 …; covers regional indicators)
   (0x20000, 0x3fffd), // CJK extension B+
 ];
 
@@ -142,6 +142,8 @@ const _zeroWidthSingletons = <int>{0x200c, 0x200d};
 
 const _zeroWidthSingles = <int>{0x05bf, 0x0670, 0x093a, 0x093c};
 
+/// Sorted non-overlapping inclusive zero-width ranges (binary-searched in
+/// [_inRanges]). Keep sorted by low bound!
 const _zeroWidthRanges = <(int, int)>[
   (0x0000, 0x001f), (0x007f, 0x009f), // controls
   (0x0300, 0x036f), (0x0483, 0x0489), // combining marks
@@ -151,12 +153,23 @@ const _zeroWidthRanges = <(int, int)>[
   (0x0900, 0x0902), (0x0941, 0x0948), (0x0951, 0x0957),
   (0x1ab0, 0x1aff), (0x1dc0, 0x1dff), (0x20d0, 0x20ff),
   (0xfe00, 0xfe0f), (0xfe20, 0xfe2f), // variation selectors
-  (0xe0100, 0xe01ef), (0x1f3fb, 0x1f3ff), // skin tones
+  (0x1f3fb, 0x1f3ff), // skin tones
+  (0xe0100, 0xe01ef), // variation selectors supplement
 ];
 
 bool _inRanges(int rune, List<(int, int)> ranges) {
-  for (final (lo, hi) in ranges) {
-    if (rune >= lo && rune <= hi) return true;
+  var lo = 0;
+  var hi = ranges.length - 1;
+  while (lo <= hi) {
+    final mid = (lo + hi) >> 1;
+    final (start, end) = ranges[mid];
+    if (rune < start) {
+      hi = mid - 1;
+    } else if (rune > end) {
+      lo = mid + 1;
+    } else {
+      return true;
+    }
   }
   return false;
 }

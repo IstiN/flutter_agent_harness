@@ -74,7 +74,7 @@ int estimateTokens(Message message) {
     ToolResultMessage(:final content) => _textAndImageChars(content),
     _ => 0,
   };
-  return (chars / _charsPerToken).ceil();
+  return (chars + _charsPerToken - 1) ~/ _charsPerToken;
 }
 
 /// [estimateTokens] for a bare string — the same chars/4 heuristic, no
@@ -82,8 +82,8 @@ int estimateTokens(Message message) {
 /// banner's pi-mode initial-context line and the parity gate
 /// (`pi_hello_parity_test.dart`) both price a prompt with it, so the
 /// printed and gated numbers agree by construction.
-int estimateStringTokens(String text) => (text.length / _charsPerToken).ceil();
-
+int estimateStringTokens(String text) =>
+    (text.length + _charsPerToken - 1) ~/ _charsPerToken;
 int _assistantChars(List<ContentBlock> content) {
   var chars = 0;
   for (final block in content) {
@@ -126,13 +126,10 @@ int estimateSessionBranchTokens(List<SessionRecord> branch) {
   for (final record in branch) {
     tokens += switch (record) {
       MessageRecord(:final message) => estimateTokens(message),
-      CustomMessageRecord(:final content, :final timestamp) => estimateTokens(
-        UserMessage(content: content, timestamp: timestamp),
-      ),
-      CompactionRecord(:final summary) =>
-        (summary.length / _charsPerToken).ceil(),
-      BranchSummaryRecord(:final summary) =>
-        (summary.length / _charsPerToken).ceil(),
+      CustomMessageRecord(:final content) =>
+        (_textAndImageChars(content) + _charsPerToken - 1) ~/ _charsPerToken,
+      CompactionRecord(:final summary) => estimateStringTokens(summary),
+      BranchSummaryRecord(:final summary) => estimateStringTokens(summary),
       _ => 0,
     };
   }

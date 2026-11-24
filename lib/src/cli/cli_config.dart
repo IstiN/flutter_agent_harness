@@ -1901,12 +1901,13 @@ final class CliConfig {
   /// lost). A trailing `:` breaks the same way ("mapping values are not
   /// allowed here").
   String _yamlScalar(String value) {
-    const plain = r'^[A-Za-z0-9][A-Za-z0-9._+/:?=&~-]*$';
-    return !value.endsWith(':') && RegExp(plain).hasMatch(value)
+    return !value.endsWith(':') && _plainYamlScalarRe.hasMatch(value)
         ? value
         : "'${value.replaceAll("'", "''")}'";
   }
 }
+
+final _plainYamlScalarRe = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._+/:?=&~-]*$');
 
 /// Returns the user's home directory, or `null` if it cannot be determined.
 String? homeDirectory() {
