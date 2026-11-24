@@ -117,10 +117,19 @@ void main() {
       await spawned!.waitForHellos(1, timeout: const Duration(seconds: 30));
       expect(io.text, contains('DAP is up'));
       expect(io.text, contains('master secret'));
-      // The zero-config URL is persisted for the next boot.
-      final saved = File(
-        '${tempHome.path}/.dap/config.json',
-      ).readAsStringSync();
+      // The zero-config URL is persisted for the next boot. Poll briefly
+      // because `fa_hub_client` performs an unawaited `_persistEnrolled()`
+      // write to `~/.dap/config.json` concurrently with `connectTo`'s own
+      // `persistDapConfig(url: ...)` using non-atomic `File.writeAsString`,
+      // which can briefly expose a truncated empty file on Linux CI.
+      final configFile = File('${tempHome.path}/.dap/config.json');
+      var saved = '';
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (DateTime.now().isBefore(deadline)) {
+        saved = configFile.readAsStringSync();
+        if (saved.contains(url)) break;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       expect(saved, contains(url));
     },
   );
