@@ -905,8 +905,6 @@ void _wrapFlushWord(_WrapState s) {
 /// widths, close positions) while removing the per-character regex match +
 /// String allocation.
 void _streamWrapParts(String line, void Function(_WrapPart part) emit) {
-  // Pending same-width plain run, flushed when a rune of another class
-  // arrives ([end] = index just past the run's last unit).
   var runStart = -1;
   var runWidth = 0;
   var runRunes = 0;
@@ -915,6 +913,17 @@ void _streamWrapParts(String line, void Function(_WrapPart part) emit) {
     if (runStart < 0) return;
     emit(_WrapPart(line.substring(runStart, end), runWidth, runRunes));
     runStart = -1;
+  }
+
+  void appendToRun(int i, int width) {
+    if (runStart < 0 || width != runWidth) {
+      endRun(i);
+      runStart = i;
+      runWidth = width;
+      runRunes = 1;
+    } else {
+      runRunes++;
+    }
   }
 
   final n = line.length;
@@ -929,59 +938,49 @@ void _streamWrapParts(String line, void Function(_WrapPart part) emit) {
     }
     if (u == 0x1b) {
       endRun(i);
-      // SGR escape, or a lone visible ESC byte (the regex's `.`
-      // alternative matched it as a zero-width rune).
-      final len = _sgrTokenLength(line, i, n);
-      if (len > 0) {
-        emit(_WrapPart.style(line.substring(i, i + len)));
-        i += len;
-      } else {
-        emit(_WrapPart.style('\x1b'));
-        i++;
-      }
+      i += _emitEscToken(line, i, n, emit);
       continue;
     }
-    // Fast path for printable ASCII (0x21..0x7e): always width 1, never
-    // surrogate, never zero-width.
     if (u >= 0x21 && u <= 0x7e) {
-      if (runStart < 0 || runWidth != 1) {
-        endRun(i);
-        runStart = i;
-        runWidth = 1;
-        runRunes = 1;
-      } else {
-        runRunes++;
-      }
+      appendToRun(i, 1);
       i++;
       continue;
     }
-    // Decode one rune (surrogate pairs stay one token).
-    int rune;
-    var len = 1;
-    if (_isSurrogatePairAt(line, i, u)) {
-      rune = 0x10000 + ((u - 0xd800) << 10) + (line.codeUnitAt(i + 1) - 0xdc00);
-      len = 2;
-    } else {
-      rune = u;
-    }
+    final (rune, len) = _decodeRuneAt(line, i, u);
     final w = tuiRuneCellWidth(rune);
     if (w == 0) {
       endRun(i);
       emit(_WrapPart(line.substring(i, i + len), 0, 1));
-      i += len;
-      continue;
-    }
-    if (runStart < 0 || w != runWidth) {
-      endRun(i);
-      runStart = i;
-      runWidth = w;
-      runRunes = 1;
     } else {
-      runRunes++;
+      appendToRun(i, w);
     }
     i += len;
   }
   endRun(n);
+}
+
+int _emitEscToken(
+  String line,
+  int i,
+  int n,
+  void Function(_WrapPart part) emit,
+) {
+  final len = _sgrTokenLength(line, i, n);
+  if (len > 0) {
+    emit(_WrapPart.style(line.substring(i, i + len)));
+    return len;
+  }
+  emit(_WrapPart.style('\x1b'));
+  return 1;
+}
+
+(int, int) _decodeRuneAt(String line, int i, int u) {
+  if (_isSurrogatePairAt(line, i, u)) {
+    final rune =
+        0x10000 + ((u - 0xd800) << 10) + (line.codeUnitAt(i + 1) - 0xdc00);
+    return (rune, 2);
+  }
+  return (u, 1);
 }
 
 /// Wraps one ANSI-styled line to [width] visible CELL columns WITHOUT

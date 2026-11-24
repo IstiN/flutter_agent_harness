@@ -65,19 +65,10 @@ final class MemoryFileSystem
   final Set<String> _dirs = {};
 
   String _normalize(String path) {
-    // Fast path for already-canonical absolute paths (the vast majority of
-    // session/storage reads & appends: no `//`, no `/.`, no trailing `/`).
-    if (path.startsWith('/')) {
-      final len = path.length;
-      if (len == 1) return '/';
-      if (!path.contains('//') && !path.contains('/.') && !path.endsWith('/')) {
-        return path;
-      }
-    }
-    var p = path;
-    if (!p.startsWith('/')) p = '$cwd/$p';
+    if (_isCanonicalAbsolutePath(path)) return path;
+    final rooted = path.startsWith('/') ? path : '$cwd/$path';
     final segments = <String>[];
-    for (final segment in p.split('/')) {
+    for (final segment in rooted.split('/')) {
       if (segment.isEmpty || segment == '.') continue;
       if (segment == '..') {
         if (segments.isNotEmpty) segments.removeLast();
@@ -86,6 +77,14 @@ final class MemoryFileSystem
       segments.add(segment);
     }
     return segments.isEmpty ? '/' : '/${segments.join('/')}';
+  }
+
+  /// Fast path for already-canonical absolute paths (the vast majority of
+  /// session/storage reads & appends: no `//`, no `/.`, no trailing `/`).
+  static bool _isCanonicalAbsolutePath(String path) {
+    if (!path.startsWith('/')) return false;
+    if (path.length == 1) return true;
+    return !path.contains('//') && !path.contains('/.') && !path.endsWith('/');
   }
 
   String _parentOf(String path) {

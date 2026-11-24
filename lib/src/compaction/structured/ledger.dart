@@ -347,57 +347,54 @@ String _flattenBlocks(List<ContentBlock> blocks) {
   // whereType/map iterables and StringBuffer join overhead.
   if (blocks.length == 1) {
     final only = blocks[0];
-    if (only is TextContent) return _clip(only.text);
-    return '';
+    return only is TextContent ? _clip(only.text) : '';
   }
+  final joined = _joinTextBlocks(blocks);
+  return joined.isEmpty ? '' : _clip(joined);
+}
+
+String _joinTextBlocks(List<ContentBlock> blocks) {
   StringBuffer? sb;
   for (final b in blocks) {
-    if (b is TextContent) {
-      if (sb == null) {
-        sb = StringBuffer(b.text);
-      } else {
-        sb.write(' ');
-        sb.write(b.text);
-      }
+    if (b is! TextContent) continue;
+    if (sb == null) {
+      sb = StringBuffer(b.text);
+    } else {
+      sb
+        ..write(' ')
+        ..write(b.text);
     }
   }
-  return sb == null ? '' : _clip(sb.toString());
+  return sb == null ? '' : sb.toString();
 }
+
+bool _isAsciiWhitespace(int u) =>
+    u == 0x20 || u == 0x09 || u == 0x0a || u == 0x0d || u == 0x0c;
 
 String _clip(String text) {
   // Single-pass whitespace collapse + 110-char cap: never scans or allocates
   // past the first 111 non-collapsed characters of a multi-KB tool result.
-  final n = text.length;
-  if (n == 0) return '';
+  if (text.isEmpty) return '';
   final out = StringBuffer();
   var count = 0;
   var pendingSpace = false;
-  var truncated = false;
-  for (var i = 0; i < n; i++) {
+  for (var i = 0; i < text.length; i++) {
     final u = text.codeUnitAt(i);
-    final isWs = u == 0x20 || u == 0x09 || u == 0x0a || u == 0x0d || u == 0x0c;
-    if (isWs) {
+    if (_isAsciiWhitespace(u)) {
       if (count > 0) pendingSpace = true;
       continue;
     }
     if (pendingSpace) {
-      if (count == 110) {
-        truncated = true;
-        break;
-      }
+      if (count == 110) return '${out.toString().substring(0, 107)}…';
       out.writeCharCode(0x20);
       count++;
       pendingSpace = false;
     }
-    if (count == 110) {
-      truncated = true;
-      break;
-    }
+    if (count == 110) return '${out.toString().substring(0, 107)}…';
     out.writeCharCode(u);
     count++;
   }
-  if (!truncated) return out.toString();
-  return '${out.toString().substring(0, 107)}…';
+  return out.toString();
 }
 
 /// The live-edge floor shared by every hide path (issue #1379 tier 2):

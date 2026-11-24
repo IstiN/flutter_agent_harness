@@ -98,23 +98,7 @@ final class SessionLineScanner {
       );
     }
     final ranged = maybeRanged;
-    late final int size;
-    if (fileSize != null) {
-      size = fileSize;
-    } else {
-      final stat = await fs.fileInfo(path);
-      if (stat.isErr) {
-        final error = stat.errorOrNull!;
-        throw SessionException(
-          'Failed to read session $path: ${error.message}',
-          code: error.code == FileErrorCode.notFound
-              ? SessionErrorCode.notFound
-              : SessionErrorCode.storage,
-          cause: error,
-        );
-      }
-      size = stat.valueOrNull!.size;
-    }
+    final size = fileSize ?? await _statFileSize();
     var lines = 0;
     var carry = BytesBuilder(copy: false);
     var carryStart = 0;
@@ -164,6 +148,21 @@ final class SessionLineScanner {
       lines++;
     }
     return SessionLineScanResult(bytes: size, lines: lines);
+  }
+
+  Future<int> _statFileSize() async {
+    final stat = await fs.fileInfo(path);
+    if (stat.isErr) {
+      final error = stat.errorOrNull!;
+      throw SessionException(
+        'Failed to read session $path: ${error.message}',
+        code: error.code == FileErrorCode.notFound
+            ? SessionErrorCode.notFound
+            : SessionErrorCode.storage,
+        cause: error,
+      );
+    }
+    return stat.valueOrNull!.size;
   }
 
   Future<Uint8List> _readRange(
