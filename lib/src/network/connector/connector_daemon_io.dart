@@ -443,10 +443,12 @@ final class SharedConnectorPresenceClient
     required this.stateFile,
     required this.deviceId,
     this.ensureDaemonRunning,
+    this.reconnectDelay = const Duration(seconds: 2),
     this.onLog,
   });
 
   final File stateFile;
+  final Duration reconnectDelay;
   final String deviceId;
 
   /// Optional callback that spawns a detached `fa connector run` daemon if
@@ -696,13 +698,15 @@ final class SharedConnectorPresenceClient
 
   void _handleDisconnect() {
     _socket = null;
+    _failPendingRpcs('shared connector disconnected');
+    if (!_stopped) _scheduleReconnect(reconnectDelay);
+  }
+
+  void _failPendingRpcs(String reason) {
     for (final completer in _pendingRpcs.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(StateError('shared connector disconnected'));
-      }
+      if (!completer.isCompleted) completer.completeError(StateError(reason));
     }
     _pendingRpcs.clear();
-    if (!_stopped) _scheduleReconnect(const Duration(seconds: 2));
   }
 
   void _scheduleReconnect(Duration delay) {
@@ -716,7 +720,7 @@ final class SharedConnectorPresenceClient
       await _ensureConnected();
       await _registerCurrentSession();
     } on Object {
-      if (!_stopped) _scheduleReconnect(const Duration(seconds: 3));
+      if (!_stopped) _scheduleReconnect(reconnectDelay);
     }
   }
 

@@ -363,6 +363,116 @@ void main() {
       );
     },
   );
+
+  test('SharedConnectorPresenceClient reconnects after daemon restart and '
+      'validates caller ownership & agent sender labels', () async {
+    final server = FakeDeviceServer()
+      ..seedDevice(
+        'dev-mac-3',
+        deviceToken: 'tok-device-3',
+        networks: const ['net-personal'],
+      );
+    final tmp = await Directory.systemTemp.createTemp('fa_connector_reconn_');
+    addTearDown(() async {
+      server.dropAll();
+      if (await tmp.exists()) await tmp.delete(recursive: true);
+    });
+
+    const device = NetworkDeviceCredentials(
+      deviceId: 'dev-mac-3',
+      deviceToken: 'tok-device-3',
+      personalNetworkId: 'net-personal',
+    );
+    final keyStore = MemoryDeviceDmKeyStore();
+    final stateFile = File('${tmp.path}/connector.json');
+
+    MultiSessionConnectorHost makeHost() => MultiSessionConnectorHost(
+      device: device,
+      baseUrl: 'https://network.fa1.dev',
+      ticketProvider: () async => 'ticket-3',
+      transport: server.transport,
+      dmKeyStore: keyStore,
+      rosterDebounce: const Duration(milliseconds: 10),
+      catalogPollInterval: Duration.zero,
+    );
+
+    final host1 = makeHost();
+    final daemon1 = ConnectorDaemonServer(host: host1, stateFile: stateFile);
+    await daemon1.start();
+    await _waitFor(() => host1.phase == ConnectorLinkState.connected);
+
+    final received = <CliNetworkDm>[];
+    final client = SharedConnectorPresenceClient(
+      stateFile: stateFile,
+      deviceId: 'dev-mac-3',
+      reconnectDelay: const Duration(milliseconds: 25),
+    );
+    addTearDown(client.stop);
+
+    await client.startSession(
+      CliNetworkSession(
+        sessionId: 'sess-gamma',
+        mailboxPrefix: 'gamma',
+        displayName: 'Gamma',
+        cwd: '/tmp/gamma',
+        dmSink: (dm) async => received.add(dm),
+      ),
+    );
+
+    // Agent-to-agent DM exercises _agentSenderLabel + caller ownership guard.
+    final peerKey = await X25519().newKeyPair();
+    final gammaKey = await DeviceDmKeyProvider(
+      keyStore,
+    ).loadExisting('gamma@dev-mac-3');
+    final channel = dmChannelId('peer@remote-dev', 'gamma@dev-mac-3');
+    final ciphertext = await hubSealFanet1(
+      senderDhKeyPair: peerKey,
+      recipientDhPubkey: await gammaKey!.keyPair.extractPublicKey(),
+      frameId: 'dm-agent-1',
+      aadTarget: channel,
+      plaintext: wrapDeviceDmText(
+        'ping from peer',
+        sessionId: 'sess-gamma',
+        threaded: true,
+      ),
+    );
+    server.deliverTo(
+      deviceId: 'dev-mac-3',
+      mail: NetworkEnvelope(
+        kind: NetworkEnvelopeKind.mail,
+        msgId: 'dm-agent-1',
+        network: 'net-personal',
+        channel: channel,
+        from: 'peer@remote-dev',
+        to: 'gamma@dev-mac-3',
+        ts: '2026-11-24T12:10:00.000Z',
+        ciphertext: ciphertext,
+      ),
+    );
+    await _waitFor(() => received.length == 1);
+    expect(received.single.senderLabel, 'remote-dev · peer');
+
+    // Foreign caller session id is rejected by _validateCallerOwnership.
+    await expectLater(
+      host1.sendNetworkDmReply(
+        address: received.single.replyAddress,
+        text: 'hijack',
+        callerSessionId: 'sess-other',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    // Stop daemon1 → client disconnects, schedules reconnect, and attaches
+    // to daemon2 automatically once it boots.
+    await daemon1.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    final host2 = makeHost();
+    final daemon2 = ConnectorDaemonServer(host: host2, stateFile: stateFile);
+    await daemon2.start();
+    addTearDown(daemon2.stop);
+    await _waitFor(() => host2.activeSessionIds.contains('sess-gamma'));
+  });
 }
 
 final class _StaticCatalogStore implements SessionCatalogStore {
