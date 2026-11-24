@@ -75,10 +75,15 @@ void wideShellNarrowHomeTests() {
       },
     );
 
-    test('phone dock moves 15% below its #2196 position', () {
-      // #2196 reduced the original 8pt gap to 6.4pt. Issue #2215 asks for
-      // another 15% downward move, not 15% of the screen or dock height.
-      expect(MessengerBottomNavigation.bottomGap, closeTo(6.4 * .85, .0001));
+    test('phone dock moves 20% below its #2215 position', () {
+      // #2196: 8 → 6.4; #2215: 6.4 → 5.44; follow-up: lowers both bottomGap
+      // (5.44 → 4.352) and safe-area bottom clearance (scale 0.8) by 20%.
+      expect(MessengerBottomNavigation.bottomGap, closeTo(5.44 * .8, .03));
+      expect(MessengerBottomNavigation.safeAreaBottomScale, 0.8);
+      expect(
+        MessengerBottomNavigation.bottomInsetFor(34),
+        closeTo((34 + 5.44) * .8, .05),
+      );
       expect(
         MessengerFloatingDockInsets.minInflatedBottom,
         MessengerBottomNavigation.height + MessengerBottomNavigation.bottomGap,
@@ -603,10 +608,10 @@ void wideShellNarrowHomeTests() {
       final fab = find.byKey(const ValueKey('narrowShellNewChat'));
       final fabRect = tester.getRect(fab);
       final content = tester.getRect(find.byType(ChatListPanel));
-      // 844 - 34 SafeArea - bottomGap separation.
+      // 844 - bottomInsetFor(34).
       expect(
         dock.bottom,
-        closeTo(810 - MessengerBottomNavigation.bottomGap, .001),
+        closeTo(844 - MessengerBottomNavigation.bottomInsetFor(34), .001),
       );
       expect(dock.height, 56);
       expect(

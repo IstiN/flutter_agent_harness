@@ -195,8 +195,13 @@ void main() {
     final dock = _dockRect(tester);
     expect(
       dock.top,
-      closeTo(754 - MessengerBottomNavigation.bottomGap, .001),
-      reason: '34pt home indicator + bottomGap + 56pt pill',
+      closeTo(
+        844 -
+            MessengerBottomNavigation.height -
+            MessengerBottomNavigation.bottomInsetFor(34),
+        .001,
+      ),
+      reason: 'scaled 34pt home indicator + bottomGap + 56pt pill',
     );
 
     // Scroll the conversation list to its very end: the tail rows must
