@@ -134,16 +134,6 @@ final class TranscriptSeqMap {
   /// Number of head messages (the projected transcript at epoch start).
   int get headLength => headSeqs.length;
 
-  /// The newest record alias the head carries, `null` for a record-less
-  /// projection.
-  int? get lastSeq {
-    for (var i = headSeqs.length - 1; i >= 0; i--) {
-      final seq = headSeqs[i];
-      if (seq != null) return seq;
-    }
-    return null;
-  }
-
   /// The alias of the message at [position]: exact on the head (the
   /// epoch's records), `null` beyond it — the live edge carries no tag
   /// (the epoch rule: a message becomes addressable when the NEXT epoch's

@@ -61,6 +61,7 @@ final class StructuredViewState {
     required this.checkpoints,
     required this.coveredRecordIds,
     this.pinnedRecordIds = const {},
+    this.consolidatedRanges = const {},
   });
 
   /// Union of every [HiddenRangeRecord.recordIds] on the path.
@@ -76,6 +77,12 @@ final class StructuredViewState {
   /// Record ids currently pinned (issue #1379 tier 2): never hidden by
   /// judge, fallback, LRU re-hide, or agent hide — never checkpoint-covered.
   final Set<String> pinnedRecordIds;
+
+  /// GOAL #2394 (D5/AC9): every record a `consolidated` hidden range
+  /// hides → that range. Such a range renders as ONE marker at its
+  /// carrier instead of a marker per record (pre-#2394 ranges never
+  /// appear here and render exactly as before).
+  final Map<String, HiddenRangeRecord> consolidatedRanges;
 
   /// Whether no structured state exists on the path.
   bool get isEmpty =>
@@ -132,6 +139,7 @@ ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
   final checkpoints = <CompactCheckpointRecord>[];
   final covered = <String, CompactCheckpointRecord>{};
   final pinnedIds = <String>{};
+  final consolidated = <String, HiddenRangeRecord>{};
   final dropped = <DroppedFold>[];
   void apply(
     SessionRecord record,
@@ -148,11 +156,14 @@ ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
   for (final record in path) {
     switch (record) {
       case HiddenRangeRecord(:final recordIds):
-        apply(
-          record,
-          recordIds.where((id) => id.isNotEmpty).isEmpty,
-          () => hidden.addAll(recordIds),
-        );
+        apply(record, recordIds.where((id) => id.isNotEmpty).isEmpty, () {
+          hidden.addAll(recordIds);
+          if (record.consolidated) {
+            for (final id in recordIds) {
+              consolidated[id] = record;
+            }
+          }
+        });
       case SegmentPinRecord(:final recordIds, :final pinned):
         apply(record, recordIds.where((id) => id.isNotEmpty).isEmpty, () {
           pinned ? pinnedIds.addAll(recordIds) : pinnedIds.removeAll(recordIds);
@@ -183,6 +194,7 @@ ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
       checkpoints: checkpoints,
       coveredRecordIds: covered,
       pinnedRecordIds: pinnedIds,
+      consolidatedRanges: consolidated,
     ),
     dropped: dropped,
   );
@@ -194,10 +206,16 @@ StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
   final checkpoints = <CompactCheckpointRecord>[];
   final covered = <String, CompactCheckpointRecord>{};
   final pinnedRecordIds = <String>{};
+  final consolidated = <String, HiddenRangeRecord>{};
   for (final record in path) {
     switch (record) {
       case HiddenRangeRecord(:final recordIds):
         hidden.addAll(recordIds);
+        if (record.consolidated) {
+          for (final id in recordIds) {
+            consolidated[id] = record;
+          }
+        }
       case SegmentPinRecord(:final recordIds, :final pinned):
         pinned
             ? pinnedRecordIds.addAll(recordIds)
@@ -219,6 +237,7 @@ StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
     checkpoints: checkpoints,
     coveredRecordIds: covered,
     pinnedRecordIds: pinnedRecordIds,
+    consolidatedRanges: consolidated,
   );
 }
 
@@ -264,7 +283,7 @@ List<Message> renderStructuredMessages({
   required List<SessionRecord> path,
   required RecordSeqIndex seqs,
   required List<Message> Function(SessionRecord record) projectEntry,
-  void Function(SessionRecord source, Message message)? onMessage,
+  void Function(SessionRecord? source, Message message)? onMessage,
 }) {
   final resolution = resolveStructuredFolds(path);
   final state = resolution.state;
@@ -282,8 +301,9 @@ List<Message> renderStructuredMessages({
   // The single emission point: every wire message reports the record it
   // projects FROM (its own, or the covering checkpoint whose text rides
   // its position) — the record_tag alignment the session transcript and
-  // the tag epoch share (GOAL #2394).
-  void emit(SessionRecord source, Message message) {
+  // the tag epoch share (GOAL #2394). `null` = a message that projects
+  // from NO record (the #2394 fold pointer, deliberately untagged).
+  void emit(SessionRecord? source, Message message) {
     messages.add(message);
     onMessage?.call(source, message);
   }
@@ -362,7 +382,7 @@ void _projectRecord(
   required Set<String> emitted,
   required Set<String> hiddenCallIds,
   required List<Message> Function(SessionRecord record) projectEntry,
-  required void Function(SessionRecord source, Message message) emit,
+  required void Function(SessionRecord? source, Message message) emit,
 }) {
   // A covering checkpoint renders at the position of its first visible
   // path record (D2: markers sit where the content sat); null when the
@@ -378,20 +398,30 @@ void _projectRecord(
   )) {
     return;
   }
+  // GOAL #2394 (D5/AC9): a consolidated hidden range renders as ONE
+  // marker at its carrier — the other members emit nothing here.
+  if (_consolidatedAt(
+    record,
+    state: state,
+    byId: byId,
+    seqs: seqs,
+    hiddenCallIds: hiddenCallIds,
+    emit: emit,
+  )) {
+    return;
+  }
   switch (record) {
     case HiddenRangeRecord():
       return;
     case CompactCheckpointRecord():
-      // Renders in place only when its range sits fully off-branch
-      // (nothing visible triggered the in-place emission above). A hide
-      // targeting the checkpoint itself leaves no marker, no swallow.
-      if (state.hiddenRecordIds.contains(record.id)) return;
-      if (emitted.add(record.id)) {
-        emit(
-          record,
-          _checkpointMessage(record, byId: byId, seqs: seqs, state: state),
-        );
-      }
+      _projectCheckpointRecord(
+        record,
+        state: state,
+        byId: byId,
+        seqs: seqs,
+        emitted: emitted,
+        emit: emit,
+      );
     case MessageRecord():
       emit(
         record,
@@ -425,6 +455,35 @@ void _projectRecord(
   }
 }
 
+/// A checkpoint record at its own position: only when its range sits
+/// fully off-branch (nothing visible triggered the in-place emission
+/// through `_coverAt`); a hide targeting the checkpoint itself leaves no
+/// marker, no swallow. A tail-layout checkpoint (GOAL #2394 D5) renders
+/// ITS text here with the tagged hidden index — the range start carries
+/// only the `[expand a-b]` pointer.
+void _projectCheckpointRecord(
+  CompactCheckpointRecord record, {
+  required StructuredViewState state,
+  required Map<String, SessionRecord> byId,
+  required RecordSeqIndex seqs,
+  required Set<String> emitted,
+  required void Function(SessionRecord? source, Message message) emit,
+}) {
+  if (state.hiddenRecordIds.contains(record.id)) return;
+  if (!emitted.add(record.id)) return;
+  final tail = record.layout == compactCheckpointLayoutTail;
+  emit(
+    record,
+    _checkpointMessage(
+      record,
+      byId: byId,
+      seqs: seqs,
+      state: state,
+      taggedIndex: tail,
+    ),
+  );
+}
+
 /// Whether [record] is covered and its covering checkpoint rendered here
 /// (through [emit]); `false` when it does not apply (not covered, the
 /// covering checkpoint is itself hidden, or it was already emitted).
@@ -434,14 +493,96 @@ bool _coverAt(
   required Map<String, SessionRecord> byId,
   required RecordSeqIndex seqs,
   required Set<String> emitted,
-  required void Function(SessionRecord source, Message message) emit,
+  required void Function(SessionRecord? source, Message message) emit,
 }) {
   final cover = state.coveredRecordIds[record.id];
   if (cover == null || state.hiddenRecordIds.contains(cover.id)) {
     return false;
   }
+  if (cover.layout == compactCheckpointLayoutTail) {
+    // GOAL #2394 (D5): the text rides the checkpoint's OWN record (the
+    // tail at run time); the range's first record carries only the
+    // fold pointer — untagged, and emitted even when the checkpoint is
+    // itself covered by a later one (a covered range stays folded; the
+    // later checkpoint owns its own text).
+    if (state.isCovered(cover.id)) return true;
+    if (emitted.add('fold:${cover.id}')) {
+      final startSeq = seqs.seqOf(cover.firstRecordId);
+      final endSeq = seqs.seqOf(cover.lastRecordId);
+      emit(
+        null,
+        UserMessage.text(
+          expandMarker(from: startSeq ?? 0, to: endSeq ?? startSeq ?? 0),
+          timestamp: record.timestamp,
+        ),
+      );
+    }
+    return true;
+  }
   if (!emitted.add(cover.id) || state.isCovered(cover.id)) return true;
   emit(cover, _checkpointMessage(cover, byId: byId, seqs: seqs, state: state));
+  return true;
+}
+
+/// GOAL #2394 (D5/AC9): whether [record] belongs to a consolidated
+/// hidden range and was rendered by that fact — ONE `[expand a-b]`
+/// marker at the range's carrier (its first member the path still
+/// renders), nothing at the other members. A tool result whose carrier
+/// stays visible keeps its own tool_result marker: the pair must stay
+/// on the wire (#85). `false` when the range does not apply.
+bool _consolidatedAt(
+  SessionRecord record, {
+  required StructuredViewState state,
+  required Map<String, SessionRecord> byId,
+  required RecordSeqIndex seqs,
+  required Set<String> hiddenCallIds,
+  required void Function(SessionRecord? source, Message message) emit,
+}) {
+  final range = state.consolidatedRanges[record.id];
+  if (range == null) return false;
+  final members = range.recordIds.toList()
+    ..sort((a, b) => (seqs.seqOf(a) ?? 0).compareTo(seqs.seqOf(b) ?? 0));
+  // The carrier: the first member the path still renders (a member a
+  // later checkpoint swallowed cannot carry the marker).
+  SessionRecord? carrier;
+  for (final id in members) {
+    final member = byId[id];
+    if (member == null || state.isCovered(id)) continue;
+    carrier = member;
+    break;
+  }
+  if (carrier != null && carrier.id == record.id) {
+    final seqs_ = [
+      for (final id in members)
+        if (byId.containsKey(id)) ?seqs.seqOf(id),
+    ]..sort();
+    emit(
+      record,
+      UserMessage(
+        content: consolidatedHideMarker(
+          from: seqs_.firstOrNull ?? 0,
+          to: seqs_.lastOrNull,
+          label: range.labels[record.id],
+        ),
+        timestamp: record.timestamp,
+      ),
+    );
+    return true;
+  }
+  final message = record is MessageRecord ? record.message : null;
+  if (message is ToolResultMessage &&
+      record is MessageRecord &&
+      !hiddenCallIds.contains(message.toolCallId)) {
+    emit(
+      record,
+      _messageAt(
+        record,
+        state: state,
+        seqs: seqs,
+        hiddenCallIds: hiddenCallIds,
+      ),
+    );
+  }
   return true;
 }
 
@@ -526,6 +667,7 @@ Message _checkpointMessage(
   required StructuredViewState state,
   required Map<String, SessionRecord> byId,
   required RecordSeqIndex seqs,
+  bool taggedIndex = false,
 }) {
   final startSeq = seqs.seqOf(record.firstRecordId) ?? 0;
   final endSeq = seqs.seqOf(record.lastRecordId) ?? startSeq;
@@ -549,14 +691,18 @@ Message _checkpointMessage(
     textTokens: estimateTokens(UserMessage.text(text)),
     coversRanges: idsToRanges(covers),
   );
-  final index = hiddenIndexSection([
-    // Consolidated markers (issue #387) are not re-listed: a checkpoint
-    // over a marker run would otherwise reproduce every marker line
-    // inside itself and never shrink. The header's covers ranges keep
-    // every id expandable.
-    for (final id in record.coversRecordIds)
-      if (!state.hiddenRecordIds.contains(id)) ?byId[id],
-  ], seqs);
+  final index = hiddenIndexSection(
+    [
+      // Consolidated markers (issue #387) are not re-listed: a checkpoint
+      // over a marker run would otherwise reproduce every marker line
+      // inside itself and never shrink. The header's covers ranges keep
+      // every id expandable.
+      for (final id in record.coversRecordIds)
+        if (!state.hiddenRecordIds.contains(id)) ?byId[id],
+    ],
+    seqs,
+    tagged: taggedIndex,
+  );
   return UserMessage.text('$header\n$text$index', timestamp: record.timestamp);
 }
 
@@ -680,19 +826,28 @@ const hiddenIndexHeading = 'hidden segments (compact_expand reopens any id):';
 /// expandable. Empty string when nothing survives resolution.
 String hiddenIndexSection(
   Iterable<SessionRecord> records,
-  RecordSeqIndex seqs,
-) {
+  RecordSeqIndex seqs, {
+  bool tagged = false,
+}) {
   final lines = <String>[];
   for (final record in records) {
     final seq = seqs.seqOf(record.id);
     if (seq == null) continue;
+    final preview = markerPreview(recordPreviewSource(record));
     lines.add(
-      hiddenMarker(
-        seq: seq,
-        kind: markerKindFor(record),
-        tokens: recordTokens(record),
-        preview: markerPreview(recordPreviewSource(record)),
-      ),
+      tagged
+          // GOAL #2394: the tail-layout transfer record indexes its
+          // range with the SAME `m<seq>` aliases the model reads the
+          // tagged transcript by (the record_tag protocol) — kind, size
+          // and preview unchanged.
+          ? 'm$seq ${markerKindFor(record)}·${formatMarkerTokens(recordTokens(record))}'
+                '${preview.isEmpty ? '' : '·"$preview"'}'
+          : hiddenMarker(
+              seq: seq,
+              kind: markerKindFor(record),
+              tokens: recordTokens(record),
+              preview: preview,
+            ),
     );
   }
   return lines.isEmpty ? '' : '\n\n$hiddenIndexHeading\n${lines.join('\n')}';

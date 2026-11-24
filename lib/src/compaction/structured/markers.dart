@@ -138,12 +138,46 @@ String idsToRanges(Iterable<int> ids) {
 /// without a summarizer (see `AutoCompactor._localTrimFallback`).
 const localTrimMarkerPrefix = '[context trimmed locally:';
 
+/// The pointer of a FOLD (GOAL #2394 D5/AC9): `[expand 3-140]` — one
+/// line, engine-generated, sitting where the folded range's first record
+/// rendered. Never tagged (the record alias rides the transfer record at
+/// its own position — a tag here would name the same seq twice).
+String expandMarker({required int from, int? to}) =>
+    to == null || to == from ? '[expand $from]' : '[expand $from-$to]';
+
+/// The consolidated HIDE marker of one pair/range (GOAL #2394 D5/AC9):
+/// `<label> [expand 142-143]` at the carrier's position — ONE line for
+/// the whole range instead of a marker per record (`labels` rides the
+/// `HiddenRangeRecord`; a failed label leaves the bare pointer).
+String consolidatedHideMarker({required int from, int? to, String? label}) {
+  final pointer = expandMarker(from: from, to: to);
+  final text = label?.trim() ?? '';
+  return text.isEmpty ? pointer : '$text $pointer';
+}
+
 final RegExp _markerTextPattern = RegExp(r'^\[\d+(?:-\d+)?:(?:hidden|ckpt)·');
 
-/// Whether [text] opens like a projected hidden/checkpoint marker line —
-/// `[3:hidden·user·12]` or `[2-6:ckpt·38k→40tok·covers:3,5]`.
+/// GOAL #2394: the wire prefix of a marker that projects from a record —
+/// the record tag (`m142 `) the tag epoch puts on the first text block.
+final RegExp _recordTagPrefix = RegExp(r'^m\d+ ');
+
+/// The fold/consolidated pointer closing a marker text (D12): the only
+/// new marker form, always engine-generated and always at the text's end.
+final RegExp _expandPointerPattern = RegExp(r'\[expand \d+(?:-\d+)?\]\s*$');
+
+/// Whether [text] is a projected hidden/checkpoint/fold marker line —
+/// `[3:hidden·user·12]`, `[2-6:ckpt·38k→40tok·covers:3,5]`, the #2394
+/// forms `[expand 3-140]` / `old session list [expand 142-143]`, each
+/// optionally behind the record tag the epoch adds on the wire
+/// (`m3 [3:hidden·user·12]` — the tag is text, the marker is still a
+/// marker).
 ///
-/// The image registry uses this to detect that the window was renumbered
-/// at some point (issue #195 F2): hidden history may have carried images
-/// whose first-seen indexes the surviving citations still name.
-bool isCompactionMarkerText(String text) => _markerTextPattern.hasMatch(text);
+/// Tool-pairing repair, the operative-pin detector and the image registry
+/// (issue #195 F2: hidden history may have carried images whose
+/// first-seen indexes the surviving citations still name) all key off
+/// this — the new forms must resolve exactly like the old ones (REG-12).
+bool isCompactionMarkerText(String text) {
+  final body = text.replaceFirst(_recordTagPrefix, '');
+  return _markerTextPattern.hasMatch(body) ||
+      _expandPointerPattern.hasMatch(body);
+}

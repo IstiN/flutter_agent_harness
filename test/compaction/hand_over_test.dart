@@ -10,7 +10,6 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/hand_over.dart';
 import 'package:test/test.dart';
 
 const _canonical = '''

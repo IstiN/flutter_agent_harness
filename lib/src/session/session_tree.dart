@@ -402,13 +402,22 @@ final class Session {
   /// records in [recordIds] keep living in the file but project as
   /// one-line markers. Ids must be stable record ids of records already on
   /// the append path — never positions.
-  Future<String> appendHiddenRange({required List<String> recordIds}) {
+  ///
+  /// GOAL #2394: [labels] (sanitized, per carrier id) and [consolidated]
+  /// ride the additive fields of the same record — one marker per range.
+  Future<String> appendHiddenRange({
+    required List<String> recordIds,
+    Map<String, String> labels = const {},
+    bool consolidated = false,
+  }) {
     return _append(
       (id, parentId) => HiddenRangeRecord(
         id: id,
         parentId: parentId,
         timestamp: DateTime.now(),
         recordIds: recordIds,
+        labels: labels,
+        consolidated: consolidated,
       ),
       sealClass: 'compaction',
     );
@@ -425,6 +434,7 @@ final class Session {
     required String text,
     required List<String> coversRecordIds,
     required List<String> flattenedRecordIds,
+    String? layout,
   }) {
     return _append(
       (id, parentId) => CompactCheckpointRecord(
@@ -436,6 +446,7 @@ final class Session {
         text: text,
         coversRecordIds: coversRecordIds,
         flattenedRecordIds: flattenedRecordIds,
+        layout: layout,
       ),
       sealClass: 'compaction',
     );
@@ -793,7 +804,8 @@ final class Session {
         path: path,
         seqs: seqs,
         projectEntry: projectEntry,
-        onMessage: (record, _) => aligned.add(seqs.seqOf(record.id)),
+        onMessage: (record, _) =>
+            aligned.add(record == null ? null : seqs.seqOf(record.id)),
       );
       messages.addAll(rendered);
     } else {

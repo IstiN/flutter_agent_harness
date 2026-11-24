@@ -119,36 +119,18 @@ HandOverCall handOverCallAdapter({
     while (true) {
       final AssistantMessage response;
       try {
-        final shape = StreamCallShape(
-          toolChoice: 'none',
-          maxTokens: budget,
+        response = await _handOverRoundTrip(
+          stream: stream,
+          model: model,
+          cachePolicy: cachePolicy,
+          context: context,
+          messages: messages,
+          budget: budget,
           prefixLength: prefixLength,
           copilotInitiator: copilotInitiator,
+          cancelToken: cancelToken,
+          onDelta: onDelta,
         );
-        final events = cachePolicy.runWith(
-          () => stream(
-            model,
-            Context(
-              systemPrompt: context.systemPrompt,
-              messages: messages,
-              tools: context.tools,
-            ),
-            cancelToken: cancelToken,
-          ),
-          CompactionCallClass.handOver,
-          shape: shape,
-        );
-        if (onDelta != null) {
-          events.listen((event) {
-            final delta = switch (event) {
-              TextDeltaEvent(:final delta) => delta,
-              ThinkingDeltaEvent(:final delta) => delta,
-              _ => null,
-            };
-            if (delta != null && delta.isNotEmpty) onDelta(delta);
-          });
-        }
-        response = await events.result;
       } on Object catch (error) {
         // A throwing StreamFunction breaks the never-throw contract — the
         // pipeline is defensive anyway.
@@ -156,31 +138,19 @@ HandOverCall handOverCallAdapter({
       }
       calls++;
       _foldUsage(response, onUsage, usage);
-      switch (response.stopReason) {
-        case StopReason.error:
-          return fail(
-            CompactionException(
-              'hand-over call failed: ${response.errorMessage ?? 'unknown error'}',
-            ),
-          );
-        case StopReason.aborted:
-          return fail(
-            CompactionException(
-              'hand-over call aborted: ${response.errorMessage ?? 'aborted'}',
-            ),
-          );
-        default:
-          break;
+      final stopFailure = _stopFailure(response);
+      if (stopFailure != null) return fail(stopFailure);
+      if (_hasToolCalls(response) && nudges >= 1) {
+        return fail(
+          const CompactionException(
+            'hand-over call returned tool calls again after the nudge '
+            '(ladder exhausted)',
+          ),
+        );
       }
       if (_hasToolCalls(response)) {
-        if (nudges >= 1) {
-          return fail(
-            const CompactionException(
-              'hand-over call returned tool calls again after the nudge '
-              '(ladder exhausted)',
-            ),
-          );
-        }
+        // ONE nudge: the instruction's "do not call any tools" restated,
+        // appended as a user turn (the prefix stays byte-stable).
         nudges++;
         messages = [...messages, UserMessage.text(handOverNudgeText)];
         continue;
@@ -194,6 +164,7 @@ HandOverCall handOverCallAdapter({
             ),
           );
         }
+        // ONE retry at twice the budget.
         budgetRetries++;
         budget *= 2;
         continue;
@@ -208,6 +179,70 @@ HandOverCall handOverCallAdapter({
     }
   };
 }
+
+/// ONE round-trip: the request shape in the zone (NULL tool choice, the
+/// budget, the prefix breakpoint), the deltas forwarded to the host, the
+/// completed message back. A throwing stream propagates (the caller
+/// folds it into the call's failure).
+Future<AssistantMessage> _handOverRoundTrip({
+  required StreamFunction stream,
+  required Model model,
+  required CompactionCachePolicy cachePolicy,
+  required Context context,
+  required List<Message> messages,
+  required int budget,
+  required int prefixLength,
+  required String? copilotInitiator,
+  required CancelToken? cancelToken,
+  required void Function(String delta)? onDelta,
+}) async {
+  final shape = StreamCallShape(
+    toolChoice: 'none',
+    maxTokens: budget,
+    prefixLength: prefixLength,
+    copilotInitiator: copilotInitiator,
+  );
+  final events = cachePolicy.runWith(
+    () => stream(
+      model,
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: messages,
+        tools: context.tools,
+      ),
+      cancelToken: cancelToken,
+    ),
+    CompactionCallClass.handOver,
+    shape: shape,
+  );
+  if (onDelta != null) {
+    events.listen((event) {
+      final delta = _deltaOf(event);
+      if (delta.isNotEmpty) onDelta(delta);
+    });
+  }
+  return events.result;
+}
+
+String _deltaOf(AssistantMessageEvent event) => switch (event) {
+  TextDeltaEvent(:final delta) => delta,
+  ThinkingDeltaEvent(:final delta) => delta,
+  _ => '',
+};
+
+/// The ladder's terminal verdicts on a stop reason: a provider error or
+/// an abort fails at once (the `length` stop is the caller's ONE budget
+/// retry, `null` here).
+CompactionException? _stopFailure(AssistantMessage response) =>
+    switch (response.stopReason) {
+      StopReason.error => CompactionException(
+        'hand-over call failed: ${response.errorMessage ?? 'unknown error'}',
+      ),
+      StopReason.aborted => CompactionException(
+        'hand-over call aborted: ${response.errorMessage ?? 'aborted'}',
+      ),
+      _ => null,
+    };
 
 /// Whether the answer carries tool calls (whatever the stop reason says —
 /// an adapter may stop `end_turn` with a tool_use block in some SDKs).

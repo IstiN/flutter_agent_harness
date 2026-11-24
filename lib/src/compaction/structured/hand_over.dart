@@ -122,29 +122,17 @@ HandOverReply parseHandOverReply(String text) {
   // Blank lines never end the list (a model often pads before the `-`);
   // the first non-blank line that names no alias does.
   while (index < lines.length) {
-    final line = lines[index];
-    final trimmed = line.trim();
-    if (trimmed.isEmpty) {
-      index++;
-      continue;
+    final parsed = _hideListLine(lines[index], seen);
+    picks.addAll([?parsed.pick]);
+    if (parsed.ignored) {
+      ignored++;
     }
-    if (trimmed == '-' || _separatorLine.hasMatch(trimmed)) {
+    if (parsed.consumed) {
       index++;
+    }
+    if (parsed.ends) {
       break;
     }
-    final range = _rangeLine.firstMatch(line);
-    final single = range == null ? _singleLine.firstMatch(line) : null;
-    if (range == null && single == null) break;
-    final from = int.parse((range ?? single)!.group(1)!);
-    final to = range != null ? int.parse(range.group(2)!) : from;
-    final label = ((range ?? single)!.group(range != null ? 3 : 2) ?? '')
-        .trim();
-    if (from <= 0 || to < from || to - from >= _maxRangeSpan) {
-      ignored++;
-    } else if (seen.add('$from-$to')) {
-      picks.add(HandOverHidePick(from: from, to: to, rawLabel: label));
-    }
-    index++;
   }
   if (index == 0) {
     // Not an id line and not a separator: no hides, whole text = transfer.
@@ -159,6 +147,61 @@ HandOverReply parseHandOverReply(String text) {
     picks: picks,
     transfer: transfer.isEmpty ? null : transfer,
     ignoredLines: ignored,
+  );
+}
+
+/// One hide-list line: [pick] names an alias (deduplicated through
+/// [seen]), [ignored] is an id line naming nothing usable, [ends] stops
+/// the list (the separator, or a line that is no id at all), and
+/// [consumed] says whether the line belongs to the list (a non-id line
+/// starts the transfer itself).
+({HandOverHidePick? pick, bool ignored, bool ends, bool consumed})
+_hideListLine(String line, Set<String> seen) {
+  final trimmed = line.trim();
+  if (trimmed.isEmpty) {
+    return (pick: null, ignored: false, ends: false, consumed: true);
+  }
+  if (trimmed == '-' || _separatorLine.hasMatch(trimmed)) {
+    return (pick: null, ignored: false, ends: true, consumed: true);
+  }
+  final range = _rangeLine.firstMatch(line);
+  final single = range == null ? _singleLine.firstMatch(line) : null;
+  if (range == null && single == null) {
+    return (pick: null, ignored: false, ends: true, consumed: false);
+  }
+  final parsed = _aliasLine(range ?? single!, isRange: range != null);
+  final key = parsed.pick == null
+      ? ''
+      : '${parsed.pick!.from}-${parsed.pick!.to}';
+  if (parsed.pick != null && !seen.add(key)) {
+    return (pick: null, ignored: false, ends: false, consumed: true);
+  }
+  return (
+    pick: parsed.pick,
+    ignored: parsed.ignored,
+    ends: false,
+    consumed: true,
+  );
+}
+
+/// An id line's pick: an inverted or over-long range is [ignored]
+/// (counted, never content).
+({HandOverHidePick? pick, bool ignored}) _aliasLine(
+  RegExpMatch match, {
+  required bool isRange,
+}) {
+  final from = int.parse(match.group(1)!);
+  final to = isRange ? int.parse(match.group(2)!) : from;
+  if (from <= 0 || to < from || to - from >= _maxRangeSpan) {
+    return (pick: null, ignored: true);
+  }
+  return (
+    pick: HandOverHidePick(
+      from: from,
+      to: to,
+      rawLabel: (match.group(isRange ? 3 : 2) ?? '').trim(),
+    ),
+    ignored: false,
   );
 }
 
