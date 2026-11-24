@@ -121,7 +121,7 @@ extension NetworkSessionDm on NetworkSession {
   /// envelope-id dedup. One guarded timer serves every open DM in this session.
   void _ensureDmPolling() {
     if (_dmPollTimer?.isActive ?? false) return;
-    _dmPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _dmPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_pollOpenDmChannels());
     });
   }
@@ -206,6 +206,7 @@ extension NetworkSessionDm on NetworkSession {
       ),
     );
     notifyDmChanged();
+    _ensureDmPolling();
   }
 
   /// Decrypts one DM history/realtime row. Direction comes from the

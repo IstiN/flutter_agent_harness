@@ -1174,13 +1174,17 @@ jobs:
   # the quality-gate platform class.
   installer-portability:
     name: Installer sh portability (REG)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [release-pending, release-dedupe, changes]
     if: needs.changes.outputs.installer == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -2302,7 +2306,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
@@ -2319,7 +2323,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: |
@@ -2372,7 +2375,7 @@ jobs:
   # in the Quality gate: reddens the merge check, never dart_ok (#1368).
   flutter-app-goldens:
     name: Golden suite (macOS baselines)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
@@ -2389,7 +2392,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: |
@@ -3519,10 +3521,10 @@ jobs:
 
   build-macos:
     name: Build macOS (debug)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
-    timeout-minutes: 30
+    timeout-minutes: 150
     permissions:
       contents: read
     # gh-1814: this job deliberately carries NO SwiftPM lane pin — the
@@ -3551,7 +3553,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app
@@ -3611,43 +3612,58 @@ jobs:
           restore-keys: |
             macos-pods-ci-v1-${{ hashFiles('flutter_app/macos/Podfile.lock') }}-
 
+      # Same immutable xcframework cache + resumable restore as build-ios (gh-2314):
+      # self-hosted fa-m5 links can throttle github.com releases to ~16-170 KB/s,
+      # causing the old 15-min single-shot curl to time out mid-download.
+      - name: Cache vendored WasmRun macOS framework
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework
+          key: wasmrun-xcframework-macos-ci-v0.1.0
+
       - name: Restore vendored WasmRun macOS framework
-        timeout-minutes: 15
+        timeout-minutes: 120
         run: |
           set -euo pipefail
-          # Same upstream-release fallback as the iOS leg (framework is
-          # excluded from git).
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
-          rm -rf "$DEST/WasmRun.xcframework"
-          mkdir -p "$DEST"
-          # gh-2233: same hardening as build-mobile.yml's testflight step —
-          # the zip goes to $RUNNER_TEMP (job-private), NOT the arch-less
-          # fixed /tmp path that every WasmRun-downloading leg on the ONE
-          # fa-m5 box shares (multiple concurrent runner processes,
-          # gh-2134): overlapping downloads interleave two transfers into
-          # one file and unzip reads a patchwork (testflight leg run
-          # 44023345849: bad CRC at file #6, curl reported 100%). --fail +
-          # the pinned size+sha256 (same immutable asset build-macos.yml
-          # pins, gh-1759) keep unverified bytes out of the build tree.
+          LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           ZIP="$RUNNER_TEMP/WasmRun.xcframework.zip"
           ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
           ASSET_BYTES=97238501
-          curl --fail -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-            -o "$ZIP" \
-            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-          got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
-          if [ "$got" -ne "$ASSET_BYTES" ]; then
-            echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
-          elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
-            echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
+          mkdir -p "$DEST"
+          if [ -f "$DEST/WasmRun.xcframework/Info.plist" ]; then
+            echo "Using framework already in place (actions/cache hit or valid leftover)"
+          elif [ -d "$LOCAL_SRC" ]; then
+            echo "Using local framework: $LOCAL_SRC"
+            cp -R "$LOCAL_SRC" "$DEST/"
+          else
+            echo "No cache, no local copy — downloading from upstream release..."
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if curl --fail -L -C - --connect-timeout 30 --max-time 540 \
+                -o "$ZIP" \
+                https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                break
+              fi
+              if [ "$attempt" = "12" ]; then
+                echo "download attempt $attempt failed — out of loop attempts" >&2
+              else
+                echo "download attempt $attempt failed, resuming in 5s..."
+                sleep 5
+              fi
+            done
+            got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+            if [ "$got" -ne "$ASSET_BYTES" ]; then
+              echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
+              rm -f "$ZIP"
+              exit 1
+            elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+              echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
+              rm -f "$ZIP"
+              exit 1
+            fi
+            unzip -q "$ZIP" -d "$DEST"
           fi
-          unzip -q "$ZIP" -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
-
       - uses: ./.github/actions/flutter-pub-get
 
       - name: flutter build macos (debug)
@@ -3861,7 +3877,7 @@ jobs:
   # an IT. macOS leg exercises the real quarantine-strip ordering (AC3).
   installer-verify:
     name: Installer verify IT (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
@@ -3872,7 +3888,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Installer verification fixtures (AC1-AC4)
@@ -4607,13 +4627,13 @@ jobs:
             os: windows
             arch: x64
             archive: zip
-          - runner: macos-latest
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: arm64
             archive: tar
-          # Intel Mac runner (macos-13 is retired; AOT cannot cross-compile
-          # macos_x64 from arm64 — only linux_* targets cross).
-          - runner: macos-15-intel
+          # Intel Mac binary built under Rosetta on the self-hosted macos-m5 pool
+          # (no GitHub-hosted macOS runners in this repo).
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: x64
             archive: tar
@@ -4650,6 +4670,7 @@ jobs:
           # already applies to its flutter-version pins. Bump deliberately,
           # in the commit that verifies the new layout end-to-end.
           sdk: '3.13.5'
+          architecture: ${{ matrix.arch }}
 
       # gh-1522: the committed pubspec carries the 0.0.0-dev placeholder —
       # the TAG is the version (the retired flow compared tag vs pubspec
@@ -4674,7 +4695,6 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
-
       # gh-2072 (review thread 1): the release binaries matrix runs
       # `dart build cli` — a hook-building step that failed on the PR's own
       # run with the exact sqlite3 hook 504 this PR exists to prevent
@@ -4693,7 +4713,11 @@ jobs:
           # renamed — on Dart >=3.14 (native linux) the bundle is split
           # (thin launcher + libdartaot<exe>.so) and a post-build mv desyncs
           # the pair (`dartaotruntime: not an AOT snapshot`, v1.0.709).
-          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" = "macos" ] && [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 dart build cli --target=bin/fa.dart --output=build/out
+          else
+            dart build cli --target=bin/fa.dart --output=build/out
+          fi
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi
@@ -4712,7 +4736,11 @@ jobs:
         if: matrix.os == 'macos'
         shell: bash
         run: |
-          bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          else
+            bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          fi
           codesign --force --sign - build/out/bundle/bin/fa-clip
           test -x build/out/bundle/bin/fa-clip
 
@@ -5261,7 +5289,7 @@ jobs:
 
   installer-smoke:
     name: Installer smoke
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [binaries, release-provenance]
     timeout-minutes: 15
     # Depends on binaries — no !cancelled() needed here: the skip chain is
@@ -5276,10 +5304,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            runner: windows-latest
             kind: ps1
           - os: ubuntu-latest
+            runner: ubuntu-latest
             kind: sh
-          - os: macos-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
             kind: sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5442,10 +5473,10 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: x64
-          - runner: macos-latest
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: arm64
-          - runner: macos-15-intel
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: x64
           - runner: ubuntu-latest
@@ -5462,8 +5493,10 @@ jobs:
           # gh-2120: PINNED Dart 3.13.5 — same `dart build cli` layout surface
           # as the release binaries job (3.14.0 emits the split layout).
           sdk: '3.13.5'
+          architecture: ${{ matrix.arch }}
 
       - name: Pub cache
+        if: matrix.os != 'macos'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.pub-cache
@@ -5471,7 +5504,6 @@ jobs:
           restore-keys: pub-${{ runner.os }}-
 
       - run: dart pub get
-
       - name: Native-assets hook cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -5491,7 +5523,11 @@ jobs:
         run: |
           # Same bundle layout as the release job: bundle/bin/fa (+ lib/),
           # built (not renamed) as `fa` — gh-2120 follow-up, see binaries.
-          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" = "macos" ] && [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 dart build cli --target=bin/fa.dart --output=build/out
+          else
+            dart build cli --target=bin/fa.dart --output=build/out
+          fi
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi

@@ -39,11 +39,9 @@ final RegExp _whitespaceRuns = RegExp(r'\s+');
 /// A cut never lands inside a `[REDACTED:…]` token (E4): when the cap
 /// would split one, the preview backs off to before the token instead.
 String markerPreview(String content) {
-  final line = content
-      .split('\n')
-      .first
-      .replaceAll(_whitespaceRuns, ' ')
-      .trim();
+  final nl = content.indexOf('\n');
+  final firstLine = nl < 0 ? content : content.substring(0, nl);
+  final line = firstLine.replaceAll(_whitespaceRuns, ' ').trim();
   if (line.length <= markerPreviewChars) return line;
   var cut = line.substring(0, markerPreviewChars);
   final redacted = cut.indexOf('[REDACTED:');

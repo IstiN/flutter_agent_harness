@@ -89,16 +89,17 @@ void main() {
 
     test('the matrix carries the curl|sh dialect host AND the bash host', () {
       final job = jobs['installer-portability'] as YamlMap;
-      final os =
-          ((job['strategy'] as YamlMap)['matrix'] as YamlMap)['os'] as YamlList;
+      final matrix = (job['strategy'] as YamlMap)['matrix'] as YamlMap;
+      final include = matrix['include'] as YamlList;
+      final os = include.map((e) => (e as YamlMap)['os'] as String).toSet();
       expect(
-        os.map((e) => e as String).toSet(),
-        {'ubuntu-latest', 'macos-latest'},
+        os,
+        {'ubuntu-latest', 'macos-m5'},
         reason:
             'ubuntu carries dash (Ubuntu /bin/sh) + busybox ash '
-            '(Alpine); macOS proves the bash-direct path (REG-2) — a '
-            'single-OS matrix re-creates the #1596 blind spot on the '
-            'missing host',
+            '(Alpine); macOS (self-hosted macos-m5) proves the bash-direct '
+            'path (REG-2) — a single-OS matrix re-creates the #1596 blind '
+            'spot on the missing host',
       );
     });
 
