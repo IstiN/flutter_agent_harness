@@ -16,7 +16,7 @@
 /// knows the pair group it belongs to — groups hide atomically (D6).
 library;
 
-import '../token_estimation.dart' show estimateTokens;
+import '../token_estimation.dart' show estimateStringTokens, estimateTokens;
 import '../../context.dart';
 import '../../types.dart';
 import '../../session/session_record.dart';
@@ -64,15 +64,14 @@ final class LedgerEntry {
 
 /// The judge-facing index of visible records.
 final class ContextLedger {
-  ContextLedger._(this.entries, this._groupByRecordId)
-    : _entryBySeq = {for (final entry in entries) entry.seq: entry};
+  ContextLedger._(this.entries, this._groupByRecordId);
 
   /// Visible projecting records, oldest first.
   final List<LedgerEntry> entries;
 
   final Map<String, Set<String>> _groupByRecordId;
 
-  final Map<int, LedgerEntry> _entryBySeq;
+  Map<int, LedgerEntry>? _entryBySeqCache;
 
   /// The pair-atomic group of [recordId]: an assistant tool-call carrier
   /// plus every result answering its calls (D6 — all or none).
@@ -81,8 +80,14 @@ final class ContextLedger {
 
   /// The entry with numeric alias [seq], or `null` (issue #1499: a map
   /// lookup — the linear scan over all entries showed up on judge-pick
-  /// validation over marathon sessions).
-  LedgerEntry? entryAtSeq(int seq) => _entryBySeq[seq];
+  /// validation over marathon sessions). Built lazily on first lookup so
+  /// ledger builds that never look up by seq skip allocating a 10k-entry map.
+  LedgerEntry? entryAtSeq(int seq) {
+    final map = _entryBySeqCache ??= {
+      for (final entry in entries) entry.seq: entry,
+    };
+    return map[seq];
+  }
 
   /// The judge input cap (issue #541): the newest [judgePreviewEntries]
   /// entries render. The judge prompt stays O(bounded) regardless of
@@ -139,34 +144,16 @@ final class ContextLedger {
 /// session object changes). Never share a cache across sessions and never
 /// make it global: ids are only unique within a session.
 final class LedgerEntryCache {
-  final Map<String, _CachedEntry> _byId = {};
+  final Map<String, LedgerEntry> _byId = {};
 
   /// Forgets every memoized record (session switch).
   void clear() => _byId.clear();
 }
 
-/// The id-keyed scalars a rebuilt [LedgerEntry] needs; the rebuilt entry
-/// carries the CURRENT record instance so identity stays honest.
-final class _CachedEntry {
-  const _CachedEntry({
-    required this.seq,
-    required this.kind,
-    required this.tokens,
-    required this.preview,
-    required this.toolNames,
-  });
-
-  final int seq;
-  final String kind;
-  final int tokens;
-  final String preview;
-  final String toolNames;
-}
-
 /// Builds the ledger over the VISIBLE branch path (post-projection-walk:
 /// hidden and checkpoint-covered records already removed).
 ///
-/// [cache] memoizes per-record entry scalars across calls (issue #1499):
+/// [cache] memoizes per-record entries across calls (issue #1499):
 /// pass one cache instance to every rebuild of the same session's ledger.
 /// Omitted — as by every direct caller and test — the build computes each
 /// entry from scratch, byte-identical to the pre-cache shape.
@@ -192,8 +179,10 @@ LedgerEntry? _entryFor(
   if (seq == null) return null;
   final cached = cache?._byId[record.id];
   if (cached != null && cached.seq == seq) {
-    // Cache hit: scalars reuse, identity fresh. The seq guard makes the
-    // cache self-correcting should an id ever move in file order.
+    // Fast path: reuse the immutable LedgerEntry directly when the record
+    // instance is identical (the append-only steady state); otherwise
+    // re-wrap with the current record instance so identity stays honest.
+    if (identical(cached.record, record)) return cached;
     return LedgerEntry._(
       seq: seq,
       recordId: record.id,
@@ -206,13 +195,7 @@ LedgerEntry? _entryFor(
   }
   final entry = _recordEntry(record, seq);
   if (entry == null) return null;
-  cache?._byId[record.id] = _CachedEntry(
-    seq: seq,
-    kind: entry.kind,
-    tokens: entry.tokens,
-    preview: entry.preview,
-    toolNames: entry.toolNames,
-  );
+  cache?._byId[record.id] = entry;
   return entry;
 }
 
@@ -237,7 +220,7 @@ LedgerEntry? _recordEntry(SessionRecord record, int seq) {
       recordId: record.id,
       record: record,
       kind: 'ckpt',
-      tokens: estimateTokens(UserMessage.text(ckpt.text)),
+      tokens: estimateStringTokens(ckpt.text),
       preview: _clip(ckpt.text),
       toolNames: '',
     ),
@@ -246,7 +229,7 @@ LedgerEntry? _recordEntry(SessionRecord record, int seq) {
       recordId: record.id,
       record: record,
       kind: 'legacy-ckpt',
-      tokens: estimateTokens(UserMessage.text(legacy.summary)),
+      tokens: estimateStringTokens(legacy.summary),
       preview: _clip(legacy.summary),
       toolNames: '',
     ),
@@ -255,9 +238,7 @@ LedgerEntry? _recordEntry(SessionRecord record, int seq) {
       recordId: record.id,
       record: record,
       kind: 'branch-summary',
-      tokens: branch.summary.isEmpty
-          ? 0
-          : estimateTokens(UserMessage.text(branch.summary)),
+      tokens: branch.summary.isEmpty ? 0 : estimateStringTokens(branch.summary),
       preview: _clip(branch.summary),
       toolNames: '',
     ),
@@ -316,20 +297,25 @@ Map<String, Set<String>> _pairGroups(List<SessionRecord> path) {
   final groups = <String, Set<String>>{};
   final pendingCalls = <String, String>{}; // toolCallId -> carrier record id
   for (final record in path) {
-    final message = record is MessageRecord ? record.message : null;
+    if (record is! MessageRecord) continue;
+    final message = record.message;
     if (message is AssistantMessage) {
-      final calls = message.content.whereType<ToolCall>().toList();
-      if (calls.isEmpty) continue;
-      final group = {record.id};
-      groups[record.id] = group;
-      for (final call in calls) {
-        pendingCalls[call.id] = record.id;
+      Set<String>? group;
+      for (final block in message.content) {
+        if (block is ToolCall) {
+          if (group == null) {
+            group = {record.id};
+            groups[record.id] = group;
+          }
+          pendingCalls[block.id] = record.id;
+        }
       }
     } else if (message is ToolResultMessage) {
       final carrierId = pendingCalls[message.toolCallId];
       if (carrierId != null) {
-        groups[carrierId]?.add(record.id);
-        groups[record.id] = groups[carrierId]!;
+        final group = groups[carrierId]!;
+        group.add(record.id);
+        groups[record.id] = group;
       } else {
         // A result whose carrier is off-ledger (older than the visible
         // window): it hides alone, or stays — never blocks its neighbors.
@@ -357,13 +343,46 @@ String _flattenUser(Object content) {
 }
 
 String _flattenBlocks(List<ContentBlock> blocks) {
-  return _clip(blocks.whereType<TextContent>().map((b) => b.text).join(' '));
+  // Fast path for the common single-TextContent tool result: avoids
+  // whereType/map iterables and StringBuffer join overhead.
+  if (blocks.length == 1) {
+    final only = blocks[0];
+    return only is TextContent ? _clip(only.text) : '';
+  }
+  final joined = _joinTextBlocks(blocks);
+  return joined.isEmpty ? '' : _clip(joined);
 }
 
+String _joinTextBlocks(List<ContentBlock> blocks) =>
+    blocks.whereType<TextContent>().map((b) => b.text).join(' ');
+
+bool _isAsciiWhitespace(int u) =>
+    u == 0x20 || u == 0x09 || u == 0x0a || u == 0x0d || u == 0x0c;
+
 String _clip(String text) {
-  final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-  if (flat.length <= 110) return flat;
-  return '${flat.substring(0, 107)}…';
+  // Single-pass whitespace collapse + 110-char cap: never scans or allocates
+  // past the first 111 non-collapsed characters of a multi-KB tool result.
+  if (text.isEmpty) return '';
+  final out = StringBuffer();
+  var count = 0;
+  var pendingSpace = false;
+  for (var i = 0; i < text.length; i++) {
+    final u = text.codeUnitAt(i);
+    if (_isAsciiWhitespace(u)) {
+      if (count > 0) pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace) {
+      if (count == 110) return '${out.toString().substring(0, 107)}…';
+      out.writeCharCode(0x20);
+      count++;
+      pendingSpace = false;
+    }
+    if (count == 110) return '${out.toString().substring(0, 107)}…';
+    out.writeCharCode(u);
+    count++;
+  }
+  return out.toString();
 }
 
 /// The live-edge floor shared by every hide path (issue #1379 tier 2):

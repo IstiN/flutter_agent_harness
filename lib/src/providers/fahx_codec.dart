@@ -350,6 +350,52 @@ final class _Sha256 {
           (_buf[b + 2] << 8) |
           _buf[b + 3];
     }
+    _compressWords();
+  }
+
+  /// Fast-path SHA-256 finalization for an exact 32-byte payload appended
+  /// to a 64-byte mid-state ([state]): total length is always 96 bytes
+  /// (768 bits = `0x300`), so the single padded block is:
+  /// `w[0..7]` = 32-byte payload, `w[8]` = `0x80000000`, `w[9..14]` = `0`,
+  /// `w[15]` = `768`. Compresses directly into [out] without touching
+  /// `_buf`, `_pad`, or `update()`.
+  void _hash32AfterMidState(Uint32List state, Uint8List data, Uint8List out) {
+    _h[0] = state[0];
+    _h[1] = state[1];
+    _h[2] = state[2];
+    _h[3] = state[3];
+    _h[4] = state[4];
+    _h[5] = state[5];
+    _h[6] = state[6];
+    _h[7] = state[7];
+    for (var j = 0; j < 8; j++) {
+      final b = j * 4;
+      _w[j] =
+          (data[b] << 24) |
+          (data[b + 1] << 16) |
+          (data[b + 2] << 8) |
+          data[b + 3];
+    }
+    _w[8] = 0x80000000;
+    _w[9] = 0;
+    _w[10] = 0;
+    _w[11] = 0;
+    _w[12] = 0;
+    _w[13] = 0;
+    _w[14] = 0;
+    _w[15] = 768;
+    _compressWords();
+    for (var i = 0; i < 8; i++) {
+      final v = _h[i];
+      final o = i * 4;
+      out[o] = (v >> 24) & 0xff;
+      out[o + 1] = (v >> 16) & 0xff;
+      out[o + 2] = (v >> 8) & 0xff;
+      out[o + 3] = v & 0xff;
+    }
+  }
+
+  void _compressWords() {
     for (var j = 16; j < 64; j++) {
       final w15 = _w[j - 15];
       final w2 = _w[j - 2];
@@ -451,6 +497,15 @@ final class _HmacSha256 {
     _outer.update(_innerDigest, 0, 32);
     _outer.finish(out, outOff);
   }
+
+  /// Fast-path PBKDF2 inner round: overwrites the 32-byte [buf] in place
+  /// with HMAC-SHA256([buf]). Both inner and outer inputs are 32 bytes
+  /// (total 96 bytes = 768 bits), so padding is a fixed 1-block layout and
+  /// we skip `_buf`/`_pad` copies, `fillRange`, and `update` branching.
+  void compute32InPlace(Uint8List buf) {
+    _inner._hash32AfterMidState(_innerState, buf, _innerDigest);
+    _outer._hash32AfterMidState(_outerState, _innerDigest, buf);
+  }
 }
 
 /// One-shot HMAC over [nonce ‖ data] — the envelope tag, without the
@@ -498,10 +553,7 @@ Uint8List pbkdf2Sha256(
       ..finish(u, 0);
     t.setAll(0, u);
     for (var round = 1; round < rounds; round++) {
-      mac
-        ..start()
-        ..update(u, 0, 32)
-        ..finish(u, 0);
+      mac.compute32InPlace(u);
       for (var j = 0; j < 32; j++) {
         t[j] ^= u[j];
       }

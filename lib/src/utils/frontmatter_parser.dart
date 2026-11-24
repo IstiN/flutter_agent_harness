@@ -19,16 +19,27 @@ import 'package:yaml/yaml.dart';
 /// Parses the `---`-fenced YAML frontmatter block preserving YAML types
 /// (lists, booleans, maps), returning `(key→value map, remaining body)`.
 /// Values are plain Dart objects (`String`/`num`/`bool`/`List`/`Map`).
+/// Bounded memo for parsed YAML frontmatter blocks: skill/agent discovery
+/// scans the same markdown files repeatedly across agent runs and sessions.
+final _frontmatterCache = <String, Map<String, Object?>>{};
+const _frontmatterCacheCapacity = 512;
+
 (Map<String, Object?> frontmatter, String body) parseFrontmatterTyped(
   String text,
 ) {
-  final frontmatter = <String, Object?>{};
   var body = text;
   if (text.startsWith('---')) {
     final end = text.indexOf('\n---', 3);
     if (end > 0) {
+      final rawYaml = text.substring(3, end);
+      body = text.substring(end + 4).trimLeft();
+      final cached = _frontmatterCache[rawYaml];
+      if (cached != null) {
+        return (_deepCopyMap(cached), body);
+      }
+      final frontmatter = <String, Object?>{};
       try {
-        final doc = loadYaml(text.substring(3, end));
+        final doc = loadYaml(rawYaml);
         if (doc is Map) {
           for (final entry in doc.entries) {
             frontmatter['${entry.key}'] = _plainYamlValue(entry.value);
@@ -37,11 +48,27 @@ import 'package:yaml/yaml.dart';
       } on Object {
         // Malformed frontmatter: treat the file as plain body.
       }
-      body = text.substring(end + 4).trimLeft();
+      if (rawYaml.length <= 4096) {
+        if (_frontmatterCache.length >= _frontmatterCacheCapacity) {
+          _frontmatterCache.remove(_frontmatterCache.keys.first);
+        }
+        _frontmatterCache[rawYaml] = _deepCopyMap(frontmatter);
+      }
+      return (frontmatter, body);
     }
   }
-  return (frontmatter, body);
+  return (<String, Object?>{}, body);
 }
+
+Map<String, Object?> _deepCopyMap(Map<String, Object?> source) => {
+  for (final entry in source.entries) entry.key: _deepCopyValue(entry.value),
+};
+
+Object? _deepCopyValue(Object? value) => switch (value) {
+  Map<String, Object?>() => _deepCopyMap(value),
+  List() => [for (final item in value) _deepCopyValue(item)],
+  _ => value,
+};
 
 /// Converts a yaml node into a plain Dart value (recursively), so callers
 /// never see `YamlMap`/`YamlList` wrappers.
