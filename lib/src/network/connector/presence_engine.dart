@@ -323,17 +323,20 @@ final class PresenceFrame {
           if (agents.isNotEmpty)
             'agents': [
               for (final entry in agents.entries)
-                {'address': entry.key, 'state': entry.value.wireName},
-            ],
-          if (sessions.isNotEmpty)
-            'sessions': [
-              for (final entry in sessions.entries)
                 {
-                  'id': entry.key,
+                  'address': entry.key,
+                  'name': _wireAgentName(entry.key),
                   'state': entry.value.wireName,
-                  ...?sessionMetadata[entry.key]?.toJson(),
                 },
             ],
+          'sessions': [
+            for (final entry in sessions.entries)
+              {
+                'id': entry.key,
+                'state': entry.value.wireName,
+                ...?sessionMetadata[entry.key]?.toJson(),
+              },
+          ],
         },
       );
 
@@ -372,6 +375,13 @@ final class PresenceFrame {
             node['id'] as String: ConnectorSessionMetadata.fromJson(node)!,
       },
     );
+  }
+
+  /// Extracts the bare agent name from an `agent@device` address for the
+  /// fa_network `deviceAgentWire` contract (`json:"name"`).
+  static String _wireAgentName(String address) {
+    final at = address.lastIndexOf('@');
+    return at > 0 ? address.substring(0, at) : address;
   }
 
   @override

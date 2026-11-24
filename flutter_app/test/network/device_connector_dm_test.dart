@@ -560,4 +560,93 @@ void main() {
       isNull,
     );
   });
+
+  test('agentRunState tracks incremental presence frame flips', () async {
+    final (service, _, _, transport, _) = await fixture.buildService(
+      httpClient: http(),
+      tokenStore: fixture.enrolledTokens(),
+      userIdProvider: () async => 'user-1',
+      idFactory: () => 'dm-frame-1',
+    );
+    addTearDown(service.dispose);
+    await service.start();
+    await fixture.pumpUntilOnline(service);
+
+    transport.sockets.first.serverSends(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.roster,
+        msgId: 'roster-live',
+        network: 'net-personal',
+        ts: '2026-11-24T10:00:00.000Z',
+        payload: {
+          'devices': [
+            {
+              'deviceId': 'remote-dev',
+              'name': 'remote-dev',
+              'agents': [
+                {'name': 'goal', 'state': 'live'},
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    await waitFor(
+      () =>
+          service.agentRunState('goal@remote-dev', networkId: 'net-personal') ==
+          AgentRunState.live,
+    );
+
+    transport.sockets.first.serverSends(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.presence,
+        msgId: 'presence-busy',
+        network: 'net-personal',
+        ts: '2026-11-24T10:00:01.000Z',
+        payload: {
+          'devices': [
+            {
+              'deviceId': 'remote-dev',
+              'agents': [
+                {'name': 'goal', 'state': 'busy', 'exposed': true},
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    await waitFor(
+      () =>
+          service.agentRunState('goal@remote-dev', networkId: 'net-personal') ==
+          AgentRunState.busy,
+    );
+    expect(
+      service.agentRunState('goal@remote-dev', networkId: 'net-personal'),
+      AgentRunState.busy,
+    );
+
+    transport.sockets.first.serverSends(
+      NetworkEnvelope(
+        kind: NetworkEnvelopeKind.presence,
+        msgId: 'presence-idle',
+        network: 'net-personal',
+        ts: '2026-11-24T10:00:02.000Z',
+        payload: {
+          'devices': [
+            {
+              'deviceId': 'remote-dev',
+              'agents': [
+                {'name': 'goal', 'state': 'live', 'exposed': true},
+              ],
+            },
+          ],
+        },
+      ),
+    );
+    await waitFor(
+      () =>
+          service.agentRunState('goal@remote-dev', networkId: 'net-personal') ==
+          AgentRunState.live,
+    );
+  });
 }

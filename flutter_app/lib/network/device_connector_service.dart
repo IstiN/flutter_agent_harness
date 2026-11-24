@@ -494,6 +494,12 @@ class DeviceConnectorService {
   /// The most recent roster frame per network, for late subscribers.
   List<NetworkEnvelope> get currentRosterFrames =>
       List.unmodifiable(_lastRosterByNetwork.values);
+
+  /// Live agent run-state overrides learned from incremental `presence` frames
+  /// (`networkId -> agentAddress -> AgentRunState`). Cleared per network when
+  /// a full `roster` snapshot replaces that network's state.
+  final _liveAgentStatesByNetwork = <String, Map<String, AgentRunState>>{};
+
   final _presenceFrames = StreamController<NetworkEnvelope>.broadcast();
   final _presence = StreamController<PresenceFrame>.broadcast();
   final _wakeHints = StreamController<NetworkEnvelope>.broadcast();
@@ -528,6 +534,8 @@ class DeviceConnectorService {
   }) {
     final separator = agentAddress.lastIndexOf('@');
     if (separator < 1) return null;
+    final liveOverride = _liveAgentStatesByNetwork[networkId]?[agentAddress];
+    if (liveOverride != null) return liveOverride;
     final envelope = _lastRosterByNetwork[networkId];
     if (envelope == null) return null;
     return _rosterAgentState(
@@ -535,6 +543,44 @@ class DeviceConnectorService {
       agentAddress.substring(separator + 1),
       agentAddress.substring(0, separator),
     );
+  }
+
+  /// Merges agent run-state deltas from an incremental `presence` frame into
+  /// [_liveAgentStatesByNetwork] so [agentRunState] reacts immediately when
+  /// the server fans out `live`/`busy`/`offline` updates.
+  void _cachePresenceAgentStates(NetworkEnvelope envelope) {
+    final networkId = envelope.network ?? '';
+    final devices = envelope.payload['devices'];
+    if (devices is! List) return;
+    final overrides = _liveAgentStatesByNetwork.putIfAbsent(
+      networkId,
+      () => <String, AgentRunState>{},
+    );
+    for (final device in devices) {
+      _mergeDevicePresenceAgents(device, overrides);
+    }
+  }
+
+  static void _mergeDevicePresenceAgents(
+    Object? device,
+    Map<String, AgentRunState> overrides,
+  ) {
+    if (device is! Map) return;
+    final deviceId = device['deviceId'];
+    final agents = device['agents'];
+    if (deviceId is! String || deviceId.isEmpty || agents is! List) return;
+    for (final agent in agents) {
+      if (agent is! Map) continue;
+      final rawName = agent['name'] ?? agent['address'];
+      if (rawName is! String || rawName.isEmpty) continue;
+      final address = rawName.contains('@') ? rawName : '$rawName@$deviceId';
+      if (agent['exposed'] == false) {
+        overrides.remove(address);
+        continue;
+      }
+      final state = AgentRunState.tryParse('${agent['state'] ?? ''}');
+      if (state != null) overrides[address] = state;
+    }
   }
 
   /// One roster envelope's device list → the named agent's run state.
@@ -570,7 +616,7 @@ class DeviceConnectorService {
   }
 
   static AgentRunState? _exposedAgentState(Object? agent, String name) {
-    if (agent is! Map || agent['exposed'] != true) return null;
+    if (agent is! Map || agent['exposed'] == false) return null;
     if (agent['name'] != name) return null;
     return AgentRunState.tryParse('${agent['state'] ?? ''}');
   }
@@ -1280,13 +1326,16 @@ class DeviceConnectorService {
   void _wireForwarding(MachineConnector connector, int generation) {
     _subscriptions.add(
       connector.rosterFrames.listen((envelope) {
-        _lastRosterByNetwork[envelope.network ?? ''] = envelope;
+        final networkId = envelope.network ?? '';
+        _lastRosterByNetwork[networkId] = envelope;
+        _liveAgentStatesByNetwork.remove(networkId);
         _cacheRosterDmPubs(envelope);
         _rosterFrames.add(envelope);
       }),
     );
     _subscriptions.add(
       connector.presenceFrames.listen((envelope) {
+        _cachePresenceAgentStates(envelope);
         _presenceFrames.add(envelope);
         final frame = PresenceFrame.fromEnvelope(envelope);
         if (frame != null) _presence.add(frame);
@@ -1780,6 +1829,7 @@ class DeviceConnectorService {
 
   Future<void> _teardown() async {
     _lastRosterByNetwork.clear();
+    _liveAgentStatesByNetwork.clear();
     _remoteDmPubs.clear();
     _accountUserId = null;
     _userDmKeyPair = null;
