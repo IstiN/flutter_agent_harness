@@ -353,20 +353,8 @@ String _flattenBlocks(List<ContentBlock> blocks) {
   return joined.isEmpty ? '' : _clip(joined);
 }
 
-String _joinTextBlocks(List<ContentBlock> blocks) {
-  StringBuffer? sb;
-  for (final b in blocks) {
-    if (b is! TextContent) continue;
-    if (sb == null) {
-      sb = StringBuffer(b.text);
-    } else {
-      sb
-        ..write(' ')
-        ..write(b.text);
-    }
-  }
-  return sb == null ? '' : sb.toString();
-}
+String _joinTextBlocks(List<ContentBlock> blocks) =>
+    blocks.whereType<TextContent>().map((b) => b.text).join(' ');
 
 bool _isAsciiWhitespace(int u) =>
     u == 0x20 || u == 0x09 || u == 0x0a || u == 0x0d || u == 0x0c;
