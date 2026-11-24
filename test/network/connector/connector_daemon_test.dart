@@ -473,6 +473,59 @@ void main() {
     addTearDown(daemon2.stop);
     await _waitFor(() => host2.activeSessionIds.contains('sess-gamma'));
   });
+
+  test(
+    'tryAcquireConnectorDaemonLock and POST /shutdown work cleanly',
+    () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(
+          'dev-mac-4',
+          deviceToken: 'tok-device-4',
+          networks: const ['net-personal'],
+        );
+      final tmp = await Directory.systemTemp.createTemp('fa_connector_lock_');
+      addTearDown(() async {
+        server.dropAll();
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+
+      final stateFile = File('${tmp.path}/connector.json');
+      final lock = await tryAcquireConnectorDaemonLock(stateFile);
+      expect(lock, isNotNull);
+      addTearDown(() async {
+        try {
+          await lock!.unlock();
+        } on Object {
+          // Best-effort cleanup.
+        }
+        await lock!.close().catchError((Object _) {});
+      });
+
+      var shutdownRequested = false;
+      final host = MultiSessionConnectorHost(
+        device: const NetworkDeviceCredentials(
+          deviceId: 'dev-mac-4',
+          deviceToken: 'tok-device-4',
+          personalNetworkId: 'net-personal',
+        ),
+        baseUrl: 'https://network.fa1.dev',
+        ticketProvider: () async => 'ticket-4',
+        transport: server.transport,
+        rosterDebounce: const Duration(milliseconds: 10),
+        catalogPollInterval: Duration.zero,
+      );
+      final daemon = ConnectorDaemonServer(
+        host: host,
+        stateFile: stateFile,
+        onShutdownRequested: () => shutdownRequested = true,
+      );
+      await daemon.start();
+      addTearDown(daemon.stop);
+
+      expect(await requestConnectorDaemonShutdown(daemon.state), isTrue);
+      expect(shutdownRequested, isTrue);
+    },
+  );
 }
 
 final class _StaticCatalogStore implements SessionCatalogStore {

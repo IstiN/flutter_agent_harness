@@ -92,19 +92,59 @@ Future<bool> probeConnectorDaemon(
 
 /// Loopback WebSocket server wrapping one [MultiSessionConnectorHost] so N
 /// local CLI processes and desktop app instances share ONE upstream WS.
+/// Acquires an exclusive OS-level file lock on `<stateFile>.lock` so two
+/// concurrent `fa connector run` starts can never both dial upstream for the
+/// same `deviceId` (eliminating cold-start eviction races). Returns the open
+/// locked handle on success, or null when another daemon holds the lock.
+Future<RandomAccessFile?> tryAcquireConnectorDaemonLock(File stateFile) async {
+  final lockFile = File('${stateFile.path}.lock');
+  await lockFile.parent.create(recursive: true);
+  final raf = await lockFile.open(mode: FileMode.write);
+  try {
+    await raf.lock(FileLock.exclusive);
+    return raf;
+  } on FileSystemException {
+    await raf.close().catchError((Object _) {});
+    return null;
+  }
+}
+
+/// Requests a graceful shutdown of a running daemon via `POST /shutdown`
+/// (works on Windows where `Process.killPid` is a hard terminate). Returns
+/// true when the daemon acknowledged the shutdown request.
+Future<bool> requestConnectorDaemonShutdown(
+  ConnectorDaemonState state, {
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  final client = HttpClient()..connectionTimeout = timeout;
+  try {
+    final uri = Uri.parse('http://127.0.0.1:${state.port}/shutdown');
+    final req = await client.postUrl(uri).timeout(timeout);
+    req.headers.set('authorization', 'Bearer ${state.token}');
+    final res = await req.close().timeout(timeout);
+    await res.drain<void>().timeout(timeout);
+    return res.statusCode == HttpStatus.ok;
+  } on Object {
+    return false;
+  } finally {
+    client.close(force: true);
+  }
+}
+
 final class ConnectorDaemonServer {
   ConnectorDaemonServer({
     required this.host,
     required this.stateFile,
     this.port = 0,
+    this.onShutdownRequested,
     String? token,
   }) : token = token ?? _generateLocalToken();
 
   final MultiSessionConnectorHost host;
   final File stateFile;
   final int port;
+  final void Function()? onShutdownRequested;
   final String token;
-
   HttpServer? _server;
   int? _boundPort;
   final _clients = <WebSocket, _LocalClientConnection>{};
@@ -200,6 +240,14 @@ final class ConnectorDaemonServer {
           }),
         );
       await request.response.close();
+      return;
+    }
+    if (request.uri.path == '/shutdown' && request.method == 'POST') {
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..write('stopping');
+      await request.response.close();
+      onShutdownRequested?.call();
       return;
     }
     if (request.uri.path == '/ws' &&

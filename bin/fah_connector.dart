@@ -36,11 +36,14 @@ Future<int> _runConnectorDaemon(List<String> args) async {
     return 1;
   }
   final stateFile = connectorDaemonStateFile(home);
-  final existing = await readConnectorDaemonState(stateFile);
-  if (existing != null &&
-      await probeConnectorDaemon(existing, expectedDeviceId: device.deviceId)) {
+  final lock = await tryAcquireConnectorDaemonLock(stateFile);
+  if (lock == null) {
+    final existing = await readConnectorDaemonState(stateFile);
     stdout.writeln(
-      'fa connector already running (pid=${existing.pid} port=${existing.port})',
+      existing != null
+          ? 'fa connector already running '
+                '(pid=${existing.pid} port=${existing.port})'
+          : 'fa connector already starting',
     );
     return 0;
   }
@@ -68,32 +71,42 @@ Future<int> _runConnectorDaemon(List<String> args) async {
           wakeExecutable: wakeExecutable(),
         ),
   );
+  final done = Completer<void>();
+  void requestShutdown() {
+    if (!done.isCompleted) done.complete();
+  }
+
   final server = ConnectorDaemonServer(
     host: host,
     stateFile: stateFile,
     port: port,
+    onShutdownRequested: requestShutdown,
   );
-  await server.start();
-  stdout.writeln(
-    'fa connector listening on 127.0.0.1:${server.boundPort} '
-    '(pid=$pid device=${device.deviceId})',
-  );
-  final done = Completer<void>();
-  StreamSubscription<ProcessSignal>? sigInt;
-  StreamSubscription<ProcessSignal>? sigTerm;
-  void shutdown(ProcessSignal _) {
-    if (!done.isCompleted) done.complete();
+  try {
+    await server.start();
+    stdout.writeln(
+      'fa connector listening on 127.0.0.1:${server.boundPort} '
+      '(pid=$pid device=${device.deviceId})',
+    );
+    final sigInt = ProcessSignal.sigint.watch().listen(
+      (_) => requestShutdown(),
+    );
+    final sigTerm = Platform.isWindows
+        ? null
+        : ProcessSignal.sigterm.watch().listen((_) => requestShutdown());
+    await done.future;
+    await sigInt.cancel();
+    await sigTerm?.cancel();
+  } finally {
+    await server.stop();
+    httpClient.close();
+    try {
+      await lock.unlock();
+    } on Object {
+      // Best-effort cleanup.
+    }
+    await lock.close().catchError((Object _) {});
   }
-
-  sigInt = ProcessSignal.sigint.watch().listen(shutdown);
-  if (!Platform.isWindows) {
-    sigTerm = ProcessSignal.sigterm.watch().listen(shutdown);
-  }
-  await done.future;
-  await sigInt.cancel();
-  await sigTerm?.cancel();
-  await server.stop();
-  httpClient.close();
   return 0;
 }
 
@@ -118,7 +131,10 @@ Future<int> _stopConnectorDaemon() async {
     stdout.writeln('fa connector: already stopped');
     return 0;
   }
-  Process.killPid(state.pid);
+  // Graceful HTTP shutdown first so Windows also retracts live agents and
+  // cleans connector.json instead of hard-killing via TerminateProcess.
+  final graceful = await requestConnectorDaemonShutdown(state);
+  if (!graceful) Process.killPid(state.pid);
   stdout.writeln('fa connector: stopped (pid=${state.pid})');
   return 0;
 }
