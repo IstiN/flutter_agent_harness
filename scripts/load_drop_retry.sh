@@ -194,6 +194,11 @@ run_streamed() {
   local runner_pid=$!
   if [ "$SPAM_LIMIT" -gt 0 ]; then
     (
+      # gh-2404 (macOS bash 3.2): the parent's teardown TERM must end this
+      # subshell as a CLEAN exit, not a signal death — bash 3.2 then prints
+      # a job notice quoting this whole subshell (the wedge phrase included)
+      # to stderr, where it double-counts as a second wedge kill.
+      trap 'exit 0' TERM
       # `read -t` is the poll timer: a BUILTIN — killing this subshell
       # mid-wait forks no `sleep` child for the job harness to report.
       # The timer fd is the watchdog-private O_RDWR fifo opened above
@@ -235,7 +240,9 @@ run_streamed() {
   local i
   for i in 1 2 3 4 5; do
     kill -0 "$tee_pid" 2>/dev/null || break
-    read -t 0.2 -u 3 || true
+    # gh-2404: bash 3.2 (macOS) rejects fractional -t — silence its error;
+    # the ladder still caps the drain at ~1 s on bash 4+ and 0 s on 3.2.
+    read -t 0.2 -u 3 2>/dev/null || true
   done
   exec 3<&- || true
   kill "$tee_pid" 2>/dev/null || true
