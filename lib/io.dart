@@ -46,3 +46,4 @@ export 'src/tools/sqlite/sqlite3_engine_stub.dart'
 // device enrollment/ticket client. Connector core stays pure Dart — this
 // never enters lib/flutter_agent_harness.dart.
 export 'src/network/connector/device_transport_io.dart';
+export 'src/network/connector/connector_daemon_io.dart';

@@ -113,12 +113,14 @@ final class ChannelChatService implements FaChatService {
         continue;
       }
       if (candidate.text == deviceDmAcceptedReceipt) {
-        status = FaChatDeliveryStatus.accepted;
-      } else if (status != FaChatDeliveryStatus.accepted) {
-        status = FaChatDeliveryStatus.queued;
+        return FaChatDeliveryStatus.accepted;
       }
+      status = FaChatDeliveryStatus.queued;
     }
-    return status;
+    // Show an immediate pending/queued indicator on freshly sent DM bubbles
+    // until the peer's `accepted` receipt arrives (or history already holds a
+    // non-receipt reply from the peer after this message).
+    return status ?? FaChatDeliveryStatus.queued;
   }
 
   @override
