@@ -63,9 +63,16 @@ extension AgentCliUsageLedger on AgentCli {
       if (metadata.id.isEmpty || metadata.path.isEmpty) return;
       final read = await _env.readTextLines(metadata.path);
       if (read.isErr) return; // deleted/empty session: nothing to fold
-      final ledger = const UsageChainFolder().foldChain(
+      final traceEnabled =
+          isTruthyEnvValue(environment['FA_USAGE_TRACE']) &&
+          identical(_usageSegmentMarkedFor, session);
+      final scan = UsageChainScanner(
+        captureTrace: traceEnabled,
+        redactToolName: config.redactionPipeline?.redact,
+      ).scan(read.valueOrNull!);
+      final ledger = const UsageChainFolder().foldScan(
         sessionId: metadata.id,
-        lines: read.valueOrNull!,
+        scan: scan,
       );
       if (ledger.total.totals.requests == 0) return; // nothing was spent
       final dir = UsageLedgerWriter.usageDirFor(
@@ -75,6 +82,15 @@ extension AgentCliUsageLedger on AgentCli {
       await _persistFoldIfStale(dir, ledger);
       final closed = ledger.segments.lastOrNull;
       if (closed != null) {
+        if (traceEnabled && !scan.emptyTrailingSegment) {
+          for (final entry in scan.segments.last.traceLines) {
+            final line = 'sid=${metadata.id} $entry';
+            _logDiagnostic(line);
+            if (mirrorTokensLineToRunLog && !_useTui) {
+              io.writeln(config.redactionPipeline?.redact(line) ?? line);
+            }
+          }
+        }
         final line = usageTokensLogLine(
           sessionId: metadata.id,
           segment: closed,

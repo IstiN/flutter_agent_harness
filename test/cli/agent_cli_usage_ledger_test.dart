@@ -34,6 +34,7 @@ void main() {
   AgentCli cliFor(
     List<List<AssistantMessageEvent>> turns, {
     String? sessionName,
+    Map<String, String> environment = const {},
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
@@ -45,6 +46,7 @@ void main() {
       providerKind: 'openai-completions',
     ),
     io: io,
+    environment: environment,
     streamFunction: FakeStreamFunction(turns).call,
     version: '0.0.0-test',
   );
@@ -76,6 +78,112 @@ void main() {
       // string the settings/UI display.
       expect(payload, contains('"model":"test-model"'));
       expect(usageTokensLogPattern.hasMatch(payload), isTrue);
+      expect(log, isNot(contains('usage_request:')));
+      expect(log, isNot(contains('tool_result:')));
+    },
+  );
+
+  test(
+    'opt-in trace reconciles with the segment and measures tool results',
+    () async {
+      final body = 'résult ' * 3000;
+      await env.writeFile('/work/data.txt', body);
+      final splitIo = SplitChannelCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          homeDir: '/home',
+          providerKind: 'openai-completions',
+        ),
+        environment: const {'FA_USAGE_TRACE': '1'},
+        io: splitIo,
+        streamFunction: FakeStreamFunction([
+          toolTurn(const [
+            ToolCall(
+              id: 'r1',
+              name: 'read',
+              arguments: {'path': '/work/data.txt'},
+            ),
+            ToolCall(id: 'r2', name: 'nonexistent', arguments: {}),
+          ]),
+          textTurn('done', usage: reportedUsage(input: 73, output: 9)),
+        ]).call,
+        version: '0.0.0-test',
+      );
+      expect(await cli.runHeadless('read the file'), 0);
+
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      final session = sessions.single;
+      final ledger = (await readLedger(session.id))!;
+      final chain = (await env.readTextFile(session.path)).valueOrNull!;
+      final diagnostics = splitIo.diag.toString().split('\n');
+      final trace = diagnostics
+          .where(
+            (line) =>
+                line.contains('usage_request: ') ||
+                line.contains('tool_result:'),
+          )
+          .toList();
+      final usage = trace
+          .where((line) => line.contains('usage_request: '))
+          .map(
+            (line) =>
+                jsonDecode(line.split('usage_request: ').last)
+                    as Map<String, dynamic>,
+          )
+          .toList();
+      expect(usage, hasLength(ledger.segments.single.totals.requests));
+      for (final (key, total) in [
+        ('in', ledger.segments.single.totals.input),
+        ('out', ledger.segments.single.totals.output),
+        ('cr', ledger.segments.single.totals.cacheRead),
+      ]) {
+        expect(
+          usage.fold<int>(0, (sum, entry) => sum + (entry[key] as int)),
+          total,
+        );
+      }
+      expect(usage.map((entry) => entry['source']), ['estimated', 'reported']);
+      final toolRecords = chain
+          .split('\n')
+          .where((line) => line.contains('"type":"message"'))
+          .map((line) => jsonDecode(line) as Map<String, dynamic>)
+          .where((record) => (record['message'] as Map)['role'] == 'toolResult')
+          .toList();
+      final toolTrace = trace
+          .where((line) => line.contains('tool_result:'))
+          .toList();
+      expect(toolTrace, hasLength(2));
+      expect(toolRecords, hasLength(2));
+      for (var i = 0; i < toolRecords.length; i++) {
+        final message = toolRecords[i]['message'] as Map<String, dynamic>;
+        final bytes = utf8.encode(jsonEncode(message['content'])).length;
+        expect(bytes, greaterThan(0));
+        expect(
+          toolTrace[i],
+          endsWith(
+            'tool_result:${Uri.encodeComponent(message['toolName'] as String)}:$bytes',
+          ),
+        );
+      }
+      expect(trace.first, contains('usage_request: '));
+      expect(trace.last, contains('usage_request: '));
+      expect(trace.join(), isNot(contains(body)));
+      expect(
+        utf8.encode('${trace.join('\n')}\n').length,
+        lessThan(utf8.encode(chain).length * 0.05),
+      );
+      expect(splitIo.out.toString(), 'done\n');
+      final tokenLine = diagnostics.singleWhere(
+        (line) => line.startsWith(usageTokensLogPrefix),
+      );
+      expect(usageTokensLogPattern.hasMatch(tokenLine), isTrue);
     },
   );
 
@@ -211,6 +319,7 @@ void main() {
         providerKind: 'openai-completions',
       ),
       io: HepEventsIO(rawIo),
+      environment: const {'FA_USAGE_TRACE': '1'},
       streamFunction: FakeStreamFunction([
         textTurn('ok', usage: reportedUsage()),
       ]).call,
@@ -226,12 +335,14 @@ void main() {
     // Structured modes own stdout exclusively — every emitted line
     // must stay machine-parseable NDJSON.
     expect(lines.where((line) => line.contains(usageTokensLogPrefix)), isEmpty);
+    expect(lines.where((line) => line.contains('usage_request:')), isEmpty);
     // HepEventsIO drops write and forwards writeln: raw stdout stays
     // empty (the frames carry everything), while the mirror line rides
     // the host's diagnostics channel (stderr headless) — the run-log
     // capture still sees it in structured modes.
     expect(rawIo.out.toString(), isEmpty);
     expect(rawIo.diag.toString(), contains(usageTokensLogPrefix));
+    expect(rawIo.diag.toString(), contains('usage_request:'));
     // The line still reached the diag log.
     final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
     expect(log, contains(usageTokensLogPrefix));
@@ -291,6 +402,36 @@ void main() {
       expect(ledger.total.totals.input, 37);
     },
   );
+
+  test('opt-in resumed leg traces only its own segment', () async {
+    final first = cliFor(
+      [textTurn('one', usage: reportedUsage(input: 10, output: 5))],
+      environment: const {'FA_USAGE_TRACE': '1'},
+    );
+    expect(await first.runHeadless('go'), 0);
+    final sessions = await JsonlSessionRepo(
+      fs: env,
+      sessionsRoot: '/sessions',
+    ).list();
+    final second = cliFor(
+      [textTurn('two', usage: reportedUsage(input: 20, output: 7))],
+      sessionName: sessions.single.id,
+      environment: const {'FA_USAGE_TRACE': '1'},
+    );
+    expect(await second.runHeadless('again'), 0);
+    final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
+    final requests = log
+        .split('\n')
+        .where((line) => line.contains('usage_request: '))
+        .map(
+          (line) =>
+              jsonDecode(line.split('usage_request: ').last)
+                  as Map<String, dynamic>,
+        )
+        .toList();
+    expect(requests.map((request) => request['in']), [10, 20]);
+    expect(requests.map((request) => request['out']), [5, 7]);
+  });
 
   test(
     'a fake provider that omits usage marks the segment estimated (AC4)',
