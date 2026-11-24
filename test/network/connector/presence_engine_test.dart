@@ -264,7 +264,11 @@ void main() {
         'ts': '2026-11-12T10:00:00.000Z',
         'machine': 'online',
         'agents': [
-          {'address': 'goal_builder@macbook', 'state': 'live'},
+          {
+            'address': 'goal_builder@macbook',
+            'name': 'goal_builder',
+            'state': 'live',
+          },
         ],
         'sessions': [
           {'id': 'sess-1', 'state': 'wake_on_dm'},
