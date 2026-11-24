@@ -24,6 +24,8 @@ import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../providers/fahx_codec.dart' show pbkdf2Sha256;
+
 /// The envelope prefix every encrypted `priv` carries.
 const dapKeyEnvelopePrefix = 'dapkey1.';
 
@@ -52,16 +54,7 @@ Future<List<int>> _deriveKey(
   List<int> salt,
   int iterations,
 ) async {
-  final kdf = Pbkdf2(
-    macAlgorithm: Hmac.sha256(),
-    iterations: iterations,
-    bits: 256,
-  );
-  final key = await kdf.deriveKey(
-    secretKey: SecretKey(utf8.encode(passphrase)),
-    nonce: salt,
-  );
-  return key.extractBytes();
+  return pbkdf2Sha256(utf8.encode(passphrase), salt, iterations, 32);
 }
 
 /// Encrypts a plaintext base64 channel private key with [passphrase].

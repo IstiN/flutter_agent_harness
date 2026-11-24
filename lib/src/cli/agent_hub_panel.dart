@@ -677,7 +677,7 @@ const int logFaceCardMaxBodyChars = 2000;
 
 /// Clips [text] to [width] visible characters with an ellipsis.
 String _clip(String text, int width) {
-  final flat = text.replaceAll('\n', ' ');
+  final flat = text.contains('\n') ? text.replaceAll('\n', ' ') : text;
   if (flat.length <= width) return flat;
   if (width <= 1) return flat.substring(0, width);
   return '${flat.substring(0, width - 1)}…';
