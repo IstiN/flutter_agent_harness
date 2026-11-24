@@ -48,6 +48,7 @@
 ///     it again (AC21), never masked by a healed transient.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'package:test/test.dart';
 
@@ -108,6 +109,18 @@ if [ "\$N" -ge 2 ]; then
       # rerun; the per-run baseline must not).
       printf '%s\n' '{"type":"done","success":true}' > "\$main"
       sleep 2
+      exit 0 ;;
+    wedge-heal-evidence)
+      # gh-2399 AC26: the rerun records the suites attempt 1 lost (here the
+      # budgeted-suite shape: a suite with two completed tests) into the
+      # rerun reporter log the consumers never read — the exact shape run
+      # 45389186796 shard 2/3 healed with.
+      printf '%s\n' '{"type":"suite","suite":{"id":20,"path":"test/integration/trajectory/lost_test.dart","platform":"vm"}}' > "\$main"
+      printf '%s\n' '{"type":"testStart","test":{"id":21,"name":"lost case one","suiteID":20,"groupIDs":[]},"time":100}' >> "\$main"
+      printf '%s\n' '{"type":"testDone","testID":21,"result":"success","hidden":false,"skipped":false,"time":5000}' >> "\$main"
+      printf '%s\n' '{"type":"testStart","test":{"id":22,"name":"lost case two","suiteID":20,"groupIDs":[]},"time":5100}' >> "\$main"
+      printf '%s\n' '{"type":"testDone","testID":22,"result":"success","hidden":false,"skipped":false,"time":7000}' >> "\$main"
+      printf '%s\n' '{"type":"done","success":true}' >> "\$main"
       exit 0 ;;
     drop-then-drop-other)
       if [ "\$N" -eq 2 ]; then
@@ -204,6 +217,26 @@ case "\$MODE" in
     echo 'Attempt:1 waiting for isolate _waitForExitCode to check in'
     echo 'Attempt:2 waiting for isolate _waitForExitCode to check in'
     echo 'Attempt:3 waiting for isolate _waitForExitCode to check in'
+    sleep 300
+    exit 0 ;;
+  wedge-heal-evidence)
+    # gh-2399 AC26 attempt 1: the engine-abandonment wedge — a healthy
+    # suite completes, a second suite's test starts and never finishes
+    # (the whole suite is lost mid-run), then the exit-handshake wedge
+    # hangs the runner. The main reporter log stays a TRUNCATED
+    # attempt-1 stream (no done event) — the lost suite's spans exist
+    # only in the rerun log the wrapper is about to write. This is the
+    # exact shape of run 45389186796 (v1.0.772) PTY shard 2/3: the #928
+    # duration gate reads the main json only and phantom-failed
+    # "budgeted suite did not run" for suites the rerun ran green.
+    printf '%s\n' '{"type":"suite","suite":{"id":1,"path":"test/healthy_test.dart","platform":"vm"}}' > "\$main"
+    printf '%s\n' '{"type":"suite","suite":{"id":2,"path":"test/integration/trajectory/lost_test.dart","platform":"vm"}}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":10,"name":"healthy case","suiteID":1,"groupIDs":[]},"time":0}' >> "\$main"
+    printf '%s\n' '{"type":"testDone","testID":10,"result":"success","hidden":false,"skipped":false,"time":5}' >> "\$main"
+    printf '%s\n' '{"type":"testStart","test":{"id":11,"name":"lost case one","suiteID":2,"groupIDs":[]},"time":6}' >> "\$main"
+    printf '%s\n' '{"type":"allSuites","count":3,"time":12}' >> "\$main"
+    echo 'Attempt:1 waiting for isolate _waitForExitCode to check in'
+    echo 'Attempt:2 waiting for isolate _waitForExitCode to check in'
     sleep 300
     exit 0 ;;
   unfinished-exit70)
@@ -691,4 +724,168 @@ void main() {
       );
     },
   );
+
+  // ── gh-2399: the healed shard's evidence must be COMPLETE. The #928
+  //    duration-budget gate (pty-coverage-gate) reads ONLY the main
+  //    reporter log, and the gh-1300 shard-budget gate + junit conversion
+  //    read the same artifact. After a wedge heal the attempt-1 log is a
+  //    truncated stream (SIGKILL mid-run — run 45389186796 shard 2/3
+  //    ended at t=33s while the rerun ran to 12:03:20 green), so suites
+  //    present only in `<retry-log>.rerunK` phantom-fail the gate as
+  //    "budgeted suite did not run". On a green heal the wrapper must fold
+  //    every surviving rerun log into the main log — dedup per (suite
+  //    path, test name), the LATEST attempt's span wins, so a re-run file
+  //    is never double-counted — after preserving the raw attempt-1 bytes
+  //    beside it. The rerun logs themselves stay untouched (rerun
+  //    evidence), and the shard verdict logic is unchanged.
+  test('AC26 a green heal folds the rerun evidence into the main reporter '
+      'log and preserves raw attempt-1 bytes', () async {
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-heal-evidence',
+      targets:
+          'test/healthy_test.dart test/integration/trajectory/lost_test.dart',
+      env: {'LOAD_DROP_RETRY_SPAM_LIMIT': '2'},
+    );
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(r.stderr, contains('healed'));
+    expect(invocations(tmp.path), hasLength(2));
+
+    List<Map<String, dynamic>> events(String path) => [
+      for (final line in File(path).readAsLinesSync())
+        if (line.trim().isNotEmpty) jsonDecode(line) as Map<String, dynamic>,
+    ];
+
+    // The merged main log now carries the lost suite the rerun ran.
+    final merged = events('${tmp.path}/main.json');
+    final mergedPaths = [
+      for (final ev in merged)
+        if (ev['type'] == 'suite') (ev['suite'] as Map)['path'] as String,
+    ];
+    expect(
+      mergedPaths,
+      contains('test/integration/trajectory/lost_test.dart'),
+      reason:
+          'the duration-gate consumer must see the suite the rerun ran — '
+          'without the fold it phantom-fails "budgeted suite did not run" '
+          '(gh-2399, run 45389186796)',
+    );
+    // Spans: the rerun's completed tests with their rerun durations.
+    // "lost case one" started in attempt 1 (testStart, never finished) and
+    // completed in the rerun (time 1000→5000 = 4.9 s); the fold must keep
+    // exactly one span per (suite, name).
+    double span(String suitePath, String name) {
+      final suites = <int, String>{
+        for (final ev in merged)
+          if (ev['type'] == 'suite')
+            (ev['suite'] as Map)['id'] as int:
+                (ev['suite'] as Map)['path'] as String,
+      };
+      final starts = <int, List<dynamic>>{
+        for (final ev in merged)
+          if (ev['type'] == 'testStart')
+            (ev['test'] as Map)['id'] as int: [
+              (ev['test'] as Map)['name'] as String,
+              suites[(ev['test'] as Map)['suiteID']],
+              ev['time'] as int,
+            ],
+      };
+      for (final ev in merged) {
+        if (ev['type'] != 'testDone') continue;
+        final start = starts[ev['testID']];
+        if (start == null) continue;
+        if (start[0] == name && start[1] == suitePath) {
+          return ((ev['time'] as int) - (start[2] as int)) / 1000.0;
+        }
+      }
+      throw StateError('no span for $suitePath::$name');
+    }
+
+    expect(
+      span('test/integration/trajectory/lost_test.dart', 'lost case one'),
+      closeTo(4.9, 0.001),
+      reason: 'the rerun span wins over attempt-1\'s unfinished start',
+    );
+    expect(
+      span('test/integration/trajectory/lost_test.dart', 'lost case two'),
+      closeTo(1.9, 0.001),
+    );
+    expect(
+      span('test/healthy_test.dart', 'healthy case'),
+      closeTo(0.005, 0.001),
+      reason: 'attempt-1 spans of suites the rerun never touched survive',
+    );
+    // A valid stream ends with a done event (the truncated attempt-1 log
+    // had none).
+    expect(merged.last['type'], 'done');
+
+    // Raw attempt-1 evidence is preserved beside the merged log: the
+    // truncated stream (healthy span, unfinished lost start, allSuites,
+    // NO lost testDone).
+    final attempt1 = events('${tmp.path}/main.json.attempt1');
+    expect(
+      attempt1.any(
+        (ev) =>
+            ev['type'] == 'suite' &&
+            (ev['suite'] as Map)['path'] ==
+                'test/integration/trajectory/lost_test.dart',
+      ),
+      isTrue,
+      reason: 'the truncated attempt-1 stream is byte-preserved',
+    );
+    expect(
+      attempt1.any((ev) => ev['type'] == 'testDone' && ev['testID'] == 11),
+      isFalse,
+      reason: 'attempt-1 never finished "lost case one" — raw evidence',
+    );
+
+    // Rerun evidence logs stay untouched (rerun-evidence only).
+    final rerun = events('${tmp.path}/retry.json.rerun1');
+    expect(
+      rerun.any((ev) => ev['type'] == 'testDone' && ev['testID'] == 22),
+      isTrue,
+    );
+  });
+
+  test('AC27 a fold RENAME failure stays loud and never flips a green-healed '
+      'shard red (set -e must not exit on the mv)', () async {
+    // A transient storage failure (the gh-1412 blob-storage class) hits
+    // exactly the success-path `mv -f <main>.merged.$$ <main>`: the stub
+    // fails only the fold rename and passes everything else through.
+    final stubBin = Directory('${tmp.path}/stubbin')..createSync();
+    final stubMv = File('${stubBin.path}/mv')
+      ..writeAsStringSync('''
+#!/usr/bin/env bash
+case "\$*" in
+  *main.json.merged*)
+    echo "mv: cannot rename: simulated transient storage failure" >&2
+    exit 1 ;;
+  *) exec /usr/bin/mv "\$@" ;;
+esac
+''');
+    Process.runSync('chmod', ['+x', stubMv.path]);
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-heal-evidence',
+      targets:
+          'test/healthy_test.dart test/integration/trajectory/lost_test.dart',
+      env: {'LOAD_DROP_RETRY_SPAM_LIMIT': '2'},
+      pathPrefix: stubBin.path,
+    );
+    // The shard healed green — a fold rename failure must not exit the
+    // wrapper (set -euo pipefail) at mv's status.
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(r.stderr, contains('healed'));
+    // The failure is loud, per the fold-failure invariant.
+    expect(r.stderr, contains('WARNING'));
+    expect(r.stderr, contains('fold rename failed'));
+    // The main log keeps attempt-1's truncated stream (never a partial
+    // rename): no rerun span landed (attempt-1 never finished "lost case
+    // one" — its testID was 11; the rerun's spans are 21/22) and no done
+    // event was synthesised.
+    final mainText = File('${tmp.path}/main.json').readAsStringSync();
+    expect(mainText, isNot(contains('"testID":21')));
+    expect(mainText, isNot(contains('"testID":22')));
+    expect(mainText, isNot(contains('"type":"done"')));
+  });
 }

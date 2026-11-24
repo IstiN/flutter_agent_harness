@@ -215,6 +215,45 @@ void main() {
     expect(cli.waitingRegistryNoticeForTest, isNull);
   });
 
+  test('a lock released after exclusive-create refusal is retried', () async {
+    final workspace = await Directory.systemTemp.createTemp('fah-lock-race-');
+    addTearDown(() => _deleteBestEffort(workspace));
+    final delegate = LocalExecutionEnv(cwd: workspace.path);
+    final env = _ReleasedLockEnv(delegate);
+    final io = FakeCliIO();
+    addTearDown(io.close);
+    final logs = '${workspace.path}/.fah/bash_jobs';
+    await delegate.createDir(logs);
+    await delegate.writeFile(
+      '$logs/running.json',
+      '[{"id":"sh-x","command":"watch.sh","pid":"999999"}]',
+    );
+    await delegate.writeFile('$logs/running.json.lock', 'held');
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    cli.waitingProcessTableForTest = () async =>
+        (pids: <int>{}, starts: <int, String>{});
+
+    await cli.waitingCaptureLostJobsForTest();
+
+    expect(env.released, isTrue);
+    expect(env.claimAttempts, greaterThanOrEqualTo(2));
+    expect(cli.waitingRegistryNoticeForTest, isNull);
+    expect(cli.waitingLostJobsForTest, 1);
+    expect(
+      (await delegate.readTextFile('$logs/running.json')).getOrThrow(),
+      '[]',
+    );
+  });
+
   test('REG: a non-occupancy lock refusal surfaces its real fs cause '
       'without contention retries', () async {
     final delegate = MemoryExecutionEnv(cwd: '/ws');
@@ -332,6 +371,26 @@ void main() {
     expect(cli.waitingRegistryNoticeForTest, isNull);
     expect(io.out.toString(), isNot(contains('#2266')));
   });
+}
+
+final class _ReleasedLockEnv extends ForwardingFs
+    implements ExclusiveCreateFileSystem {
+  _ReleasedLockEnv(this._local) : super(_local);
+
+  final LocalExecutionEnv _local;
+  var claimAttempts = 0;
+  var released = false;
+
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) async {
+    claimAttempts++;
+    final result = await _local.createFileExclusive(path);
+    if (result.isErr && !released) {
+      (await _local.remove(path)).getOrThrow();
+      released = true;
+    }
+    return result;
+  }
 }
 
 /// An exclusive-create backend whose lock claim is refused by the fs, not

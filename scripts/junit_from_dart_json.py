@@ -30,13 +30,17 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 
-def iter_test_spans(json_path):
-    """Yield (suite_path, test_name, duration_seconds, failed) per test.
+def iter_test_events(json_path):
+    """Yield (suite_path, test_name, start_ms, end_ms, failed) per test.
 
-    The canonical dart-json span walk: paired testStart/testDone, hidden
-    pseudo-tests excluded, torn/partial lines skipped (never fatal for
-    timing data). Consumed by this converter AND
-    scripts/check_test_durations.py.
+    The canonical dart-json walk, one level under iter_test_spans: paired
+    testStart/testDone WITH the reporter's absolute times (ms since that
+    runner's start), hidden pseudo-tests excluded, torn/partial lines
+    skipped (never fatal for timing data). Consumed by iter_test_spans
+    AND scripts/merge_dart_json_reports.py — the gh-2399 evidence fold
+    needs span PLACEMENT (per-attempt relative clocks), not just
+    durations, and must not re-implement the parser (one walk, no drift
+    across #194/#928-style fixes).
     """
     suites = {}  # suiteID -> test file path
     starts = {}  # testID -> (name, suite path, start ms)
@@ -55,16 +59,28 @@ def iter_test_spans(json_path):
             elif kind == "testStart":
                 starts[ev["test"]["id"]] = (
                     ev["test"].get("name", ""),
-                    suites.get(ev["test"]["suiteID"], ""),
+                    suites.get(ev["test"].get("suiteID"), ""),
                     ev["time"],
                 )
             elif kind == "testDone":
                 tid = ev["testID"]
                 if tid in starts and not ev.get("hidden", False):
                     name, path, t0 = starts.pop(tid)
-                    dur = max((ev["time"] - t0) / 1000.0, 0.0)
-                    failed = ev.get("result") in ("failure", "error")
-                    yield path, name, dur, failed
+                    yield path, name, t0, max(ev["time"], t0), ev.get(
+                        "result"
+                    ) in ("failure", "error")
+
+
+def iter_test_spans(json_path):
+    """Yield (suite_path, test_name, duration_seconds, failed) per test.
+
+    The canonical dart-json span walk: paired testStart/testDone, hidden
+    pseudo-tests excluded, torn/partial lines skipped (never fatal for
+    timing data). Consumed by this converter AND
+    scripts/check_test_durations.py.
+    """
+    for path, name, t0, t1, failed in iter_test_events(json_path):
+        yield path, name, max((t1 - t0) / 1000.0, 0.0), failed
 
 
 def convert(json_path: str, xml_path: str) -> int:
