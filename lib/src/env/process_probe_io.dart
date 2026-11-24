@@ -41,6 +41,11 @@ Future<String?> pidStartSnapshot(int pid) async {
 // classification over it; the IO layer only runs `ps`.
 // ---------------------------------------------------------------------------
 
+final _psWhitespace = RegExp(r'\s+');
+final _lstartPattern = RegExp(
+  r'^(\w{3}) (\w{3})\s+(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
+);
+
 /// One `ps -ax -o pid=,ppid=,pgid=,lstart=,command=` row: the full
 /// identity a survivor classification and liveness sample read.
 typedef ProcessDetailRow = ({
@@ -62,7 +67,7 @@ Future<List<ProcessDetailRow>?> processDetailTableSnapshot() async {
   if (raw == null) return null;
   final rows = <ProcessDetailRow>[];
   for (final line in raw.split('\n')) {
-    final cols = line.trim().split(RegExp(r'\s+'));
+    final cols = line.trim().split(_psWhitespace);
     // Identity columns: pid ppid pgid + 5 lstart words = 8. Rows whose
     // command ps cannot print stay identified (command: null -> the
     // <unknown cmd> surface downstream).
@@ -86,9 +91,7 @@ Future<List<ProcessDetailRow>?> processDetailTableSnapshot() async {
 /// time); null when the shape does not match. Second resolution only —
 /// ps never reports sub-second starts.
 DateTime? tryParseLstart(String value) {
-  final m = RegExp(
-    r'^(\w{3}) (\w{3})\s+(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
-  ).firstMatch(value.trim());
+  final m = _lstartPattern.firstMatch(value.trim());
   if (m == null) return null;
   const months = {
     'Jan': 1,

@@ -125,14 +125,21 @@ final class SessionLineScanner {
       var lineStart = 0;
       for (var i = 0; i < chunk.length; i++) {
         if (chunk[i] != 0x0A) continue;
-        carry.add(chunk.sublist(lineStart, i));
-        final line = carry.toBytes();
-        carry = BytesBuilder(copy: false);
+        final Uint8List lineBytes;
+        if (carry.isEmpty) {
+          // Zero-copy view into the chunk when the line did not cross a
+          // chunk boundary (the common case for every line except at most
+          // one per 4 MiB chunk).
+          lineBytes = Uint8List.sublistView(chunk, lineStart, i);
+        } else {
+          carry.add(Uint8List.sublistView(chunk, lineStart, i));
+          lineBytes = carry.takeBytes();
+        }
         await onLine(
           SessionScannedLine(
             start: carryStart,
             end: cursor + i + 1,
-            text: utf8.decode(line, allowMalformed: true),
+            text: utf8.decode(lineBytes, allowMalformed: true),
           ),
         );
         lines++;
@@ -140,7 +147,7 @@ final class SessionLineScanner {
         lineStart = i + 1;
       }
       if (lineStart < chunk.length) {
-        carry.add(chunk.sublist(lineStart));
+        carry.add(Uint8List.sublistView(chunk, lineStart));
       }
       cursor = end;
     }
@@ -159,7 +166,11 @@ final class SessionLineScanner {
     return SessionLineScanResult(bytes: size, lines: lines);
   }
 
-  Future<Uint8List> _readRange(RangedReadFileSystem ranged, int a, int b) async {
+  Future<Uint8List> _readRange(
+    RangedReadFileSystem ranged,
+    int a,
+    int b,
+  ) async {
     final result = await ranged.readRange(path, a, b);
     if (result.isErr) {
       final error = result.errorOrNull!;

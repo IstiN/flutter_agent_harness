@@ -668,11 +668,16 @@ Future<String> _spanTextToWrite(
   (int, int) span,
   Map<int, _RepairLineRewrite> lineRewrites,
 ) async {
-  final keys =
-      lineRewrites.keys
-          .where((start) => start >= span.$1 && start < span.$2)
-          .toList()
-        ..sort();
+  final List<int> keys;
+  if (lineRewrites.isEmpty) {
+    keys = const [];
+  } else {
+    keys =
+        lineRewrites.keys
+            .where((start) => start >= span.$1 && start < span.$2)
+            .toList()
+          ..sort();
+  }
   final raw = await ranged.readRange(path, span.$1, span.$2);
   final bytes = raw.valueOrNull;
   if (bytes == null) {
@@ -696,14 +701,14 @@ Future<String> _spanTextToWrite(
   var cursor = 0; // byte offset within the span
   for (final key in keys) {
     final lineStart = key - span.$1;
-    out.add(bytes.sublist(cursor, lineStart));
+    out.add(Uint8List.sublistView(bytes, cursor, lineStart));
     out.add(utf8.encode(lineRewrites[key]!.replacement));
     // Advance past the ORIGINAL line (its newline included) — the same
     // 0x0A byte split the scanner used to find it.
     final lineEnd = bytes.indexOf(0x0A, lineStart);
     cursor = lineEnd < 0 ? bytes.length : lineEnd + 1;
   }
-  out.add(bytes.sublist(cursor));
+  out.add(Uint8List.sublistView(bytes, cursor));
   return utf8.decode(out.takeBytes(), allowMalformed: true);
 }
 

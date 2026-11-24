@@ -65,6 +65,15 @@ final class MemoryFileSystem
   final Set<String> _dirs = {};
 
   String _normalize(String path) {
+    // Fast path for already-canonical absolute paths (the vast majority of
+    // session/storage reads & appends: no `//`, no `/.`, no trailing `/`).
+    if (path.startsWith('/')) {
+      final len = path.length;
+      if (len == 1) return '/';
+      if (!path.contains('//') && !path.contains('/.') && !path.endsWith('/')) {
+        return path;
+      }
+    }
     var p = path;
     if (!p.startsWith('/')) p = '$cwd/$p';
     final segments = <String>[];
@@ -146,7 +155,7 @@ final class MemoryFileSystem
     final from = start.clamp(0, bytes.length);
     final to = end.clamp(from, bytes.length);
     if (to <= from) return Ok(Uint8List(0));
-    return Ok(Uint8List.fromList(bytes.sublist(from, to)));
+    return Ok(bytes.sublist(from, to));
   }
 
   @override
@@ -170,7 +179,7 @@ final class MemoryFileSystem
 
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) async {
-    return writeBinaryFile(path, Uint8List.fromList(utf8.encode(content)));
+    return writeBinaryFile(path, utf8.encode(content));
   }
 
   @override
@@ -194,16 +203,14 @@ final class MemoryFileSystem
   ) async {
     final resolved = _normalize(path);
     _ensureParents(resolved);
+    final encoded = utf8.encode(content);
+    final now = DateTime.now().millisecondsSinceEpoch;
     final existing = _files[resolved];
-    final bytes = existing?.bytes ?? Uint8List(0);
-    final encoded = Uint8List.fromList(utf8.encode(content));
-    final appended = Uint8List(bytes.length + encoded.length);
-    appended.setAll(0, bytes);
-    appended.setAll(bytes.length, encoded);
-    _files[resolved] = _MemoryFile(
-      appended,
-      DateTime.now().millisecondsSinceEpoch,
-    );
+    if (existing == null) {
+      _files[resolved] = _MemoryFile(encoded, now);
+      return const Ok(null);
+    }
+    existing.append(encoded, now);
     return const Ok(null);
   }
 
@@ -413,10 +420,34 @@ final class MemoryFileSystem
 }
 
 final class _MemoryFile {
-  _MemoryFile(this.bytes, this.mtimeMs);
+  _MemoryFile(Uint8List initial, this.mtimeMs)
+    : _buffer = initial,
+      _length = initial.length;
 
-  final Uint8List bytes;
-  final int mtimeMs;
+  Uint8List _buffer;
+  int _length;
+  int mtimeMs;
+
+  Uint8List get bytes => _length == _buffer.length
+      ? _buffer
+      : Uint8List.sublistView(_buffer, 0, _length);
+
+  void append(Uint8List chunk, int newMtimeMs) {
+    mtimeMs = newMtimeMs;
+    if (chunk.isEmpty) return;
+    final needed = _length + chunk.length;
+    if (needed > _buffer.length) {
+      var nextCap = _buffer.isEmpty ? 64 : _buffer.length * 2;
+      while (nextCap < needed) {
+        nextCap *= 2;
+      }
+      final grown = Uint8List(nextCap);
+      if (_length > 0) grown.setRange(0, _length, _buffer);
+      _buffer = grown;
+    }
+    _buffer.setRange(_length, needed, chunk);
+    _length = needed;
+  }
 }
 
 /// A [Shell] that reports [ExecutionErrorCode.shellUnavailable] for every

@@ -713,12 +713,14 @@ final class _WrapPart {
       isStyle = true,
       isSpace = false;
 
-  _WrapPart.space()
+  const _WrapPart.space()
     : text = ' ',
       runeWidth = 1,
       runes = 1,
       isStyle = false,
       isSpace = true;
+
+  static const _WrapPart spaceInstance = _WrapPart.space();
 
   final String text;
   final int runeWidth;
@@ -781,26 +783,26 @@ bool _isSgrParamByte(int unit) =>
 /// Length of the complete SGR escape starting at unit [i]
 /// (`ESC [ [0-9;]* m` — the exact shape the old wrap regex matched), or 0
 /// when the ESC byte does not head one.
-int _sgrTokenLength(List<int> units, int i, int n) {
+int _sgrTokenLength(String line, int i, int n) {
   var k = i + 1;
-  if (k >= n || units[k] != 0x5b) return 0;
+  if (k >= n || line.codeUnitAt(k) != 0x5b) return 0;
   k++;
-  while (k < n && _isSgrParamByte(units[k])) {
+  while (k < n && _isSgrParamByte(line.codeUnitAt(k))) {
     k++;
   }
-  if (k < n && units[k] == 0x6d) return k + 1 - i;
+  if (k < n && line.codeUnitAt(k) == 0x6d) return k + 1 - i;
   return 0;
 }
 
 /// True when [i] sits on a high surrogate paired with a low surrogate —
 /// the two units are ONE rune (the old unicode-aware regex `.` matched
 /// them as a single token).
-bool _isSurrogatePairAt(List<int> units, int i, int unit) =>
+bool _isSurrogatePairAt(String text, int i, int unit) =>
     unit >= 0xd800 &&
     unit <= 0xdbff &&
-    i + 1 < units.length &&
-    units[i + 1] >= 0xdc00 &&
-    units[i + 1] <= 0xdfff;
+    i + 1 < text.length &&
+    text.codeUnitAt(i + 1) >= 0xdc00 &&
+    text.codeUnitAt(i + 1) <= 0xdfff;
 
 /// Hard-cut one same-width run across rows: per-rune equivalence with the
 /// old token walk — close before the first rune that overflows a
@@ -813,8 +815,8 @@ bool _isSurrogatePairAt(List<int> units, int i, int unit) =>
 /// (`runes == unit count`: all ASCII, all BMP CJK) skip the decode.
 void _wrapWriteRunSliced(_WrapState s, _WrapPart part) {
   final w = part.runeWidth;
-  final units = part.text.codeUnits;
-  final oneUnitRunes = part.runes == part.text.length;
+  final text = part.text;
+  final oneUnitRunes = part.runes == text.length;
   var from = 0; // rune cursor
   var off = 0; // char offset of rune [from]
   while (from < part.runes) {
@@ -829,10 +831,10 @@ void _wrapWriteRunSliced(_WrapState s, _WrapPart part) {
       off += take;
     } else {
       for (var r = 0; r < take; r++) {
-        off += _isSurrogatePairAt(units, off, units[off]) ? 2 : 1;
+        off += _isSurrogatePairAt(text, off, text.codeUnitAt(off)) ? 2 : 1;
       }
     }
-    s.row.write(part.text.substring(start, off));
+    s.row.write(text.substring(start, off));
     s.col += take * w;
     from += take;
   }
@@ -902,8 +904,7 @@ void _wrapFlushWord(_WrapState s) {
 /// runes into one substring keeps the token stream's semantics (order,
 /// widths, close positions) while removing the per-character regex match +
 /// String allocation.
-List<_WrapPart> _tokenizeWrapParts(String line) {
-  final parts = <_WrapPart>[];
+void _streamWrapParts(String line, void Function(_WrapPart part) emit) {
   // Pending same-width plain run, flushed when a rune of another class
   // arrives ([end] = index just past the run's last unit).
   var runStart = -1;
@@ -912,18 +913,17 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
 
   void endRun(int end) {
     if (runStart < 0) return;
-    parts.add(_WrapPart(line.substring(runStart, end), runWidth, runRunes));
+    emit(_WrapPart(line.substring(runStart, end), runWidth, runRunes));
     runStart = -1;
   }
 
-  final units = line.codeUnits;
-  final n = units.length;
+  final n = line.length;
   var i = 0;
   while (i < n) {
-    final u = units[i];
+    final u = line.codeUnitAt(i);
     if (u == 0x20) {
       endRun(i);
-      parts.add(_WrapPart.space());
+      emit(_WrapPart.spaceInstance);
       i++;
       continue;
     }
@@ -931,21 +931,35 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
       endRun(i);
       // SGR escape, or a lone visible ESC byte (the regex's `.`
       // alternative matched it as a zero-width rune).
-      final len = _sgrTokenLength(units, i, n);
+      final len = _sgrTokenLength(line, i, n);
       if (len > 0) {
-        parts.add(_WrapPart.style(line.substring(i, i + len)));
+        emit(_WrapPart.style(line.substring(i, i + len)));
         i += len;
       } else {
-        parts.add(_WrapPart.style('\x1b'));
+        emit(_WrapPart.style('\x1b'));
         i++;
       }
+      continue;
+    }
+    // Fast path for printable ASCII (0x21..0x7e): always width 1, never
+    // surrogate, never zero-width.
+    if (u >= 0x21 && u <= 0x7e) {
+      if (runStart < 0 || runWidth != 1) {
+        endRun(i);
+        runStart = i;
+        runWidth = 1;
+        runRunes = 1;
+      } else {
+        runRunes++;
+      }
+      i++;
       continue;
     }
     // Decode one rune (surrogate pairs stay one token).
     int rune;
     var len = 1;
-    if (_isSurrogatePairAt(units, i, u)) {
-      rune = 0x10000 + ((u - 0xd800) << 10) + (units[i + 1] - 0xdc00);
+    if (_isSurrogatePairAt(line, i, u)) {
+      rune = 0x10000 + ((u - 0xd800) << 10) + (line.codeUnitAt(i + 1) - 0xdc00);
       len = 2;
     } else {
       rune = u;
@@ -953,7 +967,7 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
     final w = tuiRuneCellWidth(rune);
     if (w == 0) {
       endRun(i);
-      parts.add(_WrapPart(line.substring(i, i + len), 0, 1));
+      emit(_WrapPart(line.substring(i, i + len), 0, 1));
       i += len;
       continue;
     }
@@ -968,7 +982,6 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
     i += len;
   }
   endRun(n);
-  return parts;
 }
 
 /// Wraps one ANSI-styled line to [width] visible CELL columns WITHOUT
@@ -1001,15 +1014,16 @@ List<_WrapPart> _tokenizeWrapParts(String line) {
 /// The unicode flag makes `.` match whole runes, keeping emoji intact.
 List<String> wrapAnsiLine(String line, int width) {
   if (width <= 0) return [line];
-  // Skip the ANSI strip on plain-text lines (the common case).
-  final hasAnsi = line.codeUnits.any((c) => c == 0x1b);
+  // Skip the ANSI strip on plain-text lines (the common case), and avoid
+  // allocating `line.codeUnits` just to check for ESC.
+  final hasAnsi = line.contains('\x1b');
   final visible = hasAnsi
       ? tuiTextWidth(line.replaceAll(AnsiMarkdown.ansiSgrPattern, ''))
       : tuiTextWidth(line);
   if (visible <= width) return [line];
 
   final s = _WrapState(width);
-  for (final part in _tokenizeWrapParts(line)) {
+  _streamWrapParts(line, (part) {
     if (part.isSpace) {
       _wrapFlushWord(s);
       // A boundary space ends the closing row when it fits; at the very
@@ -1033,7 +1047,7 @@ List<String> wrapAnsiLine(String line, int width) {
       s.wordParts.add(part);
       if (!part.isStyle) s.wordVisible += part.runes * part.runeWidth;
     }
-  }
+  });
   _wrapFlushWord(s);
   // A row holding only re-emitted SGR codes (no visible columns), or only
   // a trailing boundary space (the line's trailing whitespace — invisible
