@@ -233,6 +233,102 @@ gh-2101 one compaction run is ONE cache family:
   hit is shown, not hidden: it is the regression signal the metrics
   exist for.
 
+### Compaction 2.0 v2.1 — the merged hand-over call (gh-2394)
+
+The quality tier's post-run fold is ONE call on the **session's own
+model** that reads the last main request exactly as it was sent and
+replies with a hide list plus a hand-over text ("merged" mode). The
+judge-led checkpoint ladder stays what it was for the `standalone` mode
+(a host that wires a separate smol digest role) and for every session
+without a request snapshot; the classic engine is untouched. Which mode
+runs is decided by a pure table, never by an outcome
+(`lib/src/compaction/compaction_mode.dart`):
+
+| engine       | S0 valid for the session model | separate digest role | mode        |
+|--------------|--------------------------------|----------------------|-------------|
+| classic      | –                              | –                    | `classic`   |
+| structured   | yes                            | no                   | `merged`    |
+| structured   | no                             | –                    | `standalone`|
+| structured   | yes                            | yes                  | `standalone`|
+
+- **Record tags (the epoch rule).** Under the structured engine every
+  request prefixes each projected record with its file alias `m<N> `
+  (`record_tag.dart`); the alias index is built over the whole chain at
+  load, so the first request after a resume tags every visible record.
+  The live edge past the last record is UNTAGGED — a non-record (the
+  continue nudge, the working-set tail) never borrows a predicted alias.
+  Tags live only on the wire: `stripRecordTags` removes them before any
+  persisted text, and the CLI/Flutter tests compare hosts tag-for-tag.
+- **S0 — the request snapshot.** The agent loop captures each main
+  request as sent (`request_snapshot.dart`: messages COPY, system
+  prompt, tools, the alias index, the model, the routing). A snapshot is
+  valid until the model changes or a host/compaction run appends
+  records (`Agent.invalidateRequestSnapshot`). The hand-over call sends
+  S0's prefix byte-for-byte with the request shape in the zone
+  (`StreamCacheRouting`: NULL tool choice, the session model's
+  `maxTokens`, Anthropic's history breakpoint on the last user turn,
+  Copilot's `maxTokens`; pinning Copilot's `x-initiator` to S0 is a
+  listed gap — the snapshot carries no initiator yet), so the bucket the
+  main request just warmed
+  is read from cache — the hand-over instruction is the ONLY delta,
+  appended as the last user message (`prompts/compaction/hand_over.md`,
+  rendered with the pressure, the fold range aliases, the mechanical
+  `<open-user-requests>` block, the pinned-operative lines and the
+  folded-checkpoint blocks).
+- **The reply and what the engine does with it (AC7).** `N`/`N-M` lines
+  with an optional label are hide proposals OUTSIDE the fold range; a
+  `-` line separates them from the hand-over text. The engine disposes
+  the proposals (`structured/hand_over_dispose.dart`): a tool pair snaps
+  to its whole group; user turns are never hidden; an alias unknown on
+  the SNAPSHOT index, a checkpoint/fold record, a record inside the fold
+  range or already hidden/covered, and the protected tail are ignored
+  (buckets `U/F/C/X/T/S`, rendered as `hide list 1 snapped · 1 exempt`).
+  A hide range is ONE `hidden_range` record with `consolidated: true`
+  and the sanitized labels (`labels`, per carrier: one line, ≤ 48 chars,
+  no second person, no imperative, never a message). The hand-over text
+  is persisted as a tail-layout `compact_checkpoint` whose `## Open User
+  Requests` section must carry every request of the mechanical block
+  verbatim — otherwise the run FAILS and nothing is appended. The text
+  goes through the summary sanitizer with the S0 origin evidence and the
+  pinned lines protected (gh-2103, gh-1409).
+- **Markers (AC9).** A consolidated range renders ONE marker at its
+  carrier — `<label> [expand 6-7]` — the fold pointer `[expand 2-5]`
+  sits untagged where the range's first record rendered, the transfer
+  record renders at its own position with the tagged hidden index
+  (`m4 tool_result·…`). `compact_expand` reopens both kinds;
+  `isCompactionMarkerText` resolves the old and the new forms.
+- **No fallbacks (AC4).** The call's robustness ladder is nudge on a
+  tool-call reply, the existing transient retry, and ONE retry at twice
+  the output budget on a `length` stop; an exhausted ladder appends
+  NOTHING and reports a loud failed pass (`hand-over call failed …`) —
+  the merged path never reaches the hide judge, the digest or the
+  classic prefix compactor (the budget kill keeps only the mechanical
+  local trim, which needs no endpoint). The main request then proceeds
+  under the existing over-window guards. The hide judge is not removed
+  by this PR: it still serves the `standalone` ladder.
+- **Trigger (AC11).** Pre-flight stays hard-only (`shouldCompact`). The
+  POST-RUN call fires on the soft line: `compaction.softRatio` × window
+  (default: the hard line minus 5 % of the window), muted by a
+  hysteresis of `compaction.handOver.hysteresisTurns` user turns
+  (default 3) after any run — the hard line is never muted. A prompt
+  arriving while the post-run call is in flight waits on the
+  `compacting` gate (`CompactingGate`), one run at a time.
+- **Keys.** `compaction.softRatio` (0 < r < 1), `compaction.handOver.
+  maxTokens` (positive int, default 8192 — the call's output budget),
+  `compaction.handOver.hysteresisTurns` (positive int). Strict like the
+  other tuning keys: an invalid value is a config error, never ignored.
+- **Report.** The details report carries `hand-over: merged · bucket
+  warm · calls 1 · cache 92% · hide list 1 snapped · nudges 0 · budget
+  retries 0 · transfer text`; the one-line default names the engine
+  `structured·hand-over`.
+- **Old sessions (AC20).** No migration, no re-encode, no tag backfill.
+  Records written before 2.1 load unchanged (the new fields are
+  additive and only written when set), legacy checkpoints render in
+  place exactly as before, the first compaction after a resume is a
+  merged call over the old chain, and `session_search`, `/handoff` and
+  `fa session list` read old and new records alike. The file is only
+  ever appended to (byte-prefix).
+
 ### Digest provenance (gh-2103)
 
 The "compaction laundering" audit (gh-2103): published attack research
