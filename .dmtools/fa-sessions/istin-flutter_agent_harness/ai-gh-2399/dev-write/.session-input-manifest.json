@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-24T14:58:16.297Z",
+  "ticketKey": "gh-2399",
+  "headSha": "e3b6099a6a2fb8911d2a0c55c7acc11e162f9679",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:e91a970061552c68",
+      "size": 87
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:6c4170e92a791d76",
+      "size": 15679
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:be36327b6426cc0d",
+      "size": 15093
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:bbef23946495982a",
+      "size": 306
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:623da0ffc911b4db",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:08e934b416a4d985",
+      "size": 15162
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:d6ccf6e5991c6f55",
+      "size": 2479
+    },
+    "request.md": {
+      "hash": "fnv1a64:0a2c22e5cc31a6ff",
+      "size": 920
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:37181fe2c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c866a506b577944d",
+      "size": 981
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0a2c22e5cc31a6ff",
+      "size": 920
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:9515b6ba",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the merged stream collapses the gh-1300 shard-wall metric — `wall == span-sum` on every healed shard**\n\n`write_stream` lays every folded span end-to-end on a synthetic sequential clock (`t0, clock = clock, clock + dur`). But `scripts/check_shard_durations.py` (ci.yml:1659, \"Shard duration budget gate\") measures **wall = max(testDone.time) − min(testStart.time)** over exactly this artifact — defined in its own docstring as \"the runner's own clock\". Real logs interleave spans under `--concurrency=4`, so wall < span-sum; the merged log erases the interleaving and reports **span-sum as wall, by construction**.\n\nVerified against the real gate code on a folded fixture (attempt-1 wall 12.0 s + rerun wall 105.0 s):\n\n```\nmain.json   -> wall 12.0s,  span-sum 40.5s\nrerun.json  -> wall 105.0s, span-sum 200.0s\nmerged.json -> wall 240.5s, span-sum 240.5s   <-- wall == span-sum\n```\n\nThe gate's own summary table prints \"measured wall\" and \"span sum\" as distinct columns precisely because they differ in real logs; this artifact makes them identical. Today's PTY shards are safe by margin — per-shard span-sums from `test_duration_baseline.json` are 213.6 / 111.2 / 251.6 s vs the 420 s budgets (378 s warn) — but span-sum grows with every suite added to a shard (shard 2's `cli_integration_test.dart` alone is 209.9 s), and `test_shard_budgets.json`'s seed note explicitly plans tightening the budgets via `--update-budgets` on downloaded `integration-json-shard-*` artifacts: a tighten lap that includes a healed run bakes the inflated span-sum in as the budget. This is also narrower than the PR description claims: \"Healed shards' wall totals now include rerun time\" describes *attempt-walls sum*, not span-sum (≈4× larger under concurrency 4).\n\nSuggested fix: keep each log's internal relative clock and offset attempt *k*'s spans by the accumulated wall of attempts 1..*k−1* (wall then = Σ attempt walls — the quantity the PR description promises), instead of stacking spans end-to-end. The per-test/per-suite durations and the junit conversion are unaffected either way — only the wall metric is corrupted."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:ec16eaa8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: unguarded `mv` can flip a green-healed shard red — violating this PR's own fold-failure invariant**\n\nThe function's contract (stated in the PR description and in the comment block above it): *\"A fold failure never flips a genuinely green shard red: the raw evidence stays on disk and the warning is loud.\"* The `cp -f` backup and the `python3` merge are both guarded against `set -e` — but the success-path `mv -f \"$merged\" \"$MAIN_LOG\"` is not. Under `set -euo pipefail` (active here), a failing `mv` in the `then` branch exits the wrapper at `mv`'s status: the `else` branch's loud WARNING never runs, no evidence note is printed, and the CI step goes red on a shard whose tests all passed — exactly the phantom-red class gh-2399 was filed to eliminate (this repo has precedent for transient storage failures: the gh-1412 blob-storage resets).\n\nReproduced the shell semantics (`set -euo pipefail` + failing `mv` in the `if` success branch): **exit 1, no \"folded\" line, no WARNING** — \"wrapper continued green\" never prints.\n\nFix is one line, matching the guard shape already used for `cp`:\n\n```bash\nif python3 \"$(dirname \"$0\")/merge_dart_json_reports.py\" \\\n    \"$merged\" \"${inputs[@]}\"; then\n  mv -f \"$merged\" \"$MAIN_LOG\" ||\n    echo \"load_drop_retry: WARNING — fold rename failed; $MAIN_LOG stays attempt-1's stream\" >&2\n  echo \"load_drop_retry: folded ${#inputs[@]} attempt log(s) into $MAIN_LOG ...\" >&2\nelse\n  ...\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:26f6bec7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the preserved attempt-1 artifact is documented as `.attempt1` but written as `.atempt1`**\n\nThe usage block (this line, part of the script's interface contract) promises the raw attempt-1 bytes at **`<main-log>.attempt1`** — but the code writes (and its own fold-comment and AC26 test pin) **`.atempt1`** (`scripts/load_drop_retry.sh:365`, `:383`, comment at `:357`; the PR description repeats the `.atempt1` spelling). An operator or follow-up script looking for the preserved truncated evidence at the documented name won't find it — this suffix is the forensic trail for exactly the incident class gh-2399 investigates.\n\nOne-line rename in `fold_attempt_logs` (both occurrences) plus the AC26 assertion and the comment strings, so docs and bytes agree."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:214041a2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: reuse `junit_from_dart_json.iter_test_spans` instead of duplicating the span walk**\n\n`spans_from_log` re-implements the canonical dart-json span walk that already exists as `iter_test_spans` in `scripts/junit_from_dart_json.py:38-66` — the docstring here claims \"same parsing rules\", but a second copy *is* the drift risk: when the event shape changes and `iter_test_spans` is fixed (as it has been across #194/#928), this copy silently diverges and mis-merges the healed-shard evidence the duration gates consume. `scripts/check_test_durations.py` already shows the in-repo pattern: `from junit_from_dart_json import iter_test_spans` — the same import works here (`python3` puts the script's `scripts/` dir on `sys.path[0]`, and the wrapper invokes this file by its absolute path). Adapt the yielded seconds (÷1000) back to ms, or move the ms-walk into the shared module and have both consume it."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:47fd0737",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# ⚠️ FIXED — the fold now preserves per-attempt clocks: merged wall = Σ attempt walls\n\nFixed exactly along your suggested line, in `scripts/merge_dart_json_reports.py` (commit `9268f03cdf`):\n\n- `spans_from_log` normalizes each attempt log to its **own relative clock** (its earliest real `testStart` becomes 0) and reports that log's wall (`max(end) − min(start)` — the quantity `check_shard_durations.shard_wall` measures).\n- `main()` offsets attempt *k*'s spans by the **accumulated wall of attempts 1..k−1**; a dedup-winning rerun span keeps its own log's offset.\n- `write_stream` no longer lays spans on a synthetic sequential clock — it emits the offset absolute times verbatim. Span-sum and wall are distinct again by construction.\n\nVerified on your fixture shape (attempt-1 wall 12.0 s + rerun wall 105.0 s, interleaved spans) by the new test `folded shard wall = the SUM of the attempt walls` in `test/scripts/merge_dart_json_reports_test.dart`:\n\n```\nmerged wall    = 117.0 s  (Σ attempt walls — was 210.85 s == span-sum)\nspan sum       = 210.85 s (unchanged, still a distinct column)\nper-test times = untouched (junit time=\"105.000\" / time=\"11.300\")\n```\n\nand end-to-end through the **real gate** (`check_shard_durations.py --budgets {\"merged\": 150.0}`): `RESULT: OK` on the folded artifact — the old fold failed that budget (wall 210.85 s > 150 s), reproducing your \"poisons `--update-budgets` tightening\" concern. The `done`/`allSuites` clocks now carry the last span end, so junit conversion and the per-suite #928 numbers stay byte-compatible (all 183 `test/scripts/` tests green)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:9b168b06",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# ⚠️ FIXED — the fold rename is guarded; a green-healed shard can no longer go red on it\n\nFixed in `scripts/load_drop_retry.sh` `fold_attempt_logs` (commit `9268f03cdf`). The success path is now:\n\n```bash\nif mv -f \"$merged\" \"$MAIN_LOG\"; then\n  echo \"load_drop_retry: folded ${#inputs[@]} attempt log(s) into $MAIN_LOG (raw attempt-1 preserved at $MAIN_LOG.attempt1)\" >&2\nelse\n  rm -f \"$merged\"\n  echo \"load_drop_retry: WARNING — fold rename failed; $MAIN_LOG stays attempt-1's stream (duration/junit consumers may under-report)\" >&2\nfi\n```\n\nSame invariant as the `cp -f` backup: under `set -euo pipefail` a failing rename no longer exits the wrapper at `mv`'s status — the shard verdict stays green, the leftover `$merged` temp is removed, and the warning is loud.\n\nOne deliberate deviation from the snippet: I used `if/else` instead of `mv … || echo` so the `folded … into …` line prints only when the rename actually landed (printing \"folded\" right after a rename-failure WARNING would mislead whoever reads the log). Semantics are identical to your proposal otherwise.\n\nPinned by the new AC27 test in `test/scripts/load_drop_retry_test.dart`: a PATH-stub `mv` that fails only the `<main>.merged.$$ → <main>` rename on the AC26 wedge-heal fixture → wrapper **exit 0**, `healed` + `WARNING — fold rename failed` on stderr, and `main.json` keeps attempt-1's truncated bytes (no rerun spans, no synthesised `done`). Before the fix the same probe reproduced your repro: **exit 1, no WARNING**."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:78e39034",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# 💡 FIXED — the preserved artifact is now written as `<main-log>.attempt1`\n\nFixed in `scripts/load_drop_retry.sh` (commit `9268f03cdf`) — docs and bytes agree:\n\n- `fold_attempt_logs` writes the backup at `$MAIN_LOG.attempt1` (was `.atempt1`), and both the backup-failure WARNING and the `folded …` message reference `$MAIN_LOG.attempt1`.\n- The fold-comment block above the function now reads `raw attempt-1 bytes preserved at <main-log>.attempt1`, matching the usage block at line 75.\n\nThe AC26 test in `test/scripts/load_drop_retry_test.dart` now reads the preserved evidence from `main.json.attempt1` (it failed with `PathNotFoundException` on `.attempt1` before the rename — the typo was pinned by exactly one place in the tests, now fixed there too)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:cc7042a0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# 💡 FIXED — the span walk is now the shared `junit_from_dart_json` walk (your option B)\n\nFixed per your second suggested remedy (commit `9268f03cdf`):\n\n- **`scripts/junit_from_dart_json.py`**: the ms-level walk moved into the shared module as `iter_test_events(json_path)` (yields `(suite_path, name, start_ms, end_ms, failed)` — the reporter's absolute times). `iter_test_spans` is now a thin adapter over it (`(t1 − t0) / 1000`, same clamps/filters) — byte-identical output for its existing consumers (`convert()`, `scripts/check_test_durations.py`).\n- **`scripts/merge_dart_json_reports.py`**: `spans_from_log` deleted its private copy and delegates to `iter_test_events` (`from junit_from_dart_json import iter_test_events` — same `sys.path[0]` pattern as `check_test_durations.py`). Only the merge-local concerns stay here: missing-log tolerance (`os.path.exists`) and the relative-clock normalization for the wall offset.\n\nWhy option B and not re-importing `iter_test_spans` + ÷1000: the wall fix (thread `PRRT_kwDOTXdlLc67YHyS`) needs span *placement* (start times), which `iter_test_spans` deliberately discards — sharing the ms-walk fixes both threads with one parser.\n\nDrift-protection pinned by a new test in `test/scripts/merge_dart_json_reports_test.dart`: it patches `m.iter_test_events` with a spy and asserts `spans_from_log` routes through the shared module — a future `iter_test_events` fix (#194/#928-style) reaches the healed-shard fold. `duration_budget_selftest.sh` and all 183 `test/scripts/` tests stay green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:f19a6372",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2399 fix is sound — the fold makes the healed shard's evidence complete, dedup/latest-wins semantics are correct, and all 29 tests in the two touched suites pass locally. Two important issues remain: the merged stream's synthetic sequential clock silently corrupts the gh-1300 shard-wall metric (`wall == span-sum` on every healed shard), and the unguarded `mv` in `fold_attempt_logs` can still flip a green-healed shard red against the invariant this PR states.\n\n**Key Issues**:\n1. ⚠️ `scripts/merge_dart_json_reports.py:114` — folded wall equals span-sum (verified vs the real gate: 240.5 s vs 12.0+105.0 s); under today's budgets (span-sums 213.6/111.2/251.6 vs 420 s) but grows with every added suite and poisons any `--update-budgets` tightening done from a healed artifact.\n2. ⚠️ `scripts/load_drop_retry.sh:382` — `mv -f` under `set -e` breaks \"a fold failure never flips a green shard red\" (repro: exit 1, no WARNING).\n3. 💡 `.attempt1` (usage docs) vs `.atempt1` (code) — documented evidence name doesn't exist.\n4. 💡 Duplicated span walk — import `junit_from_dart_json.iter_test_spans` (pattern already used by `check_test_durations.py`).\n\n**Digest** (below thread bar, no action required):\n- `scripts/merge_dart_json_reports.py:128` — `allSuites.count` carries the *test* count; real dart-json puts the *suite* count there (no consumer reads it today — verified by grep).\n- `spans_from_log` dedup key `(suite path, name)` collapses identically-named tests within one suite — each extra same-named span is dropped from merged totals/junit counts (rare, conservative for the duration gates).\n\n**Ticket check**: gh-2399's contract (healed shards must not phantom-fail \"budgeted suite did not run\") is satisfied — the AC26 end-to-end gate replay reproduces the incident shape and goes green after the fold; per-test and per-suite #928 numbers are faithful in the merged log; no workflow/baseline edits, matching the stated scope.\n\n**Next Steps**:\n1. Preserve per-attempt relative clocks in `write_stream` (offset attempt *k* by the accumulated wall of prior attempts) so shard wall = Σ attempt walls, not span-sum.\n2. Guard the `mv -f` like the `cp -f` backup — one `|| echo WARNING` keeps the green-healed shard green.\n3. Rename `.atempt1` → `.attempt1` (code, comments, AC26 pin) and reuse `iter_test_spans`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-24:78b51962",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-24",
+      "updatedAt": "2026-11-24",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: All four round-1 findings are verified fixed with citable hunks and fresh probes: the merged stream now preserves per-attempt clocks (re-verified with the real gate code — merged wall 117.0 s == Σ attempt walls 12.0 + 105.0, span-sum distinct at 240.5 s), the fold rename is guarded (failing-mv stub → wrapper exit 0 with a loud WARNING, attempt-1 bytes kept), `.attempt1` is renamed everywhere (0 `atempt1` remnants), and the span walk delegates to the shared `iter_test_events`. 40 tests across the touched suites plus `duration_budget_selftest.sh` pass locally; no new findings on the rework hunks.\n\n**Key Issues**: none open.\n\n**Digest** (advisory, carried from round 1 — no action required):\n- `scripts/merge_dart_json_reports.py:134` — `allSuites.count` carries the *test* count; real dart-json puts the *suite* count there (no consumer reads it — grep-verified).\n- `scripts/merge_dart_json_reports.py:160` — dedup key `(suite path, name)`: identically-named tests within one suite collapse to one merged span (rare; conservative for the duration gates).\n\n**Ticket check**: gh-2399's contract holds — the incident shape still fails the #928 gate on the raw truncated log and passes on the folded artifact; per-test and per-suite numbers stay faithful through the shared walk.\n\n**Next Steps**: merge — the review↔rework cycle converges; both digest lines stay advisory."
+    }
+  ]
+}
