@@ -189,7 +189,13 @@ run_streamed() {
   if command -v setsid >/dev/null 2>&1; then
     setsid "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
   else
-    "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
+    # No setsid(1) (macOS): the runner MUST still lead its own process
+    # group or the wedge kill below cannot take the whole tree (the stub's
+    # children outlive it, hold the fifo open, and tee never EOFs — gh-2404).
+    # python3 is already a hard dependency of this wrapper (the reporter
+    # gates below); setsid(2) through it keeps the kill semantic identical.
+    python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+      "${CMD[@]}" $TARGETS > "$FIFO" 2>&1 &
   fi
   local runner_pid=$!
   if [ "$SPAM_LIMIT" -gt 0 ]; then
@@ -224,6 +230,11 @@ run_streamed() {
   RUNNER_RC=$?
   if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
+    # Reap it HERE: bash 3.2 (macOS) otherwise prints the killed job's
+    # "Terminated …" notice later — quoting the subshell's SOURCE, which
+    # contains the wedge-kill echo line itself (gh-2404: the notice
+    # doubled the kill line in the wrapper's stderr).
+    wait "$WATCHDOG_PID" 2>/dev/null || true
     WATCHDOG_PID=""
   fi
   # Drain window: on the wedge path the group kill closed every write end
@@ -233,9 +244,15 @@ run_streamed() {
   # form as the watchdog).
   exec 3<>"$WDOG_FIFO"
   local i
+  # bash < 4 (macOS ships 3.2) rejects a fractional `read -t`; its drain
+  # caps at 5 × 1 s instead of 5 × 0.2 s (gh-2404).
+  local drain_tick=0.2
+  case "$BASH_VERSION" in
+    [123].*) drain_tick=1 ;;
+  esac
   for i in 1 2 3 4 5; do
     kill -0 "$tee_pid" 2>/dev/null || break
-    read -t 0.2 -u 3 || true
+    read -t "$drain_tick" -u 3 || true
   done
   exec 3<&- || true
   kill "$tee_pid" 2>/dev/null || true

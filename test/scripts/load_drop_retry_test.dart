@@ -261,6 +261,66 @@ case "\$MODE" in
 esac
 ''';
 
+/// gh-2404: which `/usr/bin/time` the host carries. GNU time takes
+/// `-f '%U %S' -o file`; BSD time (macOS) rejects both `-f` and `--version`
+/// and prints an `-l` rusage block instead.
+enum TimeFlavor { gnu, bsd }
+
+TimeFlavor? _timeFlavorCache;
+bool _timeFlavorProbed = false;
+
+/// The host's `/usr/bin/time` flavor: GNU answers `--version` with exit 0;
+/// BSD prints its usage and exits 1. `null` when no `/usr/bin/time`
+/// exists (the CPU assertion is then skipped explicitly, never passed
+/// silently). Probed once per test isolate.
+TimeFlavor? detectTimeFlavor() {
+  if (_timeFlavorProbed) return _timeFlavorCache;
+  _timeFlavorProbed = true;
+  if (!File('/usr/bin/time').existsSync()) return null;
+  final probe = Process.runSync('/usr/bin/time', ['--version']);
+  return _timeFlavorCache = probe.exitCode == 0
+      ? TimeFlavor.gnu
+      : TimeFlavor.bsd;
+}
+
+/// The `/usr/bin/time` argv that writes the measured tree's CPU to
+/// [outFile] under [flavor] — GNU: `-f '%U %S' -o`; BSD: `-l -o` (the
+/// rusage block's `user`/`sys` carry the same reaped-children accounting
+/// GNU's `%U`/`%S` read).
+List<String> timeArgs(TimeFlavor flavor, String outFile) =>
+    flavor == TimeFlavor.gnu
+    ? ['-f', '%U %S', '-o', outFile]
+    : ['-l', '-o', outFile];
+
+final _bsdRusageLine = RegExp(
+  r'^\s*([\d.]+)\s+real\s+([\d.]+)\s+user\s+([\d.]+)\s+sys\s*$',
+);
+
+/// CPU seconds (user + sys) from a `/usr/bin/time` output written by
+/// [timeArgs]: GNU's last line is `0.01 0.02`; BSD's `-l` block opens with
+/// `0.21 real 0.00 user 0.00 sys`. `null` when neither shape parses.
+double? parseCpuSeconds(String output, TimeFlavor flavor) {
+  final lines = output.split('\n');
+  if (flavor == TimeFlavor.bsd) {
+    for (final line in lines.reversed) {
+      final match = _bsdRusageLine.firstMatch(line);
+      if (match != null) {
+        return double.parse(match.group(2)!) + double.parse(match.group(3)!);
+      }
+    }
+    return null;
+  }
+  for (final line in lines.reversed) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length == 2) {
+      final user = double.tryParse(parts[0]);
+      final sys = double.tryParse(parts[1]);
+      if (user != null && sys != null) return user + sys;
+    }
+  }
+  return null;
+}
+
 Future<ProcessResult> runWrapper(
   String tmp, {
   required String mode,
@@ -305,6 +365,77 @@ void main() {
     File('${tmp.path}/argv.log').writeAsStringSync('');
   });
   tearDown(() => tmp.deleteSync(recursive: true));
+
+  group('gh-2404 time wrapper (GNU vs BSD)', () {
+    test('argv: GNU -f %U %S -o, BSD -l -o', () {
+      expect(timeArgs(TimeFlavor.gnu, '/x/cpu.txt'), [
+        '-f',
+        '%U %S',
+        '-o',
+        '/x/cpu.txt',
+      ]);
+      expect(timeArgs(TimeFlavor.bsd, '/x/cpu.txt'), [
+        '-l',
+        '-o',
+        '/x/cpu.txt',
+      ]);
+    });
+
+    test('parser reads the GNU shape: user sys on the last line', () {
+      expect(
+        parseCpuSeconds('0.01 0.02\n', TimeFlavor.gnu),
+        closeTo(0.03, 1e-9),
+      );
+      expect(parseCpuSeconds('0.00 0.00\n', TimeFlavor.gnu), 0.0);
+      expect(
+        parseCpuSeconds('junk\n1.5 0.25\n', TimeFlavor.gnu),
+        closeTo(1.75, 1e-9),
+      );
+      expect(
+        parseCpuSeconds(
+          'Command exited with nonzero status 1\n',
+          TimeFlavor.gnu,
+        ),
+        isNull,
+      );
+      expect(parseCpuSeconds('', TimeFlavor.gnu), isNull);
+    });
+
+    test('parser reads the BSD -l block: real user sys (+ rusage lines)', () {
+      const bsd = '''
+        3.21 real         0.04 user         0.01 sys
+           1163264  maximum resident set size
+                 0  average shared memory size
+''';
+      // user + sys — never `real` (a sleeping wrapper tree has near-zero
+      // CPU over a 3 s wall; reading `real` would pin the busy-spin bug
+      // as a pass).
+      expect(parseCpuSeconds(bsd, TimeFlavor.bsd), closeTo(0.05, 1e-9));
+      expect(
+        parseCpuSeconds(
+          '        0.5 real         0.1 user         0.2 sys',
+          TimeFlavor.bsd,
+        ),
+        closeTo(0.3, 1e-9),
+      );
+      expect(parseCpuSeconds('no rusage here\n', TimeFlavor.bsd), isNull);
+      expect(parseCpuSeconds(bsd, TimeFlavor.gnu), isNull);
+    });
+
+    test('detection: this host resolves to one flavor (BSD on macOS)', () {
+      final flavor = detectTimeFlavor();
+      if (!File('/usr/bin/time').existsSync()) {
+        expect(flavor, isNull);
+        return;
+      }
+      expect(flavor, isNotNull);
+      expect(
+        flavor,
+        Platform.isMacOS ? TimeFlavor.bsd : TimeFlavor.gnu,
+        reason: 'macOS ships BSD time; CI ships GNU time',
+      );
+    });
+  });
 
   test('AC1 green run passes through with a single invocation', () async {
     final r = await runWrapper(tmp.path, mode: 'ok');
@@ -666,8 +797,12 @@ void main() {
       // and reaped by then). The same fresh-invocation run also pins the
       // round-2 digest stderr leak: the spam baseline is computed before
       // tee starts, so `wc -c <` never hits a not-yet-created console.
-      if (!File('/usr/bin/time').existsSync()) {
-        return; // no measurement tool on this host — nothing to assert
+      // gh-2404: no measurement tool is an EXPLICIT skip, never a silent
+      // pass; BSD time (macOS) measures the same user + sys through `-l`.
+      final flavor = detectTimeFlavor();
+      if (flavor == null) {
+        markTestSkipped('no /usr/bin/time on this host — CPU not measured');
+        return;
       }
       final stub = File('${tmp.path}/stub_runner.sh')
         ..writeAsStringSync(stubRunner(tmp.path));
@@ -675,10 +810,7 @@ void main() {
       final r = await Process.run(
         '/usr/bin/time',
         [
-          '-f',
-          '%U %S',
-          '-o',
-          '${tmp.path}/cpu.txt',
+          ...timeArgs(flavor, '${tmp.path}/cpu.txt'),
           'bash',
           scriptPath,
           '${tmp.path}/main.json',
@@ -703,9 +835,14 @@ void main() {
         greaterThanOrEqualTo(2.5),
         reason: 'the stub slept ~3s — the watchdog lived through it',
       );
-      final cpuLine = File('${tmp.path}/cpu.txt').readAsLinesSync().last.trim();
-      final parts = cpuLine.split(RegExp(r'\s+'));
-      final cpu = double.parse(parts[0]) + double.parse(parts[1]);
+      final cpuOutput = File('${tmp.path}/cpu.txt').readAsStringSync();
+      final cpu = parseCpuSeconds(cpuOutput, flavor);
+      expect(
+        cpu,
+        isNotNull,
+        reason: 'unparseable ${flavor.name} time output: "$cpuOutput"',
+      );
+      final cpuLine = cpuOutput.split('\n').last.trim();
       expect(
         cpu,
         lessThan(wall * 0.5),
