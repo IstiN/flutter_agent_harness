@@ -264,6 +264,7 @@ List<Message> renderStructuredMessages({
   required List<SessionRecord> path,
   required RecordSeqIndex seqs,
   required List<Message> Function(SessionRecord record) projectEntry,
+  void Function(SessionRecord source, Message message)? onMessage,
 }) {
   final resolution = resolveStructuredFolds(path);
   final state = resolution.state;
@@ -278,24 +279,32 @@ List<Message> renderStructuredMessages({
   final hiddenCallIds = _hiddenToolCallIds(path, state);
   final messages = <Message>[];
   final emitted = <String>{};
+  // The single emission point: every wire message reports the record it
+  // projects FROM (its own, or the covering checkpoint whose text rides
+  // its position) — the record_tag alignment the session transcript and
+  // the tag epoch share (GOAL #2394).
+  void emit(SessionRecord source, Message message) {
+    messages.add(message);
+    onMessage?.call(source, message);
+  }
+
   for (final record in path) {
     final drop = droppedById[record.id];
     if (drop != null) {
       // The dropped fold's own marker/text never renders — the note
       // replaces it and the span it named renders unfolded.
-      messages.add(_droppedFoldNote(drop, seqs));
+      emit(record, _droppedFoldNote(drop, seqs));
       continue;
     }
-    messages.addAll(
-      _projectRecord(
-        record,
-        state: state,
-        byId: byId,
-        seqs: seqs,
-        emitted: emitted,
-        hiddenCallIds: hiddenCallIds,
-        projectEntry: projectEntry,
-      ),
+    _projectRecord(
+      record,
+      state: state,
+      byId: byId,
+      seqs: seqs,
+      emitted: emitted,
+      hiddenCallIds: hiddenCallIds,
+      projectEntry: projectEntry,
+      emit: emit,
     );
   }
   return messages;
@@ -343,8 +352,9 @@ Set<String> _hiddenToolCallIds(
   return callIds;
 }
 
-/// One path record to its wire messages.
-List<Message> _projectRecord(
+/// One path record to its wire messages, reported through [emit] with
+/// the record each message projects from.
+void _projectRecord(
   SessionRecord record, {
   required StructuredViewState state,
   required Map<String, SessionRecord> byId,
@@ -352,72 +362,87 @@ List<Message> _projectRecord(
   required Set<String> emitted,
   required Set<String> hiddenCallIds,
   required List<Message> Function(SessionRecord record) projectEntry,
+  required void Function(SessionRecord source, Message message) emit,
 }) {
   // A covering checkpoint renders at the position of its first visible
   // path record (D2: markers sit where the content sat); null when the
   // record is not covered (or its checkpoint was itself hidden — then
   // the range renders as if uncovered).
-  final covered = _coverAt(
+  if (_coverAt(
     record,
     state: state,
     byId: byId,
     seqs: seqs,
     emitted: emitted,
-  );
-  if (covered != null) return covered;
+    emit: emit,
+  )) {
+    return;
+  }
   switch (record) {
     case HiddenRangeRecord():
-      return const [];
+      return;
     case CompactCheckpointRecord():
       // Renders in place only when its range sits fully off-branch
-      // (nothing visible triggered the in-place emission above). A judge
-      // hide targets the checkpoint itself: no marker, no swallow.
-      if (state.hiddenRecordIds.contains(record.id)) return const [];
-      return emitted.add(record.id)
-          ? [_checkpointMessage(record, byId: byId, seqs: seqs, state: state)]
-          : const [];
+      // (nothing visible triggered the in-place emission above). A hide
+      // targeting the checkpoint itself leaves no marker, no swallow.
+      if (state.hiddenRecordIds.contains(record.id)) return;
+      if (emitted.add(record.id)) {
+        emit(
+          record,
+          _checkpointMessage(record, byId: byId, seqs: seqs, state: state),
+        );
+      }
     case MessageRecord():
-      return [
+      emit(
+        record,
         _messageAt(
           record,
           state: state,
           seqs: seqs,
           hiddenCallIds: hiddenCallIds,
         ),
-      ];
+      );
     case CompactionRecord() || BranchSummaryRecord():
-      return _legacyAt(
+      for (final message in _legacyAt(
         record,
         state: state,
         seqs: seqs,
         projectEntry: projectEntry,
-      );
+      )) {
+        emit(record, message);
+      }
     case CustomMessageRecord():
-      return _customAt(
+      for (final message in _customAt(
         record,
         state: state,
         seqs: seqs,
         projectEntry: projectEntry,
-      );
+      )) {
+        emit(record, message);
+      }
     default:
-      return const [];
+      return;
   }
 }
 
-/// The covering-checkpoint projection for [record], or null when it does
-/// not apply (not covered, or the covering checkpoint is itself hidden).
-List<Message>? _coverAt(
+/// Whether [record] is covered and its covering checkpoint rendered here
+/// (through [emit]); `false` when it does not apply (not covered, the
+/// covering checkpoint is itself hidden, or it was already emitted).
+bool _coverAt(
   SessionRecord record, {
   required StructuredViewState state,
   required Map<String, SessionRecord> byId,
   required RecordSeqIndex seqs,
   required Set<String> emitted,
+  required void Function(SessionRecord source, Message message) emit,
 }) {
   final cover = state.coveredRecordIds[record.id];
-  if (cover == null || state.hiddenRecordIds.contains(cover.id)) return null;
-  return emitted.add(cover.id) && !state.isCovered(cover.id)
-      ? [_checkpointMessage(cover, byId: byId, seqs: seqs, state: state)]
-      : const [];
+  if (cover == null || state.hiddenRecordIds.contains(cover.id)) {
+    return false;
+  }
+  if (!emitted.add(cover.id) || state.isCovered(cover.id)) return true;
+  emit(cover, _checkpointMessage(cover, byId: byId, seqs: seqs, state: state));
+  return true;
 }
 
 /// A [CustomMessageRecord] to its wire message: host-injected context

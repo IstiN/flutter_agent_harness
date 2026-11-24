@@ -62,6 +62,7 @@ export '../compaction/structured/expand_tool.dart'
     show CompactExpandController, compactExpandToolName;
 export '../prompts/prompts.g.dart'
     show
+        compactionHandOverPrompt,
         hideJudgeSystemPrompt,
         pinnedOperativePrompt,
         structuredCheckpointPrompt,
@@ -94,6 +95,7 @@ final class CompactionPrompts {
     this.turnPrefix = turnPrefixSummarizationPrompt,
     this.hideJudgeSystem = hideJudgeSystemPrompt,
     this.structuredCheckpoint = structuredCheckpointPrompt,
+    this.handOver = compactionHandOverPrompt,
     this.pinnedOperative = pinnedOperativePrompt,
   });
 
@@ -126,6 +128,10 @@ final class CompactionPrompts {
         'compaction/structured_checkpoint',
         structuredCheckpointPrompt,
       ),
+      handOver: overrides.resolve(
+        'compaction/hand_over',
+        compactionHandOverPrompt,
+      ),
       pinnedOperative: overrides.resolve(
         'compaction/pinned_operative',
         pinnedOperativePrompt,
@@ -150,6 +156,11 @@ final class CompactionPrompts {
 
   /// Instruction tail of the structured-engine checkpoint call (#148).
   final String structuredCheckpoint;
+
+  /// GOAL #2394: the merged hand-over call's instruction (appended as
+  /// the last user message over the S0 prefix; `{{…}}` placeholders are
+  /// substituted at the call site — see `renderHandOverInstruction`).
+  final String handOver;
 
   /// gh-1409 verbatim-preserve duty (AC3): appended to every
   /// summarization call whose input carries the pinned-operative block.

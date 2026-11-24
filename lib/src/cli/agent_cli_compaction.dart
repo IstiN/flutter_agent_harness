@@ -463,6 +463,28 @@ extension _AgentCliCompactionReportPrinter on AgentCli {
 }
 
 extension AgentCliCompactionRun on AgentCli {
+  /// The engine this session's compaction runs use — the live settings
+  /// override, the config choice, else the default (issue #287). The ONE
+  /// resolution the factory and the record-tag sync share.
+  CompactionEngine get _activeCompactionEngine =>
+      config.liveCompactionEngine ??
+      config.compactionEngine ??
+      CompactionEngine.structured;
+
+  /// GOAL #2394 (D6/E37): record tags ride the wire ONLY under the
+  /// structured engine. Synced at every prompt (the settings hub can flip
+  /// the engine live); a flip drops the request snapshot — the projection
+  /// the previous engine's requests described is no longer the one the
+  /// next request sends (one cache invalidation at the switch).
+  void _syncRecordTags() {
+    final enabled = _activeCompactionEngine == CompactionEngine.structured;
+    if (_agent.recordTagsEnabled == enabled) return;
+    _agent.recordTagsEnabled = enabled;
+    _agent.invalidateRequestSnapshot(
+      'compaction engine switched to ${_activeCompactionEngine.name}',
+    );
+  }
+
   /// Test seam: the compaction pass counter — a zero-pass run (issue
   /// #2273) must leave it untouched so the funnel's `passesRan` trim
   /// gate never counts runs that executed no pass.
@@ -963,10 +985,7 @@ extension AgentCliCompactionRun on AgentCli {
       // Issue #287: structured is the default fallback; an explicit
       // config choice (config.compactionEngine) or a live override from
       // the settings flow (config.liveCompactionEngine, #288) still wins.
-      engine:
-          config.liveCompactionEngine ??
-          config.compactionEngine ??
-          CompactionEngine.structured,
+      engine: _activeCompactionEngine,
       // Judge budget knob (issue #541): null keeps the 300s default
       // (gh-740 M1: raised from 90s — a 262k-token checkpoint on a slow
       // provider could not be summarized within 90s, bricking sessions).

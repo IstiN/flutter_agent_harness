@@ -9,6 +9,8 @@
 /// branch from leaf to root.
 library;
 
+import '../compaction/record_tag.dart'
+    show TranscriptProjection, TranscriptSeqMap;
 import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
 import '../compaction/token_estimation.dart';
@@ -65,10 +67,17 @@ final class SessionContext {
     required this.thinkingLevel,
     required this.model,
     required this.activeToolNames,
+    this.recordSeqs,
   });
 
   /// The rebuilt conversation context, oldest first.
   final List<Message> messages;
+
+  /// GOAL #2394: the record-tag epoch aligned with [messages] — the file
+  /// alias each message projects from (`null` entries are non-records) and
+  /// the index they resolve against. Null when a caller built the context
+  /// without it; hosts copy it onto `AgentState.recordSeqs`.
+  final TranscriptSeqMap? recordSeqs;
 
   /// The thinking level in effect at the leaf (`off` by default).
   final String thinkingLevel;
@@ -661,14 +670,28 @@ final class Session {
   /// Rebuilds the model context from the active branch: messages in branch
   /// order, with compaction, branch-summary, and custom-message records
   /// projected per pi's `buildSessionContext` + `convertToLlm`.
-  Future<List<Message>> buildContextMessages() async {
+  Future<List<Message>> buildContextMessages() async =>
+      (await buildTranscriptProjection()).messages;
+
+  /// Builds the transcript together with its record-tag alignment (GOAL
+  /// #2394 `record_tag` protocol): the SAME projection [buildContextMessages]
+  /// renders, plus — aligned by message index — the file alias (`seq`) of
+  /// the record each message projects from, `null` for non-records (the
+  /// obligations / working-set tail blocks). One transcript build feeds
+  /// both the host's `state.messages` and the agent's tag epoch, so a
+  /// tag can never drift from the transcript it addresses.
+  Future<TranscriptProjection> buildTranscriptProjection() async {
     final path = await getBranch();
     final (kept, dropped) = _applyCompactionTransform(path);
-    final messages = await _projectMessages(kept, classicHidden: dropped);
-    return _resetStaleUsageAnchors(
-      messages,
-      sourcePath: path,
-      staleEntryIds: _staleUsageAnchorEntryIds(path),
+    final projection = await _projectTranscript(kept, classicHidden: dropped);
+    return TranscriptProjection(
+      messages: _resetStaleUsageAnchors(
+        projection.messages,
+        sourcePath: path,
+        staleEntryIds: _staleUsageAnchorEntryIds(path),
+      ),
+      recordSeqs: projection.seqs,
+      index: projection.index,
     );
   }
 
@@ -688,16 +711,42 @@ final class Session {
     final path = await getBranch();
     final state = _deriveState(path);
     final (kept, dropped) = _applyCompactionTransform(path);
-    final messages = await _projectMessages(kept, classicHidden: dropped);
+    final projection = await _projectTranscript(kept, classicHidden: dropped);
     return SessionContext(
       messages: _resetStaleUsageAnchors(
-        messages,
+        projection.messages,
         sourcePath: path,
         staleEntryIds: _staleUsageAnchorEntryIds(path),
       ),
       thinkingLevel: state.thinkingLevel,
       model: state.model,
       activeToolNames: state.activeToolNames,
+      recordSeqs: TranscriptSeqMap(
+        headSeqs: projection.seqs,
+        index: projection.index,
+      ),
+    );
+  }
+
+  /// [projectPath] plus its record-tag alignment: the per-entry projection
+  /// of an explicit path with the file alias of every emitted message —
+  /// the incremental twin of [buildTranscriptProjection] for hosts that
+  /// grow an accumulated view (the windowed external-append watcher).
+  Future<({List<Message> messages, TranscriptSeqMap seqMap})>
+  projectPathWithSeqs(List<SessionRecord> path) async {
+    final seqs = RecordSeqIndex(await getEntries());
+    final messages = <Message>[];
+    final aligned = <int?>[];
+    for (final entry in path) {
+      final seq = seqs.seqOf(entry.id);
+      for (final message in _entryToMessages(entry)) {
+        messages.add(message);
+        aligned.add(seq);
+      }
+    }
+    return (
+      messages: messages,
+      seqMap: TranscriptSeqMap(headSeqs: aligned, index: seqs),
     );
   }
 
@@ -714,48 +763,53 @@ final class Session {
   /// [classicHidden] are the records a classic summary folded away; they
   /// ride the summary as a hidden-segments index (issue #266 F1a) so the
   /// agent can consult and reopen what it can no longer see.
-  Future<List<Message>> _projectMessages(
+  Future<({List<Message> messages, List<int?> seqs, RecordSeqIndex index})>
+  _projectTranscript(
     List<SessionRecord> path, {
     List<SessionRecord> classicHidden = const [],
   }) async {
+    final entries = await getEntries();
+    final seqs = RecordSeqIndex(entries);
+    final messages = <Message>[];
+    final aligned = <int?>[];
+    // Every projected message reports the record it projects from (its
+    // file alias) — or null for a non-record — so the transcript and the
+    // tag epoch stay one build (GOAL #2394).
+    void emit(SessionRecord record, Iterable<Message> projected) {
+      final seq = seqs.seqOf(record.id);
+      for (final message in projected) {
+        messages.add(message);
+        aligned.add(seq);
+      }
+    }
+
     final hasStructured = path.any(
       (entry) => entry is HiddenRangeRecord || entry is CompactCheckpointRecord,
     );
-    if (!hasStructured) {
-      if (classicHidden.isEmpty) {
-        return _withLevel0Blocks([
-          for (final entry in path) ..._entryToMessages(entry),
-        ], path: path);
-      }
-      final seqs = RecordSeqIndex(await getEntries());
-      return _withLevel0Blocks(
-        [
-          for (final entry in path)
-            ..._entryToMessages(
-              entry,
-              classicHidden: classicHidden,
-              seqs: seqs,
-            ),
-        ],
-        path: path,
-        dropped: classicHidden,
-      );
-    }
-    final entries = await getEntries();
-    final seqs = RecordSeqIndex(entries);
-    return _withLevel0Blocks(
-      renderStructuredMessages(
+    List<Message> projectEntry(SessionRecord record) =>
+        _entryToMessages(record, classicHidden: classicHidden, seqs: seqs);
+    if (hasStructured) {
+      final rendered = renderStructuredMessages(
         path: path,
         seqs: seqs,
-        projectEntry: (record) =>
-            _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
-      ),
+        projectEntry: projectEntry,
+        onMessage: (record, _) => aligned.add(seqs.seqOf(record.id)),
+      );
+      messages.addAll(rendered);
+    } else {
+      for (final entry in path) {
+        emit(entry, projectEntry(entry));
+      }
+    }
+    final leveled = await _withLevel0Blocks(
+      messages,
       path: path,
       entries: entries,
-      // The mixed shape: classic-folded records join the working set scan
-      // here too — the pure-classic branch forwards the same drop.
       dropped: classicHidden,
     );
+    // The level-0 blocks are additive tail messages — non-records.
+    final tail = List<int?>.filled(leveled.length - messages.length, null);
+    return (messages: leveled, seqs: [...aligned, ...tail], index: seqs);
   }
 
   /// Appends the gh-210 level-0 blocks at the context tail: the

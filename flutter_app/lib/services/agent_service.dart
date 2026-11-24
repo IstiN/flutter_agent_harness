@@ -902,6 +902,10 @@ class AgentService extends ChangeNotifier
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    // GOAL #2394 (D6/E37): record tags on the wire only under the
+    // structured engine; re-synced at every auto-compaction run.
+    _agent.recordTagsEnabled =
+        _appCompactionEngine == CompactionEngine.structured;
     // Boot beacon for the office pane e2e (issue #182): proves the app
     // booted WITH the mail surface when running as the Outlook taskpane.
     if (officeApi != null) {

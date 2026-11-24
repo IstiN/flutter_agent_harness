@@ -321,6 +321,7 @@ extension AgentServiceSessions on AgentService {
     final contextMessages = resetLoadedUsageAnchors(context.messages);
     _agent.reset();
     _agent.state.messages = contextMessages;
+    _agent.state.recordSeqs = context.recordSeqs;
     return (context, contextMessages, branchMs, contextMs);
   }
 
@@ -597,6 +598,7 @@ extension AgentServiceSessions on AgentService {
     // reloaded off disk carry generation-time anchors that
     // phantom-report a pre-compaction request size.
     _agent.state.messages = resetLoadedUsageAnchors(context.messages);
+    _agent.state.recordSeqs = context.recordSeqs;
     _persistedCount = context.messages.length;
     return true;
   }
@@ -641,12 +643,21 @@ extension AgentServiceSessions on AgentService {
     // usage describes the WRITER's context — pre-compaction for a
     // compaction delta — never this host's projection.
     if (hasCompaction || branch == null) {
-      final full = session.projectPath(branch ?? delta);
-      _agent.state.messages = resetLoadedUsageAnchors(full);
-      _persistedCount = full.length;
+      final full = await session.projectPathWithSeqs(branch ?? delta);
+      _agent.state.messages = resetLoadedUsageAnchors(full.messages);
+      _agent.state.recordSeqs = full.seqMap;
+      _persistedCount = full.messages.length;
       return;
     }
-    final projected = resetLoadedUsageAnchors(session.projectPath(delta));
+    final deltaProjection = await session.projectPathWithSeqs(delta);
+    final projected = resetLoadedUsageAnchors(deltaProjection.messages);
+    _agent.state.recordSeqs = TranscriptSeqMap(
+      headSeqs: [
+        ...?_agent.state.recordSeqs?.headSeqs,
+        ...deltaProjection.seqMap.headSeqs,
+      ],
+      index: deltaProjection.seqMap.index,
+    );
     // state.messages hands out an unmodifiable view — grow through the
     // setter (the old addAll on the getter threw UnsupportedError,
     // silently swallowed by the watcher's catch, and external appends

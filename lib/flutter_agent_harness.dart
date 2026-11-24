@@ -166,6 +166,9 @@ export 'src/compaction/working_set.dart';
 // lands with its consumer.
 export 'src/compaction/context_pressure.dart' hide hasAnyReportedUsage;
 export 'src/compaction/context_window_registry.dart';
+// ── Compaction 2.0 hand-over (GOAL #2394; append-only) ──
+export 'src/compaction/record_tag.dart';
+export 'src/compaction/request_snapshot.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/delegating_execution_env.dart';

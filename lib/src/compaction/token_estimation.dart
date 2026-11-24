@@ -15,6 +15,7 @@ import '../agent/image_registry.dart' show imageContentKey;
 import '../context.dart';
 import '../session/session_record.dart';
 import '../types.dart';
+import 'record_tag.dart' show tagOverheadTokens, taggedRecordCount;
 
 /// Estimated character cost of an image block (pi's `ESTIMATED_IMAGE_CHARS`:
 /// 4800 chars ≈ 1200 tokens at 4 chars/token).
@@ -487,10 +488,23 @@ int estimateRequestTokens(
   List<Message> messages, {
   String? systemPrompt,
   List<Tool> tools = const [],
+  List<int?>? recordSeqs,
 }) {
   final estimate = estimateContextTokens(messages);
-  if (estimate.lastUsageIndex != null) return estimate.tokens;
-  return estimate.tokens + estimateRequestOverheadTokens(systemPrompt, tools);
+  // GOAL #2394 (E23): the wire copy carries an `m<seq> ` tag on every
+  // record the transcript does not — the estimate must price what the
+  // request really carries, or the trigger fires late by the tag
+  // overhead. A usage anchor already priced the tags up to it; only the
+  // records after the anchor add their share.
+  final overhead = recordSeqs == null
+      ? 0
+      : tagOverheadTokens(
+          taggedRecordCount(recordSeqs, after: estimate.lastUsageIndex),
+        );
+  if (estimate.lastUsageIndex != null) return estimate.tokens + overhead;
+  return estimate.tokens +
+      estimateRequestOverheadTokens(systemPrompt, tools) +
+      overhead;
 }
 
 /// [estimateTokens] against a first-seen set: repeated images charge the

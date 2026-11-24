@@ -211,6 +211,11 @@ extension CompactionWindowSizing on AgentService {
   /// cannot serve hosted 128k models and 8k WebLLM presets.
   CompactionSettings get compactionSettings => _compactionWiring.settings;
 
+  /// The app's compaction engine (issue #148 D8, default flip #287):
+  /// project .fah/config.yaml < ~/.fah/config.yaml, default structured.
+  CompactionEngine get _appCompactionEngine =>
+      loadAppCompactionEngine(env.sessionCwd) ?? CompactionEngine.structured;
+
   /// The host wiring for the live agent (gh-1077). The smol summarizer is
   /// resolved lazily by [_maybeAutoCompact] — a broken smol chain must not
   /// fail the pre-run gate — so it is not part of this getter. Exposed for
@@ -253,6 +258,11 @@ extension CompactionWindowSizing on AgentService {
   /// builds the per-host smol/main summarizers, and surfaces failures
   /// in-chat instead of silently no-oping.
   Future<bool> _maybeAutoCompact() async {
+    // GOAL #2394 (D6/E37): tags ride the wire only under the structured
+    // engine — re-resolved per run like the engine itself (the Settings
+    // picker edits apply without a restart).
+    _agent.recordTagsEnabled =
+        _appCompactionEngine == CompactionEngine.structured;
     final wiring = _compactionWiring;
     if (_session == null || !wiring.enabled) return false;
     final conversationWindow = wiring.conversationWindow;
@@ -301,9 +311,7 @@ extension CompactionWindowSizing on AgentService {
         // config.yaml, default structured. Resolved per compaction so
         // edits apply without a restart (the Settings picker relies on
         // this — a flip takes effect at the NEXT compaction).
-        engine:
-            loadAppCompactionEngine(env.sessionCwd) ??
-            CompactionEngine.structured,
+        engine: _appCompactionEngine,
         // gh-1409: the enabled skills' operative lines ride every
         // summarization prompt as the verbatim-preserve pinned block.
         operativeSkills: _agent.operativeSkills,

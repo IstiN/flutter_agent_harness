@@ -178,7 +178,12 @@ final class StructuredCompactionPass {
 /// and the agent-initiated hide use (issue #1379 tier 2) — a single
 /// contract, not two copies.
 Future<void> refreshAgentState(Session session, AgentState state) async {
-  state.messages = await session.buildContextMessages();
+  // GOAL #2394: one build feeds the transcript AND its tag epoch — a new
+  // epoch starts here (every record the projection renders is taged with
+  // its alias again; the previous run's live edge joins the tagged head).
+  final projection = await session.buildTranscriptProjection();
+  state.messages = projection.messages;
+  state.recordSeqs = projection.seqMap;
 }
 
 /// The structured compaction engine.

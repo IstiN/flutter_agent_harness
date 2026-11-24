@@ -38,6 +38,10 @@ import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
+import '../compaction/request_snapshot.dart'
+    show RequestRouting, RequestSnapshot, RequestSnapshotStore;
+import '../compaction/structured/projection.dart' show RecordSeqIndex;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -143,11 +147,18 @@ typedef StreamFunction =
 ///
 /// Since gh-2101 the values come from the run's `CompactionCachePolicy`
 /// (lib/src/compaction/cache_policy.dart): one run-scoped routing id with
-/// `short` retention, never the session's id; cache-less providers ignore it.
+/// `short` retention, never the session's id; cache-less providers ignore
+/// it. Since GOAL #2394 the session-affine hand-over call installs an
+/// all-null record instead ([CompactionCachePolicy.sessionAffine]): every
+/// field falls through to the values the session's own main requests
+/// resolve (the resolver's bound id, the factory defaults) — the same
+/// cache bucket, never a literal — and [hasExplicitRouting] tells the
+/// resolver's binding whether to yield.
 final class StreamCacheRouting {
   StreamCacheRouting._();
 
   static final Object _zoneKey = Object();
+  static final Object _shapeKey = Object();
 
   /// The routing values active in the current zone, or `null` when no
   /// override is in effect (calls then use their built-in defaults).
@@ -158,22 +169,73 @@ final class StreamCacheRouting {
         : null;
   }
 
+  /// Whether the active override names a routing value — the resolver's
+  /// bound session id yields only to an EXPLICIT override (gh-2101 affine
+  /// ids); an all-null record (the #2394 session-affine fallthrough) is
+  /// no opinion and the resolver's binding stands, exactly as for the
+  /// session's main requests.
+  static bool get hasExplicitRouting {
+    final routing = current;
+    return routing != null &&
+        (routing.sessionId != null || routing.cacheRetention != null);
+  }
+
+  /// The request-shape overrides active in the current zone (GOAL #2394
+  /// hand-over call), or `null` when the call rides the adapter defaults.
+  static StreamCallShape? get callShape {
+    final value = Zone.current[_shapeKey];
+    return value is StreamCallShape ? value : null;
+  }
+
   /// Runs [body] with [sessionId]/[cacheRetention] overriding the cache
   /// routing of provider calls started inside it. An override is explicit:
   /// code that binds default routing values (the model-roles resolver)
-  /// yields to an active override instead of replacing it.
+  /// yields to an active override instead of replacing it. The optional
+  /// [shape] installs the call's request shape (tool choice, output
+  /// budget, history breakpoint, pinned Copilot initiator) the catalog
+  /// builders thread into the adapter options.
   static T runWith<T>(
     T Function() body, {
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   }) {
     return runZoned(
       body,
       zoneValues: {
         _zoneKey: (sessionId: sessionId, cacheRetention: cacheRetention),
+        _shapeKey: ?shape,
       },
     );
   }
+}
+
+/// The request shape of one provider call that the [StreamFunction]
+/// contract has no slot for (GOAL #2394): the compaction hand-over call
+/// sets all four; ordinary calls carry none of them.
+final class StreamCallShape {
+  /// Creates the shape; every field `null` keeps the adapter default.
+  const StreamCallShape({
+    this.toolChoice,
+    this.maxTokens,
+    this.prefixLength,
+    this.copilotInitiator,
+  });
+
+  /// `tool_choice` for adapters that support it (`'none'` on the
+  /// hand-over call — the reply must be text, never tool calls).
+  final String? toolChoice;
+
+  /// The explicit output-token budget (`compaction.handOver.maxTokens`).
+  final int? maxTokens;
+
+  /// The number of leading messages that form the cached history prefix —
+  /// the breakpoint position adapters with explicit breakpoints place the
+  /// history cache_control on (S0's last message, not the instruction).
+  final int? prefixLength;
+
+  /// The pinned Copilot `x-initiator` (`agent`/`user`) — the value S0 rode.
+  final String? copilotInitiator;
 }
 
 /// How tool calls from a single assistant message are executed.
@@ -456,6 +518,8 @@ final class AgentLoopConfig {
     this.onTruncatedToolCall,
     this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
+    this.recordSeqs,
+    this.requestSnapshots,
   });
 
   /// The model to call each turn.
@@ -529,6 +593,15 @@ final class AgentLoopConfig {
   /// (issue #1923 AC4) — the pinned queued/delivered lines. Null keeps
   /// the core silent.
   final void Function(String line)? steeringInterruptNotice;
+
+  /// GOAL #2394: the transcript's tag epoch — every request copy is
+  /// stamped `m<seq>` from it before the request transforms (null = no
+  /// tags; the transcript itself is never modified).
+  final TranscriptSeqMap? recordSeqs;
+
+  /// GOAL #2394: the main-send seam writes the request snapshot (S0)
+  /// here on every send; null disables capturing.
+  final RequestSnapshotStore? requestSnapshots;
 
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
   /// tool calls, no text — some providers answer like this under load) is
@@ -697,6 +770,8 @@ final class AgentLoopConfig {
       onTruncatedToolCall: onTruncatedToolCall,
       steeringStallWindow: steeringStallWindow,
       steeringInterruptNotice: steeringInterruptNotice,
+      recordSeqs: recordSeqs,
+      requestSnapshots: requestSnapshots,
     );
   }
 }

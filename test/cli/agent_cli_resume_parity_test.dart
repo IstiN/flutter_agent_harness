@@ -172,6 +172,15 @@ void main() {
       },
   ];
 
+  /// The projection's content signatures: every epoch record rides the
+  /// wire tagged `m<N> ` (GOAL #2394 record_tag), so the tag is stripped
+  /// before the `user:old`-style shape checks; the raw [signatures] still
+  /// compare both hosts tag-for-tag.
+  List<String> contentSignatures(Context context) => [
+    for (final signature in signatures(context))
+      signature.replaceFirst(RegExp(r'^(user|assistant|tool):m\d+ '), r'$1:'),
+  ];
+
   /// The unanchored system-prompt/tool-schema overhead of the harness
   /// CLI, measured off a captured request (≈ 8.5k estimated tokens).
   int overheadOf(Context context) => estimateRequestOverheadTokens(
@@ -411,7 +420,7 @@ void main() {
       );
       // The boundary actually shaped the projection: the 10 old
       // messages are replaced by the summary, not replayed.
-      final sigs = signatures(headlessStream.contexts.first);
+      final sigs = contentSignatures(headlessStream.contexts.first);
       expect(sigs.where((s) => s.startsWith('user:old')), isEmpty);
       expect(sigs.where((s) => s.startsWith('user:kept')), hasLength(10));
     },

@@ -40,7 +40,7 @@
 /// USD cost the pass reports render (duration/cost/cache-hit visibility).
 library;
 
-import '../agent/agent_loop.dart' show StreamCacheRouting;
+import '../agent/agent_loop.dart' show StreamCallShape, StreamCacheRouting;
 import '../session/uuid.dart' show uuidv7;
 import '../types.dart' show Usage;
 
@@ -52,10 +52,15 @@ enum CompactionCallClass {
   /// The summarizer/digest: checkpoint folds (structured) and the classic
   /// engine's summary calls.
   digest,
+
+  /// GOAL #2394: the merged hand-over call over the S0 prefix (rides
+  /// [CompactionCachePolicy.sessionAffine] — the class only names the
+  /// call for the report; the affine policy routes it like a digest).
+  handOver,
 }
 
 /// The routing values one compaction LM call rides.
-typedef CompactionCacheRouting = ({String? sessionId, String cacheRetention});
+typedef CompactionCacheRouting = ({String? sessionId, String? cacheRetention});
 
 /// Per-call-class cache routing for one compaction run's digest/judge
 /// calls. See the library docs for the design.
@@ -91,6 +96,18 @@ final class CompactionCachePolicy {
     );
   }
 
+  /// The session-affine policy of the merged hand-over call (GOAL #2394
+  /// D4): routing = the SESSION's own values through NULL fallthrough.
+  /// The zone record carries `sessionId: null, cacheRetention: null`, so
+  /// `_CatalogStreamFunction.call` falls through to the factory default
+  /// exactly like the session's main requests — never
+  /// a literal `'short'` (a resolver-bound `long` would otherwise split
+  /// the bucket). The call reads the prefix the main request just
+  /// warmed; adapters without cache knobs ignore it.
+  factory CompactionCachePolicy.sessionAffine() {
+    return CompactionCachePolicy._((_) => _fallthroughRouting());
+  }
+
   /// The legacy kill switch: `cacheRetention: 'none'` plus a fresh routing
   /// session id PER CALL — the pre-gh-2101 shape, kept for tests and for a
   /// config-level opt-out. Never routes through the session's bucket.
@@ -105,13 +122,19 @@ final class CompactionCachePolicy {
       _routingFor(klass);
 
   /// Installs the class's routing as the zone override the provider
-  /// adapters read ([StreamCacheRouting.runWith] body helper).
-  T runWith<T>(T Function() body, CompactionCallClass klass) {
+  /// adapters read ([StreamCacheRouting.runWith] body helper). [shape]
+  /// (GOAL #2394) rides the same zone as the call's request shape.
+  T runWith<T>(
+    T Function() body,
+    CompactionCallClass klass, {
+    StreamCallShape? shape,
+  }) {
     final routing = routingFor(klass);
     return StreamCacheRouting.runWith(
       body,
       sessionId: routing.sessionId,
       cacheRetention: routing.cacheRetention,
+      shape: shape,
     );
   }
 }
@@ -224,3 +247,8 @@ String? formatPassDuration(int? milliseconds) {
   final rest = minutes - hours * 60;
   return '${hours}h${rest.toString().padLeft(2, '0')}m';
 }
+
+/// The session-affine routing record: every field null, so the provider
+/// catalog resolves each one the way the session's main requests do.
+CompactionCacheRouting _fallthroughRouting() =>
+    (sessionId: null, cacheRetention: null);

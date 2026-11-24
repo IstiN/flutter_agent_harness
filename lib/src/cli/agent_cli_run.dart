@@ -127,6 +127,10 @@ extension AgentCliRun on AgentCli {
   /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
   /// compaction of an already-over-window transcript.
   Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    // GOAL #2394: the engine setting decides whether this turn's requests
+    // carry record tags (structured only) — before the pre-flight
+    // compaction so a merged hand-over sees the same policy.
+    _syncRecordTags();
     // Wall-clock catch-up (issue #259): records that came due while the
     // host slept (or while no tick ran) are delivered HERE, at turn start —
     // awaited before the prompt so this turn's first steering poll already

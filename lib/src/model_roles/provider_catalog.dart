@@ -838,6 +838,7 @@ typedef _CatalogStreamBuilder =
       CancelToken? cancelToken,
       String? sessionId,
       String? cacheRetention,
+      StreamCallShape? shape,
     );
 
 /// The [providerStreamFunction] product: resolves the cache routing at call
@@ -897,6 +898,9 @@ final class _CatalogStreamFunction {
       // Validated by providerStreamFunction; unreachable.
       throw ConfigException('Unknown provider kind: $_kind');
     }
+    // GOAL #2394: the call's request shape rides the same zone as the
+    // routing (an all-null override is the session-affine fallthrough —
+    // both fields resolve exactly as the session's main requests do).
     return builder(
       this,
       model,
@@ -904,6 +908,7 @@ final class _CatalogStreamFunction {
       cancelToken,
       effectiveSessionId,
       effectiveRetention,
+      StreamCacheRouting.callShape,
     );
   }
 
@@ -914,6 +919,7 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamOpenAICompletions(
     model,
     context,
@@ -922,6 +928,8 @@ final class _CatalogStreamFunction {
       cancelToken: cancelToken,
       sessionId: sessionId,
       cacheRetention: cacheRetention,
+      toolChoice: shape?.toolChoice,
+      maxTokens: shape?.maxTokens,
     ),
     self._httpClient,
   );
@@ -933,6 +941,7 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamAnthropic(
     model,
     context,
@@ -940,6 +949,9 @@ final class _CatalogStreamFunction {
       apiKey: self._apiKey,
       cancelToken: cancelToken,
       cacheRetention: cacheRetention,
+      toolChoice: shape?.toolChoice,
+      maxTokens: shape?.maxTokens,
+      prefixLength: shape?.prefixLength,
     ),
     self._httpClient,
   );
@@ -951,10 +963,16 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamGoogle(
     model,
     context,
-    GoogleOptions(apiKey: self._apiKey, cancelToken: cancelToken),
+    GoogleOptions(
+      apiKey: self._apiKey,
+      cancelToken: cancelToken,
+      toolChoice: shape?.toolChoice,
+      maxTokens: shape?.maxTokens,
+    ),
     self._httpClient,
   );
 
@@ -965,6 +983,7 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamDial(
     model,
     context,
@@ -986,6 +1005,7 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamCopilot(
     model,
     context,
@@ -994,6 +1014,10 @@ final class _CatalogStreamFunction {
       cancelToken: cancelToken,
       sessionId: sessionId,
       cacheRetention: cacheRetention,
+      // D10: no tool_choice on the gateway (the nudge path covers a
+      // tool-call answer); the output budget and the pinned initiator ride.
+      maxTokens: shape?.maxTokens,
+      initiator: shape?.copilotInitiator,
     ),
     self._httpClient,
   );
@@ -1005,6 +1029,7 @@ final class _CatalogStreamFunction {
     CancelToken? cancelToken,
     String? sessionId,
     String? cacheRetention,
+    StreamCallShape? shape,
   ) => streamChatGptCodex(
     model,
     context,
