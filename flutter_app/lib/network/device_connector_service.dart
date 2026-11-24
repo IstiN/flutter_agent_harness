@@ -570,17 +570,25 @@ class DeviceConnectorService {
     final agents = device['agents'];
     if (deviceId is! String || deviceId.isEmpty || agents is! List) return;
     for (final agent in agents) {
-      if (agent is! Map) continue;
-      final rawName = agent['name'] ?? agent['address'];
-      if (rawName is! String || rawName.isEmpty) continue;
-      final address = rawName.contains('@') ? rawName : '$rawName@$deviceId';
-      if (agent['exposed'] == false) {
-        overrides.remove(address);
-        continue;
-      }
-      final state = AgentRunState.tryParse('${agent['state'] ?? ''}');
-      if (state != null) overrides[address] = state;
+      _mergeSinglePresenceAgent(agent, deviceId, overrides);
     }
+  }
+
+  static void _mergeSinglePresenceAgent(
+    Object? agent,
+    String deviceId,
+    Map<String, AgentRunState> overrides,
+  ) {
+    if (agent is! Map) return;
+    final rawName = agent['name'] ?? agent['address'];
+    if (rawName is! String || rawName.isEmpty) return;
+    final address = rawName.contains('@') ? rawName : '$rawName@$deviceId';
+    if (agent['exposed'] == false) {
+      overrides.remove(address);
+      return;
+    }
+    final state = AgentRunState.tryParse('${agent['state'] ?? ''}');
+    if (state != null) overrides[address] = state;
   }
 
   /// One roster envelope's device list → the named agent's run state.

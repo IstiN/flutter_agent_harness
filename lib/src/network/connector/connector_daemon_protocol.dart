@@ -61,22 +61,16 @@ final class ConnectorDaemonState {
   /// Parses a persisted state JSON object; returns null on malformed input.
   static ConnectorDaemonState? tryFromJson(Object? raw) {
     if (raw is! Map) return null;
-    final pid = raw['pid'];
-    final port = raw['port'];
-    final token = raw['token'];
-    final deviceId = raw['deviceId'];
-    final baseUrl = raw['baseUrl'];
-    if (pid is! int ||
-        pid <= 0 ||
-        port is! int ||
-        port <= 0 ||
-        port > 65535 ||
-        token is! String ||
-        token.isEmpty ||
-        deviceId is! String ||
-        deviceId.isEmpty ||
-        baseUrl is! String ||
-        baseUrl.isEmpty) {
+    final pid = _positiveInt(raw['pid']);
+    final port = _validPort(raw['port']);
+    final token = _nonEmptyString(raw['token']);
+    final deviceId = _nonEmptyString(raw['deviceId']);
+    final baseUrl = _nonEmptyString(raw['baseUrl']);
+    if (pid == null ||
+        port == null ||
+        token == null ||
+        deviceId == null ||
+        baseUrl == null) {
       return null;
     }
     return ConnectorDaemonState(
@@ -87,6 +81,15 @@ final class ConnectorDaemonState {
       baseUrl: baseUrl,
     );
   }
+
+  static int? _positiveInt(Object? value) =>
+      value is int && value > 0 ? value : null;
+
+  static int? _validPort(Object? value) =>
+      value is int && value > 0 && value <= 65535 ? value : null;
+
+  static String? _nonEmptyString(Object? value) =>
+      value is String && value.isNotEmpty ? value : null;
 }
 
 /// Wire message types exchanged between the local Machine Connector daemon and

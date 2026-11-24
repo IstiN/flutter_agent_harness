@@ -10,6 +10,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/messaging/hub_crypto.dart';
 import 'package:flutter_agent_harness/src/network/network_account.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
 import 'fake_device_server.dart';
@@ -223,6 +225,18 @@ void main() {
       );
       expect(server.connectionCount, 1);
 
+      // fetchRosterFrames returns the cached upstream roster snapshots.
+      final rosterFrames = await clientB.fetchRosterFrames();
+      expect(rosterFrames, isNotEmpty);
+
+      // ClientB's reply to a foreign session is rejected cleanly.
+      await expectLater(
+        clientB.sendNetworkDmReply(
+          address: receivedB.single.replyAddress,
+          text: '   ',
+        ),
+        throwsA(isA<StateError>()),
+      );
       // Unregistering clientA leaves clientB live on the same upstream WS.
       await clientA.stop();
       await _waitFor(() => !host.activeSessionIds.contains('sess-alpha'));
@@ -230,4 +244,133 @@ void main() {
       expect(server.connectionCount, 1);
     },
   );
+
+  test(
+    'MultiSessionConnectorHost publishes catalog pages and wakes sleeping sessions',
+    () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(
+          'dev-mac-2',
+          deviceToken: 'tok-device-2',
+          networks: const ['net-personal'],
+        );
+      addTearDown(server.dropAll);
+
+      final patchCalls = <String>[];
+      final rosterClient = DeviceEnrollmentClient(
+        httpClient: MockClient((request) async {
+          patchCalls.add(request.body);
+          return http.Response('{}', 200);
+        }),
+      );
+      final woke = <String>[];
+      final keyStore = MemoryDeviceDmKeyStore();
+      final catalogRows = <SessionCatalogEntry>[
+        SessionCatalogEntry(
+          id: 'sess-sleep',
+          title: 'Sleeping Session',
+          cwd: '/tmp/sleep',
+          lastActiveAt: DateTime.utc(2026, 11, 24, 12, 0),
+          live: false,
+        ),
+      ];
+      final host = MultiSessionConnectorHost(
+        device: const NetworkDeviceCredentials(
+          deviceId: 'dev-mac-2',
+          deviceToken: 'tok-device-2',
+          personalNetworkId: 'net-personal',
+        ),
+        baseUrl: 'https://network.fa1.dev',
+        ticketProvider: () async => 'ticket-2',
+        transport: server.transport,
+        rosterClient: rosterClient,
+        catalogStore: _StaticCatalogStore(() => catalogRows),
+        dmKeyStore: keyStore,
+        rosterDebounce: const Duration(milliseconds: 10),
+        catalogPollInterval: Duration.zero,
+        wakeLauncher: ({required cwd, required sessionId, sessionName}) async {
+          woke.add('$sessionId@$cwd');
+          return null;
+        },
+      );
+      addTearDown(host.dispose);
+
+      await host.start();
+      await _waitFor(() => host.phase == ConnectorLinkState.connected);
+      await host.registerSession(
+        CliNetworkSession(
+          sessionId: 'sess-live',
+          mailboxPrefix: 'live',
+          displayName: 'Live Session',
+          cwd: '/tmp/live',
+          dmSink: (_) async {},
+        ),
+      );
+      await _waitFor(() => patchCalls.isNotEmpty);
+
+      // Incremental catalog refresh adds and retracts rows.
+      catalogRows.add(
+        SessionCatalogEntry(
+          id: 'sess-extra',
+          title: 'Extra Session',
+          cwd: '/tmp/extra',
+          lastActiveAt: DateTime.utc(2026, 11, 24, 12, 1),
+          live: false,
+        ),
+      );
+      await host.refreshSessionCatalog();
+      catalogRows.removeWhere((row) => row.id == 'sess-extra');
+      await host.refreshSessionCatalog();
+      await _waitFor(() => patchCalls.length >= 2);
+
+      // Inbound DM addressed to the sleeping catalog session triggers wakeLauncher
+      // and sends a queued receipt (original stays unacked).
+      final userKey = await X25519().newKeyPair();
+      final dmKeys = DeviceDmKeyProvider(keyStore);
+      final liveKey = await dmKeys.loadExisting('live@dev-mac-2');
+      expect(liveKey, isNotNull);
+      const channel = 'dm:user:u-2:live@dev-mac-2';
+      final ciphertext = await hubSealFanet1(
+        senderDhKeyPair: userKey,
+        recipientDhPubkey: await liveKey!.keyPair.extractPublicKey(),
+        frameId: 'dm-wake-1',
+        aadTarget: channel,
+        plaintext: wrapDeviceDmText(
+          'wake up',
+          sessionId: 'sess-sleep',
+          threaded: true,
+        ),
+      );
+      server.deliverTo(
+        deviceId: 'dev-mac-2',
+        mail: NetworkEnvelope(
+          kind: NetworkEnvelopeKind.mail,
+          msgId: 'dm-wake-1',
+          network: 'net-personal',
+          channel: channel,
+          from: 'user:u-2',
+          to: 'live@dev-mac-2',
+          ts: '2026-11-24T12:05:00.000Z',
+          ciphertext: ciphertext,
+        ),
+      );
+      await _waitFor(() => woke.length == 1);
+      expect(woke.single, 'sess-sleep@/tmp/sleep');
+      await _waitFor(
+        () => server.received.any(
+          (e) => e.kind == NetworkEnvelopeKind.mail && e.channel == channel,
+        ),
+      );
+    },
+  );
+}
+
+final class _StaticCatalogStore implements SessionCatalogStore {
+  _StaticCatalogStore(this._rows);
+  final List<SessionCatalogEntry> Function() _rows;
+
+  @override
+  Future<List<SessionCatalogEntry>> loadSessions({
+    Set<String> liveSessionIds = const {},
+  }) async => List<SessionCatalogEntry>.of(_rows());
 }

@@ -221,41 +221,49 @@ final class MultiSessionConnectorHost {
     final store = catalogStore;
     if (store == null) return;
     final revision = ++_catalogRevision;
-    final List<SessionCatalogEntry> loaded;
-    try {
-      loaded = await store.loadSessions(liveSessionIds: _sessions.keys.toSet());
-    } on Object {
-      onLog?.call('session catalog refresh failed');
-      return;
-    }
-    if (revision != _catalogRevision) return;
+    final loaded = await _loadCatalogSafe(store);
+    if (loaded == null || revision != _catalogRevision) return;
     final projection = projectSessionCatalog(
       previous: _catalogEntries,
       current: loaded,
       fullSnapshot: fullSnapshot,
     );
     _catalogEntries = projection.entries;
+    _applyCatalogProjection(projection, fullSnapshot: fullSnapshot);
+    _connector?.presence.publishNow();
+  }
+
+  Future<List<SessionCatalogEntry>?> _loadCatalogSafe(
+    SessionCatalogStore store,
+  ) async {
+    try {
+      return await store.loadSessions(liveSessionIds: _sessions.keys.toSet());
+    } on Object {
+      onLog?.call('session catalog refresh failed');
+      return null;
+    }
+  }
+
+  void _applyCatalogProjection(
+    SessionCatalogProjection projection, {
+    required bool fullSnapshot,
+  }) {
+    final retractions = [
+      for (final id in projection.retractedIds)
+        DeviceRosterSession(id: id, state: 'offline', networks: const []),
+    ];
     if (fullSnapshot) {
       _queueLiveRoster(fullSnapshot: true);
-      if (projection.retractedIds.isNotEmpty) {
-        _queueRosterEntries(
-          sessions: [
-            for (final id in projection.retractedIds)
-              DeviceRosterSession(id: id, state: 'offline', networks: const []),
-          ],
-        );
-      }
-    } else if (projection.upserts.isNotEmpty ||
-        projection.retractedIds.isNotEmpty) {
-      _queueRosterEntries(
-        sessions: [
-          for (final row in projection.upserts) _catalogRosterRow(row),
-          for (final id in projection.retractedIds)
-            DeviceRosterSession(id: id, state: 'offline', networks: const []),
-        ],
-      );
+      if (retractions.isNotEmpty) _queueRosterEntries(sessions: retractions);
+      return;
     }
-    _connector?.presence.publishNow();
+    if (projection.upserts.isEmpty && retractions.isEmpty) return;
+    _queueRosterEntries(
+      sessions: [
+        for (final row in projection.upserts) _catalogRosterRow(row),
+        ...retractions,
+      ],
+    );
   }
 
   /// Stops the shared connector cleanly, retracting live agents.
@@ -332,22 +340,31 @@ final class MultiSessionConnectorHost {
     String? callerSessionId,
   }) {
     final parts = parseDeviceDmChannelId(route.channel);
+    final expectedNetwork = device.personalNetworkId ?? 'personal';
     if (parts == null ||
         parts.deviceId != device.deviceId ||
-        route.network != (device.personalNetworkId ?? 'personal')) {
+        route.network != expectedNetwork) {
       throw StateError(
         'network DM reply route does not belong to this device/network',
       );
     }
-    if (callerSessionId != null &&
-        route.sessionId != null &&
-        route.sessionId != callerSessionId) {
-      final caller = _sessions[callerSessionId];
-      if (caller == null || route.agentAddress != caller.agentAddress) {
-        throw StateError(
-          'network DM reply route does not belong to session $callerSessionId',
-        );
-      }
+    _validateCallerOwnership(route, callerSessionId);
+  }
+
+  void _validateCallerOwnership(
+    DeviceDmReplyRoute route,
+    String? callerSessionId,
+  ) {
+    if (callerSessionId == null ||
+        route.sessionId == null ||
+        route.sessionId == callerSessionId) {
+      return;
+    }
+    final caller = _sessions[callerSessionId];
+    if (caller == null || route.agentAddress != caller.agentAddress) {
+      throw StateError(
+        'network DM reply route does not belong to session $callerSessionId',
+      );
     }
   }
 
@@ -472,37 +489,49 @@ final class MultiSessionConnectorHost {
     _pendingRosterAgents.clear();
     _pendingRosterSessions.clear();
     try {
-      if (sessions.isEmpty) {
-        await client.patchRoster(
-          baseUrl: baseUrl,
-          deviceId: device.deviceId,
-          deviceToken: device.deviceToken,
-          agents: agents,
-          sessions: const [],
-        );
-        return;
-      }
-      for (
-        var start = 0;
-        start < sessions.length;
-        start += sessionCatalogRosterPageSize
-      ) {
-        final end = (start + sessionCatalogRosterPageSize).clamp(
-          0,
-          sessions.length,
-        );
-        await client.patchRoster(
-          baseUrl: baseUrl,
-          deviceId: device.deviceId,
-          deviceToken: device.deviceToken,
-          agents: start == 0 ? agents : const [],
-          sessions: sessions.sublist(start, end),
-        );
-      }
+      await _patchRosterPages(client, agents, sessions);
     } on Object {
       onLog?.call('shared connector roster patch failed');
     }
   }
+
+  Future<void> _patchRosterPages(
+    DeviceEnrollmentClient client,
+    List<DeviceRosterAgent> agents,
+    List<DeviceRosterSession> sessions,
+  ) async {
+    if (sessions.isEmpty) {
+      await _sendRosterPage(client, agents, const []);
+      return;
+    }
+    for (
+      var start = 0;
+      start < sessions.length;
+      start += sessionCatalogRosterPageSize
+    ) {
+      final end = (start + sessionCatalogRosterPageSize).clamp(
+        0,
+        sessions.length,
+      );
+      await _sendRosterPage(
+        client,
+        start == 0 ? agents : const [],
+        sessions.sublist(start, end),
+      );
+    }
+  }
+
+  Future<void> _sendRosterPage(
+    DeviceEnrollmentClient client,
+    List<DeviceRosterAgent> agents,
+    List<DeviceRosterSession> sessions,
+  ) => client.patchRoster(
+    baseUrl: baseUrl,
+    deviceId: device.deviceId,
+    deviceToken: device.deviceToken,
+    agents: agents,
+    sessions: sessions,
+  );
 
   void _ensureBuilt() {
     if (_connector != null) return;
@@ -591,7 +620,7 @@ final class MultiSessionConnectorHost {
   ) {
     if (mail.sessionId != null) {
       final byId = _sessions[mail.sessionId!];
-      if (byId != null && byId.session.dmSink != null) return byId;
+      return byId?.session.dmSink != null ? byId : null;
     }
     for (final entry in _sessions.values) {
       if (entry.agentAddress == envelope.to && entry.session.dmSink != null) {
@@ -650,26 +679,10 @@ final class MultiSessionConnectorHost {
     InboundMail mail,
     DeviceDmReplyRoute route,
   ) async {
-    final targetId = mail.sessionId;
+    final target = _findWakeableCatalogRow(mail.sessionId);
     final launcher = wakeLauncher;
-    if (targetId == null ||
-        _sessions.containsKey(targetId) ||
-        launcher == null) {
-      return false;
-    }
-    final target = normalizeSessionCatalog(
-      _catalogEntries,
-    ).where((row) => row.id == targetId).firstOrNull;
-    if (target == null) return false;
-    if (_wakingSessions.add(targetId)) {
-      try {
-        await launcher(cwd: target.cwd, sessionId: target.id);
-      } on Object {
-        onLog?.call('shared connector wake launcher failed for $targetId');
-      } finally {
-        _wakingSessions.remove(targetId);
-      }
-    }
+    if (target == null || launcher == null) return false;
+    await _launchWakeOnce(launcher, target);
     await sendDeviceDmReply(
       connector: _connector!,
       keys: _dmKeys,
@@ -677,6 +690,27 @@ final class MultiSessionConnectorHost {
       reply: deviceDmQueuedReceipt,
     );
     return true;
+  }
+
+  SessionCatalogEntry? _findWakeableCatalogRow(String? targetId) {
+    if (targetId == null || _sessions.containsKey(targetId)) return null;
+    return normalizeSessionCatalog(
+      _catalogEntries,
+    ).where((row) => row.id == targetId).firstOrNull;
+  }
+
+  Future<void> _launchWakeOnce(
+    CliNetworkSessionWakeLauncher launcher,
+    SessionCatalogEntry target,
+  ) async {
+    if (!_wakingSessions.add(target.id)) return;
+    try {
+      await launcher(cwd: target.cwd, sessionId: target.id);
+    } on Object {
+      onLog?.call('shared connector wake launcher failed for ${target.id}');
+    } finally {
+      _wakingSessions.remove(target.id);
+    }
   }
 
   Map<String, ConnectorSessionMetadata> _presenceSessionMetadata() {
@@ -707,18 +741,24 @@ final class MultiSessionConnectorHost {
   String _senderLabel(String sender) {
     final at = sender.lastIndexOf('@');
     if (at > 0 && at + 1 < sender.length) {
-      final agent = sender.substring(0, at);
-      final deviceId = sender.substring(at + 1);
-      for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
-        if (row.deviceId == deviceId || row.agentAddresses.contains(sender)) {
-          return '${row.name} · $agent';
-        }
-      }
-      return '$deviceId · $agent';
+      return _agentSenderLabel(
+        sender,
+        sender.substring(0, at),
+        sender.substring(at + 1),
+      );
     }
     final userId = sender.startsWith('user:')
         ? sender.substring('user:'.length)
         : sender;
     return 'network user $userId';
+  }
+
+  String _agentSenderLabel(String sender, String agent, String deviceId) {
+    for (final row in parseNetworkDeviceRoster(_recentRosterFrames)) {
+      if (row.deviceId == deviceId || row.agentAddresses.contains(sender)) {
+        return '${row.name} · $agent';
+      }
+    }
+    return '$deviceId · $agent';
   }
 }

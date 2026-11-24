@@ -247,57 +247,77 @@ final class ConnectorDaemonServer {
   ) async {
     final msg = ConnectorDaemonWire.tryDecode(raw);
     if (msg == null) return;
-    final type = msg['type'] as String?;
     final reqId = msg['reqId'] as String?;
     try {
-      switch (type) {
-        case ConnectorDaemonWire.registerSession:
-          await _handleRegisterSession(conn, msg);
-          _replyOk(conn.socket, reqId);
-        case ConnectorDaemonWire.unregisterSession:
-          final sessionId = msg['sessionId'] as String?;
-          if (sessionId != null) {
-            conn.sessionIds.remove(sessionId);
-            await host.unregisterSession(sessionId);
-          }
-          _replyOk(conn.socket, reqId);
-        case ConnectorDaemonWire.setBusy:
-          final sessionId = msg['sessionId'] as String?;
-          final busy = msg['busy'] == true;
-          if (sessionId != null) host.setBusy(sessionId, busy);
-          _replyOk(conn.socket, reqId);
-        case ConnectorDaemonWire.sendDmReply:
-          final address = msg['address'] as String? ?? '';
-          final text = msg['text'] as String? ?? '';
-          final callerSessionId = msg['sessionId'] as String?;
-          final msgId = await host.sendNetworkDmReply(
-            address: address,
-            text: text,
-            callerSessionId: callerSessionId,
-          );
-          _replyOk(conn.socket, reqId, {'msgId': msgId});
-        case ConnectorDaemonWire.dmDeliverAck:
-          final deliveryId = msg['deliveryId'] as String?;
-          final ok = msg['ok'] == true;
-          final error = msg['error'] as String?;
-          final completer = _pendingDeliveries.remove(deliveryId);
-          if (completer != null && !completer.isCompleted) {
-            if (ok) {
-              completer.complete();
-            } else {
-              completer.completeError(
-                StateError(error ?? 'client DM sink failed'),
-              );
-            }
-          }
-        case ConnectorDaemonWire.getRoster:
-          _replyOk(conn.socket, reqId, {
-            'frames': [for (final f in host.recentRosterFrames) f.toJson()],
-          });
-      }
+      await _dispatchClientMessage(conn, msg, reqId);
     } on Object catch (error) {
       _replyError(conn.socket, reqId, '$error');
     }
+  }
+
+  Future<void> _dispatchClientMessage(
+    _LocalClientConnection conn,
+    Map<String, Object?> msg,
+    String? reqId,
+  ) async {
+    switch (msg['type']) {
+      case ConnectorDaemonWire.registerSession:
+        await _handleRegisterSession(conn, msg);
+        _replyOk(conn.socket, reqId);
+      case ConnectorDaemonWire.unregisterSession:
+        await _handleUnregisterSession(conn, msg, reqId);
+      case ConnectorDaemonWire.setBusy:
+        final sessionId = msg['sessionId'] as String?;
+        if (sessionId != null) host.setBusy(sessionId, msg['busy'] == true);
+        _replyOk(conn.socket, reqId);
+      case ConnectorDaemonWire.sendDmReply:
+        await _handleSendDmReply(conn, msg, reqId);
+      case ConnectorDaemonWire.dmDeliverAck:
+        _handleDmDeliverAck(msg);
+      case ConnectorDaemonWire.getRoster:
+        _replyOk(conn.socket, reqId, {
+          'frames': [for (final f in host.recentRosterFrames) f.toJson()],
+        });
+    }
+  }
+
+  Future<void> _handleUnregisterSession(
+    _LocalClientConnection conn,
+    Map<String, Object?> msg,
+    String? reqId,
+  ) async {
+    final sessionId = msg['sessionId'] as String?;
+    if (sessionId != null) {
+      conn.sessionIds.remove(sessionId);
+      await host.unregisterSession(sessionId);
+    }
+    _replyOk(conn.socket, reqId);
+  }
+
+  Future<void> _handleSendDmReply(
+    _LocalClientConnection conn,
+    Map<String, Object?> msg,
+    String? reqId,
+  ) async {
+    final msgId = await host.sendNetworkDmReply(
+      address: msg['address'] as String? ?? '',
+      text: msg['text'] as String? ?? '',
+      callerSessionId: msg['sessionId'] as String?,
+    );
+    _replyOk(conn.socket, reqId, {'msgId': msgId});
+  }
+
+  void _handleDmDeliverAck(Map<String, Object?> msg) {
+    final deliveryId = msg['deliveryId'] as String?;
+    final completer = _pendingDeliveries.remove(deliveryId);
+    if (completer == null || completer.isCompleted) return;
+    if (msg['ok'] == true) {
+      completer.complete();
+      return;
+    }
+    completer.completeError(
+      StateError(msg['error'] as String? ?? 'client DM sink failed'),
+    );
   }
 
   Future<void> _handleRegisterSession(
@@ -500,21 +520,18 @@ final class SharedConnectorPresenceClient
     final result = await _rpc(ConnectorDaemonWire.getRoster, const {});
     final rawFrames = result['frames'];
     if (rawFrames is! List) return const [];
-    final out = <NetworkEnvelope>[];
-    for (final item in rawFrames) {
-      if (item is Map) {
-        try {
-          out.add(
-            NetworkEnvelope.fromJson({
-              for (final MapEntry(:key, :value) in item.entries) '$key': value,
-            }),
-          );
-        } on Object {
-          // Skip malformed frame.
-        }
-      }
+    return [for (final item in rawFrames) ?_tryParseEnvelope(item)];
+  }
+
+  static NetworkEnvelope? _tryParseEnvelope(Object? raw) {
+    if (raw is! Map) return null;
+    try {
+      return NetworkEnvelope.fromJson({
+        for (final MapEntry(:key, :value) in raw.entries) '$key': value,
+      });
+    } on Object {
+      return null;
     }
-    return out;
   }
 
   @override
@@ -594,36 +611,39 @@ final class SharedConnectorPresenceClient
     if (msg == null) return;
     switch (msg['type']) {
       case ConnectorDaemonWire.rpcResult:
-        final reqId = msg['reqId'] as String?;
-        final completer = _pendingRpcs.remove(reqId);
-        if (completer != null && !completer.isCompleted) {
-          if (msg['ok'] == true) {
-            completer.complete(msg);
-          } else {
-            completer.completeError(
-              StateError('${msg['error'] ?? 'shared connector RPC failed'}'),
-            );
-          }
-        }
+        _resolveRpcResult(msg);
       case ConnectorDaemonWire.dmDeliver:
         await _handleDmDeliver(msg);
       case ConnectorDaemonWire.rosterEvent:
-        final rawEnv = msg['envelope'];
-        if (rawEnv is Map && !_rosterFrames.isClosed) {
-          try {
-            _rosterFrames.add(
-              NetworkEnvelope.fromJson({
-                for (final MapEntry(:key, :value) in rawEnv.entries)
-                  '$key': value,
-              }),
-            );
-          } on Object {
-            // Ignore malformed frame.
-          }
-        }
+        _emitRosterEnvelope(msg['envelope']);
       case ConnectorDaemonWire.noticeEvent:
         final text = msg['message'] as String?;
         if (text != null) _session?.onNotice?.call(text);
+    }
+  }
+
+  void _resolveRpcResult(Map<String, Object?> msg) {
+    final completer = _pendingRpcs.remove(msg['reqId'] as String?);
+    if (completer == null || completer.isCompleted) return;
+    if (msg['ok'] == true) {
+      completer.complete(msg);
+      return;
+    }
+    completer.completeError(
+      StateError('${msg['error'] ?? 'shared connector RPC failed'}'),
+    );
+  }
+
+  void _emitRosterEnvelope(Object? rawEnv) {
+    if (rawEnv is! Map || _rosterFrames.isClosed) return;
+    try {
+      _rosterFrames.add(
+        NetworkEnvelope.fromJson({
+          for (final MapEntry(:key, :value) in rawEnv.entries) '$key': value,
+        }),
+      );
+    } on Object {
+      // Ignore malformed frame.
     }
   }
 
@@ -682,11 +702,12 @@ final class SharedConnectorPresenceClient
       }
     }
     _pendingRpcs.clear();
-    if (_stopped) return;
+    if (!_stopped) _scheduleReconnect(const Duration(seconds: 2));
+  }
+
+  void _scheduleReconnect(Duration delay) {
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 2), () {
-      unawaited(_reconnect());
-    });
+    _reconnectTimer = Timer(delay, () => unawaited(_reconnect()));
   }
 
   Future<void> _reconnect() async {
@@ -695,11 +716,7 @@ final class SharedConnectorPresenceClient
       await _ensureConnected();
       await _registerCurrentSession();
     } on Object {
-      if (!_stopped) {
-        _reconnectTimer = Timer(const Duration(seconds: 3), () {
-          unawaited(_reconnect());
-        });
-      }
+      if (!_stopped) _scheduleReconnect(const Duration(seconds: 3));
     }
   }
 
