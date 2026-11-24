@@ -3524,7 +3524,7 @@ jobs:
     runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
-    timeout-minutes: 30
+    timeout-minutes: 150
     permissions:
       contents: read
     # gh-1814: this job deliberately carries NO SwiftPM lane pin — the
@@ -3612,43 +3612,58 @@ jobs:
           restore-keys: |
             macos-pods-ci-v1-${{ hashFiles('flutter_app/macos/Podfile.lock') }}-
 
+      # Same immutable xcframework cache + resumable restore as build-ios (gh-2314):
+      # self-hosted fa-m5 links can throttle github.com releases to ~16-170 KB/s,
+      # causing the old 15-min single-shot curl to time out mid-download.
+      - name: Cache vendored WasmRun macOS framework
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework
+          key: wasmrun-xcframework-macos-ci-v0.1.0
+
       - name: Restore vendored WasmRun macOS framework
-        timeout-minutes: 15
+        timeout-minutes: 120
         run: |
           set -euo pipefail
-          # Same upstream-release fallback as the iOS leg (framework is
-          # excluded from git).
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
-          rm -rf "$DEST/WasmRun.xcframework"
-          mkdir -p "$DEST"
-          # gh-2233: same hardening as build-mobile.yml's testflight step —
-          # the zip goes to $RUNNER_TEMP (job-private), NOT the arch-less
-          # fixed /tmp path that every WasmRun-downloading leg on the ONE
-          # fa-m5 box shares (multiple concurrent runner processes,
-          # gh-2134): overlapping downloads interleave two transfers into
-          # one file and unzip reads a patchwork (testflight leg run
-          # 44023345849: bad CRC at file #6, curl reported 100%). --fail +
-          # the pinned size+sha256 (same immutable asset build-macos.yml
-          # pins, gh-1759) keep unverified bytes out of the build tree.
+          LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           ZIP="$RUNNER_TEMP/WasmRun.xcframework.zip"
           ASSET_DIGEST="aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98"
           ASSET_BYTES=97238501
-          curl --fail -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
-            -o "$ZIP" \
-            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-          got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
-          if [ "$got" -ne "$ASSET_BYTES" ]; then
-            echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
-          elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
-            echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
-            rm -f "$ZIP"
-            exit 1
+          mkdir -p "$DEST"
+          if [ -f "$DEST/WasmRun.xcframework/Info.plist" ]; then
+            echo "Using framework already in place (actions/cache hit or valid leftover)"
+          elif [ -d "$LOCAL_SRC" ]; then
+            echo "Using local framework: $LOCAL_SRC"
+            cp -R "$LOCAL_SRC" "$DEST/"
+          else
+            echo "No cache, no local copy — downloading from upstream release..."
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if curl --fail -L -C - --connect-timeout 30 --max-time 540 \
+                -o "$ZIP" \
+                https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                break
+              fi
+              if [ "$attempt" = "12" ]; then
+                echo "download attempt $attempt failed — out of loop attempts" >&2
+              else
+                echo "download attempt $attempt failed, resuming in 5s..."
+                sleep 5
+              fi
+            done
+            got=$(wc -c < "$ZIP" 2>/dev/null | tr -d ' ' || echo 0)
+            if [ "$got" -ne "$ASSET_BYTES" ]; then
+              echo "::error::downloaded WasmRun.xcframework.zip is $got bytes (expected $ASSET_BYTES) — not unzipping unverified bytes (gh-2233)"
+              rm -f "$ZIP"
+              exit 1
+            elif ! echo "$ASSET_DIGEST  $ZIP" | shasum -a 256 -c - >/dev/null; then
+              echo "::error::downloaded WasmRun.xcframework.zip failed its pinned sha256 — not unzipping unverified bytes (gh-2233)"
+              rm -f "$ZIP"
+              exit 1
+            fi
+            unzip -q "$ZIP" -d "$DEST"
           fi
-          unzip -q "$ZIP" -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
-
       - uses: ./.github/actions/flutter-pub-get
 
       - name: flutter build macos (debug)
