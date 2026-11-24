@@ -295,7 +295,12 @@ class MyApp extends StatelessWidget {
   }
 
   Widget _materialApp(ThemeController theme, FaUiTheme? uiTheme) {
-    final localeOverride = loadAppLocaleOverride(productConfig);
+    // Resolved on every shell build and published for the context-free
+    // callers (the 429 rate-limit bubble): the whole process shares one
+    // locale decision — see [appLocaleOverride].
+    final localeOverride = appLocaleOverride = loadAppLocaleOverride(
+      productConfig,
+    );
     return MaterialApp(
       title: productConfig.displayName,
       theme: buildFaTheme(

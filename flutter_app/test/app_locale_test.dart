@@ -31,6 +31,23 @@ void main() {
     );
   });
 
+  test('the published boot override reaches context-free callers', () {
+    appLocaleOverride = 'ru';
+    addTearDown(() => appLocaleOverride = null);
+    expect(resolveAppLocale(const Locale('en')), const Locale('ru'));
+    expect(resolveAppLocale(null), const Locale('ru'));
+    // An explicit argument still wins over the published value.
+    expect(
+      resolveAppLocale(const Locale('en'), localeOverride: 'en').languageCode,
+      'en',
+    );
+  });
+
+  test('a cleared boot override falls back to the device locale', () {
+    appLocaleOverride = null;
+    expect(resolveAppLocale(const Locale('ru')), const Locale('ru'));
+  });
+
   test('an unsupported device locale resolves to English, not itself', () {
     expect(resolveAppLocale(const Locale('fr')).languageCode, 'en');
   });
