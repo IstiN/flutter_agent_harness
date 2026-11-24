@@ -115,7 +115,13 @@ enum FileErrorCode {
 /// Ported from pi's `FileError`.
 final class FileError implements Exception {
   /// Creates a [FileError] with a [code] and [message].
-  const FileError(this.code, this.message, {this.path, this.cause});
+  const FileError(
+    this.code,
+    this.message, {
+    this.path,
+    this.cause,
+    this.pathExistsAtFailure = false,
+  });
 
   /// Backend-independent error code.
   final FileErrorCode code;
@@ -128,6 +134,11 @@ final class FileError implements Exception {
 
   /// The original backend error, when available.
   final Object? cause;
+
+  /// Whether the failed operation observed an existing target path.
+  ///
+  /// The path may have been removed since the failure.
+  final bool pathExistsAtFailure;
 
   @override
   String toString() =>
@@ -262,7 +273,8 @@ abstract interface class RenamableFileSystem {
 abstract interface class ExclusiveCreateFileSystem {
   /// Creates an empty file at [path], failing when anything already
   /// occupies it — the atomic exclusive-create cross-process locks need.
-  /// The parent directory must exist.
+  /// The parent directory must exist. If the backend can identify an
+  /// existing-path refusal, it sets [FileError.pathExistsAtFailure].
   Future<Result<void, FileError>> createFileExclusive(String path);
 }
 

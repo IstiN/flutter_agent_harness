@@ -275,8 +275,8 @@ void main() {
     expect(log, contains(usageTokensLogPrefix));
   });
 
-  test('a TUI-attached session keeps stdout clean — the fa-tokens line '
-      'stays in the diag log only (gh-1292 guard)', () async {
+  test('a TUI-attached session keeps token and trace lines in the diag log '
+      'only (gh-1292 guard)', () async {
     final tuiIo = FakeCliIO();
     addTearDown(tuiIo.close);
     final cli = AgentCli(
@@ -289,6 +289,7 @@ void main() {
         providerKind: 'openai-completions',
       ),
       io: tuiIo,
+      environment: const {'FA_USAGE_TRACE': '1'},
       streamFunction: FakeStreamFunction([
         textTurn('ok', usage: reportedUsage()),
       ]).call,
@@ -298,9 +299,11 @@ void main() {
     expect(await cli.runHeadless('say hi'), 0);
 
     expect(tuiIo.out.toString(), isNot(contains(usageTokensLogPrefix)));
+    expect(tuiIo.out.toString(), isNot(contains('usage_request:')));
     // The diag-file write stays (the guard only disables the mirror).
     final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
     expect(log, contains(usageTokensLogPrefix));
+    expect(log, contains('usage_request:'));
   });
 
   test('stream-json mode keeps the NDJSON wire free of the fa-tokens line '

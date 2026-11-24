@@ -80,37 +80,49 @@ extension AgentCliUsageLedger on AgentCli {
         sessionId: metadata.id,
       );
       await _persistFoldIfStale(dir, ledger);
-      final closed = ledger.segments.lastOrNull;
-      if (closed != null) {
-        if (traceEnabled && !scan.emptyTrailingSegment) {
-          for (final entry in scan.segments.last.traceLines) {
-            final line = 'sid=${metadata.id} $entry';
-            _logDiagnostic(line);
-            if (mirrorTokensLineToRunLog && !_useTui) {
-              io.writeln(config.redactionPipeline?.redact(line) ?? line);
-            }
-          }
-        }
-        final line = usageTokensLogLine(
-          sessionId: metadata.id,
-          segment: closed,
-        );
-        _logDiagnostic(line);
-        // gh-1292: mirror the segment-close line onto the CLI diagnostics
-        // channel ([CliIO.writeln] — stderr on headless hosts) so the
-        // ephemeral runner's captured run log sees it. It must NOT ride
-        // [CliIO.write]: headless stdout is the pipeable primary stream
-        // (issue #774 AC3 — byte-identical assistant prose only). The
-        // reporter greps the whole GH job log, stderr included. TUI
-        // sessions keep the channel clean (the line stays in fa.log);
-        // structured modes (HEP/stream-json) forward writeln to the
-        // host's diagnostics channel via [HepEventsIO] — their NDJSON
-        // wires stay pure by construction.
-        if (mirrorTokensLineToRunLog && !_useTui) io.writeln(line);
-      }
+      _logClosedUsageSegment(
+        metadata.id,
+        ledger,
+        scan,
+        traceEnabled: traceEnabled,
+        mirrorToRunLog: mirrorTokensLineToRunLog,
+      );
     } on Object catch (error) {
       _logDiagnostic('usage ledger flush failed: $error');
     }
+  }
+
+  void _logClosedUsageSegment(
+    String sessionId,
+    UsageLedger ledger,
+    UsageChainScan scan, {
+    required bool traceEnabled,
+    required bool mirrorToRunLog,
+  }) {
+    final closed = ledger.segments.lastOrNull;
+    if (closed == null) return;
+    if (traceEnabled && !scan.emptyTrailingSegment) {
+      for (final entry in scan.segments.last.traceLines) {
+        final line = 'sid=$sessionId $entry';
+        _logDiagnostic(line);
+        if (mirrorToRunLog && !_useTui) {
+          io.writeln(config.redactionPipeline?.redact(line) ?? line);
+        }
+      }
+    }
+    final line = usageTokensLogLine(sessionId: sessionId, segment: closed);
+    _logDiagnostic(line);
+    // gh-1292: mirror the segment-close line onto the CLI diagnostics
+    // channel ([CliIO.writeln] — stderr on headless hosts) so the
+    // ephemeral runner's captured run log sees it. It must NOT ride
+    // [CliIO.write]: headless stdout is the pipeable primary stream
+    // (issue #774 AC3 — byte-identical assistant prose only). The
+    // reporter greps the whole GH job log, stderr included. TUI
+    // sessions keep the channel clean (the line stays in fa.log);
+    // structured modes (HEP/stream-json) forward writeln to the
+    // host's diagnostics channel via [HepEventsIO] — their NDJSON
+    // wires stay pure by construction.
+    if (mirrorToRunLog && !_useTui) io.writeln(line);
   }
 
   /// E3: rewrite the fold only when the on-disk artifact is
