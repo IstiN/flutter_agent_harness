@@ -57,7 +57,7 @@ concurrency:
 jobs:
   ios:
     name: iOS App Store metadata & screenshots
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     if: github.event.inputs.ios_content != 'none' && github.event.inputs.ios_content != ''
     steps:
       - name: Checkout repository
@@ -94,7 +94,7 @@ jobs:
 
   macos:
     name: macOS App Store metadata & screenshots
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     if: github.event.inputs.macos_content != 'none' && github.event.inputs.macos_content != ''
     steps:
       - name: Checkout repository

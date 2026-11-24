@@ -1174,13 +1174,17 @@ jobs:
   # the quality-gate platform class.
   installer-portability:
     name: Installer sh portability (REG)
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [release-pending, release-dedupe, changes]
     if: needs.changes.outputs.installer == 'true' && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -2302,7 +2306,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
@@ -2319,7 +2323,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: |
@@ -2372,7 +2375,7 @@ jobs:
   # in the Quality gate: reddens the merge check, never dart_ok (#1368).
   flutter-app-goldens:
     name: Golden suite (macOS baselines)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
@@ -2389,7 +2392,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: |
@@ -3519,7 +3521,7 @@ jobs:
 
   build-macos:
     name: Build macOS (debug)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     needs: [release-pending, release-dedupe, changes]
     if: (needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true') && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
     timeout-minutes: 30
@@ -3551,7 +3553,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app
@@ -3861,7 +3862,7 @@ jobs:
   # an IT. macOS leg exercises the real quarantine-strip ordering (AC3).
   installer-verify:
     name: Installer verify IT (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [release-pending, release-dedupe, changes]
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
@@ -3872,7 +3873,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Installer verification fixtures (AC1-AC4)
@@ -4607,13 +4612,13 @@ jobs:
             os: windows
             arch: x64
             archive: zip
-          - runner: macos-latest
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: arm64
             archive: tar
-          # Intel Mac runner (macos-13 is retired; AOT cannot cross-compile
-          # macos_x64 from arm64 — only linux_* targets cross).
-          - runner: macos-15-intel
+          # Intel Mac binary built under Rosetta on the self-hosted macos-m5 pool
+          # (no GitHub-hosted macOS runners in this repo).
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: x64
             archive: tar
@@ -4650,6 +4655,7 @@ jobs:
           # already applies to its flutter-version pins. Bump deliberately,
           # in the commit that verifies the new layout end-to-end.
           sdk: '3.13.5'
+          architecture: ${{ matrix.arch }}
 
       # gh-1522: the committed pubspec carries the 0.0.0-dev placeholder —
       # the TAG is the version (the retired flow compared tag vs pubspec
@@ -4674,7 +4680,6 @@ jobs:
           path: .dart_tool/hooks_runner/shared
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
-
       # gh-2072 (review thread 1): the release binaries matrix runs
       # `dart build cli` — a hook-building step that failed on the PR's own
       # run with the exact sqlite3 hook 504 this PR exists to prevent
@@ -4693,7 +4698,11 @@ jobs:
           # renamed — on Dart >=3.14 (native linux) the bundle is split
           # (thin launcher + libdartaot<exe>.so) and a post-build mv desyncs
           # the pair (`dartaotruntime: not an AOT snapshot`, v1.0.709).
-          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" = "macos" ] && [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 dart build cli --target=bin/fa.dart --output=build/out
+          else
+            dart build cli --target=bin/fa.dart --output=build/out
+          fi
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi
@@ -4712,7 +4721,11 @@ jobs:
         if: matrix.os == 'macos'
         shell: bash
         run: |
-          bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          else
+            bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+          fi
           codesign --force --sign - build/out/bundle/bin/fa-clip
           test -x build/out/bundle/bin/fa-clip
 
@@ -5261,7 +5274,7 @@ jobs:
 
   installer-smoke:
     name: Installer smoke
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     needs: [binaries, release-provenance]
     timeout-minutes: 15
     # Depends on binaries — no !cancelled() needed here: the skip chain is
@@ -5276,10 +5289,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            runner: windows-latest
             kind: ps1
           - os: ubuntu-latest
+            runner: ubuntu-latest
             kind: sh
-          - os: macos-latest
+          - os: macos-m5
+            runner: [self-hosted, macos-m5]
             kind: sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -5442,10 +5458,10 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: x64
-          - runner: macos-latest
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: arm64
-          - runner: macos-15-intel
+          - runner: [self-hosted, macos-m5]
             os: macos
             arch: x64
           - runner: ubuntu-latest
@@ -5462,6 +5478,7 @@ jobs:
           # gh-2120: PINNED Dart 3.13.5 — same `dart build cli` layout surface
           # as the release binaries job (3.14.0 emits the split layout).
           sdk: '3.13.5'
+          architecture: ${{ matrix.arch }}
 
       - name: Pub cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -5471,7 +5488,6 @@ jobs:
           restore-keys: pub-${{ runner.os }}-
 
       - run: dart pub get
-
       - name: Native-assets hook cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -5491,7 +5507,11 @@ jobs:
         run: |
           # Same bundle layout as the release job: bundle/bin/fa (+ lib/),
           # built (not renamed) as `fa` — gh-2120 follow-up, see binaries.
-          dart build cli --target=bin/fa.dart --output=build/out
+          if [ "${{ matrix.os }}" = "macos" ] && [ "${{ matrix.arch }}" = "x64" ]; then
+            arch -x86_64 dart build cli --target=bin/fa.dart --output=build/out
+          else
+            dart build cli --target=bin/fa.dart --output=build/out
+          fi
           if [ "${{ matrix.os }}" != "windows" ]; then
             chmod +x build/out/bundle/bin/fa
           fi

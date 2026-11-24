@@ -211,6 +211,64 @@ void main() {
       },
     );
 
+    test('audit: no workflow anywhere uses GitHub-hosted macOS runners', () {
+      // Hosted macOS runners ($0.08/min) must never be used in this repo —
+      // every macOS leg routes to the self-hosted `[self-hosted, macos-m5]`
+      // pool (and x64 CLI builds run under Rosetta `arch -x86_64`).
+      final hostedMacos = RegExp(r'^macos-(latest|\d+|xl|large)');
+      List<String> allScalars(Object? node) {
+        final out = <String>[];
+        void walk(Object? n) {
+          if (n is YamlMap) {
+            n.forEach((_, v) => walk(v));
+          } else if (n is YamlList) {
+            for (final v in n) {
+              walk(v);
+            }
+          } else if (n != null) {
+            out.add(n.toString());
+          }
+        }
+
+        walk(node);
+        return out;
+      }
+
+      final workflows = Directory(
+        '.github/workflows',
+      ).listSync().where((f) => f.path.endsWith('.yml')).toList();
+      expect(workflows, isNotEmpty);
+      for (final f in workflows) {
+        final jobs = jobsOf(f.path);
+        for (final e in jobs.entries) {
+          final job = e.value as YamlMap;
+          final runsOnScalars = allScalars(job['runs-on']);
+          for (final s in runsOnScalars) {
+            expect(
+              hostedMacos.hasMatch(s),
+              isFalse,
+              reason:
+                  '${f.path} job "${e.key}" runs-on `$s` is a GitHub-hosted '
+                  'macOS runner — route to `[self-hosted, macos-m5]` instead.',
+            );
+          }
+          final strategy = job['strategy'];
+          if (strategy is YamlMap && strategy['matrix'] != null) {
+            for (final s in allScalars(strategy['matrix'])) {
+              expect(
+                hostedMacos.hasMatch(s),
+                isFalse,
+                reason:
+                    '${f.path} job "${e.key}" strategy.matrix contains `$s`, '
+                    'a GitHub-hosted macOS runner — route to '
+                    '`[self-hosted, macos-m5]` instead.',
+              );
+            }
+          }
+        }
+      }
+    });
+
     test('audit: no workflow anywhere pins an fa-m5-* runner-name label', () {
       // gh-1906: the iOS legs queued forever because the label set
       // contained `fa-m5-1` — a runner-NAME label GitHub only assigns

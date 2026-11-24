@@ -19,7 +19,7 @@ permissions:
 jobs:
   regen:
     name: Golden regen (macOS capture)
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos-m5]
     if: github.event.label.name == 'golden-regen'
     timeout-minutes: 25
     steps:
@@ -28,7 +28,6 @@ jobs:
         with:
           flutter-version: '3.50.0'
           channel: stable
-          cache: true
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: |
