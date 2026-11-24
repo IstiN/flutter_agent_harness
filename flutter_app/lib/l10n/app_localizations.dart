@@ -5653,6 +5653,606 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Done ({count})'**
   String chatSubagentFilterDone(Object count);
+
+  /// Onboarding header step 1 label
+  ///
+  /// In en, this message translates to:
+  /// **'Ask'**
+  String get onboardingStepAsk;
+
+  /// Onboarding header step 2 label
+  ///
+  /// In en, this message translates to:
+  /// **'Think'**
+  String get onboardingStepThink;
+
+  /// Onboarding header step 3 label
+  ///
+  /// In en, this message translates to:
+  /// **'Act'**
+  String get onboardingStepAct;
+
+  /// Onboarding header step 4 label
+  ///
+  /// In en, this message translates to:
+  /// **'Make it yours'**
+  String get onboardingStepMakeItYours;
+
+  /// Short third label of the mobile page-1 mini step indicator
+  ///
+  /// In en, this message translates to:
+  /// **'Yours'**
+  String get onboardingMiniStepYours;
+
+  /// Onboarding footer page counter
+  ///
+  /// In en, this message translates to:
+  /// **'{page} of {total}'**
+  String onboardingPageCounter(Object page, Object total);
+
+  /// Onboarding footer link to the published privacy policy
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy Policy'**
+  String get onboardingPrivacyPolicy;
+
+  /// Onboarding primary button on the permissions page
+  ///
+  /// In en, this message translates to:
+  /// **'Continue without access'**
+  String get onboardingContinueWithoutAccess;
+
+  /// Onboarding primary button on the last page; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'Open {product}'**
+  String onboardingOpenProduct(Object product);
+
+  /// Onboarding page 1 title
+  ///
+  /// In en, this message translates to:
+  /// **'Start with an idea.'**
+  String get onboardingP1Title;
+
+  /// Onboarding page 1 subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Ask a question, automate a task, or describe an app you want to use.'**
+  String get onboardingP1Subtitle;
+
+  /// Onboarding page 1 feature chip 1
+  ///
+  /// In en, this message translates to:
+  /// **'Answers questions'**
+  String get onboardingFeatureAnswers;
+
+  /// Onboarding page 1 feature chip 2
+  ///
+  /// In en, this message translates to:
+  /// **'Uses your apps'**
+  String get onboardingFeatureUsesApps;
+
+  /// Onboarding page 1 feature chip 3
+  ///
+  /// In en, this message translates to:
+  /// **'Builds new apps'**
+  String get onboardingFeatureBuildsApps;
+
+  /// Onboarding mockup card caption (mobile page 1)
+  ///
+  /// In en, this message translates to:
+  /// **'Your idea'**
+  String get onboardingMockupYourIdea;
+
+  /// Sample user request shown throughout the onboarding mockups
+  ///
+  /// In en, this message translates to:
+  /// **'Build a focus timer with work and break sessions.'**
+  String get onboardingMockupFocusRequest;
+
+  /// Sample user request in the two-line floating idea pill (desktop page 1)
+  ///
+  /// In en, this message translates to:
+  /// **'Build a focus timer\nwith work and break sessions.'**
+  String get onboardingMockupFocusRequestPill;
+
+  /// Sample app name in the onboarding mockups
+  ///
+  /// In en, this message translates to:
+  /// **'Focus Timer'**
+  String get onboardingMockupFocusTimer;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Notes'**
+  String get onboardingMockupNotes;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Utilities'**
+  String get onboardingMockupUtilities;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Calculator'**
+  String get onboardingMockupCalculator;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Maps'**
+  String get onboardingMockupMaps;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Add app'**
+  String get onboardingMockupAddApp;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Habit Garden'**
+  String get onboardingMockupHabitGarden;
+
+  /// Mockup app tile label
+  ///
+  /// In en, this message translates to:
+  /// **'Create with {product}'**
+  String onboardingMockupCreateWithFa(String product);
+
+  /// Badge on the mock Habit Garden app tile
+  ///
+  /// In en, this message translates to:
+  /// **'Demo'**
+  String get onboardingMockupBadgeDemo;
+
+  /// Mock chat/timestamp caption
+  ///
+  /// In en, this message translates to:
+  /// **'Just now'**
+  String get onboardingMockupJustNow;
+
+  /// Mock chat bubble timestamp (mobile page 1)
+  ///
+  /// In en, this message translates to:
+  /// **'9:41 AM'**
+  String get onboardingMockupTimeMorning;
+
+  /// Mock calendar event time
+  ///
+  /// In en, this message translates to:
+  /// **'10:00 AM'**
+  String get onboardingMockupTimeDesignReview;
+
+  /// Mock calendar event time
+  ///
+  /// In en, this message translates to:
+  /// **'12:30 PM'**
+  String get onboardingMockupTimeLunch;
+
+  /// Mock calendar event time
+  ///
+  /// In en, this message translates to:
+  /// **'3:00 PM'**
+  String get onboardingMockupTimeSync;
+
+  /// Mock assistant typing status
+  ///
+  /// In en, this message translates to:
+  /// **'Understanding your request…'**
+  String get onboardingMockupUnderstanding;
+
+  /// Mock chat input placeholder
+  ///
+  /// In en, this message translates to:
+  /// **'Ask anything…'**
+  String get onboardingMockupAskAnything;
+
+  /// Mock Focus Timer status label
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get onboardingMockupActive;
+
+  /// Mock Focus Timer button
+  ///
+  /// In en, this message translates to:
+  /// **'Start Session'**
+  String get onboardingMockupStartSession;
+
+  /// Mock Focus Timer caption
+  ///
+  /// In en, this message translates to:
+  /// **'Work 25 min • Break 5 min'**
+  String get onboardingMockupWorkBreak;
+
+  /// Caption under the mock Focus Timer ring
+  ///
+  /// In en, this message translates to:
+  /// **'Focus time'**
+  String get onboardingMockupFocusTime;
+
+  /// Mock weather widget caption
+  ///
+  /// In en, this message translates to:
+  /// **'Sunny'**
+  String get onboardingMockupSunny;
+
+  /// Mock calendar widget title
+  ///
+  /// In en, this message translates to:
+  /// **'Upcoming'**
+  String get onboardingMockupUpcoming;
+
+  /// Mock calendar event title
+  ///
+  /// In en, this message translates to:
+  /// **'Design review'**
+  String get onboardingMockupDesignReview;
+
+  /// Mock calendar event title
+  ///
+  /// In en, this message translates to:
+  /// **'Lunch with team'**
+  String get onboardingMockupLunchWithTeam;
+
+  /// Mock calendar event title
+  ///
+  /// In en, this message translates to:
+  /// **'Project sync'**
+  String get onboardingMockupProjectSync;
+
+  /// My Apps mock panel action label
+  ///
+  /// In en, this message translates to:
+  /// **'Customize'**
+  String get onboardingMockupCustomize;
+
+  /// Onboarding provider page title; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how {product} thinks.'**
+  String onboardingChooseHowThinks(Object product);
+
+  /// Provider page subtitle line / faded provider preview on page 1
+  ///
+  /// In en, this message translates to:
+  /// **'Connect a provider to start chatting.'**
+  String get onboardingConnectProviderToStart;
+
+  /// Badge on the recommended provider in the page-1 preview
+  ///
+  /// In en, this message translates to:
+  /// **'Recommended'**
+  String get onboardingBadgeRecommended;
+
+  /// Badge on the local provider in the page-1 preview
+  ///
+  /// In en, this message translates to:
+  /// **'Local'**
+  String get onboardingBadgeLocal;
+
+  /// Faded page-1 provider preview row (OpenRouter)
+  ///
+  /// In en, this message translates to:
+  /// **'Access 100+ models from top AI providers.'**
+  String get onboardingGhostOpenRouterDesc;
+
+  /// Faded page-1 provider preview row (Ollama)
+  ///
+  /// In en, this message translates to:
+  /// **'Run open-source models on your device.'**
+  String get onboardingGhostOllamaDesc;
+
+  /// Faded page-1 provider preview row (Google Gemini)
+  ///
+  /// In en, this message translates to:
+  /// **'Google\'s latest models with advanced reasoning.'**
+  String get onboardingGhostGeminiDesc;
+
+  /// Faded page-1 provider preview row name
+  ///
+  /// In en, this message translates to:
+  /// **'Custom provider'**
+  String get onboardingGhostCustomProvider;
+
+  /// Faded page-1 provider preview row (custom provider)
+  ///
+  /// In en, this message translates to:
+  /// **'Connect any OpenAI-compatible API.'**
+  String get onboardingGhostCustomDesc;
+
+  /// Onboarding provider page subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Connect a provider to start chatting.\nYou can switch models anytime.'**
+  String get onboardingP2Subtitle;
+
+  /// Key-storage note under the provider cards
+  ///
+  /// In en, this message translates to:
+  /// **'API keys stay in your system Keychain.\nContent is sent only to providers you connect.'**
+  String get onboardingP2KeysNote;
+
+  /// Floating request card caption (desktop provider page)
+  ///
+  /// In en, this message translates to:
+  /// **'Your request'**
+  String get onboardingYourRequest;
+
+  /// Snack when a provider setup flow fails to open
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the provider setup: {error}'**
+  String onboardingFlowError(Object error);
+
+  /// Faded permissions preview title on the provider page; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'{product} can take action for you.'**
+  String onboardingProductCanAct(Object product);
+
+  /// Permissions page subtitle line; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'{product} asks only when an action needs it.'**
+  String onboardingProductAsksOnly(Object product);
+
+  /// Permissions page card title
+  ///
+  /// In en, this message translates to:
+  /// **'Calendar & Reminders'**
+  String get onboardingPermCalendarTitle;
+
+  /// Permissions page card body
+  ///
+  /// In en, this message translates to:
+  /// **'Check your schedule and create events.'**
+  String get onboardingPermCalendarDesc;
+
+  /// Permissions page card body
+  ///
+  /// In en, this message translates to:
+  /// **'Send reminders and task updates.'**
+  String get onboardingPermNotificationsDesc;
+
+  /// Permissions page card body; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'Talk to {product} with your voice.'**
+  String onboardingPermMicrophoneDesc(Object product);
+
+  /// Permission policy pill on the permission cards
+  ///
+  /// In en, this message translates to:
+  /// **'Ask when needed'**
+  String get onboardingAskWhenNeeded;
+
+  /// Secondary pill on the permission cards
+  ///
+  /// In en, this message translates to:
+  /// **'Later'**
+  String get onboardingPermLater;
+
+  /// Suffix on the permissions page flow card
+  ///
+  /// In en, this message translates to:
+  /// **'No access needed'**
+  String get onboardingNoAccessNeeded;
+
+  /// Caption on the permissions page flow diagram app pill
+  ///
+  /// In en, this message translates to:
+  /// **'no access needed'**
+  String get onboardingNoAccessNeededCaption;
+
+  /// Onboarding permissions page title
+  ///
+  /// In en, this message translates to:
+  /// **'Give access only when it helps.'**
+  String get onboardingP3Title;
+
+  /// Onboarding permissions page subtitle; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'{product} asks only when an action needs it.\nYou can change access anytime.'**
+  String onboardingP3Subtitle(Object product);
+
+  /// Permissions page privacy note title
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is enabled by default.'**
+  String get onboardingNothingEnabledByDefault;
+
+  /// Permissions page privacy note body
+  ///
+  /// In en, this message translates to:
+  /// **'You can manage access anytime in Settings.'**
+  String get onboardingManageAccessInSettings;
+
+  /// Permissions page side panel heading (desktop)
+  ///
+  /// In en, this message translates to:
+  /// **'What you\'ll get'**
+  String get onboardingWhatYouGet;
+
+  /// Caption under the mock timer in the permissions side panel
+  ///
+  /// In en, this message translates to:
+  /// **'Focus'**
+  String get onboardingFocus;
+
+  /// Onboarding ready page title
+  ///
+  /// In en, this message translates to:
+  /// **'Your sandbox is ready.'**
+  String get onboardingP4Title;
+
+  /// Onboarding ready page subtitle; {product} is the brand display name
+  ///
+  /// In en, this message translates to:
+  /// **'Use apps yourself, let {product} use them for you,\nor ask {product} to make something new.'**
+  String onboardingP4Subtitle(Object product);
+
+  /// Ready page caption above the suggestion chips
+  ///
+  /// In en, this message translates to:
+  /// **'Try these ideas to get started'**
+  String get onboardingTryIdeas;
+
+  /// Ready page suggestion chip
+  ///
+  /// In en, this message translates to:
+  /// **'Plan my day'**
+  String get onboardingSuggestPlanDay;
+
+  /// Ready page suggestion chip
+  ///
+  /// In en, this message translates to:
+  /// **'Build a workout tracker'**
+  String get onboardingSuggestWorkoutTracker;
+
+  /// Ready page suggestion chip
+  ///
+  /// In en, this message translates to:
+  /// **'Create an expense app'**
+  String get onboardingSuggestExpenseApp;
+
+  /// Ready page mock timeline / created-card title
+  ///
+  /// In en, this message translates to:
+  /// **'Focus Timer created'**
+  String get onboardingTimelineFocusCreated;
+
+  /// Ready page mock timeline entry body
+  ///
+  /// In en, this message translates to:
+  /// **'{product} built and added this app to your workspace.'**
+  String onboardingTimelineFaBuilt(String product);
+
+  /// Ready page mock timeline entry title
+  ///
+  /// In en, this message translates to:
+  /// **'You asked'**
+  String get onboardingTimelineYouAsked;
+
+  /// Ready page mock timeline entry title
+  ///
+  /// In en, this message translates to:
+  /// **'{product} delivered'**
+  String onboardingTimelineFaDelivered(String product);
+
+  /// Ready page mock timeline entry body
+  ///
+  /// In en, this message translates to:
+  /// **'Focus Timer — 25/5 focus sessions with work and break cycles.'**
+  String get onboardingTimelineFaDeliveredDesc;
+
+  /// Status label on the ready page created card
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get onboardingCompleted;
+
+  /// Button on the ready page created card
+  ///
+  /// In en, this message translates to:
+  /// **'Open Focus Timer'**
+  String get onboardingOpenFocusTimer;
+
+  /// Caption on the ready page navy app card
+  ///
+  /// In en, this message translates to:
+  /// **'25/5 focus sessions with work and break cycles.'**
+  String get onboardingNavyAppCardDesc;
+
+  /// Onboarding provider card description (AIIN); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'aiin.by — sign in, key auto-registered'**
+  String get onboardingProviderDescAin;
+
+  /// Onboarding provider card description (OpenRouter); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'OAuth or API key — 300+ models'**
+  String get onboardingProviderDescOpenrouter;
+
+  /// Onboarding provider card description (ChatGPT); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Account sign-in via OAuth'**
+  String get onboardingProviderDescChatgpt;
+
+  /// Onboarding provider card description (GitHub Copilot); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Account sign-in via device flow'**
+  String get onboardingProviderDescCopilot;
+
+  /// Onboarding provider card description (CodeMie); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Enterprise SSO sign-in'**
+  String get onboardingProviderDescCodemie;
+
+  /// Onboarding provider card description (OpenAI); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'api.openai.com — API key'**
+  String get onboardingProviderDescOpenai;
+
+  /// Onboarding provider card description (Anthropic); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'api.anthropic.com — API key'**
+  String get onboardingProviderDescAnthropic;
+
+  /// Onboarding provider card description (Google Gemini); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Gemini models — API key'**
+  String get onboardingProviderDescGoogle;
+
+  /// Onboarding provider card description (DIAL); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'EPAM DIAL Core — Api key + deployment'**
+  String get onboardingProviderDescDial;
+
+  /// Onboarding provider card description (Kimi Code); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Kimi Code models — API key'**
+  String get onboardingProviderDescKimi;
+
+  /// Onboarding provider card description (MiniMax); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'MiniMax models — API key'**
+  String get onboardingProviderDescMinimax;
+
+  /// Onboarding provider card description (Z.AI); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'GLM models — API key'**
+  String get onboardingProviderDescZai;
+
+  /// Onboarding provider card description (Ollama Cloud); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'api.ollama.com — API key'**
+  String get onboardingProviderDescOllama;
+
+  /// Onboarding provider card description (Custom); mirrors the fa_ui preset
+  ///
+  /// In en, this message translates to:
+  /// **'Any OpenAI-compatible endpoint'**
+  String get onboardingProviderDescCustom;
 }
 
 class _AppLocalizationsDelegate
