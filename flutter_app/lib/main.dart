@@ -152,13 +152,29 @@ Future<void> _saveOpenRouterRedirectKey(
 /// Native deep links are delivered as route names even though authentication
 /// consumes them through AppLinks. Absorb those platform routes transparently
 /// instead of replacing the visible home or throwing an unknown-route error.
-Route<void> _unknownAppRoute(RouteSettings settings) => PageRouteBuilder<void>(
-  settings: settings,
-  opaque: false,
-  transitionDuration: Duration.zero,
-  reverseTransitionDuration: Duration.zero,
-  pageBuilder: (_, _, _) => const SizedBox.shrink(),
-);
+///
+/// A stock `PageRouteBuilder(opaque: false, SizedBox.shrink)` is NOT enough:
+/// [ModalRoute] still installs a [ModalBarrier], and that barrier blocks
+/// every tap on the route below even while visually transparent. iOS delivers
+/// the engine-side route copy of `fah://oauth/network` exactly this way, so
+/// the OAuth callback used to leave a fully rendered but untouchable shell
+/// (issue #2392). This route owns no chrome, so it owns no barrier either.
+Route<void> _unknownAppRoute(RouteSettings settings) =>
+    _TransparentPassThroughRoute(settings);
+
+final class _TransparentPassThroughRoute extends PageRouteBuilder<void> {
+  _TransparentPassThroughRoute(RouteSettings settings)
+    : super(
+        settings: settings,
+        opaque: false,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, _, _) => const SizedBox.shrink(),
+      );
+
+  @override
+  Widget buildModalBarrier() => const SizedBox.shrink();
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({

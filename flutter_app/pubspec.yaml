@@ -204,7 +204,11 @@ dependencies:
   # Opens the privacy policy link (onboarding privacy page) in the browser.
   url_launcher: ^6.3.1
   # Deep-link handling for mobile OAuth callbacks (fah://oauth/openrouter).
-  app_links: ^6.4.0
+  # 7.x is REQUIRED on iOS once UIApplicationSceneManifest is enabled: 6.4.x
+  # listened only to UIApplicationDelegate URL callbacks, so custom-scheme
+  # OAuth callbacks delivered to SceneDelegate.scene(openURLContexts:) never
+  # reached AppLinks and the sign-in flow timed out (issue #2392).
+  app_links: ^7.2.2
   firebase_crashlytics: 5.2.6
   # WS channel abstraction for the fa_network realtime socket.
   stream_channel: ^2.1.0

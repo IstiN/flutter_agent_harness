@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(2392): iOS OAuth deep-link freeze — the app runs under
+  UIApplicationSceneManifest while app_links 6.4.x listened only to
+  UIApplicationDelegate URL callbacks, so `fah://oauth/network` never reached
+  the OAuth receiver and the token exchange never fired; the engine's route
+  copy of the link was absorbed by a transparent ModalBarrier that blocked
+  every tap on the visible shell. app_links is upgraded to UIScene-aware 7.x
+  and the unknown deep-link route is now truly pass-through (no modal
+  barrier), with a hit-testing regression test.
 - fix(2384): obligations-ledger zombies — fired-receipt auto-close and
   stale age-out at the boot/flush ledger passes, aged entries collapse to
   one reconciliation line in the injection, and the writer merges with the

@@ -32,6 +32,14 @@ void main() {
     expect(find.byType(SetupScreen), findsOneWidget);
     expect(find.text('Connect to Fa'), findsOneWidget);
 
+    // The route copy of an OAuth callback must be pass-through, not merely
+    // invisible: ModalRoute's default barrier blocks taps on the home below
+    // even when its color is null (issue #2392). The provider picker staying
+    // operable is the regression guard.
+    await tester.tap(find.text('OpenRouter').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsWidgets);
+
     navigator.pop();
     await tester.pump();
     await navigation;
