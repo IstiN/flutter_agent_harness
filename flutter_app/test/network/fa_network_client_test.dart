@@ -1174,6 +1174,63 @@ void main() {
       );
     });
 
+    test(
+      'oauthExchange retries once on iOS NSURLErrorDomain -1005 connection loss',
+      () async {
+        var attempts = 0;
+        final flakyClient = _FlakyExchangeClient((req) async {
+          attempts++;
+          if (attempts == 1) {
+            throw http.ClientException(
+              'The network connection was lost. '
+              '[domain=NSURLErrorDomain, code=-1005]',
+              req.url,
+            );
+          }
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                '{"accessToken":"at-retry","refreshToken":"rt-retry",'
+                '"expiresIn":3600,"refreshExpiresIn":86400,"tokenType":"Bearer"}',
+              ),
+            ),
+            200,
+          );
+        });
+        final client = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: flakyClient,
+        );
+        final bundle = await client.oauthExchange(
+          code: 'temp-1',
+          state: 'st-1',
+        );
+        expect(attempts, 2);
+        expect(bundle.accessToken, 'at-retry');
+        expect(bundle.refreshToken, 'rt-retry');
+      },
+    );
+
+    test(
+      'oauthExchange does not retry non-connection-loss ClientException',
+      () async {
+        var attempts = 0;
+        final flakyClient = _FlakyExchangeClient((req) async {
+          attempts++;
+          throw http.ClientException('TLS certificate invalid', req.url);
+        });
+        final client = FaNetworkClient(
+          baseUrl: Uri.parse('https://network.fa1.dev'),
+          httpClient: flakyClient,
+        );
+        await expectLater(
+          client.oauthExchange(code: 'temp-1', state: 'st-1'),
+          throwsA(isA<http.ClientException>()),
+        );
+        expect(attempts, 1);
+      },
+    );
+
     test('refreshTokens posts the refresh token and tolerates a missing '
         'refresh lifetime', () async {
       httpClient.respond(
@@ -1292,4 +1349,14 @@ void main() {
       await expectLater(client.getNetwork('net1'), throwsFormatException);
     });
   });
+}
+
+final class _FlakyExchangeClient extends http.BaseClient {
+  _FlakyExchangeClient(this._onSend);
+  final Future<http.StreamedResponse> Function(http.BaseRequest request)
+  _onSend;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _onSend(request);
 }

@@ -1102,12 +1102,25 @@ class FaNetworkClient {
 
   /// `POST /api/oauth-proxy/exchange` — swaps the temporary callback
   /// [code] (+ the initiate [state]) for the real token set. Anonymous.
+  ///
+  /// Retries once on a transient socket-drop error (e.g. iOS NSURLSession
+  /// `-1005` `NSURLErrorNetworkConnectionLost` when a pooled TLS connection
+  /// went stale during the browser OAuth hop — the exchange body never
+  /// reached the server, so one retry on a fresh connection is safe).
   Future<TokenBundle> oauthExchange({
     required String code,
     required String state,
     DateTime? now,
   }) async {
-    final res = await _request(
+    final res = await _postOAuthExchangeWithRetry(code: code, state: state);
+    return TokenBundle.fromJson(_decodeMap(res), now: now);
+  }
+
+  Future<http.Response> _postOAuthExchangeWithRetry({
+    required String code,
+    required String state,
+  }) async {
+    Future<http.Response> sendOnce() => _request(
       'POST',
       '/api/oauth-proxy/exchange',
       body: {'code': code, 'state': state},
@@ -1115,7 +1128,23 @@ class FaNetworkClient {
       authService: true,
       expected: {200},
     );
-    return TokenBundle.fromJson(_decodeMap(res), now: now);
+    try {
+      return await sendOnce();
+    } on http.ClientException catch (e) {
+      if (!_isRetryableConnectionLoss(e)) rethrow;
+      AppLog.i(
+        'fa_network',
+        'POST /api/oauth-proxy/exchange connection lost ($e) — retrying once',
+      );
+      return await sendOnce();
+    }
+  }
+
+  static bool _isRetryableConnectionLoss(http.ClientException error) {
+    final msg = error.message.toLowerCase();
+    return msg.contains('code=-1005') ||
+        msg.contains('network connection was lost') ||
+        msg.contains('connection closed before full header');
   }
 
   /// `POST /api/auth/refresh` — trades [refreshToken] for a fresh token
