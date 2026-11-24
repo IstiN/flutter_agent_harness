@@ -364,10 +364,17 @@ class MessengerBottomNavigation extends StatelessWidget {
   static const double maxWidth = 280;
   static const double expandedMaxWidth = 448;
   static const double horizontalMargin = 12;
-  // #2196 moved the dock 20% down (8 → 6.4); #2215 moves it another 15%.
-  // SafeArea still owns the device inset above this separation gap.
-  static const double bottomGap = 5.44;
+  // #2196 moved the dock 20% down (8 → 6.4); #2215 moved bottomGap another
+  // 15% (6.4 → 5.44); this follow-up lowers the full bottom clearance
+  // (safe-area home indicator + separation gap) by another 20% so the shift
+  // is visibly felt on iPhone while still clearing the home bar.
+  static const double bottomGap = 4.375;
+  static const double safeAreaBottomScale = 0.8;
 
+  /// Bottom clearance below the floating pill for a screen with [safeBottom]
+  /// home-indicator inset (0 on non-notched / desktop; ~34 on iPhone).
+  static double bottomInsetFor(double safeBottom) =>
+      safeBottom * safeAreaBottomScale + bottomGap;
   final List<Widget> children;
   final int selectedIndex;
   final double widthLimit;
