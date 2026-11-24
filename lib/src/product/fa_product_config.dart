@@ -21,6 +21,8 @@ final class FaProductConfig {
     this.driveEndpoint,
     this.sessionEndpoint,
     this.oauthCallback,
+    this.defaultProviderKey,
+    this.localeStorageKey,
     this.legalLinks = const {},
     this.featureFlags = const {},
     this.driveAliases = const {},
@@ -39,6 +41,8 @@ final class FaProductConfig {
       driveEndpoint = null,
       sessionEndpoint = null,
       oauthCallback = null,
+      defaultProviderKey = null,
+      localeStorageKey = null,
       legalLinks = const {},
       featureFlags = const {},
       driveAliases = const {},
@@ -62,6 +66,12 @@ final class FaProductConfig {
   final Uri? driveEndpoint;
   final Uri? sessionEndpoint;
   final Uri? oauthCallback;
+
+  /// Optional first-run provider preset selected by a branded product.
+  final String? defaultProviderKey;
+
+  /// Optional same-origin localStorage key carrying the host's RU/EN choice.
+  final String? localeStorageKey;
   final Map<String, Uri> legalLinks;
   final Set<String> featureFlags;
   final Set<String> driveAliases;
@@ -231,6 +241,12 @@ final class FaProductConfig {
       driveEndpoint: endpoint('driveEndpoint'),
       sessionEndpoint: endpoint('sessionEndpoint'),
       oauthCallback: endpoint('oauthCallback'),
+      defaultProviderKey: json['defaultProviderKey'] == null
+          ? null
+          : _id(json['defaultProviderKey'], 'defaultProviderKey'),
+      localeStorageKey: json['localeStorageKey'] == null
+          ? null
+          : _id(json['localeStorageKey'], 'localeStorageKey'),
       legalLinks: Map.unmodifiable(legal),
       featureFlags: Set.unmodifiable(flags),
       driveAliases: Set.unmodifiable(aliases),

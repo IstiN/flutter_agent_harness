@@ -34,6 +34,8 @@ A profile is external JSON, not a source-tree edit:
   "driveEndpoint": "https://drive.host.example/v1",
   "sessionEndpoint": "https://sessions.host.example/v1",
   "oauthCallback": "https://app.host.example/oauth/callback",
+  "defaultProviderKey": "openrouter",
+  "localeStorageKey": "host_lang",
   "legalLinks": {"privacy": "https://legal.host.example/privacy"},
   "featureFlags": ["cloudSync"],
   "brandAssets": {
@@ -65,6 +67,13 @@ invalid values also fail BEFORE Flutter runs. Output is staged and atomically
 renamed only after HTML,
 manifest, splash, `product_config.{js,json}`, icons and service-worker
 namespaces all succeed.
+
+`defaultProviderKey` optionally selects a built-in onboarding provider for a
+branded first run. The user still completes that provider's real connection flow;
+an unknown or build-filtered preset leaves the existing connection gate unchanged.
+`localeStorageKey` optionally names the host's same-origin localStorage key whose
+value is `ru` or `en`. An explicit `?lang=ru|en` handoff wins, then that stored
+choice, then the device locale; stock behavior is unchanged.
 
 OAuth accepts only the exact configured callback and expected non-empty state.
 Storage keys use `fa-product:<id>:schema:<n>`, with a SHA-256 tenant+subject

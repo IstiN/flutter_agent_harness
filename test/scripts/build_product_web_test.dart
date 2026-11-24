@@ -153,6 +153,8 @@ void main() {
     expect(runtime.brandAssets['icon512'], 'icons/Icon-512.png');
     expect(runtime.brandAssets['favicon'], 'favicon.png');
     expect(runtime.brandAssets['splash'], 'splash.png');
+    expect(runtime.defaultProviderKey, 'aiin');
+    expect(runtime.localeStorageKey, 'host_lang');
     for (final path in runtime.brandAssets.values) {
       expect(File('$output/$path').existsSync(), isTrue, reason: path);
     }
@@ -381,6 +383,8 @@ Map<String, Object?> _profile() => {
   'driveEndpoint': 'https://drive.example/v1',
   'sessionEndpoint': 'https://sessions.example/v1',
   'oauthCallback': 'https://app.example/oauth/callback',
+  'defaultProviderKey': 'aiin',
+  'localeStorageKey': 'host_lang',
   'legalLinks': {'privacy': 'https://legal.example/privacy'},
   'featureFlags': ['cloudSync'],
   'brandAssets': {

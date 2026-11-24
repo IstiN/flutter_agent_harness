@@ -1,5 +1,3 @@
-// l10n:ignore-file — part of onboarding_screen.dart, which carries the
-// exemption (marketing copy mirrors the EN reference prototype).
 part of 'onboarding_screen.dart';
 
 // Mockup widgets for the onboarding pages (chat bubbles, the Focus Timer
@@ -13,6 +11,7 @@ class _UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Align(
       alignment: Alignment.centerRight,
       child: ConstrainedBox(
@@ -35,7 +34,7 @@ class _UserBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Build a focus timer with work and break sessions.',
+                    l10n.onboardingMockupFocusRequest,
                     style: TextStyle(
                       fontSize: 13,
                       color: _onbInk(context),
@@ -47,7 +46,9 @@ class _UserBubble extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        wide ? 'Just now' : '9:41 AM',
+                        wide
+                            ? l10n.onboardingMockupJustNow
+                            : l10n.onboardingMockupTimeMorning,
                         style: TextStyle(
                           fontSize: 10,
                           color: _onbGrayLight(context),
@@ -93,7 +94,7 @@ class _TypingBubble extends StatelessWidget {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Understanding your request…',
+                  context.l10n.onboardingMockupUnderstanding,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
@@ -156,7 +157,7 @@ class _ChatInput extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Ask anything…',
+              context.l10n.onboardingMockupAskAnything,
               style: TextStyle(fontSize: 12.5, color: _onbGrayLight(context)),
             ),
           ),
@@ -185,6 +186,7 @@ class _FocusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -194,28 +196,28 @@ class _FocusCard extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Row(
+          Row(
             children: [
               Text(
-                'Focus Timer',
-                style: TextStyle(
+                l10n.onboardingMockupFocusTimer,
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                 ),
               ),
-              Spacer(),
-              Icon(Icons.more_horiz, size: 16, color: Colors.white54),
+              const Spacer(),
+              const Icon(Icons.more_horiz, size: 16, color: Colors.white54),
             ],
           ),
           const SizedBox(height: 4),
-          const Row(
+          Row(
             children: [
-              Icon(Icons.circle, size: 6, color: Color(0xFF34D399)),
-              SizedBox(width: 5),
+              const Icon(Icons.circle, size: 6, color: Color(0xFF34D399)),
+              const SizedBox(width: 5),
               Text(
-                'Active',
-                style: TextStyle(
+                l10n.onboardingMockupActive,
+                style: const TextStyle(
                   fontSize: 10.5,
                   color: Color(0xFF34D399),
                   fontWeight: FontWeight.w500,
@@ -233,10 +235,10 @@ class _FocusCard extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
-                'Start Session',
-                style: TextStyle(
+                l10n.onboardingMockupStartSession,
+                style: const TextStyle(
                   fontSize: 12.5,
                   color: Colors.white,
                   fontWeight: FontWeight.w600,
@@ -245,9 +247,9 @@ class _FocusCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Work 25 min • Break 5 min',
-            style: TextStyle(fontSize: 10, color: Colors.white54),
+          Text(
+            l10n.onboardingMockupWorkBreak,
+            style: const TextStyle(fontSize: 10, color: Colors.white54),
           ),
         ],
       ),
@@ -300,7 +302,7 @@ class _FocusRing extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Focus time',
+                    context.l10n.onboardingMockupFocusTime,
                     style: TextStyle(
                       fontSize: timeSize * 0.38,
                       color: Colors.white70,
@@ -335,12 +337,22 @@ enum _AppKind {
 }
 
 class _AppTile extends StatelessWidget {
-  const _AppTile(this.kind, this.label, {this.badge, this.size = 48});
+  const _AppTile(
+    this.kind,
+    this.label, {
+    this.badge,
+    this.size = 48,
+    this.mutedBadge = false,
+  });
 
   final _AppKind kind;
   final String label;
   final String? badge;
   final double size;
+
+  /// The "Demo" badge renders grey instead of blue. A flag, not a string
+  /// compare — the badge text is localized.
+  final bool mutedBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -386,7 +398,7 @@ class _AppTile extends StatelessWidget {
                       vertical: 1,
                     ),
                     decoration: BoxDecoration(
-                      color: badge == 'Demo'
+                      color: mutedBadge
                           ? const Color(0xFF9AA0B4)
                           : _onbPrimary(context),
                       borderRadius: BorderRadius.circular(4),
@@ -576,6 +588,7 @@ class _FlowCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return _card(
       context,
       padding: const EdgeInsets.all(14),
@@ -596,7 +609,7 @@ class _FlowCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Build a focus timer with work and break sessions.',
+                  l10n.onboardingMockupFocusRequest,
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -618,7 +631,7 @@ class _FlowCard extends StatelessWidget {
                         TextSpan(
                           children: [
                             TextSpan(
-                              text: 'Focus Timer',
+                              text: l10n.onboardingMockupFocusTimer,
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
@@ -626,7 +639,7 @@ class _FlowCard extends StatelessWidget {
                               ),
                             ),
                             TextSpan(
-                              text: '  ·  No access needed',
+                              text: '  ·  ${l10n.onboardingNoAccessNeeded}',
                               style: TextStyle(
                                 fontSize: 11,
                                 color: _kGreen,
@@ -655,6 +668,7 @@ class _FlowDiagram extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Row(
       children: [
         Expanded(
@@ -667,7 +681,7 @@ class _FlowDiagram extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Build a focus timer with work and break sessions.',
+                    l10n.onboardingMockupFocusRequest,
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
@@ -705,7 +719,7 @@ class _FlowDiagram extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Focus Timer',
+                        l10n.onboardingMockupFocusTimer,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -713,7 +727,7 @@ class _FlowDiagram extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'no access needed',
+                        l10n.onboardingNoAccessNeededCaption,
                         style: TextStyle(
                           fontSize: 10,
                           color: _kGreen,
@@ -752,6 +766,7 @@ class _PermCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final iconBox = Container(
       width: 40,
       height: 40,
@@ -768,7 +783,7 @@ class _PermCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
-        'Ask when needed',
+        l10n.onboardingAskWhenNeeded,
         style: TextStyle(
           fontSize: 9.5,
           fontWeight: FontWeight.w600,
@@ -785,7 +800,7 @@ class _PermCard extends StatelessWidget {
       ),
       child: Center(
         child: Text(
-          'Allow',
+          l10n.skillsAccessAllow,
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
@@ -805,7 +820,7 @@ class _PermCard extends StatelessWidget {
       ),
       child: Center(
         child: Text(
-          'Later',
+          l10n.onboardingPermLater,
           style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w500,
@@ -904,12 +919,13 @@ class _WhatYouGet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          "What you'll get",
+          l10n.onboardingWhatYouGet,
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
@@ -935,7 +951,7 @@ class _WhatYouGet extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    'Focus',
+                    l10n.onboardingFocus,
                     style: TextStyle(fontSize: 11, color: _onbGray(context)),
                   ),
                 ],
@@ -959,7 +975,7 @@ class _WhatYouGet extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         Text(
-          'My Apps',
+          l10n.appsMyApps,
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
@@ -1021,6 +1037,7 @@ class _MyAppsMini extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return _card(
       context,
       padding: const EdgeInsets.all(12),
@@ -1035,17 +1052,21 @@ class _MyAppsMini extends StatelessWidget {
               color: _kNavy,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Column(
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  'Focus Timer',
-                  style: TextStyle(fontSize: 7.5, color: Colors.white54),
+                  l10n.onboardingMockupFocusTimer,
+                  style: const TextStyle(fontSize: 7.5, color: Colors.white54),
                 ),
-                SizedBox(height: 4),
-                _FocusRing(size: 40, timeSize: 12),
-                SizedBox(height: 4),
-                Icon(Icons.play_circle, size: 16, color: Color(0xFF5B8DEF)),
+                const SizedBox(height: 4),
+                const _FocusRing(size: 40, timeSize: 12),
+                const SizedBox(height: 4),
+                const Icon(
+                  Icons.play_circle,
+                  size: 16,
+                  color: Color(0xFF5B8DEF),
+                ),
               ],
             ),
           ),
@@ -1057,18 +1078,18 @@ class _MyAppsMini extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      'My Apps',
+                      l10n.appsMyApps,
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: _onbInk(context),
                       ),
                     ),
-                    Spacer(),
+                    const Spacer(),
                     Icon(Icons.tune, size: 11, color: _onbGrayLight(context)),
-                    SizedBox(width: 3),
+                    const SizedBox(width: 3),
                     Text(
-                      'Customize',
+                      l10n.onboardingMockupCustomize,
                       style: TextStyle(
                         fontSize: 9,
                         color: _onbGrayLight(context),
@@ -1123,33 +1144,34 @@ class _CreatedColumn extends StatelessWidget {
 class _TimelineCard extends StatelessWidget {
   const _TimelineCard();
 
-  static const _entries = [
-    (
-      Icons.auto_awesome,
-      'Focus Timer created',
-      'Fa built and added this app to your workspace.',
-    ),
-    (
-      Icons.person_outline,
-      'You asked',
-      'Build a focus timer with work and break sessions.',
-    ),
-    (
-      Icons.auto_awesome,
-      'Fa delivered',
-      'Focus Timer — 25/5 focus sessions with work and break cycles.',
-    ),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final product = ProductConfigScope.of(context).displayName;
+    final entries = [
+      (
+        Icons.auto_awesome,
+        l10n.onboardingTimelineFocusCreated,
+        l10n.onboardingTimelineFaBuilt(product),
+      ),
+      (
+        Icons.person_outline,
+        l10n.onboardingTimelineYouAsked,
+        l10n.onboardingMockupFocusRequest,
+      ),
+      (
+        Icons.auto_awesome,
+        l10n.onboardingTimelineFaDelivered(product),
+        l10n.onboardingTimelineFaDeliveredDesc,
+      ),
+    ];
     return _card(
       context,
       padding: const EdgeInsets.all(16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (var i = 0; i < _entries.length; i++) ...[
+          for (var i = 0; i < entries.length; i++) ...[
             if (i > 0) const SizedBox(height: 14),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1165,7 +1187,7 @@ class _TimelineCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    _entries[i].$1,
+                    entries[i].$1,
                     size: 16,
                     color: i == 1 ? _onbGray(context) : _onbPrimary(context),
                   ),
@@ -1176,7 +1198,7 @@ class _TimelineCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _entries[i].$2,
+                        entries[i].$2,
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -1185,7 +1207,7 @@ class _TimelineCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _entries[i].$3,
+                        entries[i].$3,
                         style: TextStyle(
                           fontSize: 11.5,
                           color: _onbGray(context),
@@ -1197,7 +1219,7 @@ class _TimelineCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Just now',
+                  l10n.onboardingMockupJustNow,
                   style: TextStyle(fontSize: 10, color: _onbGrayLight(context)),
                 ),
               ],
@@ -1214,6 +1236,7 @@ class _CreatedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return _card(
       context,
       padding: const EdgeInsets.all(12),
@@ -1241,7 +1264,7 @@ class _CreatedCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Focus Timer created',
+                      l10n.onboardingTimelineFocusCreated,
                       style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w700,
@@ -1254,7 +1277,7 @@ class _CreatedCard extends StatelessWidget {
                         Icon(Icons.circle, size: 6, color: _kGreen),
                         SizedBox(width: 5),
                         Text(
-                          'Completed',
+                          l10n.onboardingCompleted,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -1282,7 +1305,7 @@ class _CreatedCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Build a focus timer with work and break sessions.',
+                    l10n.onboardingMockupFocusRequest,
                     style: TextStyle(
                       fontSize: 12,
                       color: _onbInk(context),
@@ -1317,7 +1340,7 @@ class _CreatedCard extends StatelessWidget {
                 Icon(Icons.open_in_new, size: 14, color: _onbPrimary(context)),
                 SizedBox(width: 6),
                 Text(
-                  'Open Focus Timer',
+                  l10n.onboardingOpenFocusTimer,
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
@@ -1339,6 +1362,7 @@ class _NavyAppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1358,38 +1382,38 @@ class _NavyAppCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Focus Timer',
-                  style: TextStyle(
+                  l10n.onboardingMockupFocusTimer,
+                  style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: Colors.white,
                   ),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  '25/5 focus sessions with work and break cycles.',
-                  style: TextStyle(fontSize: 10.5, color: Colors.white60),
+                  l10n.onboardingNavyAppCardDesc,
+                  style: const TextStyle(fontSize: 10.5, color: Colors.white60),
                 ),
               ],
             ),
           ),
-          const Row(
+          Row(
             children: [
               Text(
-                'Open',
-                style: TextStyle(
+                l10n.launcherOpenApp,
+                style: const TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                 ),
               ),
-              SizedBox(width: 2),
-              Icon(Icons.arrow_forward, size: 13, color: Colors.white),
+              const SizedBox(width: 2),
+              const Icon(Icons.arrow_forward, size: 13, color: Colors.white),
             ],
           ),
         ],
@@ -1405,6 +1429,7 @@ class _MyAppsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final tileSize = compact ? 44.0 : 48.0;
     return _card(
       context,
@@ -1416,7 +1441,7 @@ class _MyAppsPanel extends StatelessWidget {
           Row(
             children: [
               Text(
-                'My Apps',
+                l10n.appsMyApps,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
@@ -1427,7 +1452,7 @@ class _MyAppsPanel extends StatelessWidget {
               Icon(Icons.tune, size: 14, color: _onbGrayLight(context)),
               const SizedBox(width: 4),
               Text(
-                'Customize',
+                l10n.onboardingMockupCustomize,
                 style: TextStyle(
                   fontSize: 11,
                   color: _onbGray(context),
@@ -1453,21 +1478,52 @@ class _MyAppsPanel extends StatelessWidget {
             spacing: 4,
             runSpacing: compact ? 8 : 12,
             children: [
-              _AppTile(_AppKind.calendar, 'Calendar', size: tileSize),
-              _AppTile(_AppKind.files, 'Files', size: tileSize),
-              _AppTile(_AppKind.notes, 'Notes', size: tileSize),
-              _AppTile(_AppKind.maps, 'Maps', size: tileSize),
-              _AppTile(_AppKind.utilities, 'Utilities', size: tileSize),
-              _AppTile(_AppKind.calculator, 'Calculator', size: tileSize),
-              _AppTile(_AppKind.settings, 'Settings', size: tileSize),
-              _AppTile(_AppKind.focusTimer, 'Focus Timer', size: tileSize),
               _AppTile(
-                _AppKind.habitGarden,
-                'Habit Garden',
-                badge: 'Demo',
+                _AppKind.calendar,
+                l10n.onboardingPermissionCalendar,
                 size: tileSize,
               ),
-              _AppTile(_AppKind.createWithFa, 'Create with Fa', size: tileSize),
+              _AppTile(_AppKind.files, l10n.filesPanelTitle, size: tileSize),
+              _AppTile(
+                _AppKind.notes,
+                l10n.onboardingMockupNotes,
+                size: tileSize,
+              ),
+              _AppTile(
+                _AppKind.maps,
+                l10n.onboardingMockupMaps,
+                size: tileSize,
+              ),
+              _AppTile(
+                _AppKind.utilities,
+                l10n.onboardingMockupUtilities,
+                size: tileSize,
+              ),
+              _AppTile(
+                _AppKind.calculator,
+                l10n.onboardingMockupCalculator,
+                size: tileSize,
+              ),
+              _AppTile(_AppKind.settings, l10n.settingsTitle, size: tileSize),
+              _AppTile(
+                _AppKind.focusTimer,
+                l10n.onboardingMockupFocusTimer,
+                size: tileSize,
+              ),
+              _AppTile(
+                _AppKind.habitGarden,
+                l10n.onboardingMockupHabitGarden,
+                badge: l10n.onboardingMockupBadgeDemo,
+                mutedBadge: true,
+                size: tileSize,
+              ),
+              _AppTile(
+                _AppKind.createWithFa,
+                l10n.onboardingMockupCreateWithFa(
+                  ProductConfigScope.of(context).displayName,
+                ),
+                size: tileSize,
+              ),
             ],
           ),
         ],
@@ -1488,25 +1544,25 @@ class _FocusWidget extends StatelessWidget {
         color: _kNavy,
         borderRadius: BorderRadius.circular(14),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Flexible(
                 child: Text(
-                  'Focus Timer',
-                  style: TextStyle(fontSize: 8.5, color: Colors.white54),
+                  context.l10n.onboardingMockupFocusTimer,
+                  style: const TextStyle(fontSize: 8.5, color: Colors.white54),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Icon(Icons.auto_awesome, size: 8, color: Colors.white38),
+              const Icon(Icons.auto_awesome, size: 8, color: Colors.white38),
             ],
           ),
-          Spacer(),
-          Center(child: _FocusRing(size: 50, timeSize: 15)),
-          Spacer(),
-          Center(
+          const Spacer(),
+          const Center(child: _FocusRing(size: 50, timeSize: 15)),
+          const Spacer(),
+          const Center(
             child: Icon(Icons.play_circle, size: 20, color: Color(0xFF5B8DEF)),
           ),
         ],
@@ -1531,18 +1587,18 @@ class _WeatherWidget extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
               Icon(Icons.wb_sunny, size: 12, color: Colors.white),
               Spacer(),
               Icon(Icons.auto_awesome, size: 8, color: Colors.white38),
             ],
           ),
-          Spacer(),
-          Text(
+          const Spacer(),
+          const Text(
             '24°',
             style: TextStyle(
               fontSize: 24,
@@ -1551,9 +1607,12 @@ class _WeatherWidget extends StatelessWidget {
               height: 1,
             ),
           ),
-          Text('Sunny', style: TextStyle(fontSize: 10, color: Colors.white)),
-          SizedBox(height: 2),
           Text(
+            context.l10n.onboardingMockupSunny,
+            style: const TextStyle(fontSize: 10, color: Colors.white),
+          ),
+          const SizedBox(height: 2),
+          const Text(
             '↑ 26°  ↓ 15°',
             style: TextStyle(fontSize: 8.5, color: Colors.white70),
           ),
@@ -1566,14 +1625,26 @@ class _WeatherWidget extends StatelessWidget {
 class _UpcomingWidget extends StatelessWidget {
   const _UpcomingWidget();
 
-  static const _events = [
-    (Color(0xFF5B8DEF), 'Design review', '10:00 AM'),
-    (Color(0xFFF59E0B), 'Lunch with team', '12:30 PM'),
-    (Color(0xFF2EBD9E), 'Project sync', '3:00 PM'),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final events = [
+      (
+        const Color(0xFF5B8DEF),
+        l10n.onboardingMockupDesignReview,
+        l10n.onboardingMockupTimeDesignReview,
+      ),
+      (
+        const Color(0xFFF59E0B),
+        l10n.onboardingMockupLunchWithTeam,
+        l10n.onboardingMockupTimeLunch,
+      ),
+      (
+        const Color(0xFF2EBD9E),
+        l10n.onboardingMockupProjectSync,
+        l10n.onboardingMockupTimeSync,
+      ),
+    ];
     return Container(
       height: 120,
       padding: const EdgeInsets.all(9),
@@ -1586,7 +1657,7 @@ class _UpcomingWidget extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Upcoming',
+            l10n.onboardingMockupUpcoming,
             style: TextStyle(
               fontSize: 9,
               fontWeight: FontWeight.w700,
@@ -1594,7 +1665,7 @@ class _UpcomingWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          for (final (c, title, time) in _events)
+          for (final (c, title, time) in events)
             Padding(
               padding: const EdgeInsets.only(bottom: 2),
               child: Row(
@@ -1643,16 +1714,28 @@ class _Suggestions extends StatelessWidget {
   const _Suggestions({required this.wide});
   final bool wide;
 
-  static const _items = [
-    (Icons.auto_awesome, 'Plan my day', Color(0xFFF59E0B)),
-    (Icons.fitness_center, 'Build a workout tracker', Color(0xFF5B8DEF)),
-    (Icons.credit_card, 'Create an expense app', Color(0xFF2EBD9E)),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final items = [
+      (
+        Icons.auto_awesome,
+        l10n.onboardingSuggestPlanDay,
+        const Color(0xFFF59E0B),
+      ),
+      (
+        Icons.fitness_center,
+        l10n.onboardingSuggestWorkoutTracker,
+        const Color(0xFF5B8DEF),
+      ),
+      (
+        Icons.credit_card,
+        l10n.onboardingSuggestExpenseApp,
+        const Color(0xFF2EBD9E),
+      ),
+    ];
     final cards = [
-      for (final (icon, label, color) in _items)
+      for (final (icon, label, color) in items)
         Container(
           width: wide ? 180 : null,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

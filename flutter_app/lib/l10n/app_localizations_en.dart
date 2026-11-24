@@ -3183,4 +3183,346 @@ class AppLocalizationsEn extends AppLocalizations {
   String chatSubagentFilterDone(Object count) {
     return 'Done ($count)';
   }
+
+  @override
+  String get onboardingStepAsk => 'Ask';
+
+  @override
+  String get onboardingStepThink => 'Think';
+
+  @override
+  String get onboardingStepAct => 'Act';
+
+  @override
+  String get onboardingStepMakeItYours => 'Make it yours';
+
+  @override
+  String get onboardingMiniStepYours => 'Yours';
+
+  @override
+  String onboardingPageCounter(Object page, Object total) {
+    return '$page of $total';
+  }
+
+  @override
+  String get onboardingPrivacyPolicy => 'Privacy Policy';
+
+  @override
+  String get onboardingContinueWithoutAccess => 'Continue without access';
+
+  @override
+  String onboardingOpenProduct(Object product) {
+    return 'Open $product';
+  }
+
+  @override
+  String get onboardingP1Title => 'Start with an idea.';
+
+  @override
+  String get onboardingP1Subtitle =>
+      'Ask a question, automate a task, or describe an app you want to use.';
+
+  @override
+  String get onboardingFeatureAnswers => 'Answers questions';
+
+  @override
+  String get onboardingFeatureUsesApps => 'Uses your apps';
+
+  @override
+  String get onboardingFeatureBuildsApps => 'Builds new apps';
+
+  @override
+  String get onboardingMockupYourIdea => 'Your idea';
+
+  @override
+  String get onboardingMockupFocusRequest =>
+      'Build a focus timer with work and break sessions.';
+
+  @override
+  String get onboardingMockupFocusRequestPill =>
+      'Build a focus timer\nwith work and break sessions.';
+
+  @override
+  String get onboardingMockupFocusTimer => 'Focus Timer';
+
+  @override
+  String get onboardingMockupNotes => 'Notes';
+
+  @override
+  String get onboardingMockupUtilities => 'Utilities';
+
+  @override
+  String get onboardingMockupCalculator => 'Calculator';
+
+  @override
+  String get onboardingMockupMaps => 'Maps';
+
+  @override
+  String get onboardingMockupAddApp => 'Add app';
+
+  @override
+  String get onboardingMockupHabitGarden => 'Habit Garden';
+
+  @override
+  String onboardingMockupCreateWithFa(String product) {
+    return 'Create with $product';
+  }
+
+  @override
+  String get onboardingMockupBadgeDemo => 'Demo';
+
+  @override
+  String get onboardingMockupJustNow => 'Just now';
+
+  @override
+  String get onboardingMockupTimeMorning => '9:41 AM';
+
+  @override
+  String get onboardingMockupTimeDesignReview => '10:00 AM';
+
+  @override
+  String get onboardingMockupTimeLunch => '12:30 PM';
+
+  @override
+  String get onboardingMockupTimeSync => '3:00 PM';
+
+  @override
+  String get onboardingMockupUnderstanding => 'Understanding your request…';
+
+  @override
+  String get onboardingMockupAskAnything => 'Ask anything…';
+
+  @override
+  String get onboardingMockupActive => 'Active';
+
+  @override
+  String get onboardingMockupStartSession => 'Start Session';
+
+  @override
+  String get onboardingMockupWorkBreak => 'Work 25 min • Break 5 min';
+
+  @override
+  String get onboardingMockupFocusTime => 'Focus time';
+
+  @override
+  String get onboardingMockupSunny => 'Sunny';
+
+  @override
+  String get onboardingMockupUpcoming => 'Upcoming';
+
+  @override
+  String get onboardingMockupDesignReview => 'Design review';
+
+  @override
+  String get onboardingMockupLunchWithTeam => 'Lunch with team';
+
+  @override
+  String get onboardingMockupProjectSync => 'Project sync';
+
+  @override
+  String get onboardingMockupCustomize => 'Customize';
+
+  @override
+  String onboardingChooseHowThinks(Object product) {
+    return 'Choose how $product thinks.';
+  }
+
+  @override
+  String get onboardingConnectProviderToStart =>
+      'Connect a provider to start chatting.';
+
+  @override
+  String get onboardingBadgeRecommended => 'Recommended';
+
+  @override
+  String get onboardingBadgeLocal => 'Local';
+
+  @override
+  String get onboardingGhostOpenRouterDesc =>
+      'Access 100+ models from top AI providers.';
+
+  @override
+  String get onboardingGhostOllamaDesc =>
+      'Run open-source models on your device.';
+
+  @override
+  String get onboardingGhostGeminiDesc =>
+      'Google\'s latest models with advanced reasoning.';
+
+  @override
+  String get onboardingGhostCustomProvider => 'Custom provider';
+
+  @override
+  String get onboardingGhostCustomDesc => 'Connect any OpenAI-compatible API.';
+
+  @override
+  String get onboardingP2Subtitle =>
+      'Connect a provider to start chatting.\nYou can switch models anytime.';
+
+  @override
+  String get onboardingP2KeysNote =>
+      'API keys stay in your system Keychain.\nContent is sent only to providers you connect.';
+
+  @override
+  String get onboardingYourRequest => 'Your request';
+
+  @override
+  String onboardingFlowError(Object error) {
+    return 'Could not open the provider setup: $error';
+  }
+
+  @override
+  String onboardingProductCanAct(Object product) {
+    return '$product can take action for you.';
+  }
+
+  @override
+  String onboardingProductAsksOnly(Object product) {
+    return '$product asks only when an action needs it.';
+  }
+
+  @override
+  String get onboardingPermCalendarTitle => 'Calendar & Reminders';
+
+  @override
+  String get onboardingPermCalendarDesc =>
+      'Check your schedule and create events.';
+
+  @override
+  String get onboardingPermNotificationsDesc =>
+      'Send reminders and task updates.';
+
+  @override
+  String onboardingPermMicrophoneDesc(Object product) {
+    return 'Talk to $product with your voice.';
+  }
+
+  @override
+  String get onboardingAskWhenNeeded => 'Ask when needed';
+
+  @override
+  String get onboardingPermLater => 'Later';
+
+  @override
+  String get onboardingNoAccessNeeded => 'No access needed';
+
+  @override
+  String get onboardingNoAccessNeededCaption => 'no access needed';
+
+  @override
+  String get onboardingP3Title => 'Give access only when it helps.';
+
+  @override
+  String onboardingP3Subtitle(Object product) {
+    return '$product asks only when an action needs it.\nYou can change access anytime.';
+  }
+
+  @override
+  String get onboardingNothingEnabledByDefault =>
+      'Nothing is enabled by default.';
+
+  @override
+  String get onboardingManageAccessInSettings =>
+      'You can manage access anytime in Settings.';
+
+  @override
+  String get onboardingWhatYouGet => 'What you\'ll get';
+
+  @override
+  String get onboardingFocus => 'Focus';
+
+  @override
+  String get onboardingP4Title => 'Your sandbox is ready.';
+
+  @override
+  String onboardingP4Subtitle(Object product) {
+    return 'Use apps yourself, let $product use them for you,\nor ask $product to make something new.';
+  }
+
+  @override
+  String get onboardingTryIdeas => 'Try these ideas to get started';
+
+  @override
+  String get onboardingSuggestPlanDay => 'Plan my day';
+
+  @override
+  String get onboardingSuggestWorkoutTracker => 'Build a workout tracker';
+
+  @override
+  String get onboardingSuggestExpenseApp => 'Create an expense app';
+
+  @override
+  String get onboardingTimelineFocusCreated => 'Focus Timer created';
+
+  @override
+  String onboardingTimelineFaBuilt(String product) {
+    return '$product built and added this app to your workspace.';
+  }
+
+  @override
+  String get onboardingTimelineYouAsked => 'You asked';
+
+  @override
+  String onboardingTimelineFaDelivered(String product) {
+    return '$product delivered';
+  }
+
+  @override
+  String get onboardingTimelineFaDeliveredDesc =>
+      'Focus Timer — 25/5 focus sessions with work and break cycles.';
+
+  @override
+  String get onboardingCompleted => 'Completed';
+
+  @override
+  String get onboardingOpenFocusTimer => 'Open Focus Timer';
+
+  @override
+  String get onboardingNavyAppCardDesc =>
+      '25/5 focus sessions with work and break cycles.';
+
+  @override
+  String get onboardingProviderDescAin =>
+      'aiin.by — sign in, key auto-registered';
+
+  @override
+  String get onboardingProviderDescOpenrouter =>
+      'OAuth or API key — 300+ models';
+
+  @override
+  String get onboardingProviderDescChatgpt => 'Account sign-in via OAuth';
+
+  @override
+  String get onboardingProviderDescCopilot => 'Account sign-in via device flow';
+
+  @override
+  String get onboardingProviderDescCodemie => 'Enterprise SSO sign-in';
+
+  @override
+  String get onboardingProviderDescOpenai => 'api.openai.com — API key';
+
+  @override
+  String get onboardingProviderDescAnthropic => 'api.anthropic.com — API key';
+
+  @override
+  String get onboardingProviderDescGoogle => 'Gemini models — API key';
+
+  @override
+  String get onboardingProviderDescDial =>
+      'EPAM DIAL Core — Api key + deployment';
+
+  @override
+  String get onboardingProviderDescKimi => 'Kimi Code models — API key';
+
+  @override
+  String get onboardingProviderDescMinimax => 'MiniMax models — API key';
+
+  @override
+  String get onboardingProviderDescZai => 'GLM models — API key';
+
+  @override
+  String get onboardingProviderDescOllama => 'api.ollama.com — API key';
+
+  @override
+  String get onboardingProviderDescCustom => 'Any OpenAI-compatible endpoint';
 }
