@@ -45,6 +45,9 @@ final class CompactionTuning {
     this.triggerRatio,
     this.reserveTokens,
     this.keepRecentTokens,
+    this.softRatio,
+    this.handOverMaxTokens,
+    this.handOverHysteresisTurns,
   });
 
   /// Parses a raw `compaction:` yaml node into the tuning keys. Null
@@ -73,6 +76,13 @@ final class CompactionTuning {
         name: 'keepRecentTokens',
         label: label,
       ),
+      softRatio: _parseSoftRatio(node['softRatio'], label: label),
+      handOverMaxTokens: _parseHandOverInt(node, 'maxTokens', label: label),
+      handOverHysteresisTurns: _parseHandOverInt(
+        node,
+        'hysteresisTurns',
+        label: label,
+      ),
     );
     _validateExclusivity(
       tuning.triggerRatio,
@@ -93,9 +103,26 @@ final class CompactionTuning {
   /// The kept-recent region override, bypassing the forWindow curve.
   final int? keepRecentTokens;
 
-  /// Whether no key carries an opinion — the forWindow curve stands.
+  /// GOAL #2394 (D8/AC11): the post-run soft trigger line as a share of
+  /// the window (0 < r < 1) — `compaction.softRatio`. Null → the hard line
+  /// minus 5 % of the window (`hand_over_trigger.dart`).
+  final double? softRatio;
+
+  /// GOAL #2394 (D1 d/AC4): the merged hand-over call's output budget —
+  /// `compaction.handOver.maxTokens`. Null → the adapter's 8192 default.
+  final int? handOverMaxTokens;
+
+  /// GOAL #2394 (D8/AC11): user turns the soft line stays muted after a
+  /// compaction run — `compaction.handOver.hysteresisTurns`. Null → 3.
+  final int? handOverHysteresisTurns;
+
   bool get isEmpty =>
-      triggerRatio == null && reserveTokens == null && keepRecentTokens == null;
+      triggerRatio == null &&
+      reserveTokens == null &&
+      keepRecentTokens == null &&
+      softRatio == null &&
+      handOverMaxTokens == null &&
+      handOverHysteresisTurns == null;
 
   /// The inverse of [isEmpty].
   bool get isNotEmpty => !isEmpty;
@@ -126,6 +153,46 @@ double? _parseTriggerRatio(Object? value, {required String label}) {
 /// Parses a positive-int `compaction.<name>` token budget (gh-2098);
 /// null when absent. Mirrors `parseJudgeBudgetSeconds` (issue #541 —
 /// the pattern for `compaction.*` keys).
+/// GOAL #2394: `compaction.softRatio` — a number strictly inside (0, 1).
+double? _parseSoftRatio(Object? value, {required String label}) {
+  if (value == null) return null;
+  if (value is! num) {
+    throw ConfigException(
+      '$label: compaction.softRatio must be a number strictly between '
+      '0 and 1, got: $value',
+    );
+  }
+  final ratio = value.toDouble();
+  if (ratio <= 0 || ratio >= 1) {
+    throw ConfigException(
+      '$label: compaction.softRatio must be strictly between 0 and 1, '
+      'got: $value',
+    );
+  }
+  return ratio;
+}
+
+/// GOAL #2394: one positive-int key of the nested `compaction.handOver:`
+/// map (`maxTokens`, `hysteresisTurns`). Strict like the other keys; a
+/// missing map or key means "no opinion".
+int? _parseHandOverInt(Object? node, String key, {required String label}) {
+  final handOver = (node as Map)['handOver'];
+  if (handOver == null) return null;
+  if (handOver is! Map) {
+    throw ConfigException(
+      '$label: compaction.handOver must be a map, got: $handOver',
+    );
+  }
+  final value = handOver[key];
+  if (value == null) return null;
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '$label: compaction.handOver.$key must be a positive int, got: $value',
+    );
+  }
+  return value;
+}
+
 int? _parseTokens(
   Object? value, {
   required String name,
@@ -172,6 +239,10 @@ CompactionTuning? mergeCompactionTuning({
     triggerRatio: project?.triggerRatio ?? global?.triggerRatio,
     reserveTokens: project?.reserveTokens ?? global?.reserveTokens,
     keepRecentTokens: project?.keepRecentTokens ?? global?.keepRecentTokens,
+    softRatio: project?.softRatio ?? global?.softRatio,
+    handOverMaxTokens: project?.handOverMaxTokens ?? global?.handOverMaxTokens,
+    handOverHysteresisTurns:
+        project?.handOverHysteresisTurns ?? global?.handOverHysteresisTurns,
   );
   _validateExclusivity(
     merged.triggerRatio,

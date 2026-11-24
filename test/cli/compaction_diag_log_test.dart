@@ -15,6 +15,17 @@ import 'agent_cli_test_support.dart';
 
 const _window = 100000;
 
+/// The distinct smol digest role's provider (GOAL #2394: the judge ladder
+/// is the `standalone` mode — a host WITHOUT a separate smol role runs the
+/// merged hand-over call and never the judge).
+final _smolProvider = CustomProviderEntry(
+  name: 'fa-test-smol',
+  apiType: 'openai',
+  baseUrl: 'https://example.test',
+  modelId: 'test-smol',
+  keyName: 'SMOL_TEST_API_KEY',
+);
+
 Model get _model => const Model(
   id: 'test-model',
   api: 'test-api',
@@ -264,6 +275,26 @@ void main() {
           homeDir: home,
           providerKind: 'openai-completions',
           approvalMode: ApprovalMode.yolo,
+          // GOAL #2394: a distinct smol digest role keeps the judge
+          // ladder (`standalone` mode) — without one the default is the
+          // merged hand-over call and the judge never runs.
+          customProviders: CustomProviderRegistry([_smolProvider]),
+          modelRolesResolver: ModelRolesResolver(
+            config: ModelRolesConfig(
+              roles: {
+                smolModelRole: const [
+                  ModelRef(
+                    provider: 'fa-test-smol',
+                    modelId: 'test-smol',
+                    baseUrl: 'https://example.test',
+                  ),
+                ],
+              },
+            ),
+            secrets: const {'SMOL_TEST_API_KEY': 'test-key'},
+            customProviders: [_smolProvider],
+            streamFactory: (kind, apiKey) => routed,
+          ),
         ),
         io: FakeCliIO(),
         environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '800'},

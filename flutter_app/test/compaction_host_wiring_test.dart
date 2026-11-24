@@ -431,4 +431,96 @@ void main() {
       expect(clamped.settings.reserveTokens, 16000);
     });
   });
+
+  // GOAL #2394 (AC11/AC14): the hand-over knobs ride the shared host
+  // wiring the same way the CLI reads them from `CompactionTuning`.
+  group('GOAL #2394 hand-over knobs', () {
+    test('the tuning keys ride the wiring; absent keys stay null', () {
+      final wiring = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        tuning: CompactionTuning.fromSection({
+          'softRatio': 0.7,
+          'handOver': {'maxTokens': 2048, 'hysteresisTurns': 2},
+        }, label: 'test'),
+      );
+      expect(wiring.softRatio, 0.7);
+      expect(wiring.handOverMaxTokens, 2048);
+      expect(wiring.handOverHysteresisTurns, 2);
+      final plain = resolveCompactionHostWiring(mainModel: _mainModel());
+      expect(plain.softRatio, isNull);
+      expect(plain.handOverMaxTokens, isNull);
+      expect(plain.handOverHysteresisTurns, isNull);
+    });
+
+    test('the post-run soft line and its hysteresis are pure functions of '
+        'the settings (AC11)', () {
+      final window = _mainModel().contextWindow;
+      final settings = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+      ).settings;
+      final hard = window - settings.reserveTokens;
+      // Default: the soft line sits 5 % of the window under the hard line.
+      expect(
+        softTriggerTokens(window: window, settings: settings),
+        hard - (window * softRatioDefaultGap).floor(),
+      );
+      expect(
+        softTriggerTokens(window: window, settings: settings, softRatio: 0.5),
+        (window * 0.5).floor(),
+      );
+      final hysteresis = HandOverHysteresis(turns: 2);
+      final soft = softTriggerTokens(window: window, settings: settings);
+      // Fresh: the band fires; after a run it stays muted for 2 turns.
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
+      hysteresis.recordRun();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isFalse,
+      );
+      hysteresis.onTurn();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isFalse,
+      );
+      hysteresis.onTurn();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
+      // Over the hard line the hysteresis never mutes.
+      hysteresis.recordRun();
+      expect(
+        softTriggerReached(
+          tokens: hard + 1,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
+    });
+  });
 }

@@ -60,6 +60,9 @@ final class CompactionHostWiring {
     required this.enabled,
     this.maxAttempts = compactionSummarizerMaxAttempts,
     this.baseBackoff = compactionSummarizerBaseBackoff,
+    this.handOverMaxTokens,
+    this.handOverHysteresisTurns,
+    this.softRatio,
   });
 
   /// The EFFECTIVE context window of the main model (owner cap applied via
@@ -94,6 +97,18 @@ final class CompactionHostWiring {
 
   /// First backoff step of the shared ladder (doubled per attempt).
   final Duration baseBackoff;
+
+  /// GOAL #2394: the merged hand-over call's output budget
+  /// (`compaction.handOver.maxTokens`); null → the adapter default.
+  final int? handOverMaxTokens;
+
+  /// GOAL #2394: the soft-trigger hysteresis window in user turns
+  /// (`compaction.handOver.hysteresisTurns`); null → the default (3).
+  final int? handOverHysteresisTurns;
+
+  /// GOAL #2394: the soft trigger line as a share of the window
+  /// (`compaction.softRatio`); null → hard line − 5 %.
+  final double? softRatio;
 
   /// Whether [other] resolves the same compaction SEMANTICS as this
   /// wiring — the AC5 parity assertion. Models compare by provider/model
@@ -165,6 +180,9 @@ CompactionHostWiring resolveCompactionHostWiring({
     ),
     smolModel: distinct ? smolModel : null,
     enabled: enabled,
+    handOverMaxTokens: tuning?.handOverMaxTokens,
+    handOverHysteresisTurns: tuning?.handOverHysteresisTurns,
+    softRatio: tuning?.softRatio,
   );
 }
 

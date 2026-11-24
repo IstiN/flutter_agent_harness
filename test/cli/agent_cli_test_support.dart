@@ -426,3 +426,46 @@ final class RenameGateEnv implements ExecutionEnv, RenamableFileSystem {
     ShellExecOptions? options,
   }) => _delegate.exec(command, options: options);
 }
+
+/// GOAL #2394: whether [context] is the merged hand-over call — its LAST
+/// user message is the rendered `prompts/compaction/hand_over.md`
+/// instruction (the fold-range line), appended to the S0 prefix. The
+/// structured engine's default mode when no separate smol role is
+/// wired, so every content-routed fake that needs a fold answers this
+/// BEFORE its judge/summarizer branches.
+bool isHandOverCall(Context context) {
+  final last = context.messages.lastOrNull;
+  return last is UserMessage &&
+      messageText(last).contains('Fold range: records');
+}
+
+final _openUserRequestsBlock = RegExp(
+  r'<open-user-requests>\n(.*?)\n?</open-user-requests>',
+  dotAll: true,
+);
+
+/// A valid hand-over reply for the instruction in [context]: [hideLines]
+/// as the hide list (nothing by default), the `-` separator, the
+/// mandatory `## Open User Requests` section with the instruction's
+/// mechanical asks carried verbatim (`none` when the block is empty),
+/// then [text] as the transfer.
+String handOverReplyFor(
+  Context context, {
+  List<String> hideLines = const [],
+  String text = 'checkpoint: the hand-over summary of the folded range.',
+}) {
+  final instruction = messageText(context.messages.last as UserMessage);
+  final block = _openUserRequestsBlock.firstMatch(instruction)?.group(1) ?? '';
+  final asks = [
+    for (final line in block.split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
+  return [
+    ...hideLines,
+    '-',
+    '## Open User Requests',
+    if (asks.isEmpty) '- none' else ...asks,
+    '## Hand-over',
+    text,
+  ].join('\n');
+}

@@ -257,13 +257,15 @@ extension CompactionWindowSizing on AgentService {
   /// (gh-1077: the same shared resolution the CLI computes through),
   /// builds the per-host smol/main summarizers, and surfaces failures
   /// in-chat instead of silently no-oping.
-  Future<bool> _maybeAutoCompact() async {
+  Future<bool> _maybeAutoCompact({bool postRun = false}) async {
     // GOAL #2394 (D6/E37): tags ride the wire only under the structured
     // engine — re-resolved per run like the engine itself (the Settings
     // picker edits apply without a restart).
     _agent.recordTagsEnabled =
         _appCompactionEngine == CompactionEngine.structured;
     final wiring = _compactionWiring;
+    handOverTrigger.hysteresis.turns =
+        wiring.handOverHysteresisTurns ?? handOverHysteresisTurnsDefault;
     if (_session == null || !wiring.enabled) return false;
     final conversationWindow = wiring.conversationWindow;
     if (conversationWindow <= 0) return false;
@@ -277,9 +279,21 @@ extension CompactionWindowSizing on AgentService {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
-      return false;
-    }
+    final hard = shouldCompact(transcriptTokens, conversationWindow, settings);
+    // GOAL #2394 (AC11/D8): the POST-RUN soft line arms the merged
+    // hand-over alone — in the [soft, hard) band, muted by the hysteresis
+    // for N user turns after any run. The over-window relief stays
+    // hard-only: the hard guard is never suppressed.
+    final soft =
+        !hard &&
+        postRun &&
+        handOverTrigger.softReached(
+          tokens: transcriptTokens,
+          window: conversationWindow,
+          settings: settings,
+          softRatio: wiring.softRatio,
+        );
+    if (!hard && !soft) return false;
     // The whole transcript fits in the kept region: compaction could not
     // drop anything. (A single oversized message can still overflow the
     // engine — that surfaces as a readable run error, not a compaction
@@ -315,7 +329,18 @@ extension CompactionWindowSizing on AgentService {
         // gh-1409: the enabled skills' operative lines ride every
         // summarization prompt as the verbatim-preserve pinned block.
         operativeSkills: _agent.operativeSkills,
+        // GOAL #2394 (AC1/AC2): the last main request as sent (S0) — a
+        // snapshot valid for the session's model selects the merged
+        // hand-over (cache-affine prefix); the budget knob is
+        // `compaction.handOver.maxTokens`.
+        requestSnapshot: _agent.requestSnapshots.validFor(_agent.state.model),
+        handOverMaxTokens: wiring.handOverMaxTokens ?? handOverMaxTokensDefault,
+        // GOAL #2394 (AC11): the post-run soft line armed this run.
+        softTriggered: soft,
       ).run();
+      // The run may have appended records — the projection the snapshot
+      // described is no longer the live one.
+      _agent.invalidateRequestSnapshot('compaction run appended records');
     } on Object catch (error) {
       // A throwing run (unresolvable summarizer chain, engine crash) is a
       // compaction failure like any other: the session stays intact
@@ -346,6 +371,9 @@ extension CompactionWindowSizing on AgentService {
     // Extensions may not call the protected notifyListeners — _notify is
     // the class's own one-line wrapper, in scope via the same library.
     _notify();
+    // GOAL #2394 (D8): any run — success or failure alike — starts the
+    // hysteresis window.
+    handOverTrigger.recordRun();
     // Success signal for the over-window guard's auto-continuation: the
     // transcript actually shrank (same basis as the gate above).
     final afterTokens = estimateRequestTokens(

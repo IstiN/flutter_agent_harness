@@ -1847,6 +1847,11 @@ class AgentService extends ChangeNotifier
   String? _sessionFile;
   int _persistedCount = 0;
 
+  /// GOAL #2394 (D8/D9): the post-run soft trigger's hysteresis and
+  /// the `compacting` gate — the per-run compaction wiring sets the turn
+  /// window, the send path counts the turns and waits on the gate.
+  final handOverTrigger = HandOverTriggerState();
+
   /// Monotonic load-generation counter (issue #199 AC5/E3): bumped by
   /// every path that swaps or clears the session ([loadSession], [reset],
   /// [initialize], [deleteSession]); page loads, external refreshes, and
@@ -2005,6 +2010,13 @@ class AgentService extends ChangeNotifier
   Future<void> sendText(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    // GOAL #2394 (D8/D9): a user turn advanced the hysteresis clock; a
+    // post-run hand-over still in flight is AWAITED here, before the
+    // streaming check and the prompt (no async gap between them: a steer
+    // must still land as a steer) — its records land before the run's
+    // pre-flight measures the transcript.
+    handOverTrigger.onTurn();
+    await handOverTrigger.gate.wait();
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
     if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();

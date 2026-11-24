@@ -127,9 +127,12 @@ import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
 import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
+import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
+import '../compaction/structured/hand_over_ladder.dart'
+    show handOverMaxTokensDefault;
 import '../compaction/token_estimation.dart';
 import '../context.dart';
 import '../cube/cube.dart';
@@ -1663,6 +1666,13 @@ class AgentCli {
   /// provider then; legacy mode reads them from the provider kind.
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
+
+  /// GOAL #2394 (D8/D9): the post-run soft trigger's hysteresis and the
+  /// `compacting` gate — ONE holder (agent_cli.dart sits at the size
+  /// gate; the compaction extension reads it).
+  late final handOverTrigger = HandOverTriggerState(
+    turns: config.compactionTuning?.handOverHysteresisTurns,
+  );
 
   /// gh-1762: the live token-rate meter — fed by the agent event tap
   /// (text/thinking/tool-call-arg deltas + per-response usage), read by

@@ -25,8 +25,11 @@ import 'dart:math' as math;
 import '../cancel_token.dart';
 import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
+import '../compaction/compaction_mode.dart';
+import '../compaction/request_snapshot.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
+import '../compaction/structured/hand_over_ladder.dart';
 import '../compaction/structured/markers.dart' show localTrimMarkerPrefix;
 import '../compaction/structured/judge.dart';
 import '../context.dart';
@@ -67,6 +70,7 @@ final class AutoCompactorPass {
     this.basisReadTokens,
     this.durationMs,
     this.usage,
+    this.handOver,
   });
 
   /// 1-based pass number.
@@ -148,6 +152,11 @@ final class AutoCompactorPass {
   /// the details report's cost/cache-hit metrics. Null when the pass
   /// made no metered call (or no usage was reported).
   final CompactionUsageTotals? usage;
+
+  /// GOAL #2394 (AC14): the merged hand-over pass's metrics (mode,
+  /// bucket, real calls, cache, the hide list's buckets, nudges, budget
+  /// retries). Null on every other pass.
+  final HandOverPassMetrics? handOver;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -1112,6 +1121,9 @@ class AutoCompactorFactory {
     this.operativeSkills = const [],
     this.messageCap,
     this.messageCapMargin = kMessageCapDefaultMargin,
+    this.requestSnapshot,
+    this.handOverMaxTokens = handOverMaxTokensDefault,
+    this.softTriggered = false,
   });
 
   final Session session;
@@ -1155,10 +1167,35 @@ class AutoCompactorFactory {
   /// fires (see [messageCapTriggerReached]).
   final int messageCapMargin;
 
+  /// GOAL #2394 (AC1/AC2): the last main request as sent (S0) — the
+  /// merged hand-over call's prefix. A snapshot valid for the session's
+  /// model with no separate digest role selects the `merged` mode
+  /// ([selectCompactionMode]); otherwise the standalone ladder runs.
+  final RequestSnapshot? requestSnapshot;
+
+  /// GOAL #2394 (AC4): the merged call's output budget
+  /// (`compaction.handOver.maxTokens`).
+  final int handOverMaxTokens;
+
+  /// GOAL #2394 (AC11): the host armed this run on the post-run soft
+  /// line — the merged pass waives the hard gate; any other mode keeps
+  /// it (the soft line never arms a standalone digest or the classic
+  /// engine).
+  final bool softTriggered;
+
   /// The pinned-operative payload derived from [operativeSkills] (null
   /// when the skills declare no operative lines).
   PinnedOperativePayload? get pinnedOperative =>
       pinnedOperativePayloadOf(operativeSkills);
+
+  /// GOAL #2394: whether the host wired a digest/smol role distinct from
+  /// the session's main model (the `standalone` condition).
+  bool get _separateDigestRole {
+    final smol = sources.smolModel;
+    if (smol == null) return false;
+    return smol.provider != sources.mainModel.provider ||
+        smol.id != sources.mainModel.id;
+  }
 
   /// gh-2101: ONE cache policy per run — every digest/judge call the run
   /// makes shares its routing id (one provider cache bucket). Memoized:
@@ -1206,10 +1243,33 @@ class AutoCompactorFactory {
         messageCap,
         margin: messageCapMargin,
       );
+      // GOAL #2394 (AC1): the EXHAUSTIVE mode table decides once, up
+      // front — never an outcome of the run.
+      final mode = selectCompactionMode(
+        engine: engine,
+        snapshotValid:
+            requestSnapshot != null &&
+            requestSnapshot!.isValidFor(sources.mainModel),
+        separateDigestRole: _separateDigestRole,
+      );
+      // GOAL #2394 (AC11): the post-run soft line arms the merged
+      // hand-over alone — any other mode keeps the hard gate.
+      if (softTriggered && mode != CompactionMode.merged) {
+        hooks.onDone(
+          0,
+          _requestTokens(),
+          reason:
+              'soft trigger: mode ${mode.name} keeps the hard gate — '
+              'nothing run',
+        );
+        return true;
+      }
+      final merged = mode == CompactionMode.merged;
       final adapter = _StructuredHooksAdapter(hooks);
       final outcome = await _runStructured(
         adapter: adapter,
         capTriggered: capTriggered,
+        mode: mode,
       );
       // gh-1742 invariant 1: a FORCED run (observed usage over the line)
       // that did zero passes is not relief — the structured engine's
@@ -1219,7 +1279,11 @@ class AutoCompactorFactory {
       // into the next request. Fall through to the classic engine,
       // whose forced semantics run the summarizer regardless of its
       // own estimate. An unforced no-op stays the success short-circuit.
-      if (outcome.ok && (adapter.passCount > 0 || !(force || capTriggered))) {
+      // GOAL #2394 (AC4): the merged hand-over has no residual classic
+      // fallback — its zero-pass run is a valid "nothing to dispose"
+      // verdict, never a reason to start another engine.
+      if (outcome.ok &&
+          (merged || adapter.passCount > 0 || !(force || capTriggered))) {
         // Close the hooks bracket the classic [AutoCompactor.run] closes
         // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
         // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
@@ -1232,6 +1296,23 @@ class AutoCompactorFactory {
           reason: outcome.reason,
         );
         return true;
+      }
+      if (merged) {
+        // GOAL #2394 (AC4/I9) — NO fallback: a failed merged call reports
+        // loudly and the run is a failure; the classic prefix compactor
+        // and the judge ladder are never reached from the merged path.
+        if (outcome.timedOut) {
+          // The gh-1743 mechanical local trim (no provider call) is the
+          // one valve that stays — it needs no endpoint.
+          return _mergedTimedOut(adapter, outcome.error!);
+        }
+        return _reportFailedRun(
+          adapter,
+          outcome.error ??
+              const CompactionException(
+                'hand-over run failed without a pass receipt',
+              ),
+        );
       }
       if (outcome.timedOut) {
         // Budget kill (issue #515): the summarizer/judge wedged past the
@@ -1267,9 +1348,10 @@ class AutoCompactorFactory {
         return false;
       }
       // Fall through: the classic prefix compactor is the residual
-      // fallback (issue #148 flowchart S7/D4) — its summary then renders
-      // under structured projection as an opaque legacy-ckpt segment.
-      // Its own run() closes the bracket.
+      // fallback of the STANDALONE ladder (issue #148 flowchart S7/D4;
+      // GOAL #2394 AC4: the merged hand-over returned above) — its
+      // summary then renders under structured projection as an opaque
+      // legacy-ckpt segment. Its own run() closes the bracket.
       //
       // #2258: the structured ladders stop a cancelled run at their first
       // gate boundary (no receipt, no append) and return a false verdict —
@@ -1288,10 +1370,46 @@ class AutoCompactorFactory {
     return build().run();
   }
 
+  /// GOAL #2394: the merged run's budget-kill branch — the mechanical
+  /// local trim (gh-1743, no provider call) bounds the live context; a
+  /// nothing-left-to-trim verdict surfaces as a failed run.
+  bool _mergedTimedOut(_StructuredHooksAdapter adapter, Object error) {
+    final trimmed = build().applyLocalTrimFallback(pass: adapter.passCount + 1);
+    if (trimmed) return true;
+    return _reportFailedRun(adapter, error);
+  }
+
+  /// The merged path's terminal failed-run report: the failed pass
+  /// receipt plus the closed host bracket (the CLI HEP `compaction_end`
+  /// frame, the Flutter chat sheet) — never a silent `false`.
+  bool _reportFailedRun(_StructuredHooksAdapter adapter, Object error) {
+    hooks.onBothRolesFailed(error);
+    // The engine's own failed-pass receipt already rode through the
+    // adapter; a timeout (no receipt) still gets one.
+    if (adapter.passCount == 0) {
+      hooks.onPass(
+        AutoCompactorPass(
+          pass: 1,
+          tokensBefore: _requestTokens(),
+          tokensAfter: _requestTokens(),
+          fallback: 'structured·hand-over',
+          ok: false,
+          error: error,
+        ),
+      );
+    }
+    hooks.onDone(
+      adapter.passCount == 0 ? 1 : adapter.passCount,
+      _requestTokens(),
+    );
+    return false;
+  }
+
   Future<({bool ok, bool timedOut, Object? error, String? reason})>
   _runStructured({
     _StructuredHooksAdapter? adapter,
     bool capTriggered = false,
+    CompactionMode mode = CompactionMode.standalone,
   }) async {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
@@ -1310,6 +1428,8 @@ class AutoCompactorFactory {
         ),
       );
     }
+    final merged = mode == CompactionMode.merged;
+    final snapshot = merged ? requestSnapshot : null;
     final compactor = StructuredCompactor(
       session: session,
       state: state,
@@ -1341,14 +1461,19 @@ class AutoCompactorFactory {
       // run's cancels into it. Wiring the run-wide token here was the
       // incident's born-cancelled retry: the first judge timeout killed
       // the shared token and every later call failed in ~75 ms.
-      judge: streamFunctionHideJudge(
-        smolStream,
-        smolModel,
-        system: prompts.hideJudgeSystem,
-        onDelta: hooks.onDelta,
-        cachePolicy: _cachePolicy,
-        onUsage: _usageLedger?.add,
-      ),
+      // GOAL #2394 (AC19 scope of this PR): the merged path builds NO
+      // judge adapter and never calls it; the standalone ladder (a host
+      // with a separate digest role) keeps the judge as today.
+      judge: merged
+          ? _unusedJudge
+          : streamFunctionHideJudge(
+              smolStream,
+              smolModel,
+              system: prompts.hideJudgeSystem,
+              onDelta: hooks.onDelta,
+              cachePolicy: _cachePolicy,
+              onUsage: _usageLedger?.add,
+            ),
       summarize: streamFunctionSummarizer(
         smolStream,
         smolModel,
@@ -1375,11 +1500,30 @@ class AutoCompactorFactory {
       judgeTarget:
           'role=smol, model=${smolModel.id} @ '
           '${Uri.parse(smolModel.baseUrl).host}',
+      // GOAL #2394: the merged hand-over call rides the SESSION's routing
+      // (NULL fallthrough) with the request shape in the zone; its prefix
+      // and frozen index are the snapshot's.
+      handOver: snapshot == null
+          ? null
+          : handOverCallAdapter(
+              stream: sources.mainStream,
+              model: snapshot.model,
+              cachePolicy: CompactionCachePolicy.sessionAffine(),
+              maxTokens: handOverMaxTokens,
+              prefixLength: snapshot.prefixLength,
+              onDelta: hooks.onDelta,
+              onUsage: _usageLedger?.add,
+            ),
+      requestSnapshot: snapshot,
+      handOverPrompt: prompts.handOver,
     );
     // gh-1680: the cap trigger is computed by [run] and handed in so a
     // forced-but-zero-pass structured outcome can fall through to the
     // classic engine there (gh-1742 invariant 1).
-    final running = compactor.run(force: force || capTriggered);
+    final running = compactor.run(
+      force: force || capTriggered,
+      softTriggered: merged && softTriggered,
+    );
     try {
       final ok = await running.timeout(
         totalBudget,
@@ -1499,6 +1643,8 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
           // Issue #2274: the designed judge-latch skip rides its own
           // label — a skip is not a hide and not a failure.
           'skipped:judge-latch' => 'structured·skipped-judge-latch',
+          // GOAL #2394: the merged hand-over pass rides its own label.
+          'hand-over' => 'structured·hand-over',
           _ => 'structured·hide',
         },
         ok: pass.ok,
@@ -1524,7 +1670,15 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         // duration and metered usage (cost/cache-hit), never content.
         durationMs: pass.durationMs,
         usage: pass.usage,
+        // GOAL #2394 (AC14): the merged pass's metrics ride to the host.
+        handOver: pass.handOver,
       ),
     );
   }
 }
+
+/// GOAL #2394: the merged path's judge slot — never called (the engine
+/// runs no judge ladder when a hand-over call is wired); throws loudly
+/// if a future regression reaches it, instead of silently hiding.
+Future<String?> _unusedJudge(String ledgerText, [CancelToken? cancelToken]) =>
+    throw StateError('the hide judge must not run on the merged path');

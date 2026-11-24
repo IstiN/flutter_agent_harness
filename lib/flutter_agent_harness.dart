@@ -170,6 +170,7 @@ export 'src/compaction/context_window_registry.dart';
 export 'src/compaction/record_tag.dart';
 export 'src/compaction/request_snapshot.dart';
 export 'src/compaction/compaction_mode.dart';
+export 'src/compaction/hand_over_trigger.dart';
 export 'src/compaction/structured/hand_over.dart';
 export 'src/compaction/structured/hand_over_dispose.dart';
 export 'src/compaction/structured/hand_over_ladder.dart';

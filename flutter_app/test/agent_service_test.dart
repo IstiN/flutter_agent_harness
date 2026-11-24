@@ -14,6 +14,8 @@ import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'hand_over_fixture.dart';
+
 StreamFunction _singleTextResponse(String text) {
   return (model, context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
@@ -248,6 +250,18 @@ StreamFunction _streamingTextResponse(String text) {
     return stream;
   };
 }
+
+/// GOAL #2394: the merged hand-over call (the structured default without a
+/// smol role) answers with a valid transfer carrying [text]; every other
+/// request answers [text] as the chat would.
+StreamFunction _handOverAwareText(String text) =>
+    (model, context, {cancelToken}) => isHandOverCall(context)
+    ? _singleTextResponse(handOverReplyFor(context, text: text))(
+        model,
+        context,
+        cancelToken: cancelToken,
+      )
+    : _singleTextResponse(text)(model, context, cancelToken: cancelToken);
 
 StreamFunction _errorStream(String errorMessage) {
   return (model, context, {cancelToken}) {
@@ -2941,7 +2955,7 @@ void main() {
       final env = MemoryExecutionEnv();
       final service = AgentService(
         agent: _createAgent(
-          _singleTextResponse('reply'),
+          _handOverAwareText('reply'),
           contextWindow: 512,
           systemPrompt: '',
         ),
@@ -2960,22 +2974,21 @@ void main() {
       await service.sendText('z' * 600);
       await service.waitForIdle();
 
-      // The first two turns were checkpointed; the kept region starts at
-      // turn 2. Under the structured default (issue #287) the chat's first
-      // message is the checkpoint marker: [2-4:ckpt·…→…tok·covers:2,4]
-      // followed by the checkpoint text and the hidden-segments index.
-      expect(service.messages, hasLength(5));
+      // The first two turns were handed over; the kept region starts at
+      // turn 3. Under the structured default (issue #287) in MERGED mode
+      // (GOAL #2394) the chat's first message is the untagged fold
+      // pointer `[expand 2-5]` and the transfer record (the checkpoint
+      // marker `[…:ckpt·…→…tok·covers:…]` + text + hidden index) renders
+      // at its own position — the end of the transcript.
+      expect(service.messages.first.content, contains('[expand 2-'));
+      final transfer = service.messages.last.content;
+      expect(transfer, contains('ckpt·'), reason: 'the transfer record');
       expect(
-        service.messages.first.content,
-        contains('ckpt·'),
-        reason: 'the structured checkpoint marker heads the chat',
-      );
-      expect(
-        service.messages.first.content,
+        transfer,
         contains('covers:2,4'),
         reason: 'records 2-4 (turns one and two) are the covered range',
       );
-      expect(service.messages.first.content, contains('reply'));
+      expect(transfer, contains('reply'));
       expect(service.error, isNull);
 
       // A post-compaction turn runs normally against the rebuilt context.
@@ -3017,15 +3030,17 @@ void main() {
     test(
       'a failing summary call stays silent and never fakes a summary',
       () async {
-        // Chat answers normally; the compaction summary call (recognizable by
-        // its fixed system prompt) fails — best effort must not surface the
-        // error or corrupt history with an invented summary.
+        // Chat answers normally; the compaction call fails. Under the
+        // merged default (GOAL #2394, AC4 — no fallbacks) a failed
+        // hand-over appends NOTHING and surfaces ONE loud in-chat notice
+        // (gh-1077 AC2): history is never corrupted with an invented
+        // summary, the session keeps every record.
         flakySummarizer(
           Model model,
           Context context, {
           CancelToken? cancelToken,
         }) {
-          if (context.systemPrompt == summarizationSystemPrompt) {
+          if (isHandOverCall(context)) {
             return _errorStream('summary backend down')(model, context);
           }
           return _singleTextResponse('reply')(model, context);
@@ -3054,6 +3069,12 @@ void main() {
           rendered,
           isNot(contains('compacted into the following summary')),
         );
+        expect(rendered, isNot(contains('ckpt·')));
+        expect(
+          rendered,
+          contains(appCompactionFailureNoticeLead),
+          reason: 'the failed hand-over is loud, never a silent no-op',
+        );
         // The emergency local trim (it fires for this over-window
         // transcript) is honest and in-memory only: the marker names the
         // outage, and the session file keeps every record — the next
@@ -3066,7 +3087,8 @@ void main() {
             expect(transcript, contains(filler));
           }
         } else {
-          expect(service.messages, hasLength(6));
+          // Six chat rows plus the ONE loud failure notice.
+          expect(service.messages, hasLength(7));
         }
       },
     );

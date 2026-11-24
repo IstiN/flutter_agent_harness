@@ -387,6 +387,8 @@ List<String> formatCompactionReport(
     // gh-2101: the metered LLM work — call count, duration, cost and the
     // cache-hit share (cache 0% stays visible: the regression signal).
     ?_llmMetricsLine(pass),
+    // GOAL #2394 (AC14): the merged hand-over pass's metrics line.
+    if (pass.handOver case final metrics?) 'hand-over: ${metrics.render()}',
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
     // session records or folding a summary — a bare "0 hidden · 0
     // summarized" next to a big freed count cannot describe a real
@@ -495,7 +497,10 @@ extension AgentCliCompactionRun on AgentCli {
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
   /// to resume only when the window was really freed.
-  Future<bool> _maybeAutoCompact({bool forceE1Pass = false}) async {
+  Future<bool> _maybeAutoCompact({
+    bool forceE1Pass = false,
+    bool postRun = false,
+  }) async {
     final session = _session;
     if (session == null) return false;
     if (_agent.state.messages.isEmpty) return false;
@@ -534,14 +539,27 @@ extension AgentCliCompactionRun on AgentCli {
             _agent.state.messages.length,
             _modelCaps.learnedCapFor(model),
           );
-    if (!shouldCompact(
+    final hard =
+        shouldCompact(
           tokens,
           _effectiveContextWindow,
           _effectiveCompactionSettings,
-        ) &&
-        !overCap) {
-      return false;
-    }
+        ) ||
+        overCap;
+    // GOAL #2394 (AC11/D8): the POST-RUN soft line arms the merged
+    // hand-over alone — in the [soft, hard) band, muted by the hysteresis
+    // for N user turns after any run. The pre-flight and the over-window
+    // guard stay hard-only: the hard guard is never suppressed.
+    final soft =
+        !hard &&
+        postRun &&
+        handOverTrigger.softReached(
+          tokens: tokens,
+          window: _effectiveContextWindow,
+          settings: _effectiveCompactionSettings,
+          softRatio: config.compactionTuning?.softRatio,
+        );
+    if (!hard && !soft) return false;
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     try {
@@ -554,7 +572,11 @@ extension AgentCliCompactionRun on AgentCli {
       // contract is a compaction BEFORE the next user request; the
       // post-run fold keeps its shipped no-op-when-under-trigger
       // behavior.
-      await _runAutoCompact('[auto-compacted]', force: e1PassPending);
+      await _runAutoCompact(
+        '[auto-compacted]',
+        force: e1PassPending,
+        softTriggered: soft,
+      );
     } finally {
       // Hand the busy row back to the run even when the compaction throws
       // or is cancelled (issue #1085): a stale 'Compacting context…'
@@ -898,6 +920,7 @@ extension AgentCliCompactionRun on AgentCli {
     String label, {
     Session? session,
     bool force = false,
+    bool softTriggered = false,
   }) async {
     // The user's explicit stop wins over any compaction (issue #1085
     // round-1): the abort must not merely cancel the IN-FLIGHT pass — it
@@ -942,6 +965,7 @@ extension AgentCliCompactionRun on AgentCli {
         abort.token,
         session: session,
         force: force,
+        softTriggered: softTriggered,
       );
     } finally {
       _activeCompactionAbort = null;
@@ -963,6 +987,7 @@ extension AgentCliCompactionRun on AgentCli {
     CancelToken token, {
     Session? session,
     bool force = false,
+    bool softTriggered = false,
   }) async {
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
@@ -1001,6 +1026,16 @@ extension AgentCliCompactionRun on AgentCli {
       // compaction — `count ≥ cap − margin` fires even when the token
       // trigger is untouched (the pre-emptive trigger).
       messageCap: _modelCaps.learnedCapFor(_agent.state.model),
+      // GOAL #2394 (AC1/AC2): the last main request as sent (S0) — a
+      // snapshot valid for the session's model selects the merged
+      // hand-over (cache-affine prefix); the budget knob is
+      // `compaction.handOver.maxTokens`.
+      requestSnapshot: _agent.requestSnapshots.validFor(_agent.state.model),
+      handOverMaxTokens:
+          config.compactionTuning?.handOverMaxTokens ??
+          handOverMaxTokensDefault,
+      // GOAL #2394 (AC11): the post-run soft line armed this run.
+      softTriggered: softTriggered,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
@@ -1037,6 +1072,13 @@ extension AgentCliCompactionRun on AgentCli {
       },
       force: force || label == '[compacted]',
     ).run();
+    // GOAL #2394 (D8): any run — success or failure alike — starts the
+    // hysteresis window; a run that appended records moved the
+    // projection the snapshot described, so S0 is stale.
+    handOverTrigger.recordRun();
+    if (hooks.reportedPass) {
+      _agent.invalidateRequestSnapshot('compaction run appended records');
+    }
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;
   }

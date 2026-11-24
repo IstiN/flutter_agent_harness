@@ -26,16 +26,23 @@ import 'package:fa/services/task_models_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// A text responder that records which MODEL ids it served.
+import 'hand_over_fixture.dart';
+
+/// A text responder that records which MODEL ids it served; a merged
+/// hand-over call (GOAL #2394) gets a valid transfer built from its own
+/// instruction instead of the bare text.
 StreamFunction _recordingText(List<String> seen, String text) {
   return (model, context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
     seen.add(model.id);
+    final reply = isHandOverCall(context)
+        ? handOverReplyFor(context, text: text)
+        : text;
     stream.push(
       DoneEvent(
         reason: StopReason.stop,
         message: AssistantMessage(
-          content: [TextContent(text: text)],
+          content: [TextContent(text: reply)],
           api: model.api,
           provider: model.provider,
           model: model.id,
@@ -494,7 +501,12 @@ void main() {
         AppLog.dump().substring(logBefore),
         isNot(contains('smol role unresolved')),
       );
-      expect(service.messages.first.content, contains('ckpt·'));
+      // GOAL #2394: the merged hand-over's tail-layout checkpoint — the
+      // range start carries the `[expand a-b]` pointer, the transfer text
+      // (with its `ckpt·` header) renders at the record's own position.
+      expect(service.messages.first.content, contains('[expand '));
+      expect(service.messages.last.content, contains('ckpt·'));
+      expect(service.messages.last.content, contains('main summary'));
       expect(service.error, isNull);
     });
 
@@ -529,7 +541,12 @@ void main() {
 
       // The resolver cannot serve an empty model id either way, and the
       // legacy build's isEmpty guard rejects the slot — main summarizes.
-      expect(service.messages.first.content, contains('ckpt·'));
+      // GOAL #2394: the merged hand-over's tail-layout checkpoint — the
+      // range start carries the `[expand a-b]` pointer, the transfer text
+      // (with its `ckpt·` header) renders at the record's own position.
+      expect(service.messages.first.content, contains('[expand '));
+      expect(service.messages.last.content, contains('ckpt·'));
+      expect(service.messages.last.content, contains('main summary'));
       expect(service.error, isNull);
       expect(
         service.messages.any(
