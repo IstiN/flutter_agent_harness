@@ -21,12 +21,15 @@
 /// shape through the real gate: truncated main → FAIL, merged → OK.
 library;
 
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show max, min;
 
 import 'package:test/test.dart';
 
 const scriptPath = 'scripts/merge_dart_json_reports.py';
 const gatePath = 'scripts/check_test_durations.py';
+const shardGatePath = 'scripts/check_shard_durations.py';
 const junitPath = 'scripts/junit_from_dart_json.py';
 
 /// Minimal dart-json reporter stream: one suite, spans as
@@ -275,4 +278,117 @@ void main() {
     final (_, code) = await runScript([]);
     expect(code, 2);
   });
+
+  test('folded shard wall = the SUM of the attempt walls — the gh-1300 '
+      'shard metric stays meaningful, never the span sum', () async {
+    // Reviewer fixture shape (PR #2402 thread on
+    // merge_dart_json_reports.py:114): attempt-1 spans INTERLEAVED under
+    // --concurrency=4 (wall 12.0 s, span-sum 12.85 s) + a rerun with wall
+    // 105.0 s / span-sum 198.0 s. The old synthetic sequential clock laid
+    // the spans end-to-end, so the merged wall came out as the SPAN SUM
+    // (210.85 s) — and check_shard_durations.py measures
+    // max(testDone) - min(testStart) over exactly this artifact.
+    final main = await write(
+      'main.json',
+      [
+        '{"protocolVersion":"0.1.1","type":"start","pid":1,"time":0}',
+        '{"type":"suite","suite":{"id":1,"platform":"vm","path":"test/a_test.dart"},"time":0}',
+        '{"type":"testStart","test":{"id":1,"name":"case a","suiteID":1,"groupIDs":[],"metadata":{"skip":false}},"time":100}',
+        '{"type":"testStart","test":{"id":2,"name":"case b","suiteID":1,"groupIDs":[],"metadata":{"skip":false}},"time":200}',
+        '{"type":"testDone","testID":1,"result":"success","hidden":false,"skipped":false,"time":900}',
+        '{"type":"testStart","test":{"id":3,"name":"case c","suiteID":1,"groupIDs":[],"metadata":{"skip":false}},"time":800}',
+        '{"type":"testDone","testID":2,"result":"success","hidden":false,"skipped":false,"time":950}',
+        '{"type":"testDone","testID":3,"result":"success","hidden":false,"skipped":false,"time":12100}',
+      ].join('\n'),
+    );
+    final rerun = await write(
+      'rerun.json',
+      [
+        '{"protocolVersion":"0.1.1","type":"start","pid":2,"time":0}',
+        '{"type":"suite","suite":{"id":1,"platform":"vm","path":"test/b_test.dart"},"time":0}',
+        '{"type":"testStart","test":{"id":1,"name":"case d","suiteID":1,"groupIDs":[],"metadata":{"skip":false}},"time":0}',
+        '{"type":"testStart","test":{"id":2,"name":"case e","suiteID":1,"groupIDs":[],"metadata":{"skip":false}},"time":500}',
+        '{"type":"testDone","testID":1,"result":"success","hidden":false,"skipped":false,"time":105000}',
+        '{"type":"testDone","testID":2,"result":"success","hidden":false,"skipped":false,"time":93500}',
+      ].join('\n'),
+    );
+    final merged = '${tmp.path}/merged.json';
+    final (out, code) = await runScript([merged, main, rerun]);
+    expect(code, 0, reason: out);
+
+    // The gate's own wall formula (check_shard_durations.shard_wall):
+    // max(testDone) - min(testStart) over real (paired, non-hidden) spans.
+    double wall(String path) {
+      final starts = <int, int>{};
+      final startTimes = <int>[];
+      final doneTimes = <int>[];
+      for (final line in File(path).readAsLinesSync()) {
+        if (line.trim().isEmpty) continue;
+        final ev = jsonDecode(line) as Map<String, dynamic>;
+        if (ev['type'] == 'testStart') {
+          starts[(ev['test'] as Map)['id'] as int] = ev['time'] as int;
+        } else if (ev['type'] == 'testDone') {
+          if (ev['hidden'] == true) continue;
+          final t0 = starts.remove(ev['testID']);
+          if (t0 == null) continue;
+          startTimes.add(t0);
+          doneTimes.add(ev['time'] as int);
+        }
+      }
+      return (doneTimes.reduce(max) - startTimes.reduce(min)) / 1000.0;
+    }
+
+    expect(
+      wall(merged),
+      closeTo(117.0, 0.001),
+      reason:
+          'the merged wall must equal the SUM of the attempt walls '
+          '(12.0 + 105.0) — not the span sum (12.85 + 198.0 = 210.85)',
+    );
+    // Per-test durations are untouched by the clock offset — the junit
+    // conversion and the per-suite #928 numbers stay faithful.
+    final junit = '${tmp.path}/junit.xml';
+    final conv = await Process.run('python3', [junitPath, merged, junit]);
+    expect(conv.exitCode, 0, reason: conv.stderr);
+    final xml = File(junit).readAsStringSync();
+    expect(xml, contains('time="105.000"'), reason: 'rerun case d');
+    expect(xml, contains('time="11.300"'), reason: 'attempt-1 case c');
+
+    // End-to-end through the REAL gh-1300 gate: a 150 s budget fits the
+    // summed attempt walls (117 s) but not the span-sum wall (210.85 s)
+    // the old fold produced.
+    final budgets = await write(
+      'budgets.json',
+      '{"_meta":{},"warn_fraction":0.9,"shards":{"merged":150.0}}',
+    );
+    final shardGate = await Process.run('python3', [
+      shardGatePath,
+      '--budgets',
+      budgets,
+      merged,
+    ]);
+    expect(shardGate.exitCode, 0, reason: shardGate.stdout as String);
+    expect(shardGate.stdout as String, contains('RESULT: OK'));
+  });
+
+  test(
+    'the span walk is the SHARED junit_from_dart_json walk — no '
+    'duplicated parser to drift (#194/#928 fixes must reach the fold)',
+    () async {
+      final probe = await Process.run('python3', [
+        '-c',
+        'import sys; sys.path.insert(0, "scripts");\n'
+            'import merge_dart_json_reports as m;\n'
+            'seen = []\n'
+            'def spy(path):\n'
+            '    seen.append(path)\n'
+            '    yield from ()\n'
+            'm.iter_test_events = spy\n'
+            'assert m.spans_from_log("scripts/junit_from_dart_json.py") == ([], 0)\n'
+            'assert seen == ["scripts/junit_from_dart_json.py"], "merge must '
+            'delegate the span walk to junit_from_dart_json.iter_test_events"\n',
+      ]);
+      expect(probe.exitCode, 0, reason: probe.stderr as String);
+    },
+  );
 }

@@ -822,7 +822,7 @@ void main() {
     // Raw attempt-1 evidence is preserved beside the merged log: the
     // truncated stream (healthy span, unfinished lost start, allSuites,
     // NO lost testDone).
-    final attempt1 = events('${tmp.path}/main.json.atempt1');
+    final attempt1 = events('${tmp.path}/main.json.attempt1');
     expect(
       attempt1.any(
         (ev) =>
@@ -845,5 +845,47 @@ void main() {
       rerun.any((ev) => ev['type'] == 'testDone' && ev['testID'] == 22),
       isTrue,
     );
+  });
+
+  test('AC27 a fold RENAME failure stays loud and never flips a green-healed '
+      'shard red (set -e must not exit on the mv)', () async {
+    // A transient storage failure (the gh-1412 blob-storage class) hits
+    // exactly the success-path `mv -f <main>.merged.$$ <main>`: the stub
+    // fails only the fold rename and passes everything else through.
+    final stubBin = Directory('${tmp.path}/stubbin')..createSync();
+    final stubMv = File('${stubBin.path}/mv')
+      ..writeAsStringSync('''
+#!/usr/bin/env bash
+case "\$*" in
+  *main.json.merged*)
+    echo "mv: cannot rename: simulated transient storage failure" >&2
+    exit 1 ;;
+  *) exec /usr/bin/mv "\$@" ;;
+esac
+''');
+    Process.runSync('chmod', ['+x', stubMv.path]);
+    final r = await runWrapper(
+      tmp.path,
+      mode: 'wedge-heal-evidence',
+      targets:
+          'test/healthy_test.dart test/integration/trajectory/lost_test.dart',
+      env: {'LOAD_DROP_RETRY_SPAM_LIMIT': '2'},
+      pathPrefix: stubBin.path,
+    );
+    // The shard healed green — a fold rename failure must not exit the
+    // wrapper (set -euo pipefail) at mv's status.
+    expect(r.exitCode, 0, reason: 'stderr: ${r.stderr}');
+    expect(r.stderr, contains('healed'));
+    // The failure is loud, per the fold-failure invariant.
+    expect(r.stderr, contains('WARNING'));
+    expect(r.stderr, contains('fold rename failed'));
+    // The main log keeps attempt-1's truncated stream (never a partial
+    // rename): no rerun span landed (attempt-1 never finished "lost case
+    // one" — its testID was 11; the rerun's spans are 21/22) and no done
+    // event was synthesised.
+    final mainText = File('${tmp.path}/main.json').readAsStringSync();
+    expect(mainText, isNot(contains('"testID":21')));
+    expect(mainText, isNot(contains('"testID":22')));
+    expect(mainText, isNot(contains('"type":"done"')));
   });
 }

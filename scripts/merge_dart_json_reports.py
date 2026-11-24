@@ -18,8 +18,16 @@ dart-json stream:
     a span wins, so a re-run file contributes its rerun spans only and
     nothing is double-counted (a partial attempt-1 suite total can never
     inflate the merged one);
+  - each attempt keeps its internal relative clock and is offset by the
+    accumulated wall of attempts 1..k-1: the merged stream's wall
+    (max testDone - min testStart — what check_shard_durations.py's
+    gh-1300 shard budget measures) is the SUM of the attempt walls, never
+    the span sum the synthetic sequential clock of the first draft
+    produced;
   - hidden pseudo-tests (the `loading <path>` loader events) are dropped —
-    the same filter junit_from_dart_json.iter_test_spans applies;
+    the shared walk junit_from_dart_json.iter_test_events applies the
+    same filter (one parser for junit, the #928 budgets and this fold —
+    no drift);
   - torn/partial lines (a SIGKILLed stream ends mid-line), missing logs
     and empty logs are tolerated: the fold uses whatever spans survived;
   - a span that FAILED and never reran stays failed in the merged stream —
@@ -42,46 +50,37 @@ import json
 import os
 import sys
 
+from junit_from_dart_json import iter_test_events
+
 
 def spans_from_log(path):
-    """[(suite_path, name, duration_ms, failed)] from one reporter log.
+    """([(suite_path, name, start_ms, end_ms, failed)], wall_ms) per log.
 
-    The canonical dart-json span walk (same parsing rules as
-    scripts/junit_from_dart_json.py): paired testStart/testDone, hidden
-    pseudo-tests excluded, torn/unparsable lines skipped — never fatal for
-    timing data. A missing log folds as empty.
+    Parsing comes from the SHARED dart-json walk
+    (junit_from_dart_json.iter_test_events) — paired testStart/testDone,
+    hidden pseudo-tests excluded, torn/unparsable lines skipped, never
+    fatal for timing data; a missing log folds as empty.
+
+    Times are normalized to the log's OWN relative clock (its earliest
+    real testStart becomes 0), so wall_ms = max(end) - min(start) is
+    exactly the quantity scripts/check_shard_durations.py measures over
+    the artifact.
     """
-    out = []
     if not os.path.exists(path):
-        return out
-    suites = {}  # suiteID -> test file path
-    starts = {}  # testID -> (name, suite path, start ms)
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            kind = ev.get("type")
-            if kind == "suite":
-                suites[ev["suite"]["id"]] = ev["suite"].get("path", "")
-            elif kind == "testStart":
-                starts[ev["test"]["id"]] = (
-                    ev["test"].get("name", ""),
-                    suites.get(ev["test"].get("suiteID"), ""),
-                    ev["time"],
-                )
-            elif kind == "testDone":
-                tid = ev["testID"]
-                if tid in starts and not ev.get("hidden", False):
-                    name, suite_path, t0 = starts.pop(tid)
-                    dur = max(ev["time"] - t0, 0)
-                    failed = ev.get("result") in ("failure", "error")
-                    out.append((suite_path, name, dur, failed))
-    return out
+        return [], 0
+    spans = []
+    t_min = None
+    t_max = 0
+    for suite_path, name, t0, t1, failed in iter_test_events(path):
+        if t_min is None or t0 < t_min:
+            t_min = t0
+        if t1 > t_max:
+            t_max = t1
+        spans.append((suite_path, name, t0, t1, failed))
+    if not spans:
+        return [], 0
+    spans = [(p, n, t0 - t_min, t1 - t_min, f) for p, n, t0, t1, f in spans]
+    return spans, t_max - t_min
 
 
 def _compact(obj) -> str:
@@ -91,11 +90,18 @@ def _compact(obj) -> str:
 
 
 def write_stream(out_path, folded):
-    """Emit the folded spans as one valid dart-json stream (atomic replace)."""
+    """Emit the folded spans as one valid dart-json stream (atomic replace).
+
+    Each span carries its absolute merged-clock time assigned in main()
+    (its attempt's relative clock offset by the accumulated wall of the
+    preceding attempts) — so the merged stream's wall (max testDone minus
+    min testStart, the metric check_shard_durations.py reads) equals the
+    SUM of the attempt walls, never the span sum.
+    """
     tmp = out_path + ".tmp"
     suite_paths = sorted({k[0] for k in folded})
     suite_ids = {p: i for i, p in enumerate(suite_paths)}
-    any_failed = any(f for (_, f) in folded.values())
+    any_failed = any(f for (_, _, f) in folded.values())
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(_compact({
             "protocolVersion": "0.1.1", "type": "start",
@@ -109,9 +115,9 @@ def write_stream(out_path, folded):
             }) + "\n")
         test_id = 0
         clock = 0
-        for (p, name), (dur, failed) in folded.items():
+        for (p, name), (t0, t1, failed) in folded.items():
             test_id += 1
-            t0, clock = clock, clock + dur
+            clock = max(clock, t1)
             fh.write(_compact({
                 "type": "testStart",
                 "test": {"id": test_id, "name": name,
@@ -122,7 +128,7 @@ def write_stream(out_path, folded):
             fh.write(_compact({
                 "type": "testDone", "testID": test_id,
                 "result": "failure" if failed else "success",
-                "hidden": False, "skipped": False, "time": clock,
+                "hidden": False, "skipped": False, "time": t1,
             }) + "\n")
         fh.write(_compact({
             "type": "allSuites", "count": test_id,
@@ -141,11 +147,18 @@ def main() -> int:
         return 2
     out_path, inputs = argv[0], argv[1:]
     folded = {}
+    offset = 0  # accumulated wall of the attempts folded so far (ms)
     for path in inputs:
         # Latest log wins per (suite path, name): a rerun span supersedes
-        # attempt-1's partial/failed record of the same test.
-        for suite_path, name, dur, failed in spans_from_log(path):
-            folded[(suite_path, name)] = (dur, failed)
+        # attempt-1's partial/failed record of the same test. Each attempt
+        # keeps its internal relative clock and is offset by the
+        # accumulated wall of attempts 1..k-1 — the merged wall is the SUM
+        # of the attempt walls (what the gh-1300 shard gate and the PR
+        # description promise), never the span sum.
+        spans, wall = spans_from_log(path)
+        for suite_path, name, t0, t1, failed in spans:
+            folded[(suite_path, name)] = (offset + t0, offset + t1, failed)
+        offset += wall
     write_stream(out_path, folded)
     print(
         f"merged {len(folded)} test span(s) from "

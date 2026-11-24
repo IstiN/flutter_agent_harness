@@ -354,7 +354,7 @@ done
 # run" (run 45389186796, v1.0.772). Merge attempt-1 + every surviving
 # rerun log into the main log (dedup per suite+test, latest attempt wins —
 # nothing double-counted), raw attempt-1 bytes preserved at
-# <main-log>.atempt1, rerun logs untouched. A fold failure never flips a
+# <main-log>.attempt1, rerun logs untouched. A fold failure never flips a
 # genuinely green shard red: the raw evidence stays on disk and the
 # warning is loud.
 fold_attempt_logs() {
@@ -362,8 +362,8 @@ fold_attempt_logs() {
   if [ -s "$MAIN_LOG" ]; then
     # Best-effort evidence retention: a failed backup must never flip a
     # genuinely green shard red (set -e) — the fold itself is the point.
-    cp -f "$MAIN_LOG" "$MAIN_LOG.atempt1" ||
-      echo "load_drop_retry: WARNING — could not preserve raw attempt-1 at $MAIN_LOG.atempt1" >&2
+    cp -f "$MAIN_LOG" "$MAIN_LOG.attempt1" ||
+      echo "load_drop_retry: WARNING — could not preserve raw attempt-1 at $MAIN_LOG.attempt1" >&2
     inputs+=("$MAIN_LOG")
   fi
   local k
@@ -379,8 +379,15 @@ fold_attempt_logs() {
   local merged="$MAIN_LOG.merged.$$"
   if python3 "$(dirname "$0")/merge_dart_json_reports.py" \
     "$merged" "${inputs[@]}"; then
-    mv -f "$merged" "$MAIN_LOG"
-    echo "load_drop_retry: folded ${#inputs[@]} attempt log(s) into $MAIN_LOG (raw attempt-1 preserved at $MAIN_LOG.atempt1)" >&2
+    # A failed rename must never flip a genuinely green shard red
+    # (set -e): the main log stays attempt-1's stream and the warning is
+    # loud — the same invariant as the cp backup above.
+    if mv -f "$merged" "$MAIN_LOG"; then
+      echo "load_drop_retry: folded ${#inputs[@]} attempt log(s) into $MAIN_LOG (raw attempt-1 preserved at $MAIN_LOG.attempt1)" >&2
+    else
+      rm -f "$merged"
+      echo "load_drop_retry: WARNING — fold rename failed; $MAIN_LOG stays attempt-1's stream (duration/junit consumers may under-report)" >&2
+    fi
   else
     rm -f "$merged"
     echo "load_drop_retry: WARNING — evidence fold failed; $MAIN_LOG stays attempt-1's truncated stream (duration/junit consumers may under-report)" >&2
