@@ -139,15 +139,19 @@ extension _WideLayoutShellPresentation on _WideLayoutShellState {
     // here — the camera hardware sits top-right, the bottom-right glass
     // is free, and consuming it squeezed the 6 phone slots below the
     // full-label minimum ("Netw…"/"Activ…").
+    final bottomInset = MessengerBottomNavigation.bottomInsetFor(
+      MediaQuery.paddingOf(context).bottom,
+    );
     return SafeArea(
       top: false,
       right: false,
+      bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           MessengerBottomNavigation.horizontalMargin,
           0,
           MessengerBottomNavigation.horizontalMargin,
-          MessengerBottomNavigation.bottomGap,
+          bottomInset,
         ),
         child: ListenableBuilder(
           listenable: _chatController,
