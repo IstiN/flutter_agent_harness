@@ -44,6 +44,26 @@ Future<List<NetworkDeviceRow>> _readNetworkRoster({
   if (device == null) {
     throw const NetworkAuthException('not enrolled; run enroll first');
   }
+  final stateFile = connectorDaemonStateFile(_homeDir());
+  final daemonState = await readConnectorDaemonState(stateFile);
+  if (daemonState != null &&
+      await probeConnectorDaemon(
+        daemonState,
+        expectedDeviceId: device.deviceId,
+      )) {
+    final client = SharedConnectorPresenceClient(
+      stateFile: stateFile,
+      deviceId: device.deviceId,
+    );
+    try {
+      final frames = await client.fetchRosterFrames();
+      if (frames.isNotEmpty) return parseNetworkDeviceRoster(frames);
+    } on Object {
+      // Fall through to direct read if daemon has no cached roster yet.
+    } finally {
+      await client.stop();
+    }
+  }
   return readNetworkDeviceRoster(
     NetworkPresenceController(
       device: device,
@@ -88,6 +108,22 @@ Future<CliNetworkPresence?> _restoreNetworkPresence({
       );
     } on Object {
       // Best-effort: device presence does not depend on the account token.
+    }
+    final home = _homeDir();
+    final daemonState = await _ensureConnectorDaemonRunning(
+      homeDirectory: home,
+      deviceId: device.deviceId,
+    );
+    if (daemonState != null) {
+      httpClient.close();
+      return SharedConnectorPresenceClient(
+        stateFile: connectorDaemonStateFile(home),
+        deviceId: device.deviceId,
+        ensureDaemonRunning: () => _ensureConnectorDaemonRunning(
+          homeDirectory: home,
+          deviceId: device.deviceId,
+        ),
+      );
     }
     final env = LocalExecutionEnv(cwd: Directory.current.path);
     final repo = JsonlSessionRepo(

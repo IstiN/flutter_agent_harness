@@ -83,6 +83,7 @@ import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
 part 'fah_util.dart';
 part 'fah_network.dart';
+part 'fah_connector.dart';
 part 'fah_model.dart';
 part 'fah_io.dart';
 part 'fah_console_cp.dart';

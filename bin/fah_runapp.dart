@@ -49,6 +49,11 @@ Future<void> _runApp(List<String> args) async {
   if (args.isNotEmpty && args.first == 'dap') {
     exit(await runDapCommand(args.sublist(1)));
   }
+  // `fa connector run|status|stop [--port N]` — single-per-machine Machine
+  // Connector daemon (docs/fa_network_connector.md §3 / §10).
+  if (args.isNotEmpty && args.first == 'connector') {
+    exit(await _runConnectorCommand(args.sublist(1)));
+  }
   final serveMarkerCount =
       (serve.serveA2a ? 1 : 0) + (serve.serveBridge ? 1 : 0);
   if (serveMarkerCount != 1 && args.contains('serve')) {
