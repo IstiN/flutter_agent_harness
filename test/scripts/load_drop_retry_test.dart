@@ -298,6 +298,34 @@ Future<ProcessResult> runWrapper(
 
 List<String> invocations(String tmp) => File('$tmp/argv.log').readAsLinesSync();
 
+/// gh-2404: `/usr/bin/time` is GNU on Linux CI but BSD on macOS. GNU takes
+/// `-f '%U %S'`; BSD has no `-f` (`illegal option -- f`, exit 1) and takes
+/// `-l`. `--version` exits 0 only on GNU (BSD prints usage, exits 1).
+bool gnuTime() => Process.runSync('/usr/bin/time', ['--version']).exitCode == 0;
+
+/// CPU user+sys seconds from `/usr/bin/time` output — parses BOTH shapes:
+/// GNU `-f '%U %S'` (`0.01 0.02`) and BSD `-l` (the `x real x user x sys`
+/// line, before the rusage rows). Throws on an unparsable shape — never a
+/// silent 0.
+double parseCpuSeconds(String output) {
+  final bsd = RegExp(
+    r'^\s*([\d.]+) real\s+([\d.]+) user\s+([\d.]+) sys\s*$',
+    multiLine: true,
+  ).firstMatch(output);
+  if (bsd != null) {
+    return double.parse(bsd.group(2)!) + double.parse(bsd.group(3)!);
+  }
+  for (final line in output.trim().split('\n')) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length == 2 &&
+        double.tryParse(parts[0]) != null &&
+        double.tryParse(parts[1]) != null) {
+      return double.parse(parts[0]) + double.parse(parts[1]);
+    }
+  }
+  throw FormatException('unparsable /usr/bin/time output: "$output"');
+}
+
 void main() {
   late Directory tmp;
   setUp(() {
@@ -563,8 +591,14 @@ void main() {
     expect(r.stderr, contains('exit-handshake wedge'));
     expect(r.stderr, contains('healed'));
     expect(
-      RegExp('exit-handshake wedge').allMatches(r.stderr.toString()),
+      RegExp(
+        '^load_drop_retry: exit-handshake wedge',
+        multiLine: true,
+      ).allMatches(r.stderr.toString()),
       hasLength(1),
+      // Anchored on the message prefix: bash 3.2's job notice for a TERMed
+      // watchdog quotes the whole subshell source (phrase included) and
+      // must not count as a second kill (gh-2404).
       reason: 'exactly ONE wedge kill — attempt 1 only',
     );
     final calls = invocations(tmp.path);
@@ -643,8 +677,13 @@ void main() {
     expect(r.exitCode, 0, reason: 'stderr: $stderrText');
     expect(stderrText, contains('healed'));
     expect(
-      RegExp('exit-handshake wedge').allMatches(stderrText),
+      RegExp(
+        '^load_drop_retry: exit-handshake wedge',
+        multiLine: true,
+      ).allMatches(stderrText),
       hasLength(1),
+      // Same anchor rationale as AC20 (gh-2404): bash 3.2's TERMed-watchdog
+      // job notice quotes the phrase and must not count as a second kill.
       reason: 'exactly ONE wedge kill — attempt 1 only',
     );
     expect(invocations(tmp.path), hasLength(2));
@@ -669,16 +708,20 @@ void main() {
       if (!File('/usr/bin/time').existsSync()) {
         return; // no measurement tool on this host — nothing to assert
       }
+      // gh-2404: feature-detect GNU vs BSD time — BSD (macOS) has no -f
+      // (`illegal option -- f`, exit 1); use -l there and parse the
+      // `x real x user x sys` line.
+      final cpuFile = '${tmp.path}/cpu.txt';
+      final gnuDetected = gnuTime();
       final stub = File('${tmp.path}/stub_runner.sh')
         ..writeAsStringSync(stubRunner(tmp.path));
       final watch = Stopwatch()..start();
       final r = await Process.run(
         '/usr/bin/time',
         [
-          '-f',
-          '%U %S',
+          if (gnuDetected) ...['-f', '%U %S'] else '-l',
           '-o',
-          '${tmp.path}/cpu.txt',
+          cpuFile,
           'bash',
           scriptPath,
           '${tmp.path}/main.json',
@@ -703,16 +746,15 @@ void main() {
         greaterThanOrEqualTo(2.5),
         reason: 'the stub slept ~3s — the watchdog lived through it',
       );
-      final cpuLine = File('${tmp.path}/cpu.txt').readAsLinesSync().last.trim();
-      final parts = cpuLine.split(RegExp(r'\s+'));
-      final cpu = double.parse(parts[0]) + double.parse(parts[1]);
+      final cpuText = File(cpuFile).readAsStringSync();
+      final cpu = parseCpuSeconds(cpuText);
       expect(
         cpu,
         lessThan(wall * 0.5),
         reason:
             'wrapper-tree CPU $cpu s over $wall s wall — a busy-spinning '
             'poll timer pins ~1 core (CPU ≈ wall); a blocking timer is '
-            'near-zero. time output: "$cpuLine"',
+            'near-zero. time output: "$cpuText"',
       );
       expect(
         r.stderr.toString(),
@@ -887,5 +929,55 @@ esac
     expect(mainText, isNot(contains('"testID":21')));
     expect(mainText, isNot(contains('"testID":22')));
     expect(mainText, isNot(contains('"type":"done"')));
+  });
+
+  // ── gh-2404: /usr/bin/time portability. GNU time (Linux CI) takes
+  //    -f '%U %S'; BSD time (macOS) has no -f (illegal option -- f, exit
+  //    1) and takes -l — the pre-fix AC25 hardcode made every macOS local
+  //    commit red while CI stayed green, defeating hook/CI parity.
+  test('gh-2404 the time parser reads BOTH GNU and BSD output shapes '
+      '(and fails loud on neither)', () {
+    // GNU -f '%U %S' — the -o file holds exactly one line.
+    expect(parseCpuSeconds('0.01 0.02\n'), closeTo(0.03, 1e-9));
+    // BSD -l — the real/user/sys line followed by rusage rows.
+    expect(
+      parseCpuSeconds(
+        '        1.20 real         0.80 user         0.30 sys\n'
+        '             1261568  maximum resident set size\n'
+        '                   0  messages sent\n',
+      ),
+      closeTo(1.1, 1e-9),
+    );
+    // An unparsable shape must throw — never a silent 0 CPU.
+    expect(() => parseCpuSeconds(''), throwsFormatException);
+    expect(() => parseCpuSeconds('garbage\n'), throwsFormatException);
+  });
+
+  test('gh-2404 REG guard: no GNU-only /usr/bin/time flags without a BSD '
+      'branch under test/scripts', () {
+    // The gh-2404 class: a test shells out to /usr/bin/time with GNU-only
+    // flags (-f/--format) and no BSD alternative — green on Linux CI, red
+    // on every macOS machine (BSD time: `illegal option -- f`, exit 1).
+    final offenders = <String>[];
+    for (final entry
+        in Directory('test/scripts')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('_test.dart'))) {
+      final src = entry.readAsStringSync();
+      if (!src.contains('/usr/bin/time')) continue;
+      final usesGnuFormat =
+          RegExp(r"'-f'").hasMatch(src) || src.contains('--format');
+      final hasBsdBranch = src.contains("'-l'") || src.contains("'--version'");
+      if (usesGnuFormat && !hasBsdBranch) offenders.add(entry.path);
+    }
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'GNU-only /usr/bin/time usage in test/scripts — BSD time (macOS) '
+          'has no -f; add the --version feature detect + -l branch (issue '
+          '#2404): $offenders',
+    );
   });
 }

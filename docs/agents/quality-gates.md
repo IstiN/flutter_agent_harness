@@ -37,6 +37,12 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
   `flutter analyze --no-fatal-infos --no-fatal-warnings`.
+- No test hardcodes a platform-specific tool flag without a portable
+  branch (gh-2404): `/usr/bin/time` is GNU on Linux CI but BSD on macOS —
+  BSD has no `-f` (`illegal option -- f`, exit 1) and takes `-l`.
+  Feature-detect (`--version` exits 0 only on GNU) or measure in the
+  harness itself; the hook must be green on BOTH hosts for the same diff,
+  or hook/CI parity is broken.
 - `dart test` green (integration-tagged excluded from test-core — issue
   #551: `test/integration/**` changes also run the `integration-mock` leg
   per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
