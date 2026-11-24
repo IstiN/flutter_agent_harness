@@ -586,7 +586,15 @@ jobs:
     # gh-1551: an empty schedule tick (no commits since the last v* tag)
     # skips this leg — the release-pending pre-check decides.
     if: needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
-    timeout-minutes: 8
+    # gh-2399 rework (run 45409735279): 8 minutes killed the leg at 8m02s
+    # with every completed step GREEN — the fetch-depth:0 blobless checkout
+    # alone took 5m26s of the budget (a PR run fans out ~60 jobs at once,
+    # clone throughput swings by minutes), and the healthy base run
+    # 45398653579 finished in 5m47s. 15 ≈ 2.6x the healthy wall (gh-1778
+    # doctrine band; app-crap-gate: 12 for a 5.5-min wall); a real hang is
+    # still killed loudly. Guarded by
+    # test/ci_static_gates_timeout_guard_test.dart.
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

@@ -66,7 +66,14 @@
 #                the <main-log>.console capture;
 #   <retry-log>  base path for the reruns' reporter logs: rerun k writes
 #                <retry-log>.rerunK (kept separate so the main log is never
-#                overwritten; rerun evidence only — no consumer reads it);
+#                overwritten during the loop). On a green heal the wrapper
+#                folds attempt-1 + every surviving rerun log INTO the main
+#                log (gh-239: the #928 duration gate and the junit
+#                conversion read the main log only — the unfolded truncated
+#                attempt-1 stream phantom-failed "budgeted suite did not
+#                run" for suites the rerun ran green, run 45389186796);
+#                raw attempt-1 bytes are preserved at <main-log>.attempt1
+#                and the rerun logs stay untouched;
 #   <cmd...>     the full dart test invocation INCLUDING its own
 #                --file-reporter flag; the FINAL argument is the quoted,
 #                space-separated target list (word-split here).
@@ -339,9 +346,58 @@ while [ "$RC" -ne 0 ] && [ "$RERUNS" -lt "$MAX_RERUNS" ]; do
   set -e
 done
 
+# gh-239: fold the healed shard's evidence into the MAIN reporter log.
+# The rerun's spans live in <retry-log>.rerunK — consumers (the junit
+# conversion, the #928 duration-budget gate, the gh-130 shard budgets) read
+# ONLY <main-log>, and after a wedge kill that is attempt-1's TRUNCATED
+# stream: suites the rerun ran green phantom-fail "budgeted suite did not
+# run" (run 45389186796, v1.0.772). Merge attempt-1 + every surviving
+# rerun log into the main log (dedup per suite+test, latest attempt wins —
+# nothing double-counted), raw attempt-1 bytes preserved at
+# <main-log>.attempt1, rerun logs untouched. A fold failure never flips a
+# genuinely green shard red: the raw evidence stays on disk and the
+# warning is loud.
+fold_attempt_logs() {
+  local inputs=()
+  if [ -s "$MAIN_LOG" ]; then
+    # Best-effort evidence retention: a failed backup must never flip a
+    # genuinely green shard red (set -e) — the fold itself is the point.
+    cp -f "$MAIN_LOG" "$MAIN_LOG.attempt1" ||
+      echo "load_drop_retry: WARNING — could not preserve raw attempt-1 at $MAIN_LOG.attempt1" >&2
+    inputs+=("$MAIN_LOG")
+  fi
+  local k
+  for ((k = 1; k <= RERUNS; k++)); do
+    if [ -s "$RETRY_LOG.rerun$k" ]; then
+      inputs+=("$RETRY_LOG.rerun$k")
+    fi
+  done
+  if [ "${#inputs[@]}" -le 1 ]; then
+    echo "load_drop_retry: no rerun reporter log survived the heal — main log left as attempt-1 wrote it" >&2
+    return 0
+  fi
+  local merged="$MAIN_LOG.merged.$$"
+  if python3 "$(dirname "$0")/merge_dart_json_reports.py" \
+    "$merged" "${inputs[@]}"; then
+    # A failed rename must never flip a genuinely green shard red
+    # (set -e): the main log stays attempt-1's stream and the warning is
+    # loud — the same invariant as the cp backup above.
+    if mv -f "$merged" "$MAIN_LOG"; then
+      echo "load_drop_retry: folded ${#inputs[@]} attempt log(s) into $MAIN_LOG (raw attempt-1 preserved at $MAIN_LOG.attempt1)" >&2
+    else
+      rm -f "$merged"
+      echo "load_drop_retry: WARNING — fold rename failed; $MAIN_LOG stays attempt-1's stream (duration/junit consumers may under-report)" >&2
+    fi
+  else
+    rm -f "$merged"
+    echo "load_drop_retry: WARNING — evidence fold failed; $MAIN_LOG stays attempt-1's truncated stream (duration/junit consumers may under-report)" >&2
+  fi
+}
+
 if [ "$RC" -eq 0 ]; then
   if [ "$RERUNS" -gt 0 ]; then
     echo "✅ load-drop retry: healed — dropped file(s) green on rerun $RERUNS" >&2
+    fold_attempt_logs
   fi
   exit 0
 fi
