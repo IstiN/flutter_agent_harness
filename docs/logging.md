@@ -67,3 +67,30 @@ placeholders stay literal.
 Every rendered line on every sink passes the redaction pipeline
 (`lib/src/redact/`) — including `trace` payloads. Silencing is cheap:
 filtering happens before formatting and before the append chain.
+
+## Per-request usage diagnostics
+
+Set `FA_USAGE_TRACE=1` to emit compact diagnostics at usage-segment close.
+The default is off; `fa-tokens:` and `usage.json` keep their existing
+formats. Diagnostics go to `fa.log` and, for headless runs, stderr (and
+thus `--log-file`/`FA_LOG_FILE`); stdout and structured wires stay unchanged.
+Normal file logging filters still apply.
+
+Entries are in session-chain order, prefixed with `sid=<session-id>`:
+
+- `usage_request: {"t":"...","in":N,"out":N,"cr":N,"source":"reported"}`:
+  the fold's per-request input, output and cache-read counts. `t` is the
+  request-summary timestamp (or the assistant record timestamp if no
+  summary exists); it can be null for older records. `source` is
+  `estimated` when usage was missing or a request did not finalize.
+  Summing these counts matches the segment's `fa-tokens:` line.
+- `tool_result:<name>:<bytes>`: UTF-8 bytes of the persisted result's
+  JSON-encoded content blocks, including empty, error, and image results.
+  The name is percent-encoded; result content is never logged. This is
+  a content-size proxy, not provider wire bytes or a token count.
+
+These are reconstructed from the same persisted records as the ledger,
+only for the segment closed by this process. They are emitted at close,
+not live: an ungraceful kill may prevent emission, although the chain can
+still be rebuilt while it survives. The byte-size overhead depends on the
+session; small sessions can exceed 5%.
