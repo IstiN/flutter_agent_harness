@@ -644,5 +644,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2388": [
+    {
+      "leg": "review",
+      "at": "2026-11-24T00:59:23Z",
+      "prompt": 328643,
+      "completion": 27350,
+      "total": 355993,
+      "cacheRead": 5379968,
+      "requests": 88,
+      "source": "",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
