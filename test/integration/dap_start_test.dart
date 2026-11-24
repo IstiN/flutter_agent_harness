@@ -69,6 +69,29 @@ void main() {
     return (context.slashCommands['/dap']!, io, env);
   }
 
+  /// Polls `~/.dap/config.json` briefly because `fa_hub_client` performs an
+  /// unawaited `_persistEnrolled()` write concurrently with `connectTo`'s
+  /// `persistDapConfig(url: ...)` using non-atomic `File.writeAsString`,
+  /// which can briefly expose a truncated empty file on Linux CI.
+  Future<void> expectPersistedUrl(String expectedUrl) async {
+    final configFile = File('${tempHome.path}/.dap/config.json');
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    var matched = false;
+    while (DateTime.now().isBefore(deadline)) {
+      if (configFile.existsSync() &&
+          configFile.readAsStringSync().contains(expectedUrl)) {
+        matched = true;
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(
+      matched,
+      isTrue,
+      reason: 'config.json did not persist $expectedUrl within 5s',
+    );
+  }
+
   test(
     'no secret + no hub: generates a secret, spawns a hub, connects',
     () async {
@@ -117,20 +140,8 @@ void main() {
       await spawned!.waitForHellos(1, timeout: const Duration(seconds: 30));
       expect(io.text, contains('DAP is up'));
       expect(io.text, contains('master secret'));
-      // The zero-config URL is persisted for the next boot. Poll briefly
-      // because `fa_hub_client` performs an unawaited `_persistEnrolled()`
-      // write to `~/.dap/config.json` concurrently with `connectTo`'s own
-      // `persistDapConfig(url: ...)` using non-atomic `File.writeAsString`,
-      // which can briefly expose a truncated empty file on Linux CI.
-      final configFile = File('${tempHome.path}/.dap/config.json');
-      var saved = '';
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (DateTime.now().isBefore(deadline)) {
-        saved = configFile.readAsStringSync();
-        if (saved.contains(url)) break;
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-      expect(saved, contains(url));
+      // The zero-config URL is persisted for the next boot.
+      await expectPersistedUrl(url);
     },
   );
 
@@ -220,8 +231,7 @@ void main() {
     expect(io.text, contains('DAP is up'));
     await running.waitForHellos(1, timeout: const Duration(seconds: 30));
     // …and the persisted config moved to the live hub.
-    final saved = File('${tempHome.path}/.dap/config.json').readAsStringSync();
-    expect(saved, contains(running.url.toString()));
+    await expectPersistedUrl(running.url.toString());
   });
 
   test('the /dap menu shows Stop DAP while the local hub runs (AC7)', () async {
