@@ -11,6 +11,13 @@ import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/session/obligations_ledger.dart'
+    show
+        ObligationEntry,
+        ObligationKind,
+        ObligationsLedger,
+        ObligationStatus,
+        renderObligationsBlock;
 import 'package:flutter_agent_harness/src/session/session_tree.dart'
     show
         branchSummaryPrefix,
@@ -269,6 +276,83 @@ void main() {
         dim: dim,
       );
       expect(lines.join(), contains('look:'));
+    });
+  });
+
+  group('obligations-ledger tail skips the replay (issue #2363)', () {
+    // The REAL engine shape — built through the same renderer the level-0
+    // projection injects, so the detector cannot drift from the format.
+    final ledgerNotice = renderObligationsBlock(
+      ObligationsLedger([
+        ObligationEntry(
+          id: 'obl-1',
+          kind: ObligationKind.pendingWait,
+          text: 'watch the merge train',
+          sourceRecordId: 'rec-1',
+          createdAt: DateTime.utc(2026, 10, 1),
+        ),
+        ObligationEntry(
+          id: 'obl-2',
+          kind: ObligationKind.openAsk,
+          text: 'aged ask from September',
+          sourceRecordId: 'rec-2',
+          createdAt: DateTime.utc(2026, 5, 1),
+          status: ObligationStatus.stale,
+        ),
+      ]),
+    );
+
+    test('TUI replay prints no ledger tail block on an ordinary open', () {
+      final lines = replayLinesTui(
+        UserMessage.text(ledgerNotice),
+        width: 80,
+        dim: dim,
+      );
+      expect(
+        lines,
+        isEmpty,
+        reason:
+            'issue #2363: engine chrome is not '
+            'transcript content — the model context keeps it (level-0, '
+            '#1380), the human-facing replay must not re-print it',
+      );
+    });
+
+    test('line mode skips it too', () {
+      final lines = replayLines(UserMessage.text(ledgerNotice), maxRows: 0);
+      expect(lines, isEmpty);
+    });
+
+    test('buildReplayEntries drops the message without touching the rest', () {
+      final (entries, firstIndex) = buildReplayEntries(
+        [
+          UserMessage.text(ledgerNotice),
+          assistant([TextContent(text: 'the answer')]),
+        ],
+        tui: true,
+        width: 80,
+        dim: dim,
+      );
+      expect(entries, hasLength(1), reason: 'only the assistant entry');
+      expect(entries.single.join(), contains('the answer'));
+      expect(
+        firstIndex,
+        0,
+        reason:
+            'the ledger message still counts as '
+            'replayed history — it is skipped, not lost',
+      );
+    });
+
+    test('genuine notices still replay through the system-row renderer', () {
+      const notice = '<system-notice>job sh-1 finished</system-notice>';
+      final lines = replayLinesTui(
+        UserMessage.text(notice),
+        width: 80,
+        dim: dim,
+      );
+      expect(lines, renderSystemNoticeLines(notice));
+      expect(lines.join('\n'), contains('⚙'));
     });
   });
 
