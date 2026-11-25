@@ -172,6 +172,7 @@ export 'src/compaction/hand_over_trigger.dart';
 export 'src/compaction/newest_user_turn.dart';
 export 'src/compaction/overhead_calibration.dart';
 export 'src/compaction/record_tag.dart';
+export 'src/compaction/record_tag_echo.dart';
 export 'src/compaction/request_snapshot.dart';
 export 'src/compaction/soft_window.dart';
 export 'src/compaction/structured/engine.dart' show HandOverPassMetrics;

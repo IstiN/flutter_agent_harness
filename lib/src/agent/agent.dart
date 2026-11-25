@@ -32,6 +32,7 @@ import '../providers/payload_stall.dart'
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/record_tag_echo.dart' show stripRecordTagEcho;
 import '../compaction/overhead_calibration.dart';
 import '../compaction/token_estimation.dart' show deriveOverheadCalibration;
 import '../compaction/request_snapshot.dart' show RequestSnapshotStore;
@@ -971,12 +972,43 @@ class Agent {
     _activeRun = null;
   }
 
+  /// gh-2412: an assistant reply joins the transcript (the state and
+  /// every listener — the session persist included) WITHOUT an echoed
+  /// record tag, and only while tags are enabled: the tags ride the wire
+  /// copy alone, so an alias the model repeats is never its own words.
+  /// The turn-end event repeats the same reply object — it gets the
+  /// cleaned twin (headless `turn_end` consumers read the same text).
+  AgentEvent _withoutRecordTagEcho(AgentEvent event) {
+    if (!recordTagsEnabled) return event;
+    switch (event) {
+      case MessageEndEvent(:final message):
+        if (message is! AssistantMessage) return event;
+        final clean = stripRecordTagEcho(message);
+        if (identical(clean, message)) return event;
+        _echoCleaned = (raw: message, clean: clean);
+        return MessageEndEvent(clean);
+      case TurnEndEvent(:final message, :final toolResults):
+        final echoed = _echoCleaned;
+        if (echoed == null || !identical(message, echoed.raw)) return event;
+        _echoCleaned = null;
+        return TurnEndEvent(message: echoed.clean, toolResults: toolResults);
+      default:
+        return event;
+    }
+  }
+
+  /// The last reply whose echoed tag was stripped at finalize — the raw
+  /// object and its cleaned twin — kept for the turn-end event that
+  /// repeats the raw object; cleared when that event was rewritten.
+  ({AssistantMessage raw, AssistantMessage clean})? _echoCleaned;
+
   /// Reduce internal state for a loop event, then await listeners.
   ///
   /// `agent_end` only means no further loop events will be emitted. The run
   /// is considered idle later, after all awaited listeners for `agent_end`
   /// finish and [_finishRun] clears runtime-owned state (pi semantics).
   Future<void> _processEvent(AgentEvent event) async {
+    event = _withoutRecordTagEcho(event);
     _reduceState(event);
     _touchRunWatchdog(event);
 

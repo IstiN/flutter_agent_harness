@@ -24,6 +24,14 @@ block a release again.
   provider `usage.input` (meter, guard and trigger share the basis);
   when `overhead + newest turn ≥ window − reserve` compaction is skipped
   for the session with ONE visible warning instead of thrashing.
+- fix(agent): gh-2412 — a model that echoed its own record-tag alias
+  (`m3212 Ответил…`) had the alias stored as its words: it rendered as
+  part of the reply and the next stamping epoch skipped the turn. The
+  echo is stripped at the assistant finalize seam, before the reply joins
+  the transcript (the first text block's leading `m<N>`, line-start
+  aliases; an emptied text block is dropped; tool calls and thinking are
+  untouched; with record tags off the text is the model's own and
+  survives).
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in
