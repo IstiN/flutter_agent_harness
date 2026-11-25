@@ -71,6 +71,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
   (NetworkSession, String, String?)? _chatFor;
   NetworkSession? _listenedSession;
 
+  /// The open DM's peer run view — the standard status row's
+  /// [FaChatService] on the REMOTE run; null for ordinary channels.
+  /// See [_peerRunFor].
+  _DmPeerRunService? _peerRun;
+
   @override
   void initState() {
     super.initState();
@@ -86,6 +91,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     widget.manager.removeListener(_onSourcesChanged);
     _listenedSession?.removeListener(_onSourcesChanged);
     _chat?.dispose();
+    _peerRun?.dispose();
     super.dispose();
   }
 
@@ -136,6 +142,29 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       unawaited(wanted.$1.openChannel(wanted.$2));
     }
     return true;
+  }
+
+  /// The peer run view for the open channel: created once per (session,
+  /// channel) binding — kept across rebuilds so the row's elapsed clock
+  /// survives session notifications — exchanged when the binding moves,
+  /// and re-bound on every build until the session's device connector
+  /// attaches (it can land AFTER the DM opened, review #2196 r1).
+  _DmPeerRunService? _peerRunFor(NetworkSession session, String channelId) {
+    final current = _peerRun;
+    if (current == null || !current.owns(session, channelId)) {
+      current?.dispose();
+      _peerRun = isDmChannel(channelId)
+          ? _DmPeerRunService(session, channelId)
+          : null;
+      _peerRun?.addListener(_onPeerRunChanged);
+    }
+    return _peerRun?..ensureBound();
+  }
+
+  /// The row is mounted only while the peer is busy (see [build]), so a
+  /// published state change rebuilds the page with or without it.
+  void _onPeerRunChanged() {
+    if (mounted) setState(() {});
   }
 
   String _channelLabel(NetworkSession session, String channelId) {
@@ -335,6 +364,10 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       builder: (context, _) {
         final channel = _channel(session, chatFor.$2);
         final label = _channelLabel(session, chatFor.$2);
+        final peerRun = _peerRunFor(session, chatFor.$2);
+        final busyPeer = peerRun != null && peerRun.isStreaming
+            ? peerRun
+            : null;
         return Column(
           children: [
             if (widget.showChannelHeader)
@@ -343,8 +376,6 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                 label: label,
                 manager: widget.manager,
               ),
-            if (isDmChannel(chatFor.$2))
-              _DmAgentStatusBanner(session: session, channelId: chatFor.$2),
             Expanded(
               child: FaChatStringsScope(
                 strings: _ChannelChatStrings(
@@ -376,6 +407,18 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
                   noticeBanner: session.networkOffline
                       ? _OfflineBanner(session: session)
                       : null,
+                  // The DM peer's run rides the SAME standard status row a
+                  // local run does (the visually-last transcript entry,
+                  // right above the composer): mounted only while the
+                  // remote agent is busy — idle, live or unpublished is
+                  // simply absent, never a header strip. The in-list row
+                  // itself reads the channel service, which never streams
+                  // (a REMOTE run must not flip the composer's own
+                  // streaming state), so the peer's run view docks in the
+                  // input-header slot and exactly one status row shows.
+                  inputHeader: busyPeer == null
+                      ? null
+                      : FaRunStatusRow(service: busyPeer),
                   // Network channels are the same transparent chat surface
                   // as Local sessions, never an opaque black Scaffold.
                   wallpaperBuilder: (_) => const FahWallpaper(),
@@ -728,83 +771,68 @@ class _ChannelHeader extends StatelessWidget {
   }
 }
 
-/// The banner state's pure transition (its own function so the widget's
-/// `_refresh` stays a two-branch setter under the CRAP 12 ratchet, and the
+/// The peer run state's pure transition (its own function so the
+/// refresh stays a two-branch setter under the CRAP ratchet, and the
 /// guard semantics are unit-testable without pumping a widget tree).
 /// Review #2196 round 1: `null` must NOT overload "unchanged" and "agent
 /// gone" — a peer disappearing from the roster while busy has to CLEAR
-/// the banner, so the result is `changed` + the (nullable) next state.
+/// the status, so the result is `changed` + the (nullable) next state.
 @visibleForTesting
 ({bool changed, AgentRunState? state}) dmRefreshedAgentRunState({
   required DeviceConnectorService? connector,
   required String? address,
   required String? networkId,
   required AgentRunState? current,
-  required bool mounted,
 }) {
-  if (!mounted || connector == null || address == null || networkId == null) {
+  if (connector == null || address == null || networkId == null) {
     return (changed: false, state: current);
   }
   final next = connector.agentRunState(address, networkId: networkId);
   return (changed: next != current, state: next);
 }
 
-/// The DM peer's live run indicator: 'Fa is working…' while the Devices
-/// roster marks the remote agent busy — the visible acknowledgement that
-/// the agent picked the owner's message up (owner feedback). Hidden when
-/// the agent is idle/live or no roster state is published.
-class _DmAgentStatusBanner extends StatefulWidget {
-  const _DmAgentStatusBanner({required this.session, required this.channelId});
+/// The DM peer's run as the standard [FaRunStatusRow] reads it — the
+/// visible acknowledgement that the remote agent picked the owner's
+/// message up (owner feedback). `isStreaming` is the Devices roster's
+/// busy flag; the roster publishes busy/idle only, never a phase, so
+/// [messages] stays empty and [faRunPhase] holds the row on its
+/// provider-wait («Thinking...») label for the whole run.
+///
+/// ONLY the status row consumes this view: [isStreaming], [messages] and
+/// the [Listenable] are its whole contract. The chat keeps the real
+/// [ChannelChatService] — a REMOTE run must not flip the local composer
+/// into its own streaming state (stop capsule, follow-lock) — so every
+/// other [FaChatService] member fails loudly instead of guessing.
+///
+/// The state plumbing is the one the retired header banner owned
+/// (review #2196): `DeviceConnectorService.agentRunState` re-read on every
+/// roster or presence frame of the session's device connector; `null`
+/// while nothing is published (no connector yet, agent off the roster).
+final class _DmPeerRunService extends ChangeNotifier implements FaChatService {
+  _DmPeerRunService(this._session, this._channelId);
 
-  final NetworkSession session;
-  final String channelId;
-
-  @override
-  State<_DmAgentStatusBanner> createState() => _DmAgentStatusBannerState();
-}
-
-class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
+  final NetworkSession _session;
+  final String _channelId;
   DeviceConnectorService? _connector;
   String? _address;
   AgentRunState? _state;
   final List<StreamSubscription<NetworkEnvelope>> _subs = [];
 
-  @override
-  void initState() {
-    super.initState();
-    _bind();
-  }
+  /// Whether this view belongs to [session]'s [channelId].
+  bool owns(NetworkSession session, String channelId) =>
+      identical(_session, session) && _channelId == channelId;
 
-  @override
-  void didUpdateWidget(covariant _DmAgentStatusBanner oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.session != widget.session ||
-        oldWidget.channelId != widget.channelId) {
-      _unbind();
-      _bind();
-    }
-  }
-
-  void _unbind() {
-    for (final sub in _subs) {
-      unawaited(sub.cancel());
-    }
-    _subs.clear();
-    _connector = null;
-    _address = null;
-    _state = null;
-  }
-
-  void _bind() {
-    final connector = widget.session.dmConnector;
-    final parts = parseDmChannelId(widget.channelId);
+  /// Binds to the session's device connector; a no-op once bound. Runs
+  /// from build so a connector attaching AFTER the DM opened (digest,
+  /// review #2196 r1) still goes live on the next frame.
+  void ensureBound() {
+    if (_connector != null) return;
+    final connector = _session.dmConnector;
+    final parts = parseDmChannelId(_channelId);
     if (connector == null || parts == null) return;
     _connector = connector;
     _address = '${parts.agentName}@${parts.deviceId}';
-    _state = connector.agentRunState(
-      _address!,
-      networkId: widget.session.networkId,
-    );
+    _state = connector.agentRunState(_address!, networkId: _session.networkId);
     _subs.add(connector.rosterFrames.listen((_) => _refresh()));
     _subs.add(connector.presenceFrames.listen((_) => _refresh()));
   }
@@ -813,58 +841,34 @@ class _DmAgentStatusBannerState extends State<_DmAgentStatusBanner> {
     final next = dmRefreshedAgentRunState(
       connector: _connector,
       address: _address,
-      networkId: widget.session.networkId,
+      networkId: _session.networkId,
       current: _state,
-      mounted: mounted,
     );
     if (!next.changed) return;
-    setState(() => _state = next.state);
+    _state = next.state;
+    notifyListeners();
   }
 
   @override
   void dispose() {
-    _unbind();
+    for (final sub in _subs) {
+      unawaited(sub.cancel());
+    }
+    _subs.clear();
     super.dispose();
   }
 
-  /// Lazy rebind for a late-attaching connector (kept branch-free at the
-  /// build call site for the CRAP 12 ratchet).
-  void _ensureBound() {
-    if (_connector == null) _bind();
-  }
+  // FaChatService — the status row's whole read surface.
 
   @override
-  Widget build(BuildContext context) {
-    // The connector can attach AFTER this DM opened (digest, review
-    // #2196 r1): bind lazily on build too, not only on session/channel
-    // changes — otherwise the banner never appears on an early-opened DM.
-    _ensureBound();
-    if (_state != AgentRunState.busy) return const SizedBox.shrink();
-    final colors = FahColors.of(context);
-    return Container(
-      key: const ValueKey('dmAgentWorkingBanner'),
-      width: double.infinity,
-      color: colors.teal.withValues(alpha: .10),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.6,
-              color: colors.teal,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              context.l10n.appsFaStatusWorking,
-              style: TextStyle(color: colors.teal, fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  bool get isStreaming => _state == AgentRunState.busy;
+
+  @override
+  List<FaChatMessage> get messages => const [];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    '_DmPeerRunService is the DM peer run view for FaRunStatusRow only '
+    '(isStreaming, messages); ${invocation.memberName} is not modelled.',
+  );
 }
