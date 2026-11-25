@@ -14,7 +14,12 @@ HOME_A="$ARM_ROOT/home"
 WORK="$ARM_ROOT/work"
 SESS="$HOME_A/sessions"
 
-case "$ARM_ROOT" in /tmp/fa-arm-*|/private/tmp/fa-arm-*) ;; *) echo "refusing ARM_ROOT=$ARM_ROOT" >&2; exit 2;; esac
+[[ "$ARM" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "refusing arm id '$ARM' (allowed: A-Za-z0-9_-)" >&2; exit 2; }
+case "$ARM_ROOT" in
+  *..*) echo "refusing ARM_ROOT=$ARM_ROOT (contains ..)" >&2; exit 2;;
+  /tmp/fa-arm-*|/private/tmp/fa-arm-*) ;;
+  *) echo "refusing ARM_ROOT=$ARM_ROOT" >&2; exit 2;;
+esac
 rm -rf "$ARM_ROOT"
 mkdir -p "$HERE/out" "$HOME_A/.fah" "$SESS" "$ARM_ROOT/joblogs" "$ARM_ROOT/tmp"
 chmod 700 "$ARM_ROOT"
@@ -42,20 +47,23 @@ ZAI_KEY="$(security find-generic-password -s fah -a FA_KEY_API_Z_AI -w 2>/dev/nu
 SESSION_ARGS=(--session-root "$SESS")
 [ "${ARM_UNSAFE:-0}" = 1 ] && SESSION_ARGS=()
 
-# Hard FS isolation (seatbelt): the arm can read/write only its own root.
+# Hard FS isolation (seatbelt). Writes: denied everywhere except the arm root
+# and /dev. Reads: allow-default minus the user-data trees below (system
+# binaries/libs must stay readable); later rules win in seatbelt.
 REAL_ROOT="$(cd "$ARM_ROOT" && pwd -P)"
-FA_BIN="$(cd "$(dirname "$(command -v fa)")" && pwd -P)/$(basename "$(command -v fa)")"
+# Execute the very binary the profile allows (env -i PATH may order differently).
+FA_BIN="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$(command -v fa)")"
 SBX=()
 if [ "${ARM_NO_SBX:-0}" != 1 ]; then
   cat > "$HERE/out/arm-$ARM.sb" <<SB
 (version 1)
 (allow default)
-(deny file-read* (subpath "/Users") (subpath "/private/tmp") (subpath "/private/var/folders") (subpath "/Volumes"))
-(deny file-write* (subpath "/Users") (subpath "/private/tmp") (subpath "/private/var/folders") (subpath "/Volumes"))
+(deny file-write*)
+(allow file-write* (subpath "$REAL_ROOT") (subpath "/dev"))
+(deny file-read* (subpath "/Users") (subpath "/private/tmp") (subpath "/private/var/tmp") (subpath "/private/var/folders") (subpath "/Volumes"))
 (deny mach-lookup (global-name-prefix "com.apple.metadata") (global-name-prefix "com.apple.Spotlight"))
-(allow file-read-metadata (subpath "/Users") (subpath "/private/tmp") (subpath "/private/var/folders"))
+(allow file-read-metadata (subpath "/Users") (subpath "/private/tmp") (subpath "/private/var/tmp") (subpath "/private/var/folders"))
 (allow file-read* (subpath "$REAL_ROOT"))
-(allow file-write* (subpath "$REAL_ROOT"))
 (allow file-read* (literal "$FA_BIN"))
 SB
   SBX=(sandbox-exec -f "$HERE/out/arm-$ARM.sb")
@@ -70,5 +78,5 @@ exec env -i \
   FA_PROVIDER_TYPE=zai \
   FA_PROVIDER_CONFIG='{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"ZAI_API_KEY"}' \
   ZAI_API_KEY="$ZAI_KEY" \
-  ${SBX[@]+"${SBX[@]}"} fa ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"} --cwd "$WORK" --tools "$TOOLS" \
+  ${SBX[@]+"${SBX[@]}"} "$FA_BIN" ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"} --cwd "$WORK" --tools "$TOOLS" \
      --prompt-file "$PROMPT_FILE" "$@"
