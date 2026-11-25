@@ -23,8 +23,10 @@ block a release again.
   boot (`openrouter_oauth_links_io.dart`); flows register per-route
   receivers (`/openrouter` → OpenRouter coordinator, `/network` → Networks
   `DeepLinkOAuthReceiver` on Android), callbacks the OS delivered before a
-  flow registered are buffered (bounded) and replayed once, unknown
-  `fah://oauth/*` links are logged once and dropped. No behavior change to
+  flow registered are buffered (bounded, and time-bounded to the flow
+  timeout so a stale callback can never fail a later flow with a state
+  mismatch) and replayed once, unknown `fah://oauth/*` links are logged
+  once (deduped, scheme/host/path only — no credential query) and dropped. No behavior change to
   iOS `ASWebAuthenticationSession`, desktop loopback, or the engine-side
   unknown-route pass-through; grep guard test pins the single
   construction site.

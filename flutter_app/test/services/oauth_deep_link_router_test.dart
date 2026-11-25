@@ -134,6 +134,78 @@ void main() {
       },
     );
 
+    test('does not replay a stale buffered callback into a later flow', () {
+      // A buffered callback older than the flow-timeout envelope can
+      // never be exchanged (the receiving flow's own 3-minute timeout has
+      // long passed): replaying it would fail an unrelated later flow
+      // with a state mismatch.
+      var now = DateTime(2026, 11, 25, 12);
+      final router = OAuthDeepLinkRouter(
+        clock: () => now,
+        replayTtl: const Duration(minutes: 3),
+      );
+
+      router.dispatch(Uri.parse('fah://oauth/network?code=stale&state=s'));
+      now = now.add(const Duration(minutes: 4));
+
+      final received = <Uri>[];
+      router.register(
+        OAuthDeepLinkRoute(
+          flow: 'network',
+          matches: (uri) => uri.path.startsWith('/network'),
+          onLink: received.add,
+        ),
+      );
+      expect(received, isEmpty);
+    });
+
+    test(
+      'replays a buffered callback that is still fresh (within the TTL)',
+      () {
+        var now = DateTime(2026, 11, 25, 12);
+        final router = OAuthDeepLinkRouter(clock: () => now);
+
+        router.dispatch(Uri.parse('fah://oauth/network?code=fresh&state=s'));
+        now = now.add(const Duration(minutes: 1));
+
+        final received = <Uri>[];
+        router.register(
+          OAuthDeepLinkRoute(
+            flow: 'network',
+            matches: (uri) => uri.path.startsWith('/network'),
+            onLink: received.add,
+          ),
+        );
+        expect(received.single.queryParameters['code'], 'fresh');
+      },
+    );
+
+    test('the unknown-route log never carries credentials', () {
+      final lines = <String>[];
+      final router = OAuthDeepLinkRouter(onUnknown: lines.add);
+
+      router.dispatch(
+        Uri.parse('fah://oauth/github?code=SECRET-CODE&state=SECRET-STATE'),
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single.contains('SECRET'), isFalse);
+      expect(lines.single, contains('/github'));
+    });
+
+    test('the unknown-path dedup set stays bounded and still dedupes', () {
+      final lines = <String>[];
+      final router = OAuthDeepLinkRouter(onUnknown: lines.add);
+      for (var i = 0; i < 100; i++) {
+        router.dispatch(Uri.parse('fah://oauth/path$i?code=x'));
+      }
+      expect(lines, hasLength(100));
+
+      // The cap rotates old entries, but the most recent path is still
+      // deduped after the rotation.
+      router.dispatch(Uri.parse('fah://oauth/path99?code=x'));
+      expect(lines, hasLength(100));
+    });
+
     test('the buffer is bounded: the oldest unmatched link is dropped', () {
       final router = OAuthDeepLinkRouter(bufferLimit: 2);
       for (final path in ['/network?code=1', '/network?code=2']) {
