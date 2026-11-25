@@ -200,7 +200,7 @@ void main() {
         expect(innerCalls, 0);
         expect(
           (piResult.content.single as TextContent).text,
-          'Tool `lsp` is discoverable and not loaded in this mode — this '
+          'Tool `lsp` is deferred (not loaded) in this mode — this '
           'mode ships no discovery surface; ask the user to switch '
           'the load mode via /settings (agent.mode) — see '
           'docs/tool-availability.md §Load modes.',
@@ -237,6 +237,28 @@ void main() {
         expect(rebuilds, 1);
       },
     );
+
+    test('others stub re-registration replaces the frozen description '
+        'in place (issue #2416 review round 2)', () {
+      // The sync path re-registers the stub with a FRESH deferred list on
+      // every rebuild: after a mount the mounted name must stop being
+      // advertised as "not loaded" in the schema the provider serializes.
+      AgentTool stub(String description) => othersTool(
+        description: description,
+        discoverableDocs: () => const <String, String>{},
+        onMount: (requested) => requested.join(', '),
+      );
+      final registry = ToolRegistry([
+        stub('Deferred tools (not loaded): lsp, web_search.'),
+      ]);
+      final before = registry.tools.singleWhere((t) => t.name == 'others');
+      expect(before.description, contains('lsp'));
+      registry.register(stub('Deferred tools (not loaded): web_search.'));
+      final after = registry.tools.singleWhere((t) => t.name == 'others');
+      expect(registry.tools.where((t) => t.name == 'others'), hasLength(1));
+      expect(after.description, isNot(contains('lsp')));
+      expect(after.description, contains('web_search'));
+    });
 
     test('mount state survives a resolution re-apply', () {
       final gate = ToolAvailabilityGate(toolsById: _toolsById);

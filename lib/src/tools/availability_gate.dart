@@ -299,8 +299,8 @@ final class ToolAvailabilityGate {
                     '`others` with `tool_name: "${toolCall.name}"` to load '
                     'its full description and schema, then call it again '
                     'normally.'
-              : 'Tool `${toolCall.name}` is discoverable and not loaded '
-                    'in this mode — this mode ships no discovery surface; '
+              : 'Tool `${toolCall.name}` is deferred (not loaded) in this '
+                    'mode — this mode ships no discovery surface; '
                     'ask the user to switch the load mode via /settings '
                     '(agent.mode) — see docs/tool-availability.md '
                     '§Load modes.',

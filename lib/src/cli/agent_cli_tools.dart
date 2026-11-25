@@ -344,7 +344,13 @@ extension AgentCliTools on AgentCli {
       }
       return;
     }
-    if (_toolRegistry.contains(othersToolName)) return;
+    // Re-register on every rebuild with a FRESH description (issue #2416
+    // review round 2): the name list shrinks as tools mount and grows when
+    // an MCP server connects later — the frozen-at-registration text would
+    // actively mislead the model about what is loaded. A re-registration
+    // replaces the entry in place, so the gate re-serializes the current
+    // variant; the AC9 wire-size pin still holds (only shrinks at boot
+    // shape, grows only when the deferred set genuinely grows).
     _toolRegistry.register(
       othersTool(
         description: _othersDescription(_toolGate.discoverableToolNames),

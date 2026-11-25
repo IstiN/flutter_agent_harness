@@ -78,7 +78,9 @@ class AgentToolAvailability {
       }
       return;
     }
-    if (registry.contains(othersToolName)) return;
+    // Re-register with a FRESH description on every rebuild (issue #2416
+    // review round 2): the deferred name list tracks mounts and late MCP
+    // connects; a re-registration replaces the entry in place.
     final names = _gate.discoverableToolNames;
     registry.register(
       othersTool(
