@@ -296,6 +296,10 @@ Future<ToolExecutionResult> _executeShellCall(
   required Set<String> Function()? approvedSecretLiterals,
 }) async {
   cancelToken?.throwIfCancelled();
+  // gh-2415: before any Process.start — release settled jobs' leftovers
+  // and refuse with the typed error when the descriptor table is still
+  // above the limit (never an uncaught ProcessException).
+  jobs?.guardFdPressure();
   final command = arguments['command'] as String;
   final (effectiveCommand, rewriteNotice) = _rewriteShellCommand(
     command,
@@ -553,6 +557,14 @@ Future<ToolExecutionResult> _runForegroundBash(
       );
       await Future<void>.delayed(retryBackoff);
       continue;
+    } on Object catch (error) {
+      // gh-2415: an errno-24 the OS raised inside the exec path (a spawn
+      // refusal, a log file the job could not open) surfaces as the
+      // typed, visible fd-pressure tool error — never a crash hint. The
+      // check is textual (the library is pure Dart: no dart:io types);
+      // every other throw keeps its shape.
+      if (isFdPressureError(error)) throw const FdPressureException.unsampled();
+      rethrow;
     }
 
     if (result.isErr) {
@@ -602,12 +614,18 @@ Future<ToolExecutionResult> _runForegroundBash(
   }
 }
 
-/// The user-visible error for a non-retryable bash exec failure.
-StateError _bashFailureError(
+/// The user-visible error for a non-retryable bash exec failure. A
+/// `StateError` (operational texts matched by the loop) or, for an EMFILE
+/// spawn failure (gh-2415), the typed [FdPressureException].
+Object _bashFailureError(
   ExecutionError error,
   List<String> notices,
   num? timeoutArg,
 ) {
+  if (error.code == ExecutionErrorCode.spawnError &&
+      isFdPressureError(error.cause ?? error.message)) {
+    throw const FdPressureException.unsampled();
+  }
   // gh-1053 (review rework): a killed call's error carries the captured
   // partial output — render it so the model sees WHERE the call stalled,
   // not just the verdict.

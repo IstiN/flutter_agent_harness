@@ -93,6 +93,10 @@ part 'fah_runapp.dart';
 part 'fah_wire_host.dart';
 
 Future<void> main(List<String> args) async {
+  // gh-2415: lift the descriptor soft limit (launchd's 256) to
+  // min(hard, 10240) before anything opens files — exactly once, a no-op
+  // on hosts without RLIMIT_NOFILE, microseconds on a --version boot.
+  raiseFdLimitOnce();
   // Provider forensics composition root (gh-1395 review round 1): the
   // pure barrel carries only the contracts; the io seams (env knob
   // lookup, [conn-trace] stderr lines, the observed dart:io client, the

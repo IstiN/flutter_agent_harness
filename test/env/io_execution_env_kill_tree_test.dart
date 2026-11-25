@@ -171,8 +171,12 @@ void main() async {
       await entry.stop();
       await entry.settled;
 
+      // 15 s, not 5: the stop path carries ~0.4 s kill grace + up to 3 s
+      // drain grace of REAL time before the settle listener adopts — under
+      // two parallel gates that alone crowded the old 5 s budget (hook run
+      // 2c: TimeoutException here, green alone x3).
       final adopted = await adoptedBatch.future.timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 15),
       );
       expect(entry.stopReason, 'stopped');
       // Both the tagged subshell and the work under it are re-tracked.

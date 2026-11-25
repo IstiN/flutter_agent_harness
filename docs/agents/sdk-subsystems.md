@@ -313,13 +313,28 @@
   a foreign settle), and the #517 sweep gets own pids only. Survivor
   detection on hosts without `setsid` (macOS) is MARKER-GATED: the orphan
   window is bounded on both ends (`execStart`…`execEnd`) and a candidate
-  row must still carry this harness's wrapper tag `fa_sh_cmd_<pid>_…` (the
-  per-exec script dir a backgrounded subshell inherits in its argv) — a
-  detached program (`nohup prog &`) cannot be proven ours and is left
-  alone; the notice reads `Detected N orphaned process(es) in this
+  must be provably OURS from the same `ps` snapshot: its own command or an
+  ancestor's (`ppid` chain) still carries this harness's wrapper tag
+  `fa_sh_cmd_<pid>_…` (the per-exec script dir a backgrounded subshell
+  inherits in its argv) — the `sleep`-style work under our tagged subshell
+  is ours, the same shape under a peer's tag or a detached program
+  (`nohup prog &`, launcher gone) is not and is left alone; the notice reads `Detected N orphaned process(es) in this
   session's process group near <cmd>` (never "left by"). `bash_job stop`
   refuses to signal a pid whose start time was never recorded while the
-  platform reports one now (a recycled pid would be a stranger). gh-1835: a foreground bash call still
+  platform reports one now (a recycled pid would be a stranger). gh-2415
+  (fd exhaustion): `bin/fah.dart` raises the descriptor soft limit to
+  min(hard, 10240) first thing in `main()` (`raiseFdLimitOnce` —
+  `setrlimit(RLIMIT_NOFILE)` through dart:ffi on macOS/64-bit Linux, a
+  no-op stub on web/Windows, exactly once; the launchd default 256 was
+  the driver behind "Too many open files" in long orchestrator sessions).
+  The bash tool path guards every `Process.start`
+  (`ShellJobRegistry.guardFdPressure`): above 80 % of the soft limit it
+  first releases settled jobs' leftovers (`ResourceReleaser`) and then
+  refuses with the typed `fd pressure: N/M open — …` tool error instead of
+  an uncaught `ProcessException`; an EMFILE raised by the exec surfaces as
+  the same error. `LocalExecutionEnv.readTextLines(maxLines:)` (the session
+  listing's header reads) is an explicit open/read/close so a descriptor
+  never outlives the call. gh-1835: a foreground bash call still
   running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
   switch) is auto-backgrounded — CONVERTED, never restarted (it already
   runs as a registry job under the soft-yield path): the pending tool call

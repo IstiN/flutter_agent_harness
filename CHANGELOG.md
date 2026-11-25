@@ -22,6 +22,13 @@ block a release again.
   notice wording "orphaned … in this session's process group near" replaces
   "left by"; `bash_job stop` refuses an unverifiable pid.
 
+- fix(env): gh-2415 — fd exhaustion: `fa` raises the descriptor soft limit
+  to min(hard, 10240) at startup (`setrlimit`, once, no-op on web/Windows);
+  the bash tool guards every `Process.start` against fd pressure (releases
+  settled jobs' leftovers, then a typed `fd pressure: N/M open` tool error
+  instead of an uncaught `ProcessException: Too many open files`); the
+  session listing's header reads are an explicit open/read/close.
+
 - fix(2363): the resume replay no longer re-prints the obligations-ledger
   tail block — the level-0 `<system-notice>` is model context (#1380
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
