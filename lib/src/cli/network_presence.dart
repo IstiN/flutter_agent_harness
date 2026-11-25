@@ -5,11 +5,16 @@
 /// CLI host for the pure machine connector. One process shares one device
 /// socket; the current CLI session is exposed on the personal network and
 /// its mailbox prefix becomes the agent name in `<mailbox>@<deviceId>`.
+///
+/// Roster PATCHes go through the shared [RosterPatchLimiter] (coalescing +
+/// ≤ 1 PATCH per 2 s per device process + 429 handling), exactly like the
+/// multi-session daemon host — never through a bare debounce timer.
 library;
 
 import 'dart:async';
 import 'dart:convert';
 
+import '../network/connector/catalog_poller.dart';
 import '../network/connector/connector_mux.dart';
 import '../network/connector/device_api.dart';
 import '../network/connector/device_dm.dart';
@@ -19,6 +24,7 @@ import '../network/connector/envelope.dart';
 import '../network/connector/machine_connector.dart';
 import '../network/connector/offline_outbox.dart';
 import '../network/connector/presence_engine.dart';
+import '../network/connector/roster_patch_limiter.dart';
 import '../network/connector/upstream_client.dart';
 import '../network/network_account.dart';
 import '../network/network_roster.dart';
@@ -161,13 +167,24 @@ final class NetworkPresenceController
     required this.ticketProvider,
     this.transport,
     this.rosterClient,
-    this.rosterDebounce = const Duration(milliseconds: 500),
+    this.rosterDebounce = rosterPatchDebounce,
+    this.rosterMinInterval = rosterPatchMinInterval,
     this.catalogStore,
-    this.catalogPollInterval = const Duration(seconds: 10),
+    this.catalogPollInterval = const Duration(seconds: 30),
+    this.catalogPollTimerFactory,
     this.idFactory = defaultIdFactory,
     this.onLog,
     DeviceDmKeyStore? dmKeyStore,
-  }) : _dmKeys = DeviceDmKeyProvider(dmKeyStore ?? MemoryDeviceDmKeyStore());
+  }) : _dmKeys = DeviceDmKeyProvider(dmKeyStore ?? MemoryDeviceDmKeyStore()),
+       _roster = RosterPatchLimiter(
+         baseUrl: baseUrl,
+         deviceId: device.deviceId,
+         deviceToken: device.deviceToken,
+         client: rosterClient,
+         debounce: rosterDebounce,
+         minInterval: rosterMinInterval,
+         onLog: onLog,
+       );
 
   /// Enrolled device identity.
   final NetworkDeviceCredentials device;
@@ -191,13 +208,22 @@ final class NetworkPresenceController
   /// Coalescing window for REST roster and catalog changes.
   final Duration rosterDebounce;
 
+  /// Minimum spacing of two roster PATCHes (the per-device budget).
+  final Duration rosterMinInterval;
+
   /// Complete persisted-session store. Null preserves the legacy live-only
   /// projection for embedders that have no local session store.
   final SessionCatalogStore? catalogStore;
 
-  /// Best-effort filesystem rediscovery interval; zero disables polling
-  /// (explicit [notifySessionCatalogChanged] remains available).
+  /// Best-effort filesystem rediscovery interval (default 30 s; was 10 s
+  /// before gh-2410, when overlapping passes on large stores burned CPU —
+  /// passes are now single-flight and skipped while the link is down).
+  /// Zero disables polling (explicit [notifySessionCatalogChanged] remains
+  /// available).
   final Duration catalogPollInterval;
+
+  /// Timer seam of the periodic catalog poll (tests fire ticks by hand).
+  final PeriodicTimerFactory? catalogPollTimerFactory;
 
   /// Installed by the interactive desktop CLI; null keeps queue-only DMs.
   @override
@@ -219,15 +245,12 @@ final class NetworkPresenceController
   final _rosterFrames = StreamController<NetworkEnvelope>.broadcast();
   final _recentRosterFrames = <NetworkEnvelope>[];
   final _subscriptions = <StreamSubscription<Object?>>[];
-  final _pendingRosterAgents = <String, DeviceRosterAgent>{};
-  final _pendingRosterSessions = <String, DeviceRosterSession>{};
-  Timer? _rosterTimer;
+  final RosterPatchLimiter _roster;
   Timer? _catalogTimer;
-  Timer? _catalogPollTimer;
+  CatalogPoller? _catalogPoller;
   List<SessionCatalogEntry> _catalogEntries = const [];
   var _catalogRevision = 0;
   final _wakingSessions = <String>{};
-  Future<void> _rosterWrites = Future<void>.value();
   bool _rosterActive = false;
   bool _busy = false;
 
@@ -249,13 +272,13 @@ final class NetworkPresenceController
     _rosterActive = _session != null;
     await _connector!.start();
     _queueLiveRoster(fullSnapshot: true);
-    final interval = catalogPollInterval;
-    if (catalogStore != null && interval > Duration.zero) {
-      _catalogPollTimer?.cancel();
-      _catalogPollTimer = Timer.periodic(
-        interval,
-        (_) => notifySessionCatalogChanged(),
-      );
+    if (catalogStore != null) {
+      (_catalogPoller ??= CatalogPoller(
+        run: () => refreshSessionCatalog(),
+        timerFactory: catalogPollTimerFactory,
+        onError: (error, stackTrace) =>
+            onLog?.call('session catalog poll failed: $error'),
+      )).start(catalogPollInterval);
     }
   }
 
@@ -439,8 +462,9 @@ final class NetworkPresenceController
   Future<void> dispose() async {
     _catalogRevision++;
     _catalogTimer?.cancel();
-    _catalogPollTimer?.cancel();
+    _catalogPoller?.stop();
     await stop();
+    _roster.close();
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
@@ -590,72 +614,18 @@ final class NetworkPresenceController
 
   List<String> get _sessionNetworks => [?device.personalNetworkId];
 
+  /// Queues roster rows for the shared limiter: merged by key, flushed
+  /// after the debounce window inside the per-device PATCH budget.
   void _queueRosterEntries({
     List<DeviceRosterAgent> agents = const [],
     List<DeviceRosterSession> sessions = const [],
   }) {
-    if (rosterClient == null) return;
-    for (final agent in agents) {
-      _pendingRosterAgents[agent.name] = agent;
-    }
-    for (final session in sessions) {
-      _pendingRosterSessions[session.id] = session;
-    }
-    _rosterTimer?.cancel();
-    _rosterTimer = Timer(rosterDebounce, () => unawaited(_flushRoster()));
+    _roster.enqueue(agents: agents, sessions: sessions);
   }
 
-  Future<void> _flushRoster() {
-    _rosterTimer?.cancel();
-    _rosterTimer = null;
-    final write = _rosterWrites.then((_) => _writePendingRoster());
-    _rosterWrites = write;
-    return write;
-  }
-
-  Future<void> _writePendingRoster() async {
-    final client = rosterClient;
-    if (client == null ||
-        (_pendingRosterAgents.isEmpty && _pendingRosterSessions.isEmpty)) {
-      return;
-    }
-    final agents = _pendingRosterAgents.values.toList(growable: false);
-    final sessions = _pendingRosterSessions.values.toList(growable: false);
-    _pendingRosterAgents.clear();
-    _pendingRosterSessions.clear();
-    try {
-      if (sessions.isEmpty) {
-        await client.patchRoster(
-          baseUrl: baseUrl,
-          deviceId: device.deviceId,
-          deviceToken: device.deviceToken,
-          agents: agents,
-          sessions: const [],
-        );
-        return;
-      }
-      for (
-        var start = 0;
-        start < sessions.length;
-        start += sessionCatalogRosterPageSize
-      ) {
-        final end = (start + sessionCatalogRosterPageSize).clamp(
-          0,
-          sessions.length,
-        );
-        await client.patchRoster(
-          baseUrl: baseUrl,
-          deviceId: device.deviceId,
-          deviceToken: device.deviceToken,
-          agents: start == 0 ? agents : const [],
-          sessions: sessions.sublist(start, end),
-        );
-      }
-    } on Object {
-      // Presence is strictly best-effort and must never break the local CLI.
-      onLog?.call('device roster patch failed');
-    }
-  }
+  /// Sends the pending roster rows as soon as the budget allows (stop /
+  /// retract seam) — never waits out a throttle cooldown.
+  Future<void> _flushRoster() => _roster.flush();
 
   void _handleUpstreamState(ConnectorLinkState state) {
     _setPhase(state);
@@ -937,6 +907,7 @@ final class NetworkPresenceController
   void _setPhase(ConnectorLinkState next) {
     if (_phase == next) return;
     _phase = next;
+    _catalogPoller?.setActive(next == ConnectorLinkState.connected);
     if (!_phaseChanges.isClosed) _phaseChanges.add(next);
   }
 }

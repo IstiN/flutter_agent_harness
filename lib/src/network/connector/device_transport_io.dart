@@ -11,7 +11,12 @@
 /// - `POST /api/ws-ticket` (deviceToken bearer) → a single-use ticket,
 ///   TTL 60 s, one dial each (§4);
 /// - `PATCH /api/devices/{deviceId}/roster` (deviceToken bearer) → the
-///   agent/session exposure projection visible to other devices.
+///   agent/session exposure projection visible to other devices;
+/// - a refused `/ws` upgrade with HTTP 429 (front-end overload / the
+///   server's shared REST+WS budget) surfaces as the typed
+///   [ConnectorUpgradeThrottledException] so the upstream client backs off
+///   instead of hot-looping — `dart:io` exposes only the status code of a
+///   refused upgrade, never its headers, so no `Retry-After` crosses here.
 ///
 /// The socket adapter ([ConnectorSocketAdapter]) mirrors the fake-device-
 /// server client-socket semantics: writes after close throw, close is
@@ -31,6 +36,7 @@ import 'dart:io';
 
 import 'device_api.dart';
 import 'envelope.dart';
+import 'rate_backoff.dart';
 import 'upstream_client.dart';
 
 export 'device_api.dart'
@@ -164,14 +170,30 @@ final class ConnectorSocketAdapter implements ConnectorSocket {
 /// (`?ticket=<...>`, already folded in by the upstream client — the
 /// parameter is accepted for the seam's shape and asserted nowhere).
 /// Throws when the endpoint refuses the upgrade or is unreachable; the
-/// upstream client retries with backoff.
+/// upstream client retries with backoff. A 429 refusal is typed
+/// ([refusedUpgrade]); every other failure keeps its `dart:io` error.
 final class IoConnectorTransport implements ConnectorTransport {
   /// Builds the transport (stateless).
   const IoConnectorTransport();
 
   @override
   Future<ConnectorSocket> dial(Uri url, String ticket) async {
-    final socket = await WebSocket.connect(url.toString());
+    final WebSocket socket;
+    try {
+      socket = await WebSocket.connect(url.toString());
+    } on WebSocketException catch (error) {
+      throw refusedUpgrade(error.httpStatusCode, error);
+    }
     return ConnectorSocketAdapter(duplex: WebSocketDuplex(socket));
   }
 }
+
+/// Maps a refused upgrade: HTTP 429 becomes the typed throttle signal the
+/// upstream client honours (status code only — `dart:io` never exposes the
+/// refused upgrade's headers); [cause] is rethrown for every other status.
+///
+/// Pure decision (no sockets): the seam's contract is unit-testable and
+/// shared by any future dart:io dial path.
+Object refusedUpgrade(int? statusCode, Object cause) => statusCode == 429
+    ? ConnectorUpgradeThrottledException(statusCode: statusCode)
+    : cause;

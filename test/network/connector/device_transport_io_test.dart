@@ -4,16 +4,21 @@
 
 /// Unit tests for the IO device transport (issue #2062 chunk 13):
 /// enrollment + ticket through an in-memory `http.testing` MockClient and
-/// the socket-adapter state machine over a fake duplex — NO real sockets
-/// here (the loopback WS handshake lives in
-/// `test/integration/device_transport_ws_test.dart`, tagged integration).
+/// the socket-adapter state machine over a fake duplex — no real sockets
+/// except ONE loopback refusal check (a 429 on the `/ws` upgrade maps to
+/// the typed throttle exception; the successful loopback WS handshake
+/// lives in `test/integration/device_transport_ws_test.dart`, tagged
+/// integration).
 library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/rate_backoff.dart';
+import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
@@ -340,6 +345,88 @@ void main() {
           },
         ],
       });
+    });
+  });
+
+  group('IoConnectorTransport.dial (upgrade refused)', () {
+    test('a 429 on the /ws upgrade surfaces as the typed throttle signal '
+        'the upstream client backs off on', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final dials = <String>[];
+      server.listen((request) async {
+        dials.add(request.uri.path);
+        request.response
+          ..statusCode = HttpStatus.tooManyRequests
+          ..headers.set('retry-after', '3')
+          ..write('{"error":{"code":"throttled"}}');
+        await request.response.close();
+      });
+      addTearDown(() => server.close(force: true));
+      final base = 'ws://127.0.0.1:${server.port}';
+
+      const transport = IoConnectorTransport();
+      await expectLater(
+        transport.dial(Uri.parse('$base/ws?ticket=t-1'), 't-1'),
+        throwsA(
+          isA<ConnectorUpgradeThrottledException>()
+              .having((error) => error.statusCode, 'statusCode', 429)
+              .having(
+                (error) => error,
+                'is a throttle signal',
+                isA<ConnectorThrottleSignal>(),
+              ),
+        ),
+        reason:
+            'dart:io hides the refused upgrade headers, so the status '
+            'code is the only signal — no Retry-After crosses this seam',
+      );
+      expect(dials, ['/ws']);
+
+      // Through the real client: one failed attempt, a reconnect armed
+      // (cancelled by stop) — never a hot retry loop.
+      final logs = <String>[];
+      final client = ConnectorUpstreamClient(
+        url: Uri.parse('$base/ws'),
+        transport: transport,
+        ticketProvider: () async => 't-2',
+        deviceId: 'dev-1',
+        jitterFraction: () => 1,
+        onLog: logs.add,
+      );
+      await client.start();
+      for (var i = 0; i < 20 && client.attempts == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(client.attempts, 1);
+      expect(client.state, ConnectorLinkState.disconnected);
+      expect(logs.join(' '), contains('dial failed (throttled)'));
+      await client.stop();
+      client.dispose();
+      expect(dials.length, lessThanOrEqualTo(2));
+    });
+
+    test('other refused upgrades keep their original dart:io error', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response
+          ..statusCode = HttpStatus.unauthorized
+          ..write('{"error":{"code":"unauthorized"}}');
+        await request.response.close();
+      });
+      addTearDown(() => server.close(force: true));
+      await expectLater(
+        const IoConnectorTransport().dial(
+          Uri.parse('ws://127.0.0.1:${server.port}/ws?ticket=t-1'),
+          't-1',
+        ),
+        throwsA(
+          isA<WebSocketException>().having(
+            (error) => error.httpStatusCode,
+            'httpStatusCode',
+            HttpStatus.unauthorized,
+          ),
+        ),
+      );
     });
   });
 
