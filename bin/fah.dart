@@ -39,7 +39,6 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/boot_update.dart';
 import 'package:flutter_agent_harness/src/cli/network_commands.dart';
 import 'package:flutter_agent_harness/src/network/network_account_client.dart';
-import 'package:flutter_agent_harness/src/network/network_roster.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';

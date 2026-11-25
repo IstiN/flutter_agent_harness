@@ -1300,4 +1300,113 @@ void main() {
     expect(transport.dials, isEmpty);
     expect(logs, isNotEmpty);
   });
+
+  // One upstream per app process (contract §10: the server allows ONE device
+  // socket per deviceId — a second dial evicts the first). Device surfaces
+  // claim the per-process connector instead of constructing their own.
+  group('claimShared/release: one upstream per app process', () {
+    test('a second device surface reuses the claimed connector and its '
+        'dial — never a second upstream', () async {
+      final (shell, manager, _, transport, _) = await buildService(
+        httpClient: httpClient,
+      );
+      expect(
+        DeviceConnectorService.claimShared(manager, () => shell),
+        same(shell),
+      );
+      // A pushed standalone NetworkHomePage: must NOT construct one.
+      final page = DeviceConnectorService.claimShared(
+        manager,
+        () => fail('a second owner must reuse the claimed connector'),
+      );
+      expect(page, same(shell));
+      expect(DeviceConnectorService.sharedFor(manager), same(shell));
+
+      await shell.start();
+      await page.start();
+      await pumpUntilOnline(shell);
+      expect(transport.dials, hasLength(1));
+      expect(page.isRunning, isTrue);
+
+      // The page going away leaves the shell's connector live ...
+      await page.release();
+      expect(DeviceConnectorService.sharedFor(manager), same(shell));
+      expect(shell.isRunning, isTrue);
+      // ... the last owner's release disposes it.
+      await shell.release();
+      expect(DeviceConnectorService.sharedFor(manager), isNull);
+      expect(shell.isRunning, isFalse);
+      expect(shell.connector, isNull);
+    });
+
+    test('distinct session managers own distinct connectors', () async {
+      final (shellA, managerA, _, _, _) = await buildService(
+        httpClient: httpClient,
+      );
+      final (shellB, managerB, _, _, _) = await buildService(
+        httpClient: httpClient,
+      );
+      addTearDown(shellA.dispose);
+      addTearDown(shellB.dispose);
+      expect(
+        DeviceConnectorService.claimShared(managerA, () => shellA),
+        same(shellA),
+      );
+      expect(
+        DeviceConnectorService.claimShared(managerB, () => shellB),
+        same(shellB),
+      );
+      expect(DeviceConnectorService.sharedFor(managerA), same(shellA));
+      expect(DeviceConnectorService.sharedFor(managerB), same(shellB));
+      await shellA.release();
+      expect(DeviceConnectorService.sharedFor(managerA), isNull);
+      expect(DeviceConnectorService.sharedFor(managerB), same(shellB));
+    });
+
+    test(
+      'the app upstream rides the shared hardening: an evicted link '
+      'reconnects WITHOUT resetting the attempt ladder (stable window), '
+      'so an eviction ping-pong decays instead of dialing once a second',
+      () async {
+        // Already enrolled: only ws-ticket mints hit REST here.
+        final ticketHttp = FakeHttpClient()
+          ..respond(200, body: '{"ticket":"tk-1"}')
+          ..respond(200, body: '{"ticket":"tk-2"}');
+        final (service, _, http, transport, _) = await buildService(
+          httpClient: ticketHttp,
+          tokenStore: enrolledTokens(),
+        );
+        addTearDown(service.dispose);
+        await service.start();
+        await pumpUntilOnline(service);
+        final upstream = service.connector!.upstream;
+        // No per-app overrides: the connector's defaults (jittered ladder,
+        // >= upstreamStableWindow before a reset, Retry-After/429 handling
+        // in the shared client and IoConnectorTransport) apply to mobile.
+        expect(upstream.stableWindow, upstreamStableWindow);
+        expect(upstream.attempts, 0);
+        expect(transport.dials, hasLength(1));
+
+        // The server evicts this socket (one dial elsewhere, contract §10):
+        // the link drops and reconnects within the first ladder step.
+        await transport.sockets.single.close();
+        await upstream.stateChanges
+            .firstWhere((state) => state == ConnectorLinkState.connected)
+            .timeout(const Duration(seconds: 5));
+        expect(transport.dials, hasLength(2));
+        // The fresh (short-lived) link is NOT a reset — the counter only
+        // clears after the stable window.
+        expect(upstream.attempts, 1);
+      },
+    );
+
+    test('disposing a claimed connector unregisters it', () async {
+      final (service, manager, _, _, _) = await buildService(
+        httpClient: httpClient,
+      );
+      DeviceConnectorService.claimShared(manager, () => service);
+      await service.dispose();
+      expect(DeviceConnectorService.sharedFor(manager), isNull);
+    });
+  });
 }

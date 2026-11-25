@@ -380,7 +380,46 @@ class KeychainDeviceTokenStore implements DeviceTokenStore {
 }
 
 /// Hosts the machine connector inside the app (see the library docs).
+///
+/// Ownership is PER PROCESS: the server allows ONE device socket per
+/// deviceId (contract §10 — a second dial evicts the first, the
+/// eviction-storm failure mode), so every device surface claims the one
+/// connector of its [NetworkSessionManager] through [claimShared] instead
+/// of constructing its own; the last owner's [release] disposes it.
 class DeviceConnectorService {
+  /// The claimed connector per session manager — one per app process
+  /// (`Expando`: a garbage-collected manager takes its entry along).
+  static final Expando<DeviceConnectorService> _sharedByManager =
+      Expando<DeviceConnectorService>();
+
+  /// The connector a device surface owns for [sessionManager], if any.
+  static DeviceConnectorService? sharedFor(
+    NetworkSessionManager sessionManager,
+  ) => _sharedByManager[sessionManager];
+
+  /// Claims the process connector for [sessionManager]: the instance an
+  /// earlier surface claimed (the wide shell at boot; it is then the
+  /// owner with the full wiring), else the one [create] builds, which is
+  /// registered here. Callers [release] what they claimed; a claimed
+  /// connector is never constructed twice. The wide shell is the
+  /// CANONICAL first claimer (it boots before any surface): a surface that
+  /// claimed earlier would silently become the owner with only its own
+  /// wiring — keep the shell first when adding new surfaces.
+  static DeviceConnectorService claimShared(
+    NetworkSessionManager sessionManager,
+    DeviceConnectorService Function() create,
+  ) {
+    final existing = _sharedByManager[sessionManager];
+    if (existing != null) {
+      existing._owners++;
+      return existing;
+    }
+    final service = create();
+    service._owners = 1;
+    _sharedByManager[sessionManager] = service;
+    return service;
+  }
+
   /// Builds the service over [sessionManager]. Every dependency is
   /// injectable: [chatSessionSource] (default legacy network memberships),
   /// [tokenStore] (default keychain), [outbox] (default a [FileOutboxStore]
@@ -650,6 +689,10 @@ class DeviceConnectorService {
   /// Whether [start] is active.
   bool get isRunning => _running;
 
+  /// Surfaces holding this connector via [claimShared] (test seam).
+  int get ownerCount => _owners;
+  int _owners = 0;
+
   /// The enrolled device id while running (or persisted), null before.
   String? get deviceId => _credentials?.deviceId;
 
@@ -868,8 +911,24 @@ class DeviceConnectorService {
     _setPhase(DeviceConnectorPhase.signedOut);
   }
 
-  /// Stops and detaches from the session manager; the streams close.
+  /// Drops one [claimShared] ownership: the connector keeps serving the
+  /// remaining owners; the last release disposes it ([dispose]). An
+  /// unclaimed service is disposed at once.
+  Future<void> release() async {
+    if (_owners > 1) {
+      _owners--;
+      return;
+    }
+    await dispose();
+  }
+
+  /// Stops and detaches from the session manager; the streams close. A
+  /// claimed connector stops being the process one ([sharedFor]).
   Future<void> dispose() async {
+    _owners = 0;
+    if (identical(_sharedByManager[sessionManager], this)) {
+      _sharedByManager[sessionManager] = null;
+    }
     sessionManager.removeListener(_onManagerChanged);
     _chatSessionSource.changes.removeListener(_onChatSessionsChanged);
     await stop();

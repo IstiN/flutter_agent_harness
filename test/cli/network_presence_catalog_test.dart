@@ -8,12 +8,14 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/src/cli/network_presence.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_api.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
 import 'package:flutter_agent_harness/src/network/network_account.dart';
 import 'package:flutter_agent_harness/src/session/session_catalog.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
+import '../network/connector/fake_catalog_poll.dart';
 import '../network/connector/fake_device_server.dart';
 
 final class _FakeCatalogStore implements SessionCatalogStore {
@@ -90,6 +92,9 @@ void main() {
         }),
       ),
       rosterDebounce: const Duration(milliseconds: 5),
+      // Pacing (≤ 1 roster PATCH per 2 s) is the limiter's own unit
+      // test; these projection tests disable it.
+      rosterMinInterval: Duration.zero,
       catalogStore: store,
       catalogPollInterval: Duration.zero,
     );
@@ -193,6 +198,7 @@ void main() {
           }),
         ),
         rosterDebounce: const Duration(milliseconds: 5),
+        rosterMinInterval: Duration.zero,
         catalogStore: store,
         catalogPollInterval: Duration.zero,
       );
@@ -244,6 +250,7 @@ void main() {
         }),
       ),
       rosterDebounce: Duration.zero,
+      rosterMinInterval: Duration.zero,
       catalogStore: store,
       catalogPollInterval: Duration.zero,
     );
@@ -267,6 +274,103 @@ void main() {
       expect(rows[id]?['title'], isNull);
     }
   });
+  group('periodic catalog poll (gh-2410)', () {
+    test(
+      'a tick landing during a running refresh starts no second load; '
+      'the piled-up ticks re-run once; the schedule is one 30 s timer',
+      () async {
+        final server = FakeDeviceServer()
+          ..seedDevice(device.deviceId, networks: const ['personal-1']);
+        final store = GatedCatalogStore();
+        final timers = FakeTimers();
+        final controller = NetworkPresenceController(
+          device: device,
+          baseUrl: 'https://relay.test',
+          ticketProvider: () async => 'ticket',
+          transport: server.transport,
+          catalogStore: store,
+          catalogPollTimerFactory: timers.call,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.startSession(
+          const CliNetworkSession(sessionId: 'session-live'),
+        );
+        await _waitUntil(
+          () => controller.phase == ConnectorLinkState.connected,
+        );
+        expect(timers.created, hasLength(1));
+        expect(timers.live.interval, const Duration(seconds: 30));
+        expect(store.loads, 1, reason: 'the initial full refresh');
+
+        // The pass outlasts its interval: ticks pile up while it runs.
+        store.gate = true;
+        timers.fire();
+        await pumpEventQueue();
+        expect(store.loads, 2);
+        timers.fire(3);
+        await pumpEventQueue();
+        expect(store.loads, 2, reason: 'no overlapping loadSessions');
+
+        store.gate = false;
+        await store.release();
+        await pumpEventQueue();
+        expect(store.loads, 3, reason: 'the coalesced ticks re-run once');
+
+        timers.fire();
+        await pumpEventQueue();
+        expect(store.loads, 4, reason: 'the cadence resumes');
+      },
+    );
+
+    test('ticks while the link is down never load the store; reconnect '
+        'refreshes exactly once', () async {
+      final server = FakeDeviceServer()
+        ..seedDevice(device.deviceId, networks: const ['personal-1']);
+      final store = GatedCatalogStore();
+      final timers = FakeTimers();
+      final controller = NetworkPresenceController(
+        device: device,
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket',
+        transport: server.transport,
+        catalogStore: store,
+        catalogPollTimerFactory: timers.call,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.startSession(
+        const CliNetworkSession(sessionId: 'session-live'),
+      );
+      expect(store.loads, 1, reason: 'the initial full refresh');
+      // Still disconnected: ticks are no-ops.
+      timers.fire(2);
+      await pumpEventQueue();
+      expect(store.loads, 1);
+
+      await _waitUntil(() => controller.phase == ConnectorLinkState.connected);
+      await pumpEventQueue();
+      expect(store.loads, 1, reason: 'a clean first connect needs no refresh');
+      timers.fire();
+      await pumpEventQueue();
+      expect(store.loads, 2);
+
+      server.dropAll();
+      await _waitUntil(() => controller.phase != ConnectorLinkState.connected);
+      timers.fire(2);
+      await pumpEventQueue();
+      expect(store.loads, 2, reason: 'disconnected ticks are no-ops');
+
+      await _waitUntil(
+        () => controller.phase == ConnectorLinkState.connected,
+        attempts: 600,
+      );
+      await pumpEventQueue();
+      expect(store.loads, 3, reason: 'one refresh on reconnect');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(store.loads, 3);
+    });
+  });
 }
 
 List<Map<String, Object?>> _sessions(http.Request request) =>
@@ -274,8 +378,8 @@ List<Map<String, Object?>> _sessions(http.Request request) =>
         .map((row) => (row as Map).cast<String, Object?>())
         .toList();
 
-Future<void> _waitUntil(bool Function() condition) async {
-  for (var i = 0; i < 200; i++) {
+Future<void> _waitUntil(bool Function() condition, {int attempts = 200}) async {
+  for (var i = 0; i < attempts; i++) {
     if (condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }

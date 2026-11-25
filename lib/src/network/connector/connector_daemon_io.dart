@@ -14,8 +14,15 @@ import 'dart:io';
 import 'dart:math';
 
 import '../../cli/network_presence.dart';
+import '../../cli/network_store.dart';
 import '../../session/attach/pid_probe_io.dart';
+import '../../session/session_catalog.dart';
+import '../network_account.dart';
+import '../network_account_client.dart';
+import '../network_roster.dart';
 import 'connector_daemon_protocol.dart';
+import 'device_transport_io.dart';
+import 'upstream_client.dart' show ConnectorTransport;
 import 'envelope.dart';
 import 'machine_connector.dart';
 import 'multi_session_connector_host.dart';
@@ -480,6 +487,119 @@ final class _LocalClientConnection {
   _LocalClientConnection(this.socket);
   final WebSocket socket;
   final sessionIds = <String>{};
+}
+
+/// The ONE place a CLI process picks its network-presence source — the
+/// single-upstream-per-machine rule (contract §3/§10).
+///
+/// [ensureDaemonRunning] probes the daemon state file for [deviceId] and
+/// may spawn a detached `fa connector run`, returning its state — null
+/// when no daemon is (or can be made) alive. With a state, the process
+/// gets the loopback [SharedConnectorPresenceClient] and NEVER dials the
+/// upstream itself (N sessions → one socket; an eviction ping-pong is
+/// impossible); without one, [directController] is the no-daemon fallback.
+///
+/// Every CLI construction site goes through here — the `fa` boot (which
+/// mailbox-woken sessions take as well) and the `fa network` roster reads
+/// ([readRosterFromSharedConnector]); `test/bin_network_presence_wiring_test.dart`
+/// pins that `bin/` builds no direct controller anywhere else.
+Future<CliNetworkPresence> resolveCliNetworkPresence({
+  required File stateFile,
+  required String deviceId,
+  required Future<ConnectorDaemonState?> Function() ensureDaemonRunning,
+  required CliNetworkPresence Function() directController,
+}) async {
+  final state = await ensureDaemonRunning();
+  if (state == null) return directController();
+  return SharedConnectorPresenceClient(
+    stateFile: stateFile,
+    deviceId: deviceId,
+    ensureDaemonRunning: ensureDaemonRunning,
+  );
+}
+
+/// One-shot device-roster read behind `fa network` (the CLI runner and the
+/// hub plugin's runner share it): the cached roster of a daemon that is
+/// ALIVE for [deviceId] (state file + probe — never spawns one; zero
+/// upstream dials from this process), else a direct controller — built by
+/// [directController], connected, read and disposed by
+/// [readNetworkDeviceRoster]. A daemon whose upstream link is still down
+/// has no cached roster: that reads direct too, as before the daemon
+/// existed.
+Future<List<NetworkDeviceRow>> readRosterFromSharedConnector({
+  required File stateFile,
+  required String deviceId,
+  required NetworkPresenceController Function() directController,
+}) async {
+  final state = await readConnectorDaemonState(stateFile);
+  if (state != null &&
+      await probeConnectorDaemon(state, expectedDeviceId: deviceId)) {
+    final client = SharedConnectorPresenceClient(
+      stateFile: stateFile,
+      deviceId: deviceId,
+    );
+    try {
+      final frames = await client.fetchRosterFrames();
+      if (frames.isNotEmpty) return parseNetworkDeviceRoster(frames);
+    } on Object {
+      // Fall through to the direct read: no cached roster (yet).
+    } finally {
+      await client.stop();
+    }
+  }
+  return readNetworkDeviceRoster(directController());
+}
+
+/// The direct (no-daemon) upstream controller of a CLI process over the real
+/// device transport — the ONLY production construction site of a
+/// [NetworkPresenceController] (the daemon itself owns the one other
+/// upstream: [MultiSessionConnectorHost] over the same transport). Built
+/// solely as the fallback of [resolveCliNetworkPresence] /
+/// [readRosterFromSharedConnector], never directly: a second direct dial
+/// per device is the eviction-storm regression.
+/// [transport] is the production seam: tests inject a fake upstream.
+NetworkPresenceController directCliNetworkPresence({
+  required NetworkDeviceCredentials device,
+  required String baseUrl,
+  required DeviceEnrollmentClient devices,
+  required NetworkCredentialStore store,
+  SessionCatalogStore? catalogStore,
+  ConnectorTransport transport = const IoConnectorTransport(),
+}) => NetworkPresenceController(
+  catalogStore: catalogStore,
+  device: device,
+  baseUrl: baseUrl,
+  ticketProvider: () =>
+      devices.wsTicket(baseUrl: baseUrl, deviceToken: device.deviceToken),
+  transport: transport,
+  rosterClient: devices,
+  dmKeyStore: store,
+);
+
+/// The device-roster read behind every `fa network` command surface — the
+/// CLI runner and the hub plugin's runner share this one function: the
+/// enrolled device off [store] (not enrolled → [NetworkAuthException]),
+/// then [readRosterFromSharedConnector] against the daemon [stateFile].
+Future<List<NetworkDeviceRow>> readCliNetworkRoster({
+  required NetworkCredentialStore store,
+  required DeviceEnrollmentClient devices,
+  required String baseUrl,
+  required File stateFile,
+}) async {
+  final device = await store.readDevice();
+  if (device == null) {
+    throw const NetworkAuthException('not enrolled; run enroll first');
+  }
+  return readRosterFromSharedConnector(
+    stateFile: stateFile,
+    deviceId: device.deviceId,
+    directController: () => directCliNetworkPresence(
+      device: device,
+      baseUrl: baseUrl,
+      devices: devices,
+      store: store,
+    ),
+  );
 }
 
 /// Client-side [CliNetworkPresence] implementation that attaches to the shared

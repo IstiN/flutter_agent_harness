@@ -4,10 +4,14 @@
 
 import 'dart:async';
 
+import 'package:flutter_agent_harness/src/network/connector/device_api.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
+import 'package:flutter_agent_harness/src/network/connector/rate_backoff.dart';
 import 'package:flutter_agent_harness/src/network/connector/presence_engine.dart';
 import 'package:flutter_agent_harness/src/network/connector/upstream_client.dart';
 import 'package:test/test.dart';
+
+import 'fake_connector_time.dart';
 
 /// In-memory socket pair: the fake transport's dial returns a socket whose
 /// writes land in the test's hands and whose inbound frames come from the
@@ -46,6 +50,9 @@ final class FakeTransport implements ConnectorTransport {
   final sockets = <FakeSocket>[];
   final dialTickets = <String>[];
   var failNextDial = false;
+
+  /// The error the next failed dial throws (default: a plain StateError).
+  Object? failNextDialWith;
   final dials = <Uri>[];
 
   FakeSocket? get lastSocket => sockets.isEmpty ? null : sockets.last;
@@ -56,7 +63,7 @@ final class FakeTransport implements ConnectorTransport {
     dialTickets.add(ticket);
     if (failNextDial) {
       failNextDial = false;
-      throw StateError('server unreachable');
+      throw failNextDialWith ?? StateError('server unreachable');
     }
     if (next == null) throw StateError('no socket scripted');
     final socket = next!;
@@ -337,7 +344,13 @@ void main() {
       expect(states.last, ConnectorLinkState.handshaking);
       transport.lastSocket!.receive(helloOk(resumedHello.msgId));
       await pump();
-      expect(client.attempts, 0, reason: 'attempt counter resets on welcome');
+      expect(
+        client.attempts,
+        1,
+        reason:
+            'a welcome is NOT a stable link: the counter resets only '
+            'after the stable window (see the backoff tests below)',
+      );
       expect(client.isReady, isTrue);
       await sub.cancel();
       await client.stop();
@@ -552,4 +565,218 @@ void main() {
       client.dispose();
     },
   );
+  group('reconnect backoff hardening (eviction-storm decay)', () {
+    /// A client whose link state is driven on a virtual clock.
+    ({ConnectorUpstreamClient client, FakeSocket socket}) connect(
+      FakeTransport transport,
+      FakeConnectorTimers timers, {
+      required Duration stableWindow,
+      double Function()? jitter,
+      Future<String> Function()? tickets,
+    }) {
+      final socket = FakeSocket();
+      transport.next = socket;
+      final client = ConnectorUpstreamClient(
+        url: Uri.parse('wss://network.fa1.dev/ws'),
+        transport: transport,
+        ticketProvider: tickets ?? () async => 't',
+        deviceId: 'macbook',
+        stableWindow: stableWindow,
+        jitterFraction: jitter,
+        clock: timers.clock,
+        timers: timers,
+      );
+      return (client: client, socket: socket);
+    }
+
+    Future<void> stopAndDispose(ConnectorUpstreamClient client) async {
+      await client.stop();
+      client.dispose();
+    }
+
+    Future<void> welcome(
+      ConnectorUpstreamClient client,
+      FakeSocket socket,
+    ) async {
+      await client.start();
+      await pump();
+      socket.receive(helloOk(socket.sent.single.msgId));
+      await pump();
+      expect(client.isReady, isTrue);
+    }
+
+    /// Arms the next socket so the reconnect succeeds, fires the pending
+    /// reconnect timer, answers its hello, and returns the NEW live socket.
+    Future<FakeSocket> reconnect(
+      FakeTransport transport,
+      FakeConnectorTimers timers,
+      ConnectorUpstreamClient client,
+    ) async {
+      final next = FakeSocket();
+      transport.next = next;
+      await timers.elapse(timers.pendingDelayed.single.delay);
+      await pump();
+      expect(next.sent.single.kind, NetworkEnvelopeKind.hello);
+      next.receive(helloOk(next.sent.single.msgId));
+      await pump();
+      expect(client.isReady, isTrue);
+      return next;
+    }
+
+    test('a short-lived link keeps the attempt counter: 1s, 2s, 4s … 30s '
+        'with jitter; only a stable link resets it', () async {
+      final transport = FakeTransport();
+      final clock = FakeConnectorClock();
+      final timers = FakeConnectorTimers(clock);
+      final first = connect(
+        transport,
+        timers,
+        stableWindow: const Duration(seconds: 30),
+        jitter: () => 1, // nominal ladder, no shrink
+      );
+      await welcome(first.client, first.socket);
+
+      // Evicted after 5 s (well inside the stable window).
+      await timers.elapse(const Duration(seconds: 5));
+      first.socket.drop();
+      await pump();
+      expect(first.client.attempts, 1);
+      expect(timers.pendingDelayed.single.delay, const Duration(seconds: 1));
+      await reconnect(transport, timers, first.client);
+      expect(first.client.attempts, 1, reason: 'welcome keeps the counter');
+
+      var live = transport.lastSocket!;
+      for (final expected in const [
+        Duration(seconds: 2),
+        Duration(seconds: 4),
+        Duration(seconds: 8),
+        Duration(seconds: 16),
+        Duration(seconds: 30),
+        Duration(seconds: 30),
+      ]) {
+        await timers.elapse(const Duration(seconds: 5));
+        live.drop();
+        await pump();
+        expect(timers.pendingDelayed.single.delay, expected);
+        await reconnect(transport, timers, first.client);
+        live = transport.lastSocket!;
+      }
+      expect(first.client.attempts, 7);
+
+      // Stable for the whole window → counter (and ladder) reset.
+      await timers.elapse(const Duration(seconds: 30));
+      expect(first.client.attempts, 0);
+      live.drop();
+      await pump();
+      expect(timers.pendingDelayed.single.delay, const Duration(seconds: 1));
+      await first.client.stop();
+      first.client.dispose();
+    });
+
+    test(
+      'jitter keeps the delay inside [50 %, 100 %) of the ladder step',
+      () async {
+        for (final (jitter, expected) in const [
+          (0.0, Duration(milliseconds: 500)),
+          (0.5, Duration(milliseconds: 750)),
+          (1.0, Duration(seconds: 1)),
+        ]) {
+          final transport = FakeTransport()..failNextDial = true;
+          final timers = FakeConnectorTimers(FakeConnectorClock());
+          final client = ConnectorUpstreamClient(
+            url: Uri.parse('wss://network.fa1.dev/ws'),
+            transport: transport,
+            ticketProvider: () async => 't',
+            deviceId: 'macbook',
+            jitterFraction: () => jitter,
+            clock: timers.clock,
+            timers: timers,
+          );
+          await client.start();
+          await pump();
+          expect(client.attempts, 1);
+          expect(timers.pendingDelayed.single.delay, expected);
+          await client.stop();
+          client.dispose();
+        }
+      },
+    );
+
+    test('a throttled ticket mint (429) counts as an attempt and honours '
+        'Retry-After over the ladder', () async {
+      final transport = FakeTransport();
+      final timers = FakeConnectorTimers(FakeConnectorClock());
+      final throttled = connect(
+        transport,
+        timers,
+        stableWindow: const Duration(seconds: 30),
+        jitter: () => 1,
+        tickets: () async => throw const DeviceEnrollmentThrottledException(
+          'too many ticket requests',
+          statusCode: 429,
+          retryAfter: Duration(seconds: 12),
+        ),
+      );
+      await throttled.client.start();
+      await pump();
+      expect(throttled.client.attempts, 1);
+      expect(
+        timers.pendingDelayed.single.delay,
+        const Duration(seconds: 12),
+        reason: 'Retry-After beats the 1 s ladder step',
+      );
+      await stopAndDispose(throttled.client);
+
+      // Without a hint the jittered ladder applies (4 s at attempt 3).
+      final ladder = connect(
+        transport,
+        timers,
+        stableWindow: const Duration(seconds: 30),
+        jitter: () => 1,
+        tickets: () async => throw StateError('x'),
+      );
+      await ladder.client.start();
+      await pump();
+      await timers.elapse(const Duration(seconds: 1));
+      await timers.elapse(const Duration(seconds: 2));
+      expect(ladder.client.attempts, 3);
+      expect(timers.pendingDelayed.single.delay, const Duration(seconds: 4));
+      await ladder.client.stop();
+      ladder.client.dispose();
+    });
+
+    test(
+      'a throttled upgrade (429 on /ws) retries after Retry-After',
+      () async {
+        final transport = FakeTransport()
+          ..failNextDial = true
+          ..failNextDialWith = const ConnectorUpgradeThrottledException(
+            statusCode: 429,
+          );
+        final timers = FakeConnectorTimers(FakeConnectorClock());
+        final logs = <String>[];
+        final client = ConnectorUpstreamClient(
+          url: Uri.parse('wss://network.fa1.dev/ws'),
+          transport: transport,
+          ticketProvider: () async => 't',
+          deviceId: 'macbook',
+          jitterFraction: () => 0.5,
+          clock: timers.clock,
+          timers: timers,
+          onLog: logs.add,
+        );
+        await client.start();
+        await pump();
+        expect(client.attempts, 1);
+        expect(
+          timers.pendingDelayed.single.delay,
+          const Duration(milliseconds: 750),
+          reason: 'no Retry-After → jittered ladder step',
+        );
+        expect(logs.join(' '), contains('throttled'));
+        await client.stop();
+        client.dispose();
+      },
+    );
+  });
 }

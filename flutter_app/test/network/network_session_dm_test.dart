@@ -38,7 +38,8 @@ final class FakeDmConnector implements DeviceConnectorService {
   String? agentDmPub({required String deviceId, required String agentName}) =>
       peerDmPub;
 
-  /// The DM working-banner state: null (hidden) unless a test seeds it.
+  /// The DM peer's published run state (the standard status row's
+  /// signal): null (nothing published) unless a test seeds it.
   AgentRunState? peerRunState;
 
   @override
@@ -47,11 +48,16 @@ final class FakeDmConnector implements DeviceConnectorService {
     required String networkId,
   }) => peerRunState;
 
-  @override
-  Stream<NetworkEnvelope> get rosterFrames => const Stream.empty();
+  /// The passthrough frames the status plumbing re-reads the state on —
+  /// tests push an envelope after flipping [peerRunState] to publish it.
+  final rosterController = StreamController<NetworkEnvelope>.broadcast();
+  final presenceController = StreamController<NetworkEnvelope>.broadcast();
 
   @override
-  Stream<NetworkEnvelope> get presenceFrames => const Stream.empty();
+  Stream<NetworkEnvelope> get rosterFrames => rosterController.stream;
+
+  @override
+  Stream<NetworkEnvelope> get presenceFrames => presenceController.stream;
 
   @override
   Future<String> sendDmToAgent({
@@ -599,59 +605,45 @@ void dmAgentBannerTransitionTests() {
   const networkId = 'net-personal';
   FakeDmConnector busyConnector() =>
       FakeDmConnector()..peerRunState = AgentRunState.busy;
-  group('dmRefreshedAgentRunState (CRAP-decomposed banner transition)', () {
+  group('dmRefreshedAgentRunState (CRAP-decomposed status transition)', () {
     test('changed + new state when the state changed', () {
       final next = dmRefreshedAgentRunState(
         connector: busyConnector(),
         address: address,
         networkId: networkId,
         current: null,
-        mounted: true,
       );
       expect(next.changed, isTrue);
       expect(next.state, AgentRunState.busy);
     });
 
-    test('busy -> agent GONE clears the banner (review #2196 r1)', () {
+    test('busy -> agent GONE clears the status (review #2196 r1)', () {
       final next = dmRefreshedAgentRunState(
         connector: FakeDmConnector(), // peerRunState null = agent absent
         address: address,
         networkId: networkId,
         current: AgentRunState.busy,
-        mounted: true,
       );
       expect(next.changed, isTrue);
       expect(next.state, isNull);
     });
 
-    test('unchanged when unmounted, unbound, or same state', () {
+    test('unchanged when unbound or same state', () {
       final c = busyConnector();
       final unchanged = dmRefreshedAgentRunState(
         connector: c,
         address: address,
         networkId: networkId,
         current: AgentRunState.busy,
-        mounted: true,
       );
       expect(unchanged.changed, isFalse);
       expect(unchanged.state, AgentRunState.busy);
-      expect(
-        dmRefreshedAgentRunState(
-          connector: c,
-          address: address,
-          networkId: networkId,
-          current: null,
-          mounted: false,
-        ).changed,
-        isFalse,
-      );
       expect(
         dmRefreshedAgentRunState(
           connector: null,
           address: address,
           networkId: networkId,
           current: null,
-          mounted: true,
         ).changed,
         isFalse,
       );
@@ -661,7 +653,6 @@ void dmAgentBannerTransitionTests() {
           address: null,
           networkId: networkId,
           current: null,
-          mounted: true,
         ).changed,
         isFalse,
       );
@@ -671,7 +662,6 @@ void dmAgentBannerTransitionTests() {
           address: address,
           networkId: networkId,
           current: null,
-          mounted: true,
         ).changed,
         isFalse,
         reason: 'agent absent and already hidden → nothing to change',

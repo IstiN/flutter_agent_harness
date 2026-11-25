@@ -10,6 +10,10 @@
 /// SINGLE upstream WebSocket to `fa_network` — eliminating the per-process
 /// `DeviceRegistry.Add` eviction churn that caused `presence=degraded` and
 /// dropped DM replies/receipts when multiple `fa` sessions ran concurrently.
+///
+/// Roster PATCHes go through the shared [RosterPatchLimiter] (coalescing +
+/// ≤ 1 PATCH per 2 s per device process + 429 handling), exactly like the
+/// single-session CLI host — never through a bare debounce timer.
 library;
 
 import 'dart:async';
@@ -18,6 +22,7 @@ import '../../cli/network_presence.dart';
 import '../../session/session_catalog.dart';
 import '../network_account.dart';
 import '../network_roster.dart';
+import 'catalog_poller.dart';
 import 'connector_mux.dart';
 import 'device_api.dart';
 import 'device_dm.dart';
@@ -27,6 +32,7 @@ import 'envelope.dart';
 import 'machine_connector.dart';
 import 'offline_outbox.dart';
 import 'presence_engine.dart';
+import 'roster_patch_limiter.dart';
 import 'upstream_client.dart';
 
 /// One live local session registered with [MultiSessionConnectorHost].
@@ -51,15 +57,26 @@ final class MultiSessionConnectorHost {
     required this.ticketProvider,
     this.transport,
     this.rosterClient,
-    this.rosterDebounce = const Duration(milliseconds: 500),
+    this.rosterDebounce = rosterPatchDebounce,
+    this.rosterMinInterval = rosterPatchMinInterval,
     this.catalogStore,
-    this.catalogPollInterval = const Duration(seconds: 10),
+    this.catalogPollInterval = const Duration(seconds: 30),
+    this.catalogPollTimerFactory,
     this.idFactory = defaultIdFactory,
     this.wakeLauncher,
     this.onLog,
     DeviceDmKeyStore? dmKeyStore,
     this.outbox,
-  }) : _dmKeys = DeviceDmKeyProvider(dmKeyStore ?? MemoryDeviceDmKeyStore());
+  }) : _dmKeys = DeviceDmKeyProvider(dmKeyStore ?? MemoryDeviceDmKeyStore()),
+       _roster = RosterPatchLimiter(
+         baseUrl: baseUrl,
+         deviceId: device.deviceId,
+         deviceToken: device.deviceToken,
+         client: rosterClient,
+         debounce: rosterDebounce,
+         minInterval: rosterMinInterval,
+         onLog: onLog,
+       );
 
   final NetworkDeviceCredentials device;
   final String baseUrl;
@@ -67,8 +84,18 @@ final class MultiSessionConnectorHost {
   final ConnectorTransport? transport;
   final DeviceEnrollmentClient? rosterClient;
   final Duration rosterDebounce;
+
+  /// Minimum spacing of two roster PATCHes (the per-device budget).
+  final Duration rosterMinInterval;
   final SessionCatalogStore? catalogStore;
+
+  /// Best-effort filesystem rediscovery interval (default 30 s; was 10 s
+  /// before gh-2410 — passes are single-flight and skipped while the link
+  /// is down, see [CatalogPoller]). Zero disables periodic polling.
   final Duration catalogPollInterval;
+
+  /// Timer seam of the periodic catalog poll (tests fire ticks by hand).
+  final PeriodicTimerFactory? catalogPollTimerFactory;
   final IdFactory idFactory;
   CliNetworkSessionWakeLauncher? wakeLauncher;
   final void Function(String line)? onLog;
@@ -87,15 +114,12 @@ final class MultiSessionConnectorHost {
 
   final _sessions = <String, HostedSessionEntry>{};
   final _dmPubs = <String, String>{};
-  final _pendingRosterAgents = <String, DeviceRosterAgent>{};
-  final _pendingRosterSessions = <String, DeviceRosterSession>{};
-  Timer? _rosterTimer;
+  final RosterPatchLimiter _roster;
   Timer? _catalogTimer;
-  Timer? _catalogPollTimer;
+  CatalogPoller? _catalogPoller;
   List<SessionCatalogEntry> _catalogEntries = const [];
   var _catalogRevision = 0;
   final _wakingSessions = <String>{};
-  Future<void> _rosterWrites = Future<void>.value();
   bool _started = false;
 
   /// Current upstream link phase.
@@ -125,13 +149,13 @@ final class MultiSessionConnectorHost {
     await refreshSessionCatalog(fullSnapshot: true);
     await _connector!.start();
     _queueLiveRoster(fullSnapshot: true);
-    final interval = catalogPollInterval;
-    if (catalogStore != null && interval > Duration.zero) {
-      _catalogPollTimer?.cancel();
-      _catalogPollTimer = Timer.periodic(
-        interval,
-        (_) => _scheduleCatalogRefresh(),
-      );
+    if (catalogStore != null) {
+      (_catalogPoller ??= CatalogPoller(
+        run: () => refreshSessionCatalog(),
+        timerFactory: catalogPollTimerFactory,
+        onError: (error, stackTrace) =>
+            onLog?.call('session catalog poll failed: $error'),
+      )).start(catalogPollInterval);
     }
   }
 
@@ -270,8 +294,8 @@ final class MultiSessionConnectorHost {
   Future<void> stop() async {
     _started = false;
     _catalogTimer?.cancel();
-    _catalogPollTimer?.cancel();
-    _rosterTimer?.cancel();
+    _catalogPoller?.stop();
+    _catalogPoller?.setActive(false);
     if (_sessions.isNotEmpty) {
       _queueRosterEntries(
         agents: [
@@ -298,6 +322,7 @@ final class MultiSessionConnectorHost {
   Future<void> dispose() async {
     _catalogRevision++;
     await stop();
+    _roster.close();
     for (final sub in _subscriptions) {
       await sub.cancel();
     }
@@ -455,83 +480,18 @@ final class MultiSessionConnectorHost {
     );
   }
 
+  /// Queues roster rows for the shared limiter: merged by key, flushed
+  /// after the debounce window inside the per-device PATCH budget.
   void _queueRosterEntries({
     List<DeviceRosterAgent> agents = const [],
     List<DeviceRosterSession> sessions = const [],
   }) {
-    if (rosterClient == null) return;
-    for (final agent in agents) {
-      _pendingRosterAgents[agent.name] = agent;
-    }
-    for (final session in sessions) {
-      _pendingRosterSessions[session.id] = session;
-    }
-    _rosterTimer?.cancel();
-    _rosterTimer = Timer(rosterDebounce, () => unawaited(_flushRoster()));
+    _roster.enqueue(agents: agents, sessions: sessions);
   }
 
-  Future<void> _flushRoster() {
-    _rosterTimer?.cancel();
-    _rosterTimer = null;
-    final write = _rosterWrites.then((_) => _writePendingRoster());
-    _rosterWrites = write;
-    return write;
-  }
-
-  Future<void> _writePendingRoster() async {
-    final client = rosterClient;
-    if (client == null ||
-        (_pendingRosterAgents.isEmpty && _pendingRosterSessions.isEmpty)) {
-      return;
-    }
-    final agents = _pendingRosterAgents.values.toList(growable: false);
-    final sessions = _pendingRosterSessions.values.toList(growable: false);
-    _pendingRosterAgents.clear();
-    _pendingRosterSessions.clear();
-    try {
-      await _patchRosterPages(client, agents, sessions);
-    } on Object {
-      onLog?.call('shared connector roster patch failed');
-    }
-  }
-
-  Future<void> _patchRosterPages(
-    DeviceEnrollmentClient client,
-    List<DeviceRosterAgent> agents,
-    List<DeviceRosterSession> sessions,
-  ) async {
-    if (sessions.isEmpty) {
-      await _sendRosterPage(client, agents, const []);
-      return;
-    }
-    for (
-      var start = 0;
-      start < sessions.length;
-      start += sessionCatalogRosterPageSize
-    ) {
-      final end = (start + sessionCatalogRosterPageSize).clamp(
-        0,
-        sessions.length,
-      );
-      await _sendRosterPage(
-        client,
-        start == 0 ? agents : const [],
-        sessions.sublist(start, end),
-      );
-    }
-  }
-
-  Future<void> _sendRosterPage(
-    DeviceEnrollmentClient client,
-    List<DeviceRosterAgent> agents,
-    List<DeviceRosterSession> sessions,
-  ) => client.patchRoster(
-    baseUrl: baseUrl,
-    deviceId: device.deviceId,
-    deviceToken: device.deviceToken,
-    agents: agents,
-    sessions: sessions,
-  );
+  /// Sends the pending roster rows as soon as the budget allows (session
+  /// unregister / stop seam) — never waits out a throttle cooldown.
+  Future<void> _flushRoster() => _roster.flush();
 
   void _ensureBuilt() {
     if (_connector != null) return;
@@ -584,6 +544,7 @@ final class MultiSessionConnectorHost {
 
   void _handleUpstreamState(ConnectorLinkState state) {
     _phase = state;
+    _catalogPoller?.setActive(state == ConnectorLinkState.connected);
     if (state == ConnectorLinkState.connected) {
       _queueLiveRoster(fullSnapshot: true);
     }
