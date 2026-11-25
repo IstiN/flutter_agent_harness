@@ -38,6 +38,18 @@ class _GatedStream {
       ),
     );
     final stream = AssistantMessageEventStream();
+    // GOAL #2394: the merged hand-over call (the default without a smol
+    // role) answers from the instruction itself — it consumes no scripted
+    // turn.
+    if (isHandOverCall(context)) {
+      for (final event in textTurn(
+        handOverReplyFor(context, text: 'summary of older context'),
+      )) {
+        stream.push(event);
+      }
+      stream.end();
+      return stream;
+    }
     if (!gated && gateOn(context)) {
       gated = true;
       unawaited(

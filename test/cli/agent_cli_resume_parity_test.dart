@@ -158,6 +158,27 @@ void main() {
     return stream.contexts.first;
   }
 
+  test('E37/AC15 (review round 1): a classic-pinned CLI carries NO '
+      'record tags on the wire (E37: «classic: тегов и merged нет»)', () async {
+    // Tags are gated by `Agent.recordTagsEnabled`, synced from the engine
+    // at every prompt — classic never opts in, so the request carries the
+    // stored transcript byte-for-byte.
+    final env = await freshEnv();
+    await seedFlat(env, 'parity-target', 4);
+    io = FakeCliIO();
+    final stream = FakeStreamFunction([textTurn('ok')]);
+    final cli = interactiveCli(env, stream);
+    final context = await resumeAndTurn(cli, stream);
+    expect(context.messages, hasLength(5));
+    // Byte-identity with the stored transcript (the seed texts happen to
+    // LOOK like tagged records — `m<i> …` — so the predicate alone cannot
+    // tell a wire tag from content; equality can).
+    for (var i = 0; i < 4; i++) {
+      expect(firstTextOf(context.messages[i]), 'm$i ${'a' * 4000}');
+    }
+    expect(cli.agent.recordTagsEnabled, isFalse);
+  });
+
   /// Role + text signature of a projected message list — the AC-R0
   /// token-for-token comparison basis.
   List<String> signatures(Context context) => [
@@ -170,6 +191,15 @@ void main() {
         ToolResultMessage(:final toolCallId) => 'tool:$toolCallId',
         _ => message.runtimeType.toString(),
       },
+  ];
+
+  /// The projection's content signatures: every epoch record rides the
+  /// wire tagged `m<N> ` (GOAL #2394 record_tag), so the tag is stripped
+  /// before the `user:old`-style shape checks; the raw [signatures] still
+  /// compare both hosts tag-for-tag.
+  List<String> contentSignatures(Context context) => [
+    for (final signature in signatures(context))
+      signature.replaceFirst(RegExp(r'^(user|assistant|tool):m\d+ '), r'$1:'),
   ];
 
   /// The unanchored system-prompt/tool-schema overhead of the harness
@@ -411,7 +441,7 @@ void main() {
       );
       // The boundary actually shaped the projection: the 10 old
       // messages are replaced by the summary, not replayed.
-      final sigs = signatures(headlessStream.contexts.first);
+      final sigs = contentSignatures(headlessStream.contexts.first);
       expect(sigs.where((s) => s.startsWith('user:old')), isEmpty);
       expect(sigs.where((s) => s.startsWith('user:kept')), hasLength(10));
     },

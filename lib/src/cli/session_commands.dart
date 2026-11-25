@@ -980,6 +980,12 @@ extension on AgentCli {
     // phantom-report the pre-compaction size (183k on a 27k branch) and
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
     _agent.state.messages = resetLoadedUsageAnchors(messages);
+    // GOAL #2394: the tag epoch of the resumed transcript (tags appear on
+    // the FIRST request after a pre-2.1 session resumes — no migration).
+    _agent.state.recordSeqs = context.recordSeqs;
+    // GOAL #2394 (AC2): S0 described the PREVIOUS session's transcript —
+    // a merged hand-over must never read it against this one.
+    _agent.invalidateRequestSnapshot('session resumed');
     _persistedCount = messages.length;
     // gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
     // `orphan_report` records (raw scan — the windowed open drops side-leaf

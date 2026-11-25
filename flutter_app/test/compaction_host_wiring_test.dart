@@ -279,6 +279,36 @@ void main() {
       expect(cli.sameResolutionAs(app), isTrue);
     });
 
+    test('GOAL #2394 (review round 1): the hand-over knobs ride BOTH '
+        'hosts and count in sameResolutionAs', () {
+      const tuning = CompactionTuning(
+        softRatio: 0.5,
+        handOverMaxTokens: 2048,
+        handOverHysteresisTurns: 7,
+      );
+      final cli = resolveCliCompactionWiring(
+        mainModel: _mainModel(),
+        rolesResolver: null,
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      final app = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      expect(cli.softRatio, 0.5);
+      expect(cli.handOverMaxTokens, 2048);
+      expect(cli.handOverHysteresisTurns, 7);
+      expect(cli.sameResolutionAs(app), isTrue);
+      // A host that dropped the keys no longer compares equal.
+      final defaulted = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        contextWindowCap: null,
+      );
+      expect(cli.sameResolutionAs(defaulted), isFalse);
+    });
+
     test('smol equal to main normalizes to main-only on BOTH paths', () {
       final sameRef = ModelRef(
         provider: 'anthropic',
@@ -325,6 +355,52 @@ void main() {
       expect(cli.maxAttempts, compactionSummarizerMaxAttempts);
       expect(cli.baseBackoff, compactionSummarizerBaseBackoff);
       expect(cli.settings.enabled, isTrue);
+    });
+
+    test('gh-2407 thread 7: the hand-over tuning keys ride BOTH paths and '
+        'the parity assertion compares them', () {
+      const tuning = CompactionTuning(
+        softRatio: 0.6,
+        handOverMaxTokens: 4096,
+        handOverHysteresisTurns: 5,
+      );
+      final cli = resolveCliCompactionWiring(
+        mainModel: _mainModel(),
+        rolesResolver: cliResolver(),
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      final app = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        smolModel: appResolver().resolveRole(smolModelRole)?.model,
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      // Same inputs → semantic equals including the three hand-over
+      // fields (sameResolutionAs must compare them, not ignore them).
+      expect(cli.handOverMaxTokens, 4096);
+      expect(cli.handOverHysteresisTurns, 5);
+      expect(cli.softRatio, 0.6);
+      expect(app.handOverMaxTokens, 4096);
+      expect(app.handOverHysteresisTurns, 5);
+      expect(app.softRatio, 0.6);
+      expect(cli.sameResolutionAs(app), isTrue);
+      expect(app.sameResolutionAs(cli), isTrue);
+
+      // Drift in ANY hand-over knob must fail the parity assertion (the
+      // merge-blocking guard): a one-sided tuning is a real divergence.
+      final driftedApp = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        smolModel: appResolver().resolveRole(smolModelRole)?.model,
+        contextWindowCap: null,
+        tuning: const CompactionTuning(
+          softRatio: 0.6,
+          handOverMaxTokens: 4096,
+          handOverHysteresisTurns: 7,
+        ),
+      );
+      expect(cli.sameResolutionAs(driftedApp), isFalse);
+      expect(driftedApp.sameResolutionAs(cli), isFalse);
     });
   });
 
@@ -429,6 +505,98 @@ void main() {
       );
       expect(clamped.window, 64000);
       expect(clamped.settings.reserveTokens, 16000);
+    });
+  });
+
+  // GOAL #2394 (AC11/AC14): the hand-over knobs ride the shared host
+  // wiring the same way the CLI reads them from `CompactionTuning`.
+  group('GOAL #2394 hand-over knobs', () {
+    test('the tuning keys ride the wiring; absent keys stay null', () {
+      final wiring = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        tuning: CompactionTuning.fromSection({
+          'softRatio': 0.7,
+          'handOver': {'maxTokens': 2048, 'hysteresisTurns': 2},
+        }, label: 'test'),
+      );
+      expect(wiring.softRatio, 0.7);
+      expect(wiring.handOverMaxTokens, 2048);
+      expect(wiring.handOverHysteresisTurns, 2);
+      final plain = resolveCompactionHostWiring(mainModel: _mainModel());
+      expect(plain.softRatio, isNull);
+      expect(plain.handOverMaxTokens, isNull);
+      expect(plain.handOverHysteresisTurns, isNull);
+    });
+
+    test('the post-run soft line and its hysteresis are pure functions of '
+        'the settings (AC11)', () {
+      final window = _mainModel().contextWindow;
+      final settings = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+      ).settings;
+      final hard = window - settings.reserveTokens;
+      // Default: the soft line sits 5 % of the window under the hard line.
+      expect(
+        softTriggerTokens(window: window, settings: settings),
+        hard - (window * softRatioDefaultGap).floor(),
+      );
+      expect(
+        softTriggerTokens(window: window, settings: settings, softRatio: 0.5),
+        (window * 0.5).floor(),
+      );
+      final hysteresis = HandOverHysteresis(turns: 2);
+      final soft = softTriggerTokens(window: window, settings: settings);
+      // Fresh: the band fires; after a run it stays muted for 2 turns.
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
+      hysteresis.recordRun();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isFalse,
+      );
+      hysteresis.onTurn();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isFalse,
+      );
+      hysteresis.onTurn();
+      expect(
+        softTriggerReached(
+          tokens: soft,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
+      // Over the hard line the hysteresis never mutes.
+      hysteresis.recordRun();
+      expect(
+        softTriggerReached(
+          tokens: hard + 1,
+          window: window,
+          settings: settings,
+          hysteresis: hysteresis,
+        ),
+        isTrue,
+      );
     });
   });
 }

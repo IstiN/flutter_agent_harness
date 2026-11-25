@@ -383,8 +383,14 @@ Future<_AttemptResult> _streamAttempt(
   required bool pairingHealed,
   required _StreamProgress progress,
 }) async {
+  // GOAL #2394 (record_tag): the `m<seq>` tags are stamped on a COPY of
+  // the transcript BEFORE the request transforms — the tags are message
+  // text, so every later rewrite (coalesce, pairing repair, image
+  // registry) carries them along and no sidecar has to survive it. The
+  // transcript itself is never tagged (TUI/exports/search never see it).
+  final taggedContext = tagContext(context, config.recordSeqs);
   final (requestContext, repairReport) = await _buildRequestContext(
-    context,
+    taggedContext,
     config,
     cancelToken,
     misuseNote: misuseNote,
@@ -448,6 +454,22 @@ Future<_AttemptResult> _streamAttempt(
   final requestMessageCount = requestContext.messages.length;
 
   await emit(_captureRequest(config, requestContext));
+  // GOAL #2394 (AC2): S0 — the request exactly as sent (post-transform),
+  // the model that serves it and the tag epoch its ids resolve against.
+  // Last send wins; the hand-over call extends this very prefix.
+  config.requestSnapshots?.capture(
+    RequestSnapshot(
+      model: config.model,
+      messages: requestContext.messages,
+      systemPrompt: requestContext.systemPrompt,
+      tools: requestContext.tools ?? const [],
+      seqMap:
+          config.recordSeqs ??
+          TranscriptSeqMap(headSeqs: const [], index: RecordSeqIndex([])),
+      sentAt: DateTime.now(),
+      routing: _routingOf(),
+    ),
+  );
   final AssistantMessageEventStream response;
   try {
     response = streamFunction(
@@ -609,5 +631,15 @@ Context applyMessageCapCoalesce(Context requestContext, int target) {
     systemPrompt: requestContext.systemPrompt,
     messages: coalesced,
     tools: requestContext.tools,
+  );
+}
+
+/// The zone routing values the request rides (gh-2101), for the snapshot.
+RequestRouting? _routingOf() {
+  final routing = StreamCacheRouting.current;
+  if (routing == null) return null;
+  return RequestRouting(
+    sessionId: routing.sessionId,
+    cacheRetention: routing.cacheRetention,
   );
 }

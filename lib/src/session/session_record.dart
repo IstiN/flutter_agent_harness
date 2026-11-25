@@ -304,6 +304,16 @@ sealed class SessionRecord {
           for (final recordId in (json['recordIds'] as List?) ?? const [])
             recordId as String,
         ],
+        // GOAL #2394: additive named keys only — an older reader ignores
+        // both (and never wrote them).
+        labels: {
+          for (final entry
+              in (json['labels'] as Map?)?.entries ??
+                  const Iterable<MapEntry<dynamic, dynamic>>.empty())
+            if (entry.key is String && entry.value is String)
+              entry.key as String: entry.value as String,
+        },
+        consolidated: json['consolidated'] == true,
       ),
       'compact_checkpoint' => CompactCheckpointRecord(
         id: id,
@@ -322,6 +332,8 @@ sealed class SessionRecord {
               in (json['flattenedRecordIds'] as List?) ?? const [])
             recordId as String,
         ],
+        // GOAL #2394: the layout discriminator (absent → in place).
+        layout: json['layout'] as String?,
       ),
       'segment_pin' => SegmentPinRecord(
         id: id,
@@ -535,16 +547,33 @@ final class HiddenRangeRecord extends SessionRecord {
     required super.timestamp,
     super.timestampDegraded,
     required this.recordIds,
+    this.labels = const {},
+    this.consolidated = false,
   });
 
   /// The ids of the records hidden by this event (stable session ids).
   final List<String> recordIds;
 
+  /// GOAL #2394 (D3/AC18): the model's hide label — SANITIZED, one line,
+  /// ≤ 48 chars — per CARRIER record id. Additive: written only when
+  /// non-empty, never backfilled, ignored by older readers; never a
+  /// message of its own.
+  final Map<String, String> labels;
+
+  /// GOAL #2394 (D5/AC9): the range renders as ONE marker at its carrier
+  /// (`m142 <label> [expand 142-143]`) instead of a marker per record.
+  /// Additive: `false` on every pre-#2394 record (per-record markers).
+  final bool consolidated;
+
   @override
   String get type => 'hidden_range';
 
   @override
-  Map<String, dynamic> payloadJson() => {'recordIds': recordIds};
+  Map<String, dynamic> payloadJson() => {
+    'recordIds': recordIds,
+    if (labels.isNotEmpty) 'labels': labels,
+    if (consolidated) 'consolidated': true,
+  };
 }
 
 /// A text checkpoint the structured compaction engine compacts a range
@@ -563,6 +592,7 @@ final class CompactCheckpointRecord extends SessionRecord {
     required this.text,
     required this.coversRecordIds,
     required this.flattenedRecordIds,
+    this.layout,
   });
 
   /// Id of the first record in the compacted range (inclusive).
@@ -585,6 +615,14 @@ final class CompactCheckpointRecord extends SessionRecord {
   /// for nesting depth — they are dead nodes in the checkpoint DAG.
   final List<String> flattenedRecordIds;
 
+  /// GOAL #2394 (D5/AC9): where the checkpoint renders. `null` (every
+  /// pre-#2394 record) = IN PLACE, at the range's first visible record,
+  /// as today; [compactCheckpointLayoutTail] = the range's start carries
+  /// only the `[expand a-b]` pointer and the text rides THIS record's own
+  /// position (the tail at run time). Additive discriminator — no new
+  /// record kind (an older binary still renders the text in place).
+  final String? layout;
+
   @override
   String get type => 'compact_checkpoint';
 
@@ -595,8 +633,13 @@ final class CompactCheckpointRecord extends SessionRecord {
     'text': text,
     'coversRecordIds': coversRecordIds,
     'flattenedRecordIds': flattenedRecordIds,
+    if (layout != null) 'layout': layout,
   };
 }
+
+/// The `CompactCheckpointRecord.layout` of a GOAL #2394 hand-over
+/// checkpoint: text at the record's own (tail) position.
+const String compactCheckpointLayoutTail = 'tail';
 
 /// Per-segment pin state for the second compaction tier (issue #1379): a
 /// pinned segment is immune to every hide path — the judge's picks, the

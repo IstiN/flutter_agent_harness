@@ -96,6 +96,11 @@ const rootSpecs = <PromptSpec>[
     constName: 'hideJudgeSystemPrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/hand_over.md',
+    constName: 'compactionHandOverPrompt',
+    requiredToken: '{{fold_from}}',
+  ),
+  PromptSpec(
     source: 'prompts/compaction/structured_checkpoint.md',
     constName: 'structuredCheckpointPrompt',
   ),
@@ -437,6 +442,11 @@ Future<String> renderTarget(
 /// Compiles every `prompts/skills/<name>/SKILL.md` into the
 /// `builtinSkillFiles` map constant (name → full file text, frontmatter
 /// included) the pure-Dart core embeds as its first-party skill source.
+///
+/// Formatter-stable output, like [renderPromptsFile]: one blank line
+/// separates the map from the prompt constants above and the file ends on
+/// `};` + one newline — the pre-commit hook self-formats staged files and
+/// `prompts_sync_test` compares byte-for-byte (GOAL #2394 landing fix).
 Future<String> renderBuiltinSkills(String repoRoot) async {
   final dir = Directory('$repoRoot/prompts/skills');
   final names =
@@ -446,6 +456,7 @@ Future<String> renderBuiltinSkills(String repoRoot) async {
           .toList()
         ..sort();
   final buffer = StringBuffer('''
+
 /// Compiled-in built-in agent skills (issue #1151): every
 /// `prompts/skills/<name>/SKILL.md` becomes an entry of [builtinSkillFiles]
 /// (name → full SKILL.md text, YAML frontmatter included). Edit the Markdown
@@ -474,9 +485,7 @@ const builtinSkillFiles = <String, String>{''');
       ..writeln("  '$name':")
       ..writeln('      ${dartStringLiteral(text)},');
   }
-  buffer
-    ..writeln('};')
-    ..writeln();
+  buffer.writeln('};');
   return buffer.toString();
 }
 

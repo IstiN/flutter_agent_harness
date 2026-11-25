@@ -462,6 +462,10 @@ final class CheckpointRewindController {
       ...messages.sublist(0, keepCount),
       UserMessage.text(report),
     ];
+    // GOAL #2394 (AC2): the rewound-away prefix must never ride a merged
+    // hand-over — S0 described the pre-rewind projection (both hosts;
+    // `/checkpoint restore` lands here too).
+    _agent.invalidateRequestSnapshot('checkpoint rewind');
     _onRewindApplied?.call(_agent.state.messages.length);
     _active = null;
     _lastCompleted = CompletedRewind(

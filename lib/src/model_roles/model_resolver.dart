@@ -275,8 +275,11 @@ final class ModelRolesResolver {
       final inner = _streamFactory(resolvedSpec.kind, currentKey);
       return (model, context, {cancelToken}) {
         // An explicit per-call override (the compaction bypass) wins
-        // over the resolver's bound session id.
-        if (StreamCacheRouting.current != null) {
+        // over the resolver's bound session id. GOAL #2394: an all-null
+        // override (the session-affine hand-over fallthrough) is no
+        // opinion — the resolver's binding stands, so the call rides the
+        // session's own cache bucket.
+        if (StreamCacheRouting.hasExplicitRouting) {
           return inner(model, context, cancelToken: cancelToken);
         }
         return StreamCacheRouting.runWith(

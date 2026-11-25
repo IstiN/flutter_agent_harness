@@ -127,6 +127,15 @@ extension AgentCliRun on AgentCli {
   /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
   /// compaction of an already-over-window transcript.
   Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    // GOAL #2394: the engine setting decides whether this turn's requests
+    // carry record tags (structured only) — before the pre-flight
+    // compaction so a merged hand-over sees the same policy.
+    _syncRecordTags();
+    // GOAL #2394 (D8/D9): a user turn advanced the hysteresis clock; a
+    // post-run hand-over still in flight is AWAITED here so its records
+    // land before this turn's pre-flight measures the transcript.
+    if (!isAutoContinue) _handOverTrigger.onTurn();
+    await _handOverTrigger.gate.wait();
     // Wall-clock catch-up (issue #259): records that came due while the
     // host slept (or while no tick ran) are delivered HERE, at turn start —
     // awaited before the prompt so this turn's first steering poll already
@@ -353,7 +362,9 @@ extension AgentCliRun on AgentCli {
     // the window is open the gate skips the encode entirely.
     await _persistJobBoard();
     try {
-      await _maybeAutoCompact();
+      // GOAL #2394 (D9): the post-run call runs under the `compacting`
+      // gate — a prompt arriving meanwhile waits for it.
+      await _handOverTrigger.gate.run(() => _maybeAutoCompact(postRun: true));
     } on CancelledException {
       // Abort during the POST-RUN compaction window (issue #1085 round-4
       // review): the turn has already settled and reported its outcome —

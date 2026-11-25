@@ -42,6 +42,14 @@ void main() {
     var nextFile = 1;
     List<AssistantMessageEvent> answer(Context context) {
       final system = context.systemPrompt ?? '';
+      // GOAL #2394: the merged hand-over call (the default without a smol
+      // role) answers with a valid transfer; no hides, so one fold record
+      // per pass.
+      if (isHandOverCall(context)) {
+        return textTurn(
+          handOverReplyFor(context, text: 'checkpoint: the file counting'),
+        );
+      }
       if (system.contains('context-hygiene judge')) {
         return textTurn('[2, 3, 4, 5, 6, 7, 8, 9, 10, 11]');
       }

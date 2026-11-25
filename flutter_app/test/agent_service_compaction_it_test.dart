@@ -26,16 +26,23 @@ import 'package:fa/services/task_models_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// A text responder that records which MODEL ids it served.
+import 'hand_over_fixture.dart';
+
+/// A text responder that records which MODEL ids it served; a merged
+/// hand-over call (GOAL #2394) gets a valid transfer built from its own
+/// instruction instead of the bare text.
 StreamFunction _recordingText(List<String> seen, String text) {
   return (model, context, {cancelToken}) {
     final stream = AssistantMessageEventStream();
     seen.add(model.id);
+    final reply = isHandOverCall(context)
+        ? handOverReplyFor(context, text: text)
+        : text;
     stream.push(
       DoneEvent(
         reason: StopReason.stop,
         message: AssistantMessage(
-          content: [TextContent(text: text)],
+          content: [TextContent(text: reply)],
           api: model.api,
           provider: model.provider,
           model: model.id,
@@ -156,9 +163,29 @@ void main() {
       await service.sendText('y' * 600);
       await service.waitForIdle();
       expect(smolSeen, isEmpty, reason: 'under the threshold: no calls yet');
+      // GOAL #2394 (E21): the last main send captured S0 …
+      expect(
+        service.agentForTest.requestSnapshots.validFor(
+          service.agentForTest.state.model,
+        ),
+        isNotNull,
+      );
 
       await service.sendText('z' * 600);
       await service.waitForIdle();
+      // … and the post-run compaction dropped it: the next pre-flight
+      // goes standalone until the next main send re-captures.
+      expect(
+        service.agentForTest.requestSnapshots.validFor(
+          service.agentForTest.state.model,
+        ),
+        isNull,
+        reason: 'S0 after a run is stale',
+      );
+      expect(
+        service.agentForTest.requestSnapshots.invalidReason,
+        'compaction run',
+      );
 
       // A branch_summary-class record landed: the structured checkpoint
       // marker heads the rebuilt chat.
@@ -171,6 +198,25 @@ void main() {
   });
 
   group('IT-2 — failure surfacing (AC2, E3, E4)', () {
+    test('GOAL #2394 (review round 1, host parity): the compaction tuning '
+        'knobs reach the app wiring', () {
+      final service =
+          AgentService(
+              agent: _agent(_recordingText(<String>[], 'reply')),
+              env: MemoryExecutionEnv(),
+              sessionsRoot: '/sessions',
+            )
+            ..compactionTuningOverride = const CompactionTuning(
+              softRatio: 0.5,
+              handOverMaxTokens: 2048,
+              handOverHysteresisTurns: 7,
+            );
+      final wiring = service.compactionWiringForTest;
+      expect(wiring.softRatio, 0.5);
+      expect(wiring.handOverMaxTokens, 2048);
+      expect(wiring.handOverHysteresisTurns, 7);
+    });
+
     test('a failing summarizer surfaces the in-chat notice and the session '
         'stays usable', () async {
       final seen = <String>[];
@@ -393,6 +439,117 @@ void main() {
       );
       expect(streamCalls, greaterThanOrEqualTo(2));
     });
+
+    test(
+      'E2E-04/IT-19 host leg: a prompt sent while the post-run hand-over '
+      'is in flight WAITS for it — records land before the next request',
+      () async {
+        final order = <String>[];
+        final handOverStarted = Completer<void>();
+        final releaseHandOver = Completer<void>();
+        var mainCalls = 0;
+        AssistantMessageEventStream gatedHandOverStream(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          final stream = AssistantMessageEventStream();
+          if (isHandOverCall(context)) {
+            order.add('handover:start');
+            handOverStarted.complete();
+            // Hold the merged call in flight until the test releases it.
+            releaseHandOver.future.then((_) {
+              final reply = handOverReplyFor(context, text: 'checkpoint: held');
+              stream.push(
+                DoneEvent(
+                  reason: StopReason.stop,
+                  message: AssistantMessage(
+                    content: [TextContent(text: reply)],
+                    api: model.api,
+                    provider: model.provider,
+                    model: model.id,
+                    usage: Usage.zero,
+                    stopReason: StopReason.stop,
+                    timestamp: DateTime.now(),
+                  ),
+                ),
+              );
+              order.add('handover:done');
+              stream.end();
+            });
+            return stream;
+          }
+          mainCalls++;
+          order.add('main:$mainCalls');
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: AssistantMessage(
+                content: [TextContent(text: 'r' * 1200)],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.now(),
+              ),
+            ),
+          );
+          stream.end();
+          return stream;
+        }
+
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _agent(gatedHandOverStream, contextWindow: 512),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        addTearDown(service.dispose);
+        await service.initialize();
+
+        // Two ~1200-char replies push the transcript into the band: the
+        // post-run funnel arms the merged hand-over after turn 2 settles.
+        await service.sendText('a' * 200);
+        await service.waitForIdle();
+        // NOT awaited past idle: the post-run compaction starts inside the
+        // settle listener while this future is still resolving.
+        final second = service.sendText('b' * 200);
+        await handOverStarted.future;
+        expect(order, contains('handover:start'));
+
+        // D9/E2E-04: the prompt sent MID-COMPACTION must queue on the gate —
+        // no third main request can start before the hand-over settles.
+        final third = service.sendText('ping');
+        for (var i = 0; i < 12; i++) {
+          await Future<void>.delayed(Duration.zero);
+          expect(
+            order.contains('main:3'),
+            isFalse,
+            reason:
+                'the compacting gate must hold the prompt '
+                '(order so far: $order)',
+          );
+        }
+        releaseHandOver.complete();
+        await second;
+        await third;
+        await service.waitForIdle();
+
+        // The prompt held by the gate was queued for the next turn (the
+        // settle phase still owns the agent) — a follow-up send drains it,
+        // and THAT request is the ordering proof: it cannot ride the
+        // pre-compaction projection.
+        await service.sendText('go');
+        await service.waitForIdle();
+        expect(
+          order.indexOf('handover:done'),
+          lessThan(order.indexOf('main:3')),
+          reason: 'order: $order',
+        );
+        expect(service.error, isNull);
+      },
+    );
   });
 
   group('IT-4 — the legacy smol slot (gh-1077 fix contract 1, on-device '
@@ -494,7 +651,12 @@ void main() {
         AppLog.dump().substring(logBefore),
         isNot(contains('smol role unresolved')),
       );
-      expect(service.messages.first.content, contains('ckpt·'));
+      // GOAL #2394: the merged hand-over's tail-layout checkpoint — the
+      // range start carries the `[expand a-b]` pointer, the transfer text
+      // (with its `ckpt·` header) renders at the record's own position.
+      expect(service.messages.first.content, contains('[expand '));
+      expect(service.messages.last.content, contains('ckpt·'));
+      expect(service.messages.last.content, contains('main summary'));
       expect(service.error, isNull);
     });
 
@@ -529,7 +691,12 @@ void main() {
 
       // The resolver cannot serve an empty model id either way, and the
       // legacy build's isEmpty guard rejects the slot — main summarizes.
-      expect(service.messages.first.content, contains('ckpt·'));
+      // GOAL #2394: the merged hand-over's tail-layout checkpoint — the
+      // range start carries the `[expand a-b]` pointer, the transfer text
+      // (with its `ckpt·` header) renders at the record's own position.
+      expect(service.messages.first.content, contains('[expand '));
+      expect(service.messages.last.content, contains('ckpt·'));
+      expect(service.messages.last.content, contains('main summary'));
       expect(service.error, isNull);
       expect(
         service.messages.any(
@@ -540,6 +707,108 @@ void main() {
         isFalse,
       );
     });
+  });
+  group('IT-5 — GOAL #2394 review round 1 (D9/E21)', () {
+    test(
+      'a prompt sent while the post-run hand-over is in flight waits '
+      'for it: the call finishes, its record lands, THEN the run starts',
+      () async {
+        final release = Completer<void>();
+        var mainCalls = 0;
+        var handOverCalls = 0;
+        AssistantMessage replyFor(Model model, String text) => AssistantMessage(
+          content: [TextContent(text: text)],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        final service =
+            AgentService(
+                agent: _agent((model, context, {cancelToken}) {
+                  final stream = AssistantMessageEventStream();
+                  void emit(String text) {
+                    stream.push(
+                      DoneEvent(
+                        reason: StopReason.stop,
+                        message: replyFor(model, text),
+                      ),
+                    );
+                    stream.end();
+                  }
+
+                  if (isHandOverCall(context)) {
+                    // The post-run call parks until the test releases it.
+                    handOverCalls++;
+                    unawaited(
+                      release.future.then(
+                        (_) => emit(handOverReplyFor(context, text: 'handed')),
+                      ),
+                    );
+                    return stream;
+                  }
+                  mainCalls++;
+                  emit(mainCalls == 1 ? 'A' * 600 : 'second reply');
+                  return stream;
+                }),
+                env: MemoryExecutionEnv(),
+                sessionsRoot: '/sessions',
+              )
+              // The post-run soft line sits at 5 % of the window and the
+              // keep-recent boundary at 24 tokens: the first run alone arms
+              // the merged hand-over with a foldable range (hysteresis is
+              // open — no run yet).
+              ..compactionTuningOverride = const CompactionTuning(
+                softRatio: 0.05,
+                keepRecentTokens: 24,
+              );
+        addTearDown(service.dispose);
+        await service.initialize();
+
+        unawaited(service.sendText('a' * 600));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(handOverCalls, 1, reason: 'the post-run call is in flight');
+        expect(service.handOverTrigger.gate.isCompacting, isTrue);
+
+        unawaited(service.sendText('second'));
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        // D9: the prompt is QUEUED behind the gate — no second main call,
+        // no second user record yet.
+        expect(mainCalls, 1);
+        expect(
+          service.messages.where(
+            (m) => m.role == 'user' && m.content == 'second',
+          ),
+          isEmpty,
+        );
+
+        release.complete();
+        await service.waitForIdle();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await service.waitForIdle();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await service.waitForIdle();
+        expect(mainCalls, 2);
+        expect(service.error, isNull);
+        final contents = [for (final m in service.messages) m.content];
+        final transfer = contents.indexWhere(
+          (c) => c.contains('## Open User Requests'),
+        );
+        final second = contents.indexOf('second');
+        expect(transfer, greaterThanOrEqualTo(0));
+        expect(second, greaterThan(transfer), reason: 'record before prompt');
+        expect(contents.last, 'second reply');
+        // E21: the second main send captured a FRESH S0 over the epoch
+        // the hand-over produced (user, reply, transfer record …).
+        final fresh = service.agentForTest.requestSnapshots.validFor(
+          service.agentForTest.state.model,
+        );
+        expect(fresh, isNotNull);
+        expect(fresh!.prefixLength, greaterThanOrEqualTo(3));
+      },
+    );
   });
 }
 

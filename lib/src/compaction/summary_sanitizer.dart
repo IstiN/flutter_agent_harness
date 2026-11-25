@@ -200,14 +200,21 @@ SanitizedSummary sanitizeSummary(
 // ---------------------------------------------------------------------------
 // The provenance belt (gh-2103) — no laundering through user-intent sections
 // ---------------------------------------------------------------------------
+/// Exported for the hand-over gate ([`verifyOpenUserRequests`]): both
+/// MUST agree on what a heading is — hashes need at least one space, so
+/// a `##Open User Requests` without it is no heading for the belt AND
+/// for the gate (review round 1: a gate that accepted it persisted a
+/// section the belt never graded).
+const String userIntentHeadingPrefix = r'^(?:#{1,6}\s+)?';
 
 /// Headings whose digest sections claim USER INTENT: the classic
 /// checkpoint's `## Open User Requests`, the split-turn prefix's
 /// `## Original Request`, and the structured checkpoint's bare
 /// `open asks:` heading. Only inside these sections can text pose AS the
 /// user; everywhere else tool-derived quotes are legitimate context.
-final RegExp _userIntentHeading = RegExp(
-  r'^(?:#{1,6}\s+)?(?:open user requests\b|original request\b|open asks\b\s*:)',
+final RegExp userIntentHeading = RegExp(
+  userIntentHeadingPrefix +
+      r'(?:open user requests\b|original request\b|open asks\b\s*:)',
   caseSensitive: false,
   multiLine: true,
 );
@@ -245,7 +252,7 @@ String _flattenText(String text) => text.replaceAll(_whitespaceRun, ' ').trim();
 
 /// The gh-2103 belt over the user-intent sections of [text].
 ///
-/// Within a section (from a [_userIntentHeading] line to the next markdown
+/// Within a section (from a [userIntentHeading] line to the next markdown
 /// heading, a `covers:` line, or — for the bare `open asks:` shape — the
 /// first unindented prose line):
 ///
@@ -273,7 +280,7 @@ String _beltUserIntentSections(
   SummaryOriginEvidence? origins,
   Set<String> protectedLines,
 ) {
-  if (!_userIntentHeading.hasMatch(text)) return text;
+  if (!userIntentHeading.hasMatch(text)) return text;
   final lines = text.split('\n');
   final out = <String>[];
   final pin = _BeltPinEnvelope();
@@ -287,7 +294,7 @@ String _beltUserIntentSections(
       i++;
       continue;
     }
-    if (!_userIntentHeading.hasMatch(trimmed)) {
+    if (!userIntentHeading.hasMatch(trimmed)) {
       out.add(line);
       i++;
       continue;

@@ -1,3 +1,5 @@
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart'
+    show RecordSeqIndex;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -147,13 +149,15 @@ void main() {
   }
 
   /// Builds an agent + controller over a scripted model. [turns] are replayed
-  /// in order; the host sink mirrors CLI persistence.
+  /// in order; the host sink mirrors CLI persistence. [onRewindApplied]
+  /// composes over the default persisted-count cursor update.
   Future<({Agent agent, CheckpointRewindController controller, _TestHost host})>
   harness(
     _FakeStreamFunction fake, {
     Session? session,
     bool withSession = true,
     CheckpointAutoCloseCallback? onAutoClose,
+    void Function(int messageCount)? onRewindApplied,
   }) async {
     final host = _TestHost(withSession ? session ?? await newSession() : null);
     late final CheckpointRewindController controller;
@@ -167,7 +171,10 @@ void main() {
     controller = CheckpointRewindController(
       agent: agent,
       sink: host.sink,
-      onRewindApplied: (count) => host.persistedCount = count,
+      onRewindApplied: (count) {
+        host.persistedCount = count;
+        onRewindApplied?.call(count);
+      },
       onAutoClose: onAutoClose,
     );
     registry.registerAll(controller.tools);
@@ -307,6 +314,59 @@ void main() {
   });
 
   group('rewind application', () {
+    test('GOAL #2394 AC2: an applied rewind drops S0 — the rewound-away '
+        'prefix must never ride a merged hand-over', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'probe')]),
+        _toolTurn([probeCall('/tmp/x', 'c2')]),
+        _toolTurn([rewindCall('FINDINGS: stale cache.', 'c3')]),
+        _textTurn('continuing'),
+      ]);
+      final h = await harness(fake);
+      h.agent.requestSnapshots.capture(
+        RequestSnapshot(
+          model: _model,
+          messages: List.of(h.agent.state.messages),
+          systemPrompt: 'test system prompt',
+          tools: const [],
+          seqMap: TranscriptSeqMap(
+            headSeqs: const [],
+            index: RecordSeqIndex(const []),
+          ),
+          sentAt: DateTime.utc(2026),
+        ),
+      );
+      expect(h.agent.requestSnapshots.validFor(_model), isNotNull);
+      // The window that matters: between the rewind (applied on turn end,
+      // before any post-run compaction of that turn) and the next main
+      // send — S0 must already be gone there.
+      final seenAtTurnEnd = <String?>[];
+      h.agent.subscribe((event, _) async {
+        if (event is TurnEndEvent) {
+          seenAtTurnEnd.add(h.agent.requestSnapshots.invalidReason);
+        }
+      });
+
+      await h.agent.prompt('start');
+
+      expect(h.controller.lastCompletedRewind, isNotNull);
+      expect(seenAtTurnEnd, contains('checkpoint rewind'));
+      // The continued turn's own send re-captured a FRESH S0 over the
+      // pruned projection (checkpoint prefix + report, no probe detour).
+      final current = h.agent.requestSnapshots.current!;
+      expect(current.messages, hasLength(4));
+      expect(
+        [
+          for (final m in current.messages.whereType<ToolResultMessage>())
+            m.toolName,
+        ],
+        [checkpointToolName],
+        reason:
+            'only the checkpoint result survives; the probe detour is '
+            'not in S0',
+      );
+    });
+
     test('drops post-mark messages, keeps the report verbatim, and preserves '
         'the detour in the session tree', () async {
       const report = 'FINDINGS: the cache is stale; key points: a, b, c.';
@@ -436,6 +496,40 @@ void main() {
       expect(messages, hasLength(5));
       expect((messages[3] as UserMessage).content, report);
       expect(fake.contexts.last.messages, hasLength(4));
+    });
+
+    test('gh-2407 thread 1: a rewind invalidates the request snapshot '
+        '(S0) at the rewind boundary', () async {
+      const report = 'rewind invalidation findings';
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'probe')]),
+        _toolTurn([probeCall('/tmp/x', 'c2')]),
+        _toolTurn([rewindCall(report, 'c3')]),
+        _textTurn('continuing'),
+      ]);
+      // Observed AT the rewind boundary: the host hook runs inside
+      // `_applyRewind` — the store must already be dropped there (the
+      // continuing send re-captures, so only this window can catch a
+      // stale pre-rewind S0 feeding a pre-flight hand-over).
+      Agent? agent;
+      final invalidReasonAtRewind = <String?>[];
+      final h = await harness(
+        fake,
+        onRewindApplied: (count) =>
+            invalidReasonAtRewind.add(agent?.requestSnapshots.invalidReason),
+      );
+      agent = h.agent;
+      await h.agent.prompt('start');
+
+      expect(invalidReasonAtRewind, hasLength(1));
+      expect(
+        invalidReasonAtRewind.single,
+        isNotNull,
+        reason:
+            'the rewind replaced the projection — S0 must drop before '
+            'the host cursor update, never survive to a pre-flight',
+      );
+      expect(h.agent.state.messages, hasLength(5));
     });
 
     test('checkpoint in one run, rewind in a later run', () async {

@@ -40,6 +40,8 @@ final class CopilotOptions {
     this.cancelToken,
     this.sessionId,
     this.cacheRetention,
+    this.maxTokens,
+    this.initiator,
   });
 
   /// The GitHub credential: an OAuth token (`gho_`/`ghu_`) is exchanged
@@ -59,6 +61,16 @@ final class CopilotOptions {
 
   /// Cache retention (`short`/`long`/`none`).
   final String? cacheRetention;
+
+  /// GOAL #2394 (D10): an explicit output-token budget (the hand-over
+  /// call's `compaction.handOver.maxTokens`); null keeps the model cap.
+  final int? maxTokens;
+
+  /// GOAL #2394 (D10): the pinned `x-initiator` (`agent`/`user`) — the
+  /// value the request's cached prefix (S0) rode, so a call that ends
+  /// with an appended user instruction still lands in the same bucket.
+  /// Null derives the initiator from the last message's role as before.
+  final String? initiator;
 }
 
 /// Streams an assistant message from GitHub Copilot.
@@ -308,7 +320,7 @@ OpenAICompletionsOptions _completionsOptions(
       ...copilotRequestHeaders(copilotToken: copilotToken),
       // agent iff the model's own turn continues (assistant/toolResult is
       // the last message); user for a fresh user turn.
-      'x-initiator': copilotInitiatorFor(context.messages),
+      'x-initiator': options.initiator ?? copilotInitiatorFor(context.messages),
       // Vision only when the request actually carries images (a text-only
       // model has its images downgraded by the adapter — no header then).
       if (model.input.contains('image') &&
@@ -318,6 +330,7 @@ OpenAICompletionsOptions _completionsOptions(
     cancelToken: options.cancelToken,
     sessionId: options.sessionId,
     cacheRetention: options.cacheRetention,
+    maxTokens: options.maxTokens,
   );
 }
 

@@ -58,6 +58,9 @@ const overridablePromptNames = <String, String>{
       'System prompt of the structured-engine hide judge (issue #148).',
   'compaction/structured_checkpoint':
       'Structured-engine checkpoint instructions (issue #148).',
+  'compaction/hand_over':
+      'GOAL #2394 merged hand-over instruction (appended to the S0 '
+      'prefix).',
   'compaction/pinned_operative':
       'gh-1409 verbatim-preserve duty for compaction-pinned skill '
       'operative lines.',

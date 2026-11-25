@@ -483,4 +483,50 @@ void main() {
       expect(serialized, isNot(contains('records: ')));
     });
   });
+
+  group('formatCompactionReport: GOAL #2394 hand-over pass (AC14)', () {
+    final handOverPass = AutoCompactorPass(
+      pass: 1,
+      tokensBefore: 120,
+      tokensAfter: 640,
+      fallback: 'structured·hand-over',
+      ok: true,
+      summary: '## Open User Requests\n- none',
+      hiddenRecords: 2,
+      summarizedMessages: 4,
+      handOver: const HandOverPassMetrics(
+        bucket: 'warm',
+        calls: 1,
+        nudges: 0,
+        budgetRetries: 0,
+        hideList: '1 snapped',
+        transfer: 'text',
+      ),
+    );
+
+    test('details: true carries the hand-over metrics line', () {
+      final lines = formatCompactionReport(
+        handOverPass,
+        auto: true,
+        details: true,
+      );
+      expect(lines.first, 'auto-compacted · structured·hand-over');
+      expect(
+        lines,
+        contains(
+          'hand-over: merged · bucket warm · calls 1 · '
+          'hide list 1 snapped · nudges 0 · budget retries 0 · transfer text',
+        ),
+      );
+    });
+
+    test('the default report stays the single marker line', () {
+      final lines = formatCompactionReport(handOverPass, auto: true);
+      expect(lines, hasLength(1));
+      expect(
+        lines.single,
+        startsWith('auto-compacted · structured·hand-over: 120 → 640'),
+      );
+    });
+  });
 }

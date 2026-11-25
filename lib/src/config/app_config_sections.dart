@@ -35,6 +35,7 @@ library;
 import 'package:yaml/yaml.dart';
 
 import '../cli/cli_config.dart' show parseProviderTimeouts;
+import '../compaction/tuning.dart' show CompactionTuning, mergeCompactionTuning;
 import '../exceptions.dart';
 import '../messaging/messaging_config.dart';
 import '../model_roles/model_roles.dart';
@@ -61,6 +62,7 @@ final class AppFahSections {
     this.providerTimeouts,
     this.subagents,
     this.messaging,
+    this.compactionTuning,
     this.loadMode = AgentLoadMode.defaultMode,
     this.mcpConfigured = false,
     this.warnings = const [],
@@ -96,6 +98,14 @@ final class AppFahSections {
   /// budget, and the smart loop-detection thresholds. Null (absent
   /// section — the defaults apply).
   final MessagingConfig? messaging;
+
+  /// The `compaction:` section's tuning keys (gh-2098; GOAL #2394:
+  /// `softRatio`, `handOver.maxTokens`, `handOver.hysteresisTurns`),
+  /// both scopes merged the way the CLI merges them (`mergeCompactionTuning`,
+  /// global < project, deepest key wins). Null when neither scope states
+  /// one — the structured defaults apply. Review round 1: the app used to
+  /// run the defaults forever while the CLI honored user config.
+  final CompactionTuning? compactionTuning;
 
   /// The resolved tool-load preset: `FA_AGENT_MODE` env > `agent.mode`
   /// config (the app has no `--omp` flag; the CLI's flag rung is its own).
@@ -148,6 +158,13 @@ AppFahSections parseAppConfigSections({
   final providerTimeouts = _parseTimeoutsSection(user, userSource, warnings);
   final subagents = _parseSubagentsSection(user, userSource, warnings);
   final messaging = _parseMessagingSection(user, userSource, warnings);
+  final compactionTuning = _parseCompactionTuning(
+    user,
+    userSource,
+    project,
+    projectSource,
+    warnings,
+  );
   final loadMode = _resolveLoadMode(envMode, user, userSource, warnings);
   // Inventory #2 interim: `mcp:` stays CLI-only on mobile — say so instead
   // of silently ignoring it.
@@ -167,6 +184,7 @@ AppFahSections parseAppConfigSections({
     providerTimeouts: providerTimeouts,
     subagents: subagents,
     messaging: messaging,
+    compactionTuning: compactionTuning,
     loadMode: loadMode,
     mcpConfigured: mcpConfigured,
     warnings: warnings,
@@ -353,6 +371,36 @@ MessagingConfig? _parseMessagingSection(
     warnings.add('$userSource messaging section skipped: ${error.message}');
     return null;
   }
+}
+
+/// The `compaction:` tuning keys — the CLI's own strict parser
+/// ([CompactionTuning.fromSection]) on both scopes, merged like the CLI
+/// ([mergeCompactionTuning]); a bad scope warns and is skipped (AC7),
+/// never poisoning the other scope. The engine key itself rides the
+/// app's compaction-engine loader.
+CompactionTuning? _parseCompactionTuning(
+  YamlMap? user,
+  String userSource,
+  YamlMap? project,
+  String projectSource,
+  List<String> warnings,
+) {
+  CompactionTuning? parse(YamlMap? doc, String source) {
+    final node = doc?['compaction'];
+    if (node == null) return null;
+    try {
+      return CompactionTuning.fromSection(node, label: source);
+    } on ConfigException catch (error) {
+      warnings.add('$source compaction section skipped: ${error.message}');
+      return null;
+    }
+  }
+
+  final global = parse(user, userSource);
+  final local = parse(project, projectSource);
+  if (global == null) return local;
+  if (local == null) return global;
+  return mergeCompactionTuning(global: global, project: local);
 }
 
 /// agent.mode — env first (the app has no --omp flag), then the config

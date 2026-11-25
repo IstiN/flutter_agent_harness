@@ -31,6 +31,8 @@ import '../providers/payload_stall.dart'
     show lastOutboundEstimateBytes, payloadStallScaleFor;
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/request_snapshot.dart' show RequestSnapshotStore;
 import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
@@ -115,6 +117,14 @@ final class AgentState {
   /// Error message from the most recent failed or aborted assistant turn.
   String? get errorMessage => _errorMessage;
   String? _errorMessage;
+
+  /// GOAL #2394: the tag epoch of the current transcript — the record
+  /// alias every `state.messages` entry projects from (`null` = no tags:
+  /// a classic-engine host, or a transcript not built from the session
+  /// projection). Set by [refreshAgentState] / the host alongside
+  /// `messages`; the loop stamps request COPIES from it, never the
+  /// transcript.
+  TranscriptSeqMap? recordSeqs;
 }
 
 /// Placeholder model mirroring pi's `DEFAULT_MODEL`, used when the caller
@@ -322,6 +332,29 @@ class Agent {
   /// re-reports an orphan it already reported (AC6).
   Set<String> get reportedOrphanKeys => _reportedOrphanKeys;
   final Set<String> _reportedOrphanKeys;
+
+  /// GOAL #2394 (AC2): the session's request snapshots (S0) — the last
+  /// main send as sent, overwritten at every send seam and read by the
+  /// compaction host for the cache-affine hand-over call. Hosts
+  /// invalidate it on branch switch / checkpoint rewind / session switch
+  /// (`reset`), after the over-window relief and after any compaction
+  /// run (a hidden range can land before a ladder kill — success is not
+  /// the criterion, "may have appended" is).
+  final RequestSnapshotStore requestSnapshots = RequestSnapshotStore();
+
+  /// GOAL #2394 (AC8, E37): whether main requests carry the `m<seq>`
+  /// record tags — only under the structured compaction engine. OFF by
+  /// default: a host opts in when it resolves the structured engine (the
+  /// CLI and the Flutter app sync it from their engine setting); a
+  /// classic-engine host keeps the pre-#2394 wire byte-identically — no
+  /// tags, no merged hand-over, one cache invalidation at the switch.
+  bool recordTagsEnabled = false;
+
+  /// Drops the current request snapshot — hosts call it when the
+  /// projection it described is gone (branch switch, checkpoint restore,
+  /// a successful compaction run).
+  void invalidateRequestSnapshot(String reason) =>
+      requestSnapshots.invalidate(reason);
 
   /// Issue #1750: run-lifetime learned image caps, keyed by
   /// [imageCapLatchKey] — the loop latches a provider-refused cap here;
@@ -596,7 +629,11 @@ class Agent {
     return _activeRun?.completer.future ?? Future<void>.value();
   }
 
-  /// Clear transcript state, runtime state, and queued messages.
+  /// Clear transcript state, runtime state, and queued messages — and
+  /// the request snapshot (GOAL #2394 AC2): the projection every captured
+  /// request described is gone with the transcript, so a host that
+  /// switches sessions, hands off or starts fresh never lets a stale S0
+  /// ride the next merged hand-over.
   void reset() {
     _state._messages = [];
     _state._isStreaming = false;
@@ -604,6 +641,7 @@ class Agent {
     _state._pendingToolCalls.clear();
     _state._errorMessage = null;
     clearAllQueues();
+    requestSnapshots.invalidate('agent reset');
   }
 
   /// Start a new prompt from plain text.
@@ -786,6 +824,8 @@ class Agent {
           : (context) => prepareNextTurn?.call(context),
       toolMisuseBreaker: toolMisuseBreaker,
       reportedOrphanKeys: _reportedOrphanKeys,
+      recordSeqs: recordTagsEnabled ? _state.recordSeqs : null,
+      requestSnapshots: requestSnapshots,
       imageCapLatches: _imageCapLatches,
       imageRecovery: imageRecovery,
       getSteeringMessages: () async {

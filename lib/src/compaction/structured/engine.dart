@@ -17,6 +17,14 @@
 /// summary then renders under structured projection as an opaque
 /// `legacy-ckpt` marker segment (flowchart S7).
 ///
+/// GOAL #2394 (the merged mode): when the host hands the engine a valid
+/// request snapshot (S0) and a hand-over call, ONE call over the S0 prefix
+/// replaces the two ladders above — the model proposes hides and writes
+/// the transfer text in a single answer, the engine disposes (see
+/// `engine_hand_over.dart`). The judge and digest adapters of the two
+/// ladders are never called on that path, and no outcome of the call
+/// switches engine or mode (I9).
+///
 /// Failure-safety contract mirrors the classic engine: a failed pass
 /// appends NOTHING; `state.messages` is only rebuilt after a successful
 /// append.
@@ -40,7 +48,14 @@ import 'ledger.dart';
 import 'markers.dart';
 import 'projection.dart';
 import '../cache_policy.dart';
+import '../record_tag.dart' show stripRecordTags;
+import '../request_snapshot.dart' show RequestSnapshot;
+import 'hand_over.dart';
+import 'hand_over_dispose.dart';
+import 'hand_over_ladder.dart';
 import '../../exceptions.dart' show CompactionException;
+
+part 'engine_hand_over.dart';
 
 /// Progress surface for the structured engine.
 abstract interface class StructuredCompactorHooks {
@@ -74,9 +89,11 @@ final class StructuredCompactionPass {
     this.basisReadTokens,
     this.durationMs,
     this.usage,
+    this.handOver,
   });
 
-  /// `'hide'`, `'hide-fallback'`, `'hide-lru'`, `'checkpoint'`,
+  /// `'hand-over'` (GOAL #2394 merged pass), `'hide'`, `'hide-fallback'`,
+  /// `'hide-lru'`, `'checkpoint'`,
   /// `'checkpoint-escalation'`, or `'skipped:judge-latch'`.
   final String kind;
 
@@ -159,6 +176,11 @@ final class StructuredCompactionPass {
   /// metrics. Null when the pass made no metered call (or no usage was
   /// reported).
   final CompactionUsageTotals? usage;
+
+  /// GOAL #2394 (AC14): the merged hand-over pass's metrics (mode,
+  /// bucket, real calls, cache, the hide list's buckets, nudges, budget
+  /// retries). Null on every other pass kind.
+  final HandOverPassMetrics? handOver;
 }
 
 /// Rebuilds [state.messages] from the session projection. gh-2237: the
@@ -178,7 +200,12 @@ final class StructuredCompactionPass {
 /// and the agent-initiated hide use (issue #1379 tier 2) — a single
 /// contract, not two copies.
 Future<void> refreshAgentState(Session session, AgentState state) async {
-  state.messages = await session.buildContextMessages();
+  // GOAL #2394: one build feeds the transcript AND its tag epoch — a new
+  // epoch starts here (every record the projection renders is taged with
+  // its alias again; the previous run's live edge joins the tagged head).
+  final projection = await session.buildTranscriptProjection();
+  state.messages = projection.messages;
+  state.recordSeqs = projection.seqMap;
 }
 
 /// The structured compaction engine.
@@ -206,6 +233,9 @@ final class StructuredCompactor {
     this.pinnedOperativeBlock,
     this.pinnedLines = const {},
     this.usage,
+    this.handOver,
+    this.requestSnapshot,
+    this.handOverPrompt = '',
   });
 
   /// The session being compacted.
@@ -303,6 +333,23 @@ final class StructuredCompactor {
   /// metrics).
   final CompactionUsageAccumulator? usage;
 
+  /// GOAL #2394: the merged hand-over call (`handOverCallAdapter`) over
+  /// the S0 prefix. Non-null together with [requestSnapshot] selects the
+  /// merged run (`selectCompactionMode` decided upstream — never an
+  /// outcome of the run): ONE call, the judge and digest ladders are
+  /// skipped. `null` = the standalone ladder (byte-identical to the
+  /// pre-#2394 engine).
+  final HandOverCall? handOver;
+
+  /// GOAL #2394: the last main request as sent (S0) — the merged call's
+  /// prefix, its frozen alias index, its origin evidence.
+  final RequestSnapshot? requestSnapshot;
+
+  /// GOAL #2394: the hand-over instruction template
+  /// (`CompactionPrompts.handOver`); `{{…}}` tokens are substituted at
+  /// the call site.
+  final String handOverPrompt;
+
   /// Consecutive judge failures before the deterministic fallback hide
   /// engages (issue #541): one retry, then the judge-less hide. The
   /// threshold itself is [judgeLatchAfter] — the same count persists
@@ -343,7 +390,7 @@ final class StructuredCompactor {
   /// compactor. A zero-pass `true` outcome carries [exitReason] — the
   /// deciding gate (gh-2237) — so the host can close the receipt chain
   /// honestly.
-  Future<bool> run({bool force = false}) async {
+  Future<bool> run({bool force = false, bool softTriggered = false}) async {
     exitReason = null;
     if (window <= 0) {
       exitReason = 'window disabled (window <= 0)';
@@ -358,37 +405,65 @@ final class StructuredCompactor {
     // the ledger cache (O(changed records)).
     await _refreshState();
     final trigger = window - settings.reserveTokens;
-    if (!force) {
-      // gh-2237: this is the exit that powered the silent loop — the
-      // engine deciding "nothing to do" against a basis the arming gate
-      // never measured. The reason rides [exitReason] into the host's
-      // terminal receipt. The basis binds once: the reason renders the
-      // SAME measurement the gate compared (gh-2237 rework review — one
-      // O(context) estimate, not two).
-      final basis = _requestTokens();
-      if (basis <= trigger) {
-        exitReason = 'basis $basis below trigger $trigger (trigger gate)';
-        return true;
-      }
+    if (_triggerGateDeclines(
+      trigger,
+      force: force,
+      softTriggered: softTriggered,
+    )) {
+      return true;
     }
     // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
     // expansion artifacts first — the oldest expand call/result pairs
     // re-fold into markers before the judge ever sees the ledger.
     await _runLruRehidePasses(trigger);
+    // GOAL #2394: the merged run — ONE hand-over call instead of the
+    // judge + digest ladders (and of the escalation's second call, E21).
+    // The hard gate was waived only when the host armed this run on the
+    // post-run soft line (AC11); the host's gate decided, so the pass
+    // runs.
+    if (handOver != null && requestSnapshot != null) {
+      return _runHandOverPass(
+        this,
+        trigger: trigger,
+        force: force,
+        softTriggered: softTriggered,
+      );
+    }
     if (!await _runHidePasses(trigger)) return false;
     if (!await _runCheckpointPasses(trigger)) return false;
-    // gh-2044 fragile-band escalation: an automatic run that settled with
-    // less than one full reserve of headroom deepens once through the
-    // checkpoint machinery, whether or not hideable entries remain. The
-    // deterministic fallback (issue #541) and the pass loops stop at the
-    // trigger, so a degraded run ducks under by a sliver and the next
-    // turn or two crosses the trigger again (sid 01a17c9c). Forced runs —
-    // manual `/compact` and the message-cap channel (`force || cap`) —
-    // keep their existing behavior; `maxCheckpointPasses == 0` keeps
-    // meaning "no checkpoint work".
+    return _escalateIfFragile(trigger, force: force);
+  }
+
+  /// The trigger gate (gh-2237): `true` when the run ends here with the
+  /// honest "nothing to do" — [exitReason] names the SAME measurement
+  /// the gate compared (one O(context) estimate, not two). Waived by
+  /// `force`, and by the host's post-run soft arm for the merged pass
+  /// only (GOAL #2394 AC11 — the standalone ladders keep their gate).
+  bool _triggerGateDeclines(
+    int trigger, {
+    required bool force,
+    required bool softTriggered,
+  }) {
+    if (force || (softTriggered && handOver != null)) return false;
+    final basis = _requestTokens();
+    if (basis > trigger) return false;
+    exitReason = 'basis $basis below trigger $trigger (trigger gate)';
+    return true;
+  }
+
+  /// gh-2044 fragile-band escalation: an automatic run that settled with
+  /// less than one full reserve of headroom deepens once through the
+  /// checkpoint machinery, whether or not hideable entries remain. The
+  /// deterministic fallback (issue #541) and the pass loops stop at the
+  /// trigger, so a degraded run ducks under by a sliver and the next
+  /// turn or two crosses the trigger again (sid 01a17c9c). Forced runs —
+  /// manual `/compact` and the message-cap channel (`force || cap`) —
+  /// keep their existing behavior; `maxCheckpointPasses == 0` keeps
+  /// meaning "no checkpoint work". Returns whether the context settled
+  /// at or below the trigger.
+  Future<bool> _escalateIfFragile(int trigger, {required bool force}) async {
     if (!force && maxCheckpointPasses > 0) {
-      final settled = _requestTokens();
-      final margin = trigger - settled;
+      final margin = trigger - _requestTokens();
       if (margin >= 0 && margin < settings.reserveTokens) {
         if (!await _runCheckpointEscalationPass(trigger, margin)) {
           return false;

@@ -142,9 +142,14 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    // The resume is real — the seeded history reached the request…
+    // The resume is real — the seeded history reached the request (the
+    // structured engine tags every epoch record `m<N> ` on the wire —
+    // GOAL #2394 record_tag; compare the record text under the tag)…
     expect(
-      stream.contexts.first.messages.whereType<UserMessage>().map(messageText),
+      stream.contexts.first.messages
+          .whereType<UserMessage>()
+          .map(messageText)
+          .map(stripRecordTags),
       contains('before the cut'),
     );
     // …the orphan was dropped from the payload…

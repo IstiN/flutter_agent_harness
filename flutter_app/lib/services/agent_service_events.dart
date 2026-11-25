@@ -235,7 +235,11 @@ extension AgentServiceEvents on AgentService {
       // The transcript stays in memory; the next run retries the
       // missed appends (see _persistedCount).
     }
-    final compacted = await _maybeAutoCompact();
+    // GOAL #2394 (D9): the post-run call runs under the `compacting`
+    // gate — a prompt sent meanwhile waits for it.
+    final compacted = await handOverTrigger.gate.run(
+      () => _maybeAutoCompact(postRun: true),
+    );
     // The loop's over-window guard stopped the run: once the
     // post-run compaction freed the window, continue the interrupted
     // turn on its own (once per user text) instead of idling with an
