@@ -61,6 +61,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCompactionEngine,
         loadProjectCompactionTuning,
         loadProjectContextWindowCap,
+        resolveContextWindowCap,
         loadProjectLoggingSection,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,

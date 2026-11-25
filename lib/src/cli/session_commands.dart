@@ -445,6 +445,16 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
+    // gh-241 follow-up #5b: one boot line naming the setting that won —
+    // the project `.fah/config.yaml` or the user file (both boot paths:
+    // interactive and headless).
+    final windowCap = config.contextWindowCap;
+    if (windowCap != null) {
+      _logDiagnostic(
+        'context window cap source=${config.contextWindowCapSource ?? 'user'} '
+        'window=$windowCap',
+      );
+    }
     // gh-1746 boot hygiene: resolve the resume target FIRST, then run the
     // opt-in sessions retention sweep (AC7). The sweeper must exempt the
     // session this process is about to open: its presence row registers

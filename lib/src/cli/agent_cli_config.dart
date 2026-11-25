@@ -131,6 +131,7 @@ final class AgentCliConfig {
     this.initialOverheadCalibration,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
+    this.contextWindowCapSource,
     this.stuckTool,
     this.foregroundCall,
     // gh-1577: the empty-hiccup retry knobs, threaded next to the loop's
@@ -303,6 +304,13 @@ final class AgentCliConfig {
   /// it raises the effective window to the served truth. `null` =
   /// uncapped.
   final int? contextWindowCap;
+
+  /// gh-241 follow-up #5b: which file set [contextWindowCap] —
+  /// `'project'` (`<project>/.fah/config.yaml`, the same loader the app
+  /// uses) or `'user'`; `null` when no cap applies. Logged at boot
+  /// (`context window cap source=… window=N`) so a live test can see
+  /// which setting won.
+  final String? contextWindowCapSource;
 
   /// Stuck-call supervision (`agent.stuckTool`, gh-1054): liveness
   /// heartbeats for long-running tool calls plus the autonomous

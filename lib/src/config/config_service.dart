@@ -59,6 +59,17 @@ import '../ttsr/ttsr.dart';
 /// Sections the PROJECT file participates in (each wins over the user file).
 const _projectSections = {'memory', 'cube', 'tools', 'compaction'};
 
+/// gh-241 follow-up #5b (parity with the app, owner live test): the ONE
+/// `agent.*` key the project file participates in — the CLI reads it
+/// through `loadProjectContextWindowCap`, exactly like the Flutter app.
+/// Every other `agent.*` key stays user-only (still dead config there).
+const _projectAgentKeys = {'agent.contextWindowCap'};
+
+/// Whether the project file is READ for [key] (a dotted config key).
+bool _projectParticipates(String key) =>
+    _projectSections.contains(key.split('.').first) ||
+    _projectAgentKeys.contains(key);
+
 /// Every top-level key the runtime config actually reads (the keys
 /// `CliConfig.fromYaml` consumes, plus the `roles:` group members). The
 /// source-text pin keeping this set honest lives in
@@ -315,12 +326,31 @@ final class ConfigService {
       final doc = _tryParse(projectText);
       if (doc != null) {
         for (final key in doc.keys) {
-          if (!_projectSections.contains('$key')) {
+          final name = '$key';
+          // `agent:` participates through `contextWindowCap` alone: name
+          // the OTHER agent keys, never the section as a whole.
+          final agentNode = name == 'agent' ? doc[key] : null;
+          if (agentNode is YamlMap) {
+            for (final sub in agentNode.keys) {
+              final subKey = 'agent.$sub';
+              if (_projectParticipates(subKey)) continue;
+              report.warnings.add(
+                ConfigDiagnostic(
+                  projectPath,
+                  '"$subKey" in the project file is dead config — of '
+                  '`agent.*` only agent.contextWindowCap is read from here',
+                ),
+              );
+            }
+            continue;
+          }
+          if (!_projectParticipates(name)) {
             report.warnings.add(
               ConfigDiagnostic(
                 projectPath,
                 '"$key" in the project file is dead config — only '
-                '${_projectSections.join('/')} are read from here',
+                '${_projectSections.join('/')}/agent.contextWindowCap are '
+                'read from here',
               ),
             );
           }
@@ -353,7 +383,7 @@ final class ConfigService {
         notApplicable: _mcpStdioNote(memberRefusal),
       );
     }
-    if (_projectSections.contains(top)) {
+    if (_projectParticipates(key)) {
       final projectDoc = await _readTextOrNull(projectConfigPath) ?? '';
       final projectValue = _walk(_tryParse(projectDoc), segments);
       if (projectValue != null) {
@@ -407,11 +437,14 @@ final class ConfigService {
     required String key,
   }) async {
     final resolved = await resolveWriteScope(scope, key: key);
-    if (resolved == ConfigScope.project &&
-        !_projectSections.contains(segments.first)) {
+    if (resolved == ConfigScope.project && !_projectParticipates(key)) {
+      final ofAgent = segments.first == 'agent'
+          ? ' (of `agent.*` only agent.contextWindowCap)'
+          : '';
       throw ConfigException(
-        '"${segments.first}" is only read from the user file — the project '
-        'file participates in ${_projectSections.join('/')} only. Write it '
+        '"$key" is only read from the user file — the project '
+        'file participates in ${_projectSections.join('/')}'
+        '$ofAgent only. Write it '
         'to the user file: fa config set $key <value> --global',
       );
     }
@@ -491,7 +524,7 @@ final class ConfigService {
     String? key,
   }) async {
     if (scope != null) return scope;
-    if (key != null && _projectSections.contains(key.split('.').first)) {
+    if (key != null && _projectParticipates(key)) {
       return ConfigScope.project;
     }
     return ConfigScope.global;

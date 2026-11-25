@@ -405,7 +405,9 @@
   (the `models:` section — per-slot media overrides + named custom model
   definitions `/model <name>` resolves; mutable like the custom-provider
   registry, persisted by the host). Owner context override (issues
-  #273/#729): `agent:`/`contextWindowCap` in `~/.fah/config.yaml` (strict
+  #273/#729): `agent:`/`contextWindowCap` in `~/.fah/config.yaml` — or in
+  the PROJECT `.fah/config.yaml` (`loadProjectContextWindowCap`; the
+  project value wins; gh-241 follow-up #5b) — (strict
   section, minimum 16384 = the compaction reserve) SETS the EFFECTIVE
   context window via `effectiveContextWindow` (model.dart) for the
   compaction thresholds, the CLI ctx meter/footer and the loop's over-window

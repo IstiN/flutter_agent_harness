@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(cli): gh-2411 follow-up #5b (owner live test, B1) — the PROJECT
+  `.fah/config.yaml` `agent.contextWindowCap` is now honored by the CLI
+  through the app's existing loader (`loadProjectContextWindowCap`); the
+  project value wins over the user value, the strict validation is the
+  same as the user key's (min 16384; an invalid value fails startup),
+  and the boot log names the winner
+  (`context window cap source=project window=<n>`). `fa config check`
+  no longer calls that key dead config — it names the OTHER `agent.*`
+  keys by key instead of the whole section — and `fa config set
+  agent.contextWindowCap` reads/writes the project scope (the default
+  for this key). Previously a tester's project override of 25000 was
+  silently ignored (dead config).
+
 - fix(compaction): gh-2411 follow-up #5 (owner live test, rounds 1–2) —
   a restarted session at a small window failed every prompt the same
   way: the resume boundary walk truncated the transcript to a one-message
