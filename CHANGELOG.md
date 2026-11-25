@@ -1,5 +1,6 @@
 # Changelog
 
+- feat(prompts): gh-2423 C7 — context-hygiene rules in the agent prompt (reads ≤ 50 lines, `grep -n` then a short window, test output through `grep`/`tail`, `bash_job` by id, thinking ≈ 150 words), each tied to its measured cost.
 Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
 on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
 CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
