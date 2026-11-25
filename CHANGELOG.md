@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
+  `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
+  resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in
+  executable`). Both Rosetta fa-clip legs (ci.yml + build-macos.yml) now
+  pin the universal `/bin/bash`; a repo-wide guard test bans bare
+  PATH-resolved commands under `arch -x86_64`. The vpinned-marker red was
+  the by-design fail-closed knock-on (no signed SHA256SUMS while the
+  matrix was red) — no change there.
 - fix(2392): iOS OAuth deep-link freeze — the app runs under
   UIApplicationSceneManifest while app_links 6.4.x listened only to
   UIApplicationDelegate URL callbacks, so `fah://oauth/network` never reached
