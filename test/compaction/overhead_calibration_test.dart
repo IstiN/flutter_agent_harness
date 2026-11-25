@@ -65,16 +65,56 @@ void main() {
       expect(calibration.apply(16084), 24126);
     });
 
-    test('a provider counting LESS than the heuristic never lowers the '
-        'estimate (clamped to 1.0, still a taken measurement)', () {
-      final calibration = OverheadCalibration.fromUsage(
-        promptTokens: 100,
-        unanchoredRequestTokens: 400,
-      );
-      expect(calibration.ratio, OverheadCalibration.minRatio);
+    test(
+      'a provider counting LESS than the heuristic LOWERS the estimate '
+      'down to 0.6 (owner live test: 24,348 estimated vs 15,792 real — '
+      'an over-reading heuristic switched compaction off for the session)',
+      () {
+        // glm-5.3-flash, 34 tools: the 2.5 chars/token heuristic read 24,348
+        // where the provider charged 15,792 (ratio 0.65). Clamped at 1.0 the
+        // over-read was permanent — the soft-window regime held on every
+        // prompt and the context grew to 114% with no pass ever running.
+        final live = OverheadCalibration.fromUsage(
+          promptTokens: 15792,
+          unanchoredRequestTokens: 24348,
+        );
+        expect(live.ratio, closeTo(0.65, 0.005));
+        expect(live.measured, isTrue);
+        expect(live.isCalibrated, isTrue);
+        expect(live.apply(24348), closeTo(15792, 1));
+        // A degenerate tiny report clamps at the floor — it still counts as
+        // the session's one measurement.
+        final degenerate = OverheadCalibration.fromUsage(
+          promptTokens: 100,
+          unanchoredRequestTokens: 400,
+        );
+        expect(degenerate.ratio, OverheadCalibration.minRatio);
+        expect(OverheadCalibration.minRatio, 0.6);
+        expect(degenerate.measured, isTrue);
+        expect(degenerate.apply(400), 240);
+      },
+    );
+
+    test('the owner live test session: the FIRST anchor (overhead-dominated) '
+        'is the one that lowers the meter', () {
+      // Request 1 is the overhead plus a short prompt; request 20 carries a
+      // transcript ten times the overhead. The first anchor wins on purpose.
+      final messages = [
+        UserMessage.text('hi'),
+        _reply(_cacheMiss(15792, 10)),
+        for (var i = 0; i < 20; i++) ...[
+          UserMessage.text('t' * 4000),
+          _reply(_cacheMiss(1000, 5)),
+        ],
+      ];
+      final calibration = deriveOverheadCalibration(
+        messages,
+        systemPrompt: 'p' * 60870, // 24,348 tokens at 2.5 chars/token
+        tools: const [],
+      )!;
       expect(calibration.measured, isTrue);
-      expect(calibration.isCalibrated, isFalse);
-      expect(calibration.apply(400), 400);
+      expect(calibration.ratio, lessThan(1.0));
+      expect(calibration.ratio, closeTo(15792 / (24348 + 1), 0.01));
     });
 
     test('a degenerate report clamps at 4x or stays uncalibrated', () {
@@ -125,7 +165,8 @@ void main() {
 
     test('the incident: 65,561 overhead chars priced by Copilot at 24,126 '
         '— the heuristic (26.2k) already reads higher, so the measurement '
-        'clamps at 1.0 and the heuristic stands', () {
+        'LOWERS the unanchored estimate to its number (owner live '
+        'test — before, a floor of 1.0 kept the over-reading forever)', () {
       final messages = [
         UserMessage.text('hello what do you know about dmtools?'),
         UserMessage.text('from network: You are a member of DAP channel'),
@@ -141,7 +182,12 @@ void main() {
         systemPrompt: 'p' * 65561,
       )!;
       expect(calibration.measured, isTrue);
-      expect(calibration.ratio, OverheadCalibration.minRatio);
+      expect(calibration.ratio, closeTo(24126 / unanchored, 0.01));
+      expect(
+        calibration.ratio,
+        greaterThan(OverheadCalibration.minRatio),
+        reason: 'a real measurement, not the floor',
+      );
     });
 
     test('a denser provider (40k tokens for the same overhead) calibrates '

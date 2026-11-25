@@ -22,10 +22,17 @@ final class OverheadCalibration {
   /// No calibration: the heuristic stands as is.
   static const uncalibrated = OverheadCalibration(1.0);
 
-  /// A provider reporting FEWER tokens than the heuristic never lowers
-  /// the meter — an over-read estimate wastes a slice of the window, an
-  /// under-read one silently overruns it (the gh-2411 incident).
-  static const double minRatio = 1.0;
+  /// A provider reporting FEWER tokens than the heuristic may LOWER the
+  /// meter — down to this floor. An under-read estimate silently overruns
+  /// the window (the gh-2411 incident), but an over-read one is not free
+  /// either: the owner's live test (glm-5.3-flash, 34 tools) charged
+  /// 15,792 tokens where the heuristic read 24,348 (ratio 0.65), and
+  /// clamped at 1.0 that over-read held the soft-window regime on every
+  /// prompt — no pass ever ran and the context grew to 114%. Only the
+  /// FIRST, overhead-dominated anchor moves the meter
+  /// (`deriveOverheadCalibration`); the floor keeps a degenerate report
+  /// from erasing the overhead.
+  static const double minRatio = 0.6;
 
   /// A degenerate usage report (a units mismatch, a summed field) must
   /// not multiply the window away.

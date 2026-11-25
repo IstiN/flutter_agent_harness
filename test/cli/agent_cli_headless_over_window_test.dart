@@ -46,17 +46,19 @@ void main() {
     FakeStreamFunction stream, {
     CompactionEngine? engine,
     CompactionSettings? settings,
+    int window = 12000,
   }) => AgentCli(
     config: AgentCliConfig(
       // gh-2411: overflow through messages, not overhead.
       systemPrompt: tinyPrompt,
       runtimeTools: tinyTools(const ['read', 'bash']),
-      model: const Model(
+      // Non-const: the window is the test's (gh-2411 follow-up).
+      model: Model(
         id: 'tiny-window',
         api: 'test-api',
         provider: 'test-provider',
         baseUrl: 'https://example.test',
-        contextWindow: 12000,
+        contextWindow: window,
         maxTokens: 4096,
       ),
       apiKey: '[REDACTED:Sensitive-Value]',
@@ -244,6 +246,152 @@ void main() {
   );
 
   test(
+    'gh-2411 + owner live test: in the soft-window regime the hide-only '
+    'pass runs at the window — the old tool result is hidden, the newest '
+    'user turn rides verbatim, and an under-window prompt is left alone',
+    timeout: const Timeout(Duration(seconds: 180)),
+    () async {
+      // Window 13k, reserve 3250 → trigger 9750. The ~3.4k fixed overhead
+      // plus a ~7.4k-token prompt is over the trigger (the regime — no
+      // trim could ever reach it) while request 1 (~10.9k) is still UNDER
+      // the window: nothing is trimmed, the request goes as is (ONE
+      // warning). Two tool results later the request is over the window:
+      // the LM-free emergency relief runs INSTEAD of a skip (the mid-turn
+      // hide pass keeps both recent reads; the settle relief's local trim
+      // valve then frees the window) — the prompt is carried verbatim
+      // and the turn completes under the window.
+      env.writeFile('old.txt', List.filled(120, 'o' * 40).join('\n'));
+      env.writeFile('new.txt', List.filled(120, 'n' * 40).join('\n'));
+      final prompt =
+          'Count the words in old.txt and new.txt, then answer. '
+          '${'question ' * 3300}';
+      final stream = FakeStreamFunction([
+        toolTurn([
+          const ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': 'old.txt'},
+          ),
+        ]),
+        toolTurn([
+          const ToolCall(
+            id: 't2',
+            name: 'read',
+            arguments: {'path': 'new.txt'},
+          ),
+        ]),
+        textTurn('done: both files counted'),
+      ]);
+      final cli = buildCli(
+        stream,
+        engine: CompactionEngine.classic,
+        window: 13000,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 3250,
+          keepRecentTokens: 100,
+        ),
+      );
+
+      final exitCode = await cli.runHeadless(prompt);
+      expect(exitCode, 0, reason: 'calls=${stream.calls}\n${io.out}');
+      expect(
+        stream.calls,
+        3,
+        reason:
+            'read, read, final answer — the relief is LM-free; '
+            'output:\n${io.out}',
+      );
+      String textOf(Message message) => switch (message) {
+        UserMessage(:final content) =>
+          content is String
+              ? content
+              : (content as List<ContentBlock>)
+                    .whereType<TextContent>()
+                    .map((b) => b.text)
+                    .join('\n'),
+        AssistantMessage(:final content) || ToolResultMessage(:final content) =>
+          content.whereType<TextContent>().map((b) => b.text).join('\n'),
+        _ => '',
+      };
+      int estimate(Context context) => estimateRequestTokens(
+        context.messages,
+        systemPrompt: context.systemPrompt,
+        tools: context.tools ?? const [],
+      );
+      // Precondition: request 2 still carried the first tool result.
+      expect(
+        stream.contexts[1].messages.map(textOf).join('\n'),
+        contains('o' * 40),
+      );
+      final last = stream.contexts.last;
+      final lastText = last.messages.map(textOf).join('\n');
+      expect(
+        last.messages.map(textOf),
+        contains(prompt),
+        reason: 'the newest user turn rides verbatim (gh-2411 invariant)',
+      );
+      expect(
+        lastText,
+        isNot(contains('o' * 40)),
+        reason: 'the OLD tool result is gone — trimmed by the relief',
+      );
+      expect(
+        estimate(last),
+        lessThan(13000),
+        reason: 'the post-pass estimate is under the window',
+      );
+      // The relief's own receipt: the pass that freed the window ran
+      // exactly once.
+      Iterable<String> receipts() => io.out
+          .toString()
+          .split('\n')
+          .where(
+            (line) => line.contains('continuing the turn on the compacted'),
+          );
+      expect(
+        receipts(),
+        hasLength(1),
+        reason: 'the relief freed the window exactly once; output:\n${io.out}',
+      );
+      expect(
+        io.out.toString().split('\n').where((line) => line.contains('freed')),
+        isEmpty,
+        reason: 'no LM pass ran (hide + valve only); output:\n${io.out}',
+      );
+      const warning =
+          'context window 13000 is below the fixed request overhead';
+      expect(
+        warning.allMatches(io.out.toString()),
+        hasLength(1),
+        reason: 'ONE visible warning per session',
+      );
+
+      // A prompt whose request is UNDER the window (a fresh session in
+      // the same regime): no pass runs — nothing is trimmed, nothing is
+      // hidden; the skip is silent.
+      final idle = FakeStreamFunction([textTurn('done again: nothing to do')]);
+      final second = buildCli(
+        idle,
+        engine: CompactionEngine.classic,
+        window: 13000,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 3250,
+          keepRecentTokens: 100,
+        ),
+      );
+      expect(await second.runHeadless(prompt), 0);
+      expect(idle.calls, 1, reason: 'one request, the final answer');
+      expect(
+        receipts(),
+        hasLength(1),
+        reason: 'no re-run under the window; output:\n${io.out}',
+      );
+    },
+  );
+
+  test(
     'the [net] retry notice reaches headless output (issue #1121)',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {
@@ -269,6 +417,13 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
+          // gh-2411 follow-up: the REAL prompt's ~14.4k fixed overhead is
+          // over this 12k window by itself — the loop guard stops such a
+          // request now (a soft window stands down only UNDER it), which
+          // would end the run before the retry ladder ever fires. The
+          // seam keeps the scenario on the ladder: ~3.4k overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read']),
           // gh-1380: structured sessions now carry the recall-hygiene
           // contract + the session_search schema; on this 12k window that
           // static overhead alone crosses the request-size compaction

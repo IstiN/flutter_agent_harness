@@ -43,7 +43,7 @@ import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
 import '../compaction/request_snapshot.dart'
     show RequestRouting, RequestSnapshot, RequestSnapshotStore;
 import '../compaction/structured/projection.dart' show RecordSeqIndex;
-import '../compaction/soft_window.dart' show softWindowRegime;
+import '../compaction/soft_window.dart' show softWindowSkip;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -456,8 +456,10 @@ final class AgentLoopConfig {
 
   /// gh-2411: the host's compaction reserve for the effective window —
   /// the soft-window regime (fixed overhead + newest user turn ≥
-  /// `window - reserve`: no trim can ever land under it) skips the guard
-  /// and the request goes out as is. `null`/absent = the window itself
+  /// `window - reserve`: no trim can ever land under the TRIGGER) lets a
+  /// request through untrimmed while it is still UNDER the window; over
+  /// the window the guard keeps its stop (the owner's live test: skipping
+  /// there grew the context to 114%). `null`/absent = the window itself
   /// is the line (no reserve).
   final int Function()? windowReserveTokens;
 

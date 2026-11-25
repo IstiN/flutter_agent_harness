@@ -83,6 +83,40 @@ bool softWindowRegime({
   );
 }
 
+/// Whether the soft window lets THIS request through UNTRIMED (gh-2411 +
+/// the owner's live test): the regime holds AND the honest estimate of the
+/// whole request ([requestTokens] — the loop guard's own number, the ctx
+/// meter's) is still UNDER the [window]. The ONE predicate the hosts'
+/// compaction skip and the loop guard share:
+///
+/// - under the window nothing is trimmed — no relief can ever reach the
+///   trigger, so the pass would thrash; ONE warning names the real fix;
+/// - at or over the window the request is simply over the window: the
+///   hide-only relief runs (the newest user turn still carried verbatim)
+///   and the guard keeps its stop. Skipping there too is what let the
+///   owner's session grow to 114% with no pass ever running.
+///
+/// `false` for an unlimited window (`window <= 0`).
+bool softWindowSkip({
+  required List<Message> messages,
+  required String? systemPrompt,
+  required List<Tool> tools,
+  required int window,
+  required int reserveTokens,
+  required int requestTokens,
+  OverheadCalibration calibration = OverheadCalibration.uncalibrated,
+}) {
+  if (window <= 0 || requestTokens >= window) return false;
+  return softWindowRegime(
+    messages: messages,
+    systemPrompt: systemPrompt,
+    tools: tools,
+    window: window,
+    reserveTokens: reserveTokens,
+    calibration: calibration,
+  );
+}
+
 /// The soft-window warning's once-per-session latch (gh-2411): the
 /// regime holds for EVERY turn of the session, so the notice must be
 /// visible once and then stay quiet — a warning repeated on every turn

@@ -428,14 +428,22 @@ Future<_AttemptResult> _streamAttempt(
     config.model.contextWindow,
     config.contextWindowCap,
   );
+  final guardCalibration = _guardCalibration(
+    config.overheadCalibration?.call(),
+  );
   final tokens = estimateRequestTokens(
     requestContext.messages,
     systemPrompt: requestContext.systemPrompt,
     tools: requestContext.tools ?? const [],
-    calibration:
-        config.overheadCalibration?.call() ?? OverheadCalibration.uncalibrated,
+    calibration: guardCalibration,
   );
-  if (_overWindowGuardTrips(config, requestContext, window, tokens)) {
+  if (_overWindowGuardTrips(
+    config,
+    requestContext,
+    window,
+    tokens,
+    guardCalibration,
+  )) {
     final guard = await _overWindowGuardTurn(
       context,
       requestContext,
@@ -536,30 +544,43 @@ Future<_AttemptResult> _streamAttempt(
 }
 
 /// Whether the mid-turn over-window guard trips on this request: past the
-/// window, and NOT in the soft-window regime (gh-2411) — the fixed
-/// overhead plus the newest user turn reaching the trigger means no
-/// relief can ever land a request under it. The request then goes out AS IS (the owner's rule:
-/// the window is a soft target, a slight overrun beats an invisible user
-/// turn trimmed away on every step); the host's one-time warning names
-/// the only fix. An overflow caused by anything else keeps the guard and
-/// its relief, whatever its size. The cheap `tokens > window` test runs
-/// first — the regime probe (an overhead estimate) only runs on an
-/// overflow.
+/// window, and NOT let through by the soft window (gh-2411 + the owner's
+/// live test — [softWindowSkip], the ONE predicate the hosts share): the
+/// soft window stands down only while the honest estimate is UNDER the
+/// window; a request at or over the window keeps the guard and its
+/// relief whatever the regime (skipping there let a session grow to 114%
+/// with no pass ever running). The cheap `tokens > window` test runs
+/// first — the predicate (an overhead estimate) only runs on an overflow.
+/// The calibration the over-window guard prices a request with (the
+/// session's measurement, [calibration]): a measured one — unless it sits
+/// on the ceiling clamp. A report claiming [OverheadCalibration.maxRatio]
+/// times the estimate is no density measurement but a cumulative-billing
+/// gateway's total (the "667k reads as lifetime" shape); the clamp exists
+/// so the METER over-reads such a session, never so the guard refuses a
+/// context that fits by its own estimate.
+OverheadCalibration _guardCalibration(OverheadCalibration? calibration) {
+  final measured = calibration ?? OverheadCalibration.uncalibrated;
+  return measured.ratio >= OverheadCalibration.maxRatio
+      ? OverheadCalibration.uncalibrated
+      : measured;
+}
+
 bool _overWindowGuardTrips(
   AgentLoopConfig config,
   Context requestContext,
   int window,
   int tokens,
+  OverheadCalibration guardCalibration,
 ) {
   if (window <= 0 || tokens <= window) return false;
-  return !softWindowRegime(
+  return !softWindowSkip(
     messages: requestContext.messages,
     systemPrompt: requestContext.systemPrompt,
     tools: requestContext.tools ?? const [],
     window: window,
     reserveTokens: config.windowReserveTokens?.call() ?? 0,
-    calibration:
-        config.overheadCalibration?.call() ?? OverheadCalibration.uncalibrated,
+    requestTokens: tokens,
+    calibration: guardCalibration,
   );
 }
 

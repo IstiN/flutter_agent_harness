@@ -173,6 +173,85 @@ void main() {
       );
     });
   });
+  group('softWindowSkip — the ONE predicate: the regime AND under the '
+      'window', () {
+    final prompt = 'p' * _overheadChars;
+
+    bool skip({
+      required int requestTokens,
+      int window = _window,
+      int? reserveTokens,
+      OverheadCalibration calibration = OverheadCalibration.uncalibrated,
+    }) => softWindowSkip(
+      messages: _turn(),
+      systemPrompt: prompt,
+      tools: const [],
+      window: window,
+      reserveTokens:
+          reserveTokens ?? CompactionSettings.forWindow(window).reserveTokens,
+      requestTokens: requestTokens,
+      calibration: calibration,
+    );
+
+    test('the regime + an estimate UNDER the window → untrimmed, as is', () {
+      expect(skip(requestTokens: 199), isTrue);
+      expect(skip(requestTokens: 1), isTrue);
+    });
+
+    test('the regime + an estimate AT or OVER the window → NOT skipped: the '
+        'hide-only relief and the loop guard own it (owner live test: the '
+        'context grew to 114% because every pass was skipped)', () {
+      expect(skip(requestTokens: _window), isFalse);
+      expect(skip(requestTokens: 28500), isFalse);
+    });
+
+    test('outside the regime nothing is skipped, whatever the estimate', () {
+      final window = 200000;
+      final reserve = CompactionSettings.forWindow(window).reserveTokens;
+      expect(
+        skip(requestTokens: 100, window: window, reserveTokens: reserve),
+        isFalse,
+      );
+      // A healthy window, an over-window request: the plain guard.
+      expect(
+        skip(requestTokens: 200001, window: window, reserveTokens: reserve),
+        isFalse,
+      );
+    });
+
+    test('an unlimited window never skips', () {
+      expect(skip(requestTokens: 10, window: 0), isFalse);
+    });
+
+    test("owner live test: the first anchor lowers the over-reading overhead "
+        "→ the regime is OFF at a 25k window", () {
+      const estimated = 24348;
+      const real = 15792;
+      const window = 25000;
+      final reserve = CompactionSettings.forWindow(window).reserveTokens;
+      bool regime(OverheadCalibration calibration) => windowBelowFixedOverhead(
+        overheadTokens: calibration.apply(estimated),
+        window: window,
+        reserveTokens: reserve,
+        newestUserTurnTokens: 50,
+      );
+      expect(
+        regime(OverheadCalibration.uncalibrated),
+        isTrue,
+        reason: '24,348 ≥ 18,750 — the heuristic alone was the regime',
+      );
+      final calibrated = OverheadCalibration.fromUsage(
+        promptTokens: real,
+        unanchoredRequestTokens: estimated,
+      );
+      expect(
+        regime(calibrated),
+        isFalse,
+        reason: '15,792 + 50 < 18,750 — normal compaction runs again',
+      );
+    });
+  });
+
   group('SoftWindowNotice (once per session)', () {
     test('the same session is warned exactly once, whatever the overhead '
         'or the turn', () {

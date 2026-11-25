@@ -571,11 +571,16 @@ extension AgentCliCompactionRun on AgentCli {
     // when unanchored) — the threshold must trip on what the next request
     // actually carries.
     final tokens = _liveRequestTokens();
-    // gh-2411: the soft-window regime skips every automatic pass — no
-    // trim can land under the window, so the pre-flight, the post-run
-    // fold and the over-window funnel all stand down here (ONE warning
-    // per session) instead of thrashing relief on every turn.
+    // gh-2411: the soft window skips every automatic pass while the
+    // estimate is UNDER the window — no trim can reach the trigger, so
+    // the pre-flight, the post-run fold and the over-window funnel all
+    // stand down here (ONE warning per session) instead of thrashing
+    // relief on every turn.
     if (_skipCompactionSoftWindow()) return false;
+    // ...and at or over the window (in the regime) the pass is the
+    // hide-only relief — the owner's live test: skipping there grew the
+    // context to 114% with no pass ever running.
+    if (_softWindow) return _softWindowRelief(tokens);
     // gh-1680 AC4: the additive message-count trigger — a model with a
     // learned cap compacts when the live count reaches `cap − margin`,
     // BEFORE the request, even when the token trigger is untouched. The
@@ -749,27 +754,64 @@ extension AgentCliCompactionRun on AgentCli {
     calibration: _agent.state.overheadCalibration,
   );
 
-  /// The regime's answer for every automatic compaction entry point:
-  /// `true` = skip (the request goes out as is — the owner's rule: the
-  /// window is a soft target, a slight overrun beats a user turn trimmed
-  /// away on every step). The FIRST skip of a session prints ONE visible
-  /// warning naming the only real fix; later skips stay silent.
+  /// The soft window's answer for every automatic compaction entry point
+  /// (gh-2411 + the owner's live test): `true` = skip — the regime holds
+  /// AND the honest estimate is still UNDER the window (no trim can ever
+  /// reach the trigger; the owner's rule: the window is a soft target
+  /// there, a user turn trimmed away on every step is the worse failure).
+  /// The FIRST sighting of the regime in a session prints ONE visible
+  /// warning naming the real fix; later sightings stay silent.
+  ///
+  /// `false` at or over the window even in the regime: the request is
+  /// over the window, and skipping there too is what let the owner's
+  /// session grow to 114% with no pass ever running — the callers then
+  /// run the hide-only relief ([_softWindowRelief]) instead.
   bool _skipCompactionSoftWindow() {
     if (!_softWindow) return false;
-    if (!_softWindowNotice.shouldWarn(_session?.cachedId)) return true;
-    final overhead = _liveOverheadTokens();
-    _logDiagnostic(
-      'soft window sid=$_logSid window=$_effectiveContextWindow '
-      'overhead=$overhead — compaction skipped for the session',
-    );
-    io.writeln(
-      tuiWarning(
-        'warning: context window $_effectiveContextWindow is below the '
-        'fixed request overhead $overhead (system prompt + tool schemas) '
-        '— raising the window or disabling tools is the only fix; '
-        'compaction is skipped for this session',
-      ),
-    );
+    // The FIRST sighting of the regime in the session is warned about,
+    // under the window or not — the fix it names is the only real one.
+    if (_softWindowNotice.shouldWarn(_session?.cachedId)) {
+      final overhead = _liveOverheadTokens();
+      _logDiagnostic(
+        'soft window sid=$_logSid window=$_effectiveContextWindow '
+        'overhead=$overhead — while the regime holds, automatic '
+        'compaction runs only at the window (hide-only relief)',
+      );
+      io.writeln(
+        tuiWarning(
+          'warning: context window $_effectiveContextWindow is below the '
+          'fixed request overhead $overhead (system prompt + tool schemas) '
+          '— raising the window or disabling tools is the only fix; '
+          'automatic compaction is skipped while the context stays under '
+          'the window',
+        ),
+      );
+    }
+    return _liveRequestTokens() < _effectiveContextWindow;
+  }
+
+  /// gh-2411 (owner live test): in the regime, AT OR OVER the window the
+  /// automatic pass is the hide-only, LM-free relief — the same one the
+  /// loop guard runs — never an LM summarization pass. The newest user
+  /// turn is carried verbatim (the gh-2411 invariant). Returns whether
+  /// the relief freed tokens. A pass that frees nothing is BOUNDED: it
+  /// re-runs only after the transcript changed
+  /// ([_softWindowReliefNoOpAt]) — never a per-prompt retry.
+  Future<bool> _softWindowRelief(int tokens) async {
+    final length = _agent.state.messages.length;
+    if (_softWindowReliefNoOpAt == length) {
+      _logDiagnostic(
+        'soft window relief skipped sid=$_logSid — the last pass freed '
+        'nothing at this transcript length',
+      );
+      return false;
+    }
+    final relieved = await _relieveOverWindow(_agent.state.messages);
+    if (relieved == null || _liveRequestTokens() >= tokens) {
+      _softWindowReliefNoOpAt = length;
+      return false;
+    }
+    _softWindowReliefNoOpAt = null;
     return true;
   }
 
@@ -823,6 +865,13 @@ extension AgentCliCompactionRun on AgentCli {
     // under the trigger, and the newest user turn stays visible); the
     // first prompt's request goes out as is, with ONE warning.
     if (_skipCompactionSoftWindow()) return;
+    // At or over the window in the regime: the hide-only relief first
+    // (gh-2411, the owner's live test); the valve below is the backstop.
+    if (_softWindow &&
+        tokens >= _effectiveContextWindow &&
+        await _softWindowRelief(tokens)) {
+      return;
+    }
     // Over the WINDOW itself: no request can ever be sent, and an LM
     // compaction pass here takes minutes on slow summarizers (the
     // goal_builder incident: a 3.5-minute boot cap read as a hung open
@@ -937,8 +986,14 @@ extension AgentCliCompactionRun on AgentCli {
     )) {
       return;
     }
-    // gh-2411: the soft-window regime stands down here too.
+    // gh-2411: the soft-window regime stands down here too — and at or
+    // over the window (in the regime) the pass is the hide-only relief.
     if (_skipCompactionSoftWindow()) return;
+    if (_softWindow &&
+        tokens >= _effectiveContextWindow &&
+        await _softWindowRelief(tokens)) {
+      return;
+    }
     _pushBusyPhase('Compacting context…');
     _logDiagnostic(
       'checkpoint restore budget guard start sid=$_logSid tokens=$tokens',

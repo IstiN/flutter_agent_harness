@@ -1868,6 +1868,12 @@ class AgentCli {
   /// latch (same mechanism as the soft-window warning).
   final SoftWindowNotice _guardStopNotice = SoftWindowNotice();
 
+  /// gh-2411 (owner live test): the transcript length at which the
+  /// soft window's hide-only relief last freed NOTHING — it re-runs
+  /// only after the transcript changed (a bounded pass, never a
+  /// per-prompt retry). `null` = no no-op remembered.
+  int? _softWindowReliefNoOpAt;
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.

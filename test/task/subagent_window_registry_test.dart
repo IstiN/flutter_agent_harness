@@ -341,65 +341,11 @@ void main() {
       // owner clamps down: compaction resolves
       // effectiveContextWindow(registered, cap), but a child Agent
       // built WITHOUT the cap guards against the raw registered value.
-      // Here the served window is 478k and the owner caps at 3000
-      // tokens; the first turn's tool result pushes the next request
-      // over the CAPPED basis, so the child's context bounding must
-      // trim it BEFORE that request goes out. With the uncapped basis
-      // the request is sent as is (and rides 478k).
-      //
-      // gh-2411: the guard skips ONLY the soft-window regime — fixed
-      // overhead plus the newest user turn ≥ window − reserve, where no
-      // trim can ever land under the window. The former cap (200) IS
-      // that regime against the honestly accounted ≈1.9k overhead (the
-      // sibling test below pins the stand-down); 280 clears the regime
-      // line (trigger 2250 > the ≈1.97k overhead + task), so the capped
-      // basis is still enforced by the guard and its relief.
-      final stream = _ScriptedStream();
-      stream.rules['over-capped'] = () => _toolTurn('c1');
-      final registry = ContextWindowRegistry();
-      registry.publish(
-        model: _model,
-        window: _registeredWindow,
-        source: ContextWindowSource.endpointReport,
-      );
-      final wiring = _Wiring(
-        registry: registry,
-        contextWindowCap: 3000,
-        scriptedStream: stream,
-        fatChars: 4400,
-      );
-      final result = await wiring.spawn('guarded', 'over-capped');
-      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
-      final sent = stream.contexts
-          .map(
-            (c) => estimateRequestTokens(
-              c.messages,
-              systemPrompt: c.systemPrompt,
-              tools: c.tools ?? const [],
-            ),
-          )
-          .toList();
-      expect(
-        sent,
-        isNotEmpty,
-        reason: 'the first request (overhead + task) fits the cap',
-      );
-      // Every request the child sent fits the CAPPED window, and the
-      // untrimmed follow-up (overhead + task + the fat tool result)
-      // would not have — the trim ran on the capped basis.
-      expect(sent, everyElement(lessThanOrEqualTo(3000)));
-      expect(stream.compactionCalls, greaterThanOrEqualTo(1));
-      expect(sent.first, greaterThan(200));
-    });
-
-    test('gh-2411: a cap below the fixed request overhead is the soft-window '
-        'regime — the child guard stands down instead of refusing', () async {
-      // Served 478k, capped at 200 tokens: the fixed overhead (system
-      // prompt + tool schemas, ≈1.9k) plus the task already exceeds the
-      // cap's trigger, so no trim can ever land a request under it. The
-      // window is a soft target there: the request goes out AS IS and the
-      // run completes (the owner's rule — an invisible user turn trimmed
-      // away on every step is the worse failure).
+      // Here the served window is 478k and the owner caps at 200
+      // tokens — every child request is grossly over the CAPPED basis,
+      // so the mid-turn guard must refuse BEFORE the first request is
+      // sent. With the uncapped guard this request goes out (and the
+      // run completes normally).
       final registry = ContextWindowRegistry();
       registry.publish(
         model: _model,
@@ -407,32 +353,33 @@ void main() {
         source: ContextWindowSource.endpointReport,
       );
       final wiring = _Wiring(registry: registry, contextWindowCap: 200);
-      final result = await wiring.spawn('soft', 'over-capped');
-      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
-      expect(wiring.stream.contexts, hasLength(1));
+      final result = await wiring.spawn('guarded', 'over-capped');
       expect(
-        wiring.stream.contexts.map(
-          (c) => estimateRequestTokens(
-            c.messages,
-            systemPrompt: c.systemPrompt,
-            tools: c.tools ?? const [],
-          ),
-        ),
-        everyElement(greaterThan(200)),
-        reason: 'the over-cap request is sent untrimmed',
+        wiring.stream.contexts,
+        isEmpty,
+        reason:
+            'the child guard must refuse at the capped basis before any '
+            'request is sent (an uncapped guard sends against 478k)',
       );
-      await wiring.settle('soft');
-      final records = await wiring.sessionRecords('soft');
+      // The run surfaces the guard's terminal, not a silent success:
+      // the flushed transcript's last assistant message carries the
+      // exhausted marker.
+      await wiring.settle('guarded');
+      final records = await wiring.sessionRecords('guarded');
+      final messages = records
+          .whereType<MessageRecord>()
+          .map((record) => record.message)
+          .toList();
       expect(
-        records.whereType<MessageRecord>().any(
-          (record) =>
-              record.message is AssistantMessage &&
-              isContextWindowExhaustedError(
-                (record.message as AssistantMessage).errorMessage,
-              ),
+        messages.any(
+          (message) =>
+              message is AssistantMessage &&
+              isContextWindowExhaustedError(message.errorMessage),
         ),
-        isFalse,
-        reason: 'no guard terminal in the soft-window regime',
+        isTrue,
+        reason:
+            'no over-window guard terminal in the transcript '
+            '(${result.status}, ${messages.length} messages)',
       );
     });
   });

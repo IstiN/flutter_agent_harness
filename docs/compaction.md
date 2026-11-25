@@ -213,21 +213,31 @@ invisible user turn is not. Three rules, one basis:
   plus 34 tool schemas — were billed 24,126 provider tokens, 2.72
   chars/token, where chars/4 priced 16,407, 32% under).
   Per session the first valid provider `usage.input` calibrates the
-  estimate (`OverheadCalibration`, ratio clamped to [1.0, 4.0],
-  runtime-only), and the ctx meter, the loop's over-window guard and
-  the compaction trigger all read that same basis
-  (`estimateRequestTokens`).
-- **Soft-window regime — no trim thrash.** When `overhead + newest
-  user turn ≥ window − reserve`, no trim can ever land under the
-  window. The CLI then skips compaction for the whole session and
-  prints ONE visible warning: `context window {window} is below the
-  fixed request overhead {overhead} (system prompt + tool schemas) —
-  raising the window or disabling tools is the only fix; compaction is
-  skipped for this session`. The loop's over-window guard stands down
-  only in the stricter overhead-ALONE regime (the fixed overhead by
-  itself reaches `window − reserve`); a request overflowing from
-  anything else keeps the guard and its relief
-  (`lib/src/compaction/soft_window.dart`).
+  estimate (`OverheadCalibration`, ratio clamped to [0.6, 4.0],
+  runtime-only) — it may LOWER an over-reading heuristic too (the
+  owner's live test: glm-5.3-flash billed 15,792 tokens where the
+  heuristic read 24,348, ratio 0.65) — and the ctx meter, the loop's
+  over-window guard and the compaction trigger all read that same
+  basis (`estimateRequestTokens`). The heuristic itself is a
+  per-provider average: before the first anchor lands the meter can be
+  off by that ratio.
+- **Soft window — no trim thrash, no unbounded growth.** When
+  `overhead + newest user turn ≥ window − reserve`, no trim can ever
+  reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
+  trimmed: automatic compaction is skipped and the session is warned
+  ONCE: `context window {window} is below the fixed request overhead
+  {overhead} (system prompt + tool schemas) — raising the window or
+  disabling tools is the only fix; automatic compaction is skipped
+  while the context stays under the window`. AT OR OVER THE WINDOW the
+  request is simply over the window: the automatic pass is the
+  hide-only, LM-free relief (the same one the loop guard runs — the
+  newest user turn is still carried verbatim), a pass that frees
+  nothing re-runs only after the transcript changed, and the loop's
+  over-window guard keeps its stop. ONE predicate decides both sides —
+  `softWindowSkip`: the regime AND `estimate < window`
+  (`lib/src/compaction/soft_window.dart`). Skipping over the window as
+  well was the first cut; the owner's live test grew a session to 114%
+  with no pass ever running.
 
 ### Quality tier — turn boundaries, judge-led
 

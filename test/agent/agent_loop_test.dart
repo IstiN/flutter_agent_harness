@@ -265,8 +265,8 @@ void main() {
     });
 
     test(
-      'gh-2411: the over-window guard stands down when the fixed '
-      'overhead ALONE exceeds the window — the request goes out as is',
+      'gh-2411 + owner live test: over the window the guard keeps its stop '
+      'even in the regime — a soft window stands down only UNDER it',
       () async {
         final tinyWindow = const Model(
           id: 'test-model',
@@ -276,10 +276,14 @@ void main() {
           contextWindow: 100,
           maxTokens: 4096,
         );
-        final fake = _FakeStreamFunction([_textTurn('sent as is')]);
-        // A 320-token system prompt on a 100-token window: no trim can ever
-        // land a request under it (the 20k-window incident), so the guard
-        // sends the request instead of trimming the turn away on every step.
+        final fake = _FakeStreamFunction([_textTurn('never sent')]);
+        // A 320-token system prompt + a 10-token prompt on a 100-token
+        // window: over the window (and over the trigger even with a
+        // 50-token host reserve — the regime). Nothing can land the request
+        // under the window — the guard stops it BEFORE it is sent and
+        // nothing is trimmed away (the host's one-time warning names the
+        // fix). Standing down here sent every request of the owner's
+        // session out over the window: 114% and no pass ever ran.
         final stream = agentLoop(
           prompts: [UserMessage.text('x' * 40)],
           context: Context(
@@ -287,22 +291,72 @@ void main() {
             messages: const [],
             tools: const [],
           ),
-          config: AgentLoopConfig(model: tinyWindow),
+          config: AgentLoopConfig(
+            model: tinyWindow,
+            windowReserveTokens: () => 50,
+          ),
           streamFunction: fake.call,
           toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
         );
 
         final messages = await stream.result as List<dynamic>;
-        expect(fake.calls, 1, reason: 'no local refusal in the regime');
+        expect(fake.calls, 0, reason: 'over the window: the guard owns it');
         final assistant = messages.whereType<AssistantMessage>().single;
-        expect(assistant.stopReason, StopReason.stop);
-        expect(assistant.errorMessage, isNull);
+        expect(assistant.stopReason, StopReason.error);
+        expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
       },
     );
 
+    test('gh-2411 + owner live test: a ceiling-pinned calibration never trips '
+        'the guard — the clamp serves the meter, not a refusal', () async {
+      final tinyWindow = const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 4096,
+      );
+      // A ~70-token request (system prompt + prompt at the overhead
+      // density) on a 100-token window. A cumulative-billing gateway's
+      // first report pins the session calibration on the 4x ceiling (a
+      // report claiming four times the estimate is no density
+      // measurement): the guard must keep pricing the request at its
+      // own estimate and send it — refusing here failed every child of
+      // such a provider (test/task/subagent_child_window_enforcement_
+      // test.dart, "the 667k/204.8k shape reads as lifetime").
+      Future<int> run(double ratio) async {
+        final fake = _FakeStreamFunction([_textTurn('sent')]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('x' * 40)],
+          context: Context(systemPrompt: 's' * 150, messages: const []),
+          config: AgentLoopConfig(
+            model: tinyWindow,
+            overheadCalibration: () =>
+                OverheadCalibration(ratio, measured: true),
+          ),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
+        await stream.result;
+        return fake.calls;
+      }
+
+      expect(
+        await run(OverheadCalibration.maxRatio),
+        1,
+        reason: 'a ceiling clamp is not a measurement: the request goes out',
+      );
+      expect(
+        await run(1.5),
+        0,
+        reason: 'a MEASURED ratio past the window keeps the guard',
+      );
+    });
+
     test(
-      'gh-2411: the regime reads the host reserve and the overhead '
-      'calibration — an overflow from anything else keeps the guard',
+      'gh-2411 + owner live test: over the window the reserve and the '
+      'calibration never stand the guard down; under it nothing trips',
       () async {
         final tinyWindow = const Model(
           id: 'test-model',
@@ -322,13 +376,14 @@ void main() {
           tools: const [],
         );
         Future<({int calls, AssistantMessage reply})> run(
+          Context context,
           AgentLoopConfig config,
         ) async {
           final fake = _FakeStreamFunction([_textTurn('sent')]);
           final messages =
               await agentLoop(
                     prompts: [UserMessage.text('x' * 20)],
-                    context: over(),
+                    context: context,
                     config: config,
                     streamFunction: fake.call,
                     toolExecutor: (_, _, _) async =>
@@ -341,29 +396,43 @@ void main() {
           );
         }
 
-        // No reserve: overhead + prompt (65) are under the window — the
-        // guard owns the overflow the older history added (gh-2411: the
-        // newest user turn itself is never what overflows here).
-        final guarded = await run(AgentLoopConfig(model: tinyWindow));
-        expect(guarded.calls, 0);
-        expect(
-          guarded.reply.errorMessage,
-          contains(contextWindowExhaustedMarker),
-        );
-        // The host's reserve puts the overhead over the trigger: soft regime.
-        final reserved = await run(
-          AgentLoopConfig(model: tinyWindow, windowReserveTokens: () => 50),
-        );
-        expect(reserved.calls, 1, reason: '60 >= 100 - 50');
-        // A calibrated denser provider (2x → 120 tokens of overhead) is in
-        // the regime even without a reserve.
-        final calibrated = await run(
-          AgentLoopConfig(
+        // Over the window (115 > 100) the guard trips whatever the regime:
+        // no reserve, the host's 50-token reserve and a 2x calibration
+        // (a denser provider) all refuse locally — the newest user turn
+        // itself is never what overflows here, and nothing is trimmed.
+        final configs = <String, AgentLoopConfig>{
+          'no reserve': AgentLoopConfig(model: tinyWindow),
+          'host reserve': AgentLoopConfig(
+            model: tinyWindow,
+            windowReserveTokens: () => 50,
+          ),
+          'calibrated': AgentLoopConfig(
             model: tinyWindow,
             overheadCalibration: () => const OverheadCalibration(2),
           ),
+        };
+        for (final entry in configs.entries) {
+          final guarded = await run(over(), entry.value);
+          expect(guarded.calls, 0, reason: entry.key);
+          expect(
+            guarded.reply.errorMessage,
+            contains(contextWindowExhaustedMarker),
+            reason: entry.key,
+          );
+        }
+        // UNDER the window the guard never trips, regime or not: 60 +
+        // 5 + 30 older = 95 ≤ 100 — the request goes out as is.
+        final under = Context(
+          systemPrompt: 's' * 150,
+          messages: [_older('o' * 120)],
+          tools: const [],
         );
-        expect(calibrated.calls, 1, reason: '60 * 2 >= 100');
+        final soft = await run(
+          under,
+          AgentLoopConfig(model: tinyWindow, windowReserveTokens: () => 50),
+        );
+        expect(soft.calls, 1, reason: '95 <= 100: under the window');
+        expect(soft.reply.errorMessage, isNull);
       },
     );
     test('the over-window guard does not double-count the system prompt '

@@ -262,16 +262,21 @@ void main() {
   );
 
   test(
-    'a huge prompt over a tiny window is the soft-window regime: sent as '
-    'is, ONE provider call, warned once (issue #1914 → gh-2411)',
+    'a huge prompt over a tiny window can never land under it: nothing is '
+    'trimmed, the guard stops the request before it is sent, warned once '
+    '(issue #1914 → gh-2411 + owner live test)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // gh-2411 (owner's rule): the window is a SOFT target and a user
-      // message is never made invisible. The 12.5k-token prompt plus the
-      // fixed overhead can never land under the 12k window, so no relief
-      // runs at all — the request goes out as it is, the turn completes,
-      // and the session is warned exactly once. (Before: the local trim
-      // valve cut the prompt itself away and the model never saw it.)
+      // gh-2411 (the invariant): a user message is never made invisible.
+      // The 12.5k-token prompt plus the fixed overhead can never land
+      // under the 12k window, so nothing is trimmed. The soft window
+      // stands down only WHILE THE ESTIMATE IS UNDER the window (the
+      // owner's live test: standing down over it too sent every request
+      // out and the context grew to 114% with no pass ever running) —
+      // here the very first request is over it, the hide-only relief has
+      // nothing to free, and the loop guard stops it BEFORE it is sent.
+      // The session is warned exactly once; the stop is the visible
+      // guard terminal (exit 1, never a masked 0).
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -320,8 +325,14 @@ void main() {
       final exitCode = await cli.runHeadless('x' * 50000);
       await io.close();
 
-      expect(exitCode, 0, reason: 'the turn ran on the untrimmed context');
-      expect(fake.calls, 1, reason: 'no bounded pass, no continuation');
+      expect(exitCode, 1, reason: 'over the window with nothing to free');
+      expect(
+        fake.calls,
+        0,
+        reason:
+            'nothing can land the request under the window — the guard '
+            'refuses BEFORE the first request',
+      );
       final output = io.out.toString();
       const warning =
           'context window 12000 is below the fixed request overhead';
@@ -331,10 +342,19 @@ void main() {
         hasLength(1),
         reason: 'ONE visible warning per session — never a per-turn nag',
       );
-      // Nothing was trimmed: the prompt is the model's, whole.
+      expect(
+        output,
+        contains(
+          'automatic compaction is skipped while the context stays under '
+          'the window',
+        ),
+      );
+      // The stop is visible, and nothing was trimmed: the prompt is the
+      // user's, whole. The honest terminal names the way out — the task
+      // really was not continued (nothing could free the window).
+      expect(output, contains('Context window exhausted'));
       expect(output, isNot(contains('[context trimmed]')));
-      expect(output, isNot(contains('did not free it')));
-      expect(output, isNot(contains('The task was NOT continued')));
+      expect(output, contains('The task was NOT continued'));
     },
   );
 
