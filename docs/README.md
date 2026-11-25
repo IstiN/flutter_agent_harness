@@ -39,6 +39,7 @@ docs must be listed in this index (pinned by
 - [docs/memory-churn.md](memory-churn.md) — long-term memory policy: durable facts, supersede, churn pitfalls
 - [docs/dap.md](dap.md) — DAP hub (debug adapters, fa_network bridging caveats §14)
 - [docs/cubes.md](cubes.md) — fa_cube sandbox profiles
+- [docs/agent-sandbox.md](agent-sandbox.md) — isolated arms for A/B agent tests (`scripts/agent-sandbox/`: sterile launcher, seatbelt wall, canary verification)
 - [docs/redaction.md](redaction.md) — layered secret redaction
 - [docs/hep.md](hep.md) — HEP v1 harness event protocol
 - [docs/wire-protocol.md](wire-protocol.md) — wire protocol (framing, extensions)
