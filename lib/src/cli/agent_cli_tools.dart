@@ -238,6 +238,39 @@ extension AgentCliTools on AgentCli {
   /// live registry/prompt/executor: safe to call at any time (idempotent).
   Future<void> rebuildToolAvailability() async {
     final state = _toolsWiring;
+    await _reloadToolScopes(state);
+    // gh-1984 (review thread 5): the media capabilities and registrations
+    // follow the LIVE vision slot — refreshed from the read auto-route's
+    // resolver on every pass, so a mid-session `/models set vision` is
+    // reflected by the next /tools (or any availability rebuild) instead
+    // of contradicting the working auto-route.
+    state.resolvedVision = await _resolveLiveVisionConfig();
+    _syncConditionalTools(state.resolvedVision);
+    final resolution = resolveToolAvailability(
+      capabilities: toolCapabilities(),
+      essentialToolIds: _resolutionEssentialIds(),
+      essentialNames: _resolutionEssentialNames(),
+      conditionalNames: _resolutionConditionalNames(),
+      mcpServerIds: _liveMcpServerIds(),
+      scopes: _resolutionScopes(state),
+    );
+    _warnUnknownToolIds(resolution.unknownIds);
+    _swapReadSqliteVariant(resolution);
+    _toolGate.apply(
+      resolution,
+      _toolRegistry,
+      _agent,
+      rebuildPrompt: _applyPromptComposition,
+    );
+    // After apply: the stub's register/unregister must land in
+    // agent.state.tools + the prompt, which apply just synced (GOAL #28).
+    syncOthersTool();
+    refilterMcpTools(resolution);
+  }
+
+  /// Re-reads the global (once), project, and session `tools:` scopes
+  /// into the wiring state (a broken file keeps the last good scope).
+  Future<void> _reloadToolScopes(_ToolsWiringState state) async {
     if (!state.globalLoaded) {
       state.globalLoaded = true;
       final home = config.homeDir;
@@ -255,69 +288,58 @@ extension AgentCliTools on AgentCli {
       'project',
     );
     state.session = await _readSessionTools();
-    // gh-1984 (review thread 5): the media capabilities and registrations
-    // follow the LIVE vision slot — refreshed from the read auto-route's
-    // resolver on every pass, so a mid-session `/models set vision` is
-    // reflected by the next /tools (or any availability rebuild) instead
-    // of contradicting the working auto-route.
-    state.resolvedVision = await _resolveLiveVisionConfig();
-    _syncConditionalTools(state.resolvedVision);
-    final resolution = resolveToolAvailability(
-      capabilities: toolCapabilities(),
-      // Load mode (issue #680 + GOAL #2416): the default partition demotes
-      // by NAME (keep-12 essential, capability-conditional set visible,
-      // everything else deferred to `others`); the omp/pi presets keep
-      // their id-level essential sets. Enabled MCP families demote under
-      // either form (they carry the heaviest schemas).
-      essentialToolIds: _liveLoadMode == AgentLoadMode.defaultMode
-          ? null
-          : essentialToolIdsByLoadMode[_liveLoadMode],
-      essentialNames: _liveLoadMode == AgentLoadMode.defaultMode
-          ? essentialToolNamesByLoadMode[AgentLoadMode.defaultMode]
-          : null,
-      conditionalNames: _liveLoadMode == AgentLoadMode.defaultMode
-          ? conditionalCapabilityToolNames
-          : const {},
-      mcpServerIds: [
-        for (final server
-            in _mcp.manager?.toolsByServer.keys ?? const <String>[])
-          server,
-      ],
-      scopes: [
-        for (final scope in toolScopeStack)
-          (
-            scope,
-            switch (scope) {
-              ToolScope.global => state.global,
-              ToolScope.project => state.project,
-              ToolScope.session => state.session,
-              // pi mode (issue #679): the runtime scope IS the pin —
-              // deepest scope wins per key, so the pi override turns
-              // every non-benchmark tool off and `--tools`/`FA_TOOLS`/
-              // config cannot widen a benchmark run.
-              ToolScope.runtime =>
-                _piActive
-                    ? piToolsOverride()
-                    : config.runtimeTools ?? const ToolsConfig(),
-              // Never reached: toolScopeStack carries no builtin floor.
-              ToolScope.builtin => const ToolsConfig(),
-            },
-          ),
-      ],
-    );
-    _warnUnknownToolIds(resolution.unknownIds);
-    _swapReadSqliteVariant(resolution);
-    _toolGate.apply(
-      resolution,
-      _toolRegistry,
-      _agent,
-      rebuildPrompt: _applyPromptComposition,
-    );
-    // After apply: the stub's register/unregister must land in
-    // agent.state.tools + the prompt, which apply just synced (GOAL #28).
-    syncOthersTool();
-    refilterMcpTools(resolution);
   }
+
+  /// The resolver's essential ids/names/conditional names for the LIVE
+  /// load mode (issue #680 + GOAL #2416): the default partition demotes
+  /// by NAME (keep-12 essential, capability-conditional set visible,
+  /// everything else deferred to `others`); the omp/pi presets keep their
+  /// id-level essential sets. Enabled MCP families demote under either
+  /// form (they carry the heaviest schemas).
+  Set<String>? _resolutionEssentialIds() =>
+      _liveLoadMode == AgentLoadMode.defaultMode
+      ? null
+      : essentialToolIdsByLoadMode[_liveLoadMode];
+
+  Set<String>? _resolutionEssentialNames() =>
+      _liveLoadMode == AgentLoadMode.defaultMode
+      ? essentialToolNamesByLoadMode[AgentLoadMode.defaultMode]
+      : null;
+
+  Set<String> _resolutionConditionalNames() =>
+      _liveLoadMode == AgentLoadMode.defaultMode
+      ? conditionalCapabilityToolNames
+      : const {};
+
+  /// The manager's connected MCP servers (they demote like everyone
+  /// else; servers no scope declares are enabled by default).
+  List<String> _liveMcpServerIds() => [
+    for (final server in _mcp.manager?.toolsByServer.keys ?? const <String>[])
+      server,
+  ];
+
+  /// The scope stack with each scope's live config: the wiring state's
+  /// re-read scopes plus the runtime floor (pi mode pins it — issue
+  /// #679: deepest scope wins per key, so the pi override turns every
+  /// non-benchmark tool off and `--tools`/`FA_TOOLS`/config cannot widen
+  /// a benchmark run).
+  List<(ToolScope, ToolsConfig)> _resolutionScopes(_ToolsWiringState state) => [
+    for (final scope in toolScopeStack)
+      (
+        scope,
+        switch (scope) {
+          ToolScope.global => state.global,
+          ToolScope.project => state.project,
+          ToolScope.session => state.session,
+          ToolScope.runtime =>
+            _piActive
+                ? piToolsOverride()
+                : config.runtimeTools ?? const ToolsConfig(),
+          // Never reached: toolScopeStack carries no builtin floor.
+          ToolScope.builtin => const ToolsConfig(),
+        },
+      ),
+  ];
 
   /// Registers or unregisters the `others` discovery surface (GOAL #28,
   /// issue #2416) so the registry matches the LIVE load mode and the LIVE
