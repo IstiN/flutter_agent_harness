@@ -212,12 +212,13 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',
@@ -956,12 +957,13 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 20000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 20000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',

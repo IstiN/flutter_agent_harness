@@ -21,9 +21,15 @@ import 'agent_cli_test_support.dart';
 /// One ~11k-token read pushes the transcript over the trigger (the
 /// post-run hard funnel fires) while staying under the window (no
 /// over-window relief noise).
-const _window = 12000;
+///
+/// gh-2423: the always-on working-set surface rides every request (see
+/// [gh2423ContextIncludesTokens]), so the window grows by that measured
+/// delta — the trigger moves with the overhead (the fixture's transcript
+/// crosses it at the same point) and the over-the-window distance is
+/// exactly what it was.
+final _window = 12000 + gh2423ContextIncludesTokens;
 
-Model get _tinyModel => const Model(
+Model get _tinyModel => Model(
   id: 'tiny-window',
   api: 'test-api',
   provider: 'test-provider',

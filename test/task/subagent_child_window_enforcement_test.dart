@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/subagent_board.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 /// The token estimate of the report-size contract's footprint in a child
@@ -42,6 +43,14 @@ final int _contractTokens = () {
   return (growthChars / 4).ceil();
 }();
 
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The same measured-delta
+/// calibration as [_contractTokens]: the fixtures are calibrated to the
+/// pre-gh-2423 trajectory, so the child window grows by the includes' own
+/// request footprint (4 chars per token — the estimator's heuristic).
+final int _contextIncludesTokens =
+    ((workingSetPrompt.length + contextHygienePrompt.length) / 4).ceil();
+
 /// Tiny window, same calibration as subagent_compaction_test.dart: the
 /// compaction trigger lands at window − reserve, well under the window.
 final _model = Model(
@@ -49,7 +58,7 @@ final _model = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 4300 + _contractTokens,
+  contextWindow: 4300 + _contractTokens + _contextIncludesTokens,
   maxTokens: 4096,
 );
 
@@ -137,14 +146,23 @@ final class _ScriptedStream {
     tools: context.tools ?? const [],
   );
 
+  /// The routing key: the last user text that is not a gh-2423 context
+  /// notice (`isContextNoticeText` — a harness notice rides a synthetic
+  /// user record right before the request and must not re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';

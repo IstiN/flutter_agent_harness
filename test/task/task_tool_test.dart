@@ -1081,7 +1081,10 @@ void main() {
               ModelRef(
                 provider: 'anthropic',
                 modelId: 'test-haiku',
-                contextWindow: 1000,
+                // gh-2423: every child prompt carries the working-set and
+                // context-hygiene includes (≈1k tokens), so the role's
+                // window must clear the prompt for the guard to send.
+                contextWindow: 4000,
                 maxTokens: 128,
               ),
             ],
@@ -1157,7 +1160,7 @@ void main() {
               ModelRef(
                 provider: 'anthropic',
                 modelId: 'test-cheap',
-                contextWindow: 1000,
+                contextWindow: 4000,
                 maxTokens: 128,
               ),
             ],
@@ -1198,7 +1201,7 @@ void main() {
               ModelRef(
                 provider: 'anthropic',
                 modelId: 'test-haiku',
-                contextWindow: 1000,
+                contextWindow: 4000,
                 maxTokens: 128,
               ),
             ],
@@ -1206,7 +1209,7 @@ void main() {
               ModelRef(
                 provider: 'openrouter',
                 modelId: 'test-cheap',
-                contextWindow: 1000,
+                contextWindow: 4000,
                 maxTokens: 128,
               ),
             ],
@@ -1277,7 +1280,7 @@ void main() {
               ModelRef(
                 provider: 'anthropic',
                 modelId: 'test-main',
-                contextWindow: 1000,
+                contextWindow: 4000,
                 maxTokens: 128,
               ),
             ],

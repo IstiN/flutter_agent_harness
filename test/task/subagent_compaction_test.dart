@@ -14,6 +14,7 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 /// Tiny window: reserve 1024 → compaction trigger 2976, keep-recent 2048.
@@ -27,8 +28,24 @@ final _model = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 4300 + _contractTokens,
+  contextWindow: 4300 + _contractTokens + _contextIncludesTokens,
   maxTokens: 4096,
+);
+
+/// The pre-gh-2423 child window (the trajectory the fixtures are
+/// calibrated to).
+final int _baseWindow = 4300 + _contractTokens;
+
+/// Keeps the compaction crossings where they were on [_baseWindow]: every
+/// request now also carries the include delta, so the estimate is
+/// `est_base + Δ` at every boundary and the trigger must move by the same
+/// Δ — `(base + Δ) − reserve_base` — i.e. the reserve and the keep-recent
+/// stay at the base window's `forWindow` values instead of following the
+/// raised window (the curve is not flat: a plain window raise moves the
+/// trigger by only ¾Δ here and the fill fixtures cross it).
+final CompactionTuning _crossingCalibratedTuning = CompactionTuning(
+  reserveTokens: CompactionSettings.forWindow(_baseWindow).reserveTokens,
+  keepRecentTokens: CompactionSettings.forWindow(_baseWindow).keepRecentTokens,
 );
 
 /// The token estimate of the report-size contract's footprint in a child
@@ -61,6 +78,14 @@ final int _contractTokens = () {
       contract + descriptions.fold<int>(0, (a, d) => a + d.length);
   return 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();
 }();
+
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The same measured-delta
+/// calibration as [_contractTokens]: the fixtures are calibrated to the
+/// pre-gh-2423 trajectory, so the child window grows by the includes' own
+/// request footprint (4 chars per token — the estimator's heuristic).
+final int _contextIncludesTokens =
+    ((workingSetPrompt.length + contextHygienePrompt.length) / 4).ceil();
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
 
@@ -130,14 +155,23 @@ final class _ScriptedStream {
     tools: context.tools ?? const [],
   );
 
+  /// The routing key: the last user text that is not a gh-2423 context
+  /// notice (`isContextNoticeText` — a harness notice rides a synthetic
+  /// user record right before the request and must not re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';
@@ -238,6 +272,7 @@ final class _Wiring {
       store: AgentOutputStore(),
       rolesResolver: rolesResolver,
       subagentManager: manager,
+      compactionTuning: _crossingCalibratedTuning,
       childSessionFactory: (parentId, childId) => repo.create(
         JsonlSessionCreateOptions(
           cwd: '/work',
@@ -600,7 +635,9 @@ void main() {
     test(
       "a smol-role child compacts on its OWN window, not the parent's",
       () async {
-        // Window 2000: reserve 500 → trigger 1500, keep-recent 1000.
+        // Window 2000 (+ the gh-2423 prompt includes, see
+        // _contextIncludesTokens): a smol-tier window — reserve,
+        // trigger and keep-recent all scale from it.
         final smolStream = _ScriptedStream([
           (
             match: 'grow',
@@ -617,10 +654,12 @@ void main() {
           config: ModelRolesConfig(
             roles: {
               smolModelRole: [
-                const ModelRef(
+                // Non-const: the window carries the measured gh-2423 include
+                // footprint (see _contextIncludesTokens).
+                ModelRef(
                   provider: 'anthropic',
                   modelId: 'test-smol',
-                  contextWindow: 2000,
+                  contextWindow: 2000 + _contextIncludesTokens,
                   maxTokens: 128,
                 ),
               ],
@@ -639,11 +678,11 @@ void main() {
         final handle = w.manager['smol_child']!;
         // The pressure is measured against the CHILD's 2000t window — not
         // the parent's 100000t one — and the compaction fired on it.
-        expect(handle.windowTokens, 2000);
+        expect(handle.windowTokens, 2000 + _contextIncludesTokens);
         expect(handle.compactions, greaterThanOrEqualTo(1));
         expect(
           smolStream.contexts.map(smolStream.requestTokens),
-          everyElement(lessThanOrEqualTo(2000)),
+          everyElement(lessThanOrEqualTo(2000 + _contextIncludesTokens)),
         );
       },
     );

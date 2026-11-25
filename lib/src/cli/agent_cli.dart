@@ -116,7 +116,9 @@ import '../prompts/prompts.g.dart'
         readSqliteSectionPrompt,
         cliPiModePrompt,
         finalizeGateContractPrompt,
-        recallHygienePrompt;
+        recallHygienePrompt,
+        workingSetPrompt,
+        contextHygienePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -393,6 +395,8 @@ part 'agent_cli_chain_gate.dart';
 part 'agent_cli_herdr.dart';
 part 'agent_cli_handoff.dart';
 part 'agent_cli_network.dart';
+part 'agent_cli_working_set.dart';
+part 'agent_cli_context_notices.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).
@@ -659,8 +663,14 @@ class AgentCli {
           ),
         ],
         obligationsClose: (id, status) => closeObligation(id, status),
-        goalRecite: (goal) => reciteGoal(goal),
-        goalReciteCurrent: currentGoalRecitation,
+        // gh-2423 C1: the MAIN agent's working-set store (the live
+        // session + the session redactor); children bind their own.
+        workingSet: SessionWorkingSetStore(
+          openSession: () async => _session,
+          session: () async => _session ?? (throw StateError('no session')),
+          redaction: config.redactionPipeline,
+          onSaved: _onWorkingSetSaved,
+        ),
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
         // (constructed inside the builder) may not exist yet.
@@ -2643,6 +2653,9 @@ class AgentCli {
   /// «[auto-compacted · continuing]» shows while the run continues after
   /// a mid-run fold and clears when the turn settles.
   int _autoFoldCount = 0;
+
+  /// gh-2423 C3: the near-limit notice fires once per compaction cycle.
+  final ContextNoticeLatch _nearLimitNoticeLatch = ContextNoticeLatch();
 
   /// Test seam: every busy-row phase pushed, in order (issue #653 — the
   /// fold marker must never ride the busy row; see `_pushBusyPhase` in

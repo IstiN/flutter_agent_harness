@@ -2,12 +2,13 @@
 // Use of this source code is governed by a MIT license that can be found in
 // the LICENSE file.
 
-/// gh-210 — the bounded working set: the goal recitation slot (a
-/// latest-snapshot-wins `custom` ledger the agent updates through
-/// `goal_recite`) and the recently-touched-file path references,
-/// re-injected at the context tail after a compact, with enforced
-/// budgets. Pure-derivation unit tests; the projection/hide-protection
-/// integration lives in `working_set_projection_test.dart`.
+/// gh-210 — the bounded working-set tail block: the recently-touched-file
+/// path references re-injected at the context tail after a compact, with
+/// enforced budgets, plus the read-only legacy goal-recitation shape.
+/// Since issue #2423 (C1) the agent's working-set TEXT lives in the SYSTEM
+/// channel (`working_set_snapshot_test.dart`) and the tail block carries
+/// only the files section. Pure-derivation unit tests; the projection /
+/// hide-protection integration lives in `working_set_projection_test.dart`.
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -37,7 +38,7 @@ ToolResultMessage _result(String callId, String name, String text) =>
     );
 
 void main() {
-  group('goal recitation records', () {
+  group('legacy goal_recitation records (gh-210, read-only)', () {
     test('payload round-trips through the tolerant parse', () {
       final payload = goalRecitationPayload('ship the parser fix');
       final parsed = goalRecitationFromPayload(payload);
@@ -93,8 +94,11 @@ void main() {
           data: goalRecitationPayload('second goal'),
         ),
       ];
-      expect(latestGoalRecitationIn(records)!.goal, 'second goal');
-      expect(latestGoalRecitationIn(<SessionRecord>[]), isNull);
+      // gh-2423: the legacy kind is read through the working-set rule.
+      final latest = latestWorkingSetIn(records)!;
+      expect(latest.text, 'second goal');
+      expect(latest.legacy, isTrue);
+      expect(latestWorkingSetIn(<SessionRecord>[]), isNull);
     });
 
     test('a cleared (empty-goal) latest snapshot clears the slot', () {
@@ -114,7 +118,7 @@ void main() {
           data: goalRecitationPayload(''),
         ),
       ];
-      expect(latestGoalRecitationIn(records), isNull);
+      expect(latestWorkingSetIn(records), isNull);
     });
   });
 
@@ -273,7 +277,7 @@ void main() {
   });
 
   group('renderWorkingSetBlock', () {
-    test('no recitation and no compaction boundary renders nothing', () {
+    test('no compaction boundary renders nothing', () {
       final path = <SessionRecord>[
         MessageRecord(
           id: 'r1',
@@ -285,27 +289,20 @@ void main() {
       expect(renderWorkingSetBlock(path), isEmpty);
     });
 
-    test('a recitation alone renders the goal section', () {
+    test('a goal recitation never renders in the tail block (gh-2423)', () {
+      // The agent's working-set TEXT rides the system channel
+      // (`working_set_snapshot_test.dart`): a legacy recitation record on
+      // the path adds nothing here.
       final path = <SessionRecord>[
-        MessageRecord(
-          id: 'r1',
+        CustomRecord(
+          id: 'g',
           parentId: null,
           timestamp: DateTime.utc(2026),
-          message: UserMessage.text('hi'),
+          customType: goalRecitationRecordType,
+          data: goalRecitationPayload('fix the parser, then update docs'),
         ),
       ];
-      final block = renderWorkingSetBlock(
-        path,
-        recitation: GoalRecitation(
-          goal: 'fix the parser, then update docs',
-          updatedAt: DateTime.utc(2026),
-        ),
-      );
-      expect(block, startsWith('<system-notice>'));
-      expect(block, endsWith('</system-notice>'));
-      expect(block, contains('goal: fix the parser, then update docs'));
-      // No compaction boundary → no files section.
-      expect(block, isNot(contains('recently touched files')));
+      expect(renderWorkingSetBlock(path), isEmpty);
     });
 
     test('post-compaction paths render the files section', () {
@@ -379,40 +376,40 @@ void main() {
       expect(block, isNot(contains('\n… and 9 more touched files')));
     });
 
-    test('both sections render together', () {
-      final path = <SessionRecord>[
-        MessageRecord(
-          id: 'r1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: _assistant(
-            'w',
-            calls: [
-              ToolCall(
-                id: 'c1',
-                name: 'write',
-                arguments: {'path': 'lib/a.dart', 'content': 'x'},
-              ),
-            ],
+    test(
+      'the files section renders alone — no goal line, no "working set"',
+      () {
+        final path = <SessionRecord>[
+          MessageRecord(
+            id: 'r1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: _assistant(
+              'w',
+              calls: [
+                ToolCall(
+                  id: 'c1',
+                  name: 'write',
+                  arguments: {'path': 'lib/a.dart', 'content': 'x'},
+                ),
+              ],
+            ),
           ),
-        ),
-        HiddenRangeRecord(
-          id: 'h',
-          parentId: 'r1',
-          timestamp: DateTime.utc(2026),
-          recordIds: const ['r1'],
-        ),
-      ];
-      final block = renderWorkingSetBlock(
-        path,
-        recitation: GoalRecitation(
-          goal: 'the goal',
-          updatedAt: DateTime.utc(2026),
-        ),
-      );
-      expect(block, contains('goal: the goal'));
-      expect(block, contains('- lib/a.dart'));
-    });
+          HiddenRangeRecord(
+            id: 'h',
+            parentId: 'r1',
+            timestamp: DateTime.utc(2026),
+            recordIds: const ['r1'],
+          ),
+        ];
+        final block = renderWorkingSetBlock(path);
+        expect(block, startsWith('<system-notice>\nrecently touched files'));
+        expect(block, contains('- lib/a.dart'));
+        // AC4: the heading lost the words "working set"; no goal line.
+        expect(block, isNot(contains('working set')));
+        expect(block, isNot(contains('goal:')));
+      },
+    );
 
     test('the file count is capped with an explicit counting tail', () {
       final path = <SessionRecord>[];
@@ -485,8 +482,10 @@ void main() {
           recordIds: const ['r0'],
         ),
       );
-      final block = renderWorkingSetBlock(records, budgetChars: 260);
-      expect(block.length, lessThanOrEqualTo(260));
+      // Two file lines fit: the budget drops the other four, oldest first.
+      final block = renderWorkingSetBlock(records, budgetChars: 230);
+      expect(block.length, lessThanOrEqualTo(230));
+      expect(block, contains('number/4/some_file.dart'));
       // The newest file always survives; the oldest are counted away.
       expect(block, contains('number/5/some_file.dart'));
       expect(block, isNot(contains('number/0/some_file.dart')));
@@ -517,58 +516,7 @@ void main() {
           recordIds: const ['r1'],
         ),
       ];
-      expect(
-        renderWorkingSetBlock(
-          path,
-          recitation: GoalRecitation(goal: 'g', updatedAt: DateTime.utc(2026)),
-          budgetChars: 0,
-        ),
-        isEmpty,
-      );
-    });
-
-    test('an oversized goal is clipped with an explicit marker', () {
-      final path = <SessionRecord>[
-        MessageRecord(
-          id: 'r1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('hi'),
-        ),
-      ];
-      final block = renderWorkingSetBlock(
-        path,
-        recitation: GoalRecitation(
-          goal: 'g' * (goalRecitationBudgetChars + 500),
-          updatedAt: DateTime.utc(2026),
-        ),
-      );
-      expect(block.length, lessThan(goalRecitationBudgetChars + 500));
-      expect(block, contains('[clipped'));
-      // The render flattens the goal to one line.
-      expect(
-        block.split('\n').where((l) => l.startsWith('goal: ')),
-        hasLength(1),
-      );
-    });
-
-    test('multi-line goals render as one flattened line', () {
-      final path = <SessionRecord>[
-        MessageRecord(
-          id: 'r1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('hi'),
-        ),
-      ];
-      final block = renderWorkingSetBlock(
-        path,
-        recitation: GoalRecitation(
-          goal: 'line one\nline two\n\nline three',
-          updatedAt: DateTime.utc(2026),
-        ),
-      );
-      expect(block, contains('goal: line one line two line three'));
+      expect(renderWorkingSetBlock(path, budgetChars: 0), isEmpty);
     });
   });
 }

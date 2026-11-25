@@ -17,6 +17,7 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
@@ -26,6 +27,14 @@ const _catalogWindow = 4000;
 /// What the provider really serves, published into the registry by the
 /// (simulated) live detection.
 const _registeredWindow = 478000;
+
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The owner-cap fixture
+/// below is calibrated to the pre-gh-2423 request size — a cap must still
+/// admit the child's first request — so it grows by the includes' own
+/// request footprint (4 chars per token, the estimator's heuristic).
+final int _contextIncludesTokens =
+    ((workingSetPrompt.length + contextHygienePrompt.length) / 4).ceil();
 
 final _model = Model(
   id: 'child-model',
@@ -145,7 +154,10 @@ final class _ScriptedStream {
   int get calls => contexts.length;
 
   /// The text the next turn is keyed on: the last user message, or —
-  /// after a tool call — the last tool result's text.
+  /// after a tool call — the last tool result's text, skipping gh-2423
+  /// context notices (`isContextNoticeText`: a harness notice rides a
+  /// synthetic user record right before the request and must not
+  /// re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is ToolResultMessage) {
@@ -156,10 +168,16 @@ final class _ScriptedStream {
       }
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';
@@ -328,10 +346,11 @@ void main() {
           window: _registeredWindow,
           source: ContextWindowSource.endpointReport,
         );
-        final wiring = _Wiring(registry: registry, contextWindowCap: 2000);
+        final cap = 2000 + _contextIncludesTokens;
+        final wiring = _Wiring(registry: registry, contextWindowCap: cap);
         await wiring.spawn('w1', 'capped');
         // The owner cap wins in whichever direction it points.
-        expect(wiring.manager['w1']!.windowTokens, 2000);
+        expect(wiring.manager['w1']!.windowTokens, cap);
       },
     );
 

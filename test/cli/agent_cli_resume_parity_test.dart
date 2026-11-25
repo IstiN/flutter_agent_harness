@@ -179,11 +179,23 @@ void main() {
     expect(cli.agent.recordTagsEnabled, isFalse);
   });
 
+  /// gh-2423 C3: a harness context notice — machine content in the
+  /// `<system-notice>` envelope (post-hide / near-limit), never part of
+  /// the session's own projection.
+  bool isNotice(Message message) =>
+      message is UserMessage &&
+      isContextNoticeText(userMessageText(message.content));
+
   /// Role + text signature of a projected message list — the AC-R0
-  /// token-for-token comparison basis.
+  /// token-for-token comparison basis. ONE deliberate normalization: a
+  /// gh-2423 context notice signs by SHAPE only — its numbers are the
+  /// harness's live request estimate, and the two hosts' system prompts
+  /// legitimately differ (the mailbox section, the finalize gate), so
+  /// the same transcript reads a different token count per host.
   List<String> signatures(Context context) => [
     for (final message in context.messages)
       switch (message) {
+        UserMessage() when isNotice(message) => 'user:<context-notice>',
         UserMessage() =>
           'user:${message.content is String ? message.content : (message.content as List).map((b) => b is TextContent ? b.text : 'image').join('|')}',
         AssistantMessage() =>
@@ -259,7 +271,16 @@ void main() {
         expect(estimate, lessThanOrEqualTo(_threshold));
         // …and the resume carried the WHOLE session (no trim, no
         // auto-compaction — full parity with the pre-exit transcript).
-        expect(context.messages, hasLength(count + 1));
+        // A gh-2423 near-limit notice may ride AFTER the prompt (machine
+        // content, at most one per cycle) — it is not a session record.
+        final sessionMessages = context.messages
+            .where((m) => !isNotice(m))
+            .toList();
+        expect(sessionMessages, hasLength(count + 1));
+        expect(
+          context.messages.length - sessionMessages.length,
+          lessThanOrEqualTo(1),
+        );
         final output = io.out.toString();
         expect(output, isNot(contains('Context window exhausted')));
         expect(output, isNot(contains('auto-compacted')));
@@ -316,8 +337,13 @@ void main() {
       // The budget stop kept older history on disk: the projection is
       // the tail, not the whole file (laziness preserved).
       expect(context.messages.length, lessThan(budgetCount + 17));
-      // The LIVE tail is intact — the prompt rides the request.
-      expect((context.messages.last as UserMessage).content, 'go');
+      // The LIVE tail is intact — the prompt rides the request (a
+      // gh-2423 context notice, if any, is machine content after it).
+      final liveTail = context.messages
+          .whereType<UserMessage>()
+          .where((m) => !isNotice(m))
+          .last;
+      expect(liveTail.content, 'go');
     },
   );
 

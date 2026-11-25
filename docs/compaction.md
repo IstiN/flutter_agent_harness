@@ -383,7 +383,7 @@ legitimate context and carry their origin by the prompt's
 "with what produced them" convention — the mechanical mark arm stays out
 of them to keep false fires off real context.
 
-## The working set and the goal slot (gh-210)
+## The working set (gh-2423) and the honest notices
 
 After any compaction, the context tail carries a bounded re-injection so
 operative continuity stops depending on what happened to survive the
@@ -404,26 +404,111 @@ records it cannot see and cannot sink them:
   file's latest snapshot wins for entries the writer did not mutate
   since seed, so an external cleanup is never buried by a stale
   in-memory re-assert.
-- **The working-set block** (`lib/src/compaction/working_set.dart`) —
-  `goal:` first, then `recently touched files` once a compaction
-  boundary exists (structured hide/checkpoint OR a classic
-  `CompactionRecord`; the classic engine's folded-off records count
-  too). Files render as PATH references only — content re-reads on
-  demand — so the block stays bounded.
+- **The recently-touched-files block**
+  (`lib/src/compaction/working_set.dart`) — `recently touched files`
+  once a compaction boundary exists (structured hide/checkpoint OR a
+  classic `CompactionRecord`; the classic engine's folded-off records
+  count too). Files render as PATH references only — content re-reads on
+  demand — so the block stays bounded. It caps at
+  `defaultWorkingSetMaxPaths` lines (the oldest counted away as
+  `… and N more touched files`) and `defaultWorkingSetBudgetChars` chars
+  (the oldest files drop first) — explicit markers, never silent cuts.
 
-Budgets, enforced with explicit markers, never silent cuts: the file
-list caps at `defaultWorkingSetMaxPaths` lines (the oldest counted away
-as `… and N more touched files`), the whole block caps at
-`defaultWorkingSetBudgetChars` chars (the oldest files drop first), and
-an oversized goal clips with a `[clipped at N chars]` marker. Operative
-skills are NOT re-listed here — the gh-1409 pinned-operative mechanism
-already carries them through checkpoints, and this card leaves the
-prior mechanisms untouched.
+Operative skills are NOT re-listed here — the gh-1409 pinned-operative
+mechanism already carries them through checkpoints.
 
-**The goal recitation slot** is the agent-updatable `goal:` line. The
-agent writes it with the `recite_goal` tool (latest-wins, one new
-append-only `goal_recitation` snapshot per recite; no goal argument =
-read the current slot). Goals bound at `goalRecitationBudgetChars`
-before the write lands — the render never clips again. A session with
-no recitation and no compaction boundary projects byte-identically to
-the pre-gh-210 shape.
+### The agent's working set — `working_set(text)` (issue #2423, C1)
+
+The audit behind #2423: a hide-only compaction freed 131k tokens and the
+worker asked for a fresh one 76 s later "near my context limit again",
+on a 54k context — it could not see what it had decided, what was red,
+what came next. The working set is the agent's OWN answer to that: the
+short status it keeps for its next request — decisions made, the red
+list / never-do, next steps, rules to keep. Notes, not instructions to
+the harness, and never a place for secrets.
+
+- **Surface.** The `working_set` tool (pure SDK, `lib/src/tools/
+  working_set_tool.dart`) is registered for EVERY agent on every host
+  and every child agent — it needs no host capability. `working_set(text)`
+  creates or replaces; the newest write wins; `working_set("")` clears.
+  It replaces gh-210's host-only `recite_goal` (retired without an
+  alias): a legacy `goal_recitation` snapshot still renders as the
+  working-set text until a `working_set` record exists on the branch.
+- **Storage.** An append-only `custom` record (`working_set`) in the
+  agent's OWN session file — never the orchestrator's or the parent's.
+  Resume and a crash restart re-read it from the file (latest wins).
+  The text passes the redaction pipeline on write; the tool result
+  reports the stored size (`working set saved: N chars — pinned in every
+  request, survives compaction`) or a refusal.
+- **Cap.** `workingSetMaxChars` (4096). Longer text is REFUSED, not
+  clipped: `working set NOT saved: … over the 4096-char cap — shorten it
+  and call again (the previous working set stays pinned)`.
+- **Injection.** The newest working set rides the SYSTEM channel of
+  every request — the `<working-set source="agent" updated="HH:MM">`
+  block at the very tail of the system prompt (`AgentLoopConfig.
+  workingSetProvider`, `lib/src/agent/agent_loop.dart`). It is not a
+  transcript record, so no hide, fold, trim or summary path can drop it
+  by construction; a session with no working set projects byte-
+  identically to the pre-gh-2423 shape. The text is DATA: it never
+  grants an approval, never changes a tool tier and never feeds the
+  approval gate (`test/approval/working_set_independence_test.dart`).
+- **Discovery.** Two generated prompt includes ride the mode prompt on
+  every host (`prompts/compaction/working_set.md` — what the working set
+  is for, when to update it, that it is capped and not for secrets;
+  `prompts/compaction/context_hygiene.md` — the C7 read/test/think
+  hygiene rules). An explicit `systemPrompt` override is the whole
+  prompt, as with the recall contract.
+- **Visibility.** The TUI prints one dim line per write (`working set
+  updated (N chars)` / `working set cleared`); HEP emits a
+  `working_set` frame `{chars, updated, cleared}` — never the text.
+
+### Honest notices (issue #2423, C3)
+
+The harness knows the estimate (X) and the one window (W); the model
+cannot estimate its own context and does not need to. Two notices hand
+it the harness's numbers (`lib/src/compaction/context_notices.dart`),
+each a SYNTHETIC user record — the `<system-notice>` envelope, machine
+content for every classifier (never a pinned user turn, never an
+obligation) — that rides the agent's NEXT request as its last message:
+
+- **Post-hide** — exactly one per hide pass that hid records:
+  `compacted: N records hidden; context now ≈X/W (was ≈Y); your working
+  set is pinned — continue`. With no working set yet the last clause
+  reads `no working set yet — write one now with working_set(text), then
+  continue`. N counts the distinct records the pass took out of the
+  projection under every hide mechanism — a `hidden_range`, a structured
+  `compact_checkpoint` (the records its text replaced) or a classic
+  `compaction` summary boundary. A child whose run ends at that boundary
+  gets the notice with its next run's first request.
+- **Near-limit** — once per compaction cycle (armed at session start,
+  re-armed by every hide), when the pre-request estimate reaches
+  `min(0.85·W, trigger − max(2,000, 0.05·W))` (85 % of the window, always
+  below the trigger with a runway) — never at or past the trigger
+  itself, where the hide runs next and its own notice is the message:
+  `context ≈P% (X/W): update your working set with decisions, red tests
+  and next steps, then KEEP WORKING; compaction will fold older records`.
+
+A notice is QUEUED (`Agent.queueContextNotice`), not steered: the loop
+drains the queue right before it injects queued steering, so the notice
+is delivered and persisted with a request the run makes anyway (a tool
+continuation, the next prompt, the over-window continuation) and never
+opens a model turn of its own — a steered notice landing after a run's
+last boundary would be delivered as a whole extra turn, and under a low
+trigger every notice would breed an answer that re-crosses the trigger.
+The one exception is the over-window / message-cap relief: its retried
+request is built without that injection point, so there the notice is
+persisted first and mirrored into the live transcript the retry uses.
+
+The texts never say "at the limit" / "context limit" / "out of
+context" / "cannot continue" (`contextNoticeForbiddenPhrases`, pinned by
+test). Every token figure is the harness's pre-request ESTIMATE on the
+compaction trigger's own basis, so the texts mark it `≈` and the HEP
+frame carries `estimate: true` — an exact number is shown only when a
+provider reported it (none does for a request that was not sent yet);
+one private seam per number (`_noticeContextWindow`,
+`_noticeNumbersEstimated`) is where the shared context-usage source of
+truth re-points the notices. The TUI prints each notice once, dim, as a transcript row (not a
+user bubble); HEP emits a `context_notice` frame
+`{kind: post-hide|near-limit, tokens, window, hidden?}` — numbers only
+(see `docs/hep.md`). Children get the same texts through the task
+executor (the same queued notice before their next request).

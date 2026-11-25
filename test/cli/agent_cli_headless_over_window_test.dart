@@ -46,12 +46,13 @@ void main() {
     CompactionSettings? settings,
   }) => AgentCli(
     config: AgentCliConfig(
-      model: const Model(
+      model: Model(
         id: 'tiny-window',
         api: 'test-api',
         provider: 'test-provider',
         baseUrl: 'https://example.test',
-        contextWindow: 12000,
+        // + the gh-2423 working-set surface (see gh2423ContextIncludesTokens).
+        contextWindow: 12000 + gh2423ContextIncludesTokens,
         maxTokens: 4096,
       ),
       apiKey: '[REDACTED:Sensitive-Value]',
@@ -106,7 +107,6 @@ void main() {
       );
 
       final exitCode = await cli.runHeadless('count the words');
-
       // Guard stop → the deterministic relief (zero LM calls mid-turn) →
       // settle-path compaction (call 2, frees the window) → continuation
       // turn (call 3): the task DROVE TO COMPLETION.
@@ -121,8 +121,10 @@ void main() {
       );
       // The continuation is the notice prompt, not a bare retry of the
       // original user text.
+      // (A gh-2423 context notice may ride after it — machine content.)
       final lastPrompt = stream.contexts[2].messages
           .whereType<UserMessage>()
+          .where((m) => !isContextNoticeText(userMessageText(m.content)))
           .last;
       expect(
         lastPrompt.content as String,
@@ -184,12 +186,13 @@ void main() {
       // ladder with a transient wording, attempt 2 recovers.
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (see gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',

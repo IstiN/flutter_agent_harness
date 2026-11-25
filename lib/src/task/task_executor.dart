@@ -500,6 +500,12 @@ final class TaskExecutor {
         incomingTokens: estimateRequestTokens([UserMessage.text(promptText)]),
         probe: true,
       );
+      // gh-2423 C3: a post-hide notice deferred at the end of the previous
+      // run rides THIS run's first request.
+      for (final record
+          in _childDeferredNotices.remove(id) ?? const <String>[]) {
+        agent.queueContextNotice(UserMessage.text(record));
+      }
       agent.prepareNextTurn = (nextTurn) async {
         // gh-1948: resumed children ride the same per-boundary transcript
         // flush as fresh spawns (see _buildChild).
@@ -531,6 +537,10 @@ final class TaskExecutor {
         existingOutput: cappedText,
       );
       await _flushChildTranscript(id, child);
+      // gh-2423: the last boundary's deferred compaction pass — the
+      // reply is already captured above; the session is compacted for
+      // the next resume.
+      await _postRunChildCompaction(id, child, wiring: wiring);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
       // the row. The prior transcript stays out of the count — its usage
@@ -702,7 +712,31 @@ final class TaskExecutor {
     ({Model model, StreamFunction stream}) wiring,
     NextTurnContext nextTurn,
   ) async {
-    final compacted = await _compactChildIfNeeded(id, child, wiring: wiring);
+    // gh-2423 C3: a notice rides the child's next request — there is one
+    // only when this boundary's assistant message still carried tool
+    // calls, or a queued message (the parent's steering, the inbox)
+    // opens a new turn; a final text turn with nothing queued ends the
+    // run.
+    final continues =
+        nextTurn.message.content.whereType<ToolCall>().isNotEmpty ||
+        child.hasSteering ||
+        (await subagentManager?.hasPendingMessages(id) ?? false);
+    if (!continues) {
+      // The run ends at this boundary: the pass waits until the final
+      // reply is captured ([_postRunChildCompaction]) — a hide-only pass
+      // over an overhead-dominated context cuts the newest record too,
+      // i.e. the reply, and the run would end with "subagent produced no
+      // assistant message".
+      _childPostRunCompaction.add(id);
+      return null;
+    }
+    _childPostRunCompaction.remove(id);
+    final compacted = await _compactChildIfNeeded(
+      id,
+      child,
+      wiring: wiring,
+      continues: true,
+    );
     if (!compacted) return null;
     return AgentLoopTurnUpdate(
       context: Context(
@@ -731,6 +765,7 @@ final class TaskExecutor {
     required ({Model model, StreamFunction stream}) wiring,
     int incomingTokens = 0,
     bool probe = false,
+    bool continues = true,
   }) async {
     final manager = subagentManager;
     if (manager == null || childSessionFactory == null) return false;
@@ -771,7 +806,24 @@ final class TaskExecutor {
       observedTokens: observed,
       windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
     );
-    if (!decision.triggered) return false;
+    if (!decision.triggered) {
+      // gh-2423 C3: under the trigger, the honest near-limit notice —
+      // once per cycle, a steering message consumed before the child's
+      // next request (the same text the main agent gets). Only at a
+      // boundary the child continues from ([continues]): a final text
+      // turn has no next request to ride, and a steer there would force
+      // an extra model round for nothing — the latch stays armed.
+      if (continues) {
+        _maybeNoteChildNearLimit(
+          id,
+          child,
+          tokens: est,
+          window: window,
+          settings: settings,
+        );
+      }
+      return false;
+    }
     // Issue #1924 bounded-failure latch: after [_maxChildCompactionFailures]
     // consecutive failed passes, boundary passes stop — every further pass
     // is a heavy LLM call the broken surface will burn at every boundary
@@ -817,6 +869,17 @@ final class TaskExecutor {
       _childCompactionFailures.remove(id);
       manager.noteCompactionHealth(id);
       manager.recordCompaction(id, freedTokens: before - after);
+      // gh-2423 C3: the hide gets its honest notice (N from the pass
+      // receipt, Y/X from the same estimate the trigger used).
+      await _noteChildPostHide(
+        id,
+        child,
+        hiddenRecords: pass.hiddenRecords,
+        tokensBefore: before,
+        tokensNow: after,
+        window: window,
+        continues: continues,
+      );
       return true;
     }
     if (pass.attempted) {
@@ -832,6 +895,106 @@ final class TaskExecutor {
       );
     }
     return false;
+  }
+
+  /// The provenance of a child notice's token figures — the same rule
+  /// as the CLI's (`_noticeNumbersEstimated` there): the child's trigger
+  /// estimate is a heuristic figure, so its texts carry the `≈`. The one
+  /// seam the shared context-usage source of truth re-points.
+  static const bool _childNoticeNumbersEstimated = true;
+
+  /// gh-2423 C3: the near-limit notice latch, per child id (armed at the
+  /// child's start, re-armed by every hide — one notice per cycle).
+  final _childNearLimitLatches = <String, ContextNoticeLatch>{};
+
+  /// gh-2423 C3: the child's near-limit notice — the pre-request estimate
+  /// [tokens] reached the near-limit point of [window] under [settings].
+  /// A silent child has no TUI and no HEP stream: the MODEL gets the
+  /// notice (steering ⇒ a synthetic user record before its next request),
+  /// the parent sees nothing new (the pressure stamp already rides the
+  /// handle).
+  void _maybeNoteChildNearLimit(
+    String id,
+    Agent child, {
+    required int tokens,
+    required int window,
+    required CompactionSettings settings,
+  }) {
+    final latch = _childNearLimitLatches.putIfAbsent(
+      id,
+      ContextNoticeLatch.new,
+    );
+    if (!latch.armed) return;
+    if (!nearLimitReached(tokens: tokens, window: window, settings: settings)) {
+      return;
+    }
+    if (!latch.take()) return;
+    child.queueContextNotice(
+      UserMessage.text(
+        nearLimitContextNotice(
+          tokens: tokens,
+          window: window,
+          estimated: _childNoticeNumbersEstimated,
+        ),
+      ),
+    );
+  }
+
+  /// gh-2423: children whose LAST turn boundary deferred its compaction
+  /// pass to the end of the run (see [_compactChildAtBoundary]), per id.
+  final _childPostRunCompaction = <String>{};
+
+  /// gh-2423: the pass deferred from the run's last boundary — the same
+  /// pass the boundary would have run, AFTER the final reply was read
+  /// into the child's result, so no hide can take the deliverable with
+  /// it. No-op when the run ended without a deferred pass.
+  Future<void> _postRunChildCompaction(
+    String id,
+    Agent child, {
+    required ({Model model, StreamFunction stream}) wiring,
+  }) async {
+    if (!_childPostRunCompaction.remove(id)) return;
+    await _compactChildIfNeeded(id, child, wiring: wiring, continues: false);
+  }
+
+  /// gh-2423 C3: post-hide notices that found no next request to ride —
+  /// the hide ran at the boundary of a FINAL text turn — per child id.
+  /// Delivered (steered) before the child's next run's first request:
+  /// exactly one per hide pass, never dropped, never an extra round.
+  final _childDeferredNotices = <String, List<String>>{};
+
+  /// gh-2423 C3: the child's post-hide notice — exactly one per hide pass
+  /// that hid records ([hiddenRecords]); re-arms the near-limit latch (the
+  /// context dropped, the next crossing is a new cycle). [continues]: the
+  /// child's run goes on past this boundary (the notice rides its next
+  /// request); otherwise it is deferred to the next run.
+  Future<void> _noteChildPostHide(
+    String id,
+    Agent child, {
+    required int hiddenRecords,
+    required int tokensBefore,
+    required int tokensNow,
+    required int window,
+    required bool continues,
+  }) async {
+    if (hiddenRecords <= 0) return;
+    final snapshot = await child.workingSetStore?.load();
+    final line = postHideNoticeLine(
+      hiddenRecords: hiddenRecords,
+      tokensNow: tokensNow,
+      tokensBefore: tokensBefore,
+      window: window,
+      hasWorkingSet: snapshot != null && !snapshot.isClear,
+      estimated: _childNoticeNumbersEstimated,
+    );
+    if (line.isEmpty) return;
+    final record = contextNoticeEnvelope(line);
+    if (continues) {
+      child.queueContextNotice(UserMessage.text(record));
+    } else {
+      _childDeferredNotices.putIfAbsent(id, () => <String>[]).add(record);
+    }
+    _childNearLimitLatches.putIfAbsent(id, ContextNoticeLatch.new).rearm();
   }
 
   /// Consecutive failed child compaction passes (issue #1924), per child
@@ -907,7 +1070,8 @@ final class TaskExecutor {
   /// `(ok: false, error: …)` and nothing changes; `attempted` reports
   /// whether the engine actually attempted a pass (issue #1924 review
   /// round 1) — a gate-declined no-op is a healthy non-attempt.
-  Future<({bool ok, bool attempted, String? error})> _runChildCompactionPass({
+  Future<({bool ok, bool attempted, String? error, int hiddenRecords})>
+  _runChildCompactionPass({
     required Session session,
     required Agent child,
     required int window,
@@ -941,9 +1105,19 @@ final class TaskExecutor {
         force: runForced,
       ).run();
     } on Object catch (error) {
-      return (ok: false, attempted: hooks.attempted, error: '$error');
+      return (
+        ok: false,
+        attempted: hooks.attempted,
+        error: '$error',
+        hiddenRecords: hooks.hiddenRecords,
+      );
     }
-    return (ok: true, attempted: hooks.attempted, error: null);
+    return (
+      ok: true,
+      attempted: hooks.attempted,
+      error: null,
+      hiddenRecords: hooks.hiddenRecords,
+    );
   }
 
   /// The observed-over-headroom latch per child id (see the forced-channel
@@ -1060,6 +1234,9 @@ final class TaskExecutor {
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final agent = child;
+    // gh-2423 C1: a resumed child keeps its working set (re-read from its
+    // own file — latest wins).
+    child.workingSetStore = _childWorkingSetStore(id);
     // Issue #1829 Core flow B: same truncated-call capture as a fresh
     // spawn — a resumed child's lost reply is recovered identically.
     child.onTruncatedToolCall = (call) async {
@@ -1143,6 +1320,11 @@ final class TaskExecutor {
     // Issue #1924: a fresh run gets a fresh compaction-failure budget —
     // the latch is per-run, never per-child-lifetime.
     _childCompactionFailures.remove(id);
+    // gh-2423 C3: a fresh run also starts with an armed near-limit latch
+    // and no notice deferred by a previous run of the same id.
+    _childDeferredNotices.remove(id);
+    _childNearLimitLatches.remove(id);
+    _childPostRunCompaction.remove(id);
     // Crash-resilient transcript: the real JSONL session is created lazily
     // on the FIRST transcript flush — never at spawn time. Subagents that
     // finish with no transcript leave no session file behind.
@@ -1201,6 +1383,9 @@ final class TaskExecutor {
       cancelToken,
     );
 
+    // gh-2423: the last boundary's deferred compaction pass — the final
+    // text is captured; a hide can no longer take it away.
+    await _postRunChildCompaction(id, child, wiring: wiring);
     final capped = _capOutput(storedContent);
     // Issue #862 review: a duplicate registration in the child surface
     // (the luna wiring bug) degraded into a note - surface it loudly on
@@ -1350,6 +1535,8 @@ final class TaskExecutor {
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
+    // gh-2423 C1: the child's working set lives in the child's own session.
+    child.workingSetStore = _childWorkingSetStore(id);
     // Issue #1829 Core flow B: an output-truncated reply/agent_message
     // call is captured as a partial artifact (never executed — I2); the
     // pointer rides the child completion out of band.
@@ -1657,7 +1844,13 @@ final class TaskExecutor {
     String context, {
     int? replyBudget,
   }) {
-    final systemPrompt = StringBuffer(definition.systemPrompt.trim());
+    // gh-2423 C1/C7: every task child carries the working-set contract
+    // and the context-hygiene rules — `working_set` is in every child's
+    // surface (read tier, no availability id), and children run the
+    // hide-only compaction path the rules are written for.
+    final systemPrompt = StringBuffer(definition.systemPrompt.trim())
+      ..write('\n\n$workingSetPrompt')
+      ..write('\n\n$contextHygienePrompt');
     if (context.trim().isNotEmpty) {
       systemPrompt
         ..writeln()
@@ -2056,22 +2249,48 @@ final class TaskExecutor {
     await next;
   }
 
+  /// Creates the child's JSONL session through the host factory and
+  /// attaches its path to the handle. Null when the host wires no child
+  /// sessions or the creation failed — best-effort by contract (the
+  /// flush and the working-set write both become no-ops).
+  Future<Session?> _createChildSession(String id) async {
+    final factory = childSessionFactory;
+    final manager = subagentManager;
+    if (factory == null || manager == null) return null;
+    try {
+      final session = await factory(manager.parentSessionId, id);
+      _childSessions[id] = session;
+      manager.attachSession(id, (await session.getMetadata()).path);
+      return session;
+    } on Object {
+      // Session creation is best-effort; callers degrade to no-ops.
+      return null;
+    }
+  }
+
+  /// gh-2423 C1: the CHILD's own working-set store — the `working_set`
+  /// tool resolves it through the run's zone scope, so a child's notes
+  /// land in the child's own session file (never the host's main session,
+  /// the gh-210 defect) and ride the system channel of every request the
+  /// child builds.
+  WorkingSetStore _childWorkingSetStore(String id) => SessionWorkingSetStore(
+    // Reads never create the child's file: the lazy-create-on-first-flush
+    // contract is untouched (a child that never runs leaves no file).
+    openSession: () async => _childSessions[id],
+    // A write (the model called `working_set`) may create it.
+    session: () async =>
+        _childSessions[id] ??
+        (await _createChildSession(id)) ??
+        (throw StateError('child session unavailable')),
+  );
+
   Future<void> _flushChildTranscriptNow(String id, Agent child) async {
     // Lazy-create the JSONL session on the FIRST flush — never on spawn.
     // Subagents that finish with no transcript never leave an empty file.
     var session = _childSessions[id];
     if (session == null) {
-      final factory = childSessionFactory;
-      final manager = subagentManager;
-      if (factory == null || manager == null) return;
-      try {
-        session = await factory(manager.parentSessionId, id);
-        _childSessions[id] = session;
-        manager.attachSession(id, (await session.getMetadata()).path);
-      } on Object {
-        // Session creation is best-effort; flushes become no-ops when it fails.
-        return;
-      }
+      session = await _createChildSession(id);
+      if (session == null) return;
     }
     final messages = child.state.messages;
     final written = _childSessionWrites[id] ?? 0;
@@ -2108,9 +2327,14 @@ final class _SilentCompactionHooks extends AutoCompactorHooks {
   /// caller must never read that healthy no-op as a failed pass.
   bool attempted = false;
 
+  /// Session records hidden behind the child's compaction boundary over
+  /// the run (gh-2423 C3: N of the child's post-hide notice).
+  int hiddenRecords = 0;
+
   @override
   void onPass(AutoCompactorPass pass) {
     attempted = true;
+    hiddenRecords += pass.hiddenRecords;
   }
 
   @override

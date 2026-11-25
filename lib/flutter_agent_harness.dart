@@ -159,6 +159,8 @@ export 'src/compaction/bench_trigger.dart';
 export 'src/compaction/emergency_relief.dart';
 export 'src/compaction/tuning.dart';
 export 'src/compaction/working_set.dart';
+export 'src/compaction/working_set_snapshot.dart';
+export 'src/compaction/working_set_store.dart';
 // gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
 // until a caller exists (gh-1232: the barrel is append-only — a
 // speculative export is the wrong order). The E1 discrimination it
@@ -315,7 +317,7 @@ export 'src/task/subagent_tools.dart';
 export 'src/task/subagent_scope.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/obligation_tool.dart';
-export 'src/tools/recite_goal_tool.dart';
+export 'src/tools/working_set_tool.dart';
 export 'src/tools/session_search_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';

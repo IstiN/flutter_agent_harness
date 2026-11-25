@@ -565,6 +565,9 @@ extension AgentCliCompactionRun on AgentCli {
     // when unanchored) — the threshold must trip on what the next request
     // actually carries.
     final tokens = _liveRequestTokens();
+    // gh-2423 C3: the honest near-limit notice rides the trigger's own
+    // basis, ahead of the hard/soft gates — once per compaction cycle.
+    await _maybeEmitNearLimitNotice(tokens);
     // gh-1680 AC4: the additive message-count trigger — a model with a
     // learned cap compacts when the live count reaches `cap − margin`,
     // BEFORE the request, even when the token trigger is untouched. The
@@ -615,6 +618,8 @@ extension AgentCliCompactionRun on AgentCli {
     if (!hard && !soft) return false;
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
+    // gh-2423 C3: the hide snapshot the post-hide notice counts against.
+    final knownHiddenRanges = hiddenRangeIdsIn(await session.getEntries());
     try {
       // gh-1729 review: when the E1 one-shot pass is the trigger, the
       // funnel's own re-check cannot see it (a cap-UNKNOWN model has no
@@ -644,6 +649,12 @@ extension AgentCliCompactionRun on AgentCli {
     // one-shot resume budget was burned on a transcript that still could
     // not be sent.
     final after = _liveRequestTokens();
+    // gh-2423 C3: exactly one honest post-hide notice per hide pass.
+    await _emitPostHideNotice(
+      knownHiddenRanges: knownHiddenRanges,
+      tokensBefore: tokens,
+      tokensNow: after,
+    );
     // PR #1695: success needs BOTH dimensions — a pass that only shrinks
     // tokens while the message count still trips the cap gate is not a
     // success; the caller retries relief and the funnel reports
@@ -938,8 +949,17 @@ extension AgentCliCompactionRun on AgentCli {
     _runAbortRequested = false;
     _pushBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
+    // gh-2423 C3: a manual hide is a hide — the model gets the same
+    // honest numbers.
+    final knownHiddenRanges = hiddenRangeIdsIn(await session.getEntries());
     try {
       final reported = await _runAutoCompact('[compacted]');
+      await _emitPostHideNotice(
+        session: session,
+        knownHiddenRanges: knownHiddenRanges,
+        tokensBefore: before,
+        tokensNow: _liveRequestTokens(),
+      );
       if (!reported && _liveRequestTokens() >= before) {
         // A no-op manual /compact (already compacted at the leaf) prints no
         // report block — say why instead of looking like a silent hang.
@@ -1207,6 +1227,8 @@ extension OverWindowGuardRelief on AgentCli {
       window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,
     );
+    final knownHiddenRanges = hiddenRangeIdsIn(await _session!.getEntries());
+    final tokensBefore = _liveRequestTokens();
     final outcome = await relief.run();
     // The relief re-anchored the live transcript from the session
     // projection (refreshAgentState) — keep the persist cursor in step,
@@ -1222,6 +1244,16 @@ extension OverWindowGuardRelief on AgentCli {
       'over-window relief replaced the '
       'projection',
     );
+    // gh-2423 C3: the emergency tier's hide gets its honest numbers too
+    // (the #2264 continuation notice names the event; this names N/X/Y/W).
+    if (outcome.hiddenRecords > 0) {
+      await _emitPostHideNotice(
+        knownHiddenRanges: knownHiddenRanges,
+        tokensBefore: tokensBefore,
+        tokensNow: _liveRequestTokens(),
+        relief: true,
+      );
+    }
     return outcome;
   }
 }
