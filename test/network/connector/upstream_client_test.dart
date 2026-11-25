@@ -45,6 +45,18 @@ final class FakeSocket implements ConnectorSocket {
   void drop() => controller.close();
 }
 
+/// A [FakeSocket] whose drop carries a peer close status — the
+/// [ConnectorCloseInfo] seam the IO adapter implements over
+/// `WebSocket.closeCode` (4001 = the server kept another socket of this
+/// device and closed this dial).
+final class FakeCloseCodeSocket extends FakeSocket
+    implements ConnectorCloseInfo {
+  FakeCloseCodeSocket(this.closeCode);
+
+  @override
+  final int? closeCode;
+}
+
 final class FakeTransport implements ConnectorTransport {
   FakeSocket? next;
   final sockets = <FakeSocket>[];
@@ -573,9 +585,11 @@ void main() {
       required Duration stableWindow,
       double Function()? jitter,
       Future<String> Function()? tickets,
+      FakeSocket? socket,
+      void Function(String)? onLog,
     }) {
-      final socket = FakeSocket();
-      transport.next = socket;
+      final live = socket ?? FakeSocket();
+      transport.next = live;
       final client = ConnectorUpstreamClient(
         url: Uri.parse('wss://network.fa1.dev/ws'),
         transport: transport,
@@ -585,8 +599,9 @@ void main() {
         jitterFraction: jitter,
         clock: timers.clock,
         timers: timers,
+        onLog: onLog,
       );
-      return (client: client, socket: socket);
+      return (client: client, socket: live);
     }
 
     Future<void> stopAndDispose(ConnectorUpstreamClient client) async {
@@ -610,9 +625,10 @@ void main() {
     Future<FakeSocket> reconnect(
       FakeTransport transport,
       FakeConnectorTimers timers,
-      ConnectorUpstreamClient client,
-    ) async {
-      final next = FakeSocket();
+      ConnectorUpstreamClient client, {
+      FakeSocket? socket,
+    }) async {
+      final next = socket ?? FakeSocket();
       transport.next = next;
       await timers.elapse(timers.pendingDelayed.single.delay);
       await pump();
@@ -778,5 +794,181 @@ void main() {
         client.dispose();
       },
     );
+
+    group('duplicate device connection (close code 4001)', () {
+      const stable = Duration(seconds: 30);
+
+      test('a drop with 4001 waits 5 s: no dial before the floor, the dial '
+          'lands on the 5 s mark', () async {
+        final transport = FakeTransport();
+        final timers = FakeConnectorTimers(FakeConnectorClock());
+        final logs = <String>[];
+        final link = connect(
+          transport,
+          timers,
+          stableWindow: stable,
+          jitter: () => 1,
+          socket: FakeCloseCodeSocket(duplicateDialCloseCode),
+          onLog: logs.add,
+        );
+        await welcome(link.client, link.socket);
+        final dialsBefore = transport.dials.length;
+
+        link.socket.drop();
+        await pump();
+        expect(link.client.attempts, 1);
+        expect(
+          timers.pendingDelayed.single.delay,
+          duplicateDialBackoff,
+          reason: 'max(ladder 1 s, floor 5 s): 4001 is not the ladder',
+        );
+        expect(
+          logs.join(' '),
+          contains(
+            'duplicate device connection (4001): the established socket '
+            'keeps the device; retry in ≥5 s',
+          ),
+        );
+
+        await timers.elapse(
+          duplicateDialBackoff - const Duration(milliseconds: 1),
+        );
+        expect(
+          transport.dials,
+          hasLength(dialsBefore),
+          reason: 'no dial a millisecond before the floor',
+        );
+
+        transport.next = FakeSocket();
+        await timers.elapse(const Duration(milliseconds: 1));
+        await pump();
+        expect(transport.dials, hasLength(dialsBefore + 1));
+        expect(
+          transport.lastSocket!.sent.single.kind,
+          NetworkEnvelopeKind.hello,
+        );
+        await stopAndDispose(link.client);
+      });
+
+      test('every further 4001 waits ≥ 5 s again — the ladder keeps climbing '
+          'behind the floor (a short-lived link never resets it)', () async {
+        final transport = FakeTransport();
+        final timers = FakeConnectorTimers(FakeConnectorClock());
+        final link = connect(
+          transport,
+          timers,
+          stableWindow: stable,
+          jitter: () => 0, // smallest jitter: steps 0.5, 1, 2, 4, 8 s
+          socket: FakeCloseCodeSocket(duplicateDialCloseCode),
+        );
+        await welcome(link.client, link.socket);
+        var live = link.socket;
+
+        // Attempts 1–4: the jittered ladder stays under the 5 s floor.
+        for (var attempt = 1; attempt <= 4; attempt++) {
+          live.drop();
+          await pump();
+          expect(link.client.attempts, attempt);
+          expect(timers.pendingDelayed.single.delay, duplicateDialBackoff);
+          live = await reconnect(
+            transport,
+            timers,
+            link.client,
+            socket: FakeCloseCodeSocket(duplicateDialCloseCode),
+          );
+        }
+        // Attempt 5: the ladder (8 s) outgrows the floor → max(ladder, 5 s).
+        live.drop();
+        await pump();
+        expect(timers.pendingDelayed.single.delay, const Duration(seconds: 8));
+        live = await reconnect(
+          transport,
+          timers,
+          link.client,
+          socket: FakeCloseCodeSocket(duplicateDialCloseCode),
+        );
+
+        // A stable link resets the ladder; the floor still holds for the
+        // next 4001.
+        await timers.elapse(stable);
+        expect(link.client.attempts, 0);
+        live.drop();
+        await pump();
+        expect(link.client.attempts, 1);
+        expect(timers.pendingDelayed.single.delay, duplicateDialBackoff);
+        await stopAndDispose(link.client);
+      });
+
+      test(
+        "control: a code-less close (or dart:io's 1005 'no status') keeps "
+        'the plain ladder — the 1 s first step — so the two paths differ',
+        () async {
+          for (final socket in [FakeSocket(), FakeCloseCodeSocket(1005)]) {
+            final transport = FakeTransport();
+            final timers = FakeConnectorTimers(FakeConnectorClock());
+            final logs = <String>[];
+            final link = connect(
+              transport,
+              timers,
+              stableWindow: stable,
+              jitter: () => 1,
+              socket: socket,
+              onLog: logs.add,
+            );
+            await welcome(link.client, link.socket);
+            link.socket.drop();
+            await pump();
+            expect(link.client.attempts, 1);
+            expect(
+              timers.pendingDelayed.single.delay,
+              const Duration(seconds: 1),
+            );
+            expect(logs.join(' '), contains('link lost'));
+            expect(
+              logs.join(' '),
+              isNot(contains('duplicate device connection')),
+            );
+            await stopAndDispose(link.client);
+          }
+        },
+      );
+
+      test(
+        'a 4001 before hello_ok (the duplicate dial is closed mid-handshake) '
+        'waits 5 s too',
+        () async {
+          final transport = FakeTransport();
+          final timers = FakeConnectorTimers(FakeConnectorClock());
+          final logs = <String>[];
+          final link = connect(
+            transport,
+            timers,
+            stableWindow: stable,
+            jitter: () => 1,
+            socket: FakeCloseCodeSocket(duplicateDialCloseCode),
+            onLog: logs.add,
+          );
+          await link.client.start();
+          await pump();
+          expect(link.client.state, ConnectorLinkState.handshaking);
+
+          link.socket.drop();
+          await pump();
+          expect(link.client.state, ConnectorLinkState.disconnected);
+          expect(link.client.attempts, 1);
+          expect(
+            timers.pendingDelayed.single.delay,
+            duplicateDialBackoff,
+            reason: 'not the 1 s ladder step',
+          );
+          expect(
+            logs.join(' '),
+            contains('duplicate device connection (4001)'),
+          );
+          expect(link.socket.closed, isTrue);
+          await stopAndDispose(link.client);
+        },
+      );
+    });
   });
 }

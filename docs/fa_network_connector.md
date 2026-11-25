@@ -137,6 +137,20 @@ lost their DM link in that storm). Client rules, pinned by
   step; a 429 on ticket mint or upgrade waits `Retry-After` when available
   (`dart:io` exposes only the status of a refused WS upgrade → ladder
   fallback otherwise).
+- Duplicate dial (fa_network a0d92b6, in production): the server KEEPS the
+  established device socket and closes a second dial under the same
+  `deviceId` with WS close code **4001** (reason `duplicate device
+  connection`). The client must not fight for the device: it reads the code
+  through the pure-Dart `ConnectorCloseInfo` seam (`WebSocket.closeCode`,
+  valid once the frames stream completed — `dart:io` assigns it when the
+  close frame arrives), logs `duplicate device connection (4001): the
+  established socket keeps the device; retry in ≥5 s`, and waits
+  `max(ladder, 5 s)` (`duplicateDialBackoff`); the ladder is not reset (a
+  short-lived link). A dead established socket is swept by the server's
+  ping-ghost within ~45 s, after which the ≥ 5 s retry re-claims the
+  device. Pinned by `upstream_client_test.dart` (fake clock: no dial before
+  5 s, every further 4001 ≥ 5 s, a code-less close keeps the 1 s step) and
+  `device_transport_io_test.dart` (loopback 4001 → `closeCode`).
 - Roster PATCH: both hosts write through one `RosterPatchLimiter` — at least
   2 s between PATCHes per device process, `Retry-After` or a jittered
   cooldown on 429, pending rows merged into the next flush, never dropped.
@@ -155,7 +169,8 @@ lost their DM link in that storm). Client rules, pinned by
   `hello` (deviceId + local roster digest) → server replies
   `hello_ok` + full `roster` snapshot for the device's networks, then
   incremental roster/presence frames.
-- Reconnect: 1 s → 30 s backoff, resume by (deviceId, deviceToken);
+- Reconnect: 1 s → 30 s backoff (a 4001 duplicate-dial close floors the
+  wait at 5 s — §3.1), resume by (deviceId, deviceToken);
   the server redelivers undelivered (unacked) mail in seq order after
   the roster snapshot (AC5). Redelivered/stored mail is forwarded
   VERBATIM — `from` stays the sender id the frame arrived with
