@@ -879,51 +879,78 @@ extension on AgentCli {
     }
   }
 
-  /// gh-241 follow-up #5 (F3/R2): the calibration the RESIDENT tail can
-  /// vouch for — the first valid provider usage AFTER the newest resident
-  /// compaction boundary (or on a branch complete to its root). An anchor
-  /// above a boundary, or on a mid-chain tail, priced a request whose head
-  /// is not resident (gh-2237's stale-anchor rule): not vouchable.
-  /// `null` = the tail measures nothing, so the walk must not truncate
-  /// on the heuristic (R1).
+  /// gh-241 follow-up #5d (D1 — owner live test round 5): the overhead is
+  /// calibrated by the OVERHEAD-DOMINATED request of the session — its
+  /// first valid provider report (pre-boundary allowed; the C1 seam) —
+  /// never by a tail-heavy post-boundary reply. `ratio = reported /
+  /// (estimated history + estimated overhead)` conflates the two, and a
+  /// reply that priced a folded tail read x0.82 where the session's first
+  /// request read x0.66 (≈19,500 against ≈15,700 real at a 25k window —
+  /// enough to switch the soft-window regime on at every resume).
+  /// The estimate is always taken over the very request the provider
+  /// priced: the anchor's context start (the file head or a boundary
+  /// above it) is paged resident first (bounded: 64 block pages).
+  /// `null` = nothing vouches, so the walk must not truncate on the
+  /// heuristic (R1). Every applied calibration names its anchor in one
+  /// log line: `resume calibration source=first|pre-boundary|post-boundary`
+  /// followed by the anchor record id and `ratio=x<N>`.
   Future<OverheadCalibration?> _residentTailCalibration(Session session) async {
-    final branch = await session.getBranch();
-    if (branch.isNotEmpty) {
-      var start = 0;
-      var boundary = false;
-      for (var i = 0; i < branch.length; i++) {
-        final entry = branch[i];
-        if (_isContextBoundary(entry)) {
-          start = i;
-          boundary = true;
+    final storage = session.getStorage();
+    var branch = await session.getBranch();
+    // A header-only session (nothing appended yet) measures nothing.
+    if (branch.isEmpty) return null;
+    if (storage is WindowedSessionStorage) {
+      // Toward the file head — the session's FIRST report is the anchor,
+      // whatever a nearer report says. Bounded twice: 64 block pages,
+      // and a marathon keeps its newest vouchable report instead of a
+      // full open. A context nothing measures (no report below a
+      // resident boundary) ends the probe: that session is unmeasured
+      // and the walk runs under R1 (only a boundary may limit it).
+      for (var pages = 0; pages < 64 && storage.hasOlder; pages++) {
+        if (branch.length >= _calibrationProbeMaxRecords) break;
+        if (_oldestUsageReply(branch) == null &&
+            branch.any(_isContextBoundary)) {
+          break;
         }
+        await storage.growOlderUntil((_) => false, maxPages: 1);
+        branch = await session.getBranch();
       }
-      // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
-      // only from a COMPLETE walk (the branch reaches a tree root) — every
-      // anchor of a mid-chain tail priced a request whose head is missing.
-      final complete = boundary || branch.first.parentId == null;
-      final resident = complete
-          ? deriveOverheadCalibration(
-              [
-                for (final entry in branch.sublist(start))
-                  if (entry is MessageRecord) entry.message,
-              ],
-              systemPrompt: _agent.state.systemPrompt,
-              tools: _agent.state.tools,
-            )
-          : null;
-      if (resident != null) return resident;
     }
-    // gh-241 follow-up #5c (C1 — owner live test round 4): the resident
-    // tail measured nothing (a resume right after a durable checkpoint:
-    // the checkpoint IS the last record). The overhead is a property of
-    // the system prompt + the tool schemas, not of the folded history —
-    // a report that priced an EARLIER request still vouches for it.
-    // Without this the resume read "unmeasured", fell into the
-    // soft-window regime on the raw heuristic (≈23.8k estimated vs ≈14.4k
-    // real at a 25k window) and trimmed the context to 3 messages against
-    // a provider truth of 15,310.
-    return _olderReportCalibration(session);
+    final oldest = _oldestUsageReply(branch);
+    if (oldest != null && _contextOpened(branch, branch.indexOf(oldest))) {
+      final calibration = _calibrationOver(branch, branch.indexOf(oldest));
+      if (calibration != null) {
+        _logCalibration(
+          branch.first.parentId == null ? 'first' : 'pre-boundary',
+          oldest,
+          calibration,
+        );
+        return calibration;
+      }
+    }
+    // Nothing older vouches (a mid-chain tail whose oldest report has no
+    // boundary above it): fall back to the first report on the RESIDENT
+    // tail — a tail-heavy price, logged as such.
+    var start = 0;
+    var boundary = false;
+    for (var i = 0; i < branch.length; i++) {
+      if (_isContextBoundary(branch[i])) {
+        start = i;
+        boundary = true;
+      }
+    }
+    // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
+    // only from a COMPLETE walk (the branch reaches a tree root) — every
+    // anchor of a mid-chain tail priced a request whose head is missing.
+    if (!(boundary || branch.first.parentId == null)) return null;
+    final calibration = _calibrationOver(branch, null, from: start);
+    if (calibration == null) return null;
+    _logCalibration(
+      'post-boundary',
+      _oldestUsageReply(branch.sublist(start)),
+      calibration,
+    );
+    return calibration;
   }
 
   /// Whether [record] opens a new context (every projection cuts here):
@@ -933,17 +960,6 @@ extension on AgentCli {
       record is HiddenRangeRecord ||
       record is CompactCheckpointRecord;
 
-  /// The newest usage-bearing assistant reply on the resident [branch].
-  static MessageRecord? _newestUsageReply(List<SessionRecord> branch) {
-    for (var i = branch.length - 1; i >= 0; i--) {
-      final entry = branch[i];
-      if (entry is MessageRecord && assistantUsageOf(entry.message) != null) {
-        return entry;
-      }
-    }
-    return null;
-  }
-
   /// Whether the context the reply at [at] was sent with is resident:
   /// a boundary opens it at a lower index, or the branch starts at a
   /// tree root (the file head — nothing is missing above it).
@@ -952,52 +968,51 @@ extension on AgentCli {
       (branch.first.parentId == null ||
           branch.sublist(0, at).any(_isContextBoundary));
 
-  /// gh-241 follow-up #5c (C1): the calibration from the last valid
-  /// provider report ANYWHERE in the session — a bounded backward walk
-  /// pages older records until that reply is resident AND the boundary
-  /// (or the file head) that opens ITS context is, so the estimate it is
-  /// measured against is the very request the provider priced. Never
-  /// unbounded: 64 block pages per stage; `null` when nothing vouches.
-  Future<OverheadCalibration?> _olderReportCalibration(Session session) async {
-    final storage = session.getStorage();
-    if (storage is! WindowedSessionStorage) return null;
-    var anchor = _newestUsageReply(await session.getBranch());
-    for (var pages = 0; anchor == null && pages < 64; pages++) {
-      if (!storage.hasOlder) break;
-      await storage.growOlderUntil((_) => false, maxPages: 1);
-      anchor = _newestUsageReply(await session.getBranch());
-    }
-    if (anchor == null) return null;
-    var branch = await session.getBranch();
-    for (
-      var pages = 0;
-      !_contextOpened(branch, branch.indexOf(anchor)) && pages < 64;
-      pages++
-    ) {
-      if (!storage.hasOlder) break;
-      await storage.growOlderUntil((_) => false, maxPages: 1);
-      branch = await session.getBranch();
-    }
-    final at = branch.indexOf(anchor);
-    if (at < 0 || !_contextOpened(branch, at)) return null;
-    var start = 0;
-    for (var i = 0; i < at; i++) {
-      if (_isContextBoundary(branch[i])) start = i;
-    }
-    final calibration = deriveOverheadCalibration(
-      [
-        for (final entry in branch.sublist(start, at + 1))
-          if (entry is MessageRecord) entry.message,
-      ],
-      systemPrompt: _agent.state.systemPrompt,
-      tools: _agent.state.tools,
+  /// Resident records the calibration probe may page in before it
+  /// settles for the newest vouchable report (a full open is the thing
+  /// the windowed resume exists to avoid).
+  static const _calibrationProbeMaxRecords = 4096;
+
+  /// Names the anchor every applied load calibration rests on.
+  void _logCalibration(
+    String source,
+    MessageRecord? anchor,
+    OverheadCalibration calibration,
+  ) {
+    _logDiagnostic(
+      'resume calibration source=$source anchor=${anchor?.id} '
+      'ratio=x${calibration.ratio.toStringAsFixed(2)}',
     );
-    if (calibration != null) {
-      _logDiagnostic(
-        'resume calibration source=pre-boundary report anchor=${anchor.id}',
-      );
+  }
+
+  /// [deriveOverheadCalibration] over the requests from [from] up to and
+  /// including the record at [to] (`null`: the branch end) — its anchor
+  /// is the first valid provider report in that span, priced against the
+  /// history the span lays before it.
+  OverheadCalibration? _calibrationOver(
+    List<SessionRecord> branch,
+    int? to, {
+    int from = 0,
+  }) => deriveOverheadCalibration(
+    [
+      for (final entry in branch.sublist(
+        from,
+        to == null ? branch.length : to + 1,
+      ))
+        if (entry is MessageRecord) entry.message,
+    ],
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+  );
+
+  /// The OLDEST usage-bearing assistant reply on the [branch].
+  static MessageRecord? _oldestUsageReply(List<SessionRecord> branch) {
+    for (final entry in branch) {
+      if (entry is MessageRecord && assistantUsageOf(entry.message) != null) {
+        return entry;
+      }
     }
-    return calibration;
+    return null;
   }
 
   /// gh-241 follow-up #5 (F3/R3): a resumed projection that is a TAIL of
@@ -1027,7 +1042,8 @@ extension on AgentCli {
     );
     final how = report.droppedByBudget > 0
         ? '${report.droppedByBudget} older record(s) left on disk — '
-              'the context window bounds what loads (paged lazily)'
+              'the context window or the newest compaction boundary bounds '
+              'what loads (paged lazily)'
         : 'older history sits above the newest compaction boundary';
     final line =
         '[resume] loaded the last ${messages.length} message(s) of the '
@@ -1114,14 +1130,41 @@ extension on AgentCli {
             tools: _agent.state.tools,
             overheadCalibration: residentCalibration,
           );
+    // gh-241 follow-up #5d (D2 — owner live test round 5): a budget of
+    // ZERO (measured, but the window does not cover overhead + reserve)
+    // is `null` too — and `null` used to walk UNBOUNDED to the file head
+    // (47–53 messages, ≈31k estimated: the raw history earlier cuts had
+    // removed), because the walk knew classic compactions only. Now an
+    // unbudgeted walk stops at the newest durable boundary — a structured
+    // checkpoint included — and cuts the window there; a measured zero
+    // with NO boundary to stop at is bounded after the walk by the
+    // parity budget floored at a tenth of the window (a larger reserve
+    // still keeps strictly less; the newest turn always loads)
+    // keeps R1: only a boundary may limit what loads.
+    final calibratedOverhead = residentCalibration?.apply(
+      estimateRequestOverheadTokens(
+        _agent.state.systemPrompt,
+        _agent.state.tools,
+      ),
+    );
+    final parityFloored =
+        _effectiveContextWindow -
+        (calibratedOverhead ?? 0) -
+        _effectiveCompactionSettings.reserveTokens;
+    final tightBudget = parityFloored > _effectiveContextWindow ~/ 10
+        ? parityFloored
+        : _effectiveContextWindow ~/ 10;
     final budget = (parityBudget ?? 0) > 0 ? parityBudget : null;
     _logDiagnostic(
       'resume walk sid=${metadata.id} '
       'budget=${budget ?? 'none'} '
       '${parityBudget == null
-          ? '(unmeasured: estimate only)'
+          ? '(unmeasured: estimate only — the walk stops at the newest '
+                'compaction boundary or checkpoint)'
           : budget == null
-          ? '(zero: window below overhead + reserve)'
+          ? '(zero: window below overhead + reserve — the walk stops at '
+                'the newest compaction boundary or checkpoint, else at a '
+                'tenth of the window)'
           : 'calibrated x${residentCalibration!.ratio.toStringAsFixed(2)} (reported)'}',
     );
     final cachedContext = fpBefore == null
@@ -1154,7 +1197,16 @@ extension on AgentCli {
     // compaction trigger — on every fresh resume.
     final boundaryResident = await session.ensureCompactionBoundaryResident(
       tokenBudget: budget,
+      checkpointsAreBoundaries: budget == null,
     );
+    // gh-241 follow-up #5d (D2): a measured zero budget found no durable
+    // boundary to stop at (the walk reached the file head) — bound the
+    // tail by the window minus the calibrated overhead instead.
+    if (budget == null &&
+        parityBudget != null &&
+        !session.resumeWalkReport().hasOlder) {
+      await session.ensureCompactionBoundaryResident(tokenBudget: tightBudget);
+    }
     if (!boundaryResident) {
       // gh-1555 W1 (d2): the walk exhausted maxPages without reaching a
       // boundary or the file head — a degenerate giant. The OLD fallback

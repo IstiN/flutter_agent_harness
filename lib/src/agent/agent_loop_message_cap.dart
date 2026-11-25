@@ -453,6 +453,17 @@ Future<_AttemptResult> _streamAttempt(
       cancelToken,
       window,
       tokens,
+      // gh-241 follow-up #5d (D5): the regime's window cannot hold what
+      // every request carries — over it, with relief spent, the guard
+      // stands down instead of stopping the turn.
+      sendAnyway: softWindowRegime(
+        messages: requestContext.messages,
+        systemPrompt: requestContext.systemPrompt,
+        tools: requestContext.tools ?? const [],
+        window: window,
+        reserveTokens: config.windowReserveTokens?.call() ?? 0,
+        calibration: guardCalibration,
+      ),
     );
     if (guard.terminal != null) return _AttemptReturn(guard.terminal!);
     if (guard.retried) {

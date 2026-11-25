@@ -290,6 +290,34 @@ A hand-over reply whose transfer carries no `## Open User Requests`
 heading gets ONE corrective retry (the retry names the section and
 quotes the defective reply); a second miss keeps the failure.
 
+#### First-anchor overhead, bounded resume walk, honest relief (gh-241 follow-up #5d)
+
+- **The overhead anchor is the session's FIRST valid provider report** — the
+  overhead-dominated request — not the tail-heavy reply after the newest
+  boundary (`resume calibration source=first|pre-boundary|post-boundary
+  anchor=<id> ratio=x<N>` is always logged). At the owner's 25k window the
+  two reports differ (x0.66 vs x0.82 → overhead ≈19.5k vs ≈15.7k tokens).
+- **An unbudgeted resume walk (`budget=none`) stops at the newest durable
+  boundary** — a classic compaction or a structured `compact_checkpoint` —
+  instead of paging to the file head. Everything file-older than that
+  boundary cluster stays on disk: a resume never resurrects history an
+  earlier cut removed from the live context.
+- **The newest REAL user turn survives every in-memory relief.** Projection
+  markers the engine writes as user-role messages (hidden/ckpt markers,
+  `[expand N-M]` pointers, the local-trim marker) are machine content and
+  are never taken for it.
+- **A context stop keeps its promise.** After the guard's stop the
+  under-window paths run first (the regime's hide-only relief, the unforced
+  pass); when they yield nothing the `auto-compacting…` pass runs FORCED —
+  never over a disabled engine. In the soft-window regime an over-window
+  request with relief spent is SENT (the provider is the real limit): a
+  read-only turn no longer ends in `stop=error`.
+- **Notices say what happened.** "Relieved" when no summary pass ran; a
+  `context_trim_receipt` only when content was actually hidden or trimmed;
+  the resume tail line prints overhead plus the estimated tail on the
+  calibrated basis once a report exists. The estimator's density under-read
+  for non-Latin text is a separate follow-up.
+
 ### Quality tier — turn boundaries, judge-led
 
 Digests, checkpoints, the judge and escalation run only at turn

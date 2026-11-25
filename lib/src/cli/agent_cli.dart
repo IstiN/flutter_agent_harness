@@ -1867,6 +1867,10 @@ class AgentCli {
   /// gh-2411: the soft-window warning's once-per-session latch (the
   /// regime holds for every turn; the notice shows once). Lives on
   /// [AgentCli] — extensions can't declare fields.
+  /// gh-241 follow-up #5d (D6): whether the last over-window relief
+  /// hid or trimmed content (a receipt and a "cut" line need it).
+  bool _reliefCutContent = false;
+
   final SoftWindowNotice _softWindowNotice = SoftWindowNotice();
 
   /// Scope-2 B: the over-window guard-stop notice's once-per-session

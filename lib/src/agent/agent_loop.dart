@@ -43,7 +43,7 @@ import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
 import '../compaction/request_snapshot.dart'
     show RequestRouting, RequestSnapshot, RequestSnapshotStore;
 import '../compaction/structured/projection.dart' show RecordSeqIndex;
-import '../compaction/soft_window.dart' show softWindowSkip;
+import '../compaction/soft_window.dart' show softWindowRegime, softWindowSkip;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -1569,8 +1569,9 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
   bool reliefUsed,
   CancelToken? cancelToken,
   int window,
-  int tokens,
-) async {
+  int tokens, {
+  bool sendAnyway = false,
+}) async {
   // `window`/`tokens` are computed synchronously by the caller (the same
   // accounting basis as the host's ctx meter and the compaction
   // threshold: transcript estimate PLUS the system-prompt / tool-schema
@@ -1631,6 +1632,16 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
         );
       }
     }
+  }
+  // gh-241 follow-up #5d (D5 — owner live test round 5): in the
+  // soft-window regime the configured window is below what EVERY request
+  // carries (fixed overhead + reserve); relief freed nothing; the
+  // provider is the real limit — it accepted 108–123 % requests all
+  // along. Stopping here ended a read-only turn in `stop=error`, exit 1:
+  // an unsent request is worse than a slightly over one. The request
+  // goes out as is.
+  if (sendAnyway) {
+    return (context: context, reliefUsed: true, retried: false, terminal: null);
   }
   return (
     context: context,

@@ -960,16 +960,25 @@ extension AgentCliCompactionRun on AgentCli {
       // visible (F3): say what it did, and never hand the provider a
       // context that opens on an orphaned assistant/tool fragment.
       _dropLeadingNonUserMessages('resume boot cap soft-window relief');
-      _logDiagnostic(
-        'resume boot cap soft-window relief sid=$_logSid '
-        'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the live '
-        'context was cut in memory — a receipt is in the session)',
-      );
-      await _appendTrimReceipt(
-        session,
-        site: 'resume boot cap soft-window relief',
-        tokensBefore: tokens,
-      );
+      if (_reliefCutContent) {
+        _logDiagnostic(
+          'resume boot cap soft-window relief sid=$_logSid '
+          'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the live '
+          'context was cut in memory — a receipt is in the session)',
+        );
+        await _appendTrimReceipt(
+          session,
+          site: 'resume boot cap soft-window relief',
+          tokensBefore: tokens,
+        );
+      } else {
+        _logDiagnostic(
+          'resume boot cap soft-window relief sid=$_logSid '
+          'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the '
+          'figure moved with its basis — nothing was cut from the live '
+          'context)',
+        );
+      }
       return;
     }
     // Over the WINDOW itself: no request can ever be sent, and an LM
@@ -1410,6 +1419,10 @@ extension OverWindowGuardRelief on AgentCli {
     } finally {
       _pushBusyPhase('');
     }
+    // gh-241 follow-up #5d (D6): what this relief really did — content
+    // hidden or trimmed, or a figure that moved because its basis did.
+    _reliefCutContent =
+        reliefOutcome.hiddenRecords > 0 || reliefOutcome.usedTrimValve;
     final relievedProjection = _agent.state.messages.toList();
     // gh-241 follow-up #5 (F3/R5): the relief rebuilt the projection from
     // the session — a hidden range can leave it opening on an assistant
@@ -1441,7 +1454,10 @@ extension OverWindowGuardRelief on AgentCli {
     // returned list on the window basis).
     if (afterTokens <= _effectiveContextWindow) {
       io.writeln(
-        _style.dim('[resuming] continuing the turn on the compacted context'),
+        _style.dim(
+          '[resuming] continuing the turn on the relieved context (older '
+          'content hidden or trimmed in memory — no summary pass ran)',
+        ),
       );
     }
     return after;
@@ -1643,11 +1659,42 @@ extension OverWindowContinuation on AgentCli {
       // fresh compaction after Ctrl+C and even resume the stopped task.
       _throwIfUserAborted();
       try {
+        // The under-window paths first, as before: the regime's hide-only
+        // relief (it reports its own line) or the unforced pass — success
+        // retries the interrupted task.
         if (await _maybeAutoCompact()) {
           // Abort gate between a successful funnel compaction and the
           // resumed run (issue #1085 round-2 review): the fresh prompt
           // below RESETS the sticky flag, so the belt alone cannot see
           // an abort that lands in this window.
+          _throwIfUserAborted();
+          io.writeln(
+            tuiWarning(
+              '[context overflowed — auto-compacted; continuing the turn]',
+            ),
+          );
+          io.writeln(_style.dim('[resuming] continuing the interrupted task'));
+          await _runContinuationPromptSafe();
+          return true;
+        }
+        // gh-241 follow-up #5d (D5 — owner live test round 5): the LM
+        // pass the note promises ("auto-compacting…") runs FORCED once
+        // the above yielded nothing. In the owner's run the hide-only
+        // relief had nothing left to cut, `_maybeAutoCompact` stood
+        // down, and the read-only turn ended in `stop=error` with
+        // "auto-compacting…" on screen and ZERO passes run.
+        // Forced — but never over a disabled engine (zero passes stay
+        // honest; the funnel itself does not read `enabled`, only
+        // [shouldCompact] does), and never through an ARMED one-shot
+        // E1 pass (gh-2259 AC2): that pass belongs to the next
+        // pre-flight, which consumes it with `force: true`.
+        final model = _agent.state.model;
+        final e1Armed = _modelCaps.isPremptivePassPending(
+          model.provider,
+          model.id,
+        );
+        if (_effectiveCompactionSettings.enabled &&
+            await _runAutoCompact('[auto-compacted]', force: !e1Armed)) {
           _throwIfUserAborted();
           io.writeln(
             tuiWarning(

@@ -355,7 +355,7 @@ void main() {
           .toString()
           .split('\n')
           .where(
-            (line) => line.contains('continuing the turn on the compacted'),
+            (line) => line.contains('continuing the turn on the relieved'),
           );
       expect(
         receipts(),

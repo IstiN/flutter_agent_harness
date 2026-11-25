@@ -131,4 +131,61 @@ void main() {
       },
     );
   });
+
+  group('gh-241 follow-up #5d (D4 — owner live test round 5)', () {
+    test('a projection marker is machine content: the REAL newest user turn '
+        'is carried behind the trim marker — never the hidden-record marker '
+        'that follows it', () {
+      final messages = <Message>[
+        for (var i = 0; i < 20; i++) ...[
+          UserMessage.text('question $i ${'q' * 400}'),
+          _answer('answer $i ${'a' * 400}'),
+        ],
+        UserMessage.text('the REAL newest question nnn'),
+        UserMessage.text('[175:hidden·tool_result·13k·"---"]'),
+      ];
+      final trimmed = localTrimValve(
+        messages: messages,
+        reason: 'test valve',
+        window: 300,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 200,
+        ),
+        overheadTokens: 290,
+      )!;
+      final texts = trimmed.messages
+          .whereType<UserMessage>()
+          .map(_markerText)
+          .toList();
+      expect(
+        texts,
+        hasLength(3),
+        reason: 'trim marker + the real turn + the hidden marker: $texts',
+      );
+      expect(texts[1], 'the REAL newest question nnn');
+    });
+
+    test('every projection marker form reads as synthetic: a (tagged) hidden '
+        'or checkpoint marker, a bare or labelled expand pointer, the local '
+        'trim marker — a tagged real question does not', () {
+      const synthetic = [
+        '[175:hidden·tool_result·13k·"---"]',
+        'm5 [175:hidden·tool_result·13k·"---"]',
+        '[3-140:ckpt·the early work]',
+        '[expand 3-140]',
+        'm7 [expand 12]',
+        'old session list [expand 142-143]',
+        '[context trimmed locally: test, 4 older message(s) were dropped]',
+      ];
+      for (final text in synthetic) {
+        expect(isSyntheticUserText(text), isTrue, reason: text);
+      }
+      expect(
+        isSyntheticUserText('m42 сколько будет 17 умножить на 23?'),
+        isFalse,
+      );
+    });
+  });
 }

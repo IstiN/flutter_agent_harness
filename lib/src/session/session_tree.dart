@@ -310,16 +310,26 @@ final class Session {
   /// needs only what fits the context, and older history pages in lazily
   /// through the scrollback's loadOlder path. `null` walks to the
   /// boundary/file head as before.
+  ///
+  /// [checkpointsAreBoundaries] (gh-241 follow-up #5d, D2): a structured
+  /// `CompactCheckpointRecord` ends the walk too. The predicate knew
+  /// classic compactions only, so every session of the structured engine
+  /// paged to the file head on an unbudgeted walk — the whole branch,
+  /// raw history earlier cuts had removed included.
   Future<bool> ensureCompactionBoundaryResident({
     int maxPages = 512,
     int? tokenBudget,
+    bool checkpointsAreBoundaries = false,
   }) async {
     final storage = _storage;
     if (storage is! WindowedSessionStorage) return true;
     return storage.growOlderUntil(
-      (r) => r is CompactionRecord,
+      (r) =>
+          r is CompactionRecord ||
+          (checkpointsAreBoundaries && r is CompactCheckpointRecord),
       maxPages: maxPages,
       tokenBudget: tokenBudget,
+      trimToBoundary: checkpointsAreBoundaries,
     );
   }
 

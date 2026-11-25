@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): gh-241 follow-up #5d (owner live test round 5) —
+  resume and relief are honest about what they measure and cut. The
+  overhead calibration anchors on the session's FIRST valid provider
+  report (`resume calibration source=…` is always logged); an unbudgeted
+  resume walk stops at the newest durable boundary (classic compaction or
+  structured checkpoint) instead of paging the whole branch, so a resume
+  no longer resurrects history an earlier cut removed; the newest REAL
+  user turn survives every in-memory relief (projection markers are no
+  longer mistaken for it); after a context stop the promised
+  auto-compaction pass runs for real (never over a disabled engine) and
+  in the soft-window regime an over-window request with relief spent is
+  sent instead of ending a read-only turn in `stop=error`; notices say
+  what happened ("relieved" when no summary pass ran, a trim receipt only
+  when content was cut, a calibrated resume tail line).
 - fix(compaction): gh-2411 follow-up #5c (owner live test round 4) —
   the overhead calibration survives checkpoints and resume: it is
   derived from the last valid provider report anywhere in the session

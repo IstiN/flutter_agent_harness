@@ -49,6 +49,23 @@ Model _model(int contextWindow) => Model(
   maxTokens: 4096,
 );
 
+AssistantMessage _reported(String text, int promptTokens) => AssistantMessage(
+  content: [TextContent(text: text)],
+  api: 'test-api',
+  provider: 'test-provider',
+  model: 'test-model',
+  usage: Usage(
+    input: promptTokens,
+    output: 100,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: promptTokens + 100,
+    cost: const UsageCost(),
+  ),
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
+
 void main() {
   late FakeCliIO io;
 
@@ -209,6 +226,168 @@ void main() {
       expect(
         messages.whereType<UserMessage>().map((m) => m.content).last,
         _turn,
+      );
+    },
+  );
+  test(
+    'D1: the overhead ratio comes from the session\'s FIRST report, never '
+    'from a tail-heavy post-boundary reply — budget > 0, no soft window, '
+    'no relief',
+    timeout: const Timeout(Duration(minutes: 4)),
+    () async {
+      final heuristicOverhead = await probeHeuristicOverhead();
+      final window = (heuristicOverhead * 1.12).round();
+      final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final seed = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+      );
+      await seed.appendSessionName('first-anchor-target');
+      // The session's FIRST request is overhead-dominated: the provider
+      // priced it at x0.66 of the heuristic (the owner's x0.66).
+      final first = await seed.appendMessage(
+        UserMessage.text('TASK build the mips interpreter'),
+      );
+      final firstPrompt = (heuristicOverhead * 0.66).round() + 12;
+      final firstAnchor = await seed.appendMessage(
+        _reported('the first answer', firstPrompt),
+      );
+      // Early raw history NO checkpoint covers (the owner's records
+      // 4–34): a bounded resume must not bring it back (D3/D7).
+      for (var i = 0; i < 6; i++) {
+        await seed.appendMessage(
+          UserMessage.text('early raw $i ${'x' * 1200}'),
+        );
+      }
+      final fillers = <String>[];
+      for (var i = 0; i < 6; i++) {
+        fillers.add(
+          await seed.appendMessage(UserMessage.text('filler$i ${'f' * 1500}')),
+        );
+      }
+      await seed.appendCompactCheckpoint(
+        firstRecordId: first,
+        lastRecordId: fillers.last,
+        text: 'CHECKPOINT: the mips interpreter task stays open.',
+        coversRecordIds: [first, ...fillers],
+        flattenedRecordIds: const [],
+      );
+      // A TAIL-HEAVY reply after the boundary, priced at x0.9: anchoring
+      // on it reads the overhead ≈25 % too high and switches the
+      // soft-window regime on (window − reserve = x0.84 of the heuristic).
+      const checkpointText =
+          'CHECKPOINT: the mips interpreter task stays '
+          'open.';
+      const postTurn = 'post-boundary turn about the registers';
+      final tailEst =
+          estimateTokens(UserMessage.text(checkpointText)) +
+          estimateTokens(UserMessage.text(postTurn));
+      await seed.appendMessage(UserMessage.text(postTurn));
+      await seed.appendMessage(
+        _reported(
+          'the post-boundary answer',
+          ((heuristicOverhead + tailEst) * 0.9).round(),
+        ),
+      );
+      await seed.appendMessage(
+        UserMessage.text('follow-up question about the registers'),
+      );
+      final stream = FakeStreamFunction([textTurn('answered after resume')]);
+      final cli = AgentCli(
+        config: _config(
+          _model(window),
+          env,
+          'first-anchor-target',
+          '/sessions',
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy, reason: 'idle after boot');
+      expect(stream.calls, 0, reason: 'no model call at boot');
+      var log = '';
+      await waitForIt(() async {
+        log =
+            (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ??
+            '';
+        return log.contains('resume walk');
+      }, reason: 'the resume-walk line reached fa.log');
+      final out = io.out.toString();
+      final why = '$log\n--- OUT ---\n$out';
+      expect(
+        log,
+        contains(
+          'resume calibration source=first anchor=$firstAnchor ratio=x0.66',
+        ),
+        reason: why,
+      );
+      expect(
+        log,
+        contains(
+          RegExp(
+            r'resume walk sid=\S+ budget=\d+ calibrated x0\.66 \(reported\)',
+          ),
+        ),
+        reason: why,
+      );
+      expect(log, isNot(contains('soft window sid=')), reason: why);
+      expect(log, isNot(contains('over-window relief')), reason: why);
+      io.sendLine(_turn);
+      await waitForIt(
+        () => stream.calls >= 1 && !cli.isBusy,
+        reason: 'the first user turn answers',
+      );
+      io.sendLine('/exit');
+      await run;
+      final after = io.out.toString();
+      expect(
+        after,
+        isNot(contains('below the fixed request overhead')),
+        reason: after,
+      );
+      expect(after, isNot(contains('older message(s) were dropped')));
+      expect(
+        stream.contexts.single.messages
+            .whereType<UserMessage>()
+            .map((m) => m.content)
+            .last,
+        _turn,
+      );
+      // D7: the tail line names the cut, and its figure is the number
+      // the first request is metered at (overhead + the loaded tail).
+      final tailLine = io.out
+          .toString()
+          .split('\n')
+          .firstWhere((l) => l.contains('[resume] loaded the last'));
+      final shown = int.parse(
+        RegExp(r'≈(\d+) tokens').firstMatch(tailLine)!.group(1)!,
+      );
+      final request = stream.contexts.single;
+      final firstEstimate = estimateRequestTokens(
+        request.messages,
+        systemPrompt: request.systemPrompt,
+        tools: request.tools ?? const [],
+        calibration: cli.agent.state.overheadCalibration,
+      );
+      final prompt = estimateTokens(UserMessage.text(_turn));
+      expect(
+        shown + prompt,
+        closeTo(firstEstimate, 4),
+        reason: 'tail line: $tailLine (first request $firstEstimate tokens)',
+      );
+      final texts = request.messages
+          .whereType<UserMessage>()
+          .map((m) => m.content.toString())
+          .join('\n');
+      // The parity budget (907 tokens here) keeps the newest records;
+      // the OLDEST raw history stays on disk.
+      expect(texts, isNot(contains('early raw 0')), reason: texts);
+      expect(
+        tailLine,
+        contains('older record(s) left on disk'),
+        reason: tailLine,
       );
     },
   );

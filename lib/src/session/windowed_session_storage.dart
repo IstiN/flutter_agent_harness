@@ -359,6 +359,7 @@ final class WindowedSessionStorage
     bool Function(SessionRecord record) found, {
     int maxPages = 512,
     int? tokenBudget,
+    bool trimToBoundary = false,
   }) async {
     _suspendEviction = true;
     try {
@@ -374,7 +375,17 @@ final class WindowedSessionStorage
         final leaf = await getLeafId();
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
-        if (branch.any(found) && _keptPathResident(branch)) return true;
+        final hit = branch.indexWhere(found);
+        if (hit >= 0 && _keptPathResident(branch)) {
+          // gh-241 follow-up #5d (D2/D3): an unbudgeted walk is bounded
+          // by the boundary it stopped at — a tail window that already
+          // holds a whole small file included. Everything file-older than
+          // the boundary cluster (the boundary plus its adjacent
+          // boundary records) leaves the window, so a resume never
+          // resurrects what an earlier cut took out of the live context.
+          if (trimToBoundary) _trimToBoundaryCluster(branch, hit);
+          return true;
+        }
         // Projection-aware whole-branch estimate (issue #503 round 3b):
         // hidden/covered records project as one-line markers or nothing
         // at all, so the raw tally overshot the real context by ~8x on
@@ -587,6 +598,34 @@ final class WindowedSessionStorage
       _budgetTrimDropped += dropped;
     }
   }
+
+  /// Cuts the window at the boundary cluster around [hit] (gh-241
+  /// follow-up #5d, D2/D3): the cluster is the boundary record plus the
+  /// boundary records file-adjacent above it — chained checkpoints and
+  /// their hidden ranges belong to one cut. Everything file-older leaves
+  /// the window exactly as [_trimTokenBudget] drops it: on disk, paged
+  /// back lazily, counted in [budgetTrimDroppedRecords].
+  void _trimToBoundaryCluster(List<SessionRecord> branch, int hit) {
+    var start = hit;
+    while (start > 0 && _isBoundaryRecord(branch[start - 1])) {
+      start--;
+    }
+    final cutId = branch[start].id;
+    var dropped = 0;
+    while (_entries.isNotEmpty && _entries.first.id != cutId) {
+      _dropOldest();
+      dropped++;
+    }
+    if (dropped > 0) {
+      _hasOlder = true;
+      _budgetTrimDropped += dropped;
+    }
+  }
+
+  static bool _isBoundaryRecord(SessionRecord record) =>
+      record is CompactionRecord ||
+      record is CompactCheckpointRecord ||
+      record is HiddenRangeRecord;
 
   /// One block page-up for the boundary walk ([growOlderUntil]): a
   /// single-read strip above the window (see
