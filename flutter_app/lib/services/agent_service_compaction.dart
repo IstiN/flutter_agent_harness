@@ -431,6 +431,12 @@ extension CompactionWindowSizing on AgentService {
         window: wiring.conversationWindow,
         settings: wiring.settings,
       ).run();
+      // GOAL #2394 (gh-2407 review thread 1): the relief re-anchors the
+      // transcript — the pre-relief S0 is stale, drop it (the CLI's
+      // `_runEmergencyRelief` does the same), or the next post-run soft
+      // trigger builds the merged hand-over over the replaced prefix.
+      _agent.invalidateRequestSnapshot('over-window relief replaced the '
+          'projection');
     }
     final after = _agent.state.messages.toList();
     final afterTokens = estimateRequestTokens(

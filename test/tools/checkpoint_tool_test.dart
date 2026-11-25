@@ -147,13 +147,15 @@ void main() {
   }
 
   /// Builds an agent + controller over a scripted model. [turns] are replayed
-  /// in order; the host sink mirrors CLI persistence.
+  /// in order; the host sink mirrors CLI persistence. [onRewindApplied]
+  /// composes over the default persisted-count cursor update.
   Future<({Agent agent, CheckpointRewindController controller, _TestHost host})>
   harness(
     _FakeStreamFunction fake, {
     Session? session,
     bool withSession = true,
     CheckpointAutoCloseCallback? onAutoClose,
+    void Function(int messageCount)? onRewindApplied,
   }) async {
     final host = _TestHost(withSession ? session ?? await newSession() : null);
     late final CheckpointRewindController controller;
@@ -167,7 +169,10 @@ void main() {
     controller = CheckpointRewindController(
       agent: agent,
       sink: host.sink,
-      onRewindApplied: (count) => host.persistedCount = count,
+      onRewindApplied: (count) {
+        host.persistedCount = count;
+        onRewindApplied?.call(count);
+      },
       onAutoClose: onAutoClose,
     );
     registry.registerAll(controller.tools);
@@ -439,7 +444,7 @@ void main() {
     });
 
     test('gh-2407 thread 1: a rewind invalidates the request snapshot '
-        '(S0) — the pruned projection it described is gone', () async {
+        '(S0) at the rewind boundary', () async {
       const report = 'rewind invalidation findings';
       final fake = _FakeStreamFunction([
         _toolTurn([checkpointCall('c1', 'probe')]),
@@ -447,19 +452,28 @@ void main() {
         _toolTurn([rewindCall(report, 'c3')]),
         _textTurn('continuing'),
       ]);
-      final h = await harness(fake);
+      // Observed AT the rewind boundary: the host hook runs inside
+      // `_applyRewind` — the store must already be dropped there (the
+      // continuing send re-captures, so only this window can catch a
+      // stale pre-rewind S0 feeding a pre-flight hand-over).
+      Agent? agent;
+      final invalidReasonAtRewind = <String?>[];
+      final h = await harness(
+        fake,
+        onRewindApplied: (count) =>
+            invalidReasonAtRewind.add(agent?.requestSnapshots.invalidReason),
+      );
+      agent = h.agent;
       await h.agent.prompt('start');
-      // The send seam captured S0 over the pre-rewind transcript.
-      expect(h.agent.requestSnapshots.validFor(_model), isNotNull);
 
-      // The rewind already pruned state.messages (the assertions above
-      // ride the same fixture): the snapshot naming the rewound-away
-      // prefix must not survive — the next merged hand-over would
-      // otherwise resend the pruned messages and resolve hide aliases
-      // through the stale frozen index.
-      expect(h.agent.requestSnapshots.current, isNull);
-      expect(h.agent.requestSnapshots.invalidReason, isNotNull);
-      expect(h.agent.requestSnapshots.validFor(_model), isNull);
+      expect(invalidReasonAtRewind, hasLength(1));
+      expect(
+        invalidReasonAtRewind.single,
+        isNotNull,
+        reason: 'the rewind replaced the projection — S0 must drop before '
+            'the host cursor update, never survive to a pre-flight',
+      );
+      expect(h.agent.state.messages, hasLength(5));
     });
 
     test('checkpoint in one run, rewind in a later run', () async {

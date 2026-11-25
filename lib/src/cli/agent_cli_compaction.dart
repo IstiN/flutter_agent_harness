@@ -1124,12 +1124,15 @@ extension AgentCliCompactionRun on AgentCli {
       force: force || label == '[compacted]',
     ).run();
     // GOAL #2394 (D8): any run — success or failure alike — starts the
-    // hysteresis window; a run that appended records moved the
-    // projection the snapshot described, so S0 is stale.
+    // hysteresis window; and ANY run may have appended (a ladder kill can
+    // land AFTER the hidden-range/checkpoint records were written), so
+    // the snapshot the next merged call would resend is stale in all
+    // cases — invalidation is unconditional here, exactly like the
+    // Flutter host's after-run hook (gh-2407 review thread 1: the old
+    // `reportedPass` condition let a partially-appended run keep S0).
     _handOverTrigger.recordRun();
-    if (hooks.reportedPass) {
-      _agent.invalidateRequestSnapshot('compaction run appended records');
-    }
+    _agent.invalidateRequestSnapshot('compaction run replaced the '
+        'projection');
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;
   }
@@ -1211,6 +1214,12 @@ extension OverWindowGuardRelief on AgentCli {
     // projection (refreshAgentState) — keep the persist cursor in step,
     // exactly like the quality tier's post-run bookkeeping.
     _persistedCount = _agent.state.messages.length;
+    // GOAL #2394 (gh-2407 review thread 1): the relief replaced the
+    // projection — the pre-relief S0 is stale (the post-run soft trigger
+    // would otherwise build the merged hand-over over the over-window
+    // prefix the relief just re-anchored away).
+    _agent.invalidateRequestSnapshot('over-window relief replaced the '
+        'projection');
     return outcome;
   }
 }
