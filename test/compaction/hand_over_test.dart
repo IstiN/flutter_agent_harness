@@ -267,6 +267,61 @@ void main() {
       expect(verdict.missing, ['now check rename']);
     });
 
+    test('review R1 BLOCKING-2: `##Open User Requests` (no space) is no '
+        'heading for the gate NOR for the belt — one prefix, one verdict', () {
+      const text = '##Open User Requests\n- fix 2321\n## Hand-over\nx';
+      final verdict = verifyOpenUserRequests(text, ['- fix 2321']);
+      expect(verdict.heading, isFalse);
+      expect(
+        verdict.missing,
+        isEmpty,
+        reason: 'the ask is verbatim — the run fails on the heading alone',
+      );
+      // The belt agrees: nothing to grade, the gate cannot pass either.
+      expect(userIntentHeading.hasMatch(text), isFalse);
+      expect(
+        userIntentHeading.hasMatch('# open asks: - fix 2321'),
+        isTrue,
+        reason: 'the space-taking shapes still are headings',
+      );
+      expect(
+        verifyOpenUserRequests('#open asks:\n- fix 2321', [
+          '- fix 2321',
+        ]).heading,
+        isFalse,
+        reason: 'the gate sees exactly what the belt sees',
+      );
+    });
+
+    test('review R1 IMPORTANT: asks are normalized on BOTH sides — a '
+        'quoted `m12 ` alias or a zero-width char in the ask cannot stall '
+        'the session', () {
+      final verdict = verifyOpenUserRequests(
+        '## Open User Requests\n'
+        '- fix the login crash\n'
+        '- rename the helper\n'
+        '## Hand-over\nx',
+        [
+          // A user turn that started by quoting an alias …
+          '- [asked 2026-11-20, record 0b1c2d3e] m12 fix the login crash',
+          // … and one that carried pasted zero-width noise.
+          '- [asked 2026-11-20, record 9f8e7d6c] rename\u200b the\u2060 helper',
+        ],
+      );
+      expect(verdict.missing, isEmpty);
+    });
+
+    test("review R1: the belt's `[from toolResult]` mark on an echoed ask "
+        'is not a dropped ask', () {
+      final verdict = verifyOpenUserRequests(
+        '## Open User Requests\n'
+        '- reproduce with curl -I localhost [from toolResult]\n'
+        '## Hand-over\nx',
+        ['- reproduce with curl -I localhost'],
+      );
+      expect(verdict.missing, isEmpty);
+    });
+
     test('an empty asks block only demands the heading', () {
       final verdict = verifyOpenUserRequests(
         '## Open User Requests\nnone\n## Hand-over\nok',

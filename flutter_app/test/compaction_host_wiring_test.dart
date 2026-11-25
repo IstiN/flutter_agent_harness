@@ -279,6 +279,36 @@ void main() {
       expect(cli.sameResolutionAs(app), isTrue);
     });
 
+    test('GOAL #2394 (review round 1): the hand-over knobs ride BOTH '
+        'hosts and count in sameResolutionAs', () {
+      const tuning = CompactionTuning(
+        softRatio: 0.5,
+        handOverMaxTokens: 2048,
+        handOverHysteresisTurns: 7,
+      );
+      final cli = resolveCliCompactionWiring(
+        mainModel: _mainModel(),
+        rolesResolver: null,
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      final app = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      expect(cli.softRatio, 0.5);
+      expect(cli.handOverMaxTokens, 2048);
+      expect(cli.handOverHysteresisTurns, 7);
+      expect(cli.sameResolutionAs(app), isTrue);
+      // A host that dropped the keys no longer compares equal.
+      final defaulted = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        contextWindowCap: null,
+      );
+      expect(cli.sameResolutionAs(defaulted), isFalse);
+    });
+
     test('smol equal to main normalizes to main-only on BOTH paths', () {
       final sameRef = ModelRef(
         provider: 'anthropic',

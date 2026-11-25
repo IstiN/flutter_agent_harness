@@ -336,8 +336,10 @@ class Agent {
   /// GOAL #2394 (AC2): the session's request snapshots (S0) — the last
   /// main send as sent, overwritten at every send seam and read by the
   /// compaction host for the cache-affine hand-over call. Hosts
-  /// invalidate it on branch switch / checkpoint restore and after a
-  /// successful compaction run.
+  /// invalidate it on branch switch / checkpoint rewind / session switch
+  /// (`reset`), after the over-window relief and after any compaction
+  /// run (a hidden range can land before a ladder kill — success is not
+  /// the criterion, "may have appended" is).
   final RequestSnapshotStore requestSnapshots = RequestSnapshotStore();
 
   /// GOAL #2394 (AC8, E37): whether main requests carry the `m<seq>`
@@ -627,7 +629,11 @@ class Agent {
     return _activeRun?.completer.future ?? Future<void>.value();
   }
 
-  /// Clear transcript state, runtime state, and queued messages.
+  /// Clear transcript state, runtime state, and queued messages — and
+  /// the request snapshot (GOAL #2394 AC2): the projection every captured
+  /// request described is gone with the transcript, so a host that
+  /// switches sessions, hands off or starts fresh never lets a stale S0
+  /// ride the next merged hand-over.
   void reset() {
     _state._messages = [];
     _state._isStreaming = false;
@@ -635,6 +641,7 @@ class Agent {
     _state._pendingToolCalls.clear();
     _state._errorMessage = null;
     clearAllQueues();
+    requestSnapshots.invalidate('agent reset');
   }
 
   /// Start a new prompt from plain text.

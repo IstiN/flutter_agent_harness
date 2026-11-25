@@ -160,22 +160,42 @@ final RegExp _markerTextPattern = RegExp(r'^\[\d+(?:-\d+)?:(?:hidden|ckpt)·');
 final RegExp _recordTagPrefix = RegExp(r'^m\d+ ');
 
 /// The fold/consolidated pointer closing a marker text (D12): the only
-/// new marker form, always engine-generated and always at the text's end.
+/// new marker form, always engine-generated and always the WHOLE text
+/// behind an optional label — `[expand 3-140]`, `old session list
+/// [expand 142-143]`. End-anchored alone it would also match genuine
+/// content that merely ends in a quoted pointer (docs and skill texts
+/// quote `[expand 3-140]`), and three boundary detectors key off this
+/// predicate (review round 1) — so the text before the pointer must be
+/// a label the ENGINE could have written: one line, no brackets, at most
+/// the hide-label budget (`hideLabelMaxChars` / `hideLabelMaxWords` in
+/// hand_over.dart, mirrored here).
 final RegExp _expandPointerPattern = RegExp(r'\[expand \d+(?:-\d+)?\]\s*$');
 
-/// Whether [text] is a projected hidden/checkpoint/fold marker line —
-/// `[3:hidden·user·12]`, `[2-6:ckpt·38k→40tok·covers:3,5]`, the #2394
-/// forms `[expand 3-140]` / `old session list [expand 142-143]`, each
-/// optionally behind the record tag the epoch adds on the wire
-/// (`m3 [3:hidden·user·12]` — the tag is text, the marker is still a
-/// marker).
-///
+/// Mirrors the hide-label budget the engine enforces before it ever
+/// renders a label into a marker (`sanitizeHideLabel`).
+const int _markerLabelMaxChars = 48;
+const int _markerLabelMaxWords = 6;
+
+bool _isEngineExpandPointer(String body) {
+  final match = _expandPointerPattern.firstMatch(body);
+  if (match == null) return false;
+  // The engine writes a marker as ONE line: a pointer that only ends a
+  // longer text (a quoted pointer on the last line of a tool result) is
+  // not a marker.
+  final head = body.substring(0, match.start);
+  if (head.contains('\n')) return false;
+  final label = head.trim();
+  if (label.isEmpty) return true;
+  if (label.contains('[') || label.contains(']')) return false;
+  return label.length <= _markerLabelMaxChars &&
+      label.split(RegExp(r'\s+')).length <= _markerLabelMaxWords;
+}
+
 /// Tool-pairing repair, the operative-pin detector and the image registry
 /// (issue #195 F2: hidden history may have carried images whose
 /// first-seen indexes the surviving citations still name) all key off
 /// this — the new forms must resolve exactly like the old ones (REG-12).
 bool isCompactionMarkerText(String text) {
   final body = text.replaceFirst(_recordTagPrefix, '');
-  return _markerTextPattern.hasMatch(body) ||
-      _expandPointerPattern.hasMatch(body);
+  return _markerTextPattern.hasMatch(body) || _isEngineExpandPointer(body);
 }

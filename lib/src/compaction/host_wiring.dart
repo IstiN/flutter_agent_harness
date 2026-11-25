@@ -130,6 +130,11 @@ final class CompactionHostWiring {
         enabled == other.enabled &&
         maxAttempts == other.maxAttempts &&
         baseBackoff == other.baseBackoff &&
+        // GOAL #2394 (review round 1): the hand-over knobs are part of
+        // the semantics both hosts must resolve identically.
+        handOverMaxTokens == other.handOverMaxTokens &&
+        handOverHysteresisTurns == other.handOverHysteresisTurns &&
+        softRatio == other.softRatio &&
         smolSame();
   }
 }

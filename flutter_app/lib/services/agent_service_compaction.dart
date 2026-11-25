@@ -233,6 +233,9 @@ extension CompactionWindowSizing on AgentService {
     mainModel: _agent.state.model,
     contextWindowCap: _contextWindowCap,
     systemOverheadTokens: _systemOverheadTokens,
+    // GOAL #2394 (host parity): the same `compaction:` tuning keys the
+    // CLI resolves — soft line, hand-over budget, hysteresis.
+    tuning: compactionTuningOverride ?? _appCompactionTuning,
   );
 
   /// Estimated tokens the provider counts against the context window on top
@@ -340,7 +343,7 @@ extension CompactionWindowSizing on AgentService {
       ).run();
       // The run may have appended records — the projection the snapshot
       // described is no longer the live one.
-      _agent.invalidateRequestSnapshot('compaction run appended records');
+      _agent.invalidateRequestSnapshot('compaction run');
     } on Object catch (error) {
       // A throwing run (unresolvable summarizer chain, engine crash) is a
       // compaction failure like any other: the session stays intact
@@ -445,6 +448,8 @@ extension CompactionWindowSizing on AgentService {
     // The relief replaced `state.messages`; mirror it into the chat list
     // so the UI reflects the relieved transcript (same contract as the
     // post-run compaction path above).
+    // GOAL #2394 (AC2): S0 described the pre-relief, over-window prefix.
+    _agent.invalidateRequestSnapshot('over-window relief');
     _persistedCount = after.length;
     messages
       ..clear()

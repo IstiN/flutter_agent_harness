@@ -169,6 +169,50 @@ void main() {
       },
     );
 
+    test(
+      'review R1: a QUEUED run registers before it waits — isCompacting '
+      'stays true across the hand-over and wait() covers the queued body',
+      () async {
+        final gate = CompactingGate();
+        final first = Completer<void>();
+        final second = Completer<void>();
+        final order = <String>[];
+        final r1 = gate.run(() async {
+          order.add('1:start');
+          await first.future;
+          order.add('1:end');
+        });
+        final r2 = gate.run(() async {
+          order.add('2:start');
+          expect(gate.isCompacting, isTrue);
+          await second.future;
+          order.add('2:end');
+        });
+        final waited = gate.wait().then((_) => order.add('waited'));
+        await Future<void>.delayed(Duration.zero);
+        expect(order, ['1:start']);
+        expect(gate.isCompacting, isTrue, reason: 'the queued run counts');
+
+        first.complete();
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(order, ['1:start', '1:end', '2:start']);
+        expect(
+          gate.isCompacting,
+          isTrue,
+          reason: 'the queued body is THE active compaction while it runs',
+        );
+        expect(order, isNot(contains('waited')));
+
+        second.complete();
+        await r1;
+        await r2;
+        await waited;
+        expect(order, ['1:start', '1:end', '2:start', '2:end', 'waited']);
+        expect(gate.isCompacting, isFalse);
+      },
+    );
+
     test('a throwing body still releases the gate', () async {
       final gate = CompactingGate();
       await expectLater(

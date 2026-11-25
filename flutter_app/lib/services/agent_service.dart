@@ -758,6 +758,10 @@ class AgentService extends ChangeNotifier
       providerTimeoutsOverride = appConfig?.providerTimeouts;
     }
     _yamlRedactConfig = appConfig?.redact;
+    // GOAL #2394 (review round 1, host parity): the `compaction:` tuning
+    // keys — the app honors them exactly like the CLI (merged scopes);
+    // a bad section already warned above and reads as the defaults.
+    _appCompactionTuning = appConfig?.compactionTuning;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
     // config is readable.
@@ -1528,6 +1532,15 @@ class AgentService extends ChangeNotifier
   /// The yaml `redact:` section (AC4); null = the mask-mode default.
   RedactionConfig? _yamlRedactConfig;
 
+  /// The `compaction:` tuning keys of the booted config (GOAL #2394);
+  /// [compactionTuningOverride] wins (tests).
+  CompactionTuning? _appCompactionTuning;
+
+  /// Test seam for the `compaction:` tuning keys (GOAL #2394): set
+  /// before [initialize]; null in production.
+  @visibleForTesting
+  CompactionTuning? compactionTuningOverride;
+
   /// Boot secrets snapshot ([_attachRedactor]): the live re-enable seed.
   Map<String, String> _bootSecrets = const {};
 
@@ -2017,8 +2030,16 @@ class AgentService extends ChangeNotifier
     // is in flight: an idle gate must not open an async gap before the
     // prompt (hosts observe `unawaited(sendText())` through
     // `waitForIdle()`, which must see the run as started).
+    //
+    // The post-run call runs INSIDE the ending run's lifecycle (the agent
+    // end event), so after the wait the agent may still be settling:
+    // the text is a fresh PROMPT, never a steer into a finished turn —
+    // it waits for the settlement, then prompts (review round 1, D9).
     handOverTrigger.onTurn();
-    if (handOverTrigger.gate.isCompacting) await handOverTrigger.gate.wait();
+    if (handOverTrigger.gate.isCompacting) {
+      await handOverTrigger.gate.wait();
+      if (_agent.state.isStreaming) await _agent.waitForIdle();
+    }
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
     if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();

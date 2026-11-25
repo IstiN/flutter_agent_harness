@@ -1,3 +1,5 @@
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart'
+    show RecordSeqIndex;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -307,6 +309,59 @@ void main() {
   });
 
   group('rewind application', () {
+    test('GOAL #2394 AC2: an applied rewind drops S0 — the rewound-away '
+        'prefix must never ride a merged hand-over', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'probe')]),
+        _toolTurn([probeCall('/tmp/x', 'c2')]),
+        _toolTurn([rewindCall('FINDINGS: stale cache.', 'c3')]),
+        _textTurn('continuing'),
+      ]);
+      final h = await harness(fake);
+      h.agent.requestSnapshots.capture(
+        RequestSnapshot(
+          model: _model,
+          messages: List.of(h.agent.state.messages),
+          systemPrompt: 'test system prompt',
+          tools: const [],
+          seqMap: TranscriptSeqMap(
+            headSeqs: const [],
+            index: RecordSeqIndex(const []),
+          ),
+          sentAt: DateTime.utc(2026),
+        ),
+      );
+      expect(h.agent.requestSnapshots.validFor(_model), isNotNull);
+      // The window that matters: between the rewind (applied on turn end,
+      // before any post-run compaction of that turn) and the next main
+      // send — S0 must already be gone there.
+      final seenAtTurnEnd = <String?>[];
+      h.agent.subscribe((event, _) async {
+        if (event is TurnEndEvent) {
+          seenAtTurnEnd.add(h.agent.requestSnapshots.invalidReason);
+        }
+      });
+
+      await h.agent.prompt('start');
+
+      expect(h.controller.lastCompletedRewind, isNotNull);
+      expect(seenAtTurnEnd, contains('checkpoint rewind'));
+      // The continued turn's own send re-captured a FRESH S0 over the
+      // pruned projection (checkpoint prefix + report, no probe detour).
+      final current = h.agent.requestSnapshots.current!;
+      expect(current.messages, hasLength(4));
+      expect(
+        [
+          for (final m in current.messages.whereType<ToolResultMessage>())
+            m.toolName,
+        ],
+        [checkpointToolName],
+        reason:
+            'only the checkpoint result survives; the probe detour is '
+            'not in S0',
+      );
+    });
+
     test('drops post-mark messages, keeps the report verbatim, and preserves '
         'the detour in the session tree', () async {
       const report = 'FINDINGS: the cache is stale; key points: a, b, c.';

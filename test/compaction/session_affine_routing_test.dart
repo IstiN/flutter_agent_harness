@@ -333,6 +333,9 @@ void main() {
           isTrue,
         );
         expect(payload['tool_choice'], {'type': 'none'});
+        // Review round 1: the header capture IS read — the `x-initiator`
+        // pin is Copilot-only (IT-15), Anthropic never carries it.
+        expect(headers, [''], reason: 'no x-initiator on Anthropic');
 
         // Negative: S0 ending with an assistant message gets NO history
         // breakpoint (Anthropic only breaks on user messages).

@@ -1127,9 +1127,10 @@ extension AgentCliCompactionRun on AgentCli {
     // hysteresis window; a run that appended records moved the
     // projection the snapshot described, so S0 is stale.
     _handOverTrigger.recordRun();
-    if (hooks.reportedPass) {
-      _agent.invalidateRequestSnapshot('compaction run appended records');
-    }
+    // "May have appended", not "reported success": a hidden range can land
+    // before a ladder kill (reportedPass stays false) and the run still
+    // moved the projection the snapshot described.
+    _agent.invalidateRequestSnapshot('compaction run');
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;
   }
@@ -1209,7 +1210,9 @@ extension OverWindowGuardRelief on AgentCli {
     final outcome = await relief.run();
     // The relief re-anchored the live transcript from the session
     // projection (refreshAgentState) — keep the persist cursor in step,
-    // exactly like the quality tier's post-run bookkeeping.
+    // exactly like the quality tier's post-run bookkeeping, and drop S0
+    // (GOAL #2394 AC2): it described the pre-relief, over-window prefix.
+    _agent.invalidateRequestSnapshot('over-window relief');
     _persistedCount = _agent.state.messages.length;
     return outcome;
   }

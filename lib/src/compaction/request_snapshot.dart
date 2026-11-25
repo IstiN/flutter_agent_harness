@@ -145,8 +145,12 @@ final class RequestSnapshotStore {
     _invalidReason = null;
   }
 
-  /// Drops the snapshot — the projection it described is gone.
+  /// Drops the snapshot — the projection it described is gone. Without a
+  /// snapshot it is a no-op: hosts invalidate on every transition (a
+  /// reset, a rewind, a run) and a reason must only ever describe a
+  /// snapshot that really was dropped.
   void invalidate(String reason) {
+    if (_snapshot == null) return;
     _snapshot = null;
     _invalidReason = reason;
   }

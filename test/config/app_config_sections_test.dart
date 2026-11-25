@@ -314,4 +314,50 @@ void main() {
       expect(app.warnings.single, contains('replyAutoSpill'));
     });
   });
+
+  group('GOAL #2394 compaction tuning (host parity, review round 1)', () {
+    test('both scopes parse and merge like the CLI: global < project, '
+        'deepest key wins', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc(
+          'compaction:\n'
+          '  softRatio: 0.6\n'
+          '  handOver:\n'
+          '    maxTokens: 4096\n'
+          '    hysteresisTurns: 5\n',
+        ),
+        projectDoc: _doc(
+          'compaction:\n'
+          '  handOver:\n'
+          '    hysteresisTurns: 9\n',
+        ),
+      );
+      expect(app.warnings, isEmpty);
+      final tuning = app.compactionTuning!;
+      expect(tuning.softRatio, 0.6);
+      expect(tuning.handOverMaxTokens, 4096);
+      expect(tuning.handOverHysteresisTurns, 9);
+    });
+
+    test('a bad value warns, names the scope and keeps the other scope '
+        '(AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('compaction:\n  softRatio: 1.5\n'),
+        projectDoc: _doc('compaction:\n  handOver:\n    hysteresisTurns: 4\n'),
+        userSource: '~/.fah/config.yaml',
+      );
+      expect(
+        app.warnings.where(
+          (w) => w.contains('~/.fah/config.yaml compaction section skipped'),
+        ),
+        hasLength(1),
+      );
+      expect(app.compactionTuning?.handOverHysteresisTurns, 4);
+      expect(app.compactionTuning?.softRatio, isNull);
+    });
+
+    test('no section → null (the structured defaults apply)', () {
+      expect(parseAppConfigSections().compactionTuning, isNull);
+    });
+  });
 }

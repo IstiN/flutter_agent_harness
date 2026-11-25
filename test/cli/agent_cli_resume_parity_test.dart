@@ -158,6 +158,27 @@ void main() {
     return stream.contexts.first;
   }
 
+  test('E37/AC15 (review round 1): a classic-pinned CLI carries NO '
+      'record tags on the wire (E37: «classic: тегов и merged нет»)', () async {
+    // Tags are gated by `Agent.recordTagsEnabled`, synced from the engine
+    // at every prompt — classic never opts in, so the request carries the
+    // stored transcript byte-for-byte.
+    final env = await freshEnv();
+    await seedFlat(env, 'parity-target', 4);
+    io = FakeCliIO();
+    final stream = FakeStreamFunction([textTurn('ok')]);
+    final cli = interactiveCli(env, stream);
+    final context = await resumeAndTurn(cli, stream);
+    expect(context.messages, hasLength(5));
+    // Byte-identity with the stored transcript (the seed texts happen to
+    // LOOK like tagged records — `m<i> …` — so the predicate alone cannot
+    // tell a wire tag from content; equality can).
+    for (var i = 0; i < 4; i++) {
+      expect(firstTextOf(context.messages[i]), 'm$i ${'a' * 4000}');
+    }
+    expect(cli.agent.recordTagsEnabled, isFalse);
+  });
+
   /// Role + text signature of a projected message list — the AC-R0
   /// token-for-token comparison basis.
   List<String> signatures(Context context) => [

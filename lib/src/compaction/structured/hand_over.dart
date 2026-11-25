@@ -10,6 +10,7 @@
 /// [sanitizeHideLabel] before it can reach a marker.
 library;
 
+import '../record_tag.dart' show stripRecordTags;
 import '../summary_sanitizer.dart';
 
 /// One hide proposal: the inclusive alias range `from`..`to` on the S0
@@ -288,12 +289,33 @@ String renderHandOverInstruction({
       .trimRight();
 }
 
+/// The mandatory heading, built on the belt's own prefix
+/// ([userIntentHeadingPrefix] — review round 1, BLOCKING-2): the gate
+/// and the provenance belt must agree on what a heading is, so a
+/// `##Open User Requests` without the space is no heading here either
+/// and the run fails instead of persisting a section the belt never
+/// graded.
 final RegExp _userIntentHeading = RegExp(
-  r'^(?:#{1,6}\s*)?(?:open user requests\b|open asks\b\s*:)',
+  userIntentHeadingPrefix + r'(?:open user requests\b|open asks\b\s*:)',
   multiLine: true,
   caseSensitive: false,
 );
 final RegExp _askPointer = RegExp(r'^\s*-\s*\[[^\]]*\]\s*');
+
+/// The belt's origin mark ([sanitizeSummary]) — an ask that quotes tool
+/// text comes back annotated, which must not count as "dropped".
+final RegExp _originMark = RegExp(r'\s?\[from toolResult\]');
+
+/// The ONE normalization both sides of the verbatim check share (review
+/// round 1): wire-tag echoes out (`stripRecordTags`), encoding noise out
+/// ([normalizeReplyText]), origin marks out, whitespace flattened. The
+/// transfer arrives already normalized by the engine; the mechanical
+/// block is raw record text — without this, an ask that itself starts
+/// with a quoted `m<N> ` alias or carries a zero-width character could
+/// never be found and the session stalled fail-closed on every run.
+String _verbatimKey(String text) => stripRecordTags(
+  normalizeReplyText(text).replaceAll(_originMark, ''),
+).replaceAll(_whitespaceRun, ' ').trim();
 
 /// The verdict of the mechanical open-asks check (D2/#81).
 typedef OpenUserRequestsVerdict = ({
@@ -315,12 +337,13 @@ OpenUserRequestsVerdict verifyOpenUserRequests(
   String transfer,
   List<String> askLines,
 ) {
-  final flat = transfer.replaceAll(_whitespaceRun, ' ');
+  final flat = _verbatimKey(transfer);
   final missing = <String>[];
   for (final line in askLines) {
     final text = line.replaceFirst(_askPointer, '').trim();
-    if (text.isEmpty) continue;
-    if (!flat.contains(text.replaceAll(_whitespaceRun, ' '))) {
+    final key = _verbatimKey(text);
+    if (key.isEmpty) continue;
+    if (!flat.contains(key)) {
       missing.add(text);
     }
   }

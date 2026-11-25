@@ -148,22 +148,25 @@ final class CompactingGate {
   bool get isCompacting => _active != null;
 
   /// Runs [body] as THE compaction; a nested/second run while one is in
-  /// flight is joined to the first's completion instead of starting
-  /// (never two writers).
-  Future<T> run<T>(Future<T> Function() body) async {
-    final active = _active;
-    if (active != null) {
-      await active.future;
-      return body();
-    }
+  /// flight is queued behind it (never two writers). The queued run
+  /// REGISTERs at once, before it waits (review round 1: a joined body
+  /// that executed unregistered left `isCompacting` false while it
+  /// appended, so a prompt skipped the queue — D9/E33). The newest
+  /// registration is the one [wait] holds: it completes only after every
+  /// run queued before it.
+  Future<T> run<T>(Future<T> Function() body) {
+    final previous = _active;
     final completer = Completer<void>();
     _active = completer;
-    try {
-      return await body();
-    } finally {
-      _active = null;
-      completer.complete();
-    }
+    return () async {
+      if (previous != null) await previous.future;
+      try {
+        return await body();
+      } finally {
+        if (identical(_active, completer)) _active = null;
+        completer.complete();
+      }
+    }();
   }
 
   /// Resolves when no compaction is in flight (immediately when idle).
