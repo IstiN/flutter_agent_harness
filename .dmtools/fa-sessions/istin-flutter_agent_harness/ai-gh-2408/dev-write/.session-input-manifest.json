@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-25T03:59:03.915Z",
+  "ticketKey": "gh-2408",
+  "headSha": "0547ef5a51b87e22cbaf8bfe3a5a52adda87d8fa",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:58a496876764488f",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:ca9248b656ed5f0e",
+      "size": 15321
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:601a153a3b97eb6d",
+      "size": 2195
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:c0111a6446ff29f7",
+      "size": 3671
+    },
+    "request.md": {
+      "hash": "fnv1a64:299a9bf2811e927e",
+      "size": 907
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:c888f9f1cd79a675",
+      "size": 691
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:df2393e8c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:b956ca7d9adc77ff",
+      "size": 968
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:299a9bf2811e927e",
+      "size": 907
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc67uDud",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "CHANGELOG.md:16",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the merge commit's CHANGELOG resolution deletes main's gh-2394 and gh-2404 `## Unreleased` entries**\n\nMerging `origin/main` into this branch (`0547ef5a51 — \"Merge origin/main into ai/gh-2408\"`) resolved the CHANGELOG conflict by keeping the **branch side byte-identical**: `git diff 8e74c74dd4 0547ef5a51 -- CHANGELOG.md` is empty. Since the merge-base is now main's tip (`9673f87298`), the PR diff itself **removes** the entries main added:\n\n- `- feat(2394): Compaction 2.0 v2.1 …` (12 lines, main's CHANGELOG:16)\n- `- fix(2404): load_drop_retry_test — BSD time branch …` (3 lines, main's CHANGELOG:31)\n\n`git diff origin/main...HEAD -- CHANGELOG.md` → `@@ -13,24 +13,14 @@`: 15 lines of main's entries deleted, the 8-line gh-2408 entry added on top. On merge (ours == base for this file), main's `## Unreleased` silently loses both entries.\n\nWhy it matters: `CHANGELOG.md` is **curated-only** — new lines go under `## Unreleased` and the release folds them into the tag's section at publish-staging time (file header, gh-1522; AGENTS.md § Commits and releases). If this PR merges before the next release cut, the v1.0.776 release notes permanently lose the Compaction 2.0 v2.1 and gh-2404 entries — and no gate catches it (content is not measured; the full suite passes green with the deletion in place).\n\nThis is also out of scope: a gh-2408 CI fix must not touch the gh-2394/gh-2404 entries at all.\n\n**Fix**: redo the merge resolution for this one file — take main's CHANGELOG verbatim and re-insert the gh-2408 entry at the top of `## Unreleased`:\n\n```bash\ngit checkout origin/main -- CHANGELOG.md\n# then re-add the 8-line `- fix(ci): gh-2408 …` block directly under `## Unreleased`\n```\n\nNothing else in the merge lost content (the full PR delta is 4 files; only CHANGELOG.md carries deletions)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:f06d7410",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the AC2 guard never runs — the bare-`dart` exemption is shipped unpinned**\n\n`rosettaCommand` (`test/ci_2408_rosetta_interpreter_guard_test.dart:39`) anchors with `^` and no `multiLine: true`, but in the AC2 group it is applied to **whole multi-line `run:` scripts**, not per line. With `hasMatch`, `^` matches only at string start, so `scripts` (line 167-171) keeps a step only if its run block literally *begins* with `arch -x86_64` — no script in this repo does (all three start with comments or variable assignments). Every job therefore fails `usesRosettaDart` and hits `continue` at line 182.\n\nEvidence (run against this tree):\n\n- `dart test test/ci_2408_rosetta_interpreter_guard_test.dart` → **4 tests, all AC1** (`+4: All tests passed!`). The `AC2 — the bare-dart exemption stays paired with setup-dart arch` group registers **zero tests** — for the 3 jobs that actually run `arch -x86_64 dart` (`build-macos.yml::build-macos-cli`, `ci.yml::binaries`, `ci.yml::binaries-pr`).\n- The same filter chain with per-line matching detects those **3 jobs**; the shipped code detects **0**.\n\nConsequence: the file header documents AC2 as part of the guard's contract (\"every job invoking `arch -x86_64 dart` carries a setup-dart step with an explicit `architecture:`\"), and the PR description claims the exemption is \"itself pinned per-job\" — but **removing `architecture: ${{ matrix.arch }}` from any of the three setup-dart steps today leaves this guard green**, and AC1's bare-`dart` exemption would then PATH-resolve the host arm64 dart into `arch -x86_64 dart build cli` — the exact `Bad CPU type in executable` failure class this PR exists to prevent, unguarded. AC1 and the fa-clip regression pin do work; this is only the dart-exemption half that is inert.\n\nFix: AC2 doesn't need its own matcher — derive the job set from the already-correct per-line helper:\n\n```dart\nfinal dartJobs = rosetaInvocations(path)\n    .where((inv) => inv.$3 == 'dart')\n    .map((inv) => inv.$1)\n    .toSet();\nfor (final job in dartJobs) { /* existing setup-dart `architecture:` assert */ }\n```\n\n(lines 167-182 are then deleted wholesale. Minimal alternative: `RegExp(..., multiLine: true)` plus a per-line filter before `hasMatch` — but note the inner `allMatches` on the comment-filtered, re-joined script has the same start-of-string anchor problem, so reusing `rosettaInvocations` is the safer fix.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:ded423b0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the guard's matcher only sees line-leading `arch -x86_64` forms**\n\n`RegExp(r'^\\s*arch -x86_64 (\\S+)')` matches only invocations at the start of a line. Shell-legal forms that PATH-resolve the same way are invisible to the guard, e.g.:\n\n```yaml\ncd scripts && arch -x86_64 bash build_fa_clip.sh\nout=$(arch -x86_64 bash scripts/build_fa_clip.sh ...)\nsudo arch -x86_64 bash scripts/build_fa_clip.sh\n```\n\nAny future edit that moves the Rosetta invocation into a compound command sails through AC1 while reintroducing the gh-2408 failure class. Consider dropping the `^` anchor (comments are already skipped before matching, and a stray false positive in a guard test is cheap) or anchoring on shell operators: `RegExp(r'(?:^|[;&|]|\\$\\()\\s*arch -x86_64 (\\S+)')`. Optional: also scan `.github/actions/**/action.y(a)ml` composite steps so `arch -x86_64` can't hide outside `workflows/` — the repo already ships a composite (`sqlite3-native-assets-prewarm`)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:5d38e20c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — ⚠️ IMPORTANT: \"the AC2 guard never runs — the bare-`dart` exemption is shipped unpinned\"\n\n**Confirmed — fixed in 8e74c74dd4.**\n\nReproduced first on the shipped tree, both ways the finding describes:\n\n- `dart test test/ci_2408_rosetta_interpreter_guard_test.dart` → **4 tests, all AC1**; the AC2 group registered zero tests.\n- Mutation check: removing `architecture: ${{ matrix.arch }}` from the `ci.yml::binaries` setup-dart step left the guard **green** (4 passed) — the pin contract was unenforced.\n\n## Fix\n\nAC2 now derives its job set with the suggested per-line derivation instead of the whole-script chain (which anchored `^` at string start via `hasMatch` on multi-line `run:` blocks):\n\n```dart\n/// Jobs in the workflow whose run-steps invoke `arch -x86_64 dart`,\n/// derived per-line from [rosettaInvocations]. ...\nSet<String> rosettaDartJobs(String workflowPath) =>\n    rosettaInvocations(workflowPath)\n        .where((inv) => inv.$3 == 'dart')\n        .map((inv) => inv.$1)\n        .toSet();\n```\n\n- The whole-script `scripts`/`usesRosettaDart` matcher chain is deleted; the setup-dart `architecture:` assert is factored into `hasSetupDartArchPin()` and reused.\n- AC2 registers exactly the 3 expected jobs: `build-macos.yml::build-macos-cli`, `ci.yml::binaries`, `ci.yml::binaries-pr`.\n\n## Verification (mutation check, both directions)\n\n- Removing `architecture: ${{ matrix.arch }}` from `ci.yml::binaries` now **fails the guard**: `8 passed, 1 failed` — `ci.yml::binaries pins setup-dart architecture for its arch -x86_64 dart`. The same mutation on the shipped code stayed green, so the fix is the difference.\n- Guard file after the fix: **9/9 pass** (4 AC1 + 3 AC2 jobs + 2 negative probes); `dart format --set-exit-if-changed` clean, `dart analyze` clean.\n\nA new negative probe in the same file feeds a synthetic workflow (temp file outside `.github/workflows`) whose run script is comment-first with the invocation inside an `if` — the exact shape the old chain never saw — and asserts `rosettaDartJobs` catches it plus `hasSetupDartArchPin` is false (RED before the fix, GREEN after)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:2957bbe1",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — 💡 SUGGESTION: \"the guard's matcher only sees line-leading `arch -x86_64` forms\"\n\n**Picked up in this lap (same file as the AC2 fix, trivial edit) — fixed in 8e74c74dd4.**\n\n## Fix\n\nTook the first suggested option — the matcher is now deliberately **unanchored**:\n\n```dart\n/// `arch -x86_64 <cmd>` occurrences in a line of a step script. Deliberately\n/// UNANCHORED (gh-2409 review thread 2): compound-command forms\n/// (`cd x && arch -x86_64 bash ...`, `out=$(arch -x86_64 bash ...)`,\n/// `sudo arch -x86_64 bash ...`) PATH-resolve the same way, and comment\n/// lines are already skipped before matching — a stray false positive in a\n/// guard test is cheap, a missed violation reintroduces gh-2408.\nfinal rosettaCommand = RegExp(r'arch -x86_64 (\\S+)');\n```\n\n- All three cited compound forms now trip AC1; comment lines are still skipped before matching, so documented prose keeps citing the failing form freely.\n- New negative probe in the same file: a synthetic workflow running `out=$(arch -x86_64 bash scripts/build_fa_clip.sh ...)` — `rosettaInvocations` flags `bash` and AC1's safety predicate fails it. RED on the anchored matcher (`Actual: []`, does not contain `bash`), GREEN after.\n- Repo-wide effect today is nil-by-design: the only real invocations remain the 3 `arch -x86_64 dart` (exact-arch SDK) and 2 `arch -x86_64 /bin/bash` (universal) lines; no false positives introduced (78 workflow-shape family tests pass).\n\n## Not picked up here (left for triage)\n\nThe optional `.github/actions/**/action.y(a)ml` composite scan: no composite in this repo contains `arch -x86_64` today (grep-verified, incl. `sqlite3-native-assets-prewarm`), and composites use `runs.steps` rather than `jobs`, so the scan needs its own parsing path — a >trivial edit beyond this lap's scope (opportunistic pickup is same-file + trivial only). Nothing currently hides there; triage can close it as deferred."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:b485342c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the merge commit's CHANGELOG resolution deletes main's gh-2394 and gh-2404 `## Unreleased` entries**\n\nMerging `origin/main` into this branch (`0547ef5a51 — \"Merge origin/main into ai/gh-2408\"`) resolved the CHANGELOG conflict by keeping the **branch side byte-identical**: `git diff 8e74c74dd4 0547ef5a51 -- CHANGELOG.md` is empty. Since the merge-base is now main's tip (`9673f87298`), the PR diff itself **removes** the entries main added:\n\n- `- feat(2394): Compaction 2.0 v2.1 …` (12 lines, main's CHANGELOG:16)\n- `- fix(2404): load_drop_retry_test — BSD time branch …` (3 lines, main's CHANGELOG:31)\n\n`git diff origin/main...HEAD -- CHANGELOG.md` → `@@ -13,24 +13,14 @@`: 15 lines of main's entries deleted, the 8-line gh-2408 entry added on top. On merge (ours == base for this file), main's `## Unreleased` silently loses both entries.\n\nWhy it matters: `CHANGELOG.md` is **curated-only** — new lines go under `## Unreleased` and the release folds them into the tag's section at publish-staging time (file header, gh-1522; AGENTS.md § Commits and releases). If this PR merges before the next release cut, the v1.0.776 release notes permanently lose the Compaction 2.0 v2.1 and gh-2404 entries — and no gate catches it (content is not measured; the full suite passes green with the deletion in place).\n\nThis is also out of scope: a gh-2408 CI fix must not touch the gh-2394/gh-2404 entries at all.\n\n**Fix**: redo the merge resolution for this one file — take main's CHANGELOG verbatim and re-insert the gh-2408 entry at the top of `## Unreleased`:\n\n```bash\ngit checkout origin/main -- CHANGELOG.md\n# then re-add the 8-line `- fix(ci): gh-2408 …` block directly under `## Unreleased`\n```\n\nNothing else in the merge lost content (the full PR delta is 4 files; only CHANGELOG.md carries deletions)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:f1933c0d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The fa-clip fix itself is correct and verified — both Rosetta legs now pin the universal `/bin/bash` (`ci.yml:4744`, `build-macos.yml:1387`), all three `arch -x86_64 dart` jobs carry setup-dart `architecture:` pins today, and `build_fa_clip.sh` under Rosetta behaves as described. However, the new guard test's AC2 group — the half that pins the bare-`dart` exemption — never executes (start-of-string regex anchor on multi-line scripts → 0 jobs detected, 0 tests registered), so the guard ships with its documented `architecture:`-pairing contract silently unenforced.\n\n**Key Issues**:\n- ⚠️ `test/ci_2408_rosetta_interpreter_guard_test.dart:170` — AC2 dead: removing a setup-dart `architecture:` pin today stays green (details in the inline thread).\n- 💡 Digest — `test/ci_2408_rosetta_interpreter_guard_test.dart:39` — matcher only sees line-leading `arch -x86_64`; compound-command forms slip past the guard (posted as a suggestion thread).\n- 📝 Digest — PR description test-coverage overstatement: \"a negative-probe check (a fresh `arch -x86_64 bash` violation is flagged)\" — no synthetic probe exists; the only negative assertion is the regression pin's `isNot` on the fixed fa-clip strings.\n- 📝 Digest — PR description opens with `Closes #2408` while its own Notes say \"No Fixes/Closes keywords per repo policy\" and ticket gh-2408 says the issue \"closes manually when the ref goes green\" — GitHub will auto-close the issue on merge regardless of green ref; drop the keyword line.\n\n**Next Steps**:\n1. Make AC2 derive its job set from `rosettaInvocations()` (per-line matching) instead of `hasMatch` on whole scripts — then removing an `architecture:` pin turns the guard red.\n2. Optionally widen the guard regex to non-line-leading forms.\n3. Drop the `Closes #2408` line / fix the negative-probe claim in the PR description."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:98dd8c0f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES (re-review round 2)\n\n**Summary**: Round 1's findings are verifiably fixed — AC2 now derives its job set per-line via `rosettaDartJobs()` (registers the 3 real `arch -x86_64 dart` jobs; a missing `architecture:` pin fails the guard), the matcher is deliberately unanchored with a compound-command negative probe, guard 9/9 + workflow-shape family green. However the new merge of `origin/main` (`0547ef5`) resolved the CHANGELOG conflict by keeping the branch's stale file, so the PR diff now **deletes** main's `feat(2394)` Compaction 2.0 v2.1 and `fix(2404)` `## Unreleased` entries — silent release-notes loss on the curated-only CHANGELOG once merged.\n\n**Key Issues**:\n- 🚨 `CHANGELOG.md:16` — merge resolution dropped main's gh-2394/gh-2404 entries (evidence: `git diff origin/main...HEAD -- CHANGELOG.md` shows them as removals; no gate covers content). Fix: `git checkout origin/main -- CHANGELOG.md` + re-add the gh-2408 block on top.\n- ✅ Registry F1 (⚠️ AC2 guard never ran) — **fixed**: per-line derivation, 3 AC2 job tests registered, comment-first/no-pin negative probe green.\n- ✅ Registry F2 (💡 matcher line-leading only) — **fixed**: unanchored `RegExp(r'arch -x86_64 (\\S+)')`, compound-command probe green; the optional composite-scan half is justifiably deferred (no composite contains `arch -x86_64` today).\n- ✅ Round-1 digest items addressed: PR description's negative-probe claim is now real code, the `Closes #2408` line is gone.\n\n**Next Steps**:\n1. Redo the merge's CHANGELOG resolution (restore gh-2394 + gh-2404 entries, keep the gh-2408 entry on top) — the only change this round.\n2. Re-run the guard file + `scripts/check_changelog_size.sh` after the fix."
+    }
+  ]
+}
