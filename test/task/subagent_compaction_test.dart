@@ -687,4 +687,149 @@ void main() {
       },
     );
   });
+
+  group('gh-2423 C3 — the defered post-hide notice rides the next run', () {
+    /// Every context notice (any kind) of [context], oldest first.
+    List<String> noticesIn(Context context) => [
+      for (final message in context.messages.whereType<UserMessage>())
+        if (isContextNoticeText(userMessageText(message.content)))
+          userMessageText(message.content),
+    ];
+
+    /// Whether [notice] is the POST-HIDE one (the near-limit notice is a
+    /// different contract and may legitimately ride the same request).
+    bool isPostHide(String notice) => notice.contains('compacted: ');
+
+    /// The context notices delivered AFTER [prompt] in [context] — the
+    /// notices THIS run received. Everything before the prompt is
+    /// replayed history: an earlier notice is a transcript record and
+    /// rides every later request.
+    List<String> deliveredAfter(Context context, String prompt) {
+      final promptIndex = context.messages.lastIndexWhere(
+        (message) =>
+            message is UserMessage &&
+            // The resumed child's prompt is the drained mail, attributed
+            // (`from <sender>: <text>`).
+            userMessageText(message.content).endsWith(prompt),
+      );
+      expect(promptIndex, greaterThanOrEqualTo(0), reason: 'the prompt');
+      return noticesIn(
+        Context(
+          systemPrompt: context.systemPrompt,
+          messages: context.messages.sublist(promptIndex + 1),
+          tools: context.tools,
+        ),
+      );
+    }
+
+    Iterable<Context> requestsMatching(_ScriptedStream stream, String text) =>
+        stream.contexts.where(
+          (context) => _ScriptedStream.lastUserText(context).contains(text),
+        );
+
+    test('a post-run hide defers ONE notice; the first request of the '
+        'resumed run carries it, last; a second resume carries none', () async {
+      // Three fat tool turns (~600t each) stay under the 4382t trigger at
+      // every mid-run boundary (≈3835t after the third); the final text
+      // turn (2800 chars ≈ 700t) crosses it only AFTER the last
+      // boundary — the post-run pass hides, and with no next request to
+      // ride the post-hide notice is defered to the next run.
+      final w = _Wiring(
+        rules: [
+          (
+            match: 'grow',
+            turns: [
+              _toolTurn('read', 'c1'),
+              _toolTurn('read', 'c2'),
+              _toolTurn('read', 'c3'),
+              _textTurn('done: ${'y' * 2800}'),
+            ],
+          ),
+          (match: 'continue', turns: [_textTurn('resumed: finished')]),
+        ],
+      );
+      final first = await w.spawn('deferrer', 'grow the context');
+      expect(first.status, TaskSpawnStatus.completed, reason: first.error);
+      final handle = w.manager['deferrer']!;
+      // No request of the first run could carry the post-hide notice:
+      // every mid-run boundary was under the trigger.
+      for (final context in requestsMatching(w.stream, 'grow')) {
+        expect(
+          noticesIn(context).where(isPostHide),
+          isEmpty,
+          reason: 'nothing hid before the post-run pass',
+        );
+      }
+      expect(handle.compactions, greaterThanOrEqualTo(1));
+      expect(handle.status, SubagentStatus.completed);
+
+      // Resume 1: the defered notice rides the FIRST request of the
+      // resumed run — exactly one, as the last message. (The resume
+      // probe may also hand the child its near-limit notice: the
+      // post-hide context sits ≈73 % here, over the 43 % near-limit
+      // point — a different contract, latched to one per cycle.)
+      await w.executor.resumeChild('deferrer', 'continue the work');
+      expect(w.manager['deferrer']!.status, SubagentStatus.completed);
+      final resumed = _firstRequest(w.stream, 'continue the work');
+      final delivered = deliveredAfter(resumed, 'continue the work');
+      final postHide = delivered.where(isPostHide).toList();
+      expect(postHide, hasLength(1), reason: '$delivered');
+      expect(postHide.single, startsWith('<system-notice>'));
+      expect(postHide.single, contains('records hidden'));
+      expect(delivered.last, postHide.single, reason: 'it rides last');
+      expect(
+        delivered.length,
+        lessThanOrEqualTo(2),
+        reason: 'one defered notice + at most one near-limit',
+      );
+      expect(
+        resumed.messages.last,
+        isA<UserMessage>(),
+        reason: 'the notice rides last',
+      );
+      // …and once per hide pass: no later request of that run carries a
+      // fresh post-hide delivery.
+      for (final later in requestsMatching(
+        w.stream,
+        'continue the work',
+      ).skip(1)) {
+        expect(
+          deliveredAfter(later, 'continue the work').where(isPostHide),
+          isEmpty,
+        );
+      }
+
+      // Resume 2: the defered list is TAKEN, not copied.
+      await w.executor.resumeChild('deferrer', 'continue once more');
+      expect(w.manager['deferrer']!.status, SubagentStatus.completed);
+      expect(
+        deliveredAfter(
+          _firstRequest(w.stream, 'continue once more'),
+          'continue once more',
+        ).where(isPostHide),
+        isEmpty,
+      );
+    });
+
+    test('a run that hid nothing defers nothing', () async {
+      final w = _Wiring(
+        rules: [
+          (match: 'grow', turns: [_textTurn('done')]),
+          (match: 'continue', turns: [_textTurn('resumed: ok')]),
+        ],
+      );
+      final result = await w.spawn('quiet', 'grow the context');
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      expect(w.manager['quiet']!.compactions, 0);
+      await w.executor.resumeChild('quiet', 'continue the work');
+      expect(w.manager['quiet']!.status, SubagentStatus.completed);
+      expect(
+        deliveredAfter(
+          _firstRequest(w.stream, 'continue the work'),
+          'continue the work',
+        ),
+        isEmpty,
+      );
+    });
+  });
 }

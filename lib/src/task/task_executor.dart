@@ -454,11 +454,8 @@ final class TaskExecutor {
         capText: false,
       );
       mail = await manager.drainMessages(id);
-      final since = mail.isEmpty ? null : DateTime.tryParse(mail.first.sentAt);
+      final (:promptText, :since) = _resumePrompt(mail, fallback: message);
       deliveryStage(id, 'consumed', since: since);
-      final promptText = mail.isEmpty
-          ? message
-          : mail.map((m) => 'from ${m.fromId}: ${m.text}').join('\n');
       final session = await _resumeSession(id, handle);
       final prior = await session.buildContextMessages();
       _childSessions[id] = session;
@@ -502,10 +499,7 @@ final class TaskExecutor {
       );
       // gh-2423 C3: a post-hide notice deferred at the end of the previous
       // run rides THIS run's first request.
-      for (final record
-          in _childDeferredNotices.remove(id) ?? const <String>[]) {
-        agent.queueContextNotice(UserMessage.text(record));
-      }
+      _queueDeferredChildNotices(id, agent);
       agent.prepareNextTurn = (nextTurn) async {
         // gh-1948: resumed children ride the same per-boundary transcript
         // flush as fresh spawns (see _buildChild).
@@ -796,32 +790,25 @@ final class TaskExecutor {
     );
     // Pressure stamp: the reconciled transcript-basis pressure (estimate
     // plus the trailing incoming prompt), what task_status shows.
-    manager.notePressure(
+    _stampChildPressure(
       id,
-      estTokens: reconcileContextTokens(
-        estimatedTokens: transcriptEst + incomingTokens,
-        observedTokens: observed,
-      ),
-      windowTokens: window,
+      model: wiring.model,
+      estTokens: transcriptEst + incomingTokens,
       observedTokens: observed,
-      windowVerified: contextWindowRegistry?.isVerified(wiring.model) ?? false,
+      window: window,
     );
     if (!decision.triggered) {
       // gh-2423 C3: under the trigger, the honest near-limit notice —
       // once per cycle, a steering message consumed before the child's
-      // next request (the same text the main agent gets). Only at a
-      // boundary the child continues from ([continues]): a final text
-      // turn has no next request to ride, and a steer there would force
-      // an extra model round for nothing — the latch stays armed.
-      if (continues) {
-        _maybeNoteChildNearLimit(
-          id,
-          child,
-          tokens: est,
-          window: window,
-          settings: settings,
-        );
-      }
+      // next request (the same text the main agent gets).
+      _maybeNoteChildNearLimit(
+        id,
+        child,
+        tokens: est,
+        window: window,
+        settings: settings,
+        continues: continues,
+      );
       return false;
     }
     // Issue #1924 bounded-failure latch: after [_maxChildCompactionFailures]
@@ -907,19 +894,59 @@ final class TaskExecutor {
   /// child's start, re-armed by every hide — one notice per cycle).
   final _childNearLimitLatches = <String, ContextNoticeLatch>{};
 
+  /// The resumed child's first prompt and its wake stamp (issue #647 warm
+  /// wake): the drained mail attributed per sender, or the parent's own
+  /// [fallback] message when the inbox was empty.
+  ({String promptText, DateTime? since}) _resumePrompt(
+    List<SubagentMessage> mail, {
+    required String fallback,
+  }) {
+    if (mail.isEmpty) return (promptText: fallback, since: null);
+    return (
+      promptText: mail.map((m) => 'from ${m.fromId}: ${m.text}').join('\n'),
+      since: DateTime.tryParse(mail.first.sentAt),
+    );
+  }
+
+  /// Pressure stamp on the child's handle: the reconciled transcript-basis
+  /// pressure (estimate plus the trailing incoming prompt), what
+  /// task_status shows.
+  void _stampChildPressure(
+    String id, {
+    required Model model,
+    required int estTokens,
+    required int? observedTokens,
+    required int window,
+  }) {
+    subagentManager?.notePressure(
+      id,
+      estTokens: reconcileContextTokens(
+        estimatedTokens: estTokens,
+        observedTokens: observedTokens,
+      ),
+      windowTokens: window,
+      observedTokens: observedTokens,
+      windowVerified: contextWindowRegistry?.isVerified(model) ?? false,
+    );
+  }
+
   /// gh-2423 C3: the child's near-limit notice — the pre-request estimate
   /// [tokens] reached the near-limit point of [window] under [settings].
   /// A silent child has no TUI and no HEP stream: the MODEL gets the
   /// notice (steering ⇒ a synthetic user record before its next request),
   /// the parent sees nothing new (the pressure stamp already rides the
-  /// handle).
+  /// handle). Only at a boundary the child continues from ([continues]):
+  /// a final text turn has no next request to ride, and a steer there
+  /// would force an extra model round for nothing — the latch stays armed.
   void _maybeNoteChildNearLimit(
     String id,
     Agent child, {
     required int tokens,
     required int window,
     required CompactionSettings settings,
+    required bool continues,
   }) {
+    if (!continues) return;
     final latch = _childNearLimitLatches.putIfAbsent(
       id,
       ContextNoticeLatch.new,
@@ -962,6 +989,17 @@ final class TaskExecutor {
   /// Delivered (steered) before the child's next run's first request:
   /// exactly one per hide pass, never dropped, never an extra round.
   final _childDeferredNotices = <String, List<String>>{};
+
+  /// Hands the notices deferred at the end of the previous run to THIS
+  /// run's first request (gh-2423 C3). The list is TAKEN, not copied: a
+  /// second resume carries none; nothing was deferred ⇒ a no-op.
+  void _queueDeferredChildNotices(String id, Agent child) {
+    final deferred = _childDeferredNotices.remove(id);
+    if (deferred == null) return;
+    for (final record in deferred) {
+      child.queueContextNotice(UserMessage.text(record));
+    }
+  }
 
   /// gh-2423 C3: the child's post-hide notice — exactly one per hide pass
   /// that hid records ([hiddenRecords]); re-arms the near-limit latch (the
@@ -1080,6 +1118,12 @@ final class TaskExecutor {
     required bool runForced,
   }) async {
     final hooks = _SilentCompactionHooks();
+    // gh-2423 C3: N of the post-hide notice is counted from the SESSION
+    // (BOTH hide mechanisms — `hidden_range` and the structured
+    // `compact_checkpoint`), the same basis as the main agent's notice;
+    // the pass-reported figure is only the fallback of an unreadable
+    // session.
+    final knownHides = await _hideRecordIdsOf(session);
     try {
       final smol = rolesResolver?.resolveRole(smolModelRole);
       await AutoCompactorFactory(
@@ -1109,15 +1153,49 @@ final class TaskExecutor {
         ok: false,
         attempted: hooks.attempted,
         error: '$error',
-        hiddenRecords: hooks.hiddenRecords,
+        hiddenRecords: await _newlyHiddenRecords(
+          session,
+          knownHides,
+          fallback: hooks.hiddenRecords,
+        ),
       );
     }
     return (
       ok: true,
       attempted: hooks.attempted,
       error: null,
-      hiddenRecords: hooks.hiddenRecords,
+      hiddenRecords: await _newlyHiddenRecords(
+        session,
+        knownHides,
+        fallback: hooks.hiddenRecords,
+      ),
     );
+  }
+
+  /// The hide-record ids of [session] (null when the session cannot be
+  /// read — the caller then falls back to the pass-reported figure).
+  Future<Set<String>?> _hideRecordIdsOf(Session session) async {
+    try {
+      return hiddenRangeIdsIn(await session.getEntries());
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The records a compaction run hid: the hide records of [session]
+  /// appended after [knownHides]; [fallback] when the snapshot or the
+  /// re-read was impossible.
+  Future<int> _newlyHiddenRecords(
+    Session session,
+    Set<String>? knownHides, {
+    required int fallback,
+  }) async {
+    if (knownHides == null) return fallback;
+    try {
+      return newlyHiddenRecordCount(await session.getEntries(), knownHides);
+    } on Object {
+      return fallback;
+    }
   }
 
   /// The observed-over-headroom latch per child id (see the forced-channel
