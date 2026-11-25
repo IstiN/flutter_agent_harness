@@ -1,0 +1,327 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-25T01:37:41.892Z",
+  "ticketKey": "gh-2394",
+  "headSha": "b0e5fd6d1ae28cf53dff714852a1d2382fe71696",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1f6d406220351e93",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e8ba78f9b2712288",
+      "size": 46765
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:1b5044a6c7644753",
+      "size": 24364
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:476af0c28f48fcae",
+      "size": 8225
+    },
+    "request.md": {
+      "hash": "fnv1a64:d49ecffe20c7330f",
+      "size": 85242
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:23add47b1bee7313",
+      "size": 1990
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0a0acfa7c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:88fadf55359fff9e",
+      "size": 85848
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:d49ecffe20c7330f",
+      "size": 85242
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc67rOGg",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/session_commands.dart:985",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: S0 is never invalidated on projection-replacing host transitions — the merged hand-over runs over the wrong context**\n\nThe ticket (AC2, `input/gh-2394/ticket.md`: \"инвалидация по списку: switch сессии / checkout ветки; checkpoint rewind/restore; …\") and this PR's own doc (`lib/src/agent/agent.dart:345-347`: \"Hosts invalidate it on branch switch / checkpoint restore\") require the request snapshot to be dropped whenever the projection it describes is replaced. Only **two** host invalidation sites exist in the whole diff (engine switch `lib/src/cli/agent_cli_compaction.dart:535`, post-run `:1131` / `flutter_app/lib/services/agent_service_compaction.dart:343`); `RequestSnapshotStore.validFor` checks **only the model**, and `Agent.reset()` (`lib/src/agent/agent.dart:631`) clears messages but not the snapshot store. So every projection-replacing flow below leaves a **stale S0 that still counts as valid**:\n\n- **Session switch / in-process resume** — this line sets the new session's tag epoch but never drops the old session's S0 (`_switchSession` → `_agent.reset()` keeps the store; `flutter_app/lib/services/agent_service_sessions.dart:324` is the same gap on the app host);\n- **Checkpoint rewind / restore** — `_applyRewind` prunes `state.messages` (`lib/src/tools/checkpoint_tool.dart:461-466`), the CLI's `onRewindApplied` only sets `_persistedCount` (`lib/src/cli/agent_cli.dart:1019, :1087`); `/checkpoint restore` likewise swaps the projection with **no send in between**, so the stale pre-restore S0 survives until the restore budget guard (`lib/src/cli/agent_cli_compaction.dart:885`) or the next prompt's pre-flight (`:291-296`) resolves `validFor(model)` → true and feeds the rewound-away prefix into the merged hand-over (hide aliases then resolve through the stale frozen seqMap, `lib/src/compaction/request_snapshot.dart:68-72`);\n- **`/handoff`** — replaces the transcript with the digest (`lib/src/cli/agent_cli_handoff.dart:238`);\n- **CLI partial appends** — S0 is invalidated only `if (hooks.reportedPass)` (`lib/src/cli/agent_cli_compaction.dart:1129-1131`), but `_appendHandOverRecords` can append the hidden range and *then* hit a ladder kill (`lib/src/compaction/structured/engine_hand_over.dart:196-220`) — records landed, `reportedPass` is false, S0 stays.\n- **Over-window emergency relief** — `relief.run()` re-anchors the transcript (`lib/src/cli/agent_cli_compaction.dart:1209`) but the relief path only keeps `_persistedCount` in step (`:1210-1213`), never invalidates; the app mirror is `_relieveOverWindow` (`flutter_app/lib/services/agent_service.dart:280, :900`, sole invalidation still the after-run hook). The post-run soft trigger then reads the stale **pre-relief** S0 as valid and builds the merged hand-over over the over-window prefix — a cache-cold, likely-overflowing call whose disposal picks mostly drop against the fresh projection.\n\nConcrete failure: `/session switch` (or `/resume`) onto a session whose transcript is at/over the hard line → the **first prompt's pre-flight compaction** selects `merged` (snapshot \"valid\": same model) and sends the **previous session's transcript** as the hand-over prefix while naming the new session's fold range. The ask-verification gate usually fails (a compaction outage loop on exactly the sessions that need it most), but two sessions in the same repo routinely share user-request lines — then the check passes and a **wrong-session transfer text is appended into the new session's file** as a `compact_checkpoint` covering the new range.\n\nThe store-level test (`test/compaction/request_snapshot_test.dart`, \"E20\") calls `store.invalidate(...)` **by hand** — it proves the mechanism but no host ever invokes it on these paths, so the gap is invisible to the suite.\n\nFix: invalidate the store (or key it by session) on the session-load/switch paths, the rewind `_applyRewind`, `/checkpoint restore`, `/handoff`, the over-window relief paths on **both** hosts, and drop the `reportedPass` condition in favor of \"any run that may have appended\" (the Flutter host already does the unconditional variant)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOIY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/structured/hand_over.dart:292",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: `##Open User Requests` (no space) passes the mandatory-section gate but blinds the provenance belt — laundering path reopens**\n\nThe gate and the belt it exists to arm use **divergent heading regexes**:\n\n- gate (`lib/src/compaction/structured/hand_over.dart:291-293`): `^(?:#{1,6}\\s*)?(?:open user requests\\b|open asks\\b\\s*:)` — `\\s*`, **zero** whitespace accepted;\n- belt (`lib/src/compaction/summary_sanitizer.dart:208-211`): `^(?:#{1,6}\\s+)?…` — `\\s+`, **one-or-more** required, with an early return when no heading matches (`:276`: `if (!_userIntentHeading.hasMatch(text)) return text;`).\n\nOrder of operations in `_handOverTransfer` (`lib/src/compaction/structured/engine_hand_over.dart:160-170`): `sanitizeSummary` runs **first**, then `verifyOpenUserRequests`. A reply that writes the heading as `##Open User Requests` or `#open asks:` (no space — trivially steerable by payload-injected tool text, the PR's own threat model input 1/3) therefore:\n\n1. gets **no belt grading** — machine-origin synthetic asks and unevidenced tool quotes inside the section ride into the durable `compact_checkpoint` unstripped, unmarked — the exact laundering class gh-2103 and ticket D2/#81 close (\"belt не работает без заголовка\", N1);\n2. still **passes** `verifyOpenUserRequests` (heading `true`, asks verbatim) — so the run persists and reports success.\n\nThe gate's own doc says the opposite contract: \"without it the sanitizer belt cannot run, so the run FAILS\" (`hand_over.dart:299-302`). Fix: share one heading pattern (gate adopts `\\s+`, or both reuse a single exported regex), and add the `##Open…` variant as a payload fixture (ticket UT-12/IT-09 list)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOJ-",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/hand_over_trigger.dart:157",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `CompactingGate.run` joins a second caller unregistered — the joined body escapes the D9 queue**\n\n`CompactingGate.run` (`lib/src/compaction/hand_over_trigger.dart:153-165`) joins a caller while a run is in flight by awaiting the active completer and then executing `body()` **without re-registering it** (`:156-157`). During that joined body `isCompacting` is `false` and `wait()` (`:170-176`) returns immediately.\n\nConcrete interleaving on both hosts: run A settles → post-run compaction #1 holds the gate; a run that does not pass `_beginUserPrompt` (a reaction/scheduled/background-job run) settles while #1 is still in flight → `_afterRun`'s `gate.run` (`lib/src/cli/agent_cli_run.dart:367`) joins → body #2 executes unregistered after #1 completes; a user prompt arriving during body #2 now skips the queue (`agent_service.dart:2021` checks `isCompacting`; `_beginUserPrompt`'s `gate.wait()`, `agent_cli_run.dart:138`, returns immediately) and its pre-flight measures/compacts while #2's appends and `_refreshState` are mid-flight — the exact double-`_refreshState`/lost-persist hazard D9/AC12 (E33, IT-19) introduces the gate to prevent. `wait()`'s while-loop only re-checks registered runs, so it cannot catch this either.\n\nFix: in the join branch, register the joined body as the active compaction (set `_active` before `body()`, complete in `finally`), so `isCompacting`/`wait()` see it; a unit test with two overlapping `run` calls + a concurrent `wait()` would pin it (none exists today)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOLY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/structured/hand_over.dart:323",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the verbatim-asks check normalizes one side only — a session whose asks carry wire-tag/zero-width text can never fold (permanent fail-closed loop)**\n\n`verifyOpenUserRequests` (`lib/src/compaction/structured/hand_over.dart:314-328`) compares the **normalized** reply against the **raw** mechanical block:\n\n- reply side: `sanitizeSummary(stripRecordTags(stripThinkBlocks(raw)), …)` (`engine_hand_over.dart:163`) — `stripRecordTags` drops a leading `m<digits> ` from **every** line (`record_tag.dart:63-65`) and the belt may append ` [from toolResult]` annotations;\n- mechanical side: `userRequestCandidateLines` output — raw record text, only `\\s+`-flattened at `hand_over.dart:323`; U+200B/U+200C/U+200D/U+2060 are not `\\s` and survive there.\n\nSo a user turn that starts with `m<digits> ` (quoting an alias) or contains a zero-width char (pasted text) can **never** be contained in the normalized transfer → the run fails (E36) and nothing is appended. With no fallback (AC4 by design), every subsequent post-run soft trigger re-runs the 2–3 round-trip hand-over and fails again: a **permanent compaction stall** for that session, loud but unfixable without editing history. A sanitizer `[from toolResult]` mark inside an echoed ask breaks verbatim the same way (ticket AC6 wants asks verbatim; `protectedLines` covers only pinned lines).\n\nFix: normalize both sides identically — run the mechanical ask lines through the same zero-width/tag stripping before the containment check (and/or pass the ask lines as `protectedLines` so the belt keeps them byte-stable)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rONs",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/compaction/hand_over_pass_test.dart:207",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the merged persist site's provenance gate has no hostile-text test — a regression re-opens laundering with the suite green**\n\nThe merged persist site runs the gh-2103 laundering gate (`lib/src/compaction/structured/engine_hand_over.dart:162-165`: `sanitizeSummary(stripRecordTags(stripThinkBlocks(raw)), protectedLines: c.pinnedLines, origins: SummaryOriginEvidence(snapshot.messages))`), but **no test in this PR ever feeds a hostile transfer**:\n\n- every `hand_over_pass_test.dart` fixture is clean text; the only negative content asserted is `<think>` absence (`:236-238`);\n- `test/compaction/provenance_laundering_test.dart:14-16` scopes its layer-3 persist-path coverage to \"classic compaction, structured checkpoints, branch digests\" — the new merged site is not in the list;\n- the ticket's payload-fixture list (Security section / IT-09) explicitly demands the \"quoted fake user turn\" fixture and REG-11 demands the persist-site gate with `protectedLines`.\n\nIf a later refactor drops `origins:` or `protectedLines:` from this call, tool-controlled text is laundered into trusted memory again and **no test fails** — precisely the \"gate фактически выключен\" class the ticket's review round 2 called out (N1). Add a pass-level test: a transfer quoting a forged ask planted in a tool result must come out origin-marked/`[from toolResult]`, and a pinned-operative line must survive verbatim."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOPu",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/compaction/hand_over_trigger_test.dart:115",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the host wirings that carry D9/AC12/E21 have no test — two-line regressions ship green**\n\nThe gate and store primitives are unit-tested, but the shipped seams are not exercised anywhere in the diff:\n\n- **No host-level test sends a prompt while the post-run call is in flight** (E2E-04/IT-19's host leg): neither the CLI's `gate.run(() => _maybeAutoCompact(postRun: true))` (`lib/src/cli/agent_cli_run.dart:367`) nor the Flutter pair (`agent_service_events.dart:241-243`, `agent_service.dart:2021`) is covered — the #2258 double-refresh/incident class this wiring exists for can regress silently;\n- **Success-only S0 invalidation**: the CLI drops the snapshot only `if (hooks.reportedPass)` (`lib/src/cli/agent_cli_compaction.dart:1129-1131`); no test pins that after a successful merged run the next pre-flight goes **standalone** because S0 was invalidated (E21: \"S0 после рана невалиден\"; `request_snapshot_test.dart:124-131` only calls `store.invalidate('compaction ran')` by hand);\n- the Flutter equivalents (`agent_service_compaction.dart:331-343`) are likewise unexercised for these transitions (the existing `compaction_host_wiring_test.dart` additions do not cover them).\n\nA regression deleting either two-line wiring flips mode selection or reintroduces the double-writer race with all tests green. Add: a CLI-scoped test that runs a merged pass and asserts the next pre-flight selects standalone (store empty/invalid), and a prompt-during-post-run interleaving test on one host."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOR5",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/services/agent_service_compaction.dart:268",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: new `compaction` tuning knobs are honored only on the CLI — host-parity contract broken**\n\nThe PR adds three shared-looking knobs — `compaction.softRatio`, `compaction.handOver.maxTokens`, `compaction.handOver.hysteresisTurns` (`lib/src/compaction/tuning.dart:79-85, :106-117`) — but only `resolveCliCompactionWiring` parses them (`lib/src/compaction/host_wiring.dart:196-210`). The app's `_compactionWiring` getter calls `resolveCompactionHostWiring` **without** the `tuning:` argument (`flutter_app/lib/services/agent_service_compaction.dart:232-236`), and the app config loader never parses the section's tuning keys at all — so `wiring.handOverHysteresisTurns` (read at `:268`) and `wiring.softRatio` (read at `:294`) are structurally always `null` on the app: it runs the defaults forever while the CLI applies user config.\n\n`docs/agents/cross-platform-parity.md:7-12` requires a shared setting to work on BOTH hosts or an explicit `cliOnlySettings` entry with a WHY; `compaction` is owned by the **shared** `compactionEngine` setting (`lib/src/parity/settings_registry.dart:856-865`) and is absent from `cliOnlySettings` (`:165-222`). The AC5 parity test cannot catch the drift because `CompactionHostWiring.sameResolutionAs` omits the three new fields (`lib/src/compaction/host_wiring.dart:117-134` compares window/conversationWindow/settings scalars/enabled/maxAttempts/baseBackoff/smol only).\n\nFix: parse the tuning keys in `loadAppFahConfig` and pass them into `_compactionWiring` (plus add the three fields to `sameResolutionAs` so the parity test actually compares them) — or declare the exemption in the registry with a reason."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOTO",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/structured/markers.dart:164",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the new `[expand …]` branch of `isCompactionMarkerText` is end-anchored only — ordinary content ending in a quoted pointer flips real boundaries**\n\n`_expandPointerPattern = RegExp(r'\\[expand \\d+(?:-\\d+)?\\]\\s*$')` (`lib/src/compaction/structured/markers.dart:164`, consumed at `:177-181`) classifies **any** message text that merely *ends* with a bracketed `[expand N]`/`[expand N-M]` as a compaction marker. The legacy branch is start-anchored (`^\\[\\d+…:(hidden|ckpt)·`, `:155`) and essentially never occurs naturally; the new form does — this repo's own docs and skill texts quote `[expand 3-140]` routinely, and a tool result whose last line is such a quote now matches.\n\nThree boundary detectors key off the predicate, where the false positive has real cost:\n\n- `isPinRenumberingBoundary` (`lib/src/skills/operative_pins.dart:396-412`): after a false boundary the pinned-operative carrier block is **suppressed** for the rest of the window — a \"pinned verbatim\" directive silently stops rendering although the skill body is not in context;\n- `_nearestCutBoundary` (`lib/src/agent/tool_pairing.dart:702`): pairing diagnostics mislabeled \"context marker\";\n- the image registry's citation-trust boundary (issue #195 F2).\n\nThe ticket's D12/security blessing covers **forged** markers in tool text as safe degradation — not this accidental-match class on genuine content. Suggest anchoring to the engine-rendered whole-line form: optional `m<N> ` tag, then at most a ≤6-word bracket-free label, then the pointer at end-of-text — coincidental quotes then resolve like the old start-anchored form."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOU2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_resume_parity_test.dart:179",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the classic parity suite strips `m<N> ` before shape checks — a classic-engine tag leak would ship green (E37/AC15 unasserted)**\n\n`contentSignatures` (`test/cli/agent_cli_resume_parity_test.dart:175-180`) strips `^(user|assistant|tool):m\\d+ ` before the `user:old`-style shape comparisons, and the suite pins `compactionEngine.classic` (`:116`, `:138`) — but **no assertion anywhere checks that classic wires carry no tags** (E37: \"classic: тегов и merged нет\"). The raw `signatures` compare host-vs-host only, so if `recordTagsEnabled` ever leaked onto classic requests both sides would carry the same tags and every test stays green while the promised byte-identity (AC15/REG-08/REG-09: classic golden, one-invalidation engine switch, windowed cases) breaks.\n\nOne assertion pins the contract: in a classic-pinned run, capture a request context and expect `leadingRecordTag` on no message text (the helper already exists in `record_tag.dart`). Same test can cover the structured↔classic switch invalidation (REG-08/09) at the store level."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOWJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/compaction/session_affine_routing_test.dart:96",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the Copilot `x-initiator` consumption is wired but unasserted — the declared gap covers only the S0-recording side**\n\n`StreamCallShape.copilotInitiator` is plumbed end-to-end (`lib/src/model_roles/provider_catalog.dart:1001-1013` → `CopilotOptions.initiator`), and `UT-14` (`test/compaction/session_affine_routing_test.dart:96ff`) proves the zone can carry the field — but **no test pins the header**: the capture helper records `request.headers['x-initiator']` into a list that is never read (`:96`), and no Copilot fake exists (IT-15 \"Copilot fake: пин `x-initiator`, nudge\" has no counterpart). The PR's declared gap (\"the snapshot carries no initiator yet\", `docs/compaction.md`) covers the S0-recording side only; the adapter-consumption side that IS shipped rides an untested header path — a dropped shape→Options forward would ship green.\n\nFix: read the already-captured header list and assert the merged call pins the initiator while main calls don't (or add the missing `RequestRouting.initiator` and close the gap for real — either way the current half-wired state should be pinned by a test)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOX0",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/compaction/hand_over_pass_test.dart:199",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: IT-10's tail is only partially covered — LRU-before-merged, the no-second-call rule, and `compact_expand` on the new forms are unproven**\n\nThe ticket's IT-10 row promises \"LRU до merged; остаток → без второго вызова, гистерезис, следующий pre-flight standalone; compact_expand работает\". The pass tests cover records/markers/byte-prefix but not:\n\n- **(a) LRU re-hide running before the merged call** (IT-14) — no test exercises hide-lru on the merged path (`_runLruRehidePasses` runs before the merged branch, `engine.dart` run() — untested ordering);\n- **(b) the no-second-call rule** (E21) — the residual-pressure path never fires a second call in the same run; `E28` here (`test/compaction/hand_over_pass_test.dart:481`) runs a *separate forced* run, not the same-run residual;\n- **(c) `compact_expand` actually reopening the new forms** — `structured_expand_test.dart` is untouched, so AC9's \"compact_expand работает\" rests on REG-12 render strings plus the pre-existing numeric-id parser, not on an expansion through the new `[expand N-M]` / consolidated / tail-layout records;\n- **UT-25** — `<folded-checkpoint>` blocks from `_flattenForDepthCap` rendered into a *real* instruction are only template-tested in `hand_over_test.dart`, never engine-level.\n\nEach is a small focused test on existing fixtures; together they close the AC9/IT-10/IT-14 gap between the ticket's promised matrix and the shipped suite."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOZ2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/compaction/hand_over_ladder_test.dart:240",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: ladder rung (b) — transient retry of the hand-over call — is untested (IT-17)**\n\nThe ladder tests prove the nudge rung and the ×2-budget rung (`test/compaction/hand_over_ladder_test.dart`), but **IT-17** (\"обрыв сети → глобальный transient retry (attempt 2/3) с тем же телом\") is never exercised: the fakes here answer or throw synchronously/terminally, and `E6` (`:240`) asserts a provider error is a **terminal** failure — the claim that the hand-over call rides `transientRetryStreamFunction` like main requests (attempt 2/3 on transient shapes, `lib/src/providers/transient_retry_stream.dart`) is untested. The wrapping is pre-existing shared infra (the catalog builds every call through it), so delegation is defensible — but the ticket lists IT-17 as an AC4 test and the PR's declared-gap list does not include it.\n\nOne test with a flaky-then-ok stream (fail once with a transient-shaped error, then answer) pins rung (b) for the compaction call class and documents that AC4's \"transient retry as for main requests\" is inherited, not assumed."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc67rOcJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/flutter_agent_harness.dart:170",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the new barrel group is not sorted by path within the group**\n\nAGENTS.md (\"Barrel `lib/flutter_agent_harness.dart`: grouped APPEND-ONLY export sections — … sorted by path within a group\"): the new `// ── Compaction 2.0 hand-over ──` group orders `record_tag`, `request_snapshot`, `compaction_mode`, `hand_over_trigger`, `structured/hand_over*`, `structured/engine` — path order would put `compaction_mode.dart` and `hand_over_trigger.dart` first and `structured/engine.dart` before the `structured/hand_over*.dart` exports. The append-only group placement itself is correct; only intra-group ordering deviates. (Older groups are unsorted too — grandfathered \"no re-sorting\" — so this is style-only; just append future exports in sorted order or fix the eight lines in place.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:713525ec",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: S0 is never invalidated on projection-replacing host transitions — the merged hand-over runs over the wrong context**\n\nThe ticket (AC2, `input/gh-2394/ticket.md`: \"инвалидация по списку: switch сессии / checkout ветки; checkpoint rewind/restore; …\") and this PR's own doc (`lib/src/agent/agent.dart:345-347`: \"Hosts invalidate it on branch switch / checkpoint restore\") require the request snapshot to be dropped whenever the projection it describes is replaced. Only **two** host invalidation sites exist in the whole diff (engine switch `lib/src/cli/agent_cli_compaction.dart:535`, post-run `:1131` / `flutter_app/lib/services/agent_service_compaction.dart:343`); `RequestSnapshotStore.validFor` checks **only the model**, and `Agent.reset()` (`lib/src/agent/agent.dart:631`) clears messages but not the snapshot store. So every projection-replacing flow below leaves a **stale S0 that still counts as valid**:\n\n- **Session switch / in-process resume** — this line sets the new session's tag epoch but never drops the old session's S0 (`_switchSession` → `_agent.reset()` keeps the store; `flutter_app/lib/services/agent_service_sessions.dart:324` is the same gap on the app host);\n- **Checkpoint rewind / restore** — `_applyRewind` prunes `state.messages` (`lib/src/tools/checkpoint_tool.dart:461-466`), the CLI's `onRewindApplied` only sets `_persistedCount` (`lib/src/cli/agent_cli.dart:1019, :1087`); `/checkpoint restore` likewise swaps the projection with **no send in between**, so the stale pre-restore S0 survives until the restore budget guard (`lib/src/cli/agent_cli_compaction.dart:885`) or the next prompt's pre-flight (`:291-296`) resolves `validFor(model)` → true and feeds the rewound-away prefix into the merged hand-over (hide aliases then resolve through the stale frozen seqMap, `lib/src/compaction/request_snapshot.dart:68-72`);\n- **`/handoff`** — replaces the transcript with the digest (`lib/src/cli/agent_cli_handoff.dart:238`);\n- **CLI partial appends** — S0 is invalidated only `if (hooks.reportedPass)` (`lib/src/cli/agent_cli_compaction.dart:1129-1131`), but `_appendHandOverRecords` can append the hidden range and *then* hit a ladder kill (`lib/src/compaction/structured/engine_hand_over.dart:196-220`) — records landed, `reportedPass` is false, S0 stays.\n- **Over-window emergency relief** — `relief.run()` re-anchors the transcript (`lib/src/cli/agent_cli_compaction.dart:1209`) but the relief path only keeps `_persistedCount` in step (`:1210-1213`), never invalidates; the app mirror is `_relieveOverWindow` (`flutter_app/lib/services/agent_service.dart:280, :900`, sole invalidation still the after-run hook). The post-run soft trigger then reads the stale **pre-relief** S0 as valid and builds the merged hand-over over the over-window prefix — a cache-cold, likely-overflowing call whose disposal picks mostly drop against the fresh projection.\n\nConcrete failure: `/session switch` (or `/resume`) onto a session whose transcript is at/over the hard line → the **first prompt's pre-flight compaction** selects `merged` (snapshot \"valid\": same model) and sends the **previous session's transcript** as the hand-over prefix while naming the new session's fold range. The ask-verification gate usually fails (a compaction outage loop on exactly the sessions that need it most), but two sessions in the same repo routinely share user-request lines — then the check passes and a **wrong-session transfer text is appended into the new session's file** as a `compact_checkpoint` covering the new range.\n\nThe store-level test (`test/compaction/request_snapshot_test.dart`, \"E20\") calls `store.invalidate(...)` **by hand** — it proves the mechanism but no host ever invokes it on these paths, so the gap is invisible to the suite.\n\nFix: invalidate the store (or key it by session) on the session-load/switch paths, the rewind `_applyRewind`, `/checkpoint restore`, `/handoff`, the over-window relief paths on **both** hosts, and drop the `reportedPass` condition in favor of \"any run that may have appended\" (the Flutter host already does the unconditional variant)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:2f8f2eea",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: `##Open User Requests` (no space) passes the mandatory-section gate but blinds the provenance belt — laundering path reopens**\n\nThe gate and the belt it exists to arm use **divergent heading regexes**:\n\n- gate (`lib/src/compaction/structured/hand_over.dart:291-293`): `^(?:#{1,6}\\s*)?(?:open user requests\\b|open asks\\b\\s*:)` — `\\s*`, **zero** whitespace accepted;\n- belt (`lib/src/compaction/summary_sanitizer.dart:208-211`): `^(?:#{1,6}\\s+)?…` — `\\s+`, **one-or-more** required, with an early return when no heading matches (`:276`: `if (!_userIntentHeading.hasMatch(text)) return text;`).\n\nOrder of operations in `_handOverTransfer` (`lib/src/compaction/structured/engine_hand_over.dart:160-170`): `sanitizeSummary` runs **first**, then `verifyOpenUserRequests`. A reply that writes the heading as `##Open User Requests` or `#open asks:` (no space — trivially steerable by payload-injected tool text, the PR's own threat model input 1/3) therefore:\n\n1. gets **no belt grading** — machine-origin synthetic asks and unevidenced tool quotes inside the section ride into the durable `compact_checkpoint` unstripped, unmarked — the exact laundering class gh-2103 and ticket D2/#81 close (\"belt не работает без заголовка\", N1);\n2. still **passes** `verifyOpenUserRequests` (heading `true`, asks verbatim) — so the run persists and reports success.\n\nThe gate's own doc says the opposite contract: \"without it the sanitizer belt cannot run, so the run FAILS\" (`hand_over.dart:299-302`). Fix: share one heading pattern (gate adopts `\\s+`, or both reuse a single exported regex), and add the `##Open…` variant as a payload fixture (ticket UT-12/IT-09 list)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:2cd2ed9e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `CompactingGate.run` joins a second caller unregistered — the joined body escapes the D9 queue**\n\n`CompactingGate.run` (`lib/src/compaction/hand_over_trigger.dart:153-165`) joins a caller while a run is in flight by awaiting the active completer and then executing `body()` **without re-registering it** (`:156-157`). During that joined body `isCompacting` is `false` and `wait()` (`:170-176`) returns immediately.\n\nConcrete interleaving on both hosts: run A settles → post-run compaction #1 holds the gate; a run that does not pass `_beginUserPrompt` (a reaction/scheduled/background-job run) settles while #1 is still in flight → `_afterRun`'s `gate.run` (`lib/src/cli/agent_cli_run.dart:367`) joins → body #2 executes unregistered after #1 completes; a user prompt arriving during body #2 now skips the queue (`agent_service.dart:2021` checks `isCompacting`; `_beginUserPrompt`'s `gate.wait()`, `agent_cli_run.dart:138`, returns immediately) and its pre-flight measures/compacts while #2's appends and `_refreshState` are mid-flight — the exact double-`_refreshState`/lost-persist hazard D9/AC12 (E33, IT-19) introduces the gate to prevent. `wait()`'s while-loop only re-checks registered runs, so it cannot catch this either.\n\nFix: in the join branch, register the joined body as the active compaction (set `_active` before `body()`, complete in `finally`), so `isCompacting`/`wait()` see it; a unit test with two overlapping `run` calls + a concurrent `wait()` would pin it (none exists today)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:c332a151",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the verbatim-asks check normalizes one side only — a session whose asks carry wire-tag/zero-width text can never fold (permanent fail-closed loop)**\n\n`verifyOpenUserRequests` (`lib/src/compaction/structured/hand_over.dart:314-328`) compares the **normalized** reply against the **raw** mechanical block:\n\n- reply side: `sanitizeSummary(stripRecordTags(stripThinkBlocks(raw)), …)` (`engine_hand_over.dart:163`) — `stripRecordTags` drops a leading `m<digits> ` from **every** line (`record_tag.dart:63-65`) and the belt may append ` [from toolResult]` annotations;\n- mechanical side: `userRequestCandidateLines` output — raw record text, only `\\s+`-flattened at `hand_over.dart:323`; U+200B/U+200C/U+200D/U+2060 are not `\\s` and survive there.\n\nSo a user turn that starts with `m<digits> ` (quoting an alias) or contains a zero-width char (pasted text) can **never** be contained in the normalized transfer → the run fails (E36) and nothing is appended. With no fallback (AC4 by design), every subsequent post-run soft trigger re-runs the 2–3 round-trip hand-over and fails again: a **permanent compaction stall** for that session, loud but unfixable without editing history. A sanitizer `[from toolResult]` mark inside an echoed ask breaks verbatim the same way (ticket AC6 wants asks verbatim; `protectedLines` covers only pinned lines).\n\nFix: normalize both sides identically — run the mechanical ask lines through the same zero-width/tag stripping before the containment check (and/or pass the ask lines as `protectedLines` so the belt keeps them byte-stable)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:e0e163b6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the merged persist site's provenance gate has no hostile-text test — a regression re-opens laundering with the suite green**\n\nThe merged persist site runs the gh-2103 laundering gate (`lib/src/compaction/structured/engine_hand_over.dart:162-165`: `sanitizeSummary(stripRecordTags(stripThinkBlocks(raw)), protectedLines: c.pinnedLines, origins: SummaryOriginEvidence(snapshot.messages))`), but **no test in this PR ever feeds a hostile transfer**:\n\n- every `hand_over_pass_test.dart` fixture is clean text; the only negative content asserted is `<think>` absence (`:236-238`);\n- `test/compaction/provenance_laundering_test.dart:14-16` scopes its layer-3 persist-path coverage to \"classic compaction, structured checkpoints, branch digests\" — the new merged site is not in the list;\n- the ticket's payload-fixture list (Security section / IT-09) explicitly demands the \"quoted fake user turn\" fixture and REG-11 demands the persist-site gate with `protectedLines`.\n\nIf a later refactor drops `origins:` or `protectedLines:` from this call, tool-controlled text is laundered into trusted memory again and **no test fails** — precisely the \"gate фактически выключен\" class the ticket's review round 2 called out (N1). Add a pass-level test: a transfer quoting a forged ask planted in a tool result must come out origin-marked/`[from toolResult]`, and a pinned-operative line must survive verbatim."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:5a908392",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the host wirings that carry D9/AC12/E21 have no test — two-line regressions ship green**\n\nThe gate and store primitives are unit-tested, but the shipped seams are not exercised anywhere in the diff:\n\n- **No host-level test sends a prompt while the post-run call is in flight** (E2E-04/IT-19's host leg): neither the CLI's `gate.run(() => _maybeAutoCompact(postRun: true))` (`lib/src/cli/agent_cli_run.dart:367`) nor the Flutter pair (`agent_service_events.dart:241-243`, `agent_service.dart:2021`) is covered — the #2258 double-refresh/incident class this wiring exists for can regress silently;\n- **Success-only S0 invalidation**: the CLI drops the snapshot only `if (hooks.reportedPass)` (`lib/src/cli/agent_cli_compaction.dart:1129-1131`); no test pins that after a successful merged run the next pre-flight goes **standalone** because S0 was invalidated (E21: \"S0 после рана невалиден\"; `request_snapshot_test.dart:124-131` only calls `store.invalidate('compaction ran')` by hand);\n- the Flutter equivalents (`agent_service_compaction.dart:331-343`) are likewise unexercised for these transitions (the existing `compaction_host_wiring_test.dart` additions do not cover them).\n\nA regression deleting either two-line wiring flips mode selection or reintroduces the double-writer race with all tests green. Add: a CLI-scoped test that runs a merged pass and asserts the next pre-flight selects standalone (store empty/invalid), and a prompt-during-post-run interleaving test on one host."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:ca58d68c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: new `compaction` tuning knobs are honored only on the CLI — host-parity contract broken**\n\nThe PR adds three shared-looking knobs — `compaction.softRatio`, `compaction.handOver.maxTokens`, `compaction.handOver.hysteresisTurns` (`lib/src/compaction/tuning.dart:79-85, :106-117`) — but only `resolveCliCompactionWiring` parses them (`lib/src/compaction/host_wiring.dart:196-210`). The app's `_compactionWiring` getter calls `resolveCompactionHostWiring` **without** the `tuning:` argument (`flutter_app/lib/services/agent_service_compaction.dart:232-236`), and the app config loader never parses the section's tuning keys at all — so `wiring.handOverHysteresisTurns` (read at `:268`) and `wiring.softRatio` (read at `:294`) are structurally always `null` on the app: it runs the defaults forever while the CLI applies user config.\n\n`docs/agents/cross-platform-parity.md:7-12` requires a shared setting to work on BOTH hosts or an explicit `cliOnlySettings` entry with a WHY; `compaction` is owned by the **shared** `compactionEngine` setting (`lib/src/parity/settings_registry.dart:856-865`) and is absent from `cliOnlySettings` (`:165-222`). The AC5 parity test cannot catch the drift because `CompactionHostWiring.sameResolutionAs` omits the three new fields (`lib/src/compaction/host_wiring.dart:117-134` compares window/conversationWindow/settings scalars/enabled/maxAttempts/baseBackoff/smol only).\n\nFix: parse the tuning keys in `loadAppFahConfig` and pass them into `_compactionWiring` (plus add the three fields to `sameResolutionAs` so the parity test actually compares them) — or declare the exemption in the registry with a reason."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:5811d298",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the new `[expand …]` branch of `isCompactionMarkerText` is end-anchored only — ordinary content ending in a quoted pointer flips real boundaries**\n\n`_expandPointerPattern = RegExp(r'\\[expand \\d+(?:-\\d+)?\\]\\s*$')` (`lib/src/compaction/structured/markers.dart:164`, consumed at `:177-181`) classifies **any** message text that merely *ends* with a bracketed `[expand N]`/`[expand N-M]` as a compaction marker. The legacy branch is start-anchored (`^\\[\\d+…:(hidden|ckpt)·`, `:155`) and essentially never occurs naturally; the new form does — this repo's own docs and skill texts quote `[expand 3-140]` routinely, and a tool result whose last line is such a quote now matches.\n\nThree boundary detectors key off the predicate, where the false positive has real cost:\n\n- `isPinRenumberingBoundary` (`lib/src/skills/operative_pins.dart:396-412`): after a false boundary the pinned-operative carrier block is **suppressed** for the rest of the window — a \"pinned verbatim\" directive silently stops rendering although the skill body is not in context;\n- `_nearestCutBoundary` (`lib/src/agent/tool_pairing.dart:702`): pairing diagnostics mislabeled \"context marker\";\n- the image registry's citation-trust boundary (issue #195 F2).\n\nThe ticket's D12/security blessing covers **forged** markers in tool text as safe degradation — not this accidental-match class on genuine content. Suggest anchoring to the engine-rendered whole-line form: optional `m<N> ` tag, then at most a ≤6-word bracket-free label, then the pointer at end-of-text — coincidental quotes then resolve like the old start-anchored form."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:7fe94260",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the classic parity suite strips `m<N> ` before shape checks — a classic-engine tag leak would ship green (E37/AC15 unasserted)**\n\n`contentSignatures` (`test/cli/agent_cli_resume_parity_test.dart:175-180`) strips `^(user|assistant|tool):m\\d+ ` before the `user:old`-style shape comparisons, and the suite pins `compactionEngine.classic` (`:116`, `:138`) — but **no assertion anywhere checks that classic wires carry no tags** (E37: \"classic: тегов и merged нет\"). The raw `signatures` compare host-vs-host only, so if `recordTagsEnabled` ever leaked onto classic requests both sides would carry the same tags and every test stays green while the promised byte-identity (AC15/REG-08/REG-09: classic golden, one-invalidation engine switch, windowed cases) breaks.\n\nOne assertion pins the contract: in a classic-pinned run, capture a request context and expect `leadingRecordTag` on no message text (the helper already exists in `record_tag.dart`). Same test can cover the structured↔classic switch invalidation (REG-08/09) at the store level."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:0432c15b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the Copilot `x-initiator` consumption is wired but unasserted — the declared gap covers only the S0-recording side**\n\n`StreamCallShape.copilotInitiator` is plumbed end-to-end (`lib/src/model_roles/provider_catalog.dart:1001-1013` → `CopilotOptions.initiator`), and `UT-14` (`test/compaction/session_affine_routing_test.dart:96ff`) proves the zone can carry the field — but **no test pins the header**: the capture helper records `request.headers['x-initiator']` into a list that is never read (`:96`), and no Copilot fake exists (IT-15 \"Copilot fake: пин `x-initiator`, nudge\" has no counterpart). The PR's declared gap (\"the snapshot carries no initiator yet\", `docs/compaction.md`) covers the S0-recording side only; the adapter-consumption side that IS shipped rides an untested header path — a dropped shape→Options forward would ship green.\n\nFix: read the already-captured header list and assert the merged call pins the initiator while main calls don't (or add the missing `RequestRouting.initiator` and close the gap for real — either way the current half-wired state should be pinned by a test)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:05a88c46",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: IT-10's tail is only partially covered — LRU-before-merged, the no-second-call rule, and `compact_expand` on the new forms are unproven**\n\nThe ticket's IT-10 row promises \"LRU до merged; остаток → без второго вызова, гистерезис, следующий pre-flight standalone; compact_expand работает\". The pass tests cover records/markers/byte-prefix but not:\n\n- **(a) LRU re-hide running before the merged call** (IT-14) — no test exercises hide-lru on the merged path (`_runLruRehidePasses` runs before the merged branch, `engine.dart` run() — untested ordering);\n- **(b) the no-second-call rule** (E21) — the residual-pressure path never fires a second call in the same run; `E28` here (`test/compaction/hand_over_pass_test.dart:481`) runs a *separate forced* run, not the same-run residual;\n- **(c) `compact_expand` actually reopening the new forms** — `structured_expand_test.dart` is untouched, so AC9's \"compact_expand работает\" rests on REG-12 render strings plus the pre-existing numeric-id parser, not on an expansion through the new `[expand N-M]` / consolidated / tail-layout records;\n- **UT-25** — `<folded-checkpoint>` blocks from `_flattenForDepthCap` rendered into a *real* instruction are only template-tested in `hand_over_test.dart`, never engine-level.\n\nEach is a small focused test on existing fixtures; together they close the AC9/IT-10/IT-14 gap between the ticket's promised matrix and the shipped suite."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:95840972",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: ladder rung (b) — transient retry of the hand-over call — is untested (IT-17)**\n\nThe ladder tests prove the nudge rung and the ×2-budget rung (`test/compaction/hand_over_ladder_test.dart`), but **IT-17** (\"обрыв сети → глобальный transient retry (attempt 2/3) с тем же телом\") is never exercised: the fakes here answer or throw synchronously/terminally, and `E6` (`:240`) asserts a provider error is a **terminal** failure — the claim that the hand-over call rides `transientRetryStreamFunction` like main requests (attempt 2/3 on transient shapes, `lib/src/providers/transient_retry_stream.dart`) is untested. The wrapping is pre-existing shared infra (the catalog builds every call through it), so delegation is defensible — but the ticket lists IT-17 as an AC4 test and the PR's declared-gap list does not include it.\n\nOne test with a flaky-then-ok stream (fail once with a transient-shaped error, then answer) pins rung (b) for the compaction call class and documents that AC4's \"transient retry as for main requests\" is inherited, not assumed."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:dc676514",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the new barrel group is not sorted by path within the group**\n\nAGENTS.md (\"Barrel `lib/flutter_agent_harness.dart`: grouped APPEND-ONLY export sections — … sorted by path within a group\"): the new `// ── Compaction 2.0 hand-over ──` group orders `record_tag`, `request_snapshot`, `compaction_mode`, `hand_over_trigger`, `structured/hand_over*`, `structured/engine` — path order would put `compaction_mode.dart` and `hand_over_trigger.dart` first and `structured/engine.dart` before the `structured/hand_over*.dart` exports. The append-only group placement itself is correct; only intra-group ordering deviates. (Older groups are unsorted too — grandfathered \"no re-sorting\" — so this is style-only; just append future exports in sorted order or fix the eight lines in place.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-25:c90f5f35",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The merged hand-over core (parser, dispose buckets, no-fallback ladder, marker forms, session-record backward compat) is solid and well-tested, but two blocking defects and one contract gap must be fixed first: the request snapshot (S0) is never invalidated on session switch / rewind / `/handoff` / partial appends, so the merged call can run over the *wrong session's* transcript; and a heading-variant (`##Open User Requests`, no space) passes the mandatory-section gate while blinding the provenance belt, reopening the gh-2103 laundering path.\n\n**Key Issues** (2 🚨 · 6 ⚠️ · 6 💡 · 4 🪶):\n- 🚨 Stale S0 across projection-replacing host transitions (session switch/resume, checkpoint rewind **and restore**, `/handoff`, partial appends, over-window relief) → merged hand-over over the wrong context / compaction outage loop (`session_commands.dart:985`, thread 1).\n- 🚨 Gate/belt heading regex divergence (`\\s*` vs `\\s+`) → ungraded user-intent section persisted (`hand_over.dart:292`, thread 2).\n- ⚠️ `CompactingGate.run` joins bodies unregistered → D9 queue bypassed (`hand_over_trigger.dart:157`); ⚠️ verbatim-asks normalization is one-sided → permanent fail-closed fold stall (`hand_over.dart:323`); ⚠️ AC19/D1 gap: the judge ladder is kept (PR self-declares; ticket D1 says judge removed and hide-only mode abolished — needs an explicit owner call or the follow-up card); ⚠️ merged persist-site laundering gate has no hostile-text test; ⚠️ host D9/E21 wiring (gate seam, success-only S0 invalidation) untested; ⚠️ new `compaction` tuning knobs parsed by the CLI only — the app structurally ignores them and `sameResolutionAs` omits the fields, so the AC5 parity test can't catch the drift (`agent_service_compaction.dart:268`, thread 13).\n- 🪶 digest: `legacy_session_resume_test.dart:350` duplicate assertion · `prompts/compaction/hand_over.md:3` unquoted YAML `#` truncates the generated doc · `engine_hand_over.dart:275` `judgeCalls` reused for hand-over call count · `record_tag.dart:187` a genuine record opening with `m<N> ` is treated as already tagged (alias confusion).\n\n**Next Steps**:\n1. Invalidate/key S0 on session load-switch, rewind, `/checkpoint restore`, `/handoff`, the relief paths on both hosts, and any run that appended (drop the `reportedPass` condition) + host-level lifecycle test.\n2. Share one user-intent heading regex between gate and belt + add the `##Open…` payload fixture.\n3. Register joined gate bodies; normalize both sides of the verbatim-asks check.\n4. Owner decision on AC19 (judge removal) — land it here or split a dedicated card.\n5. Parse `compaction.*` tuning in the app loader and pass it into `_compactionWiring`; add the three fields to `sameResolutionAs` (or declare the `cliOnlySettings` exemption with a WHY).\n6. Add the hostile-transfer and host-wiring tests; then the 💡 threads (marker end-anchor, parity tag-strip, Copilot header, IT-10/IT-17 tails)."
+    }
+  ]
+}
