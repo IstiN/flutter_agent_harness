@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): gh-2411 follow-up #5c (owner live test round 4) —
+  the overhead calibration survives checkpoints and resume: it is
+  derived from the last valid provider report anywhere in the session
+  (a bounded backward walk to the reply and the boundary that opens its
+  context), so a resume right after a `compact_checkpoint` logs
+  `budget=<n> calibrated xN (reported)` instead of
+  `budget=none (unmeasured)` and no longer falls into the soft-window
+  regime on the raw heuristic (three warnings and a trim to 3 messages
+  against a provider truth of 15,310). The soft-window warning latches
+  once per distinct text (a resumed session no longer prints it at boot
+  AND at its first prompt). The resume budget trim never opens the kept
+  tail on an assistant or tool message. The `[resume] loaded the last
+  K message(s)` line prints overhead + the estimated tail — the number
+  the first request is metered at (it printed the overhead alone:
+  ≈15,732 against a real 18,228).
+
 - fix(cli): gh-2411 follow-up #5b (owner live test, B1) — the PROJECT
   `.fah/config.yaml` `agent.contextWindowCap` is now honored by the CLI
   through the app's existing loader (`loadProjectContextWindowCap`); the

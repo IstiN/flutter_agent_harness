@@ -302,7 +302,8 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
         ? (record is CompactCheckpointRecord ? 0 : _hiddenMarkerTokens)
         : _projectedRecordTokens(record);
     if (tally + contribution > budget && i < branch.length - 1) {
-      return i + 1; // stop BEFORE the crossing record
+      // stop BEFORE the crossing record
+      return _openOnUserTurn(branch, i + 1);
     }
     tally += contribution;
     if (_absorbProjectionMarkers(record, hidden, covered)) {
@@ -310,6 +311,23 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
     }
   }
   return null; // whole branch fits
+}
+
+/// gh-2411 follow-up #5c (C3 — owner live test round 4): the kept tail
+/// must never OPEN on an assistant reply or a tool result — their user
+/// turn is gone (several APIs refuse the shape; the owner's spills 22/24
+/// opened on a 1092/1167-char reply). The same invariant as every
+/// in-memory cut ([cutAtUserTurnBoundary]): leading non-user messages
+/// are dropped with the crossing record. Any other record (a boundary,
+/// a custom message) opens a context legitimately; the newest record is
+/// always kept.
+int _openOnUserTurn(List<SessionRecord> branch, int cut) {
+  for (var i = cut; i < branch.length - 1; i++) {
+    final record = branch[i];
+    if (record is! MessageRecord || record.message is UserMessage) break;
+    cut = i + 1;
+  }
+  return cut;
 }
 
 /// The classic-transform KEPT region of [branch]: the last compaction
@@ -578,6 +596,13 @@ int estimateRequestTokens(
 /// measured overhead error toward 1.0 and hand the next unanchored
 /// estimate (the turn after a compaction zeroed the anchors) the same
 /// under-count the calibration exists to fix.
+/// The provider usage [estimateContextTokens] would anchor on for
+/// [message] — a finished (not aborted/errored) assistant reply with a
+/// non-zero report; `null` otherwise. The public seam of the estimator's
+/// own validity rule (gh-2411 follow-up #5c: the resume calibration
+/// scan looks for the very report the anchor is).
+Usage? assistantUsageOf(Message message) => _assistantUsage(message);
+
 OverheadCalibration? deriveOverheadCalibration(
   List<Message> messages, {
   String? systemPrompt,

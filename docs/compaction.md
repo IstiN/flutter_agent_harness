@@ -213,8 +213,9 @@ invisible user turn is not. Three rules, one basis:
   plus 34 tool schemas — were billed 24,126 provider tokens, 2.72
   chars/token, where chars/4 priced 16,407, 32% under).
   Per session the first valid provider `usage.input` calibrates the
-  estimate (`OverheadCalibration`, ratio clamped to [0.6, 4.0],
-  runtime-only) — it may LOWER an over-reading heuristic too (the
+  estimate (`OverheadCalibration`, ratio clamped to [0.6, 4.0];
+  re-derived at resume from the last valid provider report anywhere in
+  the session — gh-2411 follow-up #5c) — it may LOWER an over-reading heuristic too (the
   owner's live test: glm-5.3-flash billed 15,792 tokens where the
   heuristic read 24,348, ratio 0.65) — and the ctx meter, the loop's
   over-window guard and the compaction trigger all read that same
@@ -225,7 +226,8 @@ invisible user turn is not. Three rules, one basis:
   `overhead + newest user turn ≥ window − reserve`, no trim can ever
   reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
   trimmed: automatic compaction is skipped and the session is warned
-  ONCE: `context window {window} is below the fixed request overhead
+  ONCE per distinct warning text (a resumed session does not repeat it
+  at its first prompt): `context window {window} is below the fixed request overhead
   ≈{overhead} tokens (estimated from the system prompt + tool schemas)
   — raising the window or disabling tools is the only fix; automatic
   compaction is skipped while the context stays under the window`. AT OR OVER THE WINDOW the
@@ -257,6 +259,21 @@ either: its one-record tail dropped the newest user turn. Whenever the
 loaded projection is a tail of the file, one line says so, in the
 transcript and on screen: `[resume] loaded the last K message(s) of the
 session (N older record(s) left on disk …; ≈T tokens, estimate)`.
+
+A resume right after a durable checkpoint is MEASURED too (gh-2411
+follow-up #5c): the overhead is a property of the system prompt + the
+tool schemas, not of the folded history, so the calibration is derived
+from the last valid provider report anywhere in the session — a bounded
+backward walk pages older records until that reply and the boundary (or
+the file head) that opens its context are resident. Without it the
+resume read `budget=none (unmeasured: estimate only)`, fell back into
+the soft-window regime on the raw heuristic and trimmed the context to
+three messages against a provider truth of 15,310. Two more invariants
+of the same round: the budget trim never opens the kept tail on an
+assistant or tool message (`projectedBranchBudgetCut` →
+`_openOnUserTurn`), and the tail line's figure is overhead + the
+estimated tail — the number the first request is metered at, not the
+overhead alone.
 
 Until the provider has answered in a session and nothing is measured, no
 in-memory cut runs on the heuristic alone — not the boot cap, not the

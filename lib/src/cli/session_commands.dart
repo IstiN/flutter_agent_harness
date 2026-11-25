@@ -888,30 +888,116 @@ extension on AgentCli {
   /// on the heuristic (R1).
   Future<OverheadCalibration?> _residentTailCalibration(Session session) async {
     final branch = await session.getBranch();
-    if (branch.isEmpty) return null;
-    var start = 0;
-    var boundary = false;
-    for (var i = 0; i < branch.length; i++) {
+    if (branch.isNotEmpty) {
+      var start = 0;
+      var boundary = false;
+      for (var i = 0; i < branch.length; i++) {
+        final entry = branch[i];
+        if (_isContextBoundary(entry)) {
+          start = i;
+          boundary = true;
+        }
+      }
+      // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
+      // only from a COMPLETE walk (the branch reaches a tree root) — every
+      // anchor of a mid-chain tail priced a request whose head is missing.
+      final complete = boundary || branch.first.parentId == null;
+      final resident = complete
+          ? deriveOverheadCalibration(
+              [
+                for (final entry in branch.sublist(start))
+                  if (entry is MessageRecord) entry.message,
+              ],
+              systemPrompt: _agent.state.systemPrompt,
+              tools: _agent.state.tools,
+            )
+          : null;
+      if (resident != null) return resident;
+    }
+    // gh-241 follow-up #5c (C1 — owner live test round 4): the resident
+    // tail measured nothing (a resume right after a durable checkpoint:
+    // the checkpoint IS the last record). The overhead is a property of
+    // the system prompt + the tool schemas, not of the folded history —
+    // a report that priced an EARLIER request still vouches for it.
+    // Without this the resume read "unmeasured", fell into the
+    // soft-window regime on the raw heuristic (≈23.8k estimated vs ≈14.4k
+    // real at a 25k window) and trimmed the context to 3 messages against
+    // a provider truth of 15,310.
+    return _olderReportCalibration(session);
+  }
+
+  /// Whether [record] opens a new context (every projection cuts here):
+  /// a classic compaction, a structured fold or a checkpoint.
+  static bool _isContextBoundary(SessionRecord record) =>
+      record is CompactionRecord ||
+      record is HiddenRangeRecord ||
+      record is CompactCheckpointRecord;
+
+  /// The newest usage-bearing assistant reply on the resident [branch].
+  static MessageRecord? _newestUsageReply(List<SessionRecord> branch) {
+    for (var i = branch.length - 1; i >= 0; i--) {
       final entry = branch[i];
-      if (entry is CompactionRecord ||
-          entry is HiddenRangeRecord ||
-          entry is CompactCheckpointRecord) {
-        start = i;
-        boundary = true;
+      if (entry is MessageRecord && assistantUsageOf(entry.message) != null) {
+        return entry;
       }
     }
-    // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
-    // only from a COMPLETE walk (the branch reaches a tree root) — every
-    // anchor of a mid-chain tail priced a request whose head is missing.
-    if (!boundary && branch.first.parentId != null) return null;
-    return deriveOverheadCalibration(
+    return null;
+  }
+
+  /// Whether the context the reply at [at] was sent with is resident:
+  /// a boundary opens it at a lower index, or the branch starts at a
+  /// tree root (the file head — nothing is missing above it).
+  static bool _contextOpened(List<SessionRecord> branch, int at) =>
+      at > 0 &&
+      (branch.first.parentId == null ||
+          branch.sublist(0, at).any(_isContextBoundary));
+
+  /// gh-241 follow-up #5c (C1): the calibration from the last valid
+  /// provider report ANYWHERE in the session — a bounded backward walk
+  /// pages older records until that reply is resident AND the boundary
+  /// (or the file head) that opens ITS context is, so the estimate it is
+  /// measured against is the very request the provider priced. Never
+  /// unbounded: 64 block pages per stage; `null` when nothing vouches.
+  Future<OverheadCalibration?> _olderReportCalibration(Session session) async {
+    final storage = session.getStorage();
+    if (storage is! WindowedSessionStorage) return null;
+    var anchor = _newestUsageReply(await session.getBranch());
+    for (var pages = 0; anchor == null && pages < 64; pages++) {
+      if (!storage.hasOlder) break;
+      await storage.growOlderUntil((_) => false, maxPages: 1);
+      anchor = _newestUsageReply(await session.getBranch());
+    }
+    if (anchor == null) return null;
+    var branch = await session.getBranch();
+    for (
+      var pages = 0;
+      !_contextOpened(branch, branch.indexOf(anchor)) && pages < 64;
+      pages++
+    ) {
+      if (!storage.hasOlder) break;
+      await storage.growOlderUntil((_) => false, maxPages: 1);
+      branch = await session.getBranch();
+    }
+    final at = branch.indexOf(anchor);
+    if (at < 0 || !_contextOpened(branch, at)) return null;
+    var start = 0;
+    for (var i = 0; i < at; i++) {
+      if (_isContextBoundary(branch[i])) start = i;
+    }
+    final calibration = deriveOverheadCalibration(
       [
-        for (final entry in branch.sublist(start))
+        for (final entry in branch.sublist(start, at + 1))
           if (entry is MessageRecord) entry.message,
       ],
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
+    if (calibration != null) {
+      _logDiagnostic(
+        'resume calibration source=pre-boundary report anchor=${anchor.id}',
+      );
+    }
+    return calibration;
   }
 
   /// gh-241 follow-up #5 (F3/R3): a resumed projection that is a TAIL of
@@ -929,13 +1015,23 @@ extension on AgentCli {
         ? 'estimate'
         : 'estimate, calibrated from the provider turn '
               '${estimate.lastUsageIndex! + 1} report';
+    // gh-2411 follow-up #5c (C4 — owner live test round 4): the figure
+    // is overhead + the estimated loaded tail — the number the FIRST
+    // REQUEST is metered at. It used to print the overhead alone (the
+    // agent still held no messages: ≈15,732 against a real 18,228).
+    final tokens = estimateRequestTokens(
+      resetLoadedUsageAnchors(messages),
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+      calibration: _agent.state.overheadCalibration,
+    );
     final how = report.droppedByBudget > 0
         ? '${report.droppedByBudget} older record(s) left on disk — '
               'the context window bounds what loads (paged lazily)'
         : 'older history sits above the newest compaction boundary';
     final line =
         '[resume] loaded the last ${messages.length} message(s) of the '
-        'session ($how; ≈${_liveRequestTokens()} tokens, $provenance)';
+        'session ($how; ≈$tokens tokens, $provenance)';
     _logDiagnostic('resume tail sid=${session.cachedId} $line');
     if (!_useTui) io.writeln(_style.dim(line));
     _resumeTailNotice = line;

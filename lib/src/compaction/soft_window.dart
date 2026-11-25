@@ -121,16 +121,36 @@ bool softWindowSkip({
 /// regime holds for EVERY turn of the session, so the notice must be
 /// visible once and then stay quiet — a warning repeated on every turn
 /// is noise the owner stops reading. Keyed on the session id: a new
-/// session (resume, `/new`) re-arms it. A session whose id is not known
-/// yet never latches — the warning is never swallowed silently.
+/// session (resume, `/new`) re-arms it.
+///
+/// gh-2411 follow-up #5c (C2 — owner live test round 4): ONE latch per
+/// DISTINCT warning text within a session, with or without a session id.
+/// The old rule let a session whose id was not known yet warn on every
+/// sighting, and warned AGAIN the moment the id arrived — a resumed
+/// session printed the same line at boot and at its first prompt. The
+/// id of a session warned before it had one now carries its latches over.
 final class SoftWindowNotice {
-  String? _warnedSid;
+  /// Warned texts per session, `'<sessionId>\u0000<text>'` (an empty id
+  /// while the session's id is not known yet).
+  final Set<String> _warned = <String>{};
 
-  /// Whether the warning should be shown for session [sessionId].
-  bool shouldWarn(String? sessionId) {
-    if (sessionId == null) return true;
-    if (sessionId == _warnedSid) return false;
-    _warnedSid = sessionId;
-    return true;
+  /// A session was warned before its id was known: the next known id
+  /// belongs to that same session.
+  bool _anonymous = false;
+
+  /// Whether the warning [text] was not yet shown in session [sessionId].
+  bool shouldWarn(String? sessionId, {String text = ''}) {
+    if (sessionId != null && _anonymous) {
+      for (final key in _warned.toList()) {
+        if (key.startsWith('\u0000')) {
+          _warned
+            ..remove(key)
+            ..add('$sessionId$key');
+        }
+      }
+      _anonymous = false;
+    }
+    if (sessionId == null) _anonymous = true;
+    return _warned.add('${sessionId ?? ''}\u0000$text');
   }
 }

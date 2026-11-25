@@ -770,7 +770,10 @@ extension AgentCliCompactionRun on AgentCli {
     if (!_softWindow) return false;
     // The FIRST sighting of the regime in the session is warned about,
     // under the window or not — the fix it names is the only real one.
-    if (_softWindowNotice.shouldWarn(_session?.cachedId)) {
+    if (_softWindowNotice.shouldWarn(
+      _session?.cachedId,
+      text: 'soft-window:$_effectiveContextWindow',
+    )) {
       final overhead = _liveOverheadTokens();
       _logDiagnostic(
         'soft window sid=$_logSid window=$_effectiveContextWindow '

@@ -268,13 +268,38 @@ void main() {
       expect(notice.shouldWarn('sid-b'), isFalse);
     });
 
-    test('a session without an id yet warns on every sighting until the id '
-        'is known (never silently swallows the warning)', () {
+    // gh-2411 follow-up #5c (C2 — owner live test round 4): the old rule
+    // ("warn on every sighting until the id is known") printed the same
+    // line twice in one run. ONE latch per distinct warning text, with or
+    // without a session id.
+    test('a session without an id yet is warned ONCE per distinct text '
+        '(never a per-sighting repeat)', () {
       final notice = SoftWindowNotice();
-      expect(notice.shouldWarn(null), isTrue);
-      expect(notice.shouldWarn(null), isTrue);
-      expect(notice.shouldWarn('sid-a'), isTrue);
-      expect(notice.shouldWarn('sid-a'), isFalse);
+      expect(notice.shouldWarn(null), isTrue, reason: 'first sighting');
+      expect(notice.shouldWarn(null), isFalse, reason: 'the repeat');
+      expect(
+        notice.shouldWarn(null, text: 'window:25000'),
+        isTrue,
+        reason: 'a distinct warning text has its own latch',
+      );
+      expect(notice.shouldWarn(null, text: 'window:25000'), isFalse);
+      expect(notice.shouldWarn(null, text: 'window:30000'), isTrue);
+      expect(
+        notice.shouldWarn('sid-a'),
+        isFalse,
+        reason:
+            'the id of the SAME session arrived — not a new sighting '
+            '(a resume warned once at boot, again at the first prompt)',
+      );
+      expect(notice.shouldWarn('sid-b'), isTrue, reason: 'a new session');
+      expect(notice.shouldWarn('sid-b'), isFalse);
+    });
+
+    test('a distinct text in a known session has its own latch', () {
+      final notice = SoftWindowNotice();
+      expect(notice.shouldWarn('sid-a', text: 'w1'), isTrue);
+      expect(notice.shouldWarn('sid-a', text: 'w1'), isFalse);
+      expect(notice.shouldWarn('sid-a', text: 'w2'), isTrue);
     });
   });
 }
