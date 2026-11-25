@@ -167,6 +167,11 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
     if (mounted) setState(() {});
   }
 
+  /// The peer's run view while the remote agent is busy; idle, live or
+  /// unpublished yields null — no status row is mounted at all.
+  static _DmPeerRunService? _whileBusy(_DmPeerRunService? peerRun) =>
+      peerRun != null && peerRun.isStreaming ? peerRun : null;
+
   String _channelLabel(NetworkSession session, String channelId) {
     final name = _channel(session, channelId)?.name;
     if (isDmChannel(channelId)) {
@@ -364,10 +369,7 @@ class _NetworkChatPageState extends State<NetworkChatPage> {
       builder: (context, _) {
         final channel = _channel(session, chatFor.$2);
         final label = _channelLabel(session, chatFor.$2);
-        final peerRun = _peerRunFor(session, chatFor.$2);
-        final busyPeer = peerRun != null && peerRun.isStreaming
-            ? peerRun
-            : null;
+        final busyPeer = _whileBusy(_peerRunFor(session, chatFor.$2));
         return Column(
           children: [
             if (widget.showChannelHeader)
