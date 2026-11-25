@@ -18,8 +18,11 @@
 ///   (cancelling a read closes the connection — coder/websocket behavior
 ///   the backend agent field-tested); half-open drops are the server's job
 ///   at ~45 s;
-/// - a second successful dial DISPLACES the first socket for the same
-///   device server-side (the client treats any socket close the same way).
+/// - a second successful dial under ONE device used to DISPLACE the first
+///   socket server-side; since fa_network a0d92b6 the ESTABLISHED socket
+///   stays and the DUPLICATE dial is closed with WS status
+///   [duplicateDialCloseCode] (the client treats a plain close as before,
+///   the 4001 with a floor — see below).
 ///   The attempt counter therefore resets ONLY after the link stayed up for
 ///   [upstreamStableWindow] (≥ 30 s): N clients fighting over one device
 ///   ping-pong, but their reconnects climb the ladder (1 s, 2 s, 4 s … 30 s)
@@ -28,6 +31,10 @@
 ///   ticket mint or on the upgrade itself ([ConnectorThrottleSignal]) —
 ///   counts as a failed attempt and waits the server's `Retry-After` when
 ///   it sent one, else the jittered ladder;
+/// - a drop the peer closed with [duplicateDialCloseCode] (another socket
+///   of this device is alive: the server keeps the ESTABLISHED one and
+///   refuses to fight) waits at least [duplicateDialBackoff] — never a
+///   fast redial — and the ladder is NOT reset (short-lived link);
 /// - `acknowledge` writes the ack frame only after the caller has written
 ///   the mailbox (connector's rule); while offline the ack is dropped and
 ///   the server's redelivery gives the connector another chance.
@@ -64,6 +71,31 @@ abstract interface class ConnectorSocket {
   /// Closes the connection; idempotent.
   Future<void> close();
 }
+
+/// The peer's WebSocket close status, for [ConnectorSocket]s that can see
+/// one — the non-breaking seam the duplicate-dial rule reads
+/// ([duplicateDialCloseCode]): a socket implements it in addition, the one
+/// place that looks is [peerCloseCodeOf], so existing implementers stay as
+/// they are. The client reads [closeCode] AFTER the frames stream
+/// completed: the IO adapter answers `WebSocket.closeCode`, which
+/// `dart:io` assigns when the close frame arrives, before it closes its
+/// stream — null when no close frame arrived (abnormal drop) or none was
+/// sent (`dart:io` reports 1005 "no status received" for a code-less
+/// close frame).
+abstract interface class ConnectorCloseInfo {
+  /// The WebSocket close status code the peer sent; null when unknown.
+  int? get closeCode;
+}
+
+/// The peer's close status of [socket] when it can see one (it implements
+/// [ConnectorCloseInfo] — the IO socket and its duplex do); null for every
+/// other socket. Spelled as an object pattern: Dart does not promote an
+/// interface type to an unrelated interface type on `is`, so an `is` check
+/// followed by `.closeCode` does not compile.
+int? peerCloseCodeOf(Object? socket) => switch (socket) {
+  ConnectorCloseInfo(:final closeCode) => closeCode,
+  _ => null,
+};
 
 /// Dials the device WS (`GET /ws?ticket=<...>`): the only network operation
 /// of the pure core. Implementations throw when the server is unreachable
@@ -107,6 +139,18 @@ Duration upstreamBackoff(int attempt) {
 /// 30 s with equal jitter), so an eviction ping-pong — where every link is
 /// displaced well inside this window — can never reset.
 const upstreamStableWindow = Duration(seconds: 30);
+
+/// WS close status fa_network sends when a dial duplicates an ESTABLISHED
+/// device socket (same deviceId, a0d92b6): the established socket keeps the
+/// device, so a client seeing it must not fight for the device.
+const duplicateDialCloseCode = 4001;
+
+/// The wait floor after [duplicateDialCloseCode]: another socket of this
+/// device is alive, and the server sweeps a zombie one by ping-ghost
+/// within ~45 s — a faster redial only burns a ticket (30/min/member).
+/// Applied through [upstreamRetryDelay], so the jittered ladder step wins
+/// when it is longer (max(ladder, 5 s)).
+const duplicateDialBackoff = Duration(seconds: 5);
 
 /// The wait before attempt [attempt] of the reconnect loop: the jittered
 /// [upstreamBackoff] step, or the server's `Retry-After` when it asked for
@@ -424,8 +468,9 @@ final class ConnectorUpstreamClient {
       }
     } on Object catch (error) {
       onLog?.call('handshake failed: $error');
+      final retryAfter = _duplicateDialRetryAfter(socket);
       await _teardownSocket();
-      _retry(generation);
+      _retry(generation, retryAfter: retryAfter);
       rethrow;
     }
   }
@@ -472,8 +517,9 @@ final class ConnectorUpstreamClient {
     }
     if (generation != _dialGeneration) return;
     onLog?.call('link lost: $reason');
+    final retryAfter = _duplicateDialRetryAfter(_socket);
     unawaited(_teardownSocket());
-    _retry(generation);
+    _retry(generation, retryAfter: retryAfter);
   }
 
   /// Arms the stable-window reset: once this link has been `connected`
@@ -495,6 +541,23 @@ final class ConnectorUpstreamClient {
   /// (429 / `throttled` on the ticket mint or the upgrade); null otherwise.
   static Duration? _retryAfterOf(Object error) =>
       error is ConnectorThrottleSignal ? error.retryAfter : null;
+
+  /// The duplicate-dial floor ([duplicateDialBackoff]) when the peer closed
+  /// [socket] with [duplicateDialCloseCode] — logged, since it is the
+  /// diagnostic that tells a duplicate device apart from an outage; null
+  /// for every other drop (the jittered ladder alone). Read after the
+  /// frames stream completed and BEFORE the teardown drops the socket:
+  /// the IO adapter's code is set by then (`dart:io` assigns
+  /// `WebSocket.closeCode` before it closes its stream).
+  Duration? _duplicateDialRetryAfter(ConnectorSocket? socket) {
+    final closeCode = peerCloseCodeOf(socket);
+    if (closeCode != duplicateDialCloseCode) return null;
+    onLog?.call(
+      'duplicate device connection ($closeCode): the established socket '
+      'keeps the device; retry in ≥${duplicateDialBackoff.inSeconds} s',
+    );
+    return duplicateDialBackoff;
+  }
 
   /// `' (throttled)'` for a throttle refusal — the diagnostic that tells an
   /// eviction storm apart from a server outage in the daemon log.
