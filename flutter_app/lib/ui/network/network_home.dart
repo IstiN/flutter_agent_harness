@@ -61,21 +61,26 @@ class NetworkHomePage extends StatefulWidget {
 }
 
 class _NetworkHomePageState extends State<NetworkHomePage> {
-  /// The owned device connector (issue #2062): created only when the host
-  /// injected none (standalone use) — with an injected instance the shell
-  /// keeps ownership and disposal (chunk 16, AC1 single socket).
-  DeviceConnectorService? _ownedConnector;
+  /// The process-shared device connector this page CLAIMED (issue #2062):
+  /// only when the host injected none (standalone use) — with an injected
+  /// instance the shell keeps ownership and disposal (chunk 16, AC1 single
+  /// socket). Claimed through [DeviceConnectorService.claimShared]: the
+  /// page reuses the shell's connector for the same session manager
+  /// instead of dialing a second upstream under one device (contract §10).
+  DeviceConnectorService? _claimedConnector;
 
-  /// The connector the sidebar panel renders: injected, else owned.
+  /// The connector the sidebar panel renders: injected, else claimed.
   DeviceConnectorService? get _deviceConnector =>
-      widget.deviceConnector ?? _ownedConnector;
+      widget.deviceConnector ?? _claimedConnector;
 
   @override
   void initState() {
     super.initState();
     if (widget.deviceConnector == null) {
-      _ownedConnector = DeviceConnectorService(sessionManager: widget.manager)
-        ..start();
+      _claimedConnector = DeviceConnectorService.claimShared(
+        widget.manager,
+        () => DeviceConnectorService(sessionManager: widget.manager),
+      )..start();
     }
     widget.controller.addListener(_ensureSession);
     widget.manager.addListener(_onChanged);
@@ -86,8 +91,8 @@ class _NetworkHomePageState extends State<NetworkHomePage> {
   void dispose() {
     widget.controller.removeListener(_ensureSession);
     widget.manager.removeListener(_onChanged);
-    unawaited(_ownedConnector?.dispose());
-    _ownedConnector = null;
+    unawaited(_claimedConnector?.release());
+    _claimedConnector = null;
     super.dispose();
   }
 
