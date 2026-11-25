@@ -2012,11 +2012,13 @@ class AgentService extends ChangeNotifier
     if (trimmed.isEmpty) return;
     // GOAL #2394 (D8/D9): a user turn advanced the hysteresis clock; a
     // post-run hand-over still in flight is AWAITED here, before the
-    // streaming check and the prompt (no async gap between them: a steer
-    // must still land as a steer) — its records land before the run's
-    // pre-flight measures the transcript.
+    // streaming check and the prompt — its records land before the run's
+    // pre-flight measures the transcript. Awaited ONLY while a compaction
+    // is in flight: an idle gate must not open an async gap before the
+    // prompt (hosts observe `unawaited(sendText())` through
+    // `waitForIdle()`, which must see the run as started).
     handOverTrigger.onTurn();
-    await handOverTrigger.gate.wait();
+    if (handOverTrigger.gate.isCompacting) await handOverTrigger.gate.wait();
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
     if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();

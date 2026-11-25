@@ -1233,123 +1233,11 @@ class AutoCompactorFactory {
   /// [build] instead.
   Future<bool> run() async {
     if (engine == CompactionEngine.structured) {
-      // gh-1680: a reached message-cap trigger forces the pass exactly
-      // like `force` — the structured engine's internal gate is
-      // token-only, so the additive message-count dimension must bypass
-      // it here (AC4). Computed up front so the zero-pass fall-through
-      // below covers the cap channel identically.
-      final capTriggered = messageCapTriggerReached(
-        state.messages.length,
-        messageCap,
-        margin: messageCapMargin,
-      );
-      // GOAL #2394 (AC1): the EXHAUSTIVE mode table decides once, up
-      // front — never an outcome of the run.
-      final mode = selectCompactionMode(
-        engine: engine,
-        snapshotValid:
-            requestSnapshot != null &&
-            requestSnapshot!.isValidFor(sources.mainModel),
-        separateDigestRole: _separateDigestRole,
-      );
-      // GOAL #2394 (AC11): the post-run soft line arms the merged
-      // hand-over alone — any other mode keeps the hard gate.
-      if (softTriggered && mode != CompactionMode.merged) {
-        hooks.onDone(
-          0,
-          _requestTokens(),
-          reason:
-              'soft trigger: mode ${mode.name} keeps the hard gate — '
-              'nothing run',
-        );
-        return true;
-      }
-      final merged = mode == CompactionMode.merged;
-      final adapter = _StructuredHooksAdapter(hooks);
-      final outcome = await _runStructured(
-        adapter: adapter,
-        capTriggered: capTriggered,
-        mode: mode,
-      );
-      // gh-1742 invariant 1: a FORCED run (observed usage over the line)
-      // that did zero passes is not relief — the structured engine's
-      // pass loops gate on its own transcript estimate, so an
-      // observation the estimate cannot see would come back `ok` with
-      // nothing done and the child would ride an over-window context
-      // into the next request. Fall through to the classic engine,
-      // whose forced semantics run the summarizer regardless of its
-      // own estimate. An unforced no-op stays the success short-circuit.
-      // GOAL #2394 (AC4): the merged hand-over has no residual classic
-      // fallback — its zero-pass run is a valid "nothing to dispose"
-      // verdict, never a reason to start another engine.
-      if (outcome.ok &&
-          (merged || adapter.passCount > 0 || !(force || capTriggered))) {
-        // Close the hooks bracket the classic [AutoCompactor.run] closes
-        // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
-        // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
-        // so a structured run that skips it leaves them open forever.
-        // gh-2237: the engine's zero-pass exit reason rides along — the
-        // host renders the no-op terminal receipt from it.
-        hooks.onDone(
-          adapter.passCount,
-          _requestTokens(),
-          reason: outcome.reason,
-        );
-        return true;
-      }
-      if (merged) {
-        // GOAL #2394 (AC4/I9) — NO fallback: a failed merged call reports
-        // loudly and the run is a failure; the classic prefix compactor
-        // and the judge ladder are never reached from the merged path.
-        if (outcome.timedOut) {
-          // The gh-1743 mechanical local trim (no provider call) is the
-          // one valve that stays — it needs no endpoint.
-          return _mergedTimedOut(adapter, outcome.error!);
-        }
-        return _reportFailedRun(
-          adapter,
-          outcome.error ??
-              const CompactionException(
-                'hand-over run failed without a pass receipt',
-              ),
-        );
-      }
-      if (outcome.timedOut) {
-        // Budget kill (issue #515): the summarizer/judge wedged past the
-        // watchdog budget and the underlying call was aborted. gh-1743:
-        // do NOT abort the live session — re-running the classic engine
-        // here would only re-wedge the same endpoint, but the mechanical
-        // local trim needs no endpoint at all: bound the live context
-        // (keepRecentTokens, pairing-repaired, `[context trimmed locally]`
-        // marker) so the run proceeds. The failure verdict is kept only
-        // when there is nothing left to trim.
-        final trimmed = build().applyLocalTrimFallback(
-          pass: adapter.passCount + 1,
-        );
-        if (trimmed) return true;
-        hooks.onBothRolesFailed(outcome.error!);
-        // This is a terminal path like any other: report the failed pass
-        // and close the host bracket (mirrors the classic engine's
-        // exhaustion branch). Skipping it left the CLI's HEP
-        // `compaction_start` bracket open and `_runTokensBefore` stale —
-        // the next compaction's freed-delta frame computed against the
-        // failed run's before-count.
-        hooks.onPass(
-          AutoCompactorPass(
-            pass: adapter.passCount + 1,
-            tokensBefore: _requestTokens(),
-            tokensAfter: _requestTokens(),
-            fallback: null,
-            ok: false,
-            error: outcome.error,
-          ),
-        );
-        hooks.onDone(adapter.passCount + 1, _requestTokens());
-        return false;
-      }
+      final verdict = await _runStructuredEngine(force: force);
+      if (verdict != null) return verdict;
       // Fall through: the classic prefix compactor is the residual
       // fallback of the STANDALONE ladder (issue #148 flowchart S7/D4;
-      // GOAL #2394 AC4: the merged hand-over returned above) — its
+      // GOAL #2394 AC4: the merged hand-over never returns null) — its
       // summary then renders under structured projection as an opaque
       // legacy-ckpt segment. Its own run() closes the bracket.
       //
@@ -1368,6 +1256,133 @@ class AutoCompactorFactory {
     // plain `ok: false`). Surface the abort instead.
     runToken?.throwIfCancelled();
     return build().run();
+  }
+
+  /// The structured-engine leg of [run]. Returns the run's verdict, or
+  /// `null` when the STANDALONE ladder's residual classic fallback must
+  /// run ([run] then owns it — the cancel-parity checks stay there).
+  Future<bool?> _runStructuredEngine({required bool force}) async {
+    // gh-1680: a reached message-cap trigger forces the pass exactly
+    // like `force` — the structured engine's internal gate is
+    // token-only, so the additive message-count dimension must bypass
+    // it here (AC4). Computed up front so the zero-pass fall-through
+    // below covers the cap channel identically.
+    final capTriggered = messageCapTriggerReached(
+      state.messages.length,
+      messageCap,
+      margin: messageCapMargin,
+    );
+    // GOAL #2394 (AC1): the EXHAUSTIVE mode table decides once, up
+    // front — never an outcome of the run.
+    final mode = selectCompactionMode(
+      engine: engine,
+      snapshotValid:
+          requestSnapshot != null &&
+          requestSnapshot!.isValidFor(sources.mainModel),
+      separateDigestRole: _separateDigestRole,
+    );
+    // GOAL #2394 (AC11): the post-run soft line arms the merged
+    // hand-over alone — any other mode keeps the hard gate.
+    if (softTriggered && mode != CompactionMode.merged) {
+      hooks.onDone(
+        0,
+        _requestTokens(),
+        reason:
+            'soft trigger: mode ${mode.name} keeps the hard gate — '
+            'nothing run',
+      );
+      return true;
+    }
+    final merged = mode == CompactionMode.merged;
+    final adapter = _StructuredHooksAdapter(hooks);
+    final outcome = await _runStructured(
+      adapter: adapter,
+      capTriggered: capTriggered,
+      mode: mode,
+    );
+    if (outcome.ok &&
+        _zeroPassIsRelief(merged, adapter.passCount, force, capTriggered)) {
+      // Close the hooks bracket the classic [AutoCompactor.run] closes
+      // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
+      // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
+      // so a structured run that skips it leaves them open forever.
+      // gh-2237: the engine's zero-pass exit reason rides along — the
+      // host renders the no-op terminal receipt from it.
+      hooks.onDone(adapter.passCount, _requestTokens(), reason: outcome.reason);
+      return true;
+    }
+    if (merged) return _finishMerged(adapter, outcome);
+    if (outcome.timedOut) return _standaloneTimedOut(adapter, outcome.error!);
+    return null;
+  }
+
+  /// gh-1742 invariant 1: a FORCED run (observed usage over the line)
+  /// that did zero passes is not relief — the structured engine's
+  /// pass loops gate on their own transcript estimate, so an
+  /// observation the estimate cannot see would come back `ok` with
+  /// nothing done and the child would ride an over-window context
+  /// into the next request; the classic engine's forced semantics run
+  /// the summarizer regardless of its own estimate. An unforced no-op
+  /// stays the success short-circuit. GOAL #2394 (AC4): the merged
+  /// hand-over has no residual classic fallback — its zero-pass run is
+  /// a valid "nothing to dispose" verdict, never a reason to start
+  /// another engine.
+  bool _zeroPassIsRelief(
+    bool merged,
+    int passCount,
+    bool force,
+    bool capTriggered,
+  ) => merged || passCount > 0 || !(force || capTriggered);
+
+  /// GOAL #2394 (AC4/I9) — NO fallback on the merged path: a failed
+  /// merged call reports loudly and the run is a failure; the classic
+  /// prefix compactor and the judge ladder are never reached. The
+  /// gh-1743 mechanical local trim (no provider call) stays the one
+  /// valve for a budget kill.
+  bool _finishMerged(
+    _StructuredHooksAdapter adapter,
+    ({bool ok, bool timedOut, Object? error, String? reason}) outcome,
+  ) {
+    if (outcome.timedOut) return _mergedTimedOut(adapter, outcome.error!);
+    return _reportFailedRun(
+      adapter,
+      outcome.error ??
+          const CompactionException(
+            'hand-over run failed without a pass receipt',
+          ),
+    );
+  }
+
+  /// The STANDALONE ladder's budget kill (issue #515): the
+  /// summarizer/judge wedged past the watchdog budget and the underlying
+  /// call was aborted. gh-1743: do NOT abort the live session —
+  /// re-running the classic engine here would only re-wedge the same
+  /// endpoint, but the mechanical local trim needs no endpoint at all:
+  /// bound the live context (keepRecentTokens, pairing-repaired,
+  /// `[context trimmed locally]` marker) so the run proceeds. The
+  /// failure verdict is kept only when there is nothing left to trim —
+  /// then it is a terminal path like any other: report the failed pass
+  /// and close the host bracket (mirrors the classic engine's
+  /// exhaustion branch). Skipping it left the CLI's HEP
+  /// `compaction_start` bracket open and `_runTokensBefore` stale — the
+  /// next compaction's freed-delta frame computed against the failed
+  /// run's before-count.
+  bool _standaloneTimedOut(_StructuredHooksAdapter adapter, Object error) {
+    final trimmed = build().applyLocalTrimFallback(pass: adapter.passCount + 1);
+    if (trimmed) return true;
+    hooks.onBothRolesFailed(error);
+    hooks.onPass(
+      AutoCompactorPass(
+        pass: adapter.passCount + 1,
+        tokensBefore: _requestTokens(),
+        tokensAfter: _requestTokens(),
+        fallback: null,
+        ok: false,
+        error: error,
+      ),
+    );
+    hooks.onDone(adapter.passCount + 1, _requestTokens());
+    return false;
   }
 
   /// GOAL #2394: the merged run's budget-kill branch — the mechanical

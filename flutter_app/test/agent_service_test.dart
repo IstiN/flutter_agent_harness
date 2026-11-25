@@ -423,6 +423,51 @@ void main() {
       },
     );
 
+    test('sendText starts the run synchronously while the compacting gate is '
+        'idle (gh-2394: waitForIdle must see the run)', () async {
+      final env = MemoryExecutionEnv();
+      // The scripted reply lands a tick later: the run is observably in
+      // flight, so a waitForIdle() that resolved before the run even
+      // started cannot see the transcript complete.
+      final service = AgentService(
+        agent: _createAgent((model, context, {cancelToken}) {
+          final stream = AssistantMessageEventStream();
+          Future<void>.delayed(const Duration(milliseconds: 20)).then((_) {
+            stream.push(
+              DoneEvent(
+                reason: StopReason.stop,
+                message: AssistantMessage(
+                  content: [TextContent(text: 'hello back')],
+                  api: model.api,
+                  provider: model.provider,
+                  model: model.id,
+                  usage: Usage.zero,
+                  stopReason: StopReason.stop,
+                  timestamp: DateTime.now(),
+                ),
+              ),
+            );
+            stream.end();
+          });
+          return stream;
+        }),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      // The host pattern — fire-and-forget send + idle wait: the run
+      // must exist by the time waitForIdle() reads the agent, so an
+      // idle compacting gate must not await before the prompt (the
+      // widget tests drive runs exactly this way).
+      unawaited(service.sendText('hello'));
+      await service.waitForIdle();
+
+      expect(service.messages.length, 2);
+      expect(service.messages.last.role, 'assistant');
+      expect(service.messages.last.content, 'hello back');
+    });
+
     test('sendText appends user and assistant messages', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
