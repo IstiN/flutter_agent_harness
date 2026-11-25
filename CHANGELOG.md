@@ -18,6 +18,16 @@ block a release again.
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
   it in TUI and line mode via `isObligationsLedgerNotice` (one heading
   constant shared with the renderer).
+- refactor(2395): single mobile deep-link router — one `OAuthDeepLinkRouter`
+  (`fah://oauth/*`) now owns the app's only `AppLinks()` subscription at
+  boot (`openrouter_oauth_links_io.dart`); flows register per-route
+  receivers (`/openrouter` → OpenRouter coordinator, `/network` → Networks
+  `DeepLinkOAuthReceiver` on Android), callbacks the OS delivered before a
+  flow registered are buffered (bounded) and replayed once, unknown
+  `fah://oauth/*` links are logged once and dropped. No behavior change to
+  iOS `ASWebAuthenticationSession`, desktop loopback, or the engine-side
+  unknown-route pass-through; grep guard test pins the single
+  construction site.
 
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH

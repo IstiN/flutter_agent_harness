@@ -6,56 +6,55 @@
 // ignore_for_file: depend_on_referenced_packages
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fa/network/auth_deep_link.dart';
 import 'package:fa/network/auth_flow.dart';
+import 'package:fa/services/oauth_deep_link_router.dart';
+import 'package:fa/services/openrouter_oauth_coordinator.dart';
+import 'package:fa/services/openrouter_oauth_links_io.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('DeepLinkOAuthReceiver', () {
     test('redirectUri is the registered fah://oauth/network callback', () {
-      final controller = StreamController<Uri>();
-      final receiver = DeepLinkOAuthReceiver.bind(
-        links: controller.stream,
-        initialLink: null,
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(
+        OAuthDeepLinkRouter(),
       );
       addTearDown(receiver.close);
 
       expect(receiver.redirectUri.toString(), 'fah://oauth/network');
     });
 
-    test('completes when a matching deep link arrives on the stream', () async {
-      final controller = StreamController<Uri>();
-      final receiver = DeepLinkOAuthReceiver.bind(
-        links: controller.stream,
-        initialLink: null,
-      );
-      addTearDown(receiver.close);
+    test(
+      'completes when a matching deep link arrives through the router',
+      () async {
+        final router = OAuthDeepLinkRouter();
+        final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
+        addTearDown(receiver.close);
 
-      final pending = receiver.callback;
-      controller.add(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
-      final callback = await pending;
-      expect(callback.queryParameters['code'], 'abc');
-      expect(callback.queryParameters['state'], 'xyz');
-    });
+        final pending = receiver.callback;
+        router.dispatch(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
+        final callback = await pending;
+        expect(callback.queryParameters['code'], 'abc');
+        expect(callback.queryParameters['state'], 'xyz');
+      },
+    );
 
     test('ignores non-matching links (other hosts/paths/schemes)', () async {
-      final controller = StreamController<Uri>();
-      final receiver = DeepLinkOAuthReceiver.bind(
-        links: controller.stream,
-        initialLink: null,
-      );
+      final router = OAuthDeepLinkRouter();
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
       addTearDown(receiver.close);
 
       final pending = receiver.callback;
-      controller.add(Uri.parse('fah://oauth/openrouter?code=nope'));
-      controller.add(Uri.parse('https://example.com/oauth/network?code=nope'));
-      controller.add(Uri.parse('fa://oauth/network?code=nope'));
+      router.dispatch(Uri.parse('fah://oauth/openrouter?code=nope'));
+      router.dispatch(Uri.parse('https://example.com/oauth/network?code=nope'));
+      router.dispatch(Uri.parse('fa://oauth/network?code=nope'));
       // The Android intent-filter routes pathPrefix="/network", so a
       // sibling path that merely SHARES the prefix must not match.
-      controller.add(Uri.parse('fah://oauth/networking?code=nope'));
-      controller.add(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
+      router.dispatch(Uri.parse('fah://oauth/networking?code=nope'));
+      router.dispatch(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
       final callback = await pending;
       expect(callback.queryParameters['code'], 'abc');
     });
@@ -63,15 +62,12 @@ void main() {
     test(
       'completes for sub-paths (mirrors the Android pathPrefix filter)',
       () async {
-        final controller = StreamController<Uri>();
-        final receiver = DeepLinkOAuthReceiver.bind(
-          links: controller.stream,
-          initialLink: null,
-        );
+        final router = OAuthDeepLinkRouter();
+        final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
         addTearDown(receiver.close);
 
         final pending = receiver.callback;
-        controller.add(
+        router.dispatch(
           Uri.parse('fah://oauth/network/extra/segments?code=sub'),
         );
         final callback = await pending;
@@ -79,26 +75,23 @@ void main() {
       },
     );
 
-    test(
-      'completes from the initial link when the flow raced the listener',
-      () async {
-        final controller = StreamController<Uri>();
-        final receiver = DeepLinkOAuthReceiver.bind(
-          links: controller.stream,
-          initialLink: Uri.parse('fah://oauth/network?code=early&state=s'),
-        );
-        addTearDown(receiver.close);
+    test('completes from the buffered cold-start link delivered before '
+        'registration (router replay)', () async {
+      final router = OAuthDeepLinkRouter();
+      // The OS delivered the callback before the flow registered —
+      // the router buffers it, and registration replays it.
+      router.dispatch(Uri.parse('fah://oauth/network?code=early&state=s'));
 
-        final callback = await receiver.callback;
-        expect(callback.queryParameters['code'], 'early');
-      },
-    );
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
+      addTearDown(receiver.close);
+
+      final callback = await receiver.callback;
+      expect(callback.queryParameters['code'], 'early');
+    });
 
     test('times out when no deep link arrives', () async {
-      final controller = StreamController<Uri>();
-      final receiver = DeepLinkOAuthReceiver.bind(
-        links: controller.stream,
-        initialLink: null,
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(
+        OAuthDeepLinkRouter(),
         timeout: const Duration(milliseconds: 20),
       );
       addTearDown(receiver.close);
@@ -106,23 +99,21 @@ void main() {
       expect(receiver.callback, throwsA(isA<AuthFlowException>()));
     });
 
-    test('close is idempotent and cancels the subscription', () async {
-      final controller = StreamController<Uri>();
-      final receiver = DeepLinkOAuthReceiver.bind(
-        links: controller.stream,
-        initialLink: null,
-      );
+    test('close is idempotent and stops delivering links', () async {
+      final router = OAuthDeepLinkRouter();
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
       receiver.close();
       receiver.close();
-      expect(controller.hasListener, isFalse);
+
+      // Unregistered: a later link must not complete the closed flow.
+      router.dispatch(Uri.parse('fah://oauth/network?code=late&state=s'));
+      expect(receiver.callback, doesNotComplete);
     });
 
     test('close cancels the timeout timer (no late unhandled error)', () {
       fakeAsync((async) {
-        final controller = StreamController<Uri>();
-        final receiver = DeepLinkOAuthReceiver.bind(
-          links: controller.stream,
-          initialLink: null,
+        final receiver = DeepLinkOAuthReceiver.bindWithRouter(
+          OAuthDeepLinkRouter(),
           timeout: const Duration(minutes: 3),
         );
 
@@ -136,24 +127,49 @@ void main() {
     });
   });
 
-  group('DeepLinkOAuthReceiver.bindWithInitialLink', () {
+  group('attachOAuthDeepLinksForLinks (single-subscription boot wiring)', () {
+    test('routes an openrouter callback to the coordinator', () async {
+      final captureFuture = OpenRouterOAuthCoordinator.instance.capture(
+        Uri.parse('https://openrouter.ai/auth?state=s'),
+        launchUrl: (_, {required mode}) async => true,
+        usesLocalServerCapture: () => false,
+      );
+
+      final controller = StreamController<Uri>();
+      await attachOAuthDeepLinksForLinks(
+        links: controller.stream,
+        getInitialLink: () async => null,
+        router: OAuthDeepLinkRouter(),
+      );
+      addTearDown(controller.close);
+      addTearDown(OpenRouterOAuthCoordinator.instance.reset);
+
+      controller.add(Uri.parse('fah://oauth/openrouter?code=deep&state=s'));
+      expect(await captureFuture, 'deep');
+    });
+
     test('a link delivered while getInitialLink is in flight is not dropped '
         '(warm-resume race)', () async {
       // AppLinks' stream is broadcast-style: an event with no listener
       // attached is DROPPED, and a warm resume reports no initial link
-      // at all — so the listener must attach BEFORE the initial link
-      // is awaited.
+      // at all — so the router's subscription must attach BEFORE the
+      // initial link is awaited.
+      final router = OAuthDeepLinkRouter();
       final controller = StreamController<Uri>.broadcast();
       final initialLink = Completer<Uri?>();
-      final receiverFuture = DeepLinkOAuthReceiver.bindWithInitialLink(
+      final attached = attachOAuthDeepLinksForLinks(
         links: controller.stream,
         getInitialLink: () => initialLink.future,
+        router: router,
       );
 
       controller.add(Uri.parse('fah://oauth/network?code=stream&state=s'));
       initialLink.complete(null);
+      await attached;
 
-      final receiver = await receiverFuture;
+      // The flow registers after the dust settles and still gets the link
+      // (buffered replay — the cold-start race window).
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
       addTearDown(receiver.close);
       final callback = await receiver.callback;
       expect(callback.queryParameters['code'], 'stream');
@@ -162,52 +178,62 @@ void main() {
     test(
       'dedupes a link arriving on both the stream and the initial link',
       () async {
+        final router = OAuthDeepLinkRouter();
         final controller = StreamController<Uri>();
         final uri = Uri.parse('fah://oauth/network?code=both&state=s');
-        final receiverFuture = DeepLinkOAuthReceiver.bindWithInitialLink(
+        await attachOAuthDeepLinksForLinks(
           links: controller.stream,
           getInitialLink: () async => uri,
+          router: router,
         );
+        addTearDown(controller.close);
         controller.add(uri);
 
-        final receiver = await receiverFuture;
+        final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
         addTearDown(receiver.close);
         final callback = await receiver.callback;
         expect(callback.queryParameters['code'], 'both');
       },
     );
 
-    test('ignores a non-matching initial link and keeps listening', () async {
-      final controller = StreamController<Uri>();
-      final receiverFuture = DeepLinkOAuthReceiver.bindWithInitialLink(
-        links: controller.stream,
-        getInitialLink: () async =>
-            Uri.parse('fah://oauth/openrouter?code=nope'),
-      );
-      final receiver = await receiverFuture;
-      addTearDown(receiver.close);
-
-      final pending = receiver.callback;
-      controller.add(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
-      final callback = await pending;
-      expect(callback.queryParameters['code'], 'abc');
-    });
-
     test('a failing getInitialLink does not break the stream path', () async {
+      final router = OAuthDeepLinkRouter();
       final controller = StreamController<Uri>();
-      final receiverFuture = DeepLinkOAuthReceiver.bindWithInitialLink(
+      await attachOAuthDeepLinksForLinks(
         links: controller.stream,
         getInitialLink: () async {
           throw StateError('no initial link');
         },
+        router: router,
       );
-      final receiver = await receiverFuture;
-      addTearDown(receiver.close);
+      addTearDown(controller.close);
 
+      final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
+      addTearDown(receiver.close);
       final pending = receiver.callback;
       controller.add(Uri.parse('fah://oauth/network?code=abc&state=xyz'));
       final callback = await pending;
       expect(callback.queryParameters['code'], 'abc');
     });
+  });
+
+  group('exactly one AppLinks construction (issue #2395 guard)', () {
+    test(
+      'AppLinks() is constructed only in the boot attachment file',
+      () async {
+        // Word-boundary match: `resolveAppLinks(` must not count — the
+        // guard pins the app_links PLUGIN construction sites only.
+        final pattern = RegExp(r'\bAppLinks\(');
+        final sites = <String>[];
+        final lib = Directory('lib');
+        await for (final entity in lib.list(recursive: true)) {
+          if (entity is! File || !entity.path.endsWith('.dart')) continue;
+          if (pattern.hasMatch(entity.readAsStringSync())) {
+            sites.add(entity.path);
+          }
+        }
+        expect(sites, ['lib/services/openrouter_oauth_links_io.dart']);
+      },
+    );
   });
 }

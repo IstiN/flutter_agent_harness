@@ -2,8 +2,10 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/network/auth_deep_link.dart';
 import 'package:fa/network/auth_flow.dart';
 import 'package:fa/network/auth_loopback_io.dart';
+import 'package:fa/services/openrouter_oauth_links_io.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -134,4 +136,50 @@ void main() {
       });
     },
   );
+
+  group('Android deep-link receiver routes through the shared router', () {
+    test(
+      'binds a DeepLinkOAuthReceiver on the shared router (legacy entry pin)',
+      () async {
+        final receiver = await startOAuthCallbackReceiverForPlatform(
+          isIOS: false,
+          isAndroid: true,
+        );
+        addTearDown(receiver.close);
+
+        expect(receiver, isA<DeepLinkOAuthReceiver>());
+        expect(receiver.redirectUri.toString(), 'fah://oauth/network');
+
+        // The shared router (armed at boot by attachOAuthDeepLinks)
+        // delivers the flow's callback — no flow-private AppLinks
+        // subscription anymore.
+        oauthDeepLinkRouter.dispatch(
+          Uri.parse('fah://oauth/network?code=router&state=st-9'),
+        );
+        final callback = await receiver.callback;
+        expect(callback.queryParameters['code'], 'router');
+      },
+    );
+
+    test(
+      'a cold-start callback buffered before registration replays',
+      () async {
+        // The OS delivered the callback before the flow started (cold
+        // start): the boot router buffered it, and binding the receiver
+        // replays it.
+        oauthDeepLinkRouter.dispatch(
+          Uri.parse('fah://oauth/network?code=cold&state=st-10'),
+        );
+
+        final receiver = await startOAuthCallbackReceiverForPlatform(
+          isIOS: false,
+          isAndroid: true,
+        );
+        addTearDown(receiver.close);
+
+        final callback = await receiver.callback;
+        expect(callback.queryParameters['code'], 'cold');
+      },
+    );
+  });
 }
