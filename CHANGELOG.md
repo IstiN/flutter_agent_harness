@@ -29,6 +29,12 @@ block a release again.
   instead of an uncaught `ProcessException: Too many open files`); the
   session listing's header reads are an explicit open/read/close.
 
+- fix(messaging): gh-2415 — the scheduled-message receipt writer backs off
+  under fd pressure: a failed write keeps the receipt in memory, retries
+  with exponential backoff (2 s → 5 min cap), warns once per pressure
+  window (`[sched] receipt write deferred: fd pressure …`), flushes on
+  recovery — a lost receipt is impossible.
+
 - fix(2363): the resume replay no longer re-prints the obligations-ledger
   tail block — the level-0 `<system-notice>` is model context (#1380
   invariant untouched), not transcript chrome; `buildReplayEntries` skips

@@ -334,7 +334,15 @@
   an uncaught `ProcessException`; an EMFILE raised by the exec surfaces as
   the same error. `LocalExecutionEnv.readTextLines(maxLines:)` (the session
   listing's header reads) is an explicit open/read/close so a descriptor
-  never outlives the call. gh-1835: a foreground bash call still
+  never outlives the call. The scheduler's receipt writer
+  (`ScheduledReceiptLog`) keeps a failed receipt PENDING in memory, retries
+  with exponential backoff (2 s doubling to a 5 min cap) on a timer that
+  survives a quiet queue, warns once per pressure window
+  (`[sched] receipt write deferred: fd pressure — …; N receipt(s) kept in
+  memory`), flushes everything pending in one append on recovery (one
+  `[sched] receipt write recovered` line) — a lost receipt is impossible;
+  pending receipts already count as delivered for the ledger pass.
+  gh-1835: a foreground bash call still
   running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
   switch) is auto-backgrounded — CONVERTED, never restarted (it already
   runs as a registry job under the soft-yield path): the pending tool call
