@@ -277,7 +277,7 @@ final class NetworkPresenceController
         run: () => refreshSessionCatalog(),
         timerFactory: catalogPollTimerFactory,
         onError: (error, stackTrace) =>
-            onLog?.call('session catalog poll failed'),
+            onLog?.call('session catalog poll failed: $error'),
       )).start(catalogPollInterval);
     }
   }

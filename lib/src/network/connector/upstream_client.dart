@@ -249,6 +249,9 @@ final class ConnectorUpstreamClient {
   Future<void> start() async {
     if (_running) return;
     _running = true;
+    // A fresh start is a new link history: stop/start must not inherit the
+    // old ladder position.
+    _attempt = 0;
     _dial();
   }
 

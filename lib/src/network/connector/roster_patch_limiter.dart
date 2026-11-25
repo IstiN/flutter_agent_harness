@@ -72,6 +72,21 @@ Duration rosterThrottleBackoff(int streak, double jitterFraction) {
   );
 }
 
+/// The cooldown after the [streak]-th consecutive throttled PATCH: the
+/// jittered ladder step, or the server's `Retry-After` when it asked for
+/// LONGER. A throttle hint is a floor, never a shortcut (the rule of
+/// `upstreamRetryDelay`): a zero or sub-ladder hint must not keep the
+/// device patching at the full budget cadence under a continuous 429.
+Duration rosterThrottleDelay(
+  int streak,
+  double jitterFraction, {
+  Duration? retryAfter,
+}) {
+  final ladder = rosterThrottleBackoff(streak, jitterFraction);
+  if (retryAfter == null || retryAfter <= ladder) return ladder;
+  return retryAfter;
+}
+
 /// One serialized roster writer: pending agents/sessions by key, the
 /// debounce timer, the budget/cooldown bookkeeping and the retry timer.
 final class RosterPatchLimiter {
@@ -247,8 +262,11 @@ final class RosterPatchLimiter {
       return false;
     }
     _throttleStreak++;
-    final delay =
-        error.retryAfter ?? rosterThrottleBackoff(_throttleStreak, _jitter());
+    final delay = rosterThrottleDelay(
+      _throttleStreak,
+      _jitter(),
+      retryAfter: error.retryAfter,
+    );
     _notBefore = _clock.now().add(delay);
     onLog?.call(
       'device roster patch throttled (429); retrying in ${delay.inSeconds} s',

@@ -401,7 +401,10 @@ class DeviceConnectorService {
   /// earlier surface claimed (the wide shell at boot; it is then the
   /// owner with the full wiring), else the one [create] builds, which is
   /// registered here. Callers [release] what they claimed; a claimed
-  /// connector is never constructed twice.
+  /// connector is never constructed twice. The wide shell is the
+  /// CANONICAL first claimer (it boots before any surface): a surface that
+  /// claimed earlier would silently become the owner with only its own
+  /// wiring — keep the shell first when adding new surfaces.
   static DeviceConnectorService claimShared(
     NetworkSessionManager sessionManager,
     DeviceConnectorService Function() create,

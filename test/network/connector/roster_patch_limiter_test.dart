@@ -273,6 +273,52 @@ void main() {
     expect(h.patches, hasLength(4), reason: 'nothing left to resend');
   });
 
+  test('a zero Retry-After is a floor, never a shortcut: the streak ladder '
+      'still decays under a continuous 429', () async {
+    final h = Harness(
+      respond: (_) => throttled(retryAfter: '0'),
+      jitter: () => 0, // equal jitter at 50 % → base/2
+    );
+    addTearDown(h.limiter.close);
+    h.limiter.enqueue(agents: [agent('alpha', 'live')]);
+    await h.timers.elapse(rosterPatchDebounce);
+    expect(h.patches, hasLength(1));
+
+    // Refusal 1 → streak 1 → 5 s halved = 2.5 s cooldown, not the 0 s hint.
+    await h.timers.elapse(const Duration(milliseconds: 2499));
+    expect(h.patches, hasLength(1));
+    await h.timers.elapse(const Duration(milliseconds: 1));
+    expect(h.patches, hasLength(2));
+
+    // Refusal 2 → streak 2 → 10 s halved = 5 s: the cadence decays.
+    await h.timers.elapse(const Duration(milliseconds: 4999));
+    expect(h.patches, hasLength(2));
+    await h.timers.elapse(const Duration(milliseconds: 1));
+    expect(h.patches, hasLength(3));
+    expect(h.gapBetween(1, 2), const Duration(seconds: 5));
+  });
+
+  group('rosterThrottleDelay', () {
+    test('a hint shorter than the ladder step never shortens the cooldown', () {
+      expect(
+        rosterThrottleDelay(1, 0, retryAfter: Duration.zero),
+        const Duration(milliseconds: 2500),
+      );
+      expect(
+        rosterThrottleDelay(2, 0, retryAfter: const Duration(seconds: 3)),
+        const Duration(seconds: 5),
+      );
+    });
+
+    test('a longer hint is honoured, no hint is the pure ladder', () {
+      expect(
+        rosterThrottleDelay(1, 0, retryAfter: const Duration(seconds: 7)),
+        const Duration(seconds: 7),
+      );
+      expect(rosterThrottleDelay(3, 0), const Duration(seconds: 10));
+    });
+  });
+
   test('429 with Retry-After is honoured verbatim', () async {
     var refused = true;
     final h = Harness(
