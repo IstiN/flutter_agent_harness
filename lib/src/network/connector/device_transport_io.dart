@@ -22,7 +22,11 @@
 /// server client-socket semantics: writes after close throw, close is
 /// idempotent, and the frames stream completes when the peer goes away —
 /// the upstream client treats any of that as "link gone" and reconnects.
-/// Malformed inbound text (one corrupt frame) is skipped with a
+/// The peer's close status crosses through [ConnectorCloseInfo]
+/// (`WebSocket.closeCode`, assigned by `dart:io` when the close frame
+/// arrives — before the frames stream completes): a 4001 duplicate-dial
+/// close makes the upstream client back off instead of fighting for the
+/// device. Malformed inbound text (one corrupt frame) is skipped with a
 /// diagnostic instead of tearing the link down; JSON frames resync
 /// trivially per WS text message.
 ///
@@ -62,8 +66,9 @@ abstract interface class ConnectorTextDuplex {
   Future<void> shutdown();
 }
 
-/// The dart:io WebSocket duplex.
-final class WebSocketDuplex implements ConnectorTextDuplex {
+/// The dart:io WebSocket duplex; also the [ConnectorCloseInfo] of the
+/// underlying [WebSocket].
+final class WebSocketDuplex implements ConnectorTextDuplex, ConnectorCloseInfo {
   /// Wraps [socket].
   WebSocketDuplex(this.socket);
 
@@ -78,6 +83,11 @@ final class WebSocketDuplex implements ConnectorTextDuplex {
 
   @override
   Future<void> shutdown() => socket.close();
+
+  /// `dart:io`'s close status: set once the peer's close frame arrived,
+  /// null before that or when none did (abnormal drop).
+  @override
+  int? get closeCode => socket.closeCode;
 }
 
 /// The [ConnectorSocket] adapter over a [ConnectorTextDuplex]: decodes
@@ -85,7 +95,8 @@ final class WebSocketDuplex implements ConnectorTextDuplex {
 /// into JSON text, and owns the closed/open state machine the upstream
 /// client relies on (`isOpen`, throw-on-send-after-close, idempotent
 /// close, frames stream completing on either side going away).
-final class ConnectorSocketAdapter implements ConnectorSocket {
+final class ConnectorSocketAdapter
+    implements ConnectorSocket, ConnectorCloseInfo {
   /// Binds the adapter to [duplex]. [onLog] is the soft diagnostics sink
   /// (null = drop); it carries skipped-frame reports, never tokens.
   ConnectorSocketAdapter({required ConnectorTextDuplex duplex, this.onLog})
@@ -113,6 +124,13 @@ final class ConnectorSocketAdapter implements ConnectorSocket {
   /// True until [close] or the peer's side ended the socket.
   @override
   bool get isOpen => !_closed;
+
+  /// The peer's close status when the duplex can see one
+  /// ([WebSocketDuplex] → `WebSocket.closeCode`), null otherwise — read
+  /// by the upstream client after the frames stream completed, i.e. after
+  /// the close frame was processed.
+  @override
+  int? get closeCode => peerCloseCodeOf(_duplex);
 
   @override
   Future<void> send(NetworkEnvelope envelope) async {

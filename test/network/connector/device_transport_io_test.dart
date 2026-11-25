@@ -5,10 +5,11 @@
 /// Unit tests for the IO device transport (issue #2062 chunk 13):
 /// enrollment + ticket through an in-memory `http.testing` MockClient and
 /// the socket-adapter state machine over a fake duplex — no real sockets
-/// except ONE loopback refusal check (a 429 on the `/ws` upgrade maps to
-/// the typed throttle exception; the successful loopback WS handshake
-/// lives in `test/integration/device_transport_ws_test.dart`, tagged
-/// integration).
+/// except the loopback refusal check (a 429 on the `/ws` upgrade maps to
+/// the typed throttle exception) and the loopback 4001 close (the peer's
+/// close code reaches the socket through `ConnectorCloseInfo`); the
+/// successful loopback WS handshake lives in
+/// `test/integration/device_transport_ws_test.dart`, tagged integration).
 library;
 
 import 'dart:async';
@@ -59,6 +60,15 @@ final class FakeDuplex implements ConnectorTextDuplex {
 
   /// The peer closes its side (clean).
   Future<void> end() => _inbound.close();
+}
+
+/// A duplex that knows the peer's close status — what [WebSocketDuplex]
+/// reads off `WebSocket.closeCode`.
+final class _CloseInfoDuplex extends FakeDuplex implements ConnectorCloseInfo {
+  _CloseInfoDuplex(this.closeCode);
+
+  @override
+  final int? closeCode;
 }
 
 void main() {
@@ -430,6 +440,47 @@ void main() {
     });
   });
 
+  group('IoConnectorTransport.dial (peer close status)', () {
+    test('a server close with 4001 "duplicate device connection" reaches the '
+        'socket as ConnectorCloseInfo.closeCode once the frames stream '
+        'completes — read after the close frame, null before it', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serverClosed = Completer<void>();
+      unawaited(() async {
+        final request = await server.first;
+        final peer = await WebSocketTransformer.upgrade(request);
+        // fa_network a0d92b6: the established socket keeps the device,
+        // the duplicate dial is closed with 4001.
+        await peer.close(duplicateDialCloseCode, 'duplicate device connection');
+        serverClosed.complete();
+      }());
+      addTearDown(() => server.close(force: true));
+
+      final socket = await const IoConnectorTransport().dial(
+        Uri.parse('ws://127.0.0.1:${server.port}/ws?ticket=t-dup'),
+        't-dup',
+      );
+      expect(socket, isA<ConnectorCloseInfo>());
+      final closeInfo = socket as ConnectorCloseInfo;
+      expect(closeInfo.closeCode, isNull, reason: 'no close frame yet');
+
+      // Exactly what the upstream client does in its frames.onDone.
+      final seenAtDone = Completer<int?>();
+      socket.frames.listen(
+        (_) {},
+        onDone: () => seenAtDone.complete(closeInfo.closeCode),
+      );
+      expect(
+        await seenAtDone.future.timeout(const Duration(seconds: 10)),
+        duplicateDialCloseCode,
+        reason: 'dart:io assigns closeCode before it closes its stream',
+      );
+      await serverClosed.future.timeout(const Duration(seconds: 10));
+      expect(socket.isOpen, isFalse);
+      await socket.close();
+    });
+  });
+
   group('ConnectorSocketAdapter', () {
     test(
       'decodes inbound JSON into envelopes and skips malformed text',
@@ -521,6 +572,17 @@ void main() {
 
       expect(socket.isOpen, isFalse);
       await expectLater(socket.send(_hello()), throwsStateError);
+    });
+
+    test("closeCode forwards the duplex's ConnectorCloseInfo — null over a "
+        'plain duplex', () async {
+      final plain = ConnectorSocketAdapter(duplex: FakeDuplex());
+      expect(plain.closeCode, isNull);
+      await plain.close();
+
+      final seen = ConnectorSocketAdapter(duplex: _CloseInfoDuplex(1005));
+      expect(seen.closeCode, 1005);
+      await seen.close();
     });
   });
 }

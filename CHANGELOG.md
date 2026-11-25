@@ -24,7 +24,11 @@ block a release again.
   reconnect backoff resets only after 30 s of stable uptime (two-client
   eviction simulation: 80 → ~3 dials/min per client); roster PATCHes go through
   one shared `RosterPatchLimiter` (≥ 2 s apart, `Retry-After` or jittered
-  backoff on 429, pending rows merged, never dropped).
+  backoff on 429, pending rows merged, never dropped). fa_network (a0d92b6)
+  now keeps the established device socket and closes a duplicate dial with
+  WS close code 4001; the client reads the code through the pure-Dart
+  `ConnectorCloseInfo` seam and waits ≥ 5 s (`max(ladder, 5 s)`) before
+  redialing instead of fighting for the device.
 - fix(app): one device connector per app process
   (`DeviceConnectorService.claimShared`) — a pushed NetworkHome can no longer
   dial a second upstream under the device identity; the DM peer run status
