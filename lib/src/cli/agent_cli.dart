@@ -1057,6 +1057,10 @@ class AgentCli {
     _toolGroupsById = AgentCliTools(this).toolGroups();
     _toolGate = ToolAvailabilityGate(toolsById: _toolGroupsById);
     _agent.toolExecutor = _toolGate.wrapExecutor(_agent.toolExecutor);
+    // GOAL #28 (review round 2): a direct call to a deferred tool routes
+    // to the deferred-mount path — mount live, call proceeds natively.
+    _agent.missingToolResolver = (name) =>
+        AgentCliTools(this).resolveDeferredToolForCall(name);
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     _agent.subscribe(_onAgentEvent);
     // MCP: late tool (re)registration and prompt updates flow through the

@@ -418,6 +418,23 @@ extension AgentCliTools on AgentCli {
     return results.join('\n');
   }
 
+  /// GOAL #28 (issue #2416 review round 2): the deferred-mount path for a
+  /// DIRECT model call to a tool the partition keeps out of the manifest.
+  /// Mounts the tool live and returns it so the call proceeds natively
+  /// (real name, real approval tier, real executor — I2); null keeps the
+  /// plain not-found semantics for disabled, capability-absent, and
+  /// unknown names (I3: `off` beats everything).
+  Future<AgentTool?> resolveDeferredToolForCall(String name) async {
+    final resolution = _toolGate.resolution;
+    if (resolution == null) return null;
+    if (_toolGate.discoverableToolNames.isEmpty) return null;
+    if (!_toolGate.discoverableToolNames.contains(name)) return null;
+    final id = _toolGate.availabilityIdOf(name) ?? toolAvailabilityIdOf(name);
+    if (id != null && !_enabledId(resolution, id)) return null;
+    _mountDeferred([name]);
+    return _toolGate.originalTool(name);
+  }
+
   /// The I4 doc bytes of [tool]: its `description` plus the compact
   /// `jsonEncode(parameters)` — the same bytes the providers serialize
   /// and the ledger's manifest entry captures.

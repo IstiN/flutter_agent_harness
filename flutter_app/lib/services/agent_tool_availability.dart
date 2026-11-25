@@ -176,6 +176,31 @@ class AgentToolAvailability {
         : const {},
   );
 
+  /// GOAL #28 (issue #2416 review round 2): the deferred-mount path for a
+  /// DIRECT model call to a tool the partition keeps out of the manifest.
+  /// Mounts live and returns the tool so the call proceeds natively; null
+  /// (no registry, no resolution, disabled, unknown) keeps not-found.
+  Future<AgentTool?> resolveDeferredToolForCall(String name) async {
+    final registry = this.registry;
+    final resolution = _gate.resolution;
+    if (registry == null || resolution == null) return null;
+    if (_gate.discoverableToolNames.isEmpty) return null;
+    if (!_gate.discoverableToolNames.contains(name)) return null;
+    final mounted = _gate.mount(
+      [name],
+      registry,
+      _agent,
+      rebuildPrompt: rebuildPrompt,
+    );
+    final tool = _gate.originalTool(name);
+    if (mounted.isNotEmpty && tool != null) {
+      // The mount landed after apply's state sync — reflect it.
+      _agent.state.tools = registry.tools;
+      rebuildPrompt();
+    }
+    return tool;
+  }
+
   /// Re-applies the availability resolution to the live registry and
   /// recomposes the prompt. No-op without a registry.
   void _apply() {
