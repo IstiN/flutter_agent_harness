@@ -1,4 +1,5 @@
 import '../context.dart';
+import '../session/obligations_ledger.dart' show isObligationsLedgerNotice;
 import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
@@ -136,6 +137,7 @@ List<String> _replayUserTui(
     // byte-identical to [tuiMessageDividerBlock] in the live host.
     return ['', dim(tuiMessageDividerLayout(markerLine, width)), ''];
   }
+  if (isObligationsLedgerNotice(text)) return const [];
   if (needsSystemNoticeRewrite(text)) return renderSystemNoticeLines(text);
   // Chrome mode (issue #807): the SAME builder the live submit echo uses —
   // resume replay produces identical chrome (issue #807 AC4.5). Legacy
@@ -292,13 +294,16 @@ List<String> replayLines(
 }
 
 /// The user-message fast paths: summary markers and system-notice
-/// rewrites render verbatim, bypassing the prefix projection. Null =
-/// fall through to the regular prefix/body rendering.
+/// rewrites render verbatim, bypassing the prefix projection. The
+/// obligations-ledger tail skips the replay entirely (issue #2363 —
+/// engine chrome re-printed on every session open). Null = fall through
+/// to the regular prefix/body rendering.
 List<String>? _replayUserPrelude(Message message) {
   if (message case UserMessage(:final content)) {
     final text = _blocksText(content);
     final summaryLine = _summaryMarkerLine(text);
     if (summaryLine != null) return [summaryLine];
+    if (isObligationsLedgerNotice(text)) return const [];
     if (needsSystemNoticeRewrite(text)) return renderSystemNoticeLines(text);
   }
   return null;

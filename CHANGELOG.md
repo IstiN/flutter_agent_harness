@@ -13,6 +13,12 @@ block a release again.
 
 ## Unreleased
 
+- fix(2363): the resume replay no longer re-prints the obligations-ledger
+  tail block — the level-0 `<system-notice>` is model context (#1380
+  invariant untouched), not transcript chrome; `buildReplayEntries` skips
+  it in TUI and line mode via `isObligationsLedgerNotice` (one heading
+  constant shared with the renderer).
+
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

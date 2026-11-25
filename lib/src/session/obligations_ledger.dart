@@ -358,6 +358,22 @@ List<ObligationEntry> _closedTrailWithinBudget(
   return keptNewestFirst.reversed.toList();
 }
 
+/// The first line of the rendered obligations block (issue #1380 A1) —
+/// the notice's identity, shared by the renderer and [isObligationsLedgerNotice]
+/// so the spelling has ONE source of truth.
+const String obligationsLedgerNoticeHeading =
+    'obligations ledger (engine-maintained; verbatim quotes with their '
+    'source record — still owed unless marked done/superseded):';
+
+/// Whether [text] IS the engine-rendered obligations-ledger notice (the
+/// level-0 `<system-notice>` tail block the projection injects).
+/// Detection only: the resume replay skips it (issue #2363 — engine
+/// chrome is not transcript content and re-printing it on every session
+/// open is pure noise), while the model-visible context keeps it
+/// untouched (the #1380 level-0 invariant).
+bool isObligationsLedgerNotice(String text) =>
+    text.contains(obligationsLedgerNoticeHeading);
+
 /// The block the projection appends at level 0 (issue #1380 A1): every
 /// open obligation is visible — or explicitly counted — after any
 /// hide/compact/flatten depth.
@@ -374,9 +390,7 @@ String renderObligationsBlock(
   int maxChars = obligationsBlockBudgetChars,
 }) {
   if (ledger.isEmpty) return '';
-  const heading =
-      'obligations ledger (engine-maintained; verbatim quotes with their '
-      'source record — still owed unless marked done/superseded):';
+  const heading = obligationsLedgerNoticeHeading;
   final open = ledger.open;
   final stale = ledger.stale;
   final closed = ledger.closed;
