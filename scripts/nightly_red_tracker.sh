@@ -51,9 +51,14 @@ if [ -z "$number" ]; then
   exit 0
 fi
 
-# Same jobs-API shape the filer step uses (`conclusion == "failure"`).
+# Same jobs-API shape the filer step uses, widened per the
+# watchdog_trip_check.sh predicate precedent (#2362 review): a leg that
+# timed out (budget breach) or was cancelled (infrastructure cut) is a
+# red night exactly like a plain failure — the close must never stand on
+# one (the pre-fix filter read those nights as green = the #2362 bug in
+# a narrower shape).
 failing=$(gh api "repos/$repo/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
-  --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
+  --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | .name] | join(", ")')
 
 if [ -z "$failing" ]; then
   note "close stands #$number — every run leg green, no reopen"

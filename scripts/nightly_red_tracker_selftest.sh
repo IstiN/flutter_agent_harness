@@ -25,7 +25,11 @@
 #       propagation lag) re-opens a second time instead of giving up or
 #       looping forever;
 #   AC5 an empty close-number (dispatch drill, or the close leg closed
-#       nothing) is a silent why-not — no gh calls at all.
+#       nothing) is a silent why-not — no gh calls at all;
+#   AC6 a timed_out leg (budget breach) is a red night — close must not
+#       stand, reopen names the leg (#2362 review finding);
+#   AC7 a cancelled leg (infrastructure cut, the watchdog_trip_check.sh
+#       kill shape) is a red night — same contract as AC6.
 # Same discipline as flake_watch_selftest.sh (gh-1364, #1100 pattern).
 # Wired into ci.yml Static gates.
 set -u
@@ -146,6 +150,21 @@ GREEN_RUN='[
  {"name": "Memory churn report (issue", "conclusion": "success"},
  {"name": "File nightly-red issue", "conclusion": "success"}
 ]'
+# Red subclasses beyond plain failure: a timed-out leg (budget breach) and
+# a cancelled leg (infrastructure cut — the watchdog_trip_check.sh kill
+# shapes). Both are red nights; the close must never stand on them.
+RED_TIMEOUT_RUN='[
+ {"name": "PTY/CLI integration (nightly-only suites)", "conclusion": "timed_out"},
+ {"name": "Build macos (release)", "conclusion": "success"},
+ {"name": "Memory churn report (issue", "conclusion": "success"},
+ {"name": "File nightly-red issue", "conclusion": null}
+]'
+RED_CANCELLED_RUN='[
+ {"name": "Build ios (release)", "conclusion": "cancelled"},
+ {"name": "Build macos (release)", "conclusion": "success"},
+ {"name": "Memory churn report (issue", "conclusion": "success"},
+ {"name": "File nightly-red issue", "conclusion": null}
+]'
 
 fails=0
 
@@ -239,6 +258,26 @@ reset "$RED_RUN" 0
 heal ""
 check "AC5 empty number exits 0" "$?" "0"
 check "AC5 no gh calls at all" "$(all_calls)" "0"
+
+# AC6 — a timed_out leg is a red night (budget breach): the close must not
+# stand and the reopen must name the leg.
+reset "$RED_TIMEOUT_RUN" 0
+heal 1953
+check "AC6 timed_out night exits 0" "$?" "0"
+check "AC6 timed_out night reopens the tracker" "$(issue_field state)" "OPEN"
+check "AC6 timed_out night fires exactly one reopen" "$(call_count reopen)" "1"
+check "AC6 reopen comment names the timed-out leg" \
+  "$(issue_field comments | grep -c 'PTY/CLI integration')" "1"
+
+# AC7 — a cancelled leg is a red night (infrastructure cut, the
+# watchdog_trip_check.sh kill shape): same contract as AC6.
+reset "$RED_CANCELLED_RUN" 0
+heal 1953
+check "AC7 cancelled night exits 0" "$?" "0"
+check "AC7 cancelled night reopens the tracker" "$(issue_field state)" "OPEN"
+check "AC7 cancelled night fires exactly one reopen" "$(call_count reopen)" "1"
+check "AC7 reopen comment names the cancelled leg" \
+  "$(issue_field comments | grep -c 'Build ios')" "1"
 
 if [ "$fails" -gt 0 ]; then
   echo "nightly_red_tracker_selftest: FAILED"
