@@ -73,7 +73,11 @@ final class _CompactionAwareStream {
         },
     ].join('\n');
     final String reply;
-    if (prompt.contains('context-hygiene judge')) {
+    if (isHandOverCall(context)) {
+      // GOAL #2394: the merged hand-over call (the default without a smol
+      // role) answers with a valid transfer and no hides.
+      reply = handOverReplyFor(context, text: _checkpointReply);
+    } else if (prompt.contains('context-hygiene judge')) {
       reply = '[]';
     } else if (prompt.contains('Write a checkpoint')) {
       reply = _checkpointReply;
@@ -199,7 +203,9 @@ void main() {
   /// filtered out by their own system prompts).
   Iterable<Context> turnRequests(_CompactionAwareStream stream) =>
       stream.contexts.where(
-        (context) => (context.systemPrompt ?? '').startsWith('You are Fa'),
+        (context) =>
+            (context.systemPrompt ?? '').startsWith('You are Fa') &&
+            !isHandOverCall(context),
       );
 
   test(

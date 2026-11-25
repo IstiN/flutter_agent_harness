@@ -77,6 +77,7 @@ final class AnthropicOptions {
     this.interleavedThinking,
     this.cacheRetention,
     this.toolChoice,
+    this.prefixLength,
     this.onPayload,
     this.onResponse,
   });
@@ -137,6 +138,15 @@ final class AnthropicOptions {
   /// Anthropic tool choice: `'auto'`, `'any'`, `'none'`, or a
   /// `{type: 'tool', name: ...}` map forcing a specific tool.
   final Object? toolChoice;
+
+  /// GOAL #2394: the number of leading messages that form the cached
+  /// HISTORY prefix (the main request the provider already warmed). When
+  /// the request carries more messages than that (the appended hand-over
+  /// instruction), the history breakpoint lands on the prefix's last
+  /// message — only when it is a user message, like every history
+  /// breakpoint here (an assistant-ended prefix gets none: negative E24).
+  /// Null keeps the adapter's single last-user-message breakpoint.
+  final int? prefixLength;
 
   /// Hook invoked with the fully built request payload right before sending;
   /// return a replacement map to override it, or `null` to send it as-is.
@@ -713,6 +723,10 @@ Map<String, dynamic> _buildParams(
   _ResolvedCompat compat,
 ) {
   final cacheControl = _getCacheControl(options, compat);
+  // GOAL #2394: the history breakpoint position of a request that extends
+  // a cached prefix (S0) — the param index of the prefix's last message.
+  final prefixLength = options?.prefixLength;
+  var historyParamIndex = -1;
   // Thinking is requested when the options enable it (pi's StreamOptions
   // then default the level to 'minimal') or when options are silent and the
   // model carries a config-declared level (roles entry / env preconfig →
@@ -739,6 +753,8 @@ Map<String, dynamic> _buildParams(
       downgradeUnsupportedImages(context.messages, model),
       cacheControl: cacheControl,
       allowEmptySignature: compat.allowEmptySignature,
+      historyPrefixLength: prefixLength,
+      onHistoryParam: (index) => historyParamIndex = index,
     ),
     'max_tokens': adjusted.maxTokens,
     'stream': true,
@@ -755,6 +771,16 @@ Map<String, dynamic> _buildParams(
     thinkingOn: thinkingOn,
   );
   _addToolChoiceParam(params, options);
+  // GOAL #2394: the breakpoint on the history prefix (S0's last message)
+  // sits BEFORE the instruction's own last-user-message breakpoint; the
+  // request then carries system + tools + history + instruction = 4.
+  if (cacheControl != null && historyParamIndex >= 0) {
+    _applyCacheControlToLastUserMessage(
+      (params['messages'] as List<dynamic>)[historyParamIndex]
+          as Map<String, dynamic>,
+      cacheControl,
+    );
+  }
 
   return params;
 }
@@ -911,16 +937,33 @@ List<Map<String, dynamic>> _convertMessages(
   List<Message> messages, {
   Map<String, dynamic>? cacheControl,
   required bool allowEmptySignature,
+  int? historyPrefixLength,
+  void Function(int paramIndex)? onHistoryParam,
 }) {
   final params = <Map<String, dynamic>>[];
+  // The param message each transcript message lands in (consecutive tool
+  // results merge into one user message — every member maps to it).
+  final paramIndexOf = List<int>.filled(messages.length, -1);
 
   for (var i = 0; i < messages.length; i++) {
-    i = _convertMessageAt(
+    final paramIndex = params.length;
+    final last = _convertMessageAt(
       messages,
       i,
       params,
       allowEmptySignature: allowEmptySignature,
     );
+    for (var j = i; j <= last && j < messages.length; j++) {
+      paramIndexOf[j] = paramIndex;
+    }
+    i = last;
+  }
+
+  // GOAL #2394: report where the history prefix's last message landed —
+  // only when the request extends beyond the prefix.
+  final prefix = historyPrefixLength;
+  if (prefix != null && prefix > 0 && prefix < messages.length) {
+    onHistoryParam?.call(paramIndexOf[prefix - 1]);
   }
 
   // Add cache_control to the last user message to cache conversation history.

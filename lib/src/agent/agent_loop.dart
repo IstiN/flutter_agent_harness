@@ -38,6 +38,10 @@ import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
+import '../compaction/request_snapshot.dart'
+    show RequestRouting, RequestSnapshot, RequestSnapshotStore;
+import '../compaction/structured/projection.dart' show RecordSeqIndex;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -48,6 +52,7 @@ import 'image_recovery.dart'
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
 // recognize a supervisor-driven yield; re-exported for the loop's
 // consumers.
+export 'stream_cache_routing.dart';
 export 'stuck_tool.dart'
     show
         StuckCallFollowUp,
@@ -79,6 +84,7 @@ import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
 import 'foreground_call_budget.dart';
 import 'tool_pairing.dart';
+import 'stream_cache_routing.dart';
 
 part 'agent_loop_stuck_supervision.dart';
 part 'agent_loop_foreground_budget.dart';
@@ -130,51 +136,6 @@ typedef StreamFunction =
       Context context, {
       CancelToken? cancelToken,
     });
-
-/// Per-call prompt-cache routing overrides, consulted by the provider
-/// stream functions built with `providerStreamFunction`.
-///
-/// The [StreamFunction] contract has no options slot, so per-call routing
-/// (pi's `sessionId`/`cacheRetention` stream options) travels in a zone:
-/// [runWith] installs values for every provider call started inside its
-/// body — including async work such as fallback-chain attempts, which run
-/// in the zone they were created in. Adapters read [current] when a call
-/// starts; a `null` field keeps the call's own defaults.
-///
-/// Since gh-2101 the values come from the run's `CompactionCachePolicy`
-/// (lib/src/compaction/cache_policy.dart): one run-scoped routing id with
-/// `short` retention, never the session's id; cache-less providers ignore it.
-final class StreamCacheRouting {
-  StreamCacheRouting._();
-
-  static final Object _zoneKey = Object();
-
-  /// The routing values active in the current zone, or `null` when no
-  /// override is in effect (calls then use their built-in defaults).
-  static ({String? sessionId, String? cacheRetention})? get current {
-    final value = Zone.current[_zoneKey];
-    return value is ({String? sessionId, String? cacheRetention})
-        ? value
-        : null;
-  }
-
-  /// Runs [body] with [sessionId]/[cacheRetention] overriding the cache
-  /// routing of provider calls started inside it. An override is explicit:
-  /// code that binds default routing values (the model-roles resolver)
-  /// yields to an active override instead of replacing it.
-  static T runWith<T>(
-    T Function() body, {
-    String? sessionId,
-    String? cacheRetention,
-  }) {
-    return runZoned(
-      body,
-      zoneValues: {
-        _zoneKey: (sessionId: sessionId, cacheRetention: cacheRetention),
-      },
-    );
-  }
-}
 
 /// How tool calls from a single assistant message are executed.
 ///
@@ -456,6 +417,8 @@ final class AgentLoopConfig {
     this.onTruncatedToolCall,
     this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
+    this.recordSeqs,
+    this.requestSnapshots,
   });
 
   /// The model to call each turn.
@@ -529,6 +492,15 @@ final class AgentLoopConfig {
   /// (issue #1923 AC4) — the pinned queued/delivered lines. Null keeps
   /// the core silent.
   final void Function(String line)? steeringInterruptNotice;
+
+  /// GOAL #2394: the transcript's tag epoch — every request copy is
+  /// stamped `m<seq>` from it before the request transforms (null = no
+  /// tags; the transcript itself is never modified).
+  final TranscriptSeqMap? recordSeqs;
+
+  /// GOAL #2394: the main-send seam writes the request snapshot (S0)
+  /// here on every send; null disables capturing.
+  final RequestSnapshotStore? requestSnapshots;
 
   /// How many times a degenerate EMPTY completion (stopReason `stop`, no
   /// tool calls, no text — some providers answer like this under load) is
@@ -697,6 +669,8 @@ final class AgentLoopConfig {
       onTruncatedToolCall: onTruncatedToolCall,
       steeringStallWindow: steeringStallWindow,
       steeringInterruptNotice: steeringInterruptNotice,
+      recordSeqs: recordSeqs,
+      requestSnapshots: requestSnapshots,
     );
   }
 }

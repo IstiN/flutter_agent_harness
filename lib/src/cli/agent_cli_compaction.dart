@@ -26,6 +26,56 @@ extension EffectiveContextWindow on AgentCli {
   ).window;
 }
 
+/// GOAL #2394: the live compaction settings live beside the effective
+/// window they scale from (same library — a pure move out of the
+/// size-gated agent_cli.dart).
+extension EffectiveCompactionSettings on AgentCli {
+  /// Compaction settings for the live model: the config override when the
+  /// user pinned one, else pi's fixed defaults SCALED to the model window
+  /// (`CompactionSettings.forWindow`) — the same rule the Flutter app
+  /// applies. The fixed 20k-keep defaults are right for 128k windows but
+  /// structurally prevent compaction on small models: with keep 20000 on
+  /// an 8k-window model the compactor always "keeps" the whole transcript
+  /// (nothing is older than the kept region), so an over-window guard can
+  /// never be satisfied by compacting.
+  ///
+  /// Resolved through the shared host wiring (gh-1077): the CLI path and
+  /// the app path must agree on window/reserve semantics, and the parity
+  /// test pins that agreement — the window here is
+  /// [effectiveContextWindow] under the owner cap, no overhead subtracted
+  /// (the CLI carries no fixed request overhead).
+  CompactionSettings get _effectiveCompactionSettings {
+    final wiring = resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+      settingsOverride: config.compactionSettings,
+      tuning: config.compactionTuning,
+    );
+    // An explicit settings pin — or the gh-2098 `compaction:` tuning
+    // keys, a user pin too — beats the bench env (gh-1604):
+    // `FAH_COMPACT_TRIGGER_TOKENS` retunes the DEFAULTS for a bench run
+    // — it must never silently rewrite a user-pinned section, including
+    // `enabled: false` (the knob cannot re-enable compaction the user
+    // switched off). Unset env = byte-identical base.
+    final pinned =
+        config.compactionSettings != null ||
+        (config.compactionTuning?.isNotEmpty ?? false);
+    if (pinned) return wiring.settings;
+    return resolveBenchCompactionSettings(
+      wiring.settings,
+      window: _effectiveContextWindow,
+      env: environment,
+    );
+  }
+
+  /// Test seam (gh-1604 rework): the compaction settings the live gates
+  /// use — the explicit config pin when present, else the host defaults
+  /// with the bench env knob composed.
+  @visibleForTesting
+  CompactionSettings get effectiveCompactionSettingsForTest =>
+      _effectiveCompactionSettings;
+}
+
 extension MemoryLlmSlotResolution on AgentCli {
   /// Resolves the LLM slot for long-term-memory work PER CALL: the `memory`
   /// role, else `smol`, else the main model. The roles resolver is mutable
@@ -387,6 +437,8 @@ List<String> formatCompactionReport(
     // gh-2101: the metered LLM work — call count, duration, cost and the
     // cache-hit share (cache 0% stays visible: the regression signal).
     ?_llmMetricsLine(pass),
+    // GOAL #2394 (AC14): the merged hand-over pass's metrics line.
+    if (pass.handOver case final metrics?) 'hand-over: ${metrics.render()}',
     // Issue #673 AC3: the local-trim valve frees tokens WITHOUT hiding
     // session records or folding a summary — a bare "0 hidden · 0
     // summarized" next to a big freed count cannot describe a real
@@ -463,6 +515,28 @@ extension _AgentCliCompactionReportPrinter on AgentCli {
 }
 
 extension AgentCliCompactionRun on AgentCli {
+  /// The engine this session's compaction runs use — the live settings
+  /// override, the config choice, else the default (issue #287). The ONE
+  /// resolution the factory and the record-tag sync share.
+  CompactionEngine get _activeCompactionEngine =>
+      config.liveCompactionEngine ??
+      config.compactionEngine ??
+      CompactionEngine.structured;
+
+  /// GOAL #2394 (D6/E37): record tags ride the wire ONLY under the
+  /// structured engine. Synced at every prompt (the settings hub can flip
+  /// the engine live); a flip drops the request snapshot — the projection
+  /// the previous engine's requests described is no longer the one the
+  /// next request sends (one cache invalidation at the switch).
+  void _syncRecordTags() {
+    final enabled = _activeCompactionEngine == CompactionEngine.structured;
+    if (_agent.recordTagsEnabled == enabled) return;
+    _agent.recordTagsEnabled = enabled;
+    _agent.invalidateRequestSnapshot(
+      'compaction engine switched to ${_activeCompactionEngine.name}',
+    );
+  }
+
   /// Test seam: the compaction pass counter — a zero-pass run (issue
   /// #2273) must leave it untouched so the funnel's `passesRan` trim
   /// gate never counts runs that executed no pass.
@@ -473,7 +547,10 @@ extension AgentCliCompactionRun on AgentCli {
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
   /// to resume only when the window was really freed.
-  Future<bool> _maybeAutoCompact({bool forceE1Pass = false}) async {
+  Future<bool> _maybeAutoCompact({
+    bool forceE1Pass = false,
+    bool postRun = false,
+  }) async {
     final session = _session;
     if (session == null) return false;
     if (_agent.state.messages.isEmpty) return false;
@@ -512,14 +589,30 @@ extension AgentCliCompactionRun on AgentCli {
             _agent.state.messages.length,
             _modelCaps.learnedCapFor(model),
           );
-    if (!shouldCompact(
+    final hard =
+        shouldCompact(
           tokens,
           _effectiveContextWindow,
           _effectiveCompactionSettings,
-        ) &&
-        !overCap) {
-      return false;
-    }
+        ) ||
+        overCap;
+    // GOAL #2394 (AC11/D8): the POST-RUN soft line arms the merged
+    // hand-over alone — in the [soft, hard) band, muted by the hysteresis
+    // for N user turns after any run. The pre-flight and the over-window
+    // guard stay hard-only: the hard guard is never suppressed.
+    _handOverTrigger.tune(
+      hysteresisTurns: config.compactionTuning?.handOverHysteresisTurns,
+    );
+    final soft =
+        !hard &&
+        postRun &&
+        _handOverTrigger.softReached(
+          tokens: tokens,
+          window: _effectiveContextWindow,
+          settings: _effectiveCompactionSettings,
+          softRatio: config.compactionTuning?.softRatio,
+        );
+    if (!hard && !soft) return false;
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     try {
@@ -532,7 +625,11 @@ extension AgentCliCompactionRun on AgentCli {
       // contract is a compaction BEFORE the next user request; the
       // post-run fold keeps its shipped no-op-when-under-trigger
       // behavior.
-      await _runAutoCompact('[auto-compacted]', force: e1PassPending);
+      await _runAutoCompact(
+        '[auto-compacted]',
+        force: e1PassPending,
+        softTriggered: soft,
+      );
     } finally {
       // Hand the busy row back to the run even when the compaction throws
       // or is cancelled (issue #1085): a stale 'Compacting context…'
@@ -876,6 +973,7 @@ extension AgentCliCompactionRun on AgentCli {
     String label, {
     Session? session,
     bool force = false,
+    bool softTriggered = false,
   }) async {
     // The user's explicit stop wins over any compaction (issue #1085
     // round-1): the abort must not merely cancel the IN-FLIGHT pass — it
@@ -920,6 +1018,7 @@ extension AgentCliCompactionRun on AgentCli {
         abort.token,
         session: session,
         force: force,
+        softTriggered: softTriggered,
       );
     } finally {
       _activeCompactionAbort = null;
@@ -941,6 +1040,7 @@ extension AgentCliCompactionRun on AgentCli {
     CancelToken token, {
     Session? session,
     bool force = false,
+    bool softTriggered = false,
   }) async {
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
@@ -963,10 +1063,7 @@ extension AgentCliCompactionRun on AgentCli {
       // Issue #287: structured is the default fallback; an explicit
       // config choice (config.compactionEngine) or a live override from
       // the settings flow (config.liveCompactionEngine, #288) still wins.
-      engine:
-          config.liveCompactionEngine ??
-          config.compactionEngine ??
-          CompactionEngine.structured,
+      engine: _activeCompactionEngine,
       // Judge budget knob (issue #541): null keeps the 300s default
       // (gh-740 M1: raised from 90s — a 262k-token checkpoint on a slow
       // provider could not be summarized within 90s, bricking sessions).
@@ -982,6 +1079,14 @@ extension AgentCliCompactionRun on AgentCli {
       // compaction — `count ≥ cap − margin` fires even when the token
       // trigger is untouched (the pre-emptive trigger).
       messageCap: _modelCaps.learnedCapFor(_agent.state.model),
+      // GOAL #2394 (AC1/AC2): the last main request as sent (S0) — a
+      // snapshot valid for the session's model selects the merged
+      // hand-over (cache-affine prefix); the budget knob is
+      // `compaction.handOver.maxTokens` (null → the adapter's default).
+      requestSnapshot: _agent.requestSnapshots.validFor(_agent.state.model),
+      handOverMaxTokens: config.compactionTuning?.handOverMaxTokens,
+      // GOAL #2394 (AC11): the post-run soft line armed this run.
+      softTriggered: softTriggered,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
@@ -1018,6 +1123,14 @@ extension AgentCliCompactionRun on AgentCli {
       },
       force: force || label == '[compacted]',
     ).run();
+    // GOAL #2394 (D8): any run — success or failure alike — starts the
+    // hysteresis window; a run that appended records moved the
+    // projection the snapshot described, so S0 is stale.
+    _handOverTrigger.recordRun();
+    // "May have appended", not "reported success": a hidden range can land
+    // before a ladder kill (reportedPass stays false) and the run still
+    // moved the projection the snapshot described.
+    _agent.invalidateRequestSnapshot('compaction run');
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;
   }
@@ -1097,8 +1210,18 @@ extension OverWindowGuardRelief on AgentCli {
     final outcome = await relief.run();
     // The relief re-anchored the live transcript from the session
     // projection (refreshAgentState) — keep the persist cursor in step,
-    // exactly like the quality tier's post-run bookkeeping.
+    // exactly like the quality tier's post-run bookkeeping, and drop S0
+    // (GOAL #2394 AC2): it described the pre-relief, over-window prefix.
+    _agent.invalidateRequestSnapshot('over-window relief');
     _persistedCount = _agent.state.messages.length;
+    // GOAL #2394 (gh-2407 review thread 1): the relief replaced the
+    // projection — the pre-relief S0 is stale (the post-run soft trigger
+    // would otherwise build the merged hand-over over the over-window
+    // prefix the relief just re-anchored away).
+    _agent.invalidateRequestSnapshot(
+      'over-window relief replaced the '
+      'projection',
+    );
     return outcome;
   }
 }

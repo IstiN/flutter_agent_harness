@@ -211,6 +211,11 @@ extension CompactionWindowSizing on AgentService {
   /// cannot serve hosted 128k models and 8k WebLLM presets.
   CompactionSettings get compactionSettings => _compactionWiring.settings;
 
+  /// The app's compaction engine (issue #148 D8, default flip #287):
+  /// project .fah/config.yaml < ~/.fah/config.yaml, default structured.
+  CompactionEngine get _appCompactionEngine =>
+      loadAppCompactionEngine(env.sessionCwd) ?? CompactionEngine.structured;
+
   /// The host wiring for the live agent (gh-1077). The smol summarizer is
   /// resolved lazily by [_maybeAutoCompact] — a broken smol chain must not
   /// fail the pre-run gate — so it is not part of this getter. Exposed for
@@ -228,6 +233,9 @@ extension CompactionWindowSizing on AgentService {
     mainModel: _agent.state.model,
     contextWindowCap: _contextWindowCap,
     systemOverheadTokens: _systemOverheadTokens,
+    // GOAL #2394 (host parity): the same `compaction:` tuning keys the
+    // CLI resolves — soft line, hand-over budget, hysteresis.
+    tuning: compactionTuningOverride ?? _appCompactionTuning,
   );
 
   /// Estimated tokens the provider counts against the context window on top
@@ -252,8 +260,15 @@ extension CompactionWindowSizing on AgentService {
   /// (gh-1077: the same shared resolution the CLI computes through),
   /// builds the per-host smol/main summarizers, and surfaces failures
   /// in-chat instead of silently no-oping.
-  Future<bool> _maybeAutoCompact() async {
+  Future<bool> _maybeAutoCompact({bool postRun = false}) async {
+    // GOAL #2394 (D6/E37): tags ride the wire only under the structured
+    // engine — re-resolved per run like the engine itself (the Settings
+    // picker edits apply without a restart).
+    _agent.recordTagsEnabled =
+        _appCompactionEngine == CompactionEngine.structured;
     final wiring = _compactionWiring;
+    handOverTrigger.hysteresis.turns =
+        wiring.handOverHysteresisTurns ?? handOverHysteresisTurnsDefault;
     if (_session == null || !wiring.enabled) return false;
     final conversationWindow = wiring.conversationWindow;
     if (conversationWindow <= 0) return false;
@@ -267,9 +282,21 @@ extension CompactionWindowSizing on AgentService {
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
-      return false;
-    }
+    final hard = shouldCompact(transcriptTokens, conversationWindow, settings);
+    // GOAL #2394 (AC11/D8): the POST-RUN soft line arms the merged
+    // hand-over alone — in the [soft, hard) band, muted by the hysteresis
+    // for N user turns after any run. The over-window relief stays
+    // hard-only: the hard guard is never suppressed.
+    final soft =
+        !hard &&
+        postRun &&
+        handOverTrigger.softReached(
+          tokens: transcriptTokens,
+          window: conversationWindow,
+          settings: settings,
+          softRatio: wiring.softRatio,
+        );
+    if (!hard && !soft) return false;
     // The whole transcript fits in the kept region: compaction could not
     // drop anything. (A single oversized message can still overflow the
     // engine — that surfaces as a readable run error, not a compaction
@@ -301,13 +328,22 @@ extension CompactionWindowSizing on AgentService {
         // config.yaml, default structured. Resolved per compaction so
         // edits apply without a restart (the Settings picker relies on
         // this — a flip takes effect at the NEXT compaction).
-        engine:
-            loadAppCompactionEngine(env.sessionCwd) ??
-            CompactionEngine.structured,
+        engine: _appCompactionEngine,
         // gh-1409: the enabled skills' operative lines ride every
         // summarization prompt as the verbatim-preserve pinned block.
         operativeSkills: _agent.operativeSkills,
+        // GOAL #2394 (AC1/AC2): the last main request as sent (S0) — a
+        // snapshot valid for the session's model selects the merged
+        // hand-over (cache-affine prefix); the budget knob is
+        // `compaction.handOver.maxTokens`.
+        requestSnapshot: _agent.requestSnapshots.validFor(_agent.state.model),
+        handOverMaxTokens: wiring.handOverMaxTokens ?? handOverMaxTokensDefault,
+        // GOAL #2394 (AC11): the post-run soft line armed this run.
+        softTriggered: soft,
       ).run();
+      // The run may have appended records — the projection the snapshot
+      // described is no longer the live one.
+      _agent.invalidateRequestSnapshot('compaction run');
     } on Object catch (error) {
       // A throwing run (unresolvable summarizer chain, engine crash) is a
       // compaction failure like any other: the session stays intact
@@ -338,6 +374,9 @@ extension CompactionWindowSizing on AgentService {
     // Extensions may not call the protected notifyListeners — _notify is
     // the class's own one-line wrapper, in scope via the same library.
     _notify();
+    // GOAL #2394 (D8): any run — success or failure alike — starts the
+    // hysteresis window.
+    handOverTrigger.recordRun();
     // Success signal for the over-window guard's auto-continuation: the
     // transcript actually shrank (same basis as the gate above).
     final afterTokens = estimateRequestTokens(
@@ -395,6 +434,14 @@ extension CompactionWindowSizing on AgentService {
         window: wiring.conversationWindow,
         settings: wiring.settings,
       ).run();
+      // GOAL #2394 (gh-2407 review thread 1): the relief re-anchors the
+      // transcript — the pre-relief S0 is stale, drop it (the CLI's
+      // `_runEmergencyRelief` does the same), or the next post-run soft
+      // trigger builds the merged hand-over over the replaced prefix.
+      _agent.invalidateRequestSnapshot(
+        'over-window relief replaced the '
+        'projection',
+      );
     }
     final after = _agent.state.messages.toList();
     final afterTokens = estimateRequestTokens(
@@ -409,6 +456,8 @@ extension CompactionWindowSizing on AgentService {
     // The relief replaced `state.messages`; mirror it into the chat list
     // so the UI reflects the relieved transcript (same contract as the
     // post-run compaction path above).
+    // GOAL #2394 (AC2): S0 described the pre-relief, over-window prefix.
+    _agent.invalidateRequestSnapshot('over-window relief');
     _persistedCount = after.length;
     messages
       ..clear()

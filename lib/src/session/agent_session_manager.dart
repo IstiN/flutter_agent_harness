@@ -132,6 +132,7 @@ final class AgentSessionManager {
     final session = await _repo.open(metadata);
     final contextMessages = await session.buildContextMessages();
     agent.state.messages = contextMessages;
+    agent.state.recordSeqs = (await session.buildTranscriptProjection()).seqMap;
     final managed = ManagedSession(
       id: metadata.id,
       agent: agent,

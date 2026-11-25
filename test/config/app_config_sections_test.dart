@@ -233,6 +233,46 @@ void main() {
       expect(app.mcpConfigured, isTrue);
       expect(app.warnings.single, contains('mcp'));
     });
+  });
+
+  group('compaction section (gh-2407 tuning parity, thread 7)', () {
+    test('a present section parses through the CLI parser — the three '
+        'hand-over knobs ride to the app wiring', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc(
+          'compaction:\n'
+          '  softRatio: 0.6\n'
+          '  handOver:\n'
+          '    maxTokens: 4096\n'
+          '    hysteresisTurns: 5\n',
+        ),
+      );
+      final tuning = app.compactionTuning;
+      expect(tuning, isNotNull);
+      expect(tuning!.softRatio, 0.6);
+      expect(tuning.handOverMaxTokens, 4096);
+      expect(tuning.handOverHysteresisTurns, 5);
+      expect(app.warnings, isEmpty);
+    });
+
+    test('an absent section reads as absent (defaults)', () {
+      final app = parseAppConfigSections(userDoc: _doc('roles:\n  smol: []\n'));
+      expect(app.compactionTuning, isNull);
+    });
+
+    test('a non-map section warns and falls back to the defaults (AC7)', () {
+      final app = parseAppConfigSections(userDoc: _doc('compaction: 42\n'));
+      expect(app.compactionTuning, isNull);
+      expect(app.warnings.single, contains('compaction'));
+    });
+
+    test('a bad value warns and names the file (AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('compaction:\n  softRatio: not-a-number\n'),
+      );
+      expect(app.compactionTuning, isNull);
+      expect(app.warnings.any((w) => w.contains('compaction')), isTrue);
+    });
 
     test('a retry:-only doc is a silent no-op — CLI parity (round-1)', () {
       final app = parseAppConfigSections(
@@ -312,6 +352,52 @@ void main() {
       );
       expect(app.subagents, isNull);
       expect(app.warnings.single, contains('replyAutoSpill'));
+    });
+  });
+
+  group('GOAL #2394 compaction tuning (host parity, review round 1)', () {
+    test('both scopes parse and merge like the CLI: global < project, '
+        'deepest key wins', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc(
+          'compaction:\n'
+          '  softRatio: 0.6\n'
+          '  handOver:\n'
+          '    maxTokens: 4096\n'
+          '    hysteresisTurns: 5\n',
+        ),
+        projectDoc: _doc(
+          'compaction:\n'
+          '  handOver:\n'
+          '    hysteresisTurns: 9\n',
+        ),
+      );
+      expect(app.warnings, isEmpty);
+      final tuning = app.compactionTuning!;
+      expect(tuning.softRatio, 0.6);
+      expect(tuning.handOverMaxTokens, 4096);
+      expect(tuning.handOverHysteresisTurns, 9);
+    });
+
+    test('a bad value warns, names the scope and keeps the other scope '
+        '(AC7)', () {
+      final app = parseAppConfigSections(
+        userDoc: _doc('compaction:\n  softRatio: 1.5\n'),
+        projectDoc: _doc('compaction:\n  handOver:\n    hysteresisTurns: 4\n'),
+        userSource: '~/.fah/config.yaml',
+      );
+      expect(
+        app.warnings.where(
+          (w) => w.contains('~/.fah/config.yaml compaction section skipped'),
+        ),
+        hasLength(1),
+      );
+      expect(app.compactionTuning?.handOverHysteresisTurns, 4);
+      expect(app.compactionTuning?.softRatio, isNull);
+    });
+
+    test('no section → null (the structured defaults apply)', () {
+      expect(parseAppConfigSections().compactionTuning, isNull);
     });
   });
 }
