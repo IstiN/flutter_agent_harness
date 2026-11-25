@@ -282,7 +282,8 @@ retry:
       expect(wiring.handOverHysteresisTurns, 5);
     });
 
-    test('no section keeps the defaults', () async {
+    test('no section keeps the tuning entries null on the wiring (defaults '
+        'resolve downstream)', () async {
       final service = await buildService();
       addTearDown(service.dispose);
       final wiring = service.compactionWiringForTest;
@@ -293,6 +294,7 @@ retry:
       expect(wiring.handOverHysteresisTurns, isNull);
       expect(handOverMaxTokensDefault, 8192);
       expect(handOverHysteresisTurnsDefault, 3);
+      expect(wiring.softRatio, isNull);
     });
   });
 

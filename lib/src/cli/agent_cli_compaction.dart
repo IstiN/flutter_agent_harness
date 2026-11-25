@@ -1214,6 +1214,14 @@ extension OverWindowGuardRelief on AgentCli {
     // (GOAL #2394 AC2): it described the pre-relief, over-window prefix.
     _agent.invalidateRequestSnapshot('over-window relief');
     _persistedCount = _agent.state.messages.length;
+    // GOAL #2394 (gh-2407 review thread 1): the relief replaced the
+    // projection — the pre-relief S0 is stale (the post-run soft trigger
+    // would otherwise build the merged hand-over over the over-window
+    // prefix the relief just re-anchored away).
+    _agent.invalidateRequestSnapshot(
+      'over-window relief replaced the '
+      'projection',
+    );
     return outcome;
   }
 }
