@@ -147,15 +147,21 @@ final class CompactingGate {
   /// Whether a compaction run is in flight.
   bool get isCompacting => _active != null;
 
-  /// Runs [body] as THE compaction; a nested/second run while one is in
-  /// flight is joined to the first's completion instead of starting
-  /// (never two writers).
+  /// Runs [body] as THE compaction; a second run while one is in flight
+  /// joins the first's completion instead of starting (never two writers)
+  /// — and the JOINED body registers as the active compaction again
+  /// before it executes (gh-2407 review): an unregistered join left
+  /// `isCompacting` false and [wait] resolved while the joined appends
+  /// and refreshes were mid-flight — the exact D9 double-writer race the
+  /// gate exists to prevent.
   Future<T> run<T>(Future<T> Function() body) async {
     final active = _active;
-    if (active != null) {
-      await active.future;
-      return body();
-    }
+    if (active != null) await active.future;
+    return _registered(body);
+  }
+
+  /// Registers [body] as THE compaction (one at a time) and runs it.
+  Future<T> _registered<T>(Future<T> Function() body) async {
     final completer = Completer<void>();
     _active = completer;
     try {

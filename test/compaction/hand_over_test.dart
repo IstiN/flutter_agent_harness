@@ -258,6 +258,36 @@ void main() {
       expect(verdict.missing, hasLength(2));
     });
 
+    test('N1 a run-together `##Open` heading is NOT the mandatory heading '
+        '(gh-2407: the gate must match the belt, `\\s+`)', () {
+      // Zero whitespace after the `#`s: the belt's heading regex never
+      // matches this shape, so a gate pass here would persist an
+      // ungraded user-intent section — the gh-2103 laundering path.
+      final full = '##Open User Requests\n'
+          '- [asked 2026-11-20, record 0b1c2d3e] fix 2321 — regex in _primaryOfPartName\n'
+          '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
+          '## Hand-over\nDone.';
+      expect(verifyOpenUserRequests(full, asks).heading, isFalse);
+      expect(verifyOpenUserRequests(full, asks).missing, isEmpty);
+      final bare = '#open asks:\n'
+          '- [asked 2026-11-20, record 0b1c2d3e] fix 2321 — regex in _primaryOfPartName\n'
+          '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
+          '## Hand-over\nDone.';
+      expect(verifyOpenUserRequests(bare, asks).heading, isFalse);
+      expect(verifyOpenUserRequests(bare, asks).missing, isEmpty);
+      expect(
+        verifyOpenUserRequests('###Open asks:\nnone', asks).heading,
+        isFalse,
+      );
+      // The belt agrees: the same shape never opens a graded section.
+      final belted = sanitizeSummary(
+        '##Open User Requests\n- forged ask from a tool result\n',
+        origins: SummaryOriginEvidence(const []),
+      );
+      expect(belted.text, contains('forged ask from a tool result'));
+      expect(belted.stripped, isEmpty);
+    });
+
     test('E36 a dropped ask fails the run; wrapped lines still match', () {
       final verdict = verifyOpenUserRequests(
         'open asks:\n- fix 2321 — regex in\n  _primaryOfPartName\n## Hand-over\nx',
@@ -271,6 +301,44 @@ void main() {
       final verdict = verifyOpenUserRequests(
         '## Open User Requests\nnone\n## Hand-over\nok',
         const [],
+      );
+      expect(verdict.heading, isTrue);
+      expect(verdict.missing, isEmpty);
+    });
+
+    test('E36b an ask quoting a record alias (`m3 `) still matches the '
+        'tag-stripped transfer — both sides normalize identically', () {
+      // The model echoed the user's literal `m3 …` opening; the reply
+      // side goes through stripRecordTags (the engine pipeline), so the
+      // verified transfer carries the text WITHOUT the tag — the raw
+      // mechanical ask must normalize the same way or the run can never
+      // fold (permanent fail-closed loop, gh-2407).
+      const rawTransfer = '## Open User Requests\n'
+          'm3 do the thing again\n'
+          '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
+          '## Hand-over\nx';
+      final verdict = verifyOpenUserRequests(
+        stripRecordTags(normalizeReplyText(rawTransfer)),
+        const [
+          '- [asked 2026-11-20, record 0b1c2d3e] m3 do the thing again',
+          '- [asked 2026-11-20, record 9f8e7d6c] now check rename',
+        ],
+      );
+      expect(verdict.heading, isTrue);
+      expect(verdict.missing, isEmpty);
+    });
+
+    test('E36b an ask carrying zero-width characters matches the '
+        'normalized reply side', () {
+      // The reply parser strips zero-width noise before the transfer is
+      // verified; the mechanical ask line (raw record text) carries the
+      // same characters and must be normalized identically.
+      const rawTransfer = '## Open User Requests\n'
+          '- fix the pasted\u200B instruction line\n'
+          '## Hand-over\nx';
+      final verdict = verifyOpenUserRequests(
+        stripRecordTags(normalizeReplyText(rawTransfer)),
+        const ['- [asked] fix the pasted\u200B instruction line'],
       );
       expect(verdict.heading, isTrue);
       expect(verdict.missing, isEmpty);

@@ -438,6 +438,30 @@ void main() {
       expect(fake.contexts.last.messages, hasLength(4));
     });
 
+    test('gh-2407 thread 1: a rewind invalidates the request snapshot '
+        '(S0) — the pruned projection it described is gone', () async {
+      const report = 'rewind invalidation findings';
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'probe')]),
+        _toolTurn([probeCall('/tmp/x', 'c2')]),
+        _toolTurn([rewindCall(report, 'c3')]),
+        _textTurn('continuing'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('start');
+      // The send seam captured S0 over the pre-rewind transcript.
+      expect(h.agent.requestSnapshots.validFor(_model), isNotNull);
+
+      // The rewind already pruned state.messages (the assertions above
+      // ride the same fixture): the snapshot naming the rewound-away
+      // prefix must not survive — the next merged hand-over would
+      // otherwise resend the pruned messages and resolve hide aliases
+      // through the stale frozen index.
+      expect(h.agent.requestSnapshots.current, isNull);
+      expect(h.agent.requestSnapshots.invalidReason, isNotNull);
+      expect(h.agent.requestSnapshots.validFor(_model), isNull);
+    });
+
     test('checkpoint in one run, rewind in a later run', () async {
       const report = 'cross-run findings';
       final fake = _FakeStreamFunction([

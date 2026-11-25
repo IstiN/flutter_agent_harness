@@ -342,6 +342,28 @@ void main() {
     });
   });
 
+  group('request snapshot (S0 — gh-2394 AC2, gh-2407 thread 1)', () {
+    test('a main send captures the snapshot; reset() drops it — the '
+        'projection it described is gone', () async {
+      final fake = _FakeStreamFunction([_textTurn('hello')]);
+      final agent = _agentWith(fake);
+      await agent.prompt('hi');
+      expect(
+        agent.requestSnapshots.validFor(_model),
+        isNotNull,
+        reason: 'the send seam captured S0',
+      );
+
+      // reset() replaces the transcript (session switch / resume /
+      // /handoff): a stale S0 must never feed the next session's merged
+      // hand-over — the store drops with the messages.
+      agent.reset();
+      expect(agent.requestSnapshots.current, isNull);
+      expect(agent.requestSnapshots.invalidReason, isNotNull);
+      expect(agent.requestSnapshots.validFor(_model), isNull);
+    });
+  });
+
   group('steering', () {
     test('steer mid-run is consumed at the next turn boundary without '
         'interrupting the current turn', () async {

@@ -10,6 +10,7 @@
 /// [sanitizeHideLabel] before it can reach a marker.
 library;
 
+import '../record_tag.dart' show stripRecordTags;
 import '../summary_sanitizer.dart';
 
 /// One hide proposal: the inclusive alias range `from`..`to` on the S0
@@ -289,7 +290,11 @@ String renderHandOverInstruction({
 }
 
 final RegExp _userIntentHeading = RegExp(
-  r'^(?:#{1,6}\s*)?(?:open user requests\b|open asks\b\s*:)',
+  // MANDATORY whitespace after the `#`s (`\s+`) — the belt's exact
+  // heading shape (`summary_sanitizer.dart`): a run-together `##Open
+  // User Requests` passes no sanitizer belt, so the gate must fail it
+  // too or the gh-2103 laundering path reopens (gh-2407 review thread 2).
+  r'^(?:#{1,6}\s+)?(?:open user requests\b|open asks\b\s*:)',
   multiLine: true,
   caseSensitive: false,
 );
@@ -311,6 +316,15 @@ typedef OpenUserRequestsVerdict = ({
 /// `<open-user-requests>` block (AC6): the heading must be present and
 /// every ask line must survive verbatim; otherwise the run fails and
 /// nothing is appended (E36).
+///
+/// BOTH sides normalize identically (gh-2407 review thread 4): the reply
+/// went through [normalizeReplyText] (zero-width noise) and the engine's
+/// [stripRecordTags] (persist-side echo hygiene), so a raw mechanical
+/// ask carrying a literal `m<N> ` quote or a zero-width character must
+/// be reduced the same way before the containment check — comparing
+/// normalized against raw would fail every run of a session whose asks
+/// carry such text (a permanent fail-closed fold stall, loud but
+/// unfixable without editing history).
 OpenUserRequestsVerdict verifyOpenUserRequests(
   String transfer,
   List<String> askLines,
@@ -318,9 +332,11 @@ OpenUserRequestsVerdict verifyOpenUserRequests(
   final flat = transfer.replaceAll(_whitespaceRun, ' ');
   final missing = <String>[];
   for (final line in askLines) {
-    final text = line.replaceFirst(_askPointer, '').trim();
+    final text = stripRecordTags(
+      normalizeReplyText(line.replaceFirst(_askPointer, '')),
+    ).replaceAll(_whitespaceRun, ' ').trim();
     if (text.isEmpty) continue;
-    if (!flat.contains(text.replaceAll(_whitespaceRun, ' '))) {
+    if (!flat.contains(text)) {
       missing.add(text);
     }
   }

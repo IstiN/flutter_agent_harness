@@ -635,6 +635,11 @@ class Agent {
     _state._pendingToolCalls.clear();
     _state._errorMessage = null;
     clearAllQueues();
+    // GOAL #2394 (AC2, gh-2407 review): the transcript the request
+    // snapshot (S0) described is gone with the messages — a stale S0
+    // must never feed the merged hand-over of the NEXT session/branch
+    // (session switch, resume, /handoff, app session load all reset).
+    requestSnapshots.invalidate('agent reset replaced the projection');
   }
 
   /// Start a new prompt from plain text.

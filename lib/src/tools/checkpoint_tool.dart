@@ -462,6 +462,12 @@ final class CheckpointRewindController {
       ...messages.sublist(0, keepCount),
       UserMessage.text(report),
     ];
+    // GOAL #2394 (AC2, gh-2407 review): the rewind replaced the
+    // projection — the snapshot naming the rewound-away prefix must
+    // drop, or the next merged hand-over resends pruned messages and
+    // resolves hide aliases through the stale frozen index.
+    _agent.invalidateRequestSnapshot('checkpoint rewind replaced the '
+        'projection');
     _onRewindApplied?.call(_agent.state.messages.length);
     _active = null;
     _lastCompleted = CompletedRewind(

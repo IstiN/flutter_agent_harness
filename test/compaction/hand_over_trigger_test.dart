@@ -178,5 +178,44 @@ void main() {
       expect(gate.isCompacting, isFalse);
       await gate.wait();
     });
+
+    test('IT-19b a JOINED body stays registered — isCompacting holds and '
+        'wait() cannot resolve mid-join (gh-2407)', () async {
+      final gate = CompactingGate();
+      final firstStarted = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final first = gate.run(() async {
+        firstStarted.complete();
+        await releaseFirst.future;
+        return 'first';
+      });
+      await firstStarted.future;
+      expect(gate.isCompacting, isTrue);
+
+      // The second run joins the in-flight one; its body executes AFTER
+      // the first completed — as a compaction of its own.
+      var joinedBodySawCompacting = false;
+      final second = gate.run(() async {
+        joinedBodySawCompacting = gate.isCompacting;
+        return 'second';
+      });
+      var waiterDone = false;
+      final waiter = gate.wait().then((_) => waiterDone = true);
+
+      // Let the join happen (first settles, the joined body runs) without
+      // releasing anything: the gate must stay closed across the hand-off
+      // and the waiter must not resolve while the joined body is running.
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(Duration.zero);
+        expect(waiterDone, isFalse, reason: 'microtask turn $i');
+      }
+      releaseFirst.complete();
+      expect(await first, 'first');
+      expect(await second, 'second');
+      expect(joinedBodySawCompacting, isTrue);
+      await waiter;
+      expect(waiterDone, isTrue);
+      expect(gate.isCompacting, isFalse);
+    });
   });
 }
