@@ -22,6 +22,7 @@ import '../../cli/network_presence.dart';
 import '../../session/session_catalog.dart';
 import '../network_account.dart';
 import '../network_roster.dart';
+import 'catalog_poller.dart';
 import 'connector_mux.dart';
 import 'device_api.dart';
 import 'device_dm.dart';
@@ -59,7 +60,8 @@ final class MultiSessionConnectorHost {
     this.rosterDebounce = rosterPatchDebounce,
     this.rosterMinInterval = rosterPatchMinInterval,
     this.catalogStore,
-    this.catalogPollInterval = const Duration(seconds: 10),
+    this.catalogPollInterval = const Duration(seconds: 30),
+    this.catalogPollTimerFactory,
     this.idFactory = defaultIdFactory,
     this.wakeLauncher,
     this.onLog,
@@ -86,7 +88,14 @@ final class MultiSessionConnectorHost {
   /// Minimum spacing of two roster PATCHes (the per-device budget).
   final Duration rosterMinInterval;
   final SessionCatalogStore? catalogStore;
+
+  /// Best-effort filesystem rediscovery interval (default 30 s; was 10 s
+  /// before gh-2410 — passes are single-flight and skipped while the link
+  /// is down, see [CatalogPoller]). Zero disables periodic polling.
   final Duration catalogPollInterval;
+
+  /// Timer seam of the periodic catalog poll (tests fire ticks by hand).
+  final PeriodicTimerFactory? catalogPollTimerFactory;
   final IdFactory idFactory;
   CliNetworkSessionWakeLauncher? wakeLauncher;
   final void Function(String line)? onLog;
@@ -107,7 +116,7 @@ final class MultiSessionConnectorHost {
   final _dmPubs = <String, String>{};
   final RosterPatchLimiter _roster;
   Timer? _catalogTimer;
-  Timer? _catalogPollTimer;
+  CatalogPoller? _catalogPoller;
   List<SessionCatalogEntry> _catalogEntries = const [];
   var _catalogRevision = 0;
   final _wakingSessions = <String>{};
@@ -140,13 +149,13 @@ final class MultiSessionConnectorHost {
     await refreshSessionCatalog(fullSnapshot: true);
     await _connector!.start();
     _queueLiveRoster(fullSnapshot: true);
-    final interval = catalogPollInterval;
-    if (catalogStore != null && interval > Duration.zero) {
-      _catalogPollTimer?.cancel();
-      _catalogPollTimer = Timer.periodic(
-        interval,
-        (_) => _scheduleCatalogRefresh(),
-      );
+    if (catalogStore != null) {
+      (_catalogPoller ??= CatalogPoller(
+        run: () => refreshSessionCatalog(),
+        timerFactory: catalogPollTimerFactory,
+        onError: (error, stackTrace) =>
+            onLog?.call('session catalog poll failed'),
+      )).start(catalogPollInterval);
     }
   }
 
@@ -285,7 +294,8 @@ final class MultiSessionConnectorHost {
   Future<void> stop() async {
     _started = false;
     _catalogTimer?.cancel();
-    _catalogPollTimer?.cancel();
+    _catalogPoller?.stop();
+    _catalogPoller?.setActive(false);
     if (_sessions.isNotEmpty) {
       _queueRosterEntries(
         agents: [
@@ -534,6 +544,7 @@ final class MultiSessionConnectorHost {
 
   void _handleUpstreamState(ConnectorLinkState state) {
     _phase = state;
+    _catalogPoller?.setActive(state == ConnectorLinkState.connected);
     if (state == ConnectorLinkState.connected) {
       _queueLiveRoster(fullSnapshot: true);
     }

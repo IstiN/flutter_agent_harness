@@ -261,6 +261,20 @@ not create one unbounded frame. The listing itself remains backed by the
 existing persisted listing index and bounded reads; no transcript records are
 sent.
 
+Periodic rediscovery (gh-2410) runs every 30 s (`catalogPollInterval`) through
+one shared `CatalogPoller` (`lib/src/network/connector/catalog_poller.dart`)
+in both hosts (CLI presence, connector daemon): a tick that lands while a pass
+is still running only marks it dirty and the running pass does at most ONE
+follow-up, so store passes never overlap; ticks are no-ops while the upstream
+link is not connected (nothing is published while disconnected and the next
+connect sends a full snapshot), and a reconnect refreshes exactly once so
+changes made while the link was down reach that snapshot. The store pass
+itself is stamp-cached: snippets and name probes are memoized per file under
+its (size, mtime) pair, so an unchanged store costs zero transcript reads
+(stat only) — previously every unnamed session's head/tail name windows were
+re-read on every pass, which on a 1450-file store was ~1 GiB and 13 s per
+poll, i.e. the idle-CPU burn this fixed.
+
 The roster session's existing `id`, `title`, `path`, and `lastActivity` fields
 remain the interoperability baseline. `title` is the persisted session name,
 or the bounded first-prompt snippet, or a cwd label as a final human fallback;

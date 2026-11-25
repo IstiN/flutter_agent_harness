@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- fix(network): gh-2410 — idle `fa` sessions with network credentials
+  burned ~1.5 cores on large session stores: the 10 s session-catalog poll
+  re-probed the name windows of every unnamed session on every pass (1420 of
+  1455 on the 81 GB dev store ≈ 964 MiB of transcript reads, 13 s per pass —
+  slower than its own interval, so passes overlapped forever). The catalog
+  store now memoizes snippet AND name-probe results per file under its
+  (size, mtime) stamp (an unchanged store refreshes with zero transcript
+  reads; measured 13.0 s → 0.2–0.5 s, stat-only), and both hosts (CLI
+  presence + connector daemon) poll through one shared `CatalogPoller`:
+  single-flight (ticks during a pass coalesce into one follow-up), gated on
+  the upstream link (disconnected ticks are no-ops, reconnect refreshes
+  once), default interval 10 s → 30 s (`catalogPollInterval`).
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

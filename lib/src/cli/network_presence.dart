@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import '../network/connector/catalog_poller.dart';
 import '../network/connector/connector_mux.dart';
 import '../network/connector/device_api.dart';
 import '../network/connector/device_dm.dart';
@@ -169,7 +170,8 @@ final class NetworkPresenceController
     this.rosterDebounce = rosterPatchDebounce,
     this.rosterMinInterval = rosterPatchMinInterval,
     this.catalogStore,
-    this.catalogPollInterval = const Duration(seconds: 10),
+    this.catalogPollInterval = const Duration(seconds: 30),
+    this.catalogPollTimerFactory,
     this.idFactory = defaultIdFactory,
     this.onLog,
     DeviceDmKeyStore? dmKeyStore,
@@ -213,9 +215,15 @@ final class NetworkPresenceController
   /// projection for embedders that have no local session store.
   final SessionCatalogStore? catalogStore;
 
-  /// Best-effort filesystem rediscovery interval; zero disables polling
-  /// (explicit [notifySessionCatalogChanged] remains available).
+  /// Best-effort filesystem rediscovery interval (default 30 s; was 10 s
+  /// before gh-2410, when overlapping passes on large stores burned CPU —
+  /// passes are now single-flight and skipped while the link is down).
+  /// Zero disables polling (explicit [notifySessionCatalogChanged] remains
+  /// available).
   final Duration catalogPollInterval;
+
+  /// Timer seam of the periodic catalog poll (tests fire ticks by hand).
+  final PeriodicTimerFactory? catalogPollTimerFactory;
 
   /// Installed by the interactive desktop CLI; null keeps queue-only DMs.
   @override
@@ -239,7 +247,7 @@ final class NetworkPresenceController
   final _subscriptions = <StreamSubscription<Object?>>[];
   final RosterPatchLimiter _roster;
   Timer? _catalogTimer;
-  Timer? _catalogPollTimer;
+  CatalogPoller? _catalogPoller;
   List<SessionCatalogEntry> _catalogEntries = const [];
   var _catalogRevision = 0;
   final _wakingSessions = <String>{};
@@ -264,13 +272,13 @@ final class NetworkPresenceController
     _rosterActive = _session != null;
     await _connector!.start();
     _queueLiveRoster(fullSnapshot: true);
-    final interval = catalogPollInterval;
-    if (catalogStore != null && interval > Duration.zero) {
-      _catalogPollTimer?.cancel();
-      _catalogPollTimer = Timer.periodic(
-        interval,
-        (_) => notifySessionCatalogChanged(),
-      );
+    if (catalogStore != null) {
+      (_catalogPoller ??= CatalogPoller(
+        run: () => refreshSessionCatalog(),
+        timerFactory: catalogPollTimerFactory,
+        onError: (error, stackTrace) =>
+            onLog?.call('session catalog poll failed'),
+      )).start(catalogPollInterval);
     }
   }
 
@@ -454,7 +462,7 @@ final class NetworkPresenceController
   Future<void> dispose() async {
     _catalogRevision++;
     _catalogTimer?.cancel();
-    _catalogPollTimer?.cancel();
+    _catalogPoller?.stop();
     await stop();
     _roster.close();
     for (final subscription in _subscriptions) {
@@ -899,6 +907,7 @@ final class NetworkPresenceController
   void _setPhase(ConnectorLinkState next) {
     if (_phase == next) return;
     _phase = next;
+    _catalogPoller?.setActive(next == ConnectorLinkState.connected);
     if (!_phaseChanges.isClosed) _phaseChanges.add(next);
   }
 }
