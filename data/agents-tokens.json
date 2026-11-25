@@ -1080,5 +1080,18 @@
       "source": "reported",
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2430": [
+    {
+      "leg": "dev",
+      "at": "2026-11-25T22:25:41Z",
+      "prompt": 416158,
+      "completion": 43189,
+      "total": 459347,
+      "cacheRead": 14375808,
+      "requests": 144,
+      "source": "",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
