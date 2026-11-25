@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- fix(network): device-WS eviction storm — N `fa` sessions on one Mac each
+  held their own upstream WebSocket under ONE enrolled device while fa_network
+  evicts the older socket on every new dial (contract §10): ~100 dials/min and
+  500+ roster-PATCH 429s per minute per machine, until the relay front refused
+  `/ws` upgrades (phones lost their DM link in that storm). Every CLI presence
+  site (interactive, mailbox-woken, `fa network` roster reads, the hub plugin)
+  now resolves through the per-machine `fa connector` daemon — one upstream WS
+  per machine, the direct controller only as the no-daemon fallback; the
+  reconnect backoff resets only after 30 s of stable uptime (two-client
+  eviction simulation: 80 → ~3 dials/min per client); roster PATCHes go through
+  one shared `RosterPatchLimiter` (≥ 2 s apart, `Retry-After` or jittered
+  backoff on 429, pending rows merged, never dropped).
+- fix(app): one device connector per app process
+  (`DeviceConnectorService.claimShared`) — a pushed NetworkHome can no longer
+  dial a second upstream under the device identity; the DM peer run status
+  moved from the header strip (it overlapped the iOS status bar) to the
+  standard bottom run-status row.
 - fix(network): gh-2410 — idle `fa` sessions with network credentials
   burned ~1.5 cores on large session stores: the 10 s session-catalog poll
   re-probed the name windows of every unnamed session on every pass (1420 of
