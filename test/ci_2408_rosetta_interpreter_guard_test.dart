@@ -34,9 +34,13 @@ String read(String path) => File(path).readAsStringSync();
 YamlMap jobsOf(String workflowPath) =>
     loadYaml(read(workflowPath))['jobs'] as YamlMap;
 
-/// `arch -x86_64 <cmd>` occurrences in a step script, skipping comment
-/// lines (prose may legitimately cite the failing form).
-final rosettaCommand = RegExp(r'^\s*arch -x86_64 (\S+)');
+/// `arch -x86_64 <cmd>` occurrences in a line of a step script. Deliberately
+/// UNANCHORED (gh-2409 review thread 2): compound-command forms
+/// (`cd x && arch -x86_64 bash ...`, `out=$(arch -x86_64 bash ...)`,
+/// `sudo arch -x86_64 bash ...`) PATH-resolve the same way, and comment
+/// lines are already skipped before matching — a stray false positive in a
+/// guard test is cheap, a missed violation reintroduces gh-2408.
+final rosettaCommand = RegExp(r'arch -x86_64 (\S+)');
 
 /// Commands exempt from the absolute-path rule: setup-dart installs the
 /// exact-arch SDK, so the bare name IS the x86_64 binary (AC2 keeps this
@@ -71,6 +75,25 @@ List<(String, String, String, String)> rosettaInvocations(String workflowPath) {
   }
   return hits;
 }
+
+/// Jobs in the workflow whose run-steps invoke `arch -x86_64 dart`,
+/// derived per-line from [rosettaInvocations]. AC2 must NOT scan whole
+/// multi-line scripts with [rosettaCommand]: `^` without `multiLine:` only
+/// matches at string start, so comment-first scripts (every script in this
+/// repo) were invisible, the group registered zero tests, and a missing
+/// setup-dart `architecture:` pin stayed green (gh-2409 review thread 1).
+Set<String> rosettaDartJobs(String workflowPath) => rosettaInvocations(
+  workflowPath,
+).where((inv) => inv.$3 == 'dart').map((inv) => inv.$1).toSet();
+
+/// True when any top-level job step is a dart-lang/setup-dart use carrying
+/// an explicit `architecture:` pin — the pairing AC2 requires for the
+/// bare-`dart` exemption in AC1.
+bool hasSetupDartArchPin(YamlList steps) => steps.whereType<YamlMap>().any(
+  (s) =>
+      s['uses']?.toString().startsWith('dart-lang/setup-dart') == true &&
+      (s['with'] as YamlMap?)?.containsKey('architecture') == true,
+);
 
 void main() {
   final workflowPaths =
@@ -160,36 +183,17 @@ void main() {
 
   group('AC2 — the bare-dart exemption stays paired with setup-dart arch', () {
     for (final path in workflowPaths) {
+      final dartJobs = rosettaDartJobs(path);
+      if (dartJobs.isEmpty) continue;
       final jobs = jobsOf(path);
       for (final jobEntry in jobs.entries) {
+        if (!dartJobs.contains(jobEntry.key.toString())) continue;
         final steps = (jobEntry.value as YamlMap)['steps'] as YamlList?;
         if (steps == null) continue;
-        final scripts = steps
-            .whereType<YamlMap>()
-            .map((s) => s['run']?.toString() ?? '')
-            .where((r) => rosettaCommand.hasMatch(r))
-            .toList();
-        final usesRosettaDart = scripts.any(
-          (r) => rosettaCommand
-              .allMatches(
-                r
-                    .split('\n')
-                    .where((l) => !l.trim().startsWith('#'))
-                    .join('\n'),
-              )
-              .any((m) => m.group(1) == 'dart'),
-        );
-        if (!usesRosettaDart) continue;
         test('${path.split('/').last}::${jobEntry.key} pins setup-dart '
             'architecture for its arch -x86_64 dart', () {
-          final hasArchPin = steps.whereType<YamlMap>().any(
-            (s) =>
-                s['uses']?.toString().startsWith('dart-lang/setup-dart') ==
-                    true &&
-                (s['with'] as YamlMap?)?.containsKey('architecture') == true,
-          );
           expect(
-            hasArchPin,
+            hasSetupDartArchPin(steps),
             isTrue,
             reason:
                 '$path job "${jobEntry.key}" runs `arch -x86_64 dart` '
@@ -201,5 +205,102 @@ void main() {
         });
       }
     }
+  });
+
+  // gh-2409 rework: the PR description promises a negative probe (a fresh
+  // `arch -x86_64 bash` violation is flagged). Feed synthetic workflows to
+  // the guard machinery directly — temp files OUTSIDE .github/workflows, so
+  // the repo-wide sweeps above cannot see them.
+  group('Negative probes — synthetic violations must be flagged', () {
+    test('a compound-command arch -x86_64 bash violation is flagged (AC1)', () {
+      final dir = Directory.systemTemp.createTempSync('gh2408_probe_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final path = '${dir.path}/probe.yml';
+      File(path).writeAsStringSync(r'''
+jobs:
+  bundle:
+    steps:
+      - name: Build fa-clip pasteboard helper
+        shell: bash
+        run: |
+          out=$(arch -x86_64 bash scripts/build_fa_clip.sh out/fa-clip)
+          echo "$out"
+''');
+      final hits = rosettaInvocations(path);
+      expect(
+        hits.map((h) => h.$3),
+        contains('bash'),
+        reason:
+            'a `\$(arch -x86_64 bash ...)` compound command PATH-resolves '
+            'bash exactly like a line-leading invocation — the matcher '
+            'must see non-line-leading forms (gh-2409 review thread 2); '
+            'the anchored `^\\s*arch` regex misses it and the violation '
+            'sails through AC1',
+      );
+      // AC1 would fail this hit: bash is neither an absolute path nor an
+      // exact-arch-SDK command.
+      expect(
+        hits.any(
+          (h) =>
+              h.$3 == 'bash' &&
+              !h.$3.startsWith('/') &&
+              !archExactSdkCommands.contains(h.$3),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a Rosetta-dart job with comment-first script and no architecture '
+        'pin is caught (AC2)', () {
+      // Realistic shape: the run script does NOT begin with the arch
+      // line (comment first, invocation inside an if) — the shape every
+      // script in this repo has and the whole-script `hasMatch` chain
+      // never saw (gh-2409 review thread 1).
+      final dir = Directory.systemTemp.createTempSync('gh2408_probe_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final path = '${dir.path}/probe.yml';
+      File(path).writeAsStringSync(r'''
+jobs:
+  bundle:
+    steps:
+      - uses: dart-lang/setup-dart@e6f8ce0
+        with:
+          sdk: stable
+      - name: Build CLI bundle
+        shell: bash
+        run: |
+          # gh-1522: the bundle version rides the TAG.
+          version="${GITHUB_REF_NAME#v}"
+          if [ x = x ]; then
+            arch -x86_64 dart build cli --target=bin/fa.dart
+          else
+            dart build cli
+          fi
+          echo "$version"
+''');
+      final dartJobs = rosettaDartJobs(path);
+      expect(
+        dartJobs,
+        contains('bundle'),
+        reason:
+            'the AC2 job derivation must be per-line (rosettaInvocations) '
+            '— whole-script `hasMatch` anchored `^` at string start, so '
+            'comment-first scripts were invisible and AC2 registered '
+            'zero tests while a missing setup-dart `architecture:` pin '
+            'stayed green (gh-2409 review thread 1)',
+      );
+      final steps =
+          ((loadYaml(read(path)) as YamlMap)['jobs']
+                  as YamlMap)['bundle']['steps']
+              as YamlList;
+      expect(
+        hasSetupDartArchPin(steps),
+        isFalse,
+        reason:
+            'the synthetic setup-dart step pins no architecture — '
+            'paired with the Rosetta-dart invocation above, AC2 must '
+            'fail this job',
+      );
+    });
   });
 }
