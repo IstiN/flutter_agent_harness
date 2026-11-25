@@ -390,6 +390,7 @@ export 'src/network/connector/upstream_client.dart';
 export 'src/network/connector/device_dm_keys.dart';
 export 'src/network/connector/connector_daemon_protocol.dart';
 export 'src/network/connector/multi_session_connector_host.dart';
+export 'src/network/connector/catalog_poller.dart';
 // ── network DM delivery (#2214; append-only) ──
 export 'src/network/connector/device_dm.dart';
 export 'src/cli/network_presence.dart';

@@ -21,10 +21,13 @@ Future<int> _runNetworkCommand(List<String> args) async {
       platform: Platform.operatingSystem,
       startReceiver: NetworkOAuthLoopback.bind,
       openUrl: (uri) => openNetworkAuthUrl(uri, onStatus: stdout.writeln),
-      rosterReader: () => _readNetworkRoster(
+      // Single upstream per machine: the daemon's cached roster when it
+      // is alive for this device (zero upstream dials), else a direct read.
+      rosterReader: () => readCliNetworkRoster(
         store: store,
         devices: deviceClient,
         baseUrl: relayBaseUrl,
+        stateFile: connectorDaemonStateFile(_homeDir()),
       ),
       out: stdout.writeln,
       error: stderr.writeln,
@@ -33,48 +36,6 @@ Future<int> _runNetworkCommand(List<String> args) async {
   } finally {
     httpClient.close();
   }
-}
-
-Future<List<NetworkDeviceRow>> _readNetworkRoster({
-  required FileNetworkCredentialStore store,
-  required DeviceEnrollmentClient devices,
-  required String baseUrl,
-}) async {
-  final device = await store.readDevice();
-  if (device == null) {
-    throw const NetworkAuthException('not enrolled; run enroll first');
-  }
-  final stateFile = connectorDaemonStateFile(_homeDir());
-  final daemonState = await readConnectorDaemonState(stateFile);
-  if (daemonState != null &&
-      await probeConnectorDaemon(
-        daemonState,
-        expectedDeviceId: device.deviceId,
-      )) {
-    final client = SharedConnectorPresenceClient(
-      stateFile: stateFile,
-      deviceId: device.deviceId,
-    );
-    try {
-      final frames = await client.fetchRosterFrames();
-      if (frames.isNotEmpty) return parseNetworkDeviceRoster(frames);
-    } on Object {
-      // Fall through to direct read if daemon has no cached roster yet.
-    } finally {
-      await client.stop();
-    }
-  }
-  return readNetworkDeviceRoster(
-    NetworkPresenceController(
-      device: device,
-      baseUrl: baseUrl,
-      ticketProvider: () =>
-          devices.wsTicket(baseUrl: baseUrl, deviceToken: device.deviceToken),
-      transport: const IoConnectorTransport(),
-      rosterClient: devices,
-      dmKeyStore: store,
-    ),
-  );
 }
 
 /// Restores device-only presence. Account access-token expiry deliberately
@@ -110,36 +71,36 @@ Future<CliNetworkPresence?> _restoreNetworkPresence({
       // Best-effort: device presence does not depend on the account token.
     }
     final home = _homeDir();
-    final daemonState = await _ensureConnectorDaemonRunning(
-      homeDirectory: home,
+    // Single upstream per machine: the shared daemon when it is alive for
+    // this device (spawned on demand — a mailbox-woken session takes this
+    // same path), else the direct controller. Nothing else in bin/ builds
+    // a presence source.
+    final presence = await resolveCliNetworkPresence(
+      stateFile: connectorDaemonStateFile(home),
       deviceId: device.deviceId,
-    );
-    if (daemonState != null) {
-      httpClient.close();
-      return SharedConnectorPresenceClient(
-        stateFile: connectorDaemonStateFile(home),
+      ensureDaemonRunning: () => _ensureConnectorDaemonRunning(
+        homeDirectory: home,
         deviceId: device.deviceId,
-        ensureDaemonRunning: () => _ensureConnectorDaemonRunning(
-          homeDirectory: home,
-          deviceId: device.deviceId,
-        ),
-      );
-    }
-    final env = LocalExecutionEnv(cwd: Directory.current.path);
-    final repo = JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: sessionRoot ?? _defaultSessionRoot(),
+      ),
+      directController: () {
+        final env = LocalExecutionEnv(cwd: Directory.current.path);
+        final repo = JsonlSessionRepo(
+          fs: env,
+          sessionsRoot: sessionRoot ?? _defaultSessionRoot(),
+        );
+        return directCliNetworkPresence(
+          store: store,
+          devices: devices,
+          device: device,
+          baseUrl: baseUrl,
+          catalogStore: JsonlSessionCatalogStore(repo: repo),
+        );
+      },
     );
-    return NetworkPresenceController(
-      catalogStore: JsonlSessionCatalogStore(repo: repo),
-      device: device,
-      baseUrl: baseUrl,
-      ticketProvider: () =>
-          devices.wsTicket(baseUrl: baseUrl, deviceToken: device.deviceToken),
-      transport: const IoConnectorTransport(),
-      rosterClient: devices,
-      dmKeyStore: store,
-    );
+    // The shared client never uses the REST client; the direct controller
+    // keeps it for its lifetime.
+    if (presence is SharedConnectorPresenceClient) httpClient.close();
+    return presence;
   } on Object {
     // Corrupt/unreadable local network state must not prevent local coding.
     // Commands remain available to repair it; no credential-bearing error or

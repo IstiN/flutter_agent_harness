@@ -13,13 +13,24 @@ import 'package:fa/network/showcase_viewer.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa_ui/fa_ui.dart'
-    show FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
+    show ChatComposer, FaVisualDirection, buildFaTheme, debugFaGlassAlwaysFake;
 import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show AgentRunState, NetworkEnvelope, NetworkEnvelopeKind;
 import 'package:flutter_chat_ui/flutter_chat_ui.dart' show Chat;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../network/fakes.dart';
+import '../network/network_session_dm_test.dart' show FakeDmConnector;
 import 'golden_test_helper.dart';
+
+/// One passthrough presence frame: the DM run-status plumbing re-reads the
+/// connector's published state on every frame, the payload is irrelevant.
+const _presenceFrame = NetworkEnvelope(
+  kind: NetworkEnvelopeKind.presence,
+  msgId: 'golden-presence',
+  ts: '2025-12-01T09:30:30.000Z',
+);
 
 Future<void> _pumpChannel(
   WidgetTester tester, {
@@ -152,6 +163,7 @@ Future<void> _pumpDm(
   Size size, {
   String? projectPath,
   bool queueRetryFixture = false,
+  bool peerBusy = false,
 }) async {
   const channelId = 'dm:user:u-1:main@01a15985f6c37e9eb16b203817f2a9c2';
   const sessionId = '01a15985-f6c3-7e9e-b16b-203817f2a9c2';
@@ -162,6 +174,22 @@ Future<void> _pumpDm(
     connector: FakeWsConnector(),
     wallet: wallet,
   );
+  // The DM run status reads the session's device connector — production
+  // attaches it app-scope, before the page opens. The busy frame attaches
+  // a fake up front and publishes the run only AFTER the settled idle
+  // frame, so the only diff against the plain DM frame is the status row.
+  final connector = FakeDmConnector();
+  if (peerBusy) session.attachDmConnector(connector);
+  addTearDown(connector.dmMailController.close);
+  addTearDown(connector.rosterController.close);
+  addTearDown(connector.presenceController.close);
+  if (peerBusy && size == goldenSizePhone) {
+    // The owner's report is an iPhone frame (issue: the retired header
+    // strip painted into the iOS status bar): seed the notch inset — the
+    // same iPhone 15-class metrics as narrow_ios_top_golden_test — so the
+    // capture proves the top safe area stays clear.
+    tester.view.padding = const FakeViewPadding(top: 59, bottom: 34);
+  }
   session.channels = const [
     Channel(id: channelId, networkId: 'net1', name: 'mymac · main'),
   ];
@@ -204,7 +232,9 @@ Future<void> _pumpDm(
         ),
       );
     }
-  } else {
+  } else if (!peerBusy) {
+    // The busy frame stops at the owner's request — the remote agent is
+    // still working on it, exactly like a local run right after sending.
     state.add(
       ChannelMessage(
         envelopeId: 'dm-reply',
@@ -262,6 +292,60 @@ Future<void> _pumpDm(
     ),
     findsOneWidget,
   );
+  if (peerBusy) {
+    // Presence: the remote agent picked the request up and is working.
+    connector.peerRunState = AgentRunState.busy;
+    connector.presenceController.add(_presenceFrame);
+    for (var index = 0; index < 6; index++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    const status = ValueKey('faChatRunStatusContent');
+    const header = ValueKey('faChatFloatingHeader');
+    expect(find.byKey(status), findsOneWidget);
+    expect(find.textContaining('Thinking'), findsOneWidget);
+    // The header is the standard one: no status strip anywhere above the
+    // transcript, and nothing painted into the top safe area.
+    expect(find.byKey(const ValueKey('dmAgentWorkingBanner')), findsNothing);
+    expect(find.text('Fa is working…'), findsNothing);
+    final safeTop = tester.view.padding.top / tester.view.devicePixelRatio;
+    // The page mounts the chat surface FIRST — no strip is laid out above
+    // it — so the surface spans the body from y = 0 while the standard
+    // floating header opens exactly at the safe-area top.
+    expect(
+      tester
+          .getRect(find.byKey(ValueKey('channelChat:$channelId:$sessionId')))
+          .top,
+      0,
+    );
+    final headerRect = tester.getRect(find.byKey(header));
+    expect(headerRect.top, safeTop);
+    expect(
+      tester
+          .getRect(
+            find.descendant(
+              of: find.byKey(header),
+              matching: find.text(expectedTitle),
+            ),
+          )
+          .top,
+      greaterThanOrEqualTo(safeTop),
+    );
+    // The row mirrors a local run: the visually-last list entry, below
+    // the header, under the newest message, right above the composer.
+    final rowRect = tester.getRect(find.byKey(status));
+    expect(rowRect.top, greaterThanOrEqualTo(headerRect.bottom));
+    expect(
+      tester.getRect(find.text('Please review the mobile device list.')).bottom,
+      lessThanOrEqualTo(rowRect.top),
+    );
+    expect(
+      rowRect.bottom,
+      lessThanOrEqualTo(tester.getRect(find.byType(ChatComposer)).top),
+    );
+    await expectGolden(tester, 'network_dm_busy_${size.width.toInt()}');
+    await session.close();
+    return;
+  }
   if (queueRetryFixture) {
     expect(find.textContaining('queued / not listening'), findsNothing);
     expect(find.textContaining('accepted, awaiting steering'), findsNothing);
@@ -315,6 +399,10 @@ void main() {
     testWidgets(
       'DM queue retries render one state ${size.width.toInt()}',
       (tester) => _pumpDm(tester, size, queueRetryFixture: true),
+    );
+    testWidgets(
+      'DM peer busy shows the standard run status row ${size.width.toInt()}',
+      (tester) => _pumpDm(tester, size, peerBusy: true),
     );
   }
 
