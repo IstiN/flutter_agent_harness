@@ -21,6 +21,24 @@ block a release again.
   PATH-resolved commands under `arch -x86_64`. The vpinned-marker red was
   the by-design fail-closed knock-on (no signed SHA256SUMS while the
   matrix was red) — no change there.
+- feat(2394): Compaction 2.0 v2.1 — the post-run fold is ONE merged
+  hand-over call on the session's own model: it reads the last main
+  request as sent (record tags `m<N>`, a request snapshot S0, cache-affine
+  routing with the instruction as the only appended delta), replies with a
+  hide list the ENGINE disposes (pairs snap, user turns never hide,
+  labels live only in the additive `labels` field of a consolidated
+  `hidden_range`) plus a transfer text persisted as a tail checkpoint
+  whose `## Open User Requests` section is verified against the
+  mechanical asks block. No fallbacks on the merged path (nudge, transient
+  retry, 2× budget, then a loud failure with nothing appended); the
+  hide judge and the digest ladder stay for the `standalone` mode.
+  Post-run soft trigger with hysteresis (`compaction.softRatio`,
+  `compaction.handOver.maxTokens`, `compaction.handOver.hysteresisTurns`)
+  and a `compacting` gate that queues prompts. Old sessions need no
+  migration: legacy records render as before and stay searchable.
+- fix(2404): load_drop_retry_test — BSD time branch (macOS `/usr/bin/time`
+  has no `-f`): the test detects GNU vs BSD, parses the BSD rusage lines,
+  and the parser is unit-tested over both shapes.
 - fix(2392): iOS OAuth deep-link freeze — the app runs under
   UIApplicationSceneManifest while app_links 6.4.x listened only to
   UIApplicationDelegate URL callbacks, so `fah://oauth/network` never reached
