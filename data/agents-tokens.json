@@ -873,5 +873,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2394": [
+    {
+      "leg": "review",
+      "at": "2026-11-25T01:20:30Z",
+      "prompt": 380802,
+      "completion": 68892,
+      "total": 449694,
+      "cacheRead": 14649472,
+      "requests": 131,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
