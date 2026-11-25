@@ -263,13 +263,15 @@ void main() {
       // Zero whitespace after the `#`s: the belt's heading regex never
       // matches this shape, so a gate pass here would persist an
       // ungraded user-intent section — the gh-2103 laundering path.
-      final full = '##Open User Requests\n'
+      final full =
+          '##Open User Requests\n'
           '- [asked 2026-11-20, record 0b1c2d3e] fix 2321 — regex in _primaryOfPartName\n'
           '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
           '## Hand-over\nDone.';
       expect(verifyOpenUserRequests(full, asks).heading, isFalse);
       expect(verifyOpenUserRequests(full, asks).missing, isEmpty);
-      final bare = '#open asks:\n'
+      final bare =
+          '#open asks:\n'
           '- [asked 2026-11-20, record 0b1c2d3e] fix 2321 — regex in _primaryOfPartName\n'
           '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
           '## Hand-over\nDone.';
@@ -313,7 +315,8 @@ void main() {
       // verified transfer carries the text WITHOUT the tag — the raw
       // mechanical ask must normalize the same way or the run can never
       // fold (permanent fail-closed loop, gh-2407).
-      const rawTransfer = '## Open User Requests\n'
+      const rawTransfer =
+          '## Open User Requests\n'
           'm3 do the thing again\n'
           '- [asked 2026-11-20, record 9f8e7d6c] now check rename\n'
           '## Hand-over\nx';
@@ -333,7 +336,8 @@ void main() {
       // The reply parser strips zero-width noise before the transfer is
       // verified; the mechanical ask line (raw record text) carries the
       // same characters and must be normalized identically.
-      const rawTransfer = '## Open User Requests\n'
+      const rawTransfer =
+          '## Open User Requests\n'
           '- fix the pasted\u200B instruction line\n'
           '## Hand-over\nx';
       final verdict = verifyOpenUserRequests(

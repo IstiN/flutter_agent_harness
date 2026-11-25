@@ -1131,8 +1131,10 @@ extension AgentCliCompactionRun on AgentCli {
     // Flutter host's after-run hook (gh-2407 review thread 1: the old
     // `reportedPass` condition let a partially-appended run keep S0).
     _handOverTrigger.recordRun();
-    _agent.invalidateRequestSnapshot('compaction run replaced the '
-        'projection');
+    _agent.invalidateRequestSnapshot(
+      'compaction run replaced the '
+      'projection',
+    );
     _persistedCount = _agent.state.messages.length;
     return hooks.reportedPass;
   }
@@ -1218,8 +1220,10 @@ extension OverWindowGuardRelief on AgentCli {
     // projection — the pre-relief S0 is stale (the post-run soft trigger
     // would otherwise build the merged hand-over over the over-window
     // prefix the relief just re-anchored away).
-    _agent.invalidateRequestSnapshot('over-window relief replaced the '
-        'projection');
+    _agent.invalidateRequestSnapshot(
+      'over-window relief replaced the '
+      'projection',
+    );
     return outcome;
   }
 }

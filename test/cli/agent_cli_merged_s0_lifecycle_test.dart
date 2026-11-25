@@ -166,7 +166,8 @@ void main() {
 /// the content routing answers before this helper.
 int mainCallsOf(Context context) {
   final last = context.messages.lastOrNull;
-  final isFirstMain = last is UserMessage &&
+  final isFirstMain =
+      last is UserMessage &&
       messageText(last).contains('count the words') &&
       context.messages.length == 1;
   if (isFirstMain) return 1;

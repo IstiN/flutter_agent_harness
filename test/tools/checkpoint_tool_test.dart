@@ -470,7 +470,8 @@ void main() {
       expect(
         invalidReasonAtRewind.single,
         isNotNull,
-        reason: 'the rewind replaced the projection — S0 must drop before '
+        reason:
+            'the rewind replaced the projection — S0 must drop before '
             'the host cursor update, never survive to a pre-flight',
       );
       expect(h.agent.state.messages, hasLength(5));

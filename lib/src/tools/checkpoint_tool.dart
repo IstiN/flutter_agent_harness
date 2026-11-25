@@ -466,8 +466,10 @@ final class CheckpointRewindController {
     // projection — the snapshot naming the rewound-away prefix must
     // drop, or the next merged hand-over resends pruned messages and
     // resolves hide aliases through the stale frozen index.
-    _agent.invalidateRequestSnapshot('checkpoint rewind replaced the '
-        'projection');
+    _agent.invalidateRequestSnapshot(
+      'checkpoint rewind replaced the '
+      'projection',
+    );
     _onRewindApplied?.call(_agent.state.messages.length);
     _active = null;
     _lastCompleted = CompletedRewind(
