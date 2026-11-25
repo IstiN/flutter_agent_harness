@@ -177,9 +177,29 @@ extension AgentCliTools on AgentCli {
       'task': on,
       'checkpoint': on,
       'rewind': on,
-      'generate_image': on,
-      'generate_video': on,
-      'decide': on,
+      // GOAL #28 (issue #2416): previously registered outside the
+      // availability surface — own ids so scopes can hide them and the
+      // default partition can defer them.
+      'config': on,
+      'compact_expand': on,
+      // Capability-conditional (GOAL #28): the slot/provider predicate
+      // decides registration — a missing capability is ABSENT (reason in
+      // /tools), never present-and-erroring (#1079 rule). The async
+      // endpoint resolvers keep resolving keys at call time; these are
+      // pure configuration checks.
+      'generate_image': mediaGenerationSlotCapability(
+        config.modelsConfig,
+        'imageGeneration',
+      ),
+      'generate_video': mediaGenerationSlotCapability(
+        config.modelsConfig,
+        'videoGeneration',
+      ),
+      'decide': _agent.state.model.provider == 'openrouter'
+          ? on
+          : const ToolCapability.absent(
+              'requires an OpenRouter main connection — switch with /model',
+            ),
       'inspect_image': _toolsWiring.resolvedVision != null
           ? on
           : const ToolCapability.absent(
@@ -241,16 +261,23 @@ extension AgentCliTools on AgentCli {
     // reflected by the next /tools (or any availability rebuild) instead
     // of contradicting the working auto-route.
     state.resolvedVision = await _resolveLiveVisionConfig();
-    _syncInspectImageTool(state.resolvedVision);
+    _syncConditionalTools(state.resolvedVision);
     final resolution = resolveToolAvailability(
       capabilities: toolCapabilities(),
-      // Load mode (issue #680): the active preset's essential ids pin the
-      // schema-visible base; everything else resolves discoverable —
-      // enabled MCP families included (they carry the heaviest schemas,
-      // and the card lists mcp__* among the discoverable).
+      // Load mode (issue #680 + GOAL #2416): the default partition demotes
+      // by NAME (keep-12 essential, capability-conditional set visible,
+      // everything else deferred to `others`); the omp/pi presets keep
+      // their id-level essential sets. Enabled MCP families demote under
+      // either form (they carry the heaviest schemas).
       essentialToolIds: _liveLoadMode == AgentLoadMode.defaultMode
           ? null
           : essentialToolIdsByLoadMode[_liveLoadMode],
+      essentialNames: _liveLoadMode == AgentLoadMode.defaultMode
+          ? essentialToolNamesByLoadMode[AgentLoadMode.defaultMode]
+          : null,
+      conditionalNames: _liveLoadMode == AgentLoadMode.defaultMode
+          ? conditionalCapabilityToolNames
+          : const {},
       mcpServerIds: [
         for (final server
             in _mcp.manager?.toolsByServer.keys ?? const <String>[])
@@ -280,80 +307,146 @@ extension AgentCliTools on AgentCli {
     );
     _warnUnknownToolIds(resolution.unknownIds);
     _swapReadSqliteVariant(resolution);
-    syncDiscoverToolsTool();
     _toolGate.apply(
       resolution,
       _toolRegistry,
       _agent,
       rebuildPrompt: _applyPromptComposition,
     );
+    // After apply: the stub's register/unregister must land in
+    // agent.state.tools + the prompt, which apply just synced (GOAL #28).
+    syncOthersTool();
     refilterMcpTools(resolution);
   }
 
-  /// Registers or unregisters the `discover_tools` meta tool (issue
-  /// #680) so the registry matches the LIVE load mode: present only in
-  /// omp ([discoveryEnabledByLoadMode] — pi is pi-mono's exact benchmark
-  /// shape, discovery off, issue #679; the default mode has no demotion
-  /// and stays byte-identical). The tool carries no availability id, so
-  /// it sits outside the gate's groups and no resolution can hide it.
-  /// Called from [rebuildToolAvailability], so a mid-session mode switch
-  /// syncs it.
-  void syncDiscoverToolsTool() {
+  /// Registers or unregisters the `others` discovery surface (GOAL #28,
+  /// issue #2416) so the registry matches the LIVE load mode and the LIVE
+  /// deferred set: present iff discovery is on for the mode
+  /// ([discoveryEnabledByLoadMode] — the default partition and omp; pi is
+  /// pi-mono's exact benchmark shape, discovery off, issue #679) AND at
+  /// least one deferred tool exists (nothing deferred → no stub, E14; an
+  /// MCP server connecting later re-loads it through the next rebuild).
+  /// The tool carries no availability id, so it sits outside the gate's
+  /// groups and no resolution can hide it. Called from
+  /// [rebuildToolAvailability], so a mid-session mode switch syncs it.
+  void syncOthersTool() {
     // The gate's tombstone pointer follows the live mode too (issue #680
     // review): only a registered discovery surface may be named in the
-    // discoverable tombstone.
+    // deferred tombstone.
     _toolGate.discoveryEnabled =
         discoveryEnabledByLoadMode[_liveLoadMode] == true;
-    if (discoveryEnabledByLoadMode[_liveLoadMode] != true) {
-      _toolRegistry.unregister('discover_tools');
+    if (!_toolGate.discoveryEnabled ||
+        _toolGate.discoverableToolNames.isEmpty) {
+      if (_toolRegistry.contains(othersToolName)) {
+        _toolRegistry.unregister(othersToolName);
+        _agent.state.tools = _toolRegistry.tools;
+        _applyPromptComposition();
+      }
       return;
     }
-    if (_toolRegistry.contains('discover_tools')) return;
+    if (_toolRegistry.contains(othersToolName)) return;
     _toolRegistry.register(
-      discoverToolsTool(
+      othersTool(
+        description: _othersDescription(_toolGate.discoverableToolNames),
         discoverableDocs: _toolGate.discoverableDocs,
-        onMount: (names) => _mountDiscoverables(names),
+        onMount: _mountDeferred,
       ),
     );
+    // The register landed after apply's state sync — reflect it.
+    _agent.state.tools = _toolRegistry.tools;
+    _applyPromptComposition();
   }
 
-  /// Mounts discoverable tools by NAME through the gate (the model sees
-  /// names; the gate mounts ids) and reports what mounted, what was
-  /// unknown, and what was already loaded. The name→id lookup goes
-  /// through the gate's live map FIRST: dynamic MCP family members
-  /// (`mcp__server__tool` names) live there (noted by the re-filter), and
-  /// a mount of an mcp family re-registers its noted tools through the
-  /// gate's apply — no manager round-trip.
-  String _mountDiscoverables(List<String> names) {
-    final before = _toolGate.discoverableToolNames.toSet();
-    final unknown = <String>[];
-    final ids = <String>{};
+  /// The `others` stub's manifest text: the live deferred names plus the
+  /// load instruction (GOAL #28 AC9 — the wire-size pin is computed from
+  /// this shape).
+  String _othersDescription(List<String> names) =>
+      'Deferred tools (not loaded): ${names.join(', ')}. Call others with '
+      'tool_name to load a tool\'s full description and schema; omit '
+      'tool_name to list them with one-line docs.';
+
+  /// Mounts a deferred tool by NAME through the gate (the model sees
+  /// names; the gate resolves them) and returns the I4 doc bytes — the
+  /// tool's own `description` plus the compact `jsonEncode(parameters)`,
+  /// the same bytes the providers serialize and the ledger's
+  /// `TrajectoryToolManifestEntry` captures. Unknown, disabled, and
+  /// already-mounted names each answer their pinned text and never throw
+  /// (AC3, E2, E10, E16). The name→id lookup goes through the gate's live
+  /// map FIRST: dynamic MCP family members (`mcp__server__tool` names)
+  /// live there (noted by the re-filter), and a mount of an mcp family
+  /// re-registers its noted tools through the gate's apply.
+  String _mountDeferred(List<String> names) {
+    final resolution = _toolGate.resolution;
+    if (resolution == null) {
+      return 'tools: availability still loading — try /tools reload';
+    }
+    final results = <String>[];
     for (final name in names) {
       final id = _toolGate.availabilityIdOf(name) ?? toolAvailabilityIdOf(name);
-      if (id == null || !_toolGate.discoverableToolNames.contains(name)) {
-        unknown.add(name);
-      } else {
-        ids.add(id);
+      if (id != null && !_enabledId(resolution, id)) {
+        // `off` beats discovery (I3, E16): the disabled tombstone — no
+        // bypass through the discovery surface.
+        results.add(
+          'Tool `$name` is disabled (${_disabledIdReason(resolution, id)}) '
+          '— ask the user to enable it via /tools or settings.',
+        );
+        continue;
       }
+      final tool = _toolGate.originalTool(name);
+      if (tool == null) {
+        results.add(
+          'no such deferred tool: $name; available: '
+          '${_toolGate.discoverableToolNames.join(', ')}',
+        );
+        continue;
+      }
+      final mounted = _toolGate.mount(
+        [name],
+        _toolRegistry,
+        _agent,
+        rebuildPrompt: _applyPromptComposition,
+      );
+      if (mounted.isEmpty) {
+        // Already mounted (E10): docs again, no rebuild, no model_change.
+        results.add('`$name` is already loaded.\n${_toolDocBytes(tool)}');
+        continue;
+      }
+      results.add(
+        'Loaded `$name` (now in the schema):\n${_toolDocBytes(tool)}',
+      );
     }
-    final mountedIds = _toolGate.mount(
-      ids,
-      _toolRegistry,
-      _agent,
-      rebuildPrompt: _applyPromptComposition,
-    );
-    final mountedNames =
-        before.difference(_toolGate.discoverableToolNames.toSet()).toList()
-          ..sort();
-    return [
-      if (mountedNames.isNotEmpty)
-        'Mounted (now in the schema): ${mountedNames.join(', ')}',
-      if (mountedIds.isEmpty && mountedNames.isEmpty)
-        'Nothing mounted — the requested tools were already loaded.',
-      if (unknown.isNotEmpty)
-        'Not discoverable tools: ${unknown.join(', ')} (see the listing '
-            'for valid names).',
-    ].join('\n');
+    return results.join('\n');
+  }
+
+  /// The I4 doc bytes of [tool]: its `description` plus the compact
+  /// `jsonEncode(parameters)` — the same bytes the providers serialize
+  /// and the ledger's manifest entry captures.
+  String _toolDocBytes(AgentTool tool) =>
+      '${tool.description}\n${jsonEncode(tool.parameters)}';
+
+  /// Whether availability [id] is enabled under [resolution] — the gate's
+  /// own rule, replicated for the disabled tombstone (the gate's
+  /// per-server MCP map governs `mcp:<server>` families).
+  bool _enabledId(ToolAvailabilityResolution resolution, String id) {
+    const mcpPrefix = 'mcp:';
+    final resolved = resolution.byId[id];
+    if (resolved != null) return resolved.enabled;
+    if (id.startsWith(mcpPrefix)) {
+      final server = id.substring(mcpPrefix.length);
+      final declared = resolution.mcpServers[server];
+      if (declared != null) return declared;
+      return resolution.byId['mcp']?.enabled ?? true;
+    }
+    return true;
+  }
+
+  /// The disabled tombstone's why-text for [id]: the per-id reason, else
+  /// the aggregate `mcp` reason (the kill-switch), else a config-disabled
+  /// fallback for per-server disables.
+  String _disabledIdReason(ToolAvailabilityResolution resolution, String id) {
+    return resolution.byId[id]?.reason ??
+        resolution.byId['mcp']?.reason ??
+        'disabled by config';
   }
 
   /// Reads [path]; a broken file prints one warning and keeps [cached]
@@ -445,32 +538,99 @@ extension AgentCliTools on AgentCli {
     }
   }
 
-  /// Keeps the `inspect_image` REGISTRATION in step with the live vision
-  /// capability (gh-1984 review thread 5): the read auto-route re-resolves
-  /// the slot per read, so a mid-session slot set/remove must not leave
-  /// the tool unregistered while the capability says on (the AC3 note
-  /// names the tool) — or registered while it says off. Same pattern as
-  /// the sqlite read swap: (un)register here, keep the group map aligned
-  /// for the gate and the /tools listing.
-  void _syncInspectImageTool(InspectImageConfig? visionConfig) {
-    final registered = _toolRegistry.contains('inspect_image');
-    final wanted = visionConfig != null;
+  /// Keeps the CONDITIONAL tool registrations in step with the live
+  /// capabilities (GOAL #28, issue #2416; gh-1984 review thread 5 for the
+  /// `inspect_image` origin): a mid-session slot set/remove or `/model`
+  /// provider switch must not leave a conditional tool registered while
+  /// its capability says off — or unregistered while it says on. Same
+  /// pattern as the sqlite read swap: (un)register here, keep the group
+  /// map aligned for the gate and the /tools listing. Driven by every
+  /// availability rebuild (settings save, `/models set|remove`,
+  /// `/model`, `/provider`, `/tools reload`).
+  void _syncConditionalTools(InspectImageConfig? visionConfig) {
+    // inspect_image (gh-1984): the read auto-route re-resolves the slot
+    // per read; registration follows the same live slot. The boot path's
+    // sink (host_agent_wiring.dart) rides along — a live-registered tool
+    // reports its spend to /cost exactly like a boot-registered one.
+    final inspectRegistered = _toolRegistry.contains('inspect_image');
+    final inspectWanted = visionConfig != null;
+    if (inspectWanted != inspectRegistered) {
+      if (inspectWanted) {
+        final tool = inspectImageTool(
+          _coreToolEnv,
+          visionConfig,
+          onUsage: _readOnImageUsage,
+        );
+        _toolRegistry.register(tool);
+        _toolGroupsById['inspect_image'] = [tool];
+      } else {
+        _toolRegistry.unregister('inspect_image');
+        _toolGroupsById.remove('inspect_image');
+      }
+    }
+    // generate_image / generate_video (GOAL #28): the same live-sync
+    // pattern over the media slots — pure configuration checks (the async
+    // resolvers keep resolving keys at call time).
+    _syncOneConditionalTool(
+      'generate_image',
+      wanted: mediaGenerationSlotCapability(
+        config.modelsConfig,
+        'imageGeneration',
+      ).present,
+      build: () => generateImageTool(
+        env: _coreToolEnv,
+        modelsConfig: config.modelsConfig,
+        mainBaseUrl: () => _agent.state.model.baseUrl,
+        mainModelId: () => _agent.state.model.id,
+        mainApiKey: () => _apiKey,
+        resolveKey: _resolveMediaKey,
+      ),
+    );
+    _syncOneConditionalTool(
+      'generate_video',
+      wanted: mediaGenerationSlotCapability(
+        config.modelsConfig,
+        'videoGeneration',
+      ).present,
+      build: () => generateVideoTool(
+        env: _coreToolEnv,
+        modelsConfig: config.modelsConfig,
+        mainBaseUrl: () => _agent.state.model.baseUrl,
+        mainModelId: () => _agent.state.model.id,
+        mainApiKey: () => _apiKey,
+        resolveKey: _resolveMediaKey,
+      ),
+    );
+    // decide (GOAL #28): the call-time provider gate in decide_tool.dart
+    // becomes the registration predicate — the same live source, so the
+    // registration can never contradict the call-time refusal.
+    _syncOneConditionalTool(
+      'decide',
+      wanted: _agent.state.model.provider == 'openrouter',
+      build: () => decideTool(
+        mainBaseUrl: () => _agent.state.model.baseUrl,
+        mainProviderKind: () => _agent.state.model.provider,
+        mainApiKey: () => _apiKey,
+      ),
+    );
+  }
+
+  /// Aligns ONE conditional tool's registration with [wanted]: registers
+  /// [build]'s instance when missing, unregisters when surplus. Idempotent.
+  void _syncOneConditionalTool(
+    String name, {
+    required bool wanted,
+    required AgentTool Function() build,
+  }) {
+    final registered = _toolRegistry.contains(name);
     if (wanted == registered) return;
     if (wanted) {
-      // The boot path's sink (host_agent_wiring.dart) rides along — a
-      // live-registered tool reports its spend to /cost exactly like a
-      // boot-registered one (gh-1984 review thread 9; the same default
-      // the read auto-route's construction sites share).
-      final tool = inspectImageTool(
-        _coreToolEnv,
-        visionConfig,
-        onUsage: _readOnImageUsage,
-      );
+      final tool = build();
       _toolRegistry.register(tool);
-      _toolGroupsById['inspect_image'] = [tool];
+      _toolGroupsById[name] = [tool];
     } else {
-      _toolRegistry.unregister('inspect_image');
-      _toolGroupsById.remove('inspect_image');
+      _toolRegistry.unregister(name);
+      _toolGroupsById.remove(name);
     }
   }
 
@@ -520,7 +680,7 @@ extension AgentCliTools on AgentCli {
       for (final entry in manager.toolsByServer.entries) {
         final tools = entry.value;
         // Note names AND instances: the gate's hiding/tombstoning, the
-        // discover_tools listing/docs, and a later mount all read them.
+        // others listing/docs, and a later mount all read them.
         _toolGate.noteFamilyTools('mcp:${entry.key}', tools);
         final show =
             allows(entry.key) && _toolGate.familyVisible('mcp:${entry.key}');
@@ -594,24 +754,44 @@ extension AgentCliTools on AgentCli {
   }
 
   /// The `/tools` listing: one line per known id with its approval tier,
-  /// on/off state, deciding scope, and (when off) the reason.
+  /// state (loaded · deferred — mount with `others` or `tools: {id: on}` ·
+  /// off with the reason), deciding scope, and the `others` row (GOAL #28
+  /// AC7).
   void _toolsList() {
     final resolution = _toolGate.resolution;
     if (resolution == null) {
       io.writeln('tools: availability still loading — try /tools reload');
       return;
     }
-    io.writeln('tool             tier   state scope    reason');
+    io.writeln('tool             tier   state     scope    reason');
     for (final id in knownToolIds) {
       io.writeln(_toolsListLine(id, resolution.byId[id]!));
     }
+    final stub = _toolRegistry.lookup(othersToolName);
+    io.writeln(
+      '${othersToolName.padRight(16)} ${(stub?.tier.name ?? '-').padRight(6)} '
+      '${(_toolGate.discoveryEnabled ? 'on' : 'off').padRight(9)} '
+      'builtin  discovery surface (GOAL #2416)',
+    );
   }
 
   String _toolsListLine(String id, ResolvedToolAvailability availability) {
     final tools = _toolGroupsById[id] ?? const <AgentTool>[];
     final tier = tools.isEmpty ? '-' : tools.first.tier.name;
+    final resolution = _toolGate.resolution;
+    final deferred =
+        resolution != null &&
+        availability.enabled &&
+        (resolution.discoverableIds.contains(id) ||
+            (coreToolFamilies[id]?.any(resolution.discoverableNames.contains) ??
+                false));
+    final state = !availability.enabled
+        ? 'off'
+        : deferred
+        ? 'deferred'
+        : 'loaded';
     return '${id.padRight(16)} ${tier.padRight(6)} '
-            '${(availability.enabled ? 'on' : 'off').padRight(5)} '
+            '${state.padRight(9)} '
             '${availability.scope.name.padRight(8)} ${availability.reason ?? ''}'
         .trimRight();
   }
@@ -754,8 +934,14 @@ extension AgentCliTools on AgentCli {
   String _toolsEntryDetail(String id) {
     final decision = _toolGate.resolution?.byId[id];
     if (decision == null) return '';
-    return decision.enabled
-        ? 'on (${decision.scope.name})'
-        : 'off (${decision.reason})';
+    if (!decision.enabled) return 'off (${decision.reason})';
+    final resolution = _toolGate.resolution!;
+    final deferred =
+        resolution.discoverableIds.contains(id) ||
+        (coreToolFamilies[id]?.any(resolution.discoverableNames.contains) ??
+            false);
+    return deferred
+        ? 'deferred — mount with others or tools: {$id: on}'
+        : 'on (${decision.scope.name})';
   }
 }

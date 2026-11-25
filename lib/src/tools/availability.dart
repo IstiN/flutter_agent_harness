@@ -68,6 +68,19 @@ const knownToolIds = <String>{
   'transcribe_audio',
   'dap',
 
+  /// Session settings (GOAL #28, issue #2416): own id so a scope can hide
+  /// the tool and the default partition can defer it.
+  'config',
+
+  /// Compaction expand (GOAL #28): own id — previously registered outside
+  /// the availability surface entirely.
+  'compact_expand',
+
+  /// Structured decisions (GOAL #28): own id — the capability is
+  /// conditional (an OpenRouter main connection), so the resolver must see
+  /// it to keep it out of the manifest when the capability is absent.
+  'decide',
+
   /// The office-host-bound outlook family (issue #89, visibility #327):
   /// the tools register only inside the Outlook add-in host; every other
   /// surface lists the family as a gated row with the add-in-only reason
@@ -135,12 +148,20 @@ const coreToolFamilies = <String, Set<String>>{
     'task_status',
     'task_observe',
     'task_send',
+    'task_resume',
     'agent_directory',
     'reply',
     'agent_message',
   },
   'checkpoint': {'checkpoint'},
   'rewind': {'rewind'},
+
+  /// GOAL #28 (issue #2416): the resolver must see every deferred
+  /// candidate — previously `config`/`compact_expand` were registered
+  /// outside the availability surface and `task_resume` had no id.
+  'config': {'config'},
+  'compact_expand': {'compact_expand'},
+  'decide': {'decide'},
   'generate_image': {'generate_image'},
   'generate_video': {'generate_video'},
   'transcribe_audio': {'transcribe_audio'},
@@ -393,11 +414,25 @@ final class ToolAvailabilityResolution {
   /// Enabled ids hidden from the schema by the active load mode (issue
   /// #680): discoverable, mountable on demand through the gate. Static
   /// tool ids and `mcp:<server>` family ids alike — the card's
-  /// discoverable set explicitly includes mcp__*. Empty in the default
-  /// mode (no preset → byte-identical behavior). A discoverable id is NOT
+  /// discoverable set explicitly includes mcp__*. A discoverable id is NOT
   /// disabled: [ResolvedToolAvailability.enabled] stays true and only the
   /// gate's mount state decides visibility.
+  ///
+  /// Under the default partition (GOAL #28: [essentialToolIds] null,
+  /// [essentialNames] given) this carries only the id-level families the
+  /// name table cannot express — `mcp:<server>` and host-wired ids without
+  /// a [coreToolFamilies] entry (`dap`, `sqlite`) — while static tools
+  /// demote per NAME into [discoverableNames].
   final Set<String> discoverableIds;
+
+  /// Enabled tool NAMES hidden from the schema by the default partition
+  /// (GOAL #28, issue #2416): an enabled tool defers iff its name is
+  /// outside the essential keep-12 ([essentialToolNamesByLoadMode]), the
+  /// capability-conditional set ([conditionalCapabilityToolNames]), and
+  /// no scope standing-mounts its id (`tools: {id: on}`). Family ids whose
+  /// members split (`memory`, `task`/`reply`) resolve per name. Empty
+  /// under the omp/pi id-level presets.
+  final Set<String> discoverableNames;
 
   /// Creates a resolution.
   const ToolAvailabilityResolution({
@@ -405,6 +440,7 @@ final class ToolAvailabilityResolution {
     this.unknownIds = const {},
     this.mcpServers = const {},
     this.discoverableIds = const {},
+    this.discoverableNames = const {},
   });
 }
 
@@ -417,17 +453,28 @@ final class ToolAvailabilityResolution {
 /// default and only config can turn them off. Unknown ids are collected in
 /// [ToolAvailabilityResolution.unknownIds] without failing.
 ///
-/// [essentialToolIds] is the active load-mode preset (issue #680): when
-/// set, every ENABLED id outside it — static tool ids AND enabled
-/// `mcp:<server>` families — demotes to discoverable (see
-/// [ToolAvailabilityResolution.discoverableIds]). [mcpServerIds] names
-/// the live MCP servers (the manager's connected set): servers no scope
-/// declares are enabled by default, so the resolver cannot see them
-/// without this — they demote like everyone else.
+/// [essentialToolIds] is the active load-mode preset (issue #680, the
+/// omp/pi id-level presets): when set, every ENABLED id outside it —
+/// static tool ids AND enabled `mcp:<server>` families — demotes to
+/// discoverable (see [ToolAvailabilityResolution.discoverableIds]).
+///
+/// [essentialNames] is the default partition (GOAL #28, issue #2416):
+/// when set, every ENABLED tool whose NAME is outside it (and outside
+/// [conditionalNames]) demotes per name into
+/// [ToolAvailabilityResolution.discoverableNames]; family-less ids
+/// (`dap`, `sqlite`) and `mcp:<server>` families demote at id level. A
+/// scope's explicit `tools: {id: on}` is a standing mount under either
+/// form: the user asked for the tool, the partition only curates the
+/// default. [mcpServerIds] names the live MCP servers (the manager's
+/// connected set): servers no scope declares are enabled by default, so
+/// the resolver cannot see them without this — they demote like everyone
+/// else.
 ToolAvailabilityResolution resolveToolAvailability({
   required Map<String, ToolCapability> capabilities,
   required List<(ToolScope, ToolsConfig)> scopes,
   Set<String>? essentialToolIds,
+  Set<String>? essentialNames,
+  Set<String> conditionalNames = const {},
   Iterable<String> mcpServerIds = const [],
 }) {
   final (:intent, :intentScope, :unknownIds, :mcpServers) = _collectToolIntents(
@@ -444,39 +491,74 @@ ToolAvailabilityResolution resolveToolAvailability({
       mcpServers[server] = false;
     }
   }
-  // Load-mode demotion (issue #680): under a preset, an enabled id
-  // outside the essential set becomes discoverable — UNLESS a scope
+  // Load-mode demotion (issues #680 + #2416): under a preset an enabled
+  // tool outside the essential set becomes discoverable — UNLESS a scope
   // explicitly enabled it (`tools: {id: on}` is a standing mount: the
   // user asked for the tool, the preset only curates the default). The
   // essential set is pinned: nothing in the scope stack can demote it,
-  // and an explicit `off` still disables it exactly as before.
-  final discoverable = essentialToolIds == null
-      ? const <String>{}
-      : {
-          for (final entry in byId.entries)
-            if (entry.value.enabled &&
-                !essentialToolIds.contains(entry.key) &&
-                intent[entry.key] != true)
-              entry.key,
-          // MCP families demote too (issue #680 — the card lists mcp__*
-          // among the discoverable): the heaviest tool schemas are the
-          // feature's whole point. The same standing-mount rule applies:
-          // an explicit per-server `tools: {mcp:<server>: on}` or an
-          // aggregate `tools: {mcp: on}` keeps the family in the schema.
-          // Presets never carry mcp ids, and a disabled family (declared
-          // off, or the mcp:false kill-switch above) fails the enabled
-          // check — disable stays disable, not demotion.
-          if (intent['mcp'] != true)
-            for (final server in {...mcpServerIds, ...mcpServers.keys})
-              if ((mcpServers[server] ?? byId['mcp']?.enabled ?? true) &&
-                  mcpServers[server] != true)
-                'mcp:$server',
-        };
+  // and an explicit `off` still disables it exactly as before. A disabled
+  // or capability-absent tool is in neither the schema nor the discovery
+  // listing (`off` beats demotion, #2416 I3).
+  final discoverableIds = <String>{};
+  final discoverableNames = <String>{};
+  if (essentialToolIds != null || essentialNames != null) {
+    if (essentialToolIds != null) {
+      // Id-level presets (omp/pi): whole ids demote.
+      discoverableIds.addAll({
+        for (final entry in byId.entries)
+          if (entry.value.enabled &&
+              !essentialToolIds.contains(entry.key) &&
+              intent[entry.key] != true)
+            entry.key,
+      });
+    }
+    if (essentialNames != null) {
+      // Name-level partition (default mode): family members split per
+      // name (`memory_add` stays, `memory_list` defers; `reply` stays
+      // inside the deferred `task` family). Family-less ids (`dap`,
+      // `sqlite`) demote at id level unless the id itself is an essential
+      // name (`lsp`). The capability-conditional names
+      // ([conditionalNames]) stay visible without a mount when present.
+      for (final entry in byId.entries) {
+        if (!entry.value.enabled || intent[entry.key] == true) continue;
+        final family = coreToolFamilies[entry.key];
+        if (family == null) {
+          if (!essentialNames.contains(entry.key)) {
+            discoverableIds.add(entry.key);
+          }
+          continue;
+        }
+        for (final name in family) {
+          if (!essentialNames.contains(name) &&
+              !conditionalNames.contains(name)) {
+            discoverableNames.add(name);
+          }
+        }
+      }
+    }
+    // MCP families demote at id level (issue #680 — the card lists mcp__*
+    // among the discoverable; #2416 keeps the rule under the default
+    // partition): the heaviest tool schemas are the feature's whole
+    // point. The same standing-mount rule applies: an explicit per-server
+    // `tools: {mcp:<server>: on}` or an aggregate `tools: {mcp: on}` keeps
+    // the family in the schema. Presets never carry mcp ids, and a
+    // disabled family (declared off, or the mcp:false kill-switch above)
+    // fails the enabled check — disable stays disable, not demotion.
+    if (intent['mcp'] != true) {
+      for (final server in {...mcpServerIds, ...mcpServers.keys}) {
+        if ((mcpServers[server] ?? byId['mcp']?.enabled ?? true) &&
+            mcpServers[server] != true) {
+          discoverableIds.add('mcp:$server');
+        }
+      }
+    }
+  }
   return ToolAvailabilityResolution(
     byId: byId,
     unknownIds: unknownIds,
     mcpServers: mcpServers,
-    discoverableIds: discoverable,
+    discoverableIds: discoverableIds,
+    discoverableNames: discoverableNames,
   );
 }
 

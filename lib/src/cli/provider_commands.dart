@@ -2143,6 +2143,7 @@ extension on AgentCli {
       io.writeln(modelLine);
       _printRoleModelsNote();
       await config.onProviderChanged?.call(_providerKind, _apiKey);
+      unawaited(AgentCliTools(this).rebuildToolAvailability());
     } on ConfigException catch (error) {
       io.writeln('cannot switch provider: ${error.message}');
     } on Object catch (error) {

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Owns the capability-gated tool availability wiring for one agent
@@ -51,12 +53,71 @@ class AgentToolAvailability {
       if (id != null) toolsById.putIfAbsent(id, () => []).add(tool);
     }
     _gate = ToolAvailabilityGate(toolsById: toolsById);
-    // Load-mode discovery surface (issue #680): omp keeps the
-    // `discover_tools` path live, pi keeps the exact benchmark shape.
+    // Load-mode discovery surface (GOAL #28, issue #2416): the default
+    // partition and omp keep the `others` path live, pi keeps the exact
+    // benchmark shape. Registered only when something is actually
+    // deferred — nothing deferred means no stub.
     _gate.discoveryEnabled = discoveryEnabledByLoadMode[_loadMode] ?? false;
     // Tombstones calls to disabled tools even when the model names one.
     agent.toolExecutor = _gate.wrapExecutor(agent.toolExecutor);
     _apply();
+  }
+
+  /// Keeps the `others` registration in step with the live deferred set
+  /// (GOAL #28): present iff discovery is on AND at least one deferred
+  /// tool exists. Mounting returns the I4 doc bytes — the tool's own
+  /// description plus the compact parameter schema.
+  void _syncOthersTool() {
+    final registry = this.registry;
+    if (registry == null) return;
+    if (!_gate.discoveryEnabled || _gate.discoverableToolNames.isEmpty) {
+      if (registry.contains(othersToolName)) {
+        registry.unregister(othersToolName);
+        _agent.state.tools = registry.tools;
+        rebuildPrompt();
+      }
+      return;
+    }
+    if (registry.contains(othersToolName)) return;
+    final names = _gate.discoverableToolNames;
+    registry.register(
+      othersTool(
+        description:
+            'Deferred tools (not loaded): ${names.join(', ')}. Call others '
+            'with tool_name to load a tool\'s full description and schema; '
+            'omit tool_name to list them with one-line docs.',
+        discoverableDocs: _gate.discoverableDocs,
+        onMount: (requested) {
+          final results = <String>[];
+          for (final name in requested) {
+            final tool = _gate.originalTool(name);
+            if (tool == null) {
+              results.add(
+                'no such deferred tool: $name; available: '
+                '${_gate.discoverableToolNames.join(', ')}',
+              );
+              continue;
+            }
+            final doc = '${tool.description}\n${jsonEncode(tool.parameters)}';
+            final mounted = _gate.mount(
+              [name],
+              registry,
+              _agent,
+              rebuildPrompt: rebuildPrompt,
+            );
+            results.add(
+              mounted.isEmpty
+                  ? '`$name` is already loaded.\n$doc'
+                  : 'Loaded `$name` (now in the schema):\n$doc',
+            );
+          }
+          return results.join('\n');
+        },
+      ),
+    );
+    // The register landed after apply's state sync — reflect it.
+    _agent.state.tools = registry.tools;
+    rebuildPrompt();
   }
 
   /// The live registry the resolution re-applies to; `null` on the
@@ -97,11 +158,22 @@ class AgentToolAvailability {
   /// The resolved availability decision for the current config + wiring.
   /// The full scope stack: yaml global < project < the app-UI runtime
   /// store (deepest wins per key), with the load mode's essential pin +
-  /// discovery surface (issue #1078 AC2/E4).
+  /// discovery surface (issue #1078 AC2/E4). GOAL #28 (issue #2416): the
+  /// default partition demotes by NAME (keep-12 essential,
+  /// capability-conditional set visible); omp/pi keep their id-level
+  /// presets.
   ToolAvailabilityResolution _resolve() => resolveToolAvailability(
     capabilities: _capabilities,
     scopes: [..._configScopes, (ToolScope.runtime, _config)],
-    essentialToolIds: essentialToolIdsByLoadMode[_loadMode],
+    essentialToolIds: _loadMode == AgentLoadMode.defaultMode
+        ? null
+        : essentialToolIdsByLoadMode[_loadMode],
+    essentialNames: _loadMode == AgentLoadMode.defaultMode
+        ? essentialToolNamesByLoadMode[AgentLoadMode.defaultMode]
+        : null,
+    conditionalNames: _loadMode == AgentLoadMode.defaultMode
+        ? conditionalCapabilityToolNames
+        : const {},
   );
 
   /// Re-applies the availability resolution to the live registry and
@@ -110,6 +182,9 @@ class AgentToolAvailability {
     final registry = this.registry;
     if (registry == null) return;
     _gate.apply(_resolve(), registry, _agent, rebuildPrompt: rebuildPrompt);
+    // After apply: a stub register/unregister must land in
+    // agent.state.tools + the prompt, which apply just synced (GOAL #28).
+    _syncOthersTool();
   }
 }
 

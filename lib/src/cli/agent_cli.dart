@@ -240,11 +240,15 @@ import '../trajectory/trajectory_snapshot.dart';
 import 'trajectory_tui.dart';
 import '../tools/availability.dart';
 import '../tools/availability_gate.dart';
-import '../tools/discover_tools_tool.dart';
+import '../tools/others_tool.dart';
 import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/session_search_tool.dart';
+import '../tools/decide_tool.dart';
+import '../tools/generate_image.dart';
+import '../tools/generate_video.dart';
+import '../tools/media_slot_configs.dart';
 import '../session/session_chunk_reader.dart'
     show heavyScanGuardIfHeavy, heavyScanGuardLines, sessionSizeIfHeavy;
 import '../session/session_search.dart';
@@ -632,8 +636,15 @@ class AgentCli {
         ),
         // gh-1844 (review): `decide` rides its own facility bundle — it
         // only needs the live main-connection accessors, not the media
-        // config.
-        decisions: DecisionsServices(mainApiKey: () => _apiKey),
+        // config. GOAL #28: the mainProviderKind accessor is the BIRTH
+        // capability source (the boot kind's catalog provider name); the
+        // live availability rebuild re-decides from the agent's model
+        // provider (the same source as the tool's call-time gate).
+        decisions: DecisionsServices(
+          mainApiKey: () => _apiKey,
+          mainProviderKind: () =>
+              resolveCliProviderSpec(_providerKind)?.name ?? _providerKind,
+        ),
         browserController: config.browserController,
         // Builder hands the decorated env (review #1230) — screenshot
         // saves clamp like every other fs-touching tool.

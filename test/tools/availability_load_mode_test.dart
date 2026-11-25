@@ -186,8 +186,9 @@ void main() {
         expect(result.terminate, isFalse);
         expect(
           (result.content.single as TextContent).text,
-          'Tool `lsp` is discoverable and not loaded — call `discover_tools` '
-          'to list available tools, then mount it by name.',
+          'Tool `lsp` is deferred (not loaded) — call `others` with '
+          '`tool_name: "lsp"` to load its full description and schema, '
+          'then call it again normally.',
         );
 
         // Discovery off (pi's shape, issue #679): the pointer must be
@@ -200,7 +201,7 @@ void main() {
         expect(
           (piResult.content.single as TextContent).text,
           'Tool `lsp` is discoverable and not loaded in this mode — this '
-          'mode ships no `discover_tools` surface; ask the user to switch '
+          'mode ships no discovery surface; ask the user to switch '
           'the load mode via /settings (agent.mode) — see '
           'docs/tool-availability.md §Load modes.',
         );
@@ -349,8 +350,9 @@ void main() {
       final result = await wrapped(_call('c1', 'mcp__ctx__get'), null, null);
       expect(
         (result.content.single as TextContent).text,
-        'Tool `mcp__ctx__get` is discoverable and not loaded — call '
-        '`discover_tools` to list available tools, then mount it by name.',
+        'Tool `mcp__ctx__get` is deferred (not loaded) — call `others` '
+        'with `tool_name: "mcp__ctx__get"` to load its full description '
+        'and schema, then call it again normally.',
       );
     });
 
@@ -359,14 +361,16 @@ void main() {
       final agent = _agent(registry);
       expect(gate.availabilityIdOf('mcp__ctx__get'), 'mcp:ctx');
 
+      // GOAL #2416: the model mounts by NAME — mounting one member of a
+      // dynamic family loads the whole id-level family.
       final mounted = gate.mount(
-        ['mcp:ctx'],
+        ['mcp__ctx__get'],
         registry,
         agent,
         rebuildPrompt: () {},
       );
 
-      expect(mounted, {'mcp:ctx'});
+      expect(mounted, {'mcp__ctx__get'});
       expect(registry.contains('mcp__ctx__get'), isTrue);
       expect(registry.contains('mcp__ctx__put'), isTrue);
       expect(gate.familyVisible('mcp:ctx'), isTrue);
@@ -376,7 +380,7 @@ void main() {
     test('a mounted family member executes through the executor', () async {
       final (gate, registry) = boot();
       final agent = _agent(registry);
-      gate.mount(['mcp:ctx'], registry, agent, rebuildPrompt: () {});
+      gate.mount(['mcp__ctx__put'], registry, agent, rebuildPrompt: () {});
       final wrapped = gate.wrapExecutor(
         (call, cancelToken, onUpdate) async =>
             ToolExecutionResult.text('inner ${call.name}'),
@@ -389,12 +393,13 @@ void main() {
     });
   });
 
-  group('discover_tools meta tool (issue #680 L2)', () {
+  group('others discovery surface (issue #680 L2 + GOAL #2416)', () {
     test('lists discoverable tools with first-line docs', () async {
       final gate = ToolAvailabilityGate(toolsById: _toolsById);
       final registry = ToolRegistry([
         for (final tools in _toolsById.values) ...tools,
-        discoverToolsTool(
+        othersTool(
+          description: 'Deferred tools (not loaded): lsp, web_search.',
           discoverableDocs: gate.discoverableDocs,
           onMount: (_) => '',
         ),
@@ -406,9 +411,10 @@ void main() {
       expect(docs.keys, containsAll(['lsp', 'web_search']));
       expect(docs['lsp'], 'lsp diagnostics', reason: 'first line only');
       expect(
-        registry.lookup('discover_tools'),
+        registry.lookup(othersToolName),
         isNotNull,
-        reason: 'the meta tool carries no availability id and is never gated',
+        reason:
+            'the discovery tool carries no availability id and is never gated',
       );
     });
 
@@ -421,18 +427,19 @@ void main() {
       gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
       gate.mount(['lsp', 'web_search'], registry, agent, rebuildPrompt: () {});
 
-      final tool = discoverToolsTool(
+      final tool = othersTool(
+        description: 'Deferred tools.',
         discoverableDocs: gate.discoverableDocs,
         onMount: (_) => 'mounted',
       );
       final result = await tool.execute({}, CancelTokenSource().token, null);
       expect(
         (result.content.single as TextContent).text,
-        contains('No discoverable tools'),
+        contains('No deferred tools'),
       );
     });
 
-    test('mount argument routes through onMount by name', () async {
+    test('tool_name routes through onMount by name', () async {
       final gate = ToolAvailabilityGate(toolsById: _toolsById);
       final registry = ToolRegistry([
         for (final tools in _toolsById.values) ...tools,
@@ -441,7 +448,8 @@ void main() {
       gate.apply(_ompResolution(), registry, agent, rebuildPrompt: () {});
 
       final requested = <String>[];
-      final tool = discoverToolsTool(
+      final tool = othersTool(
+        description: 'Deferred tools.',
         discoverableDocs: gate.discoverableDocs,
         onMount: (names) {
           requested.addAll(names);
@@ -449,18 +457,163 @@ void main() {
         },
       );
       final result = await tool.execute(
-        {
-          'mount': ['lsp', '  ', 'web_search'],
-        },
+        {'tool_name': '  lsp  '},
         CancelTokenSource().token,
         null,
       );
 
-      expect(requested, ['lsp', 'web_search']);
+      expect(requested, ['lsp']);
       expect(
         (result.content.single as TextContent).text,
-        contains('Mounted (now in the schema): lsp, web_search'),
+        contains('Mounted (now in the schema): lsp'),
       );
+    });
+  });
+
+  group('default partition: name-level demotion (GOAL #2416 UT-2)', () {
+    // The keep-12 fixture: the memory family SPLITS (add/search keep,
+    // list/delete defer) and reply (a task-family member) stays.
+    final partitionTools = <String, List<AgentTool>>{
+      'read': [_tool('read', 'read a file\nlonger doc')],
+      'write': [_tool('write', 'write a file\nlonger doc')],
+      'edit': [_tool('edit', 'edit a file\nlonger doc')],
+      'ls': [_tool('ls', 'list a dir\nlonger doc')],
+      'bash': [_tool('bash', 'run a command\nlonger doc')],
+      'bash_job': [_tool('bash_job', 'job board\nlonger doc')],
+      'lsp': [_tool('lsp', 'lsp diagnostics\nlonger doc')],
+      'web_search': [
+        _tool('web_search', 'web search\nlonger doc'),
+        _tool('web_fetch', 'web fetch\nlonger doc'),
+      ],
+      'memory': [
+        _tool('memory_add', 'add a memory\nlonger doc'),
+        _tool('memory_search', 'search memories\nlonger doc'),
+        _tool('memory_list', 'list memories\nlonger doc'),
+        _tool('memory_delete', 'delete a memory\nlonger doc'),
+      ],
+      'task': [
+        _tool('task', 'spawn a subagent\nlonger doc'),
+        _tool('task_status', 'task status\nlonger doc'),
+        _tool('reply', 'reply to the parent\nlonger doc'),
+      ],
+      'config': [_tool('config', 'read settings\nlonger doc')],
+    };
+
+    ToolAvailabilityResolution partitionResolution({
+      Map<String, bool> tools = const {},
+      Iterable<String> mcpServerIds = const [],
+    }) => resolveToolAvailability(
+      capabilities: {
+        for (final id in partitionTools.keys)
+          id: const ToolCapability.available(),
+        'mcp': const ToolCapability.available(),
+      },
+      scopes: [(ToolScope.session, ToolsConfig(tools: tools))],
+      essentialNames: essentialToolNamesByLoadMode[AgentLoadMode.defaultMode],
+      conditionalNames: conditionalCapabilityToolNames,
+      mcpServerIds: mcpServerIds,
+    );
+
+    test('the memory family splits per name', () {
+      final r = partitionResolution();
+      expect(
+        r.discoverableNames,
+        containsAll(['memory_list', 'memory_delete']),
+      );
+      expect(r.discoverableNames, isNot(contains('memory_add')));
+      expect(r.discoverableNames, isNot(contains('memory_search')));
+      expect(r.discoverableIds, isNot(contains('memory')));
+    });
+
+    test('reply stays loaded inside the deferred task family', () {
+      final r = partitionResolution();
+      expect(r.discoverableNames, containsAll(['task', 'task_status']));
+      expect(r.discoverableNames, isNot(contains('reply')));
+    });
+
+    test('the keep-12 and conditional names never defer', () {
+      final r = partitionResolution();
+      for (final name in [
+        ...essentialToolNamesByLoadMode[AgentLoadMode.defaultMode]!,
+        ...conditionalCapabilityToolNames,
+      ]) {
+        expect(r.discoverableNames, isNot(contains(name)), reason: name);
+      }
+    });
+
+    test('off beats demotion: the family leaves schema AND listing', () {
+      final r = partitionResolution(tools: {'task': false});
+      expect(r.byId['task']!.enabled, isFalse);
+      expect(r.discoverableNames, isNot(contains('task')));
+      expect(r.discoverableNames, isNot(contains('task_status')));
+    });
+
+    test('a standing mount keeps the family loaded', () {
+      final r = partitionResolution(tools: {'memory': true});
+      expect(r.discoverableNames, isNot(contains('memory_list')));
+      expect(r.discoverableNames, isNot(contains('memory_delete')));
+    });
+
+    test('MCP servers demote at id level under the default partition', () {
+      final r = partitionResolution(mcpServerIds: const ['ctx']);
+      expect(r.discoverableIds, contains('mcp:ctx'));
+      // Static tools demote per NAME alongside the id-level families.
+      expect(r.discoverableNames, contains('memory_list'));
+    });
+
+    test('registry visibility follows the name-level mounts', () {
+      final gate = ToolAvailabilityGate(toolsById: partitionTools);
+      final registry = ToolRegistry([
+        for (final tools in partitionTools.values) ...tools,
+      ]);
+      final agent = _agent(registry);
+      gate.discoveryEnabled = true;
+      gate.apply(partitionResolution(), registry, agent, rebuildPrompt: () {});
+
+      // keep: memory_add/memory_search/reply; deferred: the rest.
+      expect(registry.contains('memory_add'), isTrue);
+      expect(registry.contains('memory_search'), isTrue);
+      expect(registry.contains('reply'), isTrue);
+      expect(registry.contains('memory_list'), isFalse);
+      expect(registry.contains('task'), isFalse);
+      expect(registry.contains('config'), isFalse);
+      expect(
+        gate.discoverableToolNames,
+        containsAll(['memory_list', 'memory_delete', 'task', 'config']),
+      );
+      expect(gate.discoverableToolNames, isNot(contains('reply')));
+
+      // Mount ONE name of the split family — only that name loads.
+      final mounted = gate.mount(
+        ['memory_list'],
+        registry,
+        agent,
+        rebuildPrompt: () {},
+      );
+      expect(mounted, {'memory_list'});
+      expect(registry.contains('memory_list'), isTrue);
+      expect(registry.contains('memory_delete'), isFalse);
+      expect(registry.contains('memory_add'), isTrue);
+    });
+
+    test('a direct call to a hidden name tombstones toward others', () async {
+      final gate = ToolAvailabilityGate(toolsById: partitionTools);
+      final registry = ToolRegistry([
+        for (final tools in partitionTools.values) ...tools,
+      ]);
+      final agent = _agent(registry);
+      gate.discoveryEnabled = true;
+      gate.apply(partitionResolution(), registry, agent, rebuildPrompt: () {});
+      final wrapped = gate.wrapExecutor(
+        (call, cancelToken, onUpdate) async =>
+            ToolExecutionResult.text('inner ${call.name}'),
+      );
+      final result = await wrapped(_call('c1', 'config'), null, null);
+      expect(
+        (result.content.single as TextContent).text,
+        contains('deferred (not loaded)'),
+      );
+      expect((result.content.single as TextContent).text, contains('others'));
     });
   });
 }
