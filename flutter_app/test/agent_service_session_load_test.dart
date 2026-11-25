@@ -6,6 +6,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -173,6 +174,56 @@ final class _NoFullReadFs implements FileSystem, RangedReadFileSystem {
 }
 
 void main() {
+  test('gh-2407 thread 1: a session load drops the request snapshot (S0) '
+      '— the loaded session is not the projection S0 described', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_s0_load');
+    addTearDown(() => tmp.delete(recursive: true));
+    await io.File('${tmp.path}/a.jsonl').writeAsString(
+      _header('session-a', '2026-01-01T00:00:00.000Z') +
+          _userMessage('a1', 'alpha-old one') +
+          _userMessage('a2', 'alpha-old two'),
+    );
+    final agent = _createAgent();
+    // The send-seam stand-in: the OUTGOING session's last main request
+    // (S0) sits in the store.
+    agent.requestSnapshots.capture(
+      RequestSnapshot(
+        model: agent.state.model,
+        messages: [UserMessage.text('previous session ask')],
+        seqMap: TranscriptSeqMap(
+          headSeqs: const [],
+          index: RecordSeqIndex(const []),
+        ),
+        sentAt: DateTime.now(),
+      ),
+    );
+    expect(agent.requestSnapshots.validFor(agent.state.model), isNotNull);
+
+    final service = AgentService(
+      agent: agent,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(
+        fs: LocalFileSystem(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+      ),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+    final sessions = await service.listSessions();
+    final a = sessions.where((m) => m.id == 'session-a').single;
+
+    // The load replaces the projection (`_agent.reset()`): the previous
+    // session's S0 must not survive into the next session's pre-flight —
+    // a stale snapshot would feed the merged hand-over the WRONG
+    // session's transcript.
+    await service.loadSession(a);
+    expect(agent.requestSnapshots.current, isNull);
+    expect(agent.requestSnapshots.invalidReason, isNotNull);
+    expect(agent.requestSnapshots.validFor(agent.state.model), isNull);
+  });
+
   test('loadSession generation guard: a stale open never lands its records',
       () async {
     final tmp = await io.Directory.systemTemp.createTemp('fa_generation');
