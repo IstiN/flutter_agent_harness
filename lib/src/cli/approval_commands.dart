@@ -792,7 +792,13 @@ extension ApprovalCommands on AgentCli {
     final estimate = _ctxEstimate.settledEstimate(messages);
     var tokens = estimate.tokens;
     if (estimate.lastUsageIndex == null) {
-      tokens += _requestOverheadTokens(state.systemPrompt, state.tools);
+      // gh-2411: the unanchored basis carries the session's overhead
+      // calibration — the same multiplier [_liveRequestTokens], the loop
+      // guard and the compaction trigger apply, so the meter reads what
+      // the next request really costs before the provider's first reply.
+      tokens = _agent.state.overheadCalibration.apply(
+        tokens + _requestOverheadTokens(state.systemPrompt, state.tools),
+      );
     }
     if (streaming != null) tokens += estimateTokens(streaming);
     return tokens;

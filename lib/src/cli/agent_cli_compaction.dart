@@ -529,6 +529,12 @@ extension AgentCliCompactionRun on AgentCli {
   /// the previous engine's requests described is no longer the one the
   /// next request sends (one cache invalidation at the switch).
   void _syncRecordTags() {
+    // gh-2411: the loop's soft-window regime keys off the SAME reserve
+    // the compaction trigger uses. A late-wirable knob carrying a
+    // closure, so every request reads the live settings (tuning can
+    // change mid-session); unset = the window itself is the line.
+    _agent.windowReserveTokens = () =>
+        _effectiveCompactionSettings.reserveTokens;
     final enabled = _activeCompactionEngine == CompactionEngine.structured;
     if (_agent.recordTagsEnabled == enabled) return;
     _agent.recordTagsEnabled = enabled;
@@ -565,6 +571,11 @@ extension AgentCliCompactionRun on AgentCli {
     // when unanchored) — the threshold must trip on what the next request
     // actually carries.
     final tokens = _liveRequestTokens();
+    // gh-2411: the soft-window regime skips every automatic pass — no
+    // trim can land under the window, so the pre-flight, the post-run
+    // fold and the over-window funnel all stand down here (ONE warning
+    // per session) instead of thrashing relief on every turn.
+    if (_skipCompactionSoftWindow()) return false;
     // gh-1680 AC4: the additive message-count trigger — a model with a
     // learned cap compacts when the live count reaches `cap − margin`,
     // BEFORE the request, even when the token trigger is untouched. The
@@ -707,12 +718,60 @@ extension AgentCliCompactionRun on AgentCli {
 
   /// The shared request-size estimate for compaction decisions (see
   /// [estimateRequestTokens]): identical basis to the status-line meter
-  /// and the loop guard.
+  /// and the loop guard — the session's overhead calibration included
+  /// (gh-2411), so the three never disagree on an unanchored request.
   int _liveRequestTokens() => estimateRequestTokens(
     _agent.state.messages,
     systemPrompt: _agent.state.systemPrompt,
     tools: _agent.state.tools,
+    calibration: _agent.state.overheadCalibration,
   );
+
+  /// The calibrated fixed overhead of the live request (system prompt +
+  /// tool schemas) on the same basis.
+  int _liveOverheadTokens() => estimateRequestTokens(
+    const [],
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+    calibration: _agent.state.overheadCalibration,
+  );
+
+  /// gh-2411: whether the live session sits in the SOFT-WINDOW regime
+  /// ([softWindowRegime]) — the fixed request overhead plus the newest
+  /// user turn already reaches the compaction trigger, so no trim can
+  /// ever land a request under the window.
+  bool get _softWindow => softWindowRegime(
+    messages: _agent.state.messages,
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+    window: _effectiveContextWindow,
+    reserveTokens: _effectiveCompactionSettings.reserveTokens,
+    calibration: _agent.state.overheadCalibration,
+  );
+
+  /// The regime's answer for every automatic compaction entry point:
+  /// `true` = skip (the request goes out as is — the owner's rule: the
+  /// window is a soft target, a slight overrun beats a user turn trimmed
+  /// away on every step). The FIRST skip of a session prints ONE visible
+  /// warning naming the only real fix; later skips stay silent.
+  bool _skipCompactionSoftWindow() {
+    if (!_softWindow) return false;
+    if (!_softWindowNotice.shouldWarn(_session?.cachedId)) return true;
+    final overhead = _liveOverheadTokens();
+    _logDiagnostic(
+      'soft window sid=$_logSid window=$_effectiveContextWindow '
+      'overhead=$overhead — compaction skipped for the session',
+    );
+    io.writeln(
+      tuiWarning(
+        'warning: context window $_effectiveContextWindow is below the '
+        'fixed request overhead $overhead (system prompt + tool schemas) '
+        '— raising the window or disabling tools is the only fix; '
+        'compaction is skipped for this session',
+      ),
+    );
+    return true;
+  }
 
   /// gh-1425 AC3 (the resume boot cap, lazy rework): a resumed session
   /// whose projected context is over the compaction trigger must never
@@ -759,6 +818,11 @@ extension AgentCliCompactionRun on AgentCli {
         !overCap) {
       return;
     }
+    // gh-2411: below the fixed overhead the window is a soft target —
+    // the cap must not trim the restored transcript (it can never land
+    // under the trigger, and the newest user turn stays visible); the
+    // first prompt's request goes out as is, with ONE warning.
+    if (_skipCompactionSoftWindow()) return;
     // Over the WINDOW itself: no request can ever be sent, and an LM
     // compaction pass here takes minutes on slow summarizers (the
     // goal_builder incident: a 3.5-minute boot cap read as a hung open
@@ -774,11 +838,7 @@ extension AgentCliCompactionRun on AgentCli {
         reason: 'the resumed transcript exceeded the context window',
         window: _effectiveContextWindow,
         settings: _effectiveCompactionSettings,
-        overheadTokens: estimateRequestTokens(
-          const [],
-          systemPrompt: _agent.state.systemPrompt,
-          tools: _agent.state.tools,
-        ),
+        overheadTokens: _liveOverheadTokens(),
       );
       if (trimmed != null) {
         _agent.state.messages = trimmed.messages;
@@ -877,6 +937,8 @@ extension AgentCliCompactionRun on AgentCli {
     )) {
       return;
     }
+    // gh-2411: the soft-window regime stands down here too.
+    if (_skipCompactionSoftWindow()) return;
     _pushBusyPhase('Compacting context…');
     _logDiagnostic(
       'checkpoint restore budget guard start sid=$_logSid tokens=$tokens',
@@ -1157,6 +1219,7 @@ extension OverWindowGuardRelief on AgentCli {
       overWindow,
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
+      calibration: _agent.state.overheadCalibration,
     );
     // gh-209: the relief path runs ONLY the emergency tier —
     // deterministic, seconds, no LM call on any path. The quality tier
@@ -1452,11 +1515,7 @@ extension OverWindowContinuation on AgentCli {
             'token window',
         window: _effectiveContextWindow,
         settings: _effectiveCompactionSettings,
-        overheadTokens: estimateRequestTokens(
-          const [],
-          systemPrompt: _agent.state.systemPrompt,
-          tools: _agent.state.tools,
-        ),
+        overheadTokens: _liveOverheadTokens(),
       );
       if (trimmed != null) {
         _agent.state.messages = trimmed.messages;

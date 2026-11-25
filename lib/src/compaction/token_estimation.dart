@@ -3,10 +3,13 @@
 /// Ported from pi-mono `packages/agent/src/harness/compaction/compaction.ts`
 /// (`estimateTokens`, `calculateContextTokens`, `estimateContextTokens`).
 /// The heuristic is deliberately crude and provider-agnostic: **4 characters
-/// per token**, with images estimated at 4800 chars (≈ 1200 tokens). When a
-/// provider has reported real usage on an assistant message, that number is
-/// trusted for everything up to and including that message, and only the
-/// trailing messages are estimated.
+/// per token** for transcript text, with images estimated at 4800 chars
+/// (≈ 1200 tokens). The FIXED request overhead (system prompt + tool
+/// schemas) is token-dense and prices at its own density
+/// ([overheadCharsPerToken], gh-2411), corrected per session by
+/// [OverheadCalibration]. When a provider has reported real usage on an
+/// assistant message, that number is trusted for everything up to and
+/// including that message, and only the trailing messages are estimated.
 library;
 
 import 'dart:convert';
@@ -15,6 +18,7 @@ import '../agent/image_registry.dart' show imageContentKey;
 import '../context.dart';
 import '../session/session_record.dart';
 import '../types.dart';
+import 'overhead_calibration.dart';
 import 'record_tag.dart' show tagOverheadTokens, taggedRecordCount;
 
 /// Estimated character cost of an image block (pi's `ESTIMATED_IMAGE_CHARS`:
@@ -29,8 +33,29 @@ const estimatedRepeatImageChars = 32;
 /// [imageContentKey] so the estimator and the registry never drift.
 String estimationImageKey(ImageContent image) => imageContentKey(image);
 
-/// Characters per token in pi's conservative heuristic.
+/// Characters per token in pi's conservative heuristic (transcript
+/// text: prose, tool output).
 const _charsPerToken = 4;
+
+/// Characters per token for the FIXED REQUEST OVERHEAD — the system
+/// prompt and the tool schemas (gh-2411).
+///
+/// JSON schemas and a Markdown system prompt are token-dense: quotes,
+/// colons, braces, paths and ids tokenize far below prose's ~4
+/// chars/token. Measured on the gh-2411 session (Copilot /
+/// claude-haiku-5.5, 2026-11-25): the request carried 12,105 system
+/// prompt chars + 34 tool schemas (317 name + 33,112 description +
+/// 20,027 compact schema chars) = 65,561 chars and the provider charged
+/// 24,126 input tokens — 2.72 chars/token. The chars/4 heuristic priced
+/// the same overhead at 16,407 tokens (32% under), so the ctx meter read
+/// 82% on a request the provider saw at 121%. 2.5 keeps a ~8% margin on
+/// the over-reading side (a per-provider residual is what
+/// [OverheadCalibration] corrects, upward only); the transcript heuristic
+/// above stays at pi's 4 (parity with pi's estimator).
+const double _overheadCharsPerToken = 2.5;
+
+/// The overhead density [estimateRequestOverheadTokens] prices at.
+double get overheadCharsPerToken => _overheadCharsPerToken;
 
 /// Calculate total context tokens from provider usage.
 ///
@@ -454,7 +479,10 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
 
 /// Estimated token cost of the request parts that are NOT transcript
 /// messages: the system prompt and the tool schemas (name + description +
-/// JSON-encoded parameters), at pi's 4-chars-per-token heuristic.
+/// JSON-encoded parameters), at the overhead density
+/// ([overheadCharsPerToken], gh-2411 — NOT the transcript's chars/4: a
+/// schema-dense overhead under-counted by a third on the incident
+/// session).
 ///
 /// Every wire request carries these, but [estimateContextTokens] never
 /// counts them — they only enter an ANCHORED estimate implicitly, through
@@ -470,7 +498,7 @@ int estimateRequestOverheadTokens(String? systemPrompt, List<Tool> tools) {
         tool.description.length +
         _safeJsonEncode(tool.parameters).length;
   }
-  return (chars / _charsPerToken).ceil();
+  return (chars / _overheadCharsPerToken).ceil();
 }
 
 /// Full next-request estimate — the ONE basis the ctx meter, the loop's
@@ -481,11 +509,17 @@ int estimateRequestOverheadTokens(String? systemPrompt, List<Tool> tools) {
 /// the system prompt and tool schemas in. An anchored estimate already
 /// includes them (the reported usage is the whole previous request), so
 /// adding the overhead there would double-count.
+///
+/// [calibration] (gh-2411) scales the UNANCHORED estimate — transcript
+/// plus overhead — by the multiplier the provider's first valid usage
+/// earned for it (see [deriveOverheadCalibration]); an anchored estimate
+/// is the provider's own number and is never scaled.
 int estimateRequestTokens(
   List<Message> messages, {
   String? systemPrompt,
   List<Tool> tools = const [],
   List<int?>? recordSeqs,
+  OverheadCalibration calibration = OverheadCalibration.uncalibrated,
 }) {
   final estimate = estimateContextTokens(messages);
   // GOAL #2394 (E23): the wire copy carries an `m<seq> ` tag on every
@@ -499,9 +533,43 @@ int estimateRequestTokens(
           taggedRecordCount(recordSeqs, after: estimate.lastUsageIndex),
         );
   if (estimate.lastUsageIndex != null) return estimate.tokens + overhead;
-  return estimate.tokens +
-      estimateRequestOverheadTokens(systemPrompt, tools) +
+  return calibration.apply(
+        estimate.tokens + estimateRequestOverheadTokens(systemPrompt, tools),
+      ) +
       overhead;
+}
+
+/// The session's [OverheadCalibration]: the ratio the FIRST valid
+/// provider usage anchor in [messages] earned for the unanchored estimate
+/// of the request that produced it (`prompt tokens / (transcript prefix
+/// + overhead)`), or `null` when no message carries a valid anchor.
+///
+/// The first anchor on purpose (gh-2411): its request is the smallest,
+/// so the overhead dominates both sides of the ratio. A late anchor —
+/// the transcript a hundred times the overhead — would dilute the
+/// measured overhead error toward 1.0 and hand the next unanchored
+/// estimate (the turn after a compaction zeroed the anchors) the same
+/// under-count the calibration exists to fix.
+OverheadCalibration? deriveOverheadCalibration(
+  List<Message> messages, {
+  String? systemPrompt,
+  List<Tool> tools = const [],
+}) {
+  for (var i = 0; i < messages.length; i++) {
+    final usage = _assistantUsage(messages[i]);
+    if (usage == null) continue;
+    // The provider's price for the REQUEST: its total minus the reply.
+    // Copilot splits a cache hit into `input` (uncached) + `cacheRead`,
+    // so the raw `input` field under-counts; the total carries both.
+    final promptTokens = calculateContextTokens(usage) - usage.output;
+    return OverheadCalibration.fromUsage(
+      promptTokens: promptTokens,
+      unanchoredRequestTokens:
+          estimateContextTokens(messages.sublist(0, i)).tokens +
+          estimateRequestOverheadTokens(systemPrompt, tools),
+    );
+  }
+  return null;
 }
 
 /// [estimateTokens] against a first-seen set: repeated images charge the

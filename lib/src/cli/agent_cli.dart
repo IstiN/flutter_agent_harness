@@ -129,6 +129,7 @@ import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
@@ -1857,6 +1858,11 @@ class AgentCli {
   /// `trajectory tail` poll re-evaluates the snapshot every interval and
   /// must not re-warn each time.
   bool _heavyScanGuardShown = false;
+
+  /// gh-2411: the soft-window warning's once-per-session latch (the
+  /// regime holds for every turn; the notice shows once). Lives on
+  /// [AgentCli] — extensions can't declare fields.
+  final SoftWindowNotice _softWindowNotice = SoftWindowNotice();
 
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass

@@ -54,13 +54,19 @@ void main() {
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
-    env.writeFile('big1.txt', List.filled(900, 'x' * 40).join('\n'));
+    // ~7.8k tokens: with the request overhead (~3.4k at the overhead
+    // density, gh-2411) the transcript stays UNDER the 12k window — the
+    // post-run funnel fires, the over-window guard does not.
+    env.writeFile('big1.txt', List.filled(760, 'x' * 40).join('\n'));
   });
 
   tearDown(() => io.close());
 
   AgentCli buildCli(StreamFunction stream) => AgentCli(
     config: AgentCliConfig(
+      // gh-2411: overflow through messages, not overhead.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read']),
       model: _tinyModel,
       apiKey: '[REDACTED:Sensitive-Value]',
       env: env,

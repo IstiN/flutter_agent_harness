@@ -30,7 +30,10 @@ Model get _model => const Model(
 // OVER THE TRIGGER but UNDER THE WINDOW — the domain where the boot cap
 // still runs an LLM pass (over-window now trims locally and instantly).
 // A 131k window widens the (trigger, window) band enough that the seed's
-// token math holds regardless of the exact system-prompt/tool overhead.
+// token math holds regardless of the exact system-prompt/tool overhead
+// (gh-2411: with the fixture seam, `tinyOverhead` — the real CLI prompt
+// prices ~19k tokens with skills granted, which pushed the 115k seed
+// over the window and onto the local-trim path).
 const _bigWindow = 131072;
 // CompactionSettings.forWindow(131072): reserve 16384 -> trigger 114688.
 Model get _bigModel => const Model(
@@ -90,6 +93,9 @@ void main() {
     MemoryExecutionEnv env,
     FakeStreamFunction stream, {
     Model? model,
+    // gh-2411: the big-window seeds (115k tokens) sit over the trigger
+    // and UNDER the window only with the small fixture overhead.
+    bool tinyOverhead = false,
   }) => AgentCli(
     config: AgentCliConfig(
       model: model ?? _model,
@@ -100,6 +106,8 @@ void main() {
       providerKind: 'openai-completions',
       skillsAccess: SkillsAccess.granted,
       compactionEngine: CompactionEngine.classic,
+      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
     ),
     io: io,
     streamFunction: stream.call,
@@ -183,7 +191,7 @@ void main() {
         // The turn's answer proceeds on the locally-trimmed context.
         textTurn('answered after degraded pre-flight'),
       ]);
-      final agent = cli(env, stream, model: _bigModel);
+      final agent = cli(env, stream, model: _bigModel, tinyOverhead: true);
 
       final run = agent.run();
       // LAZY BOOT: settles instantly, zero provider calls, no compaction
@@ -243,6 +251,8 @@ void main() {
       final brokenIo = _BrokenStdoutIo();
       final agent = AgentCli(
         config: AgentCliConfig(
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: _bigModel,
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
@@ -478,6 +488,8 @@ void main() {
 
       final agent = AgentCli(
         config: AgentCliConfig(
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: _bigModel,
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,

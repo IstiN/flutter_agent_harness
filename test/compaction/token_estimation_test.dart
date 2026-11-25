@@ -303,7 +303,8 @@ void main() {
   });
 
   group('estimateRequestOverheadTokens', () {
-    test('counts the system prompt and tool schemas at chars/4', () {
+    test('counts the system prompt and tool schemas at the overhead '
+        'density (gh-2411: NOT the transcript chars/4)', () {
       final tool = Tool(
         name: 'read',
         description: 'd' * 20,
@@ -313,8 +314,13 @@ void main() {
           100 + 'read'.length + 20 + jsonEncode(tool.parameters).length;
       expect(
         estimateRequestOverheadTokens('s' * 100, [tool]),
-        (chars / 4).ceil(),
+        (chars / overheadCharsPerToken).ceil(),
       );
+      // The incident's density: 65,561 overhead chars cost 24,126 provider
+      // tokens (2.72 chars/token) where chars/4 read 16,407 — the
+      // heuristic sits on the over-reading side of the measurement.
+      expect(overheadCharsPerToken, 2.5);
+      expect(overheadCharsPerToken, lessThan(65561 / 24126));
     });
 
     test('a null prompt and no tools cost nothing', () {

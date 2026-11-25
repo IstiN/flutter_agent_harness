@@ -191,6 +191,44 @@ pinned expansions never hide (F8/#1379), hides are lossless appends
 continues visibly (`[resuming] continuing the turn on the compacted
 context`).
 
+### Soft window and honest overhead (gh-2411)
+
+The context window is a SOFT target — a slight overrun is accepted; an
+invisible user turn is not. Three rules, one basis:
+
+- **The newest real user turn never drops.** The turn and its pair
+  group are excluded from the checkpoint range and from every hide
+  candidate (real user text was already exempt). When a mechanical cut
+  has to land BEHIND the turn — the local trim valve's budget walk, or
+  a classic cut that splits the turn — the turn is CARRIED: the valve
+  re-homes it verbatim right after its `[context trimmed]` marker, and
+  the classic summary opens with the ask verbatim. A hard floor at the
+  turn was tried and rejected: it leaves a long tool-using turn with
+  nothing trimmable and kills the funnel backstop
+  (`lib/src/compaction/newest_user_turn.dart`).
+- **The overhead is priced as the provider bills it.** Every request
+  carries a fixed overhead — the system prompt and the tool schemas.
+  It is priced at 2.5 chars/token, not the transcript's 4 (measured on
+  the gh-2411 session: 65,561 overhead chars — 12,105 of system prompt
+  plus 34 tool schemas — were billed 24,126 provider tokens, 2.72
+  chars/token, where chars/4 priced 16,407, 32% under).
+  Per session the first valid provider `usage.input` calibrates the
+  estimate (`OverheadCalibration`, ratio clamped to [1.0, 4.0],
+  runtime-only), and the ctx meter, the loop's over-window guard and
+  the compaction trigger all read that same basis
+  (`estimateRequestTokens`).
+- **Soft-window regime — no trim thrash.** When `overhead + newest
+  user turn ≥ window − reserve`, no trim can ever land under the
+  window. The CLI then skips compaction for the whole session and
+  prints ONE visible warning: `context window {window} is below the
+  fixed request overhead {overhead} (system prompt + tool schemas) —
+  raising the window or disabling tools is the only fix; compaction is
+  skipped for this session`. The loop's over-window guard stands down
+  only in the stricter overhead-ALONE regime (the fixed overhead by
+  itself reaches `window − reserve`); a request overflowing from
+  anything else keeps the guard and its relief
+  (`lib/src/compaction/soft_window.dart`).
+
 ### Quality tier — turn boundaries, judge-led
 
 Digests, checkpoints, the judge and escalation run only at turn

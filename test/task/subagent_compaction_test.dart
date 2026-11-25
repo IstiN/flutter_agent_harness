@@ -19,6 +19,16 @@ import 'package:test/test.dart';
 /// Tiny window: reserve 1024 → compaction trigger 2976, keep-recent 2048.
 /// The child window: the pre-#1829 calibration 4000t plus the tokens the
 /// report-size contract (issue #1829) adds to every child system prompt.
+/// gh-2411: the estimator now bills the fixed request overhead (system
+/// prompt + tool schemas — ≈4.9k chars on this child surface) at 2.5
+/// chars per token instead of 4: +733 tokens on EVERY request. The
+/// trigger is 75% of the window, so it moves by the same delta only when
+/// the window grows by 733 / 0.75 — that keeps every trigger crossing of
+/// the trajectory below exactly where it was (measured: requests
+/// 1236/1944/2652/3360 → 1969/2677/3385/4093 against the shifted
+/// trigger 3587 → 4320).
+const int _overheadDeltaTokens = 978; // (733 / 0.75).ceil()
+
 /// The compaction-threshold fixtures are calibrated to the original
 /// trajectory; raising the window by the contract's own estimate keeps the
 /// trigger crossings exactly where they were.
@@ -59,7 +69,9 @@ final int _contractTokens = () {
   const gh1956BaselineChars = 2339;
   final footprintChars =
       contract + descriptions.fold<int>(0, (a, d) => a + d.length);
-  return 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();
+  return 237 +
+      ((footprintChars - gh1956BaselineChars) / 4).ceil() +
+      _overheadDeltaTokens;
 }();
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
@@ -600,7 +612,14 @@ void main() {
     test(
       "a smol-role child compacts on its OWN window, not the parent's",
       () async {
-        // Window 2000: reserve 500 → trigger 1500, keep-recent 1000.
+        // Window 3400: reserve 850 → trigger 2550, keep-recent 1700.
+        // gh-2411: honest overhead accounting puts the child's FIRST request
+        // at ~1.9k tokens (system prompt + tool schemas), so the former
+        // 2000 window is the soft-window regime — overhead + the newest
+        // user turn ≥ window − reserve — where compaction is correctly
+        // skipped for good: no fold can ever fit under it. 3400 keeps the
+        // smol role far below the parent's window while leaving the
+        // trajectory room to cross ITS OWN trigger (2550).
         final smolStream = _ScriptedStream([
           (
             match: 'grow',
@@ -620,7 +639,7 @@ void main() {
                 const ModelRef(
                   provider: 'anthropic',
                   modelId: 'test-smol',
-                  contextWindow: 2000,
+                  contextWindow: 3400,
                   maxTokens: 128,
                 ),
               ],
@@ -639,11 +658,11 @@ void main() {
         final handle = w.manager['smol_child']!;
         // The pressure is measured against the CHILD's 2000t window — not
         // the parent's 100000t one — and the compaction fired on it.
-        expect(handle.windowTokens, 2000);
+        expect(handle.windowTokens, 3400);
         expect(handle.compactions, greaterThanOrEqualTo(1));
         expect(
           smolStream.contexts.map(smolStream.requestTokens),
-          everyElement(lessThanOrEqualTo(2000)),
+          everyElement(lessThanOrEqualTo(3400)),
         );
       },
     );

@@ -309,6 +309,24 @@ String messageText(Object message) {
       : '';
 }
 
+/// gh-2411 fixture seam (hoisted from file-local copies): the CLI
+/// compaction suites overflow through MESSAGES, never through the fixed
+/// overhead. With the real CLI prompt (~36k chars) plus the full tool
+/// set the overhead alone prices near 14.4k tokens at the request
+/// density ([overheadCharsPerToken] = 2.5 chars/token), which on a test
+/// window (12k…40k) reaches — often exceeds — the compaction trigger:
+/// the SOFT-WINDOW regime, where relief is skipped by design and the
+/// paths under test would never run. With `systemPrompt: tinyPrompt` and
+/// `runtimeTools: tinyTools([...])` the overhead is ~3.4k tokens, so the
+/// fixture keeps `overhead + newest user turn < window − reserve` and
+/// the overflow must come from a message (a big tool result or answer).
+const tinyPrompt = 'You are a test agent.';
+
+/// Every known tool off but [keep]: a tool schema costs request
+/// overhead (see [tinyPrompt]).
+ToolsConfig tinyTools(List<String> keep) =>
+    ToolsConfig(tools: {for (final id in knownToolIds) id: keep.contains(id)});
+
 /// Polls [condition] until it holds or the [seconds] budget expires.
 Future<void> waitForIt(
   FutureOr<bool> Function() condition, {

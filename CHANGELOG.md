@@ -13,6 +13,17 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): gh-2411 — a 20k user-set context window below the
+  fixed request overhead (system prompt + tool schemas, ~23.6k real
+  tokens) made the ctx meter read 65–78% (chars/4 under-counted the
+  overhead 2.3×), the over-window guard trimmed on EVERY turn, and the
+  newest user turn vanished from the live context. The newest real user
+  turn is now never dropped (non-foldable, never a hide candidate, and
+  CARRIED verbatim when a mechanical cut lands behind it); the overhead
+  is priced at 2.5 chars/token and calibrated per session from the first valid
+  provider `usage.input` (meter, guard and trigger share the basis);
+  when `overhead + newest turn ≥ window − reserve` compaction is skipped
+  for the session with ONE visible warning instead of thrashing.
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

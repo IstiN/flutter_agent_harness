@@ -432,8 +432,10 @@ Future<_AttemptResult> _streamAttempt(
     requestContext.messages,
     systemPrompt: requestContext.systemPrompt,
     tools: requestContext.tools ?? const [],
+    calibration:
+        config.overheadCalibration?.call() ?? OverheadCalibration.uncalibrated,
   );
-  if (window > 0 && tokens > window) {
+  if (_overWindowGuardTrips(config, requestContext, window, tokens)) {
     final guard = await _overWindowGuardTurn(
       context,
       requestContext,
@@ -531,6 +533,34 @@ Future<_AttemptResult> _streamAttempt(
     ),
     context,
   ));
+}
+
+/// Whether the mid-turn over-window guard trips on this request: past the
+/// window, and NOT in the soft-window regime (gh-2411) — the fixed
+/// overhead plus the newest user turn reaching the trigger means no
+/// relief can ever land a request under it. The request then goes out AS IS (the owner's rule:
+/// the window is a soft target, a slight overrun beats an invisible user
+/// turn trimmed away on every step); the host's one-time warning names
+/// the only fix. An overflow caused by anything else keeps the guard and
+/// its relief, whatever its size. The cheap `tokens > window` test runs
+/// first — the regime probe (an overhead estimate) only runs on an
+/// overflow.
+bool _overWindowGuardTrips(
+  AgentLoopConfig config,
+  Context requestContext,
+  int window,
+  int tokens,
+) {
+  if (window <= 0 || tokens <= window) return false;
+  return !softWindowRegime(
+    messages: requestContext.messages,
+    systemPrompt: requestContext.systemPrompt,
+    tools: requestContext.tools ?? const [],
+    window: window,
+    reserveTokens: config.windowReserveTokens?.call() ?? 0,
+    calibration:
+        config.overheadCalibration?.call() ?? OverheadCalibration.uncalibrated,
+  );
 }
 
 /// Consumes the provider [response] stream, emitting message lifecycle

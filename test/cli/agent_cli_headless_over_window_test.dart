@@ -36,16 +36,21 @@ void main() {
     io.close();
   });
 
-  // 12k window: the harness's system-prompt + tool-schema overhead (~8.5k
-  // estimated tokens) still fits request 1, while the 100k-char (~25k
-  // token) reply overflows request 2 — the guard fires MID-TURN, not
-  // before the first request.
+  // 12k window: with the gh-2411 fixture seam (`tinyPrompt` +
+  // `tinyTools`) the fixed request overhead is ~3.4k estimated tokens, so
+  // request 1 still fits while the ~11.5k-token tool result overflows
+  // request 2 — the guard fires MID-TURN, not before the first request.
+  // (With the real CLI prompt the overhead alone — ~14.4k tokens — is the
+  // soft-window regime: the guard stands down by design.)
   AgentCli buildCli(
     FakeStreamFunction stream, {
     CompactionEngine? engine,
     CompactionSettings? settings,
   }) => AgentCli(
     config: AgentCliConfig(
+      // gh-2411: overflow through messages, not overhead.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read', 'bash']),
       model: const Model(
         id: 'tiny-window',
         api: 'test-api',

@@ -156,6 +156,7 @@ final class EmergencyRelief {
     state.messages,
     systemPrompt: state.systemPrompt,
     tools: state.tools,
+    calibration: state.overheadCalibration,
   );
 
   /// Runs the tier. Returns the outcome; never throws for a healthy
@@ -248,6 +249,7 @@ final class EmergencyRelief {
           const [],
           systemPrompt: state.systemPrompt,
           tools: state.tools,
+          calibration: state.overheadCalibration,
         ),
       );
       if (trimmed != null) {

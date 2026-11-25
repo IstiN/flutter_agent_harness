@@ -133,10 +133,12 @@ void main() {
         maxTokens: 4096,
       );
       final fake = _FakeStreamFunction([_textTurn('never')]);
-      final prompt = UserMessage.text('x' * 800);
       final stream = agentLoop(
-        prompts: [prompt],
-        context: const Context(messages: []),
+        prompts: [UserMessage.text('x' * 40)],
+        // gh-2411: the overflow is OLDER, droppable history — an overflow
+        // that is the newest user turn itself is the soft-window regime,
+        // where the request goes out as is (no guard).
+        context: Context(messages: [_older('o' * 760)]),
         config: AgentLoopConfig(model: tinyWindow),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -168,10 +170,12 @@ void main() {
         maxTokens: 4096,
       );
       final fake = _FakeStreamFunction([_textTurn('never')]);
-      final prompt = UserMessage.text('x' * 800);
       final stream = agentLoop(
-        prompts: [prompt],
-        context: const Context(messages: []),
+        prompts: [UserMessage.text('x' * 40)],
+        // gh-2411: the overflow is OLDER, droppable history — an overflow
+        // that is the newest user turn itself is the soft-window regime,
+        // where the request goes out as is (no guard).
+        context: Context(messages: [_older('o' * 760)]),
         config: AgentLoopConfig(model: bigWindowModel, contextWindowCap: 100),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
@@ -231,15 +235,19 @@ void main() {
       final fake = _FakeStreamFunction([_textTurn('never')]);
       // 10 estimated transcript tokens — far under the window on its own…
       final prompt = UserMessage.text('x' * 40);
-      // …but the wire request also carries a ~200-token system prompt plus
-      // the tool schema, which a transcript-only estimate drops (the
+      // …and with 60 tokens of older history the transcript (70) is
+      // still under the window, but the wire request also carries a
+      // ~43-token fixed overhead (system prompt + tool schema at the
+      // overhead density), which a transcript-only estimate drops (the
       // resumed-session bug: the meter read 64% while the request was
-      // already over the window).
+      // already over the window: 70 + 43 > 100). Overhead + prompt
+      // (53) sit under the window: outside the soft-window regime
+      // (gh-2411) the guard still owns this overflow.
       final stream = agentLoop(
         prompts: [prompt],
         context: Context(
-          systemPrompt: 's' * 800,
-          messages: const [],
+          systemPrompt: 's' * 60,
+          messages: [_older('o' * 240)],
           tools: [
             Tool(name: 'read', description: 'd' * 40, parameters: const {}),
           ],
@@ -255,6 +263,109 @@ void main() {
       expect(assistant.stopReason, StopReason.error);
       expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
     });
+
+    test(
+      'gh-2411: the over-window guard stands down when the fixed '
+      'overhead ALONE exceeds the window — the request goes out as is',
+      () async {
+        final tinyWindow = const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 100,
+          maxTokens: 4096,
+        );
+        final fake = _FakeStreamFunction([_textTurn('sent as is')]);
+        // A 320-token system prompt on a 100-token window: no trim can ever
+        // land a request under it (the 20k-window incident), so the guard
+        // sends the request instead of trimming the turn away on every step.
+        final stream = agentLoop(
+          prompts: [UserMessage.text('x' * 40)],
+          context: Context(
+            systemPrompt: 's' * 800,
+            messages: const [],
+            tools: const [],
+          ),
+          config: AgentLoopConfig(model: tinyWindow),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
+
+        final messages = await stream.result as List<dynamic>;
+        expect(fake.calls, 1, reason: 'no local refusal in the regime');
+        final assistant = messages.whereType<AssistantMessage>().single;
+        expect(assistant.stopReason, StopReason.stop);
+        expect(assistant.errorMessage, isNull);
+      },
+    );
+
+    test(
+      'gh-2411: the regime reads the host reserve and the overhead '
+      'calibration — an overflow from anything else keeps the guard',
+      () async {
+        final tinyWindow = const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 100,
+          maxTokens: 4096,
+        );
+        // 60-token overhead + a 5-token prompt + 50 tokens of OLDER
+        // history = 115 > 100. Overhead + prompt (65) sit under the
+        // window (no regime without a reserve) and over the host's
+        // 50-token reserve (60 ≥ 100 - 50: the regime).
+        Context over() => Context(
+          systemPrompt: 's' * 150,
+          messages: [_older('o' * 200)],
+          tools: const [],
+        );
+        Future<({int calls, AssistantMessage reply})> run(
+          AgentLoopConfig config,
+        ) async {
+          final fake = _FakeStreamFunction([_textTurn('sent')]);
+          final messages =
+              await agentLoop(
+                    prompts: [UserMessage.text('x' * 20)],
+                    context: over(),
+                    config: config,
+                    streamFunction: fake.call,
+                    toolExecutor: (_, _, _) async =>
+                        ToolExecutionResult.text('u'),
+                  ).result
+                  as List<dynamic>;
+          return (
+            calls: fake.calls,
+            reply: messages.whereType<AssistantMessage>().single,
+          );
+        }
+
+        // No reserve: overhead + prompt (65) are under the window — the
+        // guard owns the overflow the older history added (gh-2411: the
+        // newest user turn itself is never what overflows here).
+        final guarded = await run(AgentLoopConfig(model: tinyWindow));
+        expect(guarded.calls, 0);
+        expect(
+          guarded.reply.errorMessage,
+          contains(contextWindowExhaustedMarker),
+        );
+        // The host's reserve puts the overhead over the trigger: soft regime.
+        final reserved = await run(
+          AgentLoopConfig(model: tinyWindow, windowReserveTokens: () => 50),
+        );
+        expect(reserved.calls, 1, reason: '60 >= 100 - 50');
+        // A calibrated denser provider (2x → 120 tokens of overhead) is in
+        // the regime even without a reserve.
+        final calibrated = await run(
+          AgentLoopConfig(
+            model: tinyWindow,
+            overheadCalibration: () => const OverheadCalibration(2),
+          ),
+        );
+        expect(calibrated.calls, 1, reason: '60 * 2 >= 100');
+      },
+    );
     test('the over-window guard does not double-count the system prompt '
         'when provider usage anchors the estimate', () async {
       final tinyWindow = const Model(
@@ -2108,3 +2219,9 @@ class _CancelDuringBackoffStreamFunction {
     return stream;
   }
 }
+
+/// Older, droppable history ahead of the (small) prompt (gh-2411: an
+/// overflow that is the newest user turn itself is the soft-window
+/// regime — no guard).
+Message _older(String text) =>
+    UserMessage.text(text, timestamp: DateTime.utc(2026));

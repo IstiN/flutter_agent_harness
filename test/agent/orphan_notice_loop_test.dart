@@ -267,11 +267,19 @@ void main() {
 
         // R1: the orphan rides a payload far over the 100-token window; no
         // relief configured — the guard terminal-refuses BEFORE any
-        // provider call. The one-shot must survive the refusal.
+        // provider call. The one-shot must survive the refusal. (The
+        // overflow is OLDER history, ahead of the orphan shape: an
+        // overflow that is the newest user turn itself is the soft-window
+        // regime, gh-2411 — no refusal.)
         final refused = _FakeStream();
         final stream1 = agentLoop(
-          prompts: [UserMessage.text('x' * 800)],
-          context: Context(messages: _orphanContext()),
+          prompts: [UserMessage.text('x' * 40)],
+          context: Context(
+            messages: [
+              UserMessage.text('o' * 400, timestamp: _at),
+              ..._orphanContext(),
+            ],
+          ),
           config: AgentLoopConfig(model: tinyWindow, reportedOrphanKeys: latch),
           streamFunction: refused.call,
           toolExecutor: _noTools,

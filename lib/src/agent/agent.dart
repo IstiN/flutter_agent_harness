@@ -32,6 +32,8 @@ import '../providers/payload_stall.dart'
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/overhead_calibration.dart';
+import '../compaction/token_estimation.dart' show deriveOverheadCalibration;
 import '../compaction/request_snapshot.dart' show RequestSnapshotStore;
 import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
@@ -125,6 +127,14 @@ final class AgentState {
   /// `messages`; the loop stamps request COPIES from it, never the
   /// transcript.
   TranscriptSeqMap? recordSeqs;
+
+  /// gh-2411: the session's overhead calibration — measured from the
+  /// FIRST valid provider usage the transcript carried and kept for the
+  /// rest of the session, so the unanchored estimates (every turn after a
+  /// compaction zeroed the usage anchors) price the system prompt and the
+  /// tool schemas as that provider does. Runtime-only, never persisted;
+  /// [Agent.reset] starts a session clean.
+  OverheadCalibration overheadCalibration = OverheadCalibration.uncalibrated;
 }
 
 /// Placeholder model mirroring pi's `DEFAULT_MODEL`, used when the caller
@@ -420,6 +430,16 @@ class Agent {
   /// the relief right after (gh-1077).
   OverWindowRelief? overWindowRelief;
 
+  /// gh-2411: the host's compaction reserve for the effective window,
+  /// threaded into every [AgentLoopConfig] — the loop's soft-window
+  /// regime (fixed overhead + newest user turn ≥ `window - reserve`: no
+  /// trim can ever land under it, so the request goes out as is instead
+  /// of trimming every turn) must key off the SAME reserve the host's
+  /// compaction trigger uses. `null` = no reserve (the window is the
+  /// line). Mutable like [overWindowRelief]: hosts attach it after
+  /// construction.
+  int Function()? windowReserveTokens;
+
   /// gh-1680: the learned per-model message-cap policy threaded into every
   /// [AgentLoopConfig]. `null` = the loop keeps the pre-gh-1680 behavior
   /// (a cap-400 refusal is terminal). Mutable like [overWindowRelief].
@@ -640,6 +660,7 @@ class Agent {
     _state._streamingMessage = null;
     _state._pendingToolCalls.clear();
     _state._errorMessage = null;
+    _state.overheadCalibration = OverheadCalibration.uncalibrated;
     clearAllQueues();
     requestSnapshots.invalidate('agent reset');
   }
@@ -807,6 +828,11 @@ class Agent {
             },
       messageCapPolicy: messageCapPolicy,
       messageCapRelief: messageCapRelief,
+      // gh-2411: read per request — the first valid usage of the session
+      // calibrates the state mid-run; a value snapshotted here would
+      // leave this run's guard on the stale basis.
+      overheadCalibration: () => _state.overheadCalibration,
+      windowReserveTokens: windowReserveTokens,
       onTruncatedToolCall: onTruncatedToolCall,
       stuckTool: stuckTool,
       foregroundCallBudget: foregroundCall,
@@ -1089,6 +1115,7 @@ class Agent {
         _state._streamingMessage = message;
       case MessageEndEvent(:final message):
         _state._streamingMessage = null;
+        _calibrateOverhead(message);
         _state._messages.add(message);
       case TurnEndEvent(:final message):
         _recordTurnError(message);
@@ -1109,6 +1136,23 @@ class Agent {
       default:
         break;
     }
+  }
+
+  /// gh-2411: the session's first valid provider usage calibrates the
+  /// overhead estimate ([AgentState.overheadCalibration]). Measured
+  /// BEFORE the reply joins the transcript, so the request it answered is
+  /// exactly the transcript prefix; once taken, the measurement stands
+  /// for the session.
+  void _calibrateOverhead(Message message) {
+    if (_state.overheadCalibration.measured || message is! AssistantMessage) {
+      return;
+    }
+    final calibration = deriveOverheadCalibration(
+      [..._state._messages, message],
+      systemPrompt: _state.systemPrompt,
+      tools: _state._tools,
+    );
+    if (calibration != null) _state.overheadCalibration = calibration;
   }
 
   /// Remembers the turn's error message when the turn ended in failure.

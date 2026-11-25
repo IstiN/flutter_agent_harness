@@ -38,10 +38,12 @@ import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
+import '../compaction/overhead_calibration.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
 import '../compaction/request_snapshot.dart'
     show RequestRouting, RequestSnapshot, RequestSnapshotStore;
 import '../compaction/structured/projection.dart' show RecordSeqIndex;
+import '../compaction/soft_window.dart' show softWindowRegime;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -390,6 +392,8 @@ final class AgentLoopConfig {
     this.transformContext,
     this.prepareNextTurn,
     this.overWindowRelief,
+    this.overheadCalibration,
+    this.windowReserveTokens,
     this.messageCapPolicy,
     this.messageCapRelief,
     this.getSteeringMessages,
@@ -444,6 +448,18 @@ final class AgentLoopConfig {
   /// most once per response before the guard's refusal surfaces; see
   /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
   final OverWindowRelief? overWindowRelief;
+
+  /// gh-2411: the session's overhead calibration, read per request so the
+  /// guard prices an unanchored request exactly as the host's ctx meter
+  /// does. `null` = the uncalibrated heuristic.
+  final OverheadCalibration Function()? overheadCalibration;
+
+  /// gh-2411: the host's compaction reserve for the effective window —
+  /// the soft-window regime (fixed overhead + newest user turn ≥
+  /// `window - reserve`: no trim can ever land under it) skips the guard
+  /// and the request goes out as is. `null`/absent = the window itself
+  /// is the line (no reserve).
+  final int Function()? windowReserveTokens;
 
   /// gh-1680: the learned per-model message-cap policy: a classified cap
   /// refusal is learned and the loop retries ONCE (coalesced payload +
@@ -644,6 +660,8 @@ final class AgentLoopConfig {
       transformContext: transformContext,
       prepareNextTurn: prepareNextTurn,
       overWindowRelief: overWindowRelief,
+      overheadCalibration: overheadCalibration,
+      windowReserveTokens: windowReserveTokens,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
       steeringNotifications: steeringNotifications,

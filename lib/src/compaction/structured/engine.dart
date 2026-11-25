@@ -40,6 +40,7 @@ import '../../session/session_tree.dart';
 import '../../context.dart';
 import '../../types.dart';
 import '../compaction.dart';
+import '../newest_user_turn.dart' show newestUserTurnRecordIds;
 import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import 'judge.dart';
@@ -382,6 +383,7 @@ final class StructuredCompactor {
     state.messages,
     systemPrompt: state.systemPrompt,
     tools: state.tools,
+    calibration: state.overheadCalibration,
   );
 
   /// Runs both passes; returns whether the context settled at or below
@@ -1666,12 +1668,16 @@ final class StructuredCompactor {
     // the same honest nothing-to-fold an exempt range gives, never a
     // pin-induced fallback to the lossy classic path (the judge,
     // deterministic and LRU passes still run).
+    // gh-2411: the newest real user turn is non-foldable the same way —
+    // the incident's checkpoints listed the question itself in
+    // `coversRecordIds` ("dropped by the local trim"), and the model saw
+    // only its record tag. Tool groups of the same turn stay foldable
+    // (a long agentic turn still checkpoints); coverage is by explicit
+    // ids, so the turn keeps rendering between the folds around it.
+    final userTurn = newestUserTurnRecordIds(view_.path);
     final foldable = [
       for (final entry in projected)
-        if (!view_.ledger
-            .groupOf(entry.recordId)
-            .any(view_.state.pinnedRecordIds.contains))
-          entry,
+        if (!_nonFoldable(view_, entry.recordId, userTurn)) entry,
     ];
     if (foldable.isEmpty) return null;
     var tailBudget = settings.keepRecentTokens;
@@ -1716,6 +1722,16 @@ final class StructuredCompactor {
       state: view_.state,
       visible: view_.visible,
       seqs: view_.seqs,
+    );
+  }
+
+  /// Whether [recordId]'s whole pair group can never fold into a
+  /// checkpoint: a pin (issue #1379 tier 2) or the newest real user turn
+  /// (gh-2411).
+  bool _nonFoldable(_LedgerView view, String recordId, Set<String> userTurn) {
+    final group = view.ledger.groupOf(recordId);
+    return group.any(
+      (id) => view.state.pinnedRecordIds.contains(id) || userTurn.contains(id),
     );
   }
 
