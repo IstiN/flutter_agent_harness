@@ -168,6 +168,11 @@ final class WindowedSessionStorage
   /// transition is anchored to a byte scan, not to a stale total.
   int? _aboveCount;
 
+  /// gh-241 follow-up #5 (F3/R3): records the resume walk's token-budget
+  /// stop un-indexed ([_trimTokenBudget]) — what the loaded projection left
+  /// out of the session on the heuristic's say-so. Never silently.
+  int _budgetTrimDropped = 0;
+
   /// File records BELOW the window — what [loadNewer] reveals next
   /// (the page-down count). `null` = unknown (after a jump).
   int? _belowCount = 0;
@@ -176,6 +181,10 @@ final class WindowedSessionStorage
   /// asserted by tests, not by user behavior).
   int get residentCount => _entries.length;
   int get residentWindowBytes => _residentWindowBytes;
+
+  /// Records the resume walk's token-budget stop dropped from residency
+  /// (0 when the walk ran to a compaction boundary or the file head).
+  int get budgetTrimDroppedRecords => _budgetTrimDropped;
 
   /// Append-cursor instrumentation (issue #2255 AC1/AC2: cursor truth is
   /// asserted against [SessionChunkReader.stat] size, not inferred from
@@ -573,7 +582,10 @@ final class WindowedSessionStorage
       _dropOldest();
       dropped++;
     }
-    if (dropped > 0) _hasOlder = true;
+    if (dropped > 0) {
+      _hasOlder = true;
+      _budgetTrimDropped += dropped;
+    }
   }
 
   /// One block page-up for the boundary walk ([growOlderUntil]): a

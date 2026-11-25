@@ -13,6 +13,25 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): gh-2411 follow-up #5 (owner live test, rounds 1–2) —
+  a restarted session at a small window failed every prompt the same
+  way: the resume boundary walk truncated the transcript to a one-message
+  tail on the unmeasured heuristic's say-so (28,440 → 17,773 prompt
+  tokens, silently — no record, no line), and the over-window guard then
+  hard-stopped the first request on the same heuristic (no reply → no
+  anchor → every prompt failed identically). The overhead calibration is
+  now taken at load/resume from the transcript's first vouchable usage
+  report; the walk keeps its parity budget only for MEASURED sessions
+  and otherwise loads to the newest compaction boundary or the file head;
+  a tail load always prints one line (`[resume] loaded the last K
+  message(s) …; ≈T tokens, estimate`). Unmeasured estimates never cut in
+  memory (boot cap, soft-window relief) and never hard-stop the loop; a
+  ceiling-clamped calibration never trips the guard. Every in-memory cut
+  opens the request on a user turn, leaves a `context_trim_receipt`
+  record and a diagnostic line; heuristic numbers the host prints carry
+  an explicit estimate marker. A hand-over transfer without the
+  `## Open User Requests` heading gets ONE corrective retry.
+
 - fix(compaction): gh-2411 — a 20k user-set context window below the
   fixed request overhead (system prompt + tool schemas, ~23.6k real
   tokens) made the ctx meter read 65–78% (chars/4 under-counted the

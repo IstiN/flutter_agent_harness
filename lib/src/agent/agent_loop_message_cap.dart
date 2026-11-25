@@ -573,6 +573,20 @@ bool _overWindowGuardTrips(
   OverheadCalibration guardCalibration,
 ) {
   if (window <= 0 || tokens <= window) return false;
+  // gh-2411 follow-up #5 (owner live test, round 2): never a hard stop on
+  // the heuristic alone. Until the provider has answered in this session —
+  // no assistant message in the transcript — and nothing is measured, the
+  // chars/token density is the only price of the request (+54% on the
+  // owner's prompt). It goes out: the provider's answer anchors the
+  // session, a real overflow takes the existing overflow path. Stopping
+  // here dead-locked the FIRST prompt of every restarted session at a
+  // small window — no reply, so no anchor, so the next prompt failed
+  // identically. A session that HAS been answered is anchored (every
+  // reply carries usage) or calibrated; there the guard owns the window.
+  if (!guardCalibration.measured &&
+      !requestContext.messages.any((m) => m is AssistantMessage)) {
+    return false;
+  }
   return !softWindowSkip(
     messages: requestContext.messages,
     systemPrompt: requestContext.systemPrompt,

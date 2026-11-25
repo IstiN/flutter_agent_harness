@@ -226,9 +226,9 @@ invisible user turn is not. Three rules, one basis:
   reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
   trimmed: automatic compaction is skipped and the session is warned
   ONCE: `context window {window} is below the fixed request overhead
-  {overhead} (system prompt + tool schemas) — raising the window or
-  disabling tools is the only fix; automatic compaction is skipped
-  while the context stays under the window`. AT OR OVER THE WINDOW the
+  ≈{overhead} tokens (estimated from the system prompt + tool schemas)
+  — raising the window or disabling tools is the only fix; automatic
+  compaction is skipped while the context stays under the window`. AT OR OVER THE WINDOW the
   request is simply over the window: the automatic pass is the
   hide-only, LM-free relief (the same one the loop guard runs — the
   newest user turn is still carried verbatim), a pass that frees
@@ -238,6 +238,40 @@ invisible user turn is not. Three rules, one basis:
   (`lib/src/compaction/soft_window.dart`). Skipping over the window as
   well was the first cut; the owner's live test grew a session to 114%
   with no pass ever running.
+
+#### Anchored at load/resume; unmeasured estimates never cut or stop (gh-2411 follow-up #5)
+
+The overhead calibration is taken at LOAD/RESUME too: a transcript that
+carries a vouchable provider usage report (after its newest compaction
+boundary, or on a branch complete to its root) anchors the estimate the
+moment it is loaded, so a restarted session is priced by the provider's
+own number on its very first request.
+
+The resume boundary walk is a MEASUREMENT or it is nothing. A measured
+session keeps today's parity budget (`window − calibrated overhead −
+reserve`) — the walk stops at it and trims record-granularly. An
+unmeasured one walks with NO budget: to the newest compaction boundary or
+the file head — only a boundary (durable, visible) may limit what loads.
+A budget of zero (the window below overhead + reserve) is no budget
+either: its one-record tail dropped the newest user turn. Whenever the
+loaded projection is a tail of the file, one line says so, in the
+transcript and on screen: `[resume] loaded the last K message(s) of the
+session (N older record(s) left on disk …; ≈T tokens, estimate)`.
+
+Until the provider has answered in a session and nothing is measured, no
+in-memory cut runs on the heuristic alone — not the boot cap, not the
+soft-window relief — and the loop's over-window guard does not stop: the
+request goes out, the answer anchors the session, a real overflow takes
+the existing overflow path. A calibration pinned on the 4x ceiling is no
+measurement either — the guard ignores it. Every in-memory cut opens the
+request on a user turn (never on an assistant or tool fragment), leaves a
+`context_trim_receipt` record in the session and a diagnostic line, and
+every heuristic number the host prints carries an explicit `≈`/estimate
+marker.
+
+A hand-over reply whose transfer carries no `## Open User Requests`
+heading gets ONE corrective retry (the retry names the section and
+quotes the defective reply); a second miss keeps the failure.
 
 ### Quality tier — turn boundaries, judge-led
 

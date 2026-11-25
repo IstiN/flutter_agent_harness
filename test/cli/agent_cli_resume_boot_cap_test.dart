@@ -45,6 +45,19 @@ Model get _bigModel => const Model(
   maxTokens: 4096,
 );
 
+const _measured = OverheadCalibration(1.0, measured: true);
+
+// gh-241 follow-up #5 (F3): a window the real CLI prompt alone overruns —
+// the soft-window regime for every fixture that uses the default prompt.
+Model get _tinyWindowModel => const Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 2000,
+  maxTokens: 4096,
+);
+
 void main() {
   late FakeCliIO io;
 
@@ -96,6 +109,9 @@ void main() {
     // gh-2411: the big-window seeds (115k tokens) sit over the trigger
     // and UNDER the window only with the small fixture overhead.
     bool tinyOverhead = false,
+    // gh-241 follow-up #5 (F3): the boot cap and the soft-window relief
+    // cut only MEASURED sessions; [measured: false] is the unanchored one.
+    bool measured = true,
   }) => AgentCli(
     config: AgentCliConfig(
       model: model ?? _model,
@@ -108,6 +124,7 @@ void main() {
       compactionEngine: CompactionEngine.classic,
       systemPrompt: tinyOverhead ? tinyPrompt : null,
       runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
+      initialOverheadCalibration: measured ? _measured : null,
     ),
     io: io,
     streamFunction: stream.call,
@@ -119,6 +136,189 @@ void main() {
         context.systemPrompt,
         context.tools ?? const [],
       );
+
+  /// F3 fixture: a plain transcript (no compaction boundary) in the
+  /// soft-window regime and OVER the tiny window — the owner's restarted
+  /// session in miniature. [pairs] seeds alternating user/assistant turns
+  /// (an assistant answer carries no usage: nothing anchors the session).
+  Future<MemoryExecutionEnv> seedRegime(
+    String name, {
+    int turns = 8,
+    bool pairs = false,
+  }) async {
+    final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final seed = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+    );
+    await seed.appendSessionName(name);
+    for (var i = 0; i < turns; i++) {
+      await seed.appendMessage(UserMessage.text('filler$i ${'x' * 2000}'));
+      if (pairs) {
+        await seed.appendMessage(
+          AssistantMessage(
+            content: [TextContent(text: 'answer$i ${'y' * 2000}')],
+            api: 'test-api',
+            provider: 'test-provider',
+            model: 'test-model',
+            // A REAL report on the first answer measures the session
+            // at load (R2): the provider charged 10,010 tokens for a
+            // request the heuristic prices higher — the calibration
+            // clamps at its 0.6 floor and still counts as taken.
+            usage: i == 0
+                ? const Usage(
+                    input: 10000,
+                    output: 10,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 10010,
+                    cost: UsageCost(),
+                  )
+                : Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        );
+      }
+    }
+    return env;
+  }
+
+  test(
+    'gh-241 follow-up #5 F3: an UNANCHORED soft-window resume is NOT '
+    'trimmed in memory — the first request carries the transcript as is '
+    '(no relief log line, one model call, newest turn verbatim)',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      final env = await seedRegime('boot-cap-target');
+      final stream = FakeStreamFunction([
+        textTurn('answered on the untrimmed context'),
+      ]);
+      final agent = cli(env, stream, model: _tinyWindowModel, measured: false);
+
+      final run = agent.run();
+      // The boot load runs before the first idle: wait for the restored
+      // session's replay (printed after the load, relief included).
+      await waitForIt(
+        () => io.out.toString().contains('restored session:'),
+        reason: 'boot settles',
+      );
+      await waitForIt(() => !agent.isBusy, reason: 'idle after boot');
+      final out = io.out.toString();
+      expect(stream.calls, 0);
+      expect(out, isNot(contains('trimmed locally')));
+
+      io.sendLine('go');
+      await waitForIt(
+        () => stream.calls >= 1 && !agent.isBusy,
+        reason: 'the first user turn answers',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final turnContext = stream.contexts.single;
+      final texts = [
+        for (final m in turnContext.messages)
+          if (m is UserMessage) messageText(m),
+      ];
+      // Nothing was cut before the first request (R1): all 8 seeded
+      // turns are loaded — the unmeasured walk ran to the file head, no
+      // budget — the newest turn is verbatim, the request opens on a
+      // user message, and no tail line was needed (whole session).
+      expect(texts.length, 9);
+      expect(texts.first, startsWith('filler0 '));
+      expect(texts.last, 'go');
+      expect(turnContext.messages.length, 9);
+      expect(turnContext.messages.first, isA<UserMessage>());
+      expect(io.out.toString(), isNot(contains('[resume] loaded the last')));
+      expect(io.out.toString(), isNot(contains('trimmed locally')));
+    },
+  );
+
+  test(
+    'gh-241 follow-up #5 F3/R2-R3: a MEASURED resume over the window is '
+    'priced by its provider report — a budgeted tail load SAYS so (one '
+    'visible line), every in-memory cut leaves a session record, the '
+    'first prompt runs the durable pass before the request, and the '
+    'request opens on a user turn',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      // 120 records ≈ 60k heuristic tokens: over the 32k window; the
+      // first answer's usage report measures the session at load.
+      final env = await seedRegime('boot-cap-target', turns: 60, pairs: true);
+      final stream = FakeStreamFunction([
+        textTurn('summary of the kept history'),
+        textTurn('answered on the capped context'),
+      ]);
+      final agent = cli(env, stream, tinyOverhead: true, measured: false);
+
+      final run = agent.run();
+      // The boot load runs before the first idle: wait for the restored
+      // session's replay (printed after the load, relief included).
+      await waitForIt(
+        () => io.out.toString().contains('restored session:'),
+        reason: 'boot settles',
+      );
+      await waitForIt(() => !agent.isBusy, reason: 'idle after boot');
+      expect(stream.calls, 0, reason: 'no model call at boot');
+      final out = io.out.toString();
+      // R3: the loaded projection is a budgeted tail of the file → one
+      // visible line, with the estimate marker.
+      expect(
+        out,
+        contains('[resume] loaded the last'),
+        reason: out.substring(0, out.length > 1500 ? 1500 : out.length),
+      );
+      expect(out, contains('tokens, estimate'));
+      final loaded = int.parse(
+        RegExp(r'loaded the last (\d+) message').firstMatch(out)!.group(1)!,
+      );
+      expect(loaded, lessThan(121), reason: 'a tail, not the whole file');
+
+      io.sendLine('go onward zebra-42');
+      await waitForIt(
+        () => stream.calls >= 1 && !agent.isBusy,
+        reason: 'the first user turn answers',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // Durable and recorded BEFORE the request: the pre-flight's
+      // compaction record (classic summary) — or a boot cut's receipt.
+      final files = [
+        for (final match in RegExp(r'/sessions/\S+\.jsonl').allMatches(out))
+          (await env.readTextFile(match.group(0)!)).getOrThrow(),
+      ];
+      final durable = files.any(
+        (file) =>
+            file.contains('"type":"compaction"') ||
+            file.contains('hidden_range') ||
+            file.contains('context_trim_receipt'),
+      );
+      expect(durable, isTrue, reason: 'calls=${stream.calls}');
+      // The turn's request is the context that ends with the prompt (the
+      // stream also saw the summarizer's).
+      final turnContext = stream.contexts.firstWhere(
+        (c) =>
+            c.messages.last is UserMessage &&
+            messageText(c.messages.last) == 'go onward zebra-42',
+      );
+      expect(turnContext.messages.first, isA<UserMessage>());
+      final texts = [
+        for (final m in turnContext.messages)
+          if (m is UserMessage) messageText(m),
+      ];
+      expect(texts.last, 'go onward zebra-42', reason: 'verbatim');
+      // The classic pass summarised the prefix; the kept tail rides.
+      expect(texts.where((t) => t.startsWith('filler')), isNotEmpty);
+      expect(
+        texts.any((t) => t.startsWith('filler0 ')),
+        isFalse,
+        reason: 'the prefix was compacted',
+      );
+    },
+  );
 
   test(
     'AC3 (goal_builder contract): an over-window resume boots INSTANTLY — '

@@ -84,7 +84,9 @@ final class AgentState {
     List<Tool> tools = const [],
     List<Message> messages = const [],
   }) : _tools = List.of(tools),
-       _messages = List.of(messages);
+       _messages = List.of(messages) {
+    _anchorOverheadFromTranscript();
+  }
 
   /// System prompt sent with each model request.
   String systemPrompt;
@@ -99,9 +101,34 @@ final class AgentState {
   List<Tool> get tools => List.unmodifiable(_tools);
   set tools(List<Tool> value) => _tools = List.of(value);
 
-  /// Conversation transcript. Assigning copies the list.
+  /// Conversation transcript. Assigning copies the list — and anchors the
+  /// overhead estimate when the transcript carries provider usage and the
+  /// session has no measurement yet (see [_anchorOverheadFromTranscript]).
   List<Message> get messages => List.unmodifiable(_messages);
-  set messages(List<Message> value) => _messages = List.of(value);
+  set messages(List<Message> value) {
+    _messages = List.of(value);
+    _anchorOverheadFromTranscript();
+  }
+
+  /// gh-2411 follow-up #5 (owner live test, round 2): a transcript that is
+  /// LOADED with provider usage already anchors the overhead estimate —
+  /// a resumed session is then priced by the provider's own number on its
+  /// very first request. The calibration used to be runtime-only (taken
+  /// when a reply ends), so the first request of a restarted session went
+  /// out on the chars/token heuristic alone (+54% on the owner's prompt),
+  /// the over-window guard stopped it before the provider could answer,
+  /// and with no reply there was never an anchor: every prompt failed
+  /// identically. Same rule as the live path — the FIRST valid usage
+  /// report wins; once measured, it stands for the session.
+  void _anchorOverheadFromTranscript() {
+    if (overheadCalibration.measured) return;
+    final calibration = deriveOverheadCalibration(
+      _messages,
+      systemPrompt: systemPrompt,
+      tools: _tools,
+    );
+    if (calibration != null) overheadCalibration = calibration;
+  }
 
   /// True while the agent is processing a prompt or continuation.
   ///

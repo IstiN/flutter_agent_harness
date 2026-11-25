@@ -180,17 +180,45 @@ const _hiddenMarkerTokens = hiddenRecordMarkerTokens;
 /// `127%/200k` resume). With the parity budget, meter = transcript +
 /// overhead ≤ window − reserve: below the compaction trigger, below the
 /// guard, on every fresh resume.
+///
+/// [overheadCalibration] (gh-241 follow-up #5, R2): a MEASURED session
+/// prices the overhead by the provider's own report — the budget is the
+/// same parity formula with the calibrated overhead. `null` callers skip
+/// the budget altogether (R1): an unmeasured estimate never truncates a
+/// resumed transcript.
 int resumeParityBudget({
   required int effectiveContextWindow,
   required int reserveTokens,
   String? systemPrompt,
   List<Tool> tools = const [],
+  OverheadCalibration overheadCalibration = OverheadCalibration.uncalibrated,
 }) {
   final budget =
       effectiveContextWindow -
-      estimateRequestOverheadTokens(systemPrompt, tools) -
+      overheadCalibration.apply(
+        estimateRequestOverheadTokens(systemPrompt, tools),
+      ) -
       reserveTokens;
   return budget > 0 ? budget : 0;
+}
+
+/// gh-241 follow-up #5 (F3): an in-memory cut must never hand the
+/// provider a context that OPENS on an assistant or tool fragment — its
+/// user turn is gone, several APIs refuse the shape, and the model reads
+/// the missing turns as lost history. Returns the messages from the first
+/// [UserMessage] on (the list itself when it already opens on one or
+/// holds no user message at all — nothing is invented). The caller logs
+/// [leading] through [onDropped].
+List<Message> cutAtUserTurnBoundary(
+  List<Message> messages, {
+  required String reason,
+  void Function(int leading, String reason)? onDropped,
+}) {
+  if (messages.isEmpty || messages.first is UserMessage) return messages;
+  final first = messages.indexWhere((m) => m is UserMessage);
+  if (first <= 0) return messages;
+  onDropped?.call(first, reason);
+  return messages.sublist(first);
 }
 
 /// The projected token cost of ONE record that actually renders — the

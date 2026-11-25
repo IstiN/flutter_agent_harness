@@ -343,44 +343,43 @@ void main() {
       // built WITHOUT the cap guards against the raw registered value.
       // Here the served window is 478k and the owner caps at 200
       // tokens — every child request is grossly over the CAPPED basis,
-      // so the mid-turn guard must refuse BEFORE the first request is
-      // sent. With the uncapped guard this request goes out (and the
-      // run completes normally).
+      // so the mid-turn guard must refuse. With the uncapped guard the
+      // requests go out (and the run completes normally).
+      //
+      // gh-2411 follow-up #5 (owner live test, round 2): until the
+      // provider has answered, an unmeasured request is never stopped
+      // on the heuristic alone — so the FIRST request goes out; the one
+      // after it is over the cap and takes the relief path.
       final registry = ContextWindowRegistry();
       registry.publish(
         model: _model,
         window: _registeredWindow,
         source: ContextWindowSource.endpointReport,
       );
-      final wiring = _Wiring(registry: registry, contextWindowCap: 200);
+      final stream = _ScriptedStream();
+      stream.rules['over-capped'] = () => _toolTurn('c1');
+      final wiring = _Wiring(
+        registry: registry,
+        contextWindowCap: 200,
+        scriptedStream: stream,
+      );
       final result = await wiring.spawn('guarded', 'over-capped');
-      expect(
-        wiring.stream.contexts,
-        isEmpty,
-        reason:
-            'the child guard must refuse at the capped basis before any '
-            'request is sent (an uncapped guard sends against 478k)',
-      );
-      // The run surfaces the guard's terminal, not a silent success:
-      // the flushed transcript's last assistant message carries the
-      // exhausted marker.
+      // The guard's STOP is no longer observable in this geometry (the
+      // cap sits below the fixed overhead: no trim can ever land under
+      // it — the window is a soft target there, the owner's rule). What
+      // still pins the capped basis is the child's context bounding: a
+      // pass ran, and only because of the cap — against the registered
+      // 478k nothing is over any trigger and no pass ever runs.
       await wiring.settle('guarded');
-      final records = await wiring.sessionRecords('guarded');
-      final messages = records
-          .whereType<MessageRecord>()
-          .map((record) => record.message)
-          .toList();
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
       expect(
-        messages.any(
-          (message) =>
-              message is AssistantMessage &&
-              isContextWindowExhaustedError(message.errorMessage),
-        ),
-        isTrue,
+        wiring.manager['guarded']!.compactions,
+        greaterThanOrEqualTo(1),
         reason:
-            'no over-window guard terminal in the transcript '
-            '(${result.status}, ${messages.length} messages)',
+            'the capped basis drives the child\'s context bounding (an '
+            'uncapped guard sends against 478k and never compacts)',
       );
+      expect(wiring.stream.contexts, isNotEmpty);
     });
   });
 

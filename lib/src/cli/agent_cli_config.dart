@@ -128,6 +128,7 @@ final class AgentCliConfig {
     this.compactionSettings,
     this.compactionTuning,
     this.compactionEngine,
+    this.initialOverheadCalibration,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
     this.stuckTool,
@@ -285,6 +286,15 @@ final class AgentCliConfig {
   /// the structured engine — the default everywhere since issue #287
   /// (classic remains the explicit rollback choice).
   final CompactionEngine? compactionEngine;
+
+  /// Test seam (gh-2411 follow-up #5): a session that starts MEASURED. The
+  /// real path takes the calibration from the provider's first reply or,
+  /// at load/resume, from the transcript's first usage report; a fixture
+  /// that pins the over-window guard's stop on a first request (no
+  /// provider answer yet) hands the measurement in here — otherwise the
+  /// unmeasured request is sent (provider truth decides). `null` = the
+  /// real behavior.
+  final OverheadCalibration? initialOverheadCalibration;
 
   /// Owner-side effective context override (`agent.contextWindowCap`,
   /// issues #273/#729), threaded into the [Agent] (loop guard) and into

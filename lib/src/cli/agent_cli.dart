@@ -129,6 +129,7 @@ import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/overhead_calibration.dart';
 import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -893,6 +894,10 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    final seededCalibration = config.initialOverheadCalibration;
+    if (seededCalibration != null) {
+      _agent.state.overheadCalibration = seededCalibration;
+    }
     // Issue #1786: the one-key accept + the watchdog's escalate rung call
     // into the loop's budget ladder through these controls.
     _agent.foregroundBudgetControls = _foregroundBudgetControls;
@@ -1879,6 +1884,13 @@ class AgentCli {
   /// to bracket runs with frames.
   HepWriter? _hep;
   var _persistedCount = 0;
+
+  /// gh-241 follow-up #5 (F3/R3): the one-line notice of the LAST loaded
+  /// session whose projection is a tail of the file (`[resume] loaded the
+  /// last K message(s) …`) — re-printed by the TUI restored-session
+  /// replay, because the boot load runs before the alternate screen.
+  /// `null` = the whole session loaded (or nothing loaded yet).
+  String? _resumeTailNotice;
   var _streamedText = false;
 
   /// The session instance the gh-1241 usage segment-start marker was

@@ -468,6 +468,60 @@ void main() {
     });
 
     test(
+      'gh-2411 follow-up #5 F2: a transfer without the section ONCE → ONE '
+      'corrective retry that names it → the pass succeeds (two calls)',
+      () async {
+        // Session 01a21373 (owner live test, round 2): the hand-over reply
+        // carried no `## Open User Requests` heading and the whole pass
+        // failed — "the agent cannot make progress until you switch
+        // models". Small models drop the heading; ONE retry names it.
+        final s = await session();
+        final snapshot = await snapshotOf(s);
+        final fake = _Fake([
+          '7 old read output\n-\nNo heading hand-over.',
+          '7 old read output\n-\n$_transfer',
+        ]);
+        final hooks = _Hooks();
+        final compactor = compactorFor(
+          s,
+          AgentState(model: _model, messages: []),
+          handOver: callFor(fake, snapshot),
+          snapshot: snapshot,
+          hooks: hooks,
+        );
+        expect(await compactor.run(force: true), isTrue);
+        expect(fake.contexts, hasLength(2), reason: 'exactly ONE retry');
+        final retry = texts(fake.contexts.last.messages).join('\n');
+        expect(retry, contains('## Open User Requests'));
+        expect(hooks.passes.single.ok, isTrue);
+      },
+    );
+
+    test('gh-2411 follow-up #5 F2: still missing after the ONE retry → the '
+        'existing failure, nothing appended, exactly two calls', () async {
+      final s = await session();
+      final count = (await s.getEntries()).length;
+      final snapshot = await snapshotOf(s);
+      final fake = _Fake([
+        '7 old read output\n-\nNo heading hand-over.',
+        '7 old read output\n-\nStill no heading.',
+      ]);
+      final hooks = _Hooks();
+      final compactor = compactorFor(
+        s,
+        AgentState(model: _model, messages: []),
+        handOver: callFor(fake, snapshot),
+        snapshot: snapshot,
+        hooks: hooks,
+      );
+      expect(await compactor.run(force: true), isFalse);
+      expect(await s.getEntries(), hasLength(count));
+      expect(fake.contexts, hasLength(2), reason: 'ONE retry, never a loop');
+      expect(hooks.passes.single.ok, isFalse);
+      expect('${hooks.passes.single.error}', contains('Open User Requests'));
+    });
+
+    test(
       'review R1 BLOCKING-2: `##Open User Requests` (no space) → the '
       'run FAILS and nothing is appended (no unbelted section persisted)',
       () async {

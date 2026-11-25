@@ -123,6 +123,13 @@ void main() {
       compactionSettings: compactionSettings,
       systemPrompt: tinyOverhead ? tinyPrompt : null,
       runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
+      // gh-2411 follow-up #5 (F3/R2-R4): the resume budget applies to
+      // MEASURED sessions only — this suite pins the budget path, so its
+      // fixtures are measured (ratio 1.0: today's numbers stand).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
@@ -152,6 +159,13 @@ void main() {
       compactionSettings: compactionSettings,
       systemPrompt: tinyOverhead ? tinyPrompt : null,
       runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
+      // gh-2411 follow-up #5 (F3/R2-R4): the resume budget applies to
+      // MEASURED sessions only — this suite pins the budget path, so its
+      // fixtures are measured (ratio 1.0: today's numbers stand).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,

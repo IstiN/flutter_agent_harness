@@ -209,6 +209,10 @@ extension on AgentCli {
         ? 'last ${messages.length - firstIndex} of ${messages.length}'
         : '${messages.length}';
     io.writeln(_style.dim('─── restored session: $label ($count messages)'));
+    if (_useTui) {
+      final notice = _resumeTailNotice;
+      if (notice != null) io.writeln(_style.dim(notice));
+    }
     for (final entry in entries) {
       for (final line in entry) {
         io.writeln(line);
@@ -865,7 +869,70 @@ extension on AgentCli {
     }
   }
 
+  /// gh-241 follow-up #5 (F3/R2): the calibration the RESIDENT tail can
+  /// vouch for — the first valid provider usage AFTER the newest resident
+  /// compaction boundary (or on a branch complete to its root). An anchor
+  /// above a boundary, or on a mid-chain tail, priced a request whose head
+  /// is not resident (gh-2237's stale-anchor rule): not vouchable.
+  /// `null` = the tail measures nothing, so the walk must not truncate
+  /// on the heuristic (R1).
+  Future<OverheadCalibration?> _residentTailCalibration(Session session) async {
+    final branch = await session.getBranch();
+    if (branch.isEmpty) return null;
+    var start = 0;
+    var boundary = false;
+    for (var i = 0; i < branch.length; i++) {
+      final entry = branch[i];
+      if (entry is CompactionRecord ||
+          entry is HiddenRangeRecord ||
+          entry is CompactCheckpointRecord) {
+        start = i;
+        boundary = true;
+      }
+    }
+    // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
+    // only from a COMPLETE walk (the branch reaches a tree root) — every
+    // anchor of a mid-chain tail priced a request whose head is missing.
+    if (!boundary && branch.first.parentId != null) return null;
+    return deriveOverheadCalibration(
+      [
+        for (final entry in branch.sublist(start))
+          if (entry is MessageRecord) entry.message,
+      ],
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+    );
+  }
+
+  /// gh-241 follow-up #5 (F3/R3): a resumed projection that is a TAIL of
+  /// the session says so — one line, on every path, measured or not, in
+  /// the transcript (fa.log) and on screen; the TUI re-prints it with the
+  /// restored-session replay (the boot load runs before the alternate
+  /// screen). A whole-session projection prints nothing.
+  /// Sets [_resumeTailNotice] — the R3 line of a session whose loaded
+  /// projection is a tail; the TUI replay re-prints it.
+  void _reportResumeTail(Session session, List<Message> messages) {
+    final report = session.resumeWalkReport();
+    if (report.droppedByBudget == 0 && !report.hasOlder) return;
+    final estimate = estimateContextTokens(messages);
+    final provenance = estimate.lastUsageIndex == null
+        ? 'estimate'
+        : 'estimate, calibrated from the provider turn '
+              '${estimate.lastUsageIndex! + 1} report';
+    final how = report.droppedByBudget > 0
+        ? '${report.droppedByBudget} older record(s) left on disk — '
+              'the context window bounds what loads (paged lazily)'
+        : 'older history sits above the newest compaction boundary';
+    final line =
+        '[resume] loaded the last ${messages.length} message(s) of the '
+        'session ($how; ≈${_liveRequestTokens()} tokens, $provenance)';
+    _logDiagnostic('resume tail sid=${session.cachedId} $line');
+    if (!_useTui) io.writeln(_style.dim(line));
+    _resumeTailNotice = line;
+  }
+
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
+    _resumeTailNotice = null;
     final bootSw = Stopwatch()..start();
     // A loaded session was minted by another run (or an earlier flow):
     // #2320's keep-guard applies to it (see [_deleteEmptySessionFile]).
@@ -906,11 +973,50 @@ extension on AgentCli {
     // The resume budget bounds how much history the walk keeps resident —
     // two different budgets legitimately build different context slices,
     // so it rides the cache key as the build variant (gh-1734).
-    final budget = resumeParityBudget(
-      effectiveContextWindow: _effectiveContextWindow,
-      reserveTokens: _effectiveCompactionSettings.reserveTokens,
-      systemPrompt: _agent.state.systemPrompt,
-      tools: _agent.state.tools,
+    // gh-241 follow-up #5 (F3/R1-R2 — owner live test, round 2): the
+    // budget is a MEASUREMENT or it is nothing. It used to be the
+    // heuristic (chars/token) overhead on every session, and with an
+    // over-reading heuristic the parity formula went ≤ 0 — the walk kept
+    // a one-message tail of the owner's resumed session, silently (no
+    // record, no line; 28,440 → 17,773 prompt tokens). A session the
+    // RESIDENT tail can already measure (a provider usage report after
+    // its newest boundary) gets today's budget, priced by the report
+    // (R2). An unmeasured one walks with NO budget — to the newest
+    // compaction boundary or the file head; only a boundary (durable,
+    // visible) may limit what loads (R1). The anchor the walk then
+    // surfaces is applied below, budget included.
+    final session = await _repo.open(metadata, windowed: true);
+    stage('open');
+    // `config.initialOverheadCalibration` is the test seam: a fixture
+    // declares its session measured (the reset of a session switch
+    // wipes the agent's copy).
+    final residentCalibration = _agent.state.overheadCalibration.measured
+        ? _agent.state.overheadCalibration
+        : (await _residentTailCalibration(session) ??
+              config.initialOverheadCalibration);
+    // A budget of ZERO (the window does not cover overhead + reserve even
+    // calibrated — the soft-window regime) is no budget either: the trim
+    // would floor at ONE record, whatever role it has, and drop the newest
+    // user turn from the context (gh-2411's invariant). The measured boot
+    // relief owns that residue, with the turn carried.
+    final parityBudget = residentCalibration == null
+        ? null
+        : resumeParityBudget(
+            effectiveContextWindow: _effectiveContextWindow,
+            reserveTokens: _effectiveCompactionSettings.reserveTokens,
+            systemPrompt: _agent.state.systemPrompt,
+            tools: _agent.state.tools,
+            overheadCalibration: residentCalibration,
+          );
+    final budget = (parityBudget ?? 0) > 0 ? parityBudget : null;
+    _logDiagnostic(
+      'resume walk sid=${metadata.id} '
+      'budget=${budget ?? 'none'} '
+      '${parityBudget == null
+          ? '(unmeasured: estimate only)'
+          : budget == null
+          ? '(zero: window below overhead + reserve)'
+          : 'calibrated x${residentCalibration!.ratio.toStringAsFixed(2)} (reported)'}',
     );
     final cachedContext = fpBefore == null
         ? null
@@ -918,10 +1024,8 @@ extension on AgentCli {
             metadata.path,
             sizeBytes: fpBefore.sizeBytes,
             mtimeMs: fpBefore.mtimeMs,
-            variant: budget,
+            variant: budget ?? -1,
           );
-    final session = await _repo.open(metadata, windowed: true);
-    stage('open');
     // A marathon WITHOUT compaction pages past the windowed residency
     // cache — the leaf slides out and the branch would read empty (a
     // resume that looks like a fresh session, pty_resume_equivalence
@@ -970,12 +1074,55 @@ extension on AgentCli {
       context = cachedContext;
       stage('context source=cache');
     } else {
-      final built = await session.buildContext();
+      var built = await session.buildContext();
+      // R2, the late anchor: the walk surfaced a usage report the
+      // resident tail could not vouch for. It measures the session — and
+      // a measured session carries today's budget: when the projection
+      // exceeds it, the walk's record-granular trim applies (logged
+      // below like every tail), once.
+      if (residentCalibration == null) {
+        final surfaced = deriveOverheadCalibration(
+          built.messages,
+          systemPrompt: _agent.state.systemPrompt,
+          tools: _agent.state.tools,
+        );
+        if (surfaced != null) {
+          _agent.state.overheadCalibration = surfaced;
+          final calibratedBudget = resumeParityBudget(
+            effectiveContextWindow: _effectiveContextWindow,
+            reserveTokens: _effectiveCompactionSettings.reserveTokens,
+            systemPrompt: _agent.state.systemPrompt,
+            tools: _agent.state.tools,
+            overheadCalibration: surfaced,
+          );
+          final loadedTokens = estimateRequestTokens(
+            built.messages,
+            systemPrompt: _agent.state.systemPrompt,
+            tools: _agent.state.tools,
+            calibration: surfaced,
+          );
+          if (loadedTokens > calibratedBudget) {
+            await session.ensureCompactionBoundaryResident(
+              tokenBudget: calibratedBudget,
+            );
+            if (session.resumeWalkReport().droppedByBudget > 0) {
+              built = await session.buildContext();
+            }
+          }
+        }
+      } else if (!_agent.state.overheadCalibration.measured) {
+        _agent.state.overheadCalibration = residentCalibration;
+      }
       context = built;
       stage('context');
-      await _rememberResumedContext(metadata, fpBefore, budget, built);
+      await _rememberResumedContext(metadata, fpBefore, budget ?? -1, built);
+    }
+    if (residentCalibration != null &&
+        !_agent.state.overheadCalibration.measured) {
+      _agent.state.overheadCalibration = residentCalibration;
     }
     final messages = context.messages;
+    _reportResumeTail(session, messages);
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and
     // fire a no-op compaction on every resume. Re-anchor at chars/4.

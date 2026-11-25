@@ -67,6 +67,14 @@ void main() {
       providerKind: 'openai-completions',
       compactionEngine: engine,
       compactionSettings: settings,
+      // gh-2411 follow-up #5 (F3/R6): the relief and the boot cap cut
+      // MEASURED sessions only — these fixtures pin those cuts, so they
+      // carry a measured calibration (ratio 1.0: the heuristic numbers
+      // stand unchanged).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,

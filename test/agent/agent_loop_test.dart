@@ -3,6 +3,13 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+/// A MEASURED ratio of 1.0 — the heuristic stands as the session's
+/// calibration. gh-2411 follow-up #5 (owner live test, round 2): an
+/// UNANCHORED request in an unmeasured session is never stopped on the
+/// heuristic alone, so a guard fixture brings a measurement exactly like
+/// a real session carries one after its first reply.
+const _measuredHeuristic = OverheadCalibration(1.0, measured: true);
+
 const _model = Model(
   id: 'test-model',
   api: 'test-api',
@@ -139,7 +146,10 @@ void main() {
         // that is the newest user turn itself is the soft-window regime,
         // where the request goes out as is (no guard).
         context: Context(messages: [_older('o' * 760)]),
-        config: AgentLoopConfig(model: tinyWindow),
+        config: AgentLoopConfig(
+          model: tinyWindow,
+          overheadCalibration: () => _measuredHeuristic,
+        ),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -176,7 +186,11 @@ void main() {
         // that is the newest user turn itself is the soft-window regime,
         // where the request goes out as is (no guard).
         context: Context(messages: [_older('o' * 760)]),
-        config: AgentLoopConfig(model: bigWindowModel, contextWindowCap: 100),
+        config: AgentLoopConfig(
+          model: bigWindowModel,
+          contextWindowCap: 100,
+          overheadCalibration: () => _measuredHeuristic,
+        ),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -252,7 +266,10 @@ void main() {
             Tool(name: 'read', description: 'd' * 40, parameters: const {}),
           ],
         ),
-        config: AgentLoopConfig(model: tinyWindow),
+        config: AgentLoopConfig(
+          model: tinyWindow,
+          overheadCalibration: () => _measuredHeuristic,
+        ),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -264,9 +281,68 @@ void main() {
       expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
     });
 
+    test('gh-2411 + owner live test: over the window on the PROVIDER\'S number '
+        'the guard keeps its stop even in the regime — a soft window stands '
+        'down only UNDER it', () async {
+      final tinyWindow = const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('never sent')]);
+      // The provider priced the previous request (an 800-char system
+      // prompt on a 100-token window) at 120 tokens: that anchor IS the
+      // request's size — over the window, and over the trigger even with
+      // a 50-token host reserve (the regime). Nothing can land the
+      // request under the window — the guard stops it BEFORE it is sent
+      // and nothing is trimmed away (the host's one-time warning names
+      // the fix). Standing down here sent every request of the owner's
+      // session out over the window: 114% and no pass ever ran.
+      final anchored = AssistantMessage(
+        content: const [TextContent(text: 'ok')],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage(
+          input: 120,
+          output: 5,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 125,
+          cost: const UsageCost(),
+        ),
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+      final stream = agentLoop(
+        prompts: [UserMessage.text('x' * 40)],
+        context: Context(
+          systemPrompt: 's' * 800,
+          messages: [UserMessage.text('first'), anchored],
+          tools: const [],
+        ),
+        config: AgentLoopConfig(
+          model: tinyWindow,
+          windowReserveTokens: () => 50,
+          overheadCalibration: () => _measuredHeuristic,
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 0, reason: 'over the window: the guard owns it');
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+    });
+
     test(
-      'gh-2411 + owner live test: over the window the guard keeps its stop '
-      'even in the regime — a soft window stands down only UNDER it',
+      'gh-2411 follow-up #5 (owner live test, round 2): an UNANCHORED request '
+      'in an unmeasured session is never hard-stopped on the heuristic alone',
       () async {
         final tinyWindow = const Model(
           id: 'test-model',
@@ -276,21 +352,18 @@ void main() {
           contextWindow: 100,
           maxTokens: 4096,
         );
-        final fake = _FakeStreamFunction([_textTurn('never sent')]);
-        // A 320-token system prompt + a 10-token prompt on a 100-token
-        // window: over the window (and over the trigger even with a
-        // 50-token host reserve — the regime). Nothing can land the request
-        // under the window — the guard stops it BEFORE it is sent and
-        // nothing is trimmed away (the host's one-time warning names the
-        // fix). Standing down here sent every request of the owner's
-        // session out over the window: 114% and no pass ever ran.
+        final fake = _FakeStreamFunction([_textTurn('sent')]);
+        // The same over-reading prompt (320 heuristic tokens on a 100-token
+        // window), fresh session: no usage anchor in the transcript and no
+        // calibration yet — the chars/token density is the only price (+54%
+        // on the owner's prompt). Stopping here dead-locked the FIRST
+        // prompt of every restarted session at a small window: no reply, so
+        // no anchor, so the next prompt failed identically. The request
+        // goes out — the provider's answer anchors the session (a real
+        // overflow takes the existing overflow path).
         final stream = agentLoop(
           prompts: [UserMessage.text('x' * 40)],
-          context: Context(
-            systemPrompt: 's' * 800,
-            messages: const [],
-            tools: const [],
-          ),
+          context: Context(systemPrompt: 's' * 800, messages: const []),
           config: AgentLoopConfig(
             model: tinyWindow,
             windowReserveTokens: () => 50,
@@ -300,10 +373,13 @@ void main() {
         );
 
         final messages = await stream.result as List<dynamic>;
-        expect(fake.calls, 0, reason: 'over the window: the guard owns it');
+        expect(
+          fake.calls,
+          1,
+          reason: 'unmeasured: the heuristic alone never stops a request',
+        );
         final assistant = messages.whereType<AssistantMessage>().single;
-        expect(assistant.stopReason, StopReason.error);
-        expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+        expect(assistant.stopReason, StopReason.stop);
       },
     );
 
@@ -401,14 +477,21 @@ void main() {
         // (a denser provider) all refuse locally — the newest user turn
         // itself is never what overflows here, and nothing is trimmed.
         final configs = <String, AgentLoopConfig>{
-          'no reserve': AgentLoopConfig(model: tinyWindow),
+          // A MEASURED session in every variant (gh-2411 follow-up #5:
+          // the heuristic alone never stops an unanchored request).
+          'no reserve': AgentLoopConfig(
+            model: tinyWindow,
+            overheadCalibration: () => _measuredHeuristic,
+          ),
           'host reserve': AgentLoopConfig(
             model: tinyWindow,
             windowReserveTokens: () => 50,
+            overheadCalibration: () => _measuredHeuristic,
           ),
           'calibrated': AgentLoopConfig(
             model: tinyWindow,
-            overheadCalibration: () => const OverheadCalibration(2),
+            overheadCalibration: () =>
+                const OverheadCalibration(2, measured: true),
           ),
         };
         for (final entry in configs.entries) {

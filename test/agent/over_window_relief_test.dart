@@ -14,6 +14,13 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+/// A MEASURED ratio of 1.0 — the heuristic stands as the session's
+/// calibration. gh-2411 follow-up #5 (owner live test, round 2): until the
+/// provider has answered, an unmeasured request is never stopped on the
+/// heuristic alone, so a guard fixture brings a measurement exactly like a
+/// real session carries one after its first reply.
+const _measuredHeuristic = OverheadCalibration(1.0, measured: true);
+
 const _model = Model(
   id: 'test-model',
   api: 'test-api',
@@ -141,6 +148,7 @@ void main() {
         context: const Context(messages: [], tools: [_bashTool]),
         config: AgentLoopConfig(
           model: _model,
+          overheadCalibration: () => _measuredHeuristic,
           overWindowRelief: (messages) async {
             reliefCalls++;
             return trimTo(messages, 100);
@@ -177,6 +185,7 @@ void main() {
       context: const Context(messages: [], tools: [_bashTool]),
       config: AgentLoopConfig(
         model: _model,
+        overheadCalibration: () => _measuredHeuristic,
         overWindowRelief: (messages) async => trimTo(messages, 100),
       ),
       streamFunction: fake.call,
@@ -208,6 +217,7 @@ void main() {
         context: Context(messages: [_older('o' * 760)], tools: [_bashTool]),
         config: AgentLoopConfig(
           model: _model,
+          overheadCalibration: () => _measuredHeuristic,
           overWindowRelief: (messages) async {
             reliefCalls++;
             return null; // The host could not free the window.
@@ -243,6 +253,7 @@ void main() {
         context: const Context(messages: [], tools: [_bashTool]),
         config: AgentLoopConfig(
           model: _model,
+          overheadCalibration: () => _measuredHeuristic,
           overWindowRelief: (messages) async {
             reliefCalls++;
             return messages; // "Compacted" but still over the window.
@@ -269,7 +280,10 @@ void main() {
       // that is the newest user turn itself is the soft-window regime,
       // where the request goes out as is (no guard).
       context: Context(messages: [_older('o' * 760)], tools: [_bashTool]),
-      config: AgentLoopConfig(model: _model),
+      config: AgentLoopConfig(
+        model: _model,
+        overheadCalibration: () => _measuredHeuristic,
+      ),
       streamFunction: fake.call,
       toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
     );
@@ -291,6 +305,7 @@ void main() {
       context: Context(messages: [_older('o' * 760)], tools: [_bashTool]),
       config: AgentLoopConfig(
         model: _model,
+        overheadCalibration: () => _measuredHeuristic,
         overWindowRelief: (messages) async => throw StateError('smol down'),
       ),
       streamFunction: fake.call,

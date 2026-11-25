@@ -128,6 +128,12 @@ void main() {
     bool force = false,
     Duration? attemptBudget,
   }) {
+    // gh-2411 follow-up #5: a transcript LOADED with provider usage now
+    // calibrates the overhead estimate (AgentState messages setter). This
+    // suite's usage fixtures (500 tokens on a ~100-token transcript) are
+    // stale-anchor tests, not density measurements — keep the estimate
+    // uncalibrated so each fixture's arithmetic stands.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     return AutoCompactor(
       session: session,
       state: state,
@@ -154,6 +160,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     final ledger = CompactionUsageAccumulator();
     // A real adapter over a scripted stream — the only way usage reaches
@@ -298,6 +307,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     final ok = await compactorFor(
       session,
@@ -324,6 +336,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     // The endpoint accepted the request and never answered (no error
     // event, no done) — stream.result pends forever.
@@ -1101,6 +1116,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     AssistantMessageEventStream checkpoint(
       Model m,

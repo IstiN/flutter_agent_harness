@@ -317,6 +317,15 @@ void main() {
             reserveTokens: 100,
             keepRecentTokens: 400,
           ),
+          // gh-2411 follow-up #5 (owner live test, round 2): until the
+          // provider has answered, an UNMEASURED request is never stopped
+          // on the heuristic alone (see the sibling test below). This
+          // fixture pins the guard's stop itself, so the session starts
+          // measured — exactly like a real one after its first reply.
+          initialOverheadCalibration: const OverheadCalibration(
+            1.0,
+            measured: true,
+          ),
         ),
         io: io,
         streamFunction: fake.call,
@@ -355,6 +364,60 @@ void main() {
       expect(output, contains('Context window exhausted'));
       expect(output, isNot(contains('[context trimmed]')));
       expect(output, contains('The task was NOT continued'));
+    },
+  );
+
+  test(
+    'gh-2411 follow-up #5: an UNMEASURED first request over the window goes '
+    'out — the provider decides, never the heuristic alone (owner live test, '
+    'round 2)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Session 01a16eff: a resumed session's first request was priced by
+      // the heuristic alone (+54% on the owner's prompt), the guard stopped
+      // it before the provider could answer — and with no reply there was
+      // never an anchor: every prompt failed identically. The same prompt,
+      // a fresh session, nothing measured: the request is sent.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final io = FakeCliIO();
+      final fake = FakeStreamFunction([textTurn('answered')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read']),
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 12000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 400,
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      final exitCode = await cli.runHeadless('x' * 50000);
+      await io.close();
+      expect(exitCode, 0);
+      expect(
+        fake.calls,
+        1,
+        reason: 'unmeasured: the heuristic alone never stops a request',
+      );
+      expect(io.out.toString(), isNot(contains('Context window exhausted')));
     },
   );
 

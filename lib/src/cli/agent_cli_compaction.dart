@@ -774,14 +774,15 @@ extension AgentCliCompactionRun on AgentCli {
       final overhead = _liveOverheadTokens();
       _logDiagnostic(
         'soft window sid=$_logSid window=$_effectiveContextWindow '
-        'overhead=$overhead — while the regime holds, automatic '
+        'overhead≈$overhead (estimate) — while the regime holds, automatic '
         'compaction runs only at the window (hide-only relief)',
       );
       io.writeln(
         tuiWarning(
           'warning: context window $_effectiveContextWindow is below the '
-          'fixed request overhead $overhead (system prompt + tool schemas) '
-          '— raising the window or disabling tools is the only fix; '
+          'fixed request overhead ≈$overhead tokens (estimated from the '
+          'system prompt + tool schemas) — raising the window or disabling '
+          'tools is the only fix; '
           'automatic compaction is skipped while the context stays under '
           'the window',
         ),
@@ -797,7 +798,20 @@ extension AgentCliCompactionRun on AgentCli {
   /// the relief freed tokens. A pass that frees nothing is BOUNDED: it
   /// re-runs only after the transcript changed
   /// ([_softWindowReliefNoOpAt]) — never a per-prompt retry.
-  Future<bool> _softWindowRelief(int tokens) async {
+  Future<bool> _softWindowRelief(int tokens, {Session? session}) async {
+    // gh-241 follow-up #5 (F3/R6): the relief is an in-memory cut — an
+    // UNMEASURED estimate never makes it, at the first prompt's pre-flight
+    // as little as at boot. The request goes out as is (provider truth
+    // decides); the answer anchors the session and the NEXT pre-flight
+    // runs the measured pass.
+    if (!_agent.state.overheadCalibration.measured) {
+      _logDiagnostic(
+        'soft window relief skipped sid=$_logSid tokens≈$tokens (estimate) '
+        '— unmeasured estimate never cuts content; the request goes out '
+        'as is',
+      );
+      return false;
+    }
     final length = _agent.state.messages.length;
     if (_softWindowReliefNoOpAt == length) {
       _logDiagnostic(
@@ -806,7 +820,10 @@ extension AgentCliCompactionRun on AgentCli {
       );
       return false;
     }
-    final relieved = await _relieveOverWindow(_agent.state.messages);
+    final relieved = await _relieveOverWindow(
+      _agent.state.messages,
+      session: session,
+    );
     if (relieved == null || _liveRequestTokens() >= tokens) {
       _softWindowReliefNoOpAt = length;
       return false;
@@ -841,6 +858,55 @@ extension AgentCliCompactionRun on AgentCli {
   /// the pre-fix over-window idle state.
   /// Idempotent (kill/resume mid-pass): a failed pass appends nothing, so
   /// the next boot re-runs the gate from the same state.
+  /// gh-241 follow-up #5 (F3/R5): an in-memory cut at resume leaves a
+  /// DURABLE receipt in the session file (`context_trim_receipt`: the
+  /// site, the before/after estimates, the dropped count). The file keeps
+  /// every record anyway — now it also says that the LIVE context was
+  /// cut, by what and how much; a restart replays and re-trims
+  /// identically. Best-effort: a failed append only skips the receipt.
+  Future<void> _appendTrimReceipt(
+    Session session, {
+    required String site,
+    required int tokensBefore,
+    int? dropped,
+  }) async {
+    try {
+      await session.appendCustomEntry(
+        customType: 'context_trim_receipt',
+        data: {
+          'site': site,
+          'tokens_before_est': tokensBefore,
+          'tokens_after_est': _liveRequestTokens(),
+          'dropped_messages': ?dropped,
+          'recorded_at': DateTime.now().toUtc().toIso8601String(),
+        },
+      );
+    } on Object catch (error) {
+      _logDiagnostic('context trim receipt failed sid=$_logSid: $error');
+    }
+  }
+
+  /// gh-241 follow-up #5 (F3): an in-memory cut must never hand the
+  /// provider a context that OPENS on an assistant or tool fragment — its
+  /// user turn is gone, several APIs refuse the shape, and the model reads
+  /// the missing turns as lost history. Leading non-user messages are
+  /// dropped (logged with the count); the cut itself is logged by the
+  /// caller.
+  void _dropLeadingNonUserMessages(String site) {
+    final messages = _agent.state.messages;
+    var leading = 0;
+    while (leading < messages.length && messages[leading] is! UserMessage) {
+      leading++;
+    }
+    if (leading == 0) return;
+    _agent.state.messages = messages.sublist(leading);
+    _persistedCount = _agent.state.messages.length;
+    _logDiagnostic(
+      '$site sid=$_logSid — dropped $leading leading non-user '
+      'message(s) so the request opens on a user turn',
+    );
+  }
+
   Future<void> _capResumedContext(Session session) async {
     if (_agent.state.messages.isEmpty) return;
     if (_runAbortRequested) return;
@@ -865,11 +931,42 @@ extension AgentCliCompactionRun on AgentCli {
     // under the trigger, and the newest user turn stays visible); the
     // first prompt's request goes out as is, with ONE warning.
     if (_skipCompactionSoftWindow()) return;
+    // gh-241 follow-up #5 (F3 — owner live test, round 2): an UNMEASURED
+    // estimate never cuts content. Without an anchor (no provider usage in
+    // the transcript, no calibration) the chars/token heuristic is the
+    // only price of the restored context, and it read +54% on the owner's
+    // prompt: trimming on it silently dropped 22 messages of a resumed
+    // session (17,773 prompt tokens instead of 28,440 — the model noticed
+    // the missing turns). The first request goes out UNTRIMMED; the
+    // provider's answer anchors the session and the first prompt's
+    // pre-flight owns the durable pass.
+    if (_softWindow && !_agent.state.overheadCalibration.measured) {
+      _logDiagnostic(
+        'resume boot cap skipped sid=$_logSid tokens≈$tokens (estimate) — '
+        'unmeasured estimate never cuts content; the first request goes '
+        'out untrimmed',
+      );
+      return;
+    }
     // At or over the window in the regime: the hide-only relief first
     // (gh-2411, the owner's live test); the valve below is the backstop.
     if (_softWindow &&
         tokens >= _effectiveContextWindow &&
-        await _softWindowRelief(tokens)) {
+        await _softWindowRelief(tokens, session: session)) {
+      // An in-memory cut leaves no session record — it must at least be
+      // visible (F3): say what it did, and never hand the provider a
+      // context that opens on an orphaned assistant/tool fragment.
+      _dropLeadingNonUserMessages('resume boot cap soft-window relief');
+      _logDiagnostic(
+        'resume boot cap soft-window relief sid=$_logSid '
+        'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the live '
+        'context was cut in memory — a receipt is in the session)',
+      );
+      await _appendTrimReceipt(
+        session,
+        site: 'resume boot cap soft-window relief',
+        tokensBefore: tokens,
+      );
       return;
     }
     // Over the WINDOW itself: no request can ever be sent, and an LM
@@ -892,10 +989,17 @@ extension AgentCliCompactionRun on AgentCli {
       if (trimmed != null) {
         _agent.state.messages = trimmed.messages;
         _persistedCount = _agent.state.messages.length;
+        _dropLeadingNonUserMessages('resume boot cap local-trim');
         final after = _liveRequestTokens();
         _logDiagnostic(
-          'resume boot cap local-trim sid=$_logSid tokens=$tokens '
-          '-> $after (dropped ${trimmed.dropped})',
+          'resume boot cap local-trim sid=$_logSid tokens≈$tokens '
+          '-> ≈$after (estimate; dropped ${trimmed.dropped})',
+        );
+        await _appendTrimReceipt(
+          session,
+          site: 'resume boot cap local-trim',
+          tokensBefore: tokens,
+          dropped: trimmed.dropped,
         );
         io.writeln(
           _style.dim(
@@ -1264,8 +1368,12 @@ extension OverWindowGuardRelief on AgentCli {
   /// returned list on the same basis ([_liveRequestTokens]), so a list
   /// that is still over the window is refused there too (E1 fail-fast,
   /// never a loop).
-  Future<List<Message>?> _relieveOverWindow(List<Message> overWindow) async {
-    if (_session == null) return null;
+  Future<List<Message>?> _relieveOverWindow(
+    List<Message> overWindow, {
+    Session? session,
+  }) async {
+    final target = session ?? _session;
+    if (target == null) return null;
     _logDiagnostic(
       'over-window relief start sid=$_logSid '
       'messages=${_agent.state.messages.length}',
@@ -1295,19 +1403,31 @@ extension OverWindowGuardRelief on AgentCli {
     _pushBusyPhase('Compacting context…');
     final EmergencyReliefOutcome reliefOutcome;
     try {
-      reliefOutcome = await _runEmergencyRelief();
+      reliefOutcome = await _runEmergencyRelief(session: target);
     } finally {
       _pushBusyPhase('');
     }
-    final after = _agent.state.messages.toList();
+    final relievedProjection = _agent.state.messages.toList();
+    // gh-241 follow-up #5 (F3/R5): the relief rebuilt the projection from
+    // the session — a hidden range can leave it opening on an assistant
+    // or tool fragment whose user turn is gone. The request never starts
+    // there: cut at the first user turn, and log what was dropped.
+    final after = cutAtUserTurnBoundary(
+      relievedProjection,
+      reason: 'over-window relief',
+      onDropped: (leading, site) => _logDiagnostic(
+        '$site sid=$_logSid — dropped $leading leading non-user '
+        'message(s) so the request opens on a user turn',
+      ),
+    );
     final afterTokens = _liveRequestTokens();
     if (afterTokens >= beforeTokens) {
       _logDiagnostic('over-window relief no-op sid=$_logSid');
       return null;
     }
     _logDiagnostic(
-      'over-window relief done sid=$_logSid tokens=$afterTokens '
-      '(was $beforeTokens, ${after.length} messages, '
+      'over-window relief done sid=$_logSid tokens≈$afterTokens '
+      '(estimate; was ≈$beforeTokens, ${after.length} messages, '
       'hidden=${reliefOutcome.hiddenRecords}, '
       'trim=${reliefOutcome.usedTrimValve})',
     );
@@ -1329,9 +1449,9 @@ extension OverWindowGuardRelief on AgentCli {
   /// valve. No LM call is attempted on ANY path. Every CLI compaction
   /// entry point awaits inline (there is no fire-and-forget compactor),
   /// so this cannot overlap the quality tier's post-run pass.
-  Future<EmergencyReliefOutcome> _runEmergencyRelief() async {
+  Future<EmergencyReliefOutcome> _runEmergencyRelief({Session? session}) async {
     final relief = EmergencyRelief(
-      session: _session!,
+      session: session ?? _session!,
       state: _agent.state,
       window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,
@@ -1588,8 +1708,8 @@ extension OverWindowContinuation on AgentCli {
         _persistedCount = _agent.state.messages.length;
         final after = _liveRequestTokens();
         _logDiagnostic(
-          'over-window continuation local-trim sid=$_logSid tokens=$tokens '
-          '-> $after (dropped ${trimmed.dropped})',
+          'over-window continuation local-trim sid=$_logSid tokens≈$tokens '
+          '-> ≈$after (estimate; dropped ${trimmed.dropped})',
         );
         io.writeln(
           _style.dim(

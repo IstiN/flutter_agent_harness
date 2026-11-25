@@ -323,6 +323,24 @@ final class Session {
     );
   }
 
+  /// gh-241 follow-up #5 (F3/R3): what the resume walk left out of
+  /// residency, so the host can say so. `droppedByBudget` counts the
+  /// records the token-budget stop of [ensureCompactionBoundaryResident]
+  /// un-indexed (0 when the walk ran to a compaction boundary or the file
+  /// head); `hasOlder` reports records above the window — the loaded
+  /// projection is a TAIL of the file either way. A full storage reports
+  /// nothing dropped and nothing older.
+  ({int droppedByBudget, bool hasOlder}) resumeWalkReport() {
+    final storage = _storage;
+    if (storage is! WindowedSessionStorage) {
+      return (droppedByBudget: 0, hasOlder: false);
+    }
+    return (
+      droppedByBudget: storage.budgetTrimDroppedRecords,
+      hasOlder: storage.hasOlder,
+    );
+  }
+
   /// Pages older blocks until a record that projects into conversation
   /// context is resident. Registry-only live tails (subagent/shell custom
   /// records) otherwise make a windowed open look like an empty chat even

@@ -10,6 +10,13 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+/// A MEASURED ratio of 1.0 — the heuristic stands as the session's
+/// calibration. gh-2411 follow-up #5 (owner live test, round 2): until the
+/// provider has answered, an unmeasured request is never stopped on the
+/// heuristic alone, so a guard fixture brings a measurement exactly like a
+/// real session carries one after its first reply.
+const _measuredHeuristic = OverheadCalibration(1.0, measured: true);
+
 const _model = Model(
   id: 'test-model',
   api: 'test-api',
@@ -280,7 +287,11 @@ void main() {
               ..._orphanContext(),
             ],
           ),
-          config: AgentLoopConfig(model: tinyWindow, reportedOrphanKeys: latch),
+          config: AgentLoopConfig(
+            model: tinyWindow,
+            reportedOrphanKeys: latch,
+            overheadCalibration: () => _measuredHeuristic,
+          ),
           streamFunction: refused.call,
           toolExecutor: _noTools,
         );
@@ -300,7 +311,11 @@ void main() {
         final stream2 = agentLoop(
           prompts: [UserMessage.text('continue')],
           context: Context(messages: _orphanContext()),
-          config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+          config: AgentLoopConfig(
+            model: _model,
+            reportedOrphanKeys: latch,
+            overheadCalibration: () => _measuredHeuristic,
+          ),
           streamFunction: delivered.call,
           toolExecutor: _noTools,
         );
@@ -327,7 +342,11 @@ void main() {
           final stream1 = agentLoop(
             prompts: [UserMessage.text('go')],
             context: Context(messages: _orphanContext()),
-            config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+            config: AgentLoopConfig(
+              model: _model,
+              reportedOrphanKeys: latch,
+              overheadCalibration: () => _measuredHeuristic,
+            ),
             streamFunction: throwing,
             toolExecutor: _noTools,
           );
@@ -345,7 +364,11 @@ void main() {
           final stream2 = agentLoop(
             prompts: [UserMessage.text('continue')],
             context: Context(messages: _orphanContext()),
-            config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+            config: AgentLoopConfig(
+              model: _model,
+              reportedOrphanKeys: latch,
+              overheadCalibration: () => _measuredHeuristic,
+            ),
             streamFunction: delivered.call,
             toolExecutor: _noTools,
           );
@@ -372,7 +395,11 @@ void main() {
         final stream1 = agentLoop(
           prompts: [UserMessage.text('go')],
           context: Context(messages: _orphanContext()),
-          config: AgentLoopConfig(model: _model, reportedOrphanKeys: latch),
+          config: AgentLoopConfig(
+            model: _model,
+            reportedOrphanKeys: latch,
+            overheadCalibration: () => _measuredHeuristic,
+          ),
           streamFunction: diesAfterFirstByte,
           toolExecutor: _noTools,
         );
