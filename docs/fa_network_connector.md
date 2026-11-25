@@ -113,6 +113,38 @@ Rules:
 - `refId` on ack/error references the delivered msgId; on
   hello_ok it references the hello.
 
+### 3.1 Client enforcement — one upstream per machine (eviction-storm fix)
+
+Incident (2026-11-25): N `fa` CLI sessions on one Mac each opened their own
+device WS under one enrolled device. The server evicts the older socket on
+every new dial, the client backoff reset on every short-lived connect and
+roster PATCHes were only debounced by 500 ms → ~100 dials/min and 500+ 429s
+per minute per machine, until the relay front refused `/ws` upgrades (phones
+lost their DM link in that storm). Client rules, pinned by
+`test/bin_network_presence_wiring_test.dart`:
+
+- `bin/` never constructs a `NetworkPresenceController`. Every CLI presence
+  site (interactive, mailbox-woken, `fa network`, the hub plugin) calls
+  `resolveCliNetworkPresence` (`lib/src/network/connector/connector_daemon_io.dart`):
+  a daemon alive for the same deviceId (state file + probe, spawned on demand)
+  yields the loopback `SharedConnectorPresenceClient` — zero upstream dials
+  from the session; without a daemon the direct controller is the fallback.
+- One-shot roster reads go through `readCliNetworkRoster`: the cached roster
+  of an alive daemon; a direct one-shot controller only when there is no
+  daemon or its cache is still empty.
+- Reconnect backoff (`ConnectorUpstreamClient`): the attempt counter resets
+  only after `upstreamStableWindow` (30 s) of uptime, equal jitter on every
+  step; a 429 on ticket mint or upgrade waits `Retry-After` when available
+  (`dart:io` exposes only the status of a refused WS upgrade → ladder
+  fallback otherwise).
+- Roster PATCH: both hosts write through one `RosterPatchLimiter` — at least
+  2 s between PATCHes per device process, `Retry-After` or a jittered
+  cooldown on 429, pending rows merged into the next flush, never dropped.
+- App: one `DeviceConnectorService` per process (`claimShared`/`release`).
+- Acceptance: `upstream_eviction_test.dart` — two clients against a
+  one-socket-per-device fake server decay from 80 to ≤ 3 dials/min per
+  client after the first minute.
+
 ## 4. Device WS protocol
 
 - Ticket: `POST /api/ws-ticket` authenticated with the **deviceToken**
