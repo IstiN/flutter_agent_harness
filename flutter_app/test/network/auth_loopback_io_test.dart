@@ -166,7 +166,9 @@ void main() {
       () async {
         // The OS delivered the callback before the flow started (cold
         // start): the boot router buffered it, and binding the receiver
-        // replays it.
+        // replays it into the pre-arrival slot, where the flow's own
+        // state check (auth_flow) decides whether it belongs to this
+        // attempt.
         oauthDeepLinkRouter.dispatch(
           Uri.parse('fah://oauth/network?code=cold&state=st-10'),
         );
@@ -177,8 +179,12 @@ void main() {
         );
         addTearDown(receiver.close);
 
-        final callback = await receiver.callback;
-        expect(callback.queryParameters['code'], 'cold');
+        expect(
+          (receiver as DeepLinkOAuthReceiver)
+              .preArrivedCallback
+              ?.queryParameters['code'],
+          'cold',
+        );
       },
     );
   });

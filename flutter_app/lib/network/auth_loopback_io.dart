@@ -75,6 +75,9 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
   }
 
   @override
+  Uri? get preArrivedCallback => null;
+
+  @override
   void close() {
     _timer?.cancel();
     _timer = null;
@@ -150,6 +153,9 @@ final class WebAuthSessionOAuthReceiver implements OAuthCallbackReceiver {
       _completer.completeError(AuthFlowException('sign-in failed: $e'));
     }
   }
+
+  @override
+  Uri? get preArrivedCallback => null;
 
   @override
   void close() {

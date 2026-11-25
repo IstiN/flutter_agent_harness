@@ -75,18 +75,20 @@ void main() {
       },
     );
 
-    test('completes from the buffered cold-start link delivered before '
-        'registration (router replay)', () async {
+    test('holds a buffered cold-start link as the pre-arrival callback '
+        '(does not complete the flow)', () async {
       final router = OAuthDeepLinkRouter();
       // The OS delivered the callback before the flow registered —
-      // the router buffers it, and registration replays it.
+      // the router buffers it, and registration replays it into the
+      // PRE-ARRIVAL slot: the flow state-checks it after initiate, so
+      // a dead attempt's callback can never complete a later flow.
       router.dispatch(Uri.parse('fah://oauth/network?code=early&state=s'));
 
       final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
       addTearDown(receiver.close);
 
-      final callback = await receiver.callback;
-      expect(callback.queryParameters['code'], 'early');
+      expect(receiver.preArrivedCallback?.queryParameters['code'], 'early');
+      expect(receiver.callback, doesNotComplete);
     });
 
     test('times out when no deep link arrives', () async {
@@ -168,11 +170,11 @@ void main() {
       await attached;
 
       // The flow registers after the dust settles and still gets the link
-      // (buffered replay — the cold-start race window).
+      // (buffered replay — the cold-start race window), held as the
+      // pre-arrival callback for the flow's own state check.
       final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
       addTearDown(receiver.close);
-      final callback = await receiver.callback;
-      expect(callback.queryParameters['code'], 'stream');
+      expect(receiver.preArrivedCallback?.queryParameters['code'], 'stream');
     });
 
     test(
@@ -191,6 +193,10 @@ void main() {
 
         final receiver = DeepLinkOAuthReceiver.bindWithRouter(router);
         addTearDown(receiver.close);
+        expect(receiver.preArrivedCallback?.queryParameters['code'], 'both');
+        // The still-queued stream copy then arrives live and completes
+        // the callback with the SAME uri — deduped to one value by the
+        // receiver's isCompleted guard.
         final callback = await receiver.callback;
         expect(callback.queryParameters['code'], 'both');
       },

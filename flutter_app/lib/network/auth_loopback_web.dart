@@ -260,6 +260,9 @@ final class WebOAuthReceiver implements OAuthCallbackReceiver {
   }
 
   @override
+  Uri? get preArrivedCallback => null;
+
+  @override
   void close() {
     _poll?.cancel();
     _storagePoll?.cancel();

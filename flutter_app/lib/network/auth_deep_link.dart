@@ -34,12 +34,16 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
   /// Production: `bindWithRouter(oauthDeepLinkRouter)` from the Android
   /// branch of the auth flow. A callback buffered on the router (delivered
   /// before this registration — the cold-start race) replays here
-  /// synchronously inside [OAuthDeepLinkRouter.register].
+  /// synchronously inside [OAuthDeepLinkRouter.register] into the
+  /// PRE-ARRIVAL slot, not into [callback]: the flow checks its state
+  /// after initiate and answers only a matching pre-arrival, so a dead
+  /// attempt's replayed callback can never fail a later flow.
   static DeepLinkOAuthReceiver bindWithRouter(
     OAuthDeepLinkRouter router, {
     Duration timeout = const Duration(minutes: 3),
   }) {
     final receiver = DeepLinkOAuthReceiver._(router);
+    receiver._binding = true;
     router.register(
       OAuthDeepLinkRoute(
         flow: _flow,
@@ -47,6 +51,7 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
         onLink: receiver.complete,
       ),
     );
+    receiver._binding = false;
     // The flow must not wait on the browser forever.
     receiver._timer = Timer(timeout, () {
       receiver._timer = null;
@@ -66,6 +71,15 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
   final Completer<Uri> _completer = Completer<Uri>();
   Timer? _timer;
 
+  /// Set while [bindWithRouter] registers on the router: the register
+  /// call replays buffered links synchronously, and those land in the
+  /// pre-arrival slot instead of completing the flow.
+  bool _binding = false;
+  Uri? _preArrived;
+
+  @override
+  Uri? get preArrivedCallback => _preArrived;
+
   @override
   final Uri redirectUri;
 
@@ -79,11 +93,19 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
   /// into the app must be answered, never silently ignored.
   bool matches(Uri uri) => isNetworkOAuthDeepLink(uri);
 
-  /// Completes the flow with [uri] when it matches — a no-op once the
-  /// callback already completed (a link delivered twice, e.g. on both the
-  /// router's stream and initial-link paths, is deduped here).
+  /// Completes the flow with [uri] when it matches. During
+  /// [bindWithRouter]'s registration the router's replay lands in the
+  /// PRE-ARRIVAL slot instead — a link that outlived its flow must not
+  /// complete a later one (the flow state-checks the slot after
+  /// initiate). A live dispatch completes the callback — a no-op once
+  /// already completed (a link delivered twice is deduped here).
   void complete(Uri uri) {
-    if (matches(uri)) _complete(uri);
+    if (!matches(uri)) return;
+    if (_binding) {
+      _preArrived ??= uri;
+      return;
+    }
+    _complete(uri);
   }
 
   void _complete(Uri uri) {
