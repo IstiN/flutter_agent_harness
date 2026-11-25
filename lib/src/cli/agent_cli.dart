@@ -136,6 +136,7 @@ import '../context.dart';
 import '../cube/cube.dart';
 import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
+import '../env/process_lstart.dart' show tryParseLstart;
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
 import '../compaction/context_window_registry.dart';
@@ -2142,9 +2143,6 @@ class AgentCli {
   Future<void> run() async {
     await _cubeBootRestore();
     await _requireLeaseClaim();
-    // Restart honesty (issue #450): jobs in the manifest were left
-    // running by the previous run — count them, then take the file over.
-    await _waiting.captureLostJobs();
     await _loadAgentContext();
     // Persisted model cache (stale-while-revalidate): the /model picker
     // serves the last fetched lists instantly at boot; the live refresh
@@ -2152,6 +2150,11 @@ class AgentCli {
     await _loadPersistedModelCache();
     _session = await _initializeSession();
     _notifyPluginSessionReady();
+    // Restart honesty (issue #450): jobs in the manifest were left
+    // running by the previous run — count them, then take the file over.
+    // gh-2413: AFTER the session opens — the reconcile adopts only this
+    // session's owner-tagged entries, so it needs the session id.
+    await _waiting.captureLostJobs();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _requireLeaseClaim();
