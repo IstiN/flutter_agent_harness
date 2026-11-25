@@ -11,15 +11,23 @@
 ///   the hello's `msgId`; the server then sends the roster snapshot (one
 ///   frame per user network) and redelivers unacked mail in seq order —
 ///   the client surfaces all of that on [inbound];
-/// - reconnect backoff 1 s → 30 s ([upstreamBackoff]); resume by the same
-///   (deviceId, deviceToken) pair;
+/// - reconnect backoff 1 s → 30 s with jitter ([upstreamBackoff]); resume
+///   by the same (deviceId, deviceToken) pair;
 /// - `ping`/`pong` every ~20 s ([upstreamPingInterval]) are APPLICATION
 ///   frames: the client NEVER uses socket read-timeouts to wait for quiet
 ///   (cancelling a read closes the connection — coder/websocket behavior
 ///   the backend agent field-tested); half-open drops are the server's job
 ///   at ~45 s;
 /// - a second successful dial DISPLACES the first socket for the same
-///   device server-side (the client treats any socket close the same way);
+///   device server-side (the client treats any socket close the same way).
+///   The attempt counter therefore resets ONLY after the link stayed up for
+///   [upstreamStableWindow] (≥ 30 s): N clients fighting over one device
+///   ping-pong, but their reconnects climb the ladder (1 s, 2 s, 4 s … 30 s)
+///   instead of dialing once a second each (production eviction storm);
+/// - a throttle refusal on the way to the socket — 429 / `throttled` on the
+///   ticket mint or on the upgrade itself ([ConnectorThrottleSignal]) —
+///   counts as a failed attempt and waits the server's `Retry-After` when
+///   it sent one, else the jittered ladder;
 /// - `acknowledge` writes the ack frame only after the caller has written
 ///   the mailbox (connector's rule); while offline the ack is dropped and
 ///   the server's redelivery gives the connector another chance.
@@ -28,6 +36,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' show Random;
 
 import 'envelope.dart';
 import 'presence_engine.dart'
@@ -37,6 +46,7 @@ import 'presence_engine.dart'
         ConnectorTimers,
         SystemClock,
         SystemTimers;
+import 'rate_backoff.dart';
 
 /// One live upstream connection (decoded envelopes both ways).
 abstract interface class ConnectorSocket {
@@ -84,11 +94,32 @@ enum ConnectorLinkState {
   connected,
 }
 
-/// Reconnect backoff (contract §4): 1 s doubling, capped at 30 s. The cap
-/// also bounds the shift math: a server down for days must not overflow.
+/// Reconnect backoff ladder (contract §4): 1 s doubling, capped at 30 s.
+/// The cap also bounds the shift math: a server down for days must not
+/// overflow. The actual wait is [upstreamRetryDelay] (jitter).
 Duration upstreamBackoff(int attempt) {
   final clamped = attempt < 1 ? 1 : attempt;
   return Duration(seconds: 1 << (clamped - 1) > 30 ? 30 : 1 << (clamped - 1));
+}
+
+/// How long a link must stay connected before it counts as STABLE and the
+/// attempt counter resets. Longer than the ladder cap's minimum (half of
+/// 30 s with equal jitter), so an eviction ping-pong — where every link is
+/// displaced well inside this window — can never reset.
+const upstreamStableWindow = Duration(seconds: 30);
+
+/// The wait before attempt [attempt] of the reconnect loop: the jittered
+/// [upstreamBackoff] step, or the server's `Retry-After` when it asked for
+/// longer (a throttle hint is a floor, never a shortcut).
+Duration upstreamRetryDelay(
+  int attempt,
+  double jitterFraction, {
+  Duration? retryAfter,
+  Duration Function(int attempt) backoff = upstreamBackoff,
+}) {
+  final ladder = withEqualJitter(backoff(attempt), jitterFraction);
+  if (retryAfter == null || retryAfter <= ladder) return ladder;
+  return retryAfter;
 }
 
 /// Thrown by [ConnectorUpstreamClient.send] while the link is not ready —
@@ -123,11 +154,14 @@ final class ConnectorUpstreamClient {
     this.backoff = upstreamBackoff,
     this.pingInterval = upstreamPingInterval,
     this.handshakeTimeout = const Duration(seconds: 10),
+    this.stableWindow = upstreamStableWindow,
+    double Function()? jitterFraction,
     ConnectorClock? clock,
     ConnectorTimers? timers,
     this.idFactory = defaultIdFactory,
     this.onLog,
-  }) : _clock = clock ?? const SystemClock(),
+  }) : _jitterFraction = jitterFraction ?? Random().nextDouble,
+       _clock = clock ?? const SystemClock(),
        _timers = timers ?? const SystemTimers() {
     _transport = transport;
   }
@@ -159,6 +193,13 @@ final class ConnectorUpstreamClient {
   /// How long the client waits for hello_ok before dropping the socket.
   final Duration handshakeTimeout;
 
+  /// Uptime after which a link is STABLE: the attempt counter (and with it
+  /// the reconnect ladder) resets only then, never on the hello_ok itself.
+  final Duration stableWindow;
+
+  /// Jitter source for the reconnect ladder (tests inject a fixed value).
+  final double Function() _jitterFraction;
+
   /// Frame id factory (injectable for tests).
   final IdFactory idFactory;
 
@@ -176,6 +217,7 @@ final class ConnectorUpstreamClient {
   ConnectorTimer? _pingTimer;
   ConnectorTimer? _reconnectTimer;
   ConnectorTimer? _handshakeTimer;
+  ConnectorTimer? _stableTimer;
   Completer<NetworkEnvelope>? _helloWait;
   bool _running = false;
   int _attempt = 0;
@@ -191,7 +233,8 @@ final class ConnectorUpstreamClient {
   /// True when the handshake completed — sends deliver live.
   bool get isReady => _state == ConnectorLinkState.connected;
 
-  /// The reconnect attempt counter (test seam).
+  /// Consecutive connect cycles that never reached a stable link — the
+  /// reconnect ladder index (test seam); resets after [stableWindow] uptime.
   int get attempts => _attempt;
 
   /// Every inbound frame — hello_ok, roster snapshots/patches, mail,
@@ -206,6 +249,9 @@ final class ConnectorUpstreamClient {
   Future<void> start() async {
     if (_running) return;
     _running = true;
+    // A fresh start is a new link history: stop/start must not inherit the
+    // old ladder position.
+    _attempt = 0;
     _dial();
   }
 
@@ -275,8 +321,8 @@ final class ConnectorUpstreamClient {
       try {
         ticket = await ticketProvider();
       } on Object catch (error) {
-        onLog?.call('ticket provider failed: $error');
-        _retry(generation);
+        onLog?.call('ticket provider failed${_throttleLabel(error)}: $error');
+        _retry(generation, retryAfter: _retryAfterOf(error));
         return;
       }
       ConnectorSocket socket;
@@ -288,8 +334,8 @@ final class ConnectorUpstreamClient {
           ticket,
         );
       } on Object catch (error) {
-        onLog?.call('dial failed: $error');
-        _retry(generation);
+        onLog?.call('dial failed${_throttleLabel(error)}: $error');
+        _retry(generation, retryAfter: _retryAfterOf(error));
         return;
       }
       if (!_running || generation != _dialGeneration) {
@@ -311,7 +357,9 @@ final class ConnectorUpstreamClient {
       _helloWait = null;
       _handshakeTimer?.cancel();
       _handshakeTimer = null;
-      _attempt = 0;
+      // NOT `_attempt = 0` here: a welcome says nothing about the link
+      // surviving — the stable-window timer below owns the reset.
+      _armStableWindow(generation);
       _pingTimer = _timers.periodic(pingInterval, () {
         final live = _socket;
         if (live == null || !isReady) return;
@@ -428,11 +476,38 @@ final class ConnectorUpstreamClient {
     _retry(generation);
   }
 
+  /// Arms the stable-window reset: once this link has been `connected`
+  /// for [stableWindow] it outlived any eviction ping-pong, so the next
+  /// drop starts over from the bottom of the ladder.
+  void _armStableWindow(int generation) {
+    _stableTimer?.cancel();
+    if (stableWindow <= Duration.zero) {
+      _attempt = 0;
+      return;
+    }
+    _stableTimer = _timers.delayed(stableWindow, () {
+      _stableTimer = null;
+      if (_running && generation == _dialGeneration && isReady) _attempt = 0;
+    });
+  }
+
+  /// The server's `Retry-After` when [error] is a throttle refusal
+  /// (429 / `throttled` on the ticket mint or the upgrade); null otherwise.
+  static Duration? _retryAfterOf(Object error) =>
+      error is ConnectorThrottleSignal ? error.retryAfter : null;
+
+  /// `' (throttled)'` for a throttle refusal — the diagnostic that tells an
+  /// eviction storm apart from a server outage in the daemon log.
+  static String _throttleLabel(Object error) =>
+      error is ConnectorThrottleSignal ? ' (throttled)' : '';
+
   Future<void> _teardownSocket() async {
     _pingTimer?.cancel();
     _pingTimer = null;
     _handshakeTimer?.cancel();
     _handshakeTimer = null;
+    _stableTimer?.cancel();
+    _stableTimer = null;
     await _framesSubscription?.cancel();
     _framesSubscription = null;
     final socket = _socket;
@@ -440,15 +515,23 @@ final class ConnectorUpstreamClient {
     await socket?.close();
   }
 
-  void _retry(int generation) {
+  void _retry(int generation, {Duration? retryAfter}) {
     _attempt++;
     _transition(ConnectorLinkState.disconnected);
     if (!_running) return;
     _reconnectTimer?.cancel();
-    _reconnectTimer = _timers.delayed(backoff(_attempt), () {
-      _reconnectTimer = null;
-      if (_running && generation == _dialGeneration) _dial();
-    });
+    _reconnectTimer = _timers.delayed(
+      upstreamRetryDelay(
+        _attempt,
+        _jitterFraction(),
+        retryAfter: retryAfter,
+        backoff: backoff,
+      ),
+      () {
+        _reconnectTimer = null;
+        if (_running && generation == _dialGeneration) _dial();
+      },
+    );
   }
 
   void _cancelTimers() {
@@ -458,6 +541,8 @@ final class ConnectorUpstreamClient {
     _reconnectTimer = null;
     _handshakeTimer?.cancel();
     _handshakeTimer = null;
+    _stableTimer?.cancel();
+    _stableTimer = null;
   }
 
   void _transition(ConnectorLinkState next) {

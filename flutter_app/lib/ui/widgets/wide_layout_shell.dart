@@ -448,32 +448,44 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// socket shared by every device surface (AC1). Created eagerly at boot
   /// for a signed-in shell (and on later sign-in), never for shells without
   /// network wiring; the service self-starts/stops on the manager's JWT flips.
+  /// Claimed per process ([DeviceConnectorService.claimShared]): a device
+  /// surface outside this shell (a standalone NetworkHomePage) reuses it
+  /// rather than dialing a second upstream under one device (contract §10).
   DeviceConnectorService? _deviceConnector;
 
   /// The [NetworkSessionManager]-bound connector, created on first use.
   DeviceConnectorService get _devicesConnector {
-    final sessions = widget.networkSessions;
-    assert(sessions != null, 'the DEVICES surface requires networkSessions');
-    return _deviceConnector ??= DeviceConnectorService(
-      sessionManager: sessions!,
-      chatSessionSource: createDeviceChatSessionSource(
-        widget.manager,
-        chatList: _chatController,
+    assert(
+      widget.networkSessions != null,
+      'the DEVICES surface requires networkSessions',
+    );
+    final sessions = widget.networkSessions!;
+    return _deviceConnector ??= DeviceConnectorService.claimShared(
+      sessions,
+      () => DeviceConnectorService(
+        sessionManager: sessions,
+        chatSessionSource: createDeviceChatSessionSource(
+          widget.manager,
+          chatList: _chatController,
+        ),
+        dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
+        deviceNamePrompt: (defaultName) async {
+          if (!mounted) return null;
+          // The connector starts before the Devices route is opened. Anchor
+          // first enrollment at the root overlay on both desktop and mobile.
+          final rootContext = Navigator.of(
+            context,
+            rootNavigator: true,
+          ).context;
+          return showDeviceEnrollmentNameDialog(
+            rootContext,
+            defaultName: defaultName,
+          );
+        },
+        // Enrollment/keychain/WS failures surface in the app log — the
+        // connector has no other voice on this surface.
+        onLog: (line) => AppLog.i('devices', line),
       ),
-      dmSessionHost: FlutterDeviceDmSessionHost(widget.manager),
-      deviceNamePrompt: (defaultName) async {
-        if (!mounted) return null;
-        // The connector starts before the Devices route is opened. Anchor
-        // first enrollment at the root overlay on both desktop and mobile.
-        final rootContext = Navigator.of(context, rootNavigator: true).context;
-        return showDeviceEnrollmentNameDialog(
-          rootContext,
-          defaultName: defaultName,
-        );
-      },
-      // Enrollment/keychain/WS failures surface in the app log — the
-      // connector has no other voice on this surface.
-      onLog: (line) => AppLog.i('devices', line),
     )..start();
   }
 
@@ -862,7 +874,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     widget.networkSessions?.removeListener(_onNetworkSessionsChanged);
-    unawaited(_deviceConnector?.dispose());
+    unawaited(_deviceConnector?.release());
     _deviceConnector = null;
     _listenedService?.removeListener(_onServiceChanged);
     _listenedNamesStore?.removeListener(_onNamesChanged);

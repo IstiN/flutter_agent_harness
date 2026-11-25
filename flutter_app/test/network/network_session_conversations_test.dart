@@ -17,6 +17,7 @@ import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/network_chat_page.dart';
+import 'package:fa_ui/fa_ui.dart' show ChatComposer;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/src/network/connector/device_dm_keys.dart';
 import 'package:flutter_agent_harness/src/network/connector/envelope.dart';
@@ -68,6 +69,8 @@ Future<_Rig> _rig() async {
   state.historyResolved = true;
   addTearDown(session.dispose);
   addTearDown(connector.dmMailController.close);
+  addTearDown(connector.rosterController.close);
+  addTearDown(connector.presenceController.close);
   return _Rig(session, wallet, connector);
 }
 
@@ -86,6 +89,13 @@ ChannelMessage _message(
   sessionId: sessionId,
 );
 
+/// A passthrough roster/presence frame: the DM status plumbing re-reads
+/// the connector on every frame, so the payload itself is irrelevant.
+NetworkEnvelope _frame(String id) => NetworkEnvelope(
+  kind: NetworkEnvelopeKind.presence,
+  msgId: id,
+  ts: '2026-11-14T10:00:00.000Z',
+);
 void main() {
   test(
     'two sessions and the legacy bucket hold independent DM threads',
@@ -328,48 +338,103 @@ void main() {
     await rig.session.close();
   });
 
-  testWidgets('the DM working banner shows while the peer agent is busy', (
-    tester,
-  ) async {
-    final rig = await _rig();
-    rig.connector.peerRunState = AgentRunState.busy;
-    rig.session.channelStates[dmChannel]!.add(
-      _message('one-user', 'first session only', sessionId: 'one'),
-    );
-    rig.session.selectDmSession(dmChannel, 'one', title: 'Hero One');
-    final manager = NetworkSessionManager(
-      baseUrl: testBase,
-      wallet: await KeyWallet.load(MemoryWalletBackend()),
-      httpClient: FakeHttpClient(),
-      wsConnector: FakeWsConnector(),
-    );
-    manager.sessions['net1'] = rig.session;
-    addTearDown(manager.disconnectAll);
-    final controller = NetworkModeController.inMemory(
-      mode: AppMode.network,
-      networkId: 'net1',
-      channelId: dmChannel,
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: NetworkChatPage(
-            controller: controller,
-            manager: manager,
-            showAppBar: true,
-            showChannelHeader: false,
+  testWidgets(
+    'the DM peer run status rides the standard bottom row, never the header',
+    (tester) async {
+      final rig = await _rig();
+      rig.session.channelStates[dmChannel]!.add(
+        _message('one-user', 'first session only', sessionId: 'one'),
+      );
+      rig.session.selectDmSession(dmChannel, 'one', title: 'Hero One');
+      final manager = NetworkSessionManager(
+        baseUrl: testBase,
+        wallet: await KeyWallet.load(MemoryWalletBackend()),
+        httpClient: FakeHttpClient(),
+        wsConnector: FakeWsConnector(),
+      );
+      manager.sessions['net1'] = rig.session;
+      addTearDown(manager.disconnectAll);
+      final controller = NetworkModeController.inMemory(
+        mode: AppMode.network,
+        networkId: 'net1',
+        channelId: dmChannel,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: NetworkChatPage(
+              controller: controller,
+              manager: manager,
+              showAppBar: true,
+              showChannelHeader: false,
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey('dmAgentWorkingBanner')),
-      findsOneWidget,
-    );
-    await rig.session.close();
-  });
+      );
+      await tester.pump();
+      const status = ValueKey('faChatRunStatusContent');
+      const header = ValueKey('faChatFloatingHeader');
+      // Nothing published yet: the idle frame carries no status at all.
+      expect(find.byKey(status), findsNothing);
+      // Unmount before teardown so no ticker outlives the test.
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+      // Presence: the peer agent picked the message up and is working.
+      rig.connector.peerRunState = AgentRunState.busy;
+      rig.connector.presenceController.add(_frame('presence-busy'));
+      await tester.pump();
+      // The composer measure lands one frame later; the transcript's
+      // bottom inset reserves the row from the next frame on.
+      await tester.pump();
+      expect(find.byKey(status), findsOneWidget);
+      expect(find.textContaining('Thinking'), findsOneWidget);
+      // The header is untouched: the retired teal strip and its copy are
+      // gone, and nothing sits above the floating header.
+      expect(find.byKey(const ValueKey('dmAgentWorkingBanner')), findsNothing);
+      expect(find.text('Fa is working…'), findsNothing);
+      expect(tester.getRect(find.byKey(header)).top, 0);
+      // Placement mirrors a local run: the row is the visually-LAST list
+      // entry — below the header, above the composer, under the newest
+      // message (which the reserved inset keeps fully in view).
+      final row = tester.getRect(find.byKey(status));
+      expect(
+        row.top,
+        greaterThanOrEqualTo(tester.getRect(find.byKey(header)).bottom),
+      );
+      expect(
+        tester.getRect(find.textContaining('first session only')).bottom,
+        lessThanOrEqualTo(row.top),
+      );
+      expect(
+        row.bottom,
+        lessThanOrEqualTo(tester.getRect(find.byType(ChatComposer)).top),
+      );
+      // A REMOTE run never flips the local composer into streaming: the
+      // capsule stays a send, not a stop.
+      expect(find.byIcon(Icons.stop), findsNothing);
+      expect(find.byIcon(Icons.send_rounded), findsOneWidget);
+
+      // The roster publishes the end of the run: hidden the same frame.
+      rig.connector.peerRunState = AgentRunState.live;
+      rig.connector.rosterController.add(_frame('roster-live'));
+      await tester.pump();
+      expect(find.byKey(status), findsNothing);
+      expect(find.textContaining('Thinking'), findsNothing);
+
+      // Busy again, then the agent drops off the roster while busy
+      // (review #2196 r1): that clears the row too, it never sticks.
+      rig.connector.peerRunState = AgentRunState.busy;
+      rig.connector.presenceController.add(_frame('presence-busy-2'));
+      await tester.pump();
+      expect(find.byKey(status), findsOneWidget);
+      rig.connector.peerRunState = null;
+      rig.connector.rosterController.add(_frame('roster-gone'));
+      await tester.pump();
+      expect(find.byKey(status), findsNothing);
+      await rig.session.close();
+    },
+  );
 }

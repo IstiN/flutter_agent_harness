@@ -30,8 +30,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     show
         FileNetworkCredentialStore,
-        IoConnectorTransport,
         NetworkOAuthLoopback,
+        connectorDaemonStateFile,
+        readCliNetworkRoster,
         defaultHubStateFile,
         envHubSecret,
         openNetworkAuthUrl,
@@ -993,25 +994,16 @@ final class HubPluginHost implements FahPlugin {
         platform: Platform.operatingSystem,
         startReceiver: NetworkOAuthLoopback.bind,
         openUrl: (uri) => openNetworkAuthUrl(uri, onStatus: context.io.writeln),
-        rosterReader: () async {
-          final device = await store.readDevice();
-          if (device == null) {
-            throw const NetworkAuthException('not enrolled; run enroll first');
-          }
-          return readNetworkDeviceRoster(
-            NetworkPresenceController(
-              device: device,
-              baseUrl: relay,
-              ticketProvider: () => devices.wsTicket(
-                baseUrl: relay,
-                deviceToken: device.deviceToken,
-              ),
-              transport: const IoConnectorTransport(),
-              rosterClient: devices,
-              dmKeyStore: store,
-            ),
-          );
-        },
+        // Same routing as `fa network` on the CLI: the per-machine
+        // daemon's cached roster when alive (zero upstream dials — a direct
+        // controller here used to evict the daemon's socket), else a
+        // direct one-shot read.
+        rosterReader: () => readCliNetworkRoster(
+          store: store,
+          devices: devices,
+          baseUrl: relay,
+          stateFile: connectorDaemonStateFile(home),
+        ),
         prompt: context.askLine,
         out: context.io.writeln,
         error: context.io.writeln,
