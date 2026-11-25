@@ -1220,6 +1220,17 @@ ToolExecutionResult? _alreadyFinishedStopResult(
 /// gone, or its pid was recycled onto a stranger — nothing was signaled,
 /// so "Stopped" would be a lie. Null when the stop ran normally.
 ToolExecutionResult? _refusedAdoptedStopResult(ShellJobEntry entry, String id) {
+  // gh-2413: the pid's identity could not be verified (no start tag ever
+  // recorded) — nothing was signaled and the job keeps running; the
+  // honest answer names the refusal and the manual way out.
+  if (entry.isAdopted && entry.isRunning && entry.stopRefused) {
+    return ToolExecutionResult.text(
+      '$id NOT stopped: its pid ${entry.pid} cannot be verified (no start '
+      'time was recorded for it — a recycled pid would be a stranger\'s '
+      'process), so nothing was signaled. It stays tracked; kill '
+      'pid ${entry.pid} manually if you are sure it is the job.',
+    );
+  }
   if (entry.isRunning || !entry.isAdopted || entry.stopReason != null) {
     return null;
   }

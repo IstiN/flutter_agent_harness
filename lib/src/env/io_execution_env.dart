@@ -746,11 +746,14 @@ final class LocalShell implements Shell, BackgroundShell {
   /// script body (with any `pkill -f <pattern>`) never lands in
   /// `/proc/<pid>/cmdline`, so a broad kill inside the script cannot match
   /// its own shell. The caller deletes the dir once the process exits.
-  /// Null on any failure → the legacy `sh -c <command>` delivery.
+  /// Null on any failure → the legacy `sh -c <command>` delivery. The dir
+  /// is created under this process's owner marker (gh-2413,
+  /// [shellCommandOwnerMarker]) so a backgrounded subshell's argv carries
+  /// proof of which harness launched it.
   static Future<Directory?> _writeGuardedScript(String command) async {
     Directory dir;
     try {
-      dir = await Directory.systemTemp.createTemp('fa_sh_cmd_');
+      dir = await Directory.systemTemp.createTemp(currentProcessOwnerMarker());
     } on Object {
       return null;
     }
@@ -1045,6 +1048,9 @@ final class LocalShell implements Shell, BackgroundShell {
     token?.onCancel.then(onCancel);
 
     final exitCode = await process.exitCode;
+    // gh-2413: the survivor window's upper bound — a process that started
+    // after this call's child exited is never this call's orphan.
+    final execEnd = DateTime.now();
     // gh-1053: the timer stays ARMED after the direct child exits — an
     // orphaned descendant can hold the pipes past the child's death, and
     // this timer is what bounds the call ("≤ timeout + kill grace + drain
@@ -1094,6 +1100,8 @@ final class LocalShell implements Shell, BackgroundShell {
         ownGroup: ownGroup,
         ourPgid: LocalShell.ourPgid,
         execStart: execStart,
+        execEnd: execEnd,
+        ownerMarker: currentProcessOwnerMarker(),
         table:
             await (processDetailTableSnapshotOverride ??
                 processDetailTableSnapshot)(),
@@ -1322,6 +1330,7 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
     unawaited(
       _process.exitCode.then((code) async {
         _exitCode = code;
+        _execEnd = DateTime.now();
         _timer?.cancel();
         // Wait for the streams to drain, but cap it so a killed process
         // cannot hang settled forever.
@@ -1392,6 +1401,8 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
             ownGroup: _ownGroup,
             ourPgid: LocalShell.ourPgid,
             execStart: _execStart,
+            execEnd: _execEnd,
+            ownerMarker: currentProcessOwnerMarker(),
             table:
                 await (LocalShell.processDetailTableSnapshotOverride ??
                     processDetailTableSnapshot)(),
@@ -1409,6 +1420,11 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
   /// This job's spawn moment (issue #2201): the lower bound of the
   /// orphan-window survivor scan on non-ownGroup hosts.
   final DateTime _execStart;
+
+  /// When this job's process exited (gh-2413): the UPPER bound of the
+  /// orphan-window survivor scan — nothing that started later is this
+  /// job's orphan.
+  DateTime? _execEnd;
 
   /// Survivors observed at this job's normal exit, consumed once by the
   /// registry's settle listener ([SurvivorReporting.takeSurvivors]).

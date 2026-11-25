@@ -304,7 +304,22 @@
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). gh-1835: a foreground bash call still
+  (`suppressSettleNotification`). gh-2413 (cross-session cross-talk): the
+  shared `.fah/bash_jobs/running.json` is OWNER-TAGGED — every entry
+  carries `owner` = the writing session's id; a boot reconcile adopts only
+  own-owner entries (legacy owner-less records still adopt, and their
+  notices say `adopted from unknown owner`), a foreign session's live entry
+  stays untouched (never adopted, never a reap candidate, never removed by
+  a foreign settle), and the #517 sweep gets own pids only. Survivor
+  detection on hosts without `setsid` (macOS) is MARKER-GATED: the orphan
+  window is bounded on both ends (`execStart`…`execEnd`) and a candidate
+  row must still carry this harness's wrapper tag `fa_sh_cmd_<pid>_…` (the
+  per-exec script dir a backgrounded subshell inherits in its argv) — a
+  detached program (`nohup prog &`) cannot be proven ours and is left
+  alone; the notice reads `Detected N orphaned process(es) in this
+  session's process group near <cmd>` (never "left by"). `bash_job stop`
+  refuses to signal a pid whose start time was never recorded while the
+  platform reports one now (a recycled pid would be a stranger). gh-1835: a foreground bash call still
   running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
   switch) is auto-backgrounded — CONVERTED, never restarted (it already
   runs as a registry job under the soft-yield path): the pending tool call

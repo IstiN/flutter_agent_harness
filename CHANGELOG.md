@@ -13,6 +13,15 @@ block a release again.
 
 ## Unreleased
 
+- fix(tools): gh-2413 — bash job cross-session cross-talk: `.fah/bash_jobs/
+  running.json` entries are owner-tagged (session id) and a boot adopts only
+  this session's (legacy owner-less records still adopt, notice says
+  `adopted from unknown owner`); foreign live entries are never adopted,
+  reaped or removed; the macOS orphan-window classifier is bounded by the
+  exec end and gated on this harness's `fa_sh_cmd_<pid>_` wrapper marker;
+  notice wording "orphaned … in this session's process group near" replaces
+  "left by"; `bash_job stop` refuses an unverifiable pid.
+
 - fix(2363): the resume replay no longer re-prints the obligations-ledger
   tail block — the level-0 `<system-notice>` is model context (#1380
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
