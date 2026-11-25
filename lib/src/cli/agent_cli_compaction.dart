@@ -587,6 +587,80 @@ extension AgentCliCompactionRun on AgentCli {
     // gate also consumes the one-shot E1 pass a cap-unknown refusal
     // armed (PR #1695).
     final model = _agent.state.model;
+    final trigger = _autoCompactTrigger(
+      forceE1Pass: forceE1Pass,
+      postRun: postRun,
+      tokens: tokens,
+    );
+    if (trigger == null) return false;
+    _pushBusyPhase('Compacting context…');
+    _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
+    try {
+      // gh-1729 review: when the E1 one-shot pass is the trigger, the
+      // funnel's own re-check cannot see it (a cap-UNKNOWN model has no
+      // learned cap to trip `_overMessageCap`, and the transcript sits
+      // under the token trigger) — without `force` the pass would be
+      // consumed and the funnel would silently no-op. Forced only at the
+      // pre-flight ([_beginUserPrompt], `forceE1Pass`): the pass's
+      // contract is a compaction BEFORE the next user request; the
+      // post-run fold keeps its shipped no-op-when-under-trigger
+      // behavior.
+      await _runAutoCompact(
+        '[auto-compacted]',
+        force: trigger.e1PassPending,
+        softTriggered: trigger.soft,
+      );
+    } finally {
+      // Hand the busy row back to the run even when the compaction throws
+      // or is cancelled (issue #1085): a stale 'Compacting context…'
+      // over the streamed turn reads as a compaction hang.
+      _pushBusyPhase('');
+    }
+    // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
+    // the transcript size as the source of truth for the caller.
+    // Issue #1085 M2a: continuation success = the transcript FITS THE
+    // WINDOW now, not "any reduction". A reduce-but-still-over pass used
+    // to read as success, the guard re-fired on the retried turn, and the
+    // one-shot resume budget was burned on a transcript that still could
+    // not be sent.
+    final after = _liveRequestTokens();
+    // PR #1695: success needs BOTH dimensions — a pass that only shrinks
+    // tokens while the message count still trips the cap gate is not a
+    // success; the caller retries relief and the funnel reports
+    // exhaustion instead of silently re-arming a pass every turn.
+    // Issue #2264: both dimensions are re-measured POST-RUN through the
+    // shared pure verdict — the pre-run `overCap` snapshot is stale by
+    // here (a relieved run used to fail this check on the stale flag,
+    // the funnel's second attempt no-oped, and the gh-1914 valve plus
+    // its false "still ~N vs W" verdict fired on a now-HEALTHY
+    // transcript). The re-check PEEKS the current count against the
+    // learned cap and never touches the one-shot E1 pass: the pre-run
+    // gate above already consumed it where it fired, and a measurement
+    // must not spend relief. `passesRan: 1` — this criterion is only
+    // evaluated after a pass actually ran.
+    return overWindowReliefVerdict(
+          afterTokens: after,
+          window: _effectiveContextWindow,
+          messageCapTriggered: messageCapTriggerReached(
+            _agent.state.messages.length,
+            _modelCaps.learnedCapFor(model),
+          ),
+          passesRan: 1,
+        ) ==
+        OverWindowReliefVerdict.success;
+  }
+
+  /// The trigger decision of one automatic pass (gh-1680 AC4, gh-2259,
+  /// GOAL #2394 AC11/D8): `null` = no pass runs. The decision rides the
+  /// same gates, in the same order, as before it was extracted; the only
+  /// consuming call ([_messageCapGateReached]) stays inside the forced
+  /// E1 branch.
+  _AutoCompactTrigger? _autoCompactTrigger({
+    required bool forceE1Pass,
+    required bool postRun,
+    required int tokens,
+  }) {
+    final model = _agent.state.model;
     final e1PassPending =
         forceE1Pass &&
         _modelCaps.isPremptivePassPending(model.provider, model.id);
@@ -628,62 +702,12 @@ extension AgentCliCompactionRun on AgentCli {
           settings: _effectiveCompactionSettings,
           softRatio: config.compactionTuning?.softRatio,
         );
-    if (!hard && !soft) return false;
-    _pushBusyPhase('Compacting context…');
-    _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
-    try {
-      // gh-1729 review: when the E1 one-shot pass is the trigger, the
-      // funnel's own re-check cannot see it (a cap-UNKNOWN model has no
-      // learned cap to trip `_overMessageCap`, and the transcript sits
-      // under the token trigger) — without `force` the pass would be
-      // consumed and the funnel would silently no-op. Forced only at the
-      // pre-flight ([_beginUserPrompt], `forceE1Pass`): the pass's
-      // contract is a compaction BEFORE the next user request; the
-      // post-run fold keeps its shipped no-op-when-under-trigger
-      // behavior.
-      await _runAutoCompact(
-        '[auto-compacted]',
-        force: e1PassPending,
-        softTriggered: soft,
-      );
-    } finally {
-      // Hand the busy row back to the run even when the compaction throws
-      // or is cancelled (issue #1085): a stale 'Compacting context…'
-      // over the streamed turn reads as a compaction hang.
-      _pushBusyPhase('');
-    }
-    // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
-    // the transcript size as the source of truth for the caller.
-    // Issue #1085 M2a: continuation success = the transcript FITS THE
-    // WINDOW now, not "any reduction". A reduce-but-still-over pass used
-    // to read as success, the guard re-fired on the retried turn, and the
-    // one-shot resume budget was burned on a transcript that still could
-    // not be sent.
-    final after = _liveRequestTokens();
-    // PR #1695: success needs BOTH dimensions — a pass that only shrinks
-    // tokens while the message count still trips the cap gate is not a
-    // success; the caller retries relief and the funnel reports
-    // exhaustion instead of silently re-arming a pass every turn.
-    // Issue #2264: both dimensions are re-measured POST-RUN through the
-    // shared pure verdict — the pre-run `overCap` snapshot is stale by
-    // here (a relieved run used to fail this check on the stale flag,
-    // the funnel's second attempt no-oped, and the gh-1914 valve plus
-    // its false "still ~N vs W" verdict fired on a now-HEALTHY
-    // transcript). The re-check PEEKS the current count against the
-    // learned cap and never touches the one-shot E1 pass: the pre-run
-    // gate above already consumed it where it fired, and a measurement
-    // must not spend relief. `passesRan: 1` — this criterion is only
-    // evaluated after a pass actually ran.
-    return overWindowReliefVerdict(
-          afterTokens: after,
-          window: _effectiveContextWindow,
-          messageCapTriggered: messageCapTriggerReached(
-            _agent.state.messages.length,
-            _modelCaps.learnedCapFor(model),
-          ),
-          passesRan: 1,
-        ) ==
-        OverWindowReliefVerdict.success;
+    if (!hard && !soft) return null;
+    return _AutoCompactTrigger(
+      hard: hard,
+      soft: soft,
+      e1PassPending: e1PassPending,
+    );
   }
 
   /// The gh-1680 message-count gate: the known-cap pre-emptive trigger,
@@ -911,15 +935,46 @@ extension AgentCliCompactionRun on AgentCli {
   }
 
   Future<void> _capResumedContext(Session session) async {
-    if (_agent.state.messages.isEmpty) return;
-    if (_runAbortRequested) return;
+    final tokens = _resumeCapOpeningTokens();
+    if (tokens == null) return;
+    if (await _bootCapSoftWindowRelief(tokens, session)) return;
+    if (await _bootCapOverWindowTrim(tokens, session)) return;
+    if (tokens <= _effectiveContextWindow) {
+      // Over the TRIGGER but inside the window: the next request is
+      // legal AS-IS — an LM summarization pass here costs minutes at a
+      // moment the user is watching a session open (the yoclip open:
+      // 194k tokens, a 3.5-minute boot cap the owner read as a hang).
+      // Defer the durable compaction to the first turn's pre-flight
+      // ([_maybeAutoCompact] runs before every prompt): the cap still
+      // lands BEFORE any user work continues, just without blocking the
+      // open. The meter idles at the honest pre-cap number (≤100%).
+      _logDiagnostic(
+        'resume boot cap deferred sid=$_logSid tokens=$tokens '
+        '(inside the window — the first-turn pre-flight owns the '
+        'durable compaction)',
+      );
+      // gh-1729 review: the deferred regime gets a visible receipt like
+      // every other compaction decision on this path — a meter idling
+      // just under the trigger with nothing happening reads as a stalled
+      // boot without it.
+      io.writeln(
+        _style.dim(
+          '[resume] context over the compaction trigger (~$tokens tokens, '
+          'inside the window) — compaction deferred to the first message',
+        ),
+      );
+      return;
+    }
+    await _bootCapCompaction(tokens, session);
+  }
+
+  /// The live token figure the resume boot cap acts on, or `null` when
+  /// it has nothing to do (an empty or aborted transcript, under the
+  /// trigger, or the under-window soft-window skip).
+  int? _resumeCapOpeningTokens() {
+    if (_agent.state.messages.isEmpty) return null;
+    if (_runAbortRequested) return null;
     final tokens = _liveRequestTokens();
-    // gh-1680 AC4: the message-count trigger gates the boot cap too — a
-    // resumed session riding at `cap − margin` compacts before its first
-    // request instead of re-learning the refusal the hard way. PEEKING
-    // gate (gh-1729 review): the armed E1 one-shot pass is consumed only
-    // where a compaction actually runs — consuming it for a decision the
-    // defer branch below does not act on would silently drop it.
     final overCap = _messageCapGatePending();
     if (!shouldCompact(
           tokens,
@@ -927,61 +982,73 @@ extension AgentCliCompactionRun on AgentCli {
           _effectiveCompactionSettings,
         ) &&
         !overCap) {
-      return;
+      return null;
     }
-    // gh-2411: below the fixed overhead the window is a soft target —
-    // the cap must not trim the restored transcript (it can never land
-    // under the trigger, and the newest user turn stays visible); the
-    // first prompt's request goes out as is, with ONE warning.
-    if (_skipCompactionSoftWindow()) return;
-    // gh-241 follow-up #5 (F3 — owner live test, round 2): an UNMEASURED
-    // estimate never cuts content. Without an anchor (no provider usage in
-    // the transcript, no calibration) the chars/token heuristic is the
-    // only price of the restored context, and it read +54% on the owner's
-    // prompt: trimming on it silently dropped 22 messages of a resumed
-    // session (17,773 prompt tokens instead of 28,440 — the model noticed
-    // the missing turns). The first request goes out UNTRIMMED; the
-    // provider's answer anchors the session and the first prompt's
-    // pre-flight owns the durable pass.
-    if (_softWindow && !_agent.state.overheadCalibration.measured) {
+    if (_skipCompactionSoftWindow()) return null;
+    return tokens;
+  }
+
+  /// The soft-window branch of the boot cap: an unmeasured estimate
+  /// never cuts; a measured over-window request takes the LM-free
+  /// relief and reports what it really cut. `true` = handled.
+  Future<bool> _bootCapSoftWindowRelief(int tokens, Session session) async {
+    if (!_softWindow) return false;
+    if (!_agent.state.overheadCalibration.measured) {
+      return _bootCapUnmeasured(tokens);
+    }
+    return _bootCapMeasuredRelief(tokens, session);
+  }
+
+  /// The unmeasured half: the first request goes out untrimmed.
+  bool _bootCapUnmeasured(int tokens) {
+    _logDiagnostic(
+      'resume boot cap skipped sid=$_logSid tokens≈$tokens (estimate) — '
+      'unmeasured estimate never cuts content; the first request goes '
+      'out untrimmed',
+    );
+    return true;
+  }
+
+  /// The measured half: over the window, the LM-free relief runs.
+  Future<bool> _bootCapMeasuredRelief(int tokens, Session session) async {
+    if (tokens < _effectiveContextWindow) return false;
+    if (!await _softWindowRelief(tokens, session: session)) return false;
+    await _reportBootCapRelief(tokens, session);
+    return true;
+  }
+
+  /// What the boot cap's relief really did — visible either way (F3):
+  /// an in-memory cut leaves no session record beyond its receipt, and
+  /// the provider never gets a context that opens on an orphaned
+  /// assistant/tool fragment.
+  Future<void> _reportBootCapRelief(int tokens, Session session) async {
+    _dropLeadingNonUserMessages('resume boot cap soft-window relief');
+    if (_reliefCutContent) {
       _logDiagnostic(
-        'resume boot cap skipped sid=$_logSid tokens≈$tokens (estimate) — '
-        'unmeasured estimate never cuts content; the first request goes '
-        'out untrimmed',
+        'resume boot cap soft-window relief sid=$_logSid '
+        'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the live '
+        'context was cut in memory — a receipt is in the session)',
+      );
+      await _appendTrimReceipt(
+        session,
+        site: 'resume boot cap soft-window relief',
+        tokensBefore: tokens,
       );
       return;
     }
-    // At or over the window in the regime: the hide-only relief first
-    // (gh-2411, the owner's live test); the valve below is the backstop.
-    if (_softWindow &&
-        tokens >= _effectiveContextWindow &&
-        await _softWindowRelief(tokens, session: session)) {
-      // An in-memory cut leaves no session record — it must at least be
-      // visible (F3): say what it did, and never hand the provider a
-      // context that opens on an orphaned assistant/tool fragment.
-      _dropLeadingNonUserMessages('resume boot cap soft-window relief');
-      if (_reliefCutContent) {
-        _logDiagnostic(
-          'resume boot cap soft-window relief sid=$_logSid '
-          'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the live '
-          'context was cut in memory — a receipt is in the session)',
-        );
-        await _appendTrimReceipt(
-          session,
-          site: 'resume boot cap soft-window relief',
-          tokensBefore: tokens,
-        );
-      } else {
-        _logDiagnostic(
-          'resume boot cap soft-window relief sid=$_logSid '
-          'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the '
-          'figure moved with its basis — nothing was cut from the live '
-          'context)',
-        );
-      }
-      return;
-    }
-    // Over the WINDOW itself: no request can ever be sent, and an LM
+    _logDiagnostic(
+      'resume boot cap soft-window relief sid=$_logSid '
+      'tokens≈$tokens -> ≈${_liveRequestTokens()} (estimate; the '
+      'figure moved with its basis — nothing was cut from the live '
+      'context)',
+    );
+  }
+
+  /// Over the window itself: the mechanical local trim valve (the LM
+  /// pass is the last resort, in [_bootCapCompaction]). `true` = trimmed
+  /// and reported.
+  Future<bool> _bootCapOverWindowTrim(int tokens, Session session) async {
+    // Over the window itself: no request can ever be sent, and an LM
     // compaction pass here takes minutes on slow summarizers (the
     // goal_builder incident: a 3.5-minute boot cap read as a hung open
     // and was killed — every reopen re-paid it). Apply the mechanical
@@ -1021,36 +1088,18 @@ extension AgentCliCompactionRun on AgentCli {
             '(run /compact for an LLM summary)',
           ),
         );
-        return;
+        return true;
       }
-      // The valve found nothing droppable (a degenerate single-message
-      // window): fall through to the LM pass below as the last resort.
-    } else {
-      // Over the TRIGGER but inside the window: the next request is
-      // legal AS-IS — an LM summarization pass here costs minutes at a
-      // moment the user is watching a session open (the yoclip open:
-      // 194k tokens, a 3.5-minute boot cap the owner read as a hang).
-      // Defer the durable compaction to the first turn's pre-flight
-      // ([_maybeAutoCompact] runs before every prompt): the cap still
-      // lands BEFORE any user work continues, just without blocking the
-      // open. The meter idles at the honest pre-cap number (≤100%).
-      _logDiagnostic(
-        'resume boot cap deferred sid=$_logSid tokens=$tokens '
-        '(inside the window — the first-turn pre-flight owns the '
-        'durable compaction)',
-      );
-      // gh-1729 review: the deferred regime gets a visible receipt like
-      // every other compaction decision on this path — a meter idling
-      // just under the trigger with nothing happening reads as a stalled
-      // boot without it.
-      io.writeln(
-        _style.dim(
-          '[resume] context over the compaction trigger (~$tokens tokens, '
-          'inside the window) — compaction deferred to the first message',
-        ),
-      );
-      return;
     }
+    // The valve found nothing droppable (a degenerate single-message
+    // window): fall through to the LM pass below as the last resort.
+    return false;
+  }
+
+  /// The boot cap's one compaction pass — over the window, nothing left
+  /// to trim mechanically; a failure is reported and retried before the
+  /// next turn.
+  Future<void> _bootCapCompaction(int tokens, Session session) async {
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('resume boot cap start sid=$_logSid tokens=$tokens');
     try {
@@ -1088,28 +1137,42 @@ extension AgentCliCompactionRun on AgentCli {
     CheckpointAutoCloseReason reason,
     CheckpointState checkpoint,
   ) async {
-    // Only the user-turn close restores an unpruned detour; an anchorGone
-    // close means the transcript was ALREADY rebuilt (reload/compaction).
-    if (reason != CheckpointAutoCloseReason.userTurn) return;
-    if (_session == null) return;
-    if (_agent.state.messages.isEmpty) return;
-    if (_runAbortRequested) return;
+    final tokens = _checkpointRestoreGuardTokens(reason);
+    if (tokens == null) return;
+    if (_softWindow &&
+        tokens >= _effectiveContextWindow &&
+        await _softWindowRelief(tokens)) {
+      return;
+    }
+    await _compactRestoredCheckpointContext(tokens);
+  }
+
+  /// The live token figure the checkpoint restore guard acts on, or
+  /// `null` when there is nothing to guard (not a user-turn auto-close,
+  /// no session or transcript, an aborted run, under the compaction
+  /// trigger, or the under-window soft-window skip).
+  int? _checkpointRestoreGuardTokens(CheckpointAutoCloseReason reason) {
+    if (reason != CheckpointAutoCloseReason.userTurn) return null;
+    if (_session == null) return null;
+    if (_agent.state.messages.isEmpty) return null;
+    if (_runAbortRequested) return null;
     final tokens = _liveRequestTokens();
     if (!shouldCompact(
       tokens,
       _effectiveContextWindow,
       _effectiveCompactionSettings,
     )) {
-      return;
+      return null;
     }
     // gh-2411: the soft-window regime stands down here too — and at or
     // over the window (in the regime) the pass is the hide-only relief.
-    if (_skipCompactionSoftWindow()) return;
-    if (_softWindow &&
-        tokens >= _effectiveContextWindow &&
-        await _softWindowRelief(tokens)) {
-      return;
-    }
+    if (_skipCompactionSoftWindow()) return null;
+    return tokens;
+  }
+
+  /// The guard's one compaction pass and its report (the loop adopts
+  /// the capped transcript at the next turn boundary).
+  Future<void> _compactRestoredCheckpointContext(int tokens) async {
     _pushBusyPhase('Compacting context…');
     _logDiagnostic(
       'checkpoint restore budget guard start sid=$_logSid tokens=$tokens',
@@ -1650,6 +1713,18 @@ extension OverWindowContinuation on AgentCli {
     _overWindowAutoResumed = true;
     await _ttsr?.settled;
     await _persistMessages();
+    final run = await _runOverWindowContinueAttempts();
+    if (run.continued) return true;
+    _throwIfUserAborted();
+    return _settleUncontinuedOverflow(run.passesRan, run.lastFailure);
+  }
+
+  /// The bounded continuation attempts after a context-window stop
+  /// (issue #1085): each attempt runs the under-window paths and then
+  /// the forced pass ([_overWindowContinueOnce]); a user abort stays an
+  /// abort, any other failure is recorded and the next attempt runs.
+  Future<({bool continued, int passesRan, String? lastFailure})>
+  _runOverWindowContinueAttempts() async {
     final passesBefore = _compactionPassesStarted;
     String? lastFailure;
     for (var attempt = 1; attempt <= _overWindowContinueAttempts; attempt++) {
@@ -1659,51 +1734,12 @@ extension OverWindowContinuation on AgentCli {
       // fresh compaction after Ctrl+C and even resume the stopped task.
       _throwIfUserAborted();
       try {
-        // The under-window paths first, as before: the regime's hide-only
-        // relief (it reports its own line) or the unforced pass — success
-        // retries the interrupted task.
-        if (await _maybeAutoCompact()) {
-          // Abort gate between a successful funnel compaction and the
-          // resumed run (issue #1085 round-2 review): the fresh prompt
-          // below RESETS the sticky flag, so the belt alone cannot see
-          // an abort that lands in this window.
-          _throwIfUserAborted();
-          io.writeln(
-            tuiWarning(
-              '[context overflowed — auto-compacted; continuing the turn]',
-            ),
+        if (await _overWindowContinueOnce()) {
+          return (
+            continued: true,
+            passesRan: _compactionPassesStarted - passesBefore,
+            lastFailure: lastFailure,
           );
-          io.writeln(_style.dim('[resuming] continuing the interrupted task'));
-          await _runContinuationPromptSafe();
-          return true;
-        }
-        // gh-241 follow-up #5d (D5 — owner live test round 5): the LM
-        // pass the note promises ("auto-compacting…") runs FORCED once
-        // the above yielded nothing. In the owner's run the hide-only
-        // relief had nothing left to cut, `_maybeAutoCompact` stood
-        // down, and the read-only turn ended in `stop=error` with
-        // "auto-compacting…" on screen and ZERO passes run.
-        // Forced — but never over a disabled engine (zero passes stay
-        // honest; the funnel itself does not read `enabled`, only
-        // [shouldCompact] does), and never through an ARMED one-shot
-        // E1 pass (gh-2259 AC2): that pass belongs to the next
-        // pre-flight, which consumes it with `force: true`.
-        final model = _agent.state.model;
-        final e1Armed = _modelCaps.isPremptivePassPending(
-          model.provider,
-          model.id,
-        );
-        if (_effectiveCompactionSettings.enabled &&
-            await _runAutoCompact('[auto-compacted]', force: !e1Armed)) {
-          _throwIfUserAborted();
-          io.writeln(
-            tuiWarning(
-              '[context overflowed — auto-compacted; continuing the turn]',
-            ),
-          );
-          io.writeln(_style.dim('[resuming] continuing the interrupted task'));
-          await _runContinuationPromptSafe();
-          return true;
         }
       } on CancelledException {
         // A user abort (Ctrl+C, issue #1085) must stay an abort: no
@@ -1720,8 +1756,67 @@ extension OverWindowContinuation on AgentCli {
         );
       }
     }
+    return (
+      continued: false,
+      passesRan: _compactionPassesStarted - passesBefore,
+      lastFailure: lastFailure,
+    );
+  }
+
+  /// One attempt: the under-window paths first (the regime's hide-only
+  /// relief, the unforced pass), then the `auto-compacting…` pass FORCED
+  /// (gh-241 follow-up #5d, D5). `true` = the interrupted task was handed
+  /// a continuation.
+  Future<bool> _overWindowContinueOnce() async {
+    // The under-window paths first, as before: the regime's hide-only
+    // relief (it reports its own line) or the unforced pass — success
+    // retries the interrupted task.
+    if (await _maybeAutoCompact()) {
+      await _resumeAfterOverflowPass();
+      return true;
+    }
+    // gh-241 follow-up #5d (D5 — owner live test round 5): the LM
+    // pass the note promises ("auto-compacting…") runs FORCED once
+    // the above yielded nothing. In the owner's run the hide-only
+    // relief had nothing left to cut, `_maybeAutoCompact` stood
+    // down, and the read-only turn ended in `stop=error` with
+    // "auto-compacting…" on screen and ZERO passes run.
+    // Forced — but never over a disabled engine (zero passes stay
+    // honest; the funnel itself does not read `enabled`, only
+    // [shouldCompact] does), and never through an ARMED one-shot
+    // E1 pass (gh-2259 AC2): that pass belongs to the next
+    // pre-flight, which consumes it with `force: true`.
+    final model = _agent.state.model;
+    final e1Armed = _modelCaps.isPremptivePassPending(model.provider, model.id);
+    if (_effectiveCompactionSettings.enabled &&
+        await _runAutoCompact('[auto-compacted]', force: !e1Armed)) {
+      await _resumeAfterOverflowPass();
+      return true;
+    }
+    return false;
+  }
+
+  /// Hands the interrupted task its continuation after a pass ran. Abort
+  /// gate between a successful funnel compaction and the resumed run
+  /// (issue #1085 round-2 review): the fresh prompt below RESETS the
+  /// sticky flag, so the belt alone cannot see an abort that lands in
+  /// this window.
+  Future<void> _resumeAfterOverflowPass() async {
     _throwIfUserAborted();
-    final passesRan = _compactionPassesStarted - passesBefore;
+    io.writeln(
+      tuiWarning('[context overflowed — auto-compacted; continuing the turn]'),
+    );
+    io.writeln(_style.dim('[resuming] continuing the interrupted task'));
+    await _runContinuationPromptSafe();
+  }
+
+  /// No attempt continued the task: the shared pure verdict (issue #2264)
+  /// decides between the mechanical local trim valve (issue #1914), the
+  /// honest exhausted verdict and a transcript that already fits.
+  Future<bool> _settleUncontinuedOverflow(
+    int passesRan,
+    String? lastFailure,
+  ) async {
     // Issue #1914 graceful recovery: after the bounded LM passes failed to
     // free the window, do NOT kill the task — apply the mechanical local
     // trim valve (the same endpoint-free path the resume boot cap uses, gh-
@@ -1886,4 +1981,19 @@ extension OverWindowContinuation on AgentCli {
     return classifyEmptyCompletion(_agent.state.messages, lastMessage) ==
         EmptyCompletionVerdict.cleanEmpty;
   }
+}
+
+/// One automatic pass's trigger decision (see
+/// [`_autoCompactTrigger`]): whether the hard or the soft line fired and
+/// whether the one-shot E1 pass is the trigger (it must run forced).
+final class _AutoCompactTrigger {
+  const _AutoCompactTrigger({
+    required this.hard,
+    required this.soft,
+    required this.e1PassPending,
+  });
+
+  final bool hard;
+  final bool soft;
+  final bool e1PassPending;
 }

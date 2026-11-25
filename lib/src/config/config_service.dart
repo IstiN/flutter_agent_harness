@@ -286,19 +286,7 @@ final class ConfigService {
   Future<ConfigCheckReport> check() async {
     final report = ConfigCheckReport();
     final globalPath = globalConfigPath;
-    if (globalPath == null) {
-      report.notes.add(
-        'global scope unavailable on this host (no home directory)',
-      );
-    } else {
-      final text = await _readTextOrNull(globalPath);
-      if (text == null) {
-        report.notes.add('global config absent (defaults apply): $globalPath');
-      } else {
-        _collectDiagnostics(text, globalPath, report.errors, report.warnings);
-        _collectHostWarnings(_tryParse(text), globalPath, report.warnings);
-      }
-    }
+    await _checkGlobalScope(globalPath, report);
     final projectPath = projectConfigPath;
     if (globalPath != null &&
         _normalizePath(projectPath) == _normalizePath(globalPath)) {
@@ -314,51 +302,92 @@ final class ConfigService {
     if (projectText == null) {
       report.notes.add('project config absent (defaults apply): $projectPath');
     } else {
-      final projectWarnings = <ConfigDiagnostic>[];
-      _collectDiagnostics(
-        projectText,
-        projectPath,
-        report.errors,
-        projectWarnings,
-      );
-      report.warnings.addAll(projectWarnings);
-      // Dead config: sections the project file is never read for.
-      final doc = _tryParse(projectText);
-      if (doc != null) {
-        for (final key in doc.keys) {
-          final name = '$key';
-          // `agent:` participates through `contextWindowCap` alone: name
-          // the OTHER agent keys, never the section as a whole.
-          final agentNode = name == 'agent' ? doc[key] : null;
-          if (agentNode is YamlMap) {
-            for (final sub in agentNode.keys) {
-              final subKey = 'agent.$sub';
-              if (_projectParticipates(subKey)) continue;
-              report.warnings.add(
-                ConfigDiagnostic(
-                  projectPath,
-                  '"$subKey" in the project file is dead config — of '
-                  '`agent.*` only agent.contextWindowCap is read from here',
-                ),
-              );
-            }
-            continue;
-          }
-          if (!_projectParticipates(name)) {
-            report.warnings.add(
-              ConfigDiagnostic(
-                projectPath,
-                '"$key" in the project file is dead config — only '
-                '${_projectSections.join('/')}/agent.contextWindowCap are '
-                'read from here',
-              ),
-            );
-          }
-        }
-      }
-      _collectHostWarnings(doc, projectPath, report.warnings);
+      _checkProjectScope(projectText, projectPath, report);
     }
     return report;
+  }
+
+  /// The global scope: absent, or parsed for diagnostics and host
+  /// warnings.
+  Future<void> _checkGlobalScope(
+    String? globalPath,
+    ConfigCheckReport report,
+  ) async {
+    if (globalPath == null) {
+      report.notes.add(
+        'global scope unavailable on this host (no home directory)',
+      );
+    } else {
+      final text = await _readTextOrNull(globalPath);
+      if (text == null) {
+        report.notes.add('global config absent (defaults apply): $globalPath');
+      } else {
+        _collectDiagnostics(text, globalPath, report.errors, report.warnings);
+        _collectHostWarnings(_tryParse(text), globalPath, report.warnings);
+      }
+    }
+  }
+
+  /// The project scope: diagnostics (errors join the report, warnings
+  /// via a local list), dead-config warnings, host warnings.
+  void _checkProjectScope(
+    String projectText,
+    String projectPath,
+    ConfigCheckReport report,
+  ) {
+    final projectWarnings = <ConfigDiagnostic>[];
+    _collectDiagnostics(
+      projectText,
+      projectPath,
+      report.errors,
+      projectWarnings,
+    );
+    report.warnings.addAll(projectWarnings);
+    final doc = _tryParse(projectText);
+    // Dead config: sections the project file is never read for.
+    _warnDeadProjectConfig(doc, projectPath, report.warnings);
+    _collectHostWarnings(doc, projectPath, report.warnings);
+  }
+
+  /// gh-241 follow-up #5b (B1): a key the CLI does not read from the
+  /// project file is dead config — named individually under `agent.*`
+  /// (only agent.contextWindowCap is project-scoped).
+  void _warnDeadProjectConfig(
+    YamlMap? doc,
+    String projectPath,
+    List<ConfigDiagnostic> warnings,
+  ) {
+    if (doc == null) return;
+    for (final key in doc.keys) {
+      final name = '$key';
+      // `agent:` participates through `contextWindowCap` alone: name
+      // the OTHER agent keys, never the section as a whole.
+      final agentNode = name == 'agent' ? doc[key] : null;
+      if (agentNode is YamlMap) {
+        for (final sub in agentNode.keys) {
+          final subKey = 'agent.$sub';
+          if (_projectParticipates(subKey)) continue;
+          warnings.add(
+            ConfigDiagnostic(
+              projectPath,
+              '"$subKey" in the project file is dead config — of '
+              '`agent.*` only agent.contextWindowCap is read from here',
+            ),
+          );
+        }
+        continue;
+      }
+      if (!_projectParticipates(name)) {
+        warnings.add(
+          ConfigDiagnostic(
+            projectPath,
+            '"$key" in the project file is dead config — only '
+            '${_projectSections.join('/')}/agent.contextWindowCap are '
+            'read from here',
+          ),
+        );
+      }
+    }
   }
 
   /// Resolves one dotted [key] (`memory.projectPath`, `tools.web_search`,
