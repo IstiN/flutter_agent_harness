@@ -400,6 +400,113 @@ void main() {
       );
       expect(streamCalls, greaterThanOrEqualTo(2));
     });
+
+    test('E2E-04/IT-19 host leg: a prompt sent while the post-run hand-over '
+        'is in flight WAITS for it — records land before the next request', () async {
+      final order = <String>[];
+      final handOverStarted = Completer<void>();
+      final releaseHandOver = Completer<void>();
+      var mainCalls = 0;
+      AssistantMessageEventStream gatedHandOverStream(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        if (isHandOverCall(context)) {
+          order.add('handover:start');
+          handOverStarted.complete();
+          // Hold the merged call in flight until the test releases it.
+          releaseHandOver.future.then((_) {
+            final reply = handOverReplyFor(context, text: 'checkpoint: held');
+            stream.push(
+              DoneEvent(
+                reason: StopReason.stop,
+                message: AssistantMessage(
+                  content: [TextContent(text: reply)],
+                  api: model.api,
+                  provider: model.provider,
+                  model: model.id,
+                  usage: Usage.zero,
+                  stopReason: StopReason.stop,
+                  timestamp: DateTime.now(),
+                ),
+              ),
+            );
+            order.add('handover:done');
+            stream.end();
+          });
+          return stream;
+        }
+        mainCalls++;
+        order.add('main:$mainCalls');
+        stream.push(
+          DoneEvent(
+            reason: StopReason.stop,
+            message: AssistantMessage(
+              content: [TextContent(text: 'r' * 1200)],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.stop,
+              timestamp: DateTime.now(),
+            ),
+          ),
+        );
+        stream.end();
+        return stream;
+      }
+
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _agent(gatedHandOverStream, contextWindow: 512),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      // Two ~1200-char replies push the transcript into the band: the
+      // post-run funnel arms the merged hand-over after turn 2 settles.
+      await service.sendText('a' * 200);
+      await service.waitForIdle();
+      // NOT awaited past idle: the post-run compaction starts inside the
+      // settle listener while this future is still resolving.
+      final second = service.sendText('b' * 200);
+      await handOverStarted.future;
+      expect(order, contains('handover:start'));
+
+      // D9/E2E-04: the prompt sent MID-COMPACTION must queue on the gate —
+      // no third main request can start before the hand-over settles.
+      final third = service.sendText('ping');
+      for (var i = 0; i < 12; i++) {
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          order.contains('main:3'),
+          isFalse,
+          reason: 'the compacting gate must hold the prompt '
+              '(order so far: $order)',
+        );
+      }
+      releaseHandOver.complete();
+      await second;
+      await third;
+      await service.waitForIdle();
+
+      // The prompt held by the gate was queued for the next turn (the
+      // settle phase still owns the agent) — a follow-up send drains it,
+      // and THAT request is the ordering proof: it cannot ride the
+      // pre-compaction projection.
+      await service.sendText('go');
+      await service.waitForIdle();
+      expect(
+        order.indexOf('handover:done'),
+        lessThan(order.indexOf('main:3')),
+        reason: 'order: $order',
+      );
+      expect(service.error, isNull);
+    });
   });
 
   group('IT-4 — the legacy smol slot (gh-1077 fix contract 1, on-device '

@@ -326,6 +326,52 @@ void main() {
       expect(cli.baseBackoff, compactionSummarizerBaseBackoff);
       expect(cli.settings.enabled, isTrue);
     });
+
+    test('gh-2407 thread 7: the hand-over tuning keys ride BOTH paths and '
+        'the parity assertion compares them', () {
+      const tuning = CompactionTuning(
+        softRatio: 0.6,
+        handOverMaxTokens: 4096,
+        handOverHysteresisTurns: 5,
+      );
+      final cli = resolveCliCompactionWiring(
+        mainModel: _mainModel(),
+        rolesResolver: cliResolver(),
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      final app = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        smolModel: appResolver().resolveRole(smolModelRole)?.model,
+        contextWindowCap: null,
+        tuning: tuning,
+      );
+      // Same inputs → semantic equals including the three hand-over
+      // fields (sameResolutionAs must compare them, not ignore them).
+      expect(cli.handOverMaxTokens, 4096);
+      expect(cli.handOverHysteresisTurns, 5);
+      expect(cli.softRatio, 0.6);
+      expect(app.handOverMaxTokens, 4096);
+      expect(app.handOverHysteresisTurns, 5);
+      expect(app.softRatio, 0.6);
+      expect(cli.sameResolutionAs(app), isTrue);
+      expect(app.sameResolutionAs(cli), isTrue);
+
+      // Drift in ANY hand-over knob must fail the parity assertion (the
+      // merge-blocking guard): a one-sided tuning is a real divergence.
+      final driftedApp = resolveCompactionHostWiring(
+        mainModel: _mainModel(),
+        smolModel: appResolver().resolveRole(smolModelRole)?.model,
+        contextWindowCap: null,
+        tuning: const CompactionTuning(
+          softRatio: 0.6,
+          handOverMaxTokens: 4096,
+          handOverHysteresisTurns: 7,
+        ),
+      );
+      expect(cli.sameResolutionAs(driftedApp), isFalse);
+      expect(driftedApp.sameResolutionAs(cli), isFalse);
+    });
   });
 
   group('UT-1 — the AgentConfig mapping applies the window rule', () {

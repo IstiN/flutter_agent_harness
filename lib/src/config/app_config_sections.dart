@@ -35,6 +35,7 @@ library;
 import 'package:yaml/yaml.dart';
 
 import '../cli/cli_config.dart' show parseProviderTimeouts;
+import '../compaction/tuning.dart';
 import '../exceptions.dart';
 import '../messaging/messaging_config.dart';
 import '../model_roles/model_roles.dart';
@@ -61,6 +62,7 @@ final class AppFahSections {
     this.providerTimeouts,
     this.subagents,
     this.messaging,
+    this.compactionTuning,
     this.loadMode = AgentLoadMode.defaultMode,
     this.mcpConfigured = false,
     this.warnings = const [],
@@ -96,6 +98,14 @@ final class AppFahSections {
   /// budget, and the smart loop-detection thresholds. Null (absent
   /// section — the defaults apply).
   final MessagingConfig? messaging;
+
+  /// The `compaction:` tuning section (gh-2407 review thread 7): the
+  /// trigger/reserve/keep thresholds plus the GOAL #2394 hand-over knobs
+  /// (`softRatio`, `handOver.maxTokens`, `handOver.hysteresisTurns`) —
+  /// the CLI honors them through [CliConfig.compactionTuning]; the app
+  /// host must resolve the SAME wiring (the parity guard pins the
+  /// resolved fields). Null (absent section — the forWindow defaults).
+  final CompactionTuning? compactionTuning;
 
   /// The resolved tool-load preset: `FA_AGENT_MODE` env > `agent.mode`
   /// config (the app has no `--omp` flag; the CLI's flag rung is its own).
@@ -148,6 +158,7 @@ AppFahSections parseAppConfigSections({
   final providerTimeouts = _parseTimeoutsSection(user, userSource, warnings);
   final subagents = _parseSubagentsSection(user, userSource, warnings);
   final messaging = _parseMessagingSection(user, userSource, warnings);
+  final compactionTuning = _parseCompactionSection(user, userSource, warnings);
   final loadMode = _resolveLoadMode(envMode, user, userSource, warnings);
   // Inventory #2 interim: `mcp:` stays CLI-only on mobile — say so instead
   // of silently ignoring it.
@@ -167,6 +178,7 @@ AppFahSections parseAppConfigSections({
     providerTimeouts: providerTimeouts,
     subagents: subagents,
     messaging: messaging,
+    compactionTuning: compactionTuning,
     loadMode: loadMode,
     mcpConfigured: mcpConfigured,
     warnings: warnings,
@@ -351,6 +363,25 @@ MessagingConfig? _parseMessagingSection(
     return MessagingConfig.fromYaml(node);
   } on ConfigException catch (error) {
     warnings.add('$userSource messaging section skipped: ${error.message}');
+    return null;
+  }
+}
+
+/// The `compaction:` tuning section (gh-2407 review thread 7) — the CLI's
+/// own strict parser ([CompactionTuning.fromSection], user scope, the
+/// exact section [loadCliConfig] reads); a bad section warns and falls
+/// back to the defaults (AC7), never poisoning the other sections.
+CompactionTuning? _parseCompactionSection(
+  YamlMap? user,
+  String userSource,
+  List<String> warnings,
+) {
+  final node = user?['compaction'];
+  if (node == null) return null;
+  try {
+    return CompactionTuning.fromSection(node, label: userSource);
+  } on ConfigException catch (error) {
+    warnings.add('$userSource compaction section skipped: ${error.message}');
     return null;
   }
 }

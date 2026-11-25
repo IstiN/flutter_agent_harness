@@ -263,6 +263,34 @@ retry:
     });
   });
 
+  group('compaction tuning (gh-2407 review thread 7)', () {
+    test('the yaml compaction: section rides the resolved host wiring — '
+        'the hand-over knobs are host-parity, not CLI-only', () async {
+      writeConfig(
+        'compaction:\n'
+        '  softRatio: 0.6\n'
+        '  handOver:\n'
+        '    maxTokens: 4096\n'
+        '    hysteresisTurns: 5\n',
+      );
+      final service = await buildService();
+      addTearDown(service.dispose);
+
+      final wiring = service.compactionWiringForTest;
+      expect(wiring.softRatio, 0.6);
+      expect(wiring.handOverMaxTokens, 4096);
+      expect(wiring.handOverHysteresisTurns, 5);
+    });
+
+    test('no section keeps the defaults', () async {
+      final service = await buildService();
+      addTearDown(service.dispose);
+      final wiring = service.compactionWiringForTest;
+      expect(wiring.handOverMaxTokens, handOverDefaultMaxTokens);
+      expect(wiring.handOverHysteresisTurns, handOverDefaultHysteresisTurns);
+    });
+  });
+
   group('AC3 ttsr', () {
     test('a rule violation aborts, injects, and retries clean', () async {
       writeConfig('''

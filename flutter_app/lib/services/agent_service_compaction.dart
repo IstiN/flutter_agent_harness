@@ -233,6 +233,11 @@ extension CompactionWindowSizing on AgentService {
     mainModel: _agent.state.model,
     contextWindowCap: _contextWindowCap,
     systemOverheadTokens: _systemOverheadTokens,
+    // gh-2407 review thread 7: the `compaction:` yaml section rides the
+    // app wiring exactly like the CLI's (`softRatio`,
+    // `handOver.maxTokens`, `handOver.hysteresisTurns` are host-parity
+    // knobs, not CLI-only settings).
+    tuning: _compactionTuning,
   );
 
   /// Estimated tokens the provider counts against the context window on top

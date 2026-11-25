@@ -130,6 +130,9 @@ final class CompactionHostWiring {
         enabled == other.enabled &&
         maxAttempts == other.maxAttempts &&
         baseBackoff == other.baseBackoff &&
+        handOverMaxTokens == other.handOverMaxTokens &&
+        handOverHysteresisTurns == other.handOverHysteresisTurns &&
+        softRatio == other.softRatio &&
         smolSame();
   }
 }

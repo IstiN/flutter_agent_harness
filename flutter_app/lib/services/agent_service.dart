@@ -758,6 +758,10 @@ class AgentService extends ChangeNotifier
       providerTimeoutsOverride = appConfig?.providerTimeouts;
     }
     _yamlRedactConfig = appConfig?.redact;
+    // gh-2407 review thread 7: the hand-over tuning keys are no longer
+    // CLI-only — the app's `_compactionWiring` resolves them through the
+    // SAME shared resolver (the parity test compares the fields).
+    _compactionTuning = appConfig?.compactionTuning;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
     // config is readable.
@@ -1527,6 +1531,15 @@ class AgentService extends ChangeNotifier
 
   /// The yaml `redact:` section (AC4); null = the mask-mode default.
   RedactionConfig? _yamlRedactConfig;
+
+  /// The yaml `compaction:` tuning section (gh-2407 review thread 7): the
+  /// SAME `~/.fah/config.yaml` section the CLI resolves into its wiring —
+  /// trigger/reserve/keep plus the hand-over knobs (`softRatio`,
+  /// `handOver.maxTokens`, `handOver.hysteresisTurns`). Null = the
+  /// defaults; resolved once at initialize (the section loaders' pattern)
+  /// and applied in `_compactionWiring` so both hosts compute identical
+  /// compaction semantics (the parity guard pins the fields).
+  CompactionTuning? _compactionTuning;
 
   /// Boot secrets snapshot ([_attachRedactor]): the live re-enable seed.
   Map<String, String> _bootSecrets = const {};
