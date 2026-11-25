@@ -1864,6 +1864,10 @@ class AgentCli {
   /// [AgentCli] — extensions can't declare fields.
   final SoftWindowNotice _softWindowNotice = SoftWindowNotice();
 
+  /// Scope-2 B: the over-window guard-stop notice's once-per-session
+  /// latch (same mechanism as the soft-window warning).
+  final SoftWindowNotice _guardStopNotice = SoftWindowNotice();
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.

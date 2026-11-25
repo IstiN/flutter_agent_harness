@@ -1226,6 +1226,17 @@ extension OverWindowGuardRelief on AgentCli {
     // (judge/checkpoints) owns the turn boundaries (the post-run fold
     // and the pre-flight); a slow or unusable judge class can no longer
     // turn an in-turn overflow into a ≤15 min silent stall.
+    // Scope-2 B (owner): a visible, ONE-time-per-session line before
+    // the relief — before this, the run just stopped and compacted
+    // with only the busy phase to show for it.
+    if (_guardStopNotice.shouldWarn(_session?.cachedId)) {
+      io.writeln(
+        tuiWarning(
+          'warning: context ${_liveRequestTokens()}/$_effectiveContextWindow: '
+          'request exceeded the window — auto-compacting',
+        ),
+      );
+    }
     _pushBusyPhase('Compacting context…');
     final EmergencyReliefOutcome reliefOutcome;
     try {

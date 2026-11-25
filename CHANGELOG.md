@@ -32,6 +32,10 @@ block a release again.
   aliases; an emptied text block is dropped; tool calls and thinking are
   untouched; with record tags off the text is the model's own and
   survives).
+- fix(cli): the context-guard stop now prints ONE visible warning per
+  session before its relief runs (`warning: context <live>/<window>:
+  request exceeded the window — auto-compacting`) — before this the run
+  just stopped and compacted behind the busy phase (gh-241 review B).
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

@@ -176,6 +176,74 @@ void main() {
   );
 
   test(
+    'scope-2 B (gh-241 review): the guard stop prints ONE visible warning '
+    'per session, however many times the guard trips',
+    timeout: const Timeout(Duration(seconds: 180)),
+    () async {
+      // ONE run, TWO over-window stops — the first test's scenario
+      // twice: turn 1 reads big.txt (the result overflows the request →
+      // guard stop → settle compaction → continuation), and the
+      // continuation reads big.txt AGAIN (a second guard stop). The
+      // continuation retry is ONE per run, so the second stop is the
+      // terminal one (exit 1) — the latch is what keeps it from warning
+      // a second time.
+      final stream = FakeStreamFunction([
+        bigReadTurn(),
+        textTurn('summary of the compacted history'),
+        bigReadTurn(),
+        textTurn('summary of the second compaction'),
+        textTurn('task complete: all files counted'),
+      ]);
+      final cli = buildCli(
+        stream,
+        engine: CompactionEngine.classic,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 100,
+        ),
+      );
+
+      final exitCode = await cli.runHeadless('count the words');
+
+      final output = io.out.toString();
+      final stops = output
+          .split('\n')
+          .where((line) => line.contains('Context window exhausted'))
+          .toList();
+      expect(
+        stops,
+        hasLength(2),
+        reason:
+            'precondition: the guard tripped TWICE in the session; '
+            'calls=${stream.calls} output:\n$output',
+      );
+      final warnings = output
+          .split('\n')
+          .where((line) => line.contains('request exceeded the window'))
+          .toList();
+      expect(
+        warnings,
+        hasLength(1),
+        reason:
+            'one visible warning per session — the second guard stop must '
+            'stay silent; calls=${stream.calls} output:\n$output',
+      );
+      expect(warnings.single, contains('auto-compacting'));
+      expect(
+        stream.calls,
+        5,
+        reason:
+            'both stops ran their relief: read, compaction, read, '
+            'compaction, then the terminal stop',
+      );
+      // The second stop exhausts the run's single continuation retry —
+      // the existing contract (never a masked 0).
+      expect(exitCode, 1);
+    },
+  );
+
+  test(
     'the [net] retry notice reaches headless output (issue #1121)',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {
