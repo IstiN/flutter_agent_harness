@@ -6,6 +6,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -173,67 +174,119 @@ final class _NoFullReadFs implements FileSystem, RangedReadFileSystem {
 }
 
 void main() {
-  test('loadSession generation guard: a stale open never lands its records',
-      () async {
-    final tmp = await io.Directory.systemTemp.createTemp('fa_generation');
+  test('gh-2407 thread 1: a session load drops the request snapshot (S0) '
+      '— the loaded session is not the projection S0 described', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_s0_load');
     addTearDown(() => tmp.delete(recursive: true));
-    // A is older, B newer; both small. A's parse parks on the gate.
     await io.File('${tmp.path}/a.jsonl').writeAsString(
       _header('session-a', '2026-01-01T00:00:00.000Z') +
           _userMessage('a1', 'alpha-old one') +
           _userMessage('a2', 'alpha-old two'),
     );
-    await io.File('${tmp.path}/b.jsonl').writeAsString(
-      _header('session-b', '2026-01-02T00:00:00.000Z') +
-          _userMessage('b1', 'beta-new one') +
-          _userMessage('b2', 'beta-new two'),
+    final agent = _createAgent();
+    // The send-seam stand-in: the OUTGOING session's last main request
+    // (S0) sits in the store.
+    agent.requestSnapshots.capture(
+      RequestSnapshot(
+        model: agent.state.model,
+        messages: [UserMessage.text('previous session ask')],
+        seqMap: TranscriptSeqMap(
+          headSeqs: const [],
+          index: RecordSeqIndex(const []),
+        ),
+        sentAt: DateTime.now(),
+      ),
     );
-    final gate = Completer<void>();
-    final executor = _GatedParseExecutor(gate);
+    expect(agent.requestSnapshots.validFor(agent.state.model), isNotNull);
+
     final service = AgentService(
-      agent: _createAgent(),
+      agent: agent,
       env: LocalExecutionEnv(cwd: tmp.path),
       sessionsRoot: tmp.path,
       repo: JsonlSessionRepo(
         fs: LocalFileSystem(cwd: tmp.path),
         sessionsRoot: tmp.path,
-        parseExecutor: executor,
       ),
       watchExternalSessions: false,
     );
     addTearDown(service.dispose);
     await service.initialize();
-
     final sessions = await service.listSessions();
     final a = sessions.where((m) => m.id == 'session-a').single;
-    final b = sessions.where((m) => m.id == 'session-b').single;
 
-    // Start A's load and let it park inside the gated parse.
-    final staleLoad = service.loadSession(a);
-    for (var i = 0; i < 500 && executor.calls == 0; i++) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    expect(executor.calls, 1, reason: 'A open never reached the executor');
-
-    // B's load supersedes A while A is parked; B must win completely.
-    await service.loadSession(b);
-    expect(service.currentSessionId, b.id);
-    expect(
-      service.messages.map((m) => m.content),
-      everyElement(contains('beta-new')),
-    );
-
-    // Release A's parse: the stale loader abandons silently — no A record
-    // ever lands in B's state.
-    gate.complete();
-    await staleLoad;
-    await Future<void>.delayed(Duration.zero);
-    expect(service.currentSessionId, b.id);
-    expect(
-      service.messages.where((m) => m.content.contains('alpha-old')),
-      isEmpty,
-    );
+    // The load replaces the projection (`_agent.reset()`): the previous
+    // session's S0 must not survive into the next session's pre-flight —
+    // a stale snapshot would feed the merged hand-over the WRONG
+    // session's transcript.
+    await service.loadSession(a);
+    expect(agent.requestSnapshots.current, isNull);
+    expect(agent.requestSnapshots.invalidReason, isNotNull);
+    expect(agent.requestSnapshots.validFor(agent.state.model), isNull);
   });
+
+  test(
+    'loadSession generation guard: a stale open never lands its records',
+    () async {
+      final tmp = await io.Directory.systemTemp.createTemp('fa_generation');
+      addTearDown(() => tmp.delete(recursive: true));
+      // A is older, B newer; both small. A's parse parks on the gate.
+      await io.File('${tmp.path}/a.jsonl').writeAsString(
+        _header('session-a', '2026-01-01T00:00:00.000Z') +
+            _userMessage('a1', 'alpha-old one') +
+            _userMessage('a2', 'alpha-old two'),
+      );
+      await io.File('${tmp.path}/b.jsonl').writeAsString(
+        _header('session-b', '2026-01-02T00:00:00.000Z') +
+            _userMessage('b1', 'beta-new one') +
+            _userMessage('b2', 'beta-new two'),
+      );
+      final gate = Completer<void>();
+      final executor = _GatedParseExecutor(gate);
+      final service = AgentService(
+        agent: _createAgent(),
+        env: LocalExecutionEnv(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+        repo: JsonlSessionRepo(
+          fs: LocalFileSystem(cwd: tmp.path),
+          sessionsRoot: tmp.path,
+          parseExecutor: executor,
+        ),
+        watchExternalSessions: false,
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      final sessions = await service.listSessions();
+      final a = sessions.where((m) => m.id == 'session-a').single;
+      final b = sessions.where((m) => m.id == 'session-b').single;
+
+      // Start A's load and let it park inside the gated parse.
+      final staleLoad = service.loadSession(a);
+      for (var i = 0; i < 500 && executor.calls == 0; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(executor.calls, 1, reason: 'A open never reached the executor');
+
+      // B's load supersedes A while A is parked; B must win completely.
+      await service.loadSession(b);
+      expect(service.currentSessionId, b.id);
+      expect(
+        service.messages.map((m) => m.content),
+        everyElement(contains('beta-new')),
+      );
+
+      // Release A's parse: the stale loader abandons silently — no A record
+      // ever lands in B's state.
+      gate.complete();
+      await staleLoad;
+      await Future<void>.delayed(Duration.zero);
+      expect(service.currentSessionId, b.id);
+      expect(
+        service.messages.where((m) => m.content.contains('alpha-old')),
+        isEmpty,
+      );
+    },
+  );
 
   test('findReusableSession: windowed user scan, oversized refused', () async {
     final env = MemoryExecutionEnv();
@@ -274,44 +327,44 @@ void main() {
     expect(await pickyManager.findReusableSession(), isNull);
   });
 
-  test('readSessionNames rides the quick tail scan, never a full open',
-      () async {
-    final env = MemoryExecutionEnv();
-    await env.writeFile(
-      '/sessions/named.jsonl',
-      _header('named', '2026-01-01T00:00:00.000Z') +
-          _sessionInfo('n1', 'Alpha'),
-    );
-    // The LAST session_info carries an empty name → the name is cleared.
-    await env.writeFile(
-      '/sessions/cleared.jsonl',
-      _header('cleared', '2026-01-02T00:00:00.000Z') +
-          _sessionInfo('c1', 'Temporary') +
-          _sessionInfo('c2', ''),
-    );
-    // No session_info at all → no entry.
-    await env.writeFile(
-      '/sessions/anonymous.jsonl',
-      _header('anonymous', '2026-01-03T00:00:00.000Z'),
-    );
-    final repo = JsonlSessionRepo(
-      fs: _NoFullReadFs(env),
-      sessionsRoot: '/sessions',
-    );
-    final manager = FlutterSessionManager(
-      env: env,
-      sessionsRoot: '/sessions',
-      repo: repo,
-    );
-    final sessions = await repo.list();
-    final names = await manager.readSessionNames(sessions);
-    final byId = {for (final s in sessions) s.id: s};
-    expect(
-      names,
-      {byId['named']!.id: 'Alpha'},
-      reason: 'cleared (empty last name) and anonymous contribute no entry',
-    );
-  });
+  test(
+    'readSessionNames rides the quick tail scan, never a full open',
+    () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '/sessions/named.jsonl',
+        _header('named', '2026-01-01T00:00:00.000Z') +
+            _sessionInfo('n1', 'Alpha'),
+      );
+      // The LAST session_info carries an empty name → the name is cleared.
+      await env.writeFile(
+        '/sessions/cleared.jsonl',
+        _header('cleared', '2026-01-02T00:00:00.000Z') +
+            _sessionInfo('c1', 'Temporary') +
+            _sessionInfo('c2', ''),
+      );
+      // No session_info at all → no entry.
+      await env.writeFile(
+        '/sessions/anonymous.jsonl',
+        _header('anonymous', '2026-01-03T00:00:00.000Z'),
+      );
+      final repo = JsonlSessionRepo(
+        fs: _NoFullReadFs(env),
+        sessionsRoot: '/sessions',
+      );
+      final manager = FlutterSessionManager(
+        env: env,
+        sessionsRoot: '/sessions',
+        repo: repo,
+      );
+      final sessions = await repo.list();
+      final names = await manager.readSessionNames(sessions);
+      final byId = {for (final s in sessions) s.id: s};
+      expect(names, {
+        byId['named']!.id: 'Alpha',
+      }, reason: 'cleared (empty last name) and anonymous contribute no entry');
+    },
+  );
 
   // -- Issue #1332: resume of a compacted session must not force-compact --
   // (helpers for these tests live at the bottom of the file, top-level,
@@ -333,16 +386,21 @@ void main() {
           _chainedUser('u1', 'root', 'old big question one') +
           _assistantLine('a1', 'u1', 'old big answer one') +
           _chainedUser('u2', 'a1', 'recent question') +
-          _assistantLine('a2', 'u2', 'recent answer',
-              totalTokens: staleAnchorTokens) +
+          _assistantLine(
+            'a2',
+            'u2',
+            'recent answer',
+            totalTokens: staleAnchorTokens,
+          ) +
           _compactionLine('c1', 'a2', 'u2', staleAnchorTokens),
     );
     final (agent, service) = _compactionFixture(tmp);
     addTearDown(service.dispose);
     await service.initialize();
 
-    final big =
-        (await service.listSessions()).where((m) => m.id == 'big').single;
+    final big = (await service.listSessions())
+        .where((m) => m.id == 'big')
+        .single;
     await service.loadSession(big);
 
     // The phantom basis WOULD force-compact: 102000 > 83613.
@@ -381,8 +439,7 @@ void main() {
       startsWith('The conversation history before this point'),
     );
     expect(
-      agent.state.messages.whereType<AssistantMessage>().last.usage
-          .totalTokens,
+      agent.state.messages.whereType<AssistantMessage>().last.usage.totalTokens,
       0,
       reason: 'loaded anchors are re-anchored at zero (CLI resume parity)',
     );
@@ -419,8 +476,9 @@ void main() {
     addTearDown(service.dispose);
     await service.initialize();
 
-    final over =
-        (await service.listSessions()).where((m) => m.id == 'over').single;
+    final over = (await service.listSessions())
+        .where((m) => m.id == 'over')
+        .single;
     await service.loadSession(over);
 
     final meter = estimateRequestTokens(
@@ -455,8 +513,9 @@ void main() {
     addTearDown(service.dispose);
     await service.initialize();
 
-    final struct =
-        (await service.listSessions()).where((m) => m.id == 'struct').single;
+    final struct = (await service.listSessions())
+        .where((m) => m.id == 'struct')
+        .single;
     await service.loadSession(struct);
 
     // The hidden_range record MUST have parsed: the projection carries
@@ -492,8 +551,12 @@ void main() {
     await file.writeAsString(
       _header('watched', '2026-01-01T00:00:00.000Z') +
           _chainedUser('u1', 'root', 'old big question one') +
-          _assistantLine('a1', 'u1', 'old big answer one',
-              totalTokens: staleAnchorTokens),
+          _assistantLine(
+            'a1',
+            'u1',
+            'old big answer one',
+            totalTokens: staleAnchorTokens,
+          ),
     );
     final (agent, service) = _compactionFixture(tmp);
     addTearDown(service.dispose);
@@ -501,12 +564,12 @@ void main() {
     // 2s watch timer is the driver under test.
     await service.initialize();
 
-    final watched =
-        (await service.listSessions()).where((m) => m.id == 'watched').single;
+    final watched = (await service.listSessions())
+        .where((m) => m.id == 'watched')
+        .single;
     await service.loadSession(watched);
     expect(
-      agent.state.messages.whereType<AssistantMessage>().last.usage
-          .totalTokens,
+      agent.state.messages.whereType<AssistantMessage>().last.usage.totalTokens,
       0,
       reason: 'sanity: loadSession itself re-anchors',
     );
@@ -535,7 +598,8 @@ void main() {
     expect(
       grew,
       isTrue,
-      reason: 'a plain external append reaches the provider context '
+      reason:
+          'a plain external append reaches the provider context '
           'within the watch window',
     );
 
@@ -559,10 +623,10 @@ void main() {
       reason: 'the compaction delta was ingested within the watch window',
     );
     expect(
-      agent.state.messages.whereType<AssistantMessage>().last.usage
-          .totalTokens,
+      agent.state.messages.whereType<AssistantMessage>().last.usage.totalTokens,
       0,
-      reason: 'the ingest re-projection must re-anchor, not re-arm the '
+      reason:
+          'the ingest re-projection must re-anchor, not re-arm the '
           'stale generation-time usage',
     );
     final meter = estimateRequestTokens(
@@ -573,7 +637,8 @@ void main() {
     expect(
       shouldCompact(meter, 99997, CompactionSettings.forWindow(99997)),
       isFalse,
-      reason: 'the followed session must not phantom-report after the '
+      reason:
+          'the followed session must not phantom-report after the '
           'CLI-side compaction lands',
     );
   });
@@ -592,16 +657,24 @@ String _usageJson(int totalTokens) =>
 
 /// An assistant message record with optional provider usage (the
 /// generation-time anchor the resume path must re-anchor).
-String _assistantLine(String id, String parentId, String text,
-        {int? totalTokens}) =>
+String _assistantLine(
+  String id,
+  String parentId,
+  String text, {
+  int? totalTokens,
+}) =>
     '{"type":"message","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
     '"message":{"role":"assistant","content":[{"type":"text","text":"$text"}],'
     '"api":"test-api","provider":"test","model":"test-model",'
     '"usage":${totalTokens == null ? _zeroUsage : _usageJson(totalTokens)},'
     '"stopReason":"stop","timestamp":1767225600000}}\n';
 
-String _compactionLine(String id, String parentId, String firstKeptEntryId,
-        int tokensBefore) =>
+String _compactionLine(
+  String id,
+  String parentId,
+  String firstKeptEntryId,
+  int tokensBefore,
+) =>
     '{"type":"compaction","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
     '"summary":"structured checkpoint of the earlier work",'
     '"firstKeptEntryId":"$firstKeptEntryId","tokensBefore":$tokensBefore}\n';
@@ -617,14 +690,12 @@ String _hiddenRangeLine(String id, String parentId, List<String> recordIds) =>
 /// Visible text of a projected message (typed field reads — the basis for
 /// the no-double-count assertions).
 String _textOf(Message m) => switch (m) {
-      final UserMessage u =>
-        u.content is String ? u.content as String : _blocksText(u.content),
-      final AssistantMessage a => a.content
-          .whereType<TextContent>()
-          .map((t) => t.text)
-          .join(),
-      _ => '',
-    };
+  final UserMessage u =>
+    u.content is String ? u.content as String : _blocksText(u.content),
+  final AssistantMessage a =>
+    a.content.whereType<TextContent>().map((t) => t.text).join(),
+  _ => '',
+};
 
 String _blocksText(Object content) => content is List<ContentBlock>
     ? content.whereType<TextContent>().map((t) => t.text).join()
