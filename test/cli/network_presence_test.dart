@@ -92,6 +92,9 @@ void main() {
         }),
       ),
       rosterDebounce: const Duration(milliseconds: 10),
+      // Pacing (≤ 1 roster PATCH per 2 s) is the limiter's own unit
+      // test; these projection tests disable it.
+      rosterMinInterval: Duration.zero,
       idFactory: sequentialIds(),
     );
 
@@ -173,6 +176,7 @@ void main() {
       transport: _FakeTransport(_FakeSocket()),
       rosterClient: rosterClient,
       rosterDebounce: Duration.zero,
+      rosterMinInterval: Duration.zero,
       idFactory: sequentialIds(),
     );
 
@@ -224,6 +228,7 @@ void main() {
           }),
         ),
         rosterDebounce: const Duration(milliseconds: 10),
+        rosterMinInterval: Duration.zero,
         idFactory: sequentialIds(),
       );
 
@@ -265,6 +270,60 @@ void main() {
         },
       ]);
       await controller.dispose();
+    },
+  );
+
+  test(
+    'roster PATCHes ride the shared limiter: a change burst is coalesced '
+    'and never beats the per-device budget (eviction-storm hardening)',
+    () async {
+      final requests = <http.Request>[];
+      final sentAt = <DateTime>[];
+      final controller = NetworkPresenceController(
+        device: const NetworkDeviceCredentials(
+          deviceId: 'device-1',
+          deviceToken: 'device-secret',
+          personalNetworkId: 'personal-1',
+        ),
+        baseUrl: 'https://relay.test',
+        ticketProvider: () async => 'ticket-1',
+        transport: _FakeTransport(_FakeSocket()),
+        rosterClient: DeviceEnrollmentClient(
+          httpClient: MockClient((request) async {
+            requests.add(request);
+            sentAt.add(DateTime.now());
+            return http.Response(jsonEncode({'patched': 'device-1'}), 200);
+          }),
+        ),
+        rosterDebounce: const Duration(milliseconds: 10),
+        rosterMinInterval: const Duration(milliseconds: 300),
+        idFactory: sequentialIds(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.startSession(
+        const CliNetworkSession(
+          sessionId: 'session-1',
+          mailboxPrefix: 'mailbox-1',
+        ),
+      );
+      await _waitForRosterPatches(requests, 1);
+      // Five flips inside one debounce window → ONE merged PATCH, and that
+      // PATCH waits for the budget slot after the first one.
+      for (var i = 0; i < 5; i++) {
+        controller.setBusy(i.isEven);
+      }
+      await _waitForRosterPatches(requests, 2);
+      expect(requests, hasLength(2));
+      expect(
+        sentAt[1].difference(sentAt[0]),
+        greaterThanOrEqualTo(const Duration(milliseconds: 250)),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(requests, hasLength(2), reason: 'the burst coalesced');
+      final agents = (jsonDecode(requests.last.body) as Map)['agents'] as List;
+      // i = 0..4 → the last flip is setBusy(true).
+      expect(agents.single['state'], 'busy', reason: 'latest flip wins');
     },
   );
 

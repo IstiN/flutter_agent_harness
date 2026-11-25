@@ -90,6 +90,9 @@ void main() {
         }),
       ),
       rosterDebounce: const Duration(milliseconds: 5),
+      // Pacing (≤ 1 roster PATCH per 2 s) is the limiter's own unit
+      // test; these projection tests disable it.
+      rosterMinInterval: Duration.zero,
       catalogStore: store,
       catalogPollInterval: Duration.zero,
     );
@@ -193,6 +196,7 @@ void main() {
           }),
         ),
         rosterDebounce: const Duration(milliseconds: 5),
+        rosterMinInterval: Duration.zero,
         catalogStore: store,
         catalogPollInterval: Duration.zero,
       );
@@ -244,6 +248,7 @@ void main() {
         }),
       ),
       rosterDebounce: Duration.zero,
+      rosterMinInterval: Duration.zero,
       catalogStore: store,
       catalogPollInterval: Duration.zero,
     );

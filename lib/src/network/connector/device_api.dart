@@ -12,15 +12,25 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../secret_redaction.dart';
+import 'rate_backoff.dart';
 
 /// Thrown by [DeviceEnrollmentClient] for any failure: a non-success
 /// HTTP status ([statusCode] set) or a network-level error (null).
 final class DeviceEnrollmentException implements Exception {
-  /// Builds the exception; [statusCode] is null for network errors.
-  const DeviceEnrollmentException(this.message, {this.statusCode});
+  /// Builds the exception; [statusCode] is null for network errors and
+  /// [errorCode] carries the OpenAPI `error.code` when the server sent one.
+  const DeviceEnrollmentException(
+    this.message, {
+    this.statusCode,
+    this.errorCode,
+  });
 
   /// HTTP status when the server answered, else null (network error).
   final int? statusCode;
+
+  /// OpenAPI error code of the rejected call (`throttled`, `not_found`,
+  /// …), when the body carried one.
+  final String? errorCode;
 
   /// Human-readable failure reason.
   final String message;
@@ -29,10 +39,32 @@ final class DeviceEnrollmentException implements Exception {
   /// the caller's auto-refresh-and-retry-once seam.
   bool get isUnauthorized => statusCode == 401;
 
+  /// Whether the server refused for rate reasons (HTTP 429 or the OpenAPI
+  /// `throttled` code) — callers back off instead of retrying at once.
+  bool get isThrottled => statusCode == 429 || errorCode == 'throttled';
+
   @override
   String toString() => statusCode == null
       ? 'DeviceEnrollmentException: $message'
       : 'DeviceEnrollmentException($statusCode): $message';
+}
+
+/// A throttled [DeviceEnrollmentException] (HTTP 429 / `throttled`): the
+/// same type for existing `on DeviceEnrollmentException` handlers, plus
+/// the [ConnectorThrottleSignal] the upstream client and the roster
+/// limiter read — [retryAfter] is the server's hint when it sent one.
+final class DeviceEnrollmentThrottledException extends DeviceEnrollmentException
+    implements ConnectorThrottleSignal {
+  /// Builds the throttled exception.
+  const DeviceEnrollmentThrottledException(
+    super.message, {
+    super.statusCode,
+    super.errorCode,
+    this.retryAfter,
+  });
+
+  @override
+  final Duration? retryAfter;
 }
 
 /// The enrollment result: the stable device identity pair and personal
@@ -365,10 +397,7 @@ final class DeviceEnrollmentClient {
       throw DeviceEnrollmentException('device REST call failed: $error');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw DeviceEnrollmentException(
-        'device REST call rejected: ${_snippet(response.body)}',
-        statusCode: response.statusCode,
-      );
+      throw _rejection(response);
     }
     try {
       final decoded = jsonDecode(response.body);
@@ -377,6 +406,45 @@ final class DeviceEnrollmentClient {
       throw FormatException('unexpected JSON ${decoded.runtimeType}');
     } on FormatException catch (error) {
       throw DeviceEnrollmentException('malformed device REST body: $error');
+    }
+  }
+
+  /// Maps a non-2xx answer to the typed exception: a rate refusal
+  /// (429 / `throttled`) becomes a [DeviceEnrollmentThrottledException]
+  /// carrying the `Retry-After` hint, every other status the plain
+  /// [DeviceEnrollmentException] with the OpenAPI code when present.
+  DeviceEnrollmentException _rejection(http.Response response) {
+    final message = 'device REST call rejected: ${_snippet(response.body)}';
+    final code = _errorCodeOf(response.body);
+    if (response.statusCode != 429 && code != 'throttled') {
+      return DeviceEnrollmentException(
+        message,
+        statusCode: response.statusCode,
+        errorCode: code,
+      );
+    }
+    return DeviceEnrollmentThrottledException(
+      message,
+      statusCode: response.statusCode,
+      errorCode: code,
+      retryAfter: parseRetryAfter(
+        response.headers['retry-after'] ?? response.headers['Retry-After'],
+        now: DateTime.now(),
+      ),
+    );
+  }
+
+  /// The OpenAPI `error.code` of an error body, when it is the documented
+  /// `{"error": {"code": …}}` shape.
+  static String? _errorCodeOf(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) return null;
+      final error = decoded['error'];
+      if (error is! Map) return null;
+      return error['code'] is String ? error['code'] as String : null;
+    } on Object {
+      return null;
     }
   }
 

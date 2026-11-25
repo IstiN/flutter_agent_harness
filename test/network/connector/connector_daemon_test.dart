@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
@@ -363,6 +364,67 @@ void main() {
       );
     },
   );
+
+  test('MultiSessionConnectorHost paces roster PATCHes through the shared '
+      'limiter: a change burst is coalesced and never beats the per-device '
+      'budget (eviction-storm hardening)', () async {
+    final server = FakeDeviceServer()
+      ..seedDevice(
+        'dev-mac-pace',
+        deviceToken: 'tok-device-pace',
+        networks: const ['net-personal'],
+      );
+    addTearDown(server.dropAll);
+    final requests = <http.Request>[];
+    final sentAt = <DateTime>[];
+    final rosterClient = DeviceEnrollmentClient(
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        sentAt.add(DateTime.now());
+        return http.Response('{}', 200);
+      }),
+    );
+    final host = MultiSessionConnectorHost(
+      device: const NetworkDeviceCredentials(
+        deviceId: 'dev-mac-pace',
+        deviceToken: 'tok-device-pace',
+        personalNetworkId: 'net-personal',
+      ),
+      baseUrl: 'https://network.fa1.dev',
+      ticketProvider: () async => 'ticket-pace',
+      transport: server.transport,
+      rosterClient: rosterClient,
+      rosterDebounce: const Duration(milliseconds: 10),
+      rosterMinInterval: const Duration(milliseconds: 300),
+      catalogPollInterval: Duration.zero,
+    );
+    addTearDown(host.dispose);
+
+    await host.start();
+    await _waitFor(() => host.phase == ConnectorLinkState.connected);
+    await host.registerSession(
+      CliNetworkSession(
+        sessionId: 'sess-pace',
+        mailboxPrefix: 'pace',
+        dmSink: (_) async {},
+      ),
+    );
+    await _waitFor(() => requests.length == 1);
+    // Six flips inside one debounce window → ONE merged PATCH that waits
+    // for the budget slot after the first one.
+    for (var i = 0; i < 6; i++) {
+      host.setBusy('sess-pace', i.isEven);
+    }
+    await _waitFor(() => requests.length == 2);
+    expect(
+      sentAt[1].difference(sentAt[0]),
+      greaterThanOrEqualTo(const Duration(milliseconds: 250)),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(requests, hasLength(2), reason: 'the burst coalesced');
+    final agents = (jsonDecode(requests.last.body) as Map)['agents'] as List;
+    expect(agents.single['state'], 'live', reason: 'latest flip wins');
+  });
 
   test('SharedConnectorPresenceClient reconnects after daemon restart and '
       'validates caller ownership & agent sender labels', () async {
