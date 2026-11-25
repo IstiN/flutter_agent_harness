@@ -4737,7 +4737,11 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.arch }}" = "x64" ]; then
-            arch -x86_64 bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
+            # gh-2408: /bin/bash (universal), never bare `bash` — on the
+            # self-hosted macos-m5 pool PATH resolves `bash` to the
+            # ARM-only Homebrew build and arch -x86_64 dies with
+            # `posix_spawnp: bash: Bad CPU type in executable`.
+            arch -x86_64 /bin/bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
           else
             bash scripts/build_fa_clip.sh build/out/bundle/bin/fa-clip
           fi

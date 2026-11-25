@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
+  `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
+  resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in
+  executable`). Both Rosetta fa-clip legs (ci.yml + build-macos.yml) now
+  pin the universal `/bin/bash`; a repo-wide guard test bans bare
+  PATH-resolved commands under `arch -x86_64`. The vpinned-marker red was
+  the by-design fail-closed knock-on (no signed SHA256SUMS while the
+  matrix was red) — no change there.
 - feat(2394): Compaction 2.0 v2.1 — the post-run fold is ONE merged
   hand-over call on the session's own model: it reads the last main
   request as sent (record tags `m<N>`, a request snapshot S0, cache-affine
