@@ -117,22 +117,29 @@ void main() {
   });
 
   group('default partition (GOAL #2416 UT-1)', () {
-    test('default essential names are exactly the keep-12', () {
-      expect(essentialToolNamesByLoadMode[AgentLoadMode.defaultMode], {
-        'read',
-        'write',
-        'edit',
-        'ls',
-        'bash',
-        'bash_job',
-        'lsp',
-        'web_search',
-        'web_fetch',
-        'memory_add',
-        'memory_search',
-        'reply',
-      });
-    });
+    test(
+      'default essential names are exactly the keep-12 + session_search',
+      () {
+        // GOAL #28 review round 2: session_search rides the keep set
+        // always-on (the prompt-recall contract pins it under BOTH engines)
+        // — thirteen names.
+        expect(essentialToolNamesByLoadMode[AgentLoadMode.defaultMode], {
+          'read',
+          'write',
+          'edit',
+          'ls',
+          'bash',
+          'bash_job',
+          'lsp',
+          'web_search',
+          'web_fetch',
+          'memory_add',
+          'memory_search',
+          'reply',
+          'session_search',
+        });
+      },
+    );
 
     test('pi and omp id presets are unchanged (GOAL #2416 non-goal)', () {
       expect(essentialToolIdsByLoadMode[AgentLoadMode.pi], {

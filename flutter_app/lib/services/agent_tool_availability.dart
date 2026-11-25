@@ -81,6 +81,11 @@ class AgentToolAvailability {
     // Re-register with a FRESH description on every rebuild (issue #2416
     // review round 2): the deferred name list tracks mounts and late MCP
     // connects; a re-registration replaces the entry in place.
+    // Unregister first — re-registering over a live name raises the
+    // registry's duplicate-name warning on every rebuild (CI round 3).
+    if (registry.contains(othersToolName)) {
+      registry.unregister(othersToolName);
+    }
     final names = _gate.discoverableToolNames;
     registry.register(
       othersTool(
@@ -186,6 +191,11 @@ class AgentToolAvailability {
     final registry = this.registry;
     final resolution = _gate.resolution;
     if (registry == null || resolution == null) return null;
+    // A tool mounted earlier in this run left the discoverable set, but
+    // the run's in-flight context snapshot still misses it — resolve
+    // through the LIVE registry first (issue #2416 CI round 3).
+    final Tool? live = registry.tools.where((t) => t.name == name).firstOrNull;
+    if (live != null) return live as AgentTool;
     if (_gate.discoverableToolNames.isEmpty) return null;
     if (!_gate.discoverableToolNames.contains(name)) return null;
     final mounted = _gate.mount(

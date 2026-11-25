@@ -384,7 +384,14 @@ void main() {
         contextWindow: 32768,
         maxTokens: 4096,
       );
-      final shell = FakeShell(stdout: 'x' * 32800);
+      final shell = FakeShell(
+        stdout:
+            // 45000 chars = 11250 tokens — three of these cross the 32k
+            // window on their own (issue #2416: the slim manifest removed
+            // ~12.5k overhead tokens from every estimate), under the
+            // 51200-byte tool-output cap so truncation keeps them intact.
+            'x' * 45000,
+      );
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -483,7 +490,14 @@ void main() {
         contextWindow: 32768,
         maxTokens: 4096,
       );
-      final shell = FakeShell(stdout: 'x' * 32800);
+      final shell = FakeShell(
+        stdout:
+            // 45000 chars = 11250 tokens — three of these cross the 32k
+            // window on their own (issue #2416: the slim manifest removed
+            // ~12.5k overhead tokens from every estimate), under the
+            // 51200-byte tool-output cap so truncation keeps them intact.
+            'x' * 45000,
+      );
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -912,15 +926,18 @@ void main() {
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       // The refusal shape: a moderately large real-user prompt (~6.8k
       // tokens — real user turns never hide, F8) plus growing read
-      // results (500·i tokens, DISTINCT paths so the dedup has nothing
+      // results (750·i tokens, DISTINCT paths so the dedup has nothing
       // to fold). With the request-size overhead on top, the first three
       // requests stay under the trigger and the fourth/fifth go over it,
       // where the relief's keep-2 hide budget cannot free the overage and
       // its valve declines (every result exceeds the 200-token keep
       // budget) — so the window guard REFUSES with BOTH dimensions over:
-      // tokens > window AND count ≥ cap − margin.
+      // tokens > window AND count ≥ cap − margin. (issue #2416: the slim
+      // manifest removed ~12.5k overhead tokens from every estimate, so
+      // the per-read size re-tunes from 500·i to hold the same
+      // under/under/under/over/over request shape.)
       for (var i = 1; i <= 5; i++) {
-        env.writeFile('note$i.txt', List.filled(100 * i, 'x' * 20).join('\n'));
+        env.writeFile('note$i.txt', List.filled(100 * i, 'x' * 30).join('\n'));
       }
       final home = await Directory.systemTemp.createTemp('fa_2264_');
       // A learned cap (24 → trigger at count ≥ 8) the way a previous

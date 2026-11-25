@@ -955,7 +955,7 @@ class AgentService extends ChangeNotifier
     // tool routes to the deferred-mount path — mount live, call proceeds.
     _agent.missingToolResolver = (name) async {
       final availability = _toolsAvailability;
-      final tool = availability.resolveDeferredToolForCall(name);
+      final tool = await availability.resolveDeferredToolForCall(name);
       return tool;
     };
     _toolsAvailability = AgentToolAvailability(

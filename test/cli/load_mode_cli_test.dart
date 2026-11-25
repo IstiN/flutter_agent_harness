@@ -97,6 +97,10 @@ void main() {
         await waitForIt(() => stream.calls >= 1);
         final bootBytes = _toolsBytes(stream.contexts.first);
         final bootNames = _toolNames(stream.contexts.first);
+        // GOAL #28 review round 2: session_search rides the keep set
+        // always-on (the prompt-recall contract pins it under BOTH
+        // engines), so the boot manifest is the keep-13 minus the
+        // capability-absent names + the `others` stub = 11 entries.
         expect(bootNames, {
           'read',
           'write',
@@ -107,6 +111,7 @@ void main() {
           'memory_add',
           'memory_search',
           'reply',
+          'session_search',
           'others',
         });
         // The deferred candidates stay out of the manifest.

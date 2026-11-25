@@ -2116,12 +2116,29 @@ Future<_ExecutedToolCallBatch> _executeToolCalls(
   ToolExecutor toolExecutor,
   CancelToken? cancelToken,
   AgentEventSink emit,
-) {
-  final hasSequentialToolCall = toolCalls.any((toolCall) {
-    final tool = _findTool(context, toolCall.name);
-    return tool is AgentTool &&
-        tool.executionMode == ToolExecutionMode.sequential;
-  });
+) async {
+  // GOAL #28 (issue #2416 CI round 3): the manifest partition keeps
+  // deferred tools OUT of [context.tools], so a batch of FIRST calls to a
+  // sequential-only deferred tool (e.g. five `config` calls in one turn)
+  // must consult the deferred-mount resolver for the mode decision too —
+  // otherwise the batch runs parallel and same-file writers race. The
+  // resolver mounts idempotently; the later preparation reuses the
+  // mounted tool through the live registry.
+  var hasSequentialToolCall =
+      config.toolExecution == ToolExecutionMode.sequential;
+  if (!hasSequentialToolCall) {
+    for (final toolCall in toolCalls) {
+      var tool = _findTool(context, toolCall.name);
+      if (tool == null && config.missingToolResolver != null) {
+        tool = await config.missingToolResolver!(toolCall.name);
+      }
+      if (tool is AgentTool &&
+          tool.executionMode == ToolExecutionMode.sequential) {
+        hasSequentialToolCall = true;
+        break;
+      }
+    }
+  }
   return config.toolExecution == ToolExecutionMode.sequential ||
           hasSequentialToolCall
       ? _executeToolCallsSequential(

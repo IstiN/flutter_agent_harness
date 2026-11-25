@@ -92,9 +92,11 @@ void main() {
     'a busy label',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // Three ~10k-token answers in a 40k window cross the compaction
+      // Three ~15k-token answers in a 40k window cross the compaction
       // threshold on turn 3 (same arithmetic as the busy-gate test).
-      final big = 'x' * 40000;
+      // Sized manifest-INDEPENDENTLY (issue #2416: the slim manifest
+      // removed ~12.5k overhead tokens from every estimate).
+      final big = 'x' * 60000;
       const tiny = Model(
         id: 'tiny-window',
         api: 'test-api',
@@ -212,7 +214,12 @@ void main() {
             jsonEncode(context.messages).contains('context-window guard'),
         gatedTurn: textTurn('continued after compaction'),
       );
-      final shell = FakeShell(stdout: 'x' * 32800);
+      // 45000 chars = 11250 tokens per result — crosses the 32k window on
+      // its own while staying under the 51200-byte tool-output cap
+      // (issue #2416: the slim manifest removed ~12.5k overhead
+      // tokens from every estimate; the relief decline shape is kept:
+      // the newest result alone dwarfs the 400-token keep region).
+      final shell = FakeShell(stdout: 'x' * 45000);
       final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
       final cli = AgentCli(
         config: AgentCliConfig(

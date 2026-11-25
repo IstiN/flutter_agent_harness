@@ -110,7 +110,7 @@ prompt from the start.
 
 | Mode | Schema at boot | Everything else |
 |---|---|---|
-| `default` | The **keep-12** (`read`, `write`, `edit`, `ls`, `bash`, `bash_job`, `lsp`, `web_search`, `web_fetch`, `memory_add`, `memory_search`, `reply`) plus every **capability-conditional** tool whose capability is present (`inspect_image`, `generate_image`, `generate_video`, `decide`, `transcribe_audio`), plus the `others` stub. | Deferred, **discovery on** — listed/mounted via `others` (one `tool_name` call each). |
+| `default` | The **keep-12 + `session_search`** (`read`, `write`, `edit`, `ls`, `bash`, `bash_job`, `lsp`, `web_search`, `web_fetch`, `memory_add`, `memory_search`, `reply`, `session_search` — the recall contract pins it always-on under both engines, issue #2416 review round 2) plus every **capability-conditional** tool whose capability is present (`inspect_image`, `generate_image`, `generate_video`, `decide`, `transcribe_audio`), plus the `others` stub. | Deferred, **discovery on** — listed/mounted via `others` (one `tool_name` call each). |
 | `pi` | `read`, `write`, `edit`, `bash` (pi-mono's exact benchmark shape, issue #679). | Deferred, **discovery off** — no discovery surface; switch modes to load more. |
 | `omp` | `read`, `write`, `edit`, `bash`, `ls`, `task`, `ask`. | Deferred, **discovery on** — listed/mounted via `others`. |
 

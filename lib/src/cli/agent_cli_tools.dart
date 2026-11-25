@@ -351,6 +351,9 @@ extension AgentCliTools on AgentCli {
     // replaces the entry in place, so the gate re-serializes the current
     // variant; the AC9 wire-size pin still holds (only shrinks at boot
     // shape, grows only when the deferred set genuinely grows).
+    // Unregister first: re-registering over a live name raises the
+    // registry's duplicate-name warning on every rebuild (CI round 3).
+    _toolRegistry.unregister(othersToolName);
     _toolRegistry.register(
       othersTool(
         description: _othersDescription(_toolGate.discoverableToolNames),
@@ -433,10 +436,21 @@ extension AgentCliTools on AgentCli {
   Future<AgentTool?> resolveDeferredToolForCall(String name) async {
     final resolution = _toolGate.resolution;
     if (resolution == null) return null;
-    if (_toolGate.discoverableToolNames.isEmpty) return null;
-    if (!_toolGate.discoverableToolNames.contains(name)) return null;
     final id = _toolGate.availabilityIdOf(name) ?? toolAvailabilityIdOf(name);
     if (id != null && !_enabledId(resolution, id)) return null;
+    // A tool mounted EARLIER in this run has left the discoverable set —
+    // but the run's in-flight context snapshot still misses it (the
+    // snapshot copies state.tools at run start). Resolve through the LIVE
+    // REGISTRY membership first — registry presence = mounted and
+    // enabled (issue #2416 CI round 3, second-rewind probe). The gate's
+    // originalTool() is NOT enough here: it hands back unmounted tools,
+    // whose calls would die on the executor's deferred tombstone.
+    final Tool? live = _toolRegistry.tools
+        .where((t) => t.name == name)
+        .firstOrNull;
+    if (live != null) return live as AgentTool;
+    if (_toolGate.discoverableToolNames.isEmpty) return null;
+    if (!_toolGate.discoverableToolNames.contains(name)) return null;
     _mountDeferred([name]);
     return _toolGate.originalTool(name);
   }

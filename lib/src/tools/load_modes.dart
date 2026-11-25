@@ -11,7 +11,8 @@
 /// tests have one source of truth.
 ///
 /// Since GOAL #28 (issue #2416) `defaultMode` is the owner's partition:
-/// twelve essential tool NAMES (the keep-12, [essentialToolNamesByLoadMode])
+/// thirteen essential tool NAMES (the keep-12 plus `session_search`,
+/// [essentialToolNamesByLoadMode])
 /// load into the schema, everything else defers to the `others` discovery
 /// surface, and the four capability-bound media/decide tools stay
 /// conditional on their capability ([conditionalCapabilityToolNames]).
@@ -113,6 +114,12 @@ const essentialToolNamesByLoadMode = <AgentLoadMode, Set<String>>{
     'memory_add',
     'memory_search',
     'reply',
+    // GOAL #28 review round 2 (CI red 45638891484): `session_search` is
+    // an ALWAYS-ON tool — the prompt-recall contract pins it registered
+    // under BOTH compaction engines (agent_cli_prompt_recall_test), so
+    // it rides the keep set despite the card's tier table (row 19 said
+    // deferred). The keep set is thirteen names; the deferred set is 17.
+    'session_search',
   },
 };
 

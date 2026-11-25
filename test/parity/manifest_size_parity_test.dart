@@ -62,10 +62,18 @@ void main() {
     final tools = stream.contexts.first.tools ?? const <Tool>[];
     final names = tools.map((t) => t.name).toSet();
 
-    // The stub must be present and carry the 18 CLI deferred names
+    // The stub must be present and carry the 17 CLI deferred names
     // (the fake env registers every one of them enabled).
     final others = tools.where((t) => t.name == 'others').toList();
     expect(others, hasLength(1), reason: 'the discovery stub rides');
+    // GOAL #28 review round 2: session_search is always-on (the
+    // prompt-recall contract pins it under BOTH engines), so it left the
+    // deferred 18 — the stub names 17.
+    expect(
+      names,
+      contains('session_search'),
+      reason: 'always-on under both compaction engines',
+    );
     for (final deferred in [
       'config',
       'memory_list',
@@ -84,7 +92,6 @@ void main() {
       'checkpoint',
       'rewind',
       'compact_expand',
-      'session_search',
     ]) {
       expect(
         others.single.description,
