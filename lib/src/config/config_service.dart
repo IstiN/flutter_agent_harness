@@ -6,7 +6,8 @@
 /// `fa config check|path|get|set` CLI wrapper.
 ///
 /// Scope model (the `fa-self-config` skill's precedence rule): the project
-/// file is read only for the `memory:`, `cube:` and `tools:` sections and
+/// file is read only for the `memory:`, `cube:`, `tools:` and
+/// `spills:` sections and
 /// each wins over the user file; every other key lives in the user file
 /// only. `set` resolves its scope by default to the project file when one
 /// exists in the env cwd, else the user file; an explicit scope always wins.
@@ -57,7 +58,7 @@ import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
 
 /// Sections the PROJECT file participates in (each wins over the user file).
-const _projectSections = {'memory', 'cube', 'tools', 'compaction'};
+const _projectSections = {'memory', 'cube', 'tools', 'compaction', 'spills'};
 
 /// gh-241 follow-up #5b (parity with the app, owner live test): the ONE
 /// `agent.*` key the project file participates in — the CLI reads it

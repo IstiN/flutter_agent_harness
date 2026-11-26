@@ -107,7 +107,7 @@ same core the human CLI verbs wrap:
 
 `set` answers with the file, scope, old → new value, and whether the change
 applies live or at next boot — echo that in your report (rule 5). `scope`
-defaults by key: `memory`/`cube`/`tools` → the project file (created minimal
+defaults by key: `memory`/`cube`/`tools`/`spills` → the project file (created minimal
 when absent), everything else → the user file; pass `global` or `project`
 to override. Keys come from the topic sections below — the tool rejects
 unknown top-level keys instead of writing them.
@@ -126,7 +126,7 @@ server (`command`/`args`/`env`) need host process spawning: on web and
 iOS/Android containers they are refused; configure a remote server via
 `mcp.servers.<id>.url` instead. On a host with no home directory (web)
 the global scope is refused for every user-file key — only the project
-sections (`memory`/`cube`/`tools`) persist there.
+sections (`memory`/`cube`/`tools`/`spills`) persist there.
 
 Human/script equivalent (thin wrappers over the same service):
 `fa config check`, `fa config path`, `fa config get <dotted.key>`,

@@ -228,6 +228,49 @@ void main() {
         );
       },
     );
+    // gh-2411 rework review (spills): the project file participates in the
+    // `spills:` section too — the app host has always read it
+    // (loadProjectSpillsConfig ?? user section) and the self-settings doc
+    // documents it; the check must not call a live section dead.
+    test('spills in the project file is READ, not dead config', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\nspills:\n  threshold: 4096\n',
+      );
+      await env.writeFile(
+        _projectConfig,
+        '$_validProject\nspills:\n  threshold: 1024\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(
+        report.warnings
+            .map((w) => w.message)
+            .where((m) => m.contains('dead config')),
+        isEmpty,
+      );
+      final result = await service.get('spills.threshold');
+      expect(result.found, isTrue);
+      expect(result.display, '1024');
+      expect(result.scope, 'project');
+      expect(result.file, _projectConfig);
+    });
+
+    test('fa config set spills.threshold defaults to the project scope and '
+        'validates the value', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      final defaulted = await service.set('spills.threshold', '2048');
+      expect(defaulted.scope, 'project');
+      expect(defaulted.file, _projectConfig);
+      expect(
+        (await env.readTextFile(_projectConfig)).getOrThrow(),
+        contains('threshold: 2048'),
+      );
+      // The spills section parses TOLERANTLY by design (issue #678): a
+      // mistyped scalar is a note at boot, never a failure — the write
+      // must succeed exactly like the boot parse accepts it.
+      final tolerant = await service.set('spills.threshold', 'many');
+      expect(tolerant.scope, 'project');
+    });
 
     test(
       'cwd == home: the project pass is skipped — one file, one pass (gh-1573)',
