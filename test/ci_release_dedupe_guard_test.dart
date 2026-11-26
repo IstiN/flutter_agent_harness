@@ -533,8 +533,11 @@ void main() {
       final provenanceIf = provenance['if'].toString();
       expect(
         provenanceIf,
-        contains("needs.binaries.result == 'success'"),
-        reason: 'release-provenance signs what binaries attached',
+        contains("needs.binaries.result != 'skipped'"),
+        reason:
+            'release-provenance signs what binaries attached — keyed '
+            "on the binaries result and rerunnable on a cancelled/failed "
+            'stage (gh-2436), never decoupled from it',
       );
       expect(
         provenanceIf,
