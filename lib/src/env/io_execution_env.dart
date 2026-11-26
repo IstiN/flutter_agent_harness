@@ -25,7 +25,10 @@ FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
   if (error is PathExistsException) {
     return FileError(
-      FileErrorCode.unknown,
+      // Occupancy is a CODED outcome, not unknown (issue #2355): the
+      // manifest-lock coordinator reads the code to retry a rival's
+      // release-in-window instead of surfacing it as an fs failure.
+      FileErrorCode.exists,
       '${error.message}${_osErrorDetail(error.osError)}',
       path: path,
       cause: error,
@@ -82,6 +85,21 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
         '${error.message}$detail',
         path: path,
         cause: error,
+      );
+    }
+    // EEXIST on POSIX (17); ERROR_ALREADY_EXISTS (183) on Windows.
+    // Issue #2355: `File.create(exclusive: true)` on some platforms
+    // throws the PLAIN FileSystemException (not PathExistsException),
+    // and the unmapped variant lost pathExistsAtFailure — the manifest
+    // lock coordinator then surfaced a rival's release-in-window as an
+    // fs failure (hostile-leg errno 17 reds) instead of retrying.
+    if (osError.errorCode == 17 || osError.errorCode == 183) {
+      return FileError(
+        FileErrorCode.exists,
+        '${error.message}$detail',
+        path: path,
+        cause: error,
+        pathExistsAtFailure: true,
       );
     }
   }

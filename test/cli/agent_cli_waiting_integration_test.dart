@@ -35,11 +35,16 @@ Future<void> _deleteBestEffort(Directory dir) async {
       await dir.delete(recursive: true);
       return;
     } on FileSystemException catch (error) {
-      if (attempt >= 3) {
+      // Issue #2355 occ4: 3 x 50ms was thinner than the hostile-leg
+      // straggler window (ENOTEMPTY 39 escaped the seam). A longer
+      // exponential ladder (7 tries, ~12.7s ceiling) still ends in the
+      // printed abandon: a disposable systemTemp artifact must never
+      // fail a green run, but a real straggler gets room to land.
+      if (attempt >= 7) {
         print('teardown left ${dir.path} behind: $error');
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(Duration(milliseconds: 50 << (attempt - 1)));
     }
   }
 }
