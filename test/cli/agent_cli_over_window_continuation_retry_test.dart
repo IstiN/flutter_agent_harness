@@ -1094,7 +1094,10 @@ void main() {
       // requests stay under the window until the fifth read lands, where the relief's keep-2 hide budget cannot free the overage and
       // its valve declines (every result exceeds the 200-token keep
       // budget) — so the window guard REFUSES with BOTH dimensions over:
-      // tokens > window AND count ≥ cap − margin.
+      // tokens > window AND count ≥ cap − margin. (issue #2416: the slim
+      // manifest removed ~12.5k overhead tokens from every estimate, so
+      // the per-read size re-tunes from 500·i to hold the same
+      // under/under/under/over/over request shape.)
       for (var i = 1; i <= 5; i++) {
         // gh-2411: 700·i tokens — with the tiny prompt's ~3.4k overhead
         // the five reads still push the post-fifth-read request past

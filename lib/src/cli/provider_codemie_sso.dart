@@ -233,6 +233,7 @@ extension ProviderCodeMieSso on AgentCli {
     io.writeln(modelLine);
     _printRoleModelsNote();
     await config.onProviderChanged?.call(_providerKind, _apiKey);
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// Step 2: fetch and pick a CodeMie model (or manual entry).

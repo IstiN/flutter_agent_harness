@@ -34,7 +34,8 @@ void main() {
       });
 
       test(
-        'default-mode boot: the task tool is the only surface carrying it',
+        'default-mode boot: the task tool defers; the nudge rides the '
+        'deferred tool + the others stub alone',
         () async {
           final env = MemoryExecutionEnv(cwd: '/work');
           final io = FakeCliIO();
@@ -59,29 +60,24 @@ void main() {
           await run;
           await io.close();
 
-          final task = cli.agent.state.tools
-              .where((tool) => tool.name == 'task')
-              .toList(growable: false);
-          expect(task, hasLength(1), reason: 'default mode registers task');
-          for (final sentence in _nudgeSentences) {
-            expect(task.single.description, contains(sentence));
-          }
-          final otherCarriers = cli.agent.state.tools
+          // GOAL #28 (issue #2416): the default partition defers `task` —
+          // the nudge's carrier stays out of the boot manifest (one
+          // `others(tool_name: "task")` call loads it, nudge included).
+          final manifestCarriers = cli.agent.state.tools
               .where(
-                (tool) =>
-                    tool.name != 'task' &&
-                    tool.description.contains(
-                      'Your session context is limited',
-                    ),
+                (tool) => tool.description.contains(
+                  'Your session context is limited',
+                ),
               )
               .map((tool) => tool.name)
               .toList();
-          expect(
-            otherCarriers,
-            isEmpty,
-            reason:
-                'the nudge has exactly one source: the task tool description',
-          );
+          expect(manifestCarriers, isEmpty, reason: 'task is deferred');
+          final others = cli.agent.state.tools
+              .where((tool) => tool.name == 'others')
+              .toList(growable: false);
+          expect(others, hasLength(1));
+          expect(others.single.description, contains('task'),
+              reason: 'the deferred carrier is named in the stub');
         },
       );
     },

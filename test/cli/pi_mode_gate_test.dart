@@ -113,7 +113,14 @@ void main() {
             orElse: () => '',
           );
           expect(line, isNotEmpty, reason: '$id must be listed by /tools');
-          expect(line, contains(on ? ' on ' : ' off '), reason: '$id: $line');
+          // GOAL #28 renamed the enabled vocabulary: an enabled tool
+          // renders `loaded` (the /tools surface is loaded · deferred ·
+          // off(reason)).
+          expect(
+            line,
+            contains(on ? ' loaded ' : ' off '),
+            reason: '$id: $line',
+          );
         }
       },
     );
@@ -150,12 +157,40 @@ void main() {
     test(
       'the same MCP config registers its tool in default mode (control)',
       () async {
+        // GOAL #28 (issue #2416): default mode DEMOTES MCP families — the
+        // tool defers to the `others` discovery surface (hidden from the
+        // schema, mountable by name). The control's purpose is unchanged:
+        // contrast with pi's shape above, where the same server's tool is
+        // FULLY off — no discovery surface, nothing to mount. Here the
+        // tool must be known to the gate (discoverable) and mountable.
         final fake = FakeStreamFunction([textTurn('ok')]);
         final cli = cliFor(fake.call, mcpConfig: fakeMcpConfig(pingFactory()));
         final run = cli.run();
+        // Drive the REAL discovery surface: `others` with tool_name
+        // mounts the deferred tool (the model's own flow).
+        Tool? othersTool() => cli.agent.state.tools
+            .whereType<Tool>()
+            .where((t) => t.name == 'others')
+            .firstOrNull;
         await waitForIt(
-          () => cli.agent.state.tools.any((t) => t.name == 'mcp__fs__ping'),
-          reason: 'mcp tool registered in default mode',
+          () => othersTool() != null,
+          reason: 'the others stub registered',
+        );
+        final mounted = await (othersTool()! as AgentTool).execute(
+          const {'tool_name': 'mcp__fs__ping'},
+          null,
+          null,
+        );
+        expect(
+          (mounted.content.whereType<TextContent>().map((b) => b.text).join())
+              .contains('mcp__fs__ping'),
+          isTrue,
+          reason: 'the mount documents the deferred tool (E10)',
+        );
+        expect(
+          cli.agent.state.tools.any((t) => t.name == 'mcp__fs__ping'),
+          isTrue,
+          reason: 'mounted mcp tool enters the schema',
         );
         io.sendLine('/exit');
         await run;

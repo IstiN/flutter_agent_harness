@@ -21,6 +21,7 @@ library;
 
 import '../model_roles/media_model_slots.dart';
 import '../model_roles/models_config.dart';
+import 'availability.dart';
 import 'generate_image.dart' show MediaKeyResolver, resolveMediaSlotKey;
 import 'inspect_image.dart';
 import 'transcribe_audio.dart';
@@ -154,4 +155,32 @@ Future<TranscribeAudioConfig?> Function() cliTranscriptionSlotResolver({
       mainApiKey: mainApiKey(),
     );
   };
+}
+
+/// The availability capability for one media GENERATION slot (GOAL #28,
+/// issue #2416): present iff the slot override is set and not marked
+/// unsupported (#2085) — a pure configuration check. The async endpoint
+/// resolvers (`resolveImageGenerationEndpoint`/`resolveVideoGenerationEndpoint`)
+/// keep resolving keys at call time; no secret is ever read for a
+/// manifest decision (#2416 security model).
+ToolCapability mediaGenerationSlotCapability(
+  ModelsConfig? modelsConfig,
+  String slotId,
+) {
+  final override = modelsConfig?.slots[slotId];
+  if (override == null) {
+    return ToolCapability.absent(
+      'no $slotId slot configured — set models.slots.$slotId '
+      '(/settings → Media models) or models.slots.$slotId.'
+      'useMainConnection: true',
+    );
+  }
+  if (override.unsupported) {
+    return ToolCapability.absent(
+      'the $slotId slot is marked unsupported — clear '
+      'models.slots.$slotId.unsupported (/settings → Media models) '
+      'to re-enable',
+    );
+  }
+  return const ToolCapability.available();
 }

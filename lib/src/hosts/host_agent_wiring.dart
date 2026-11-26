@@ -98,6 +98,7 @@ import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
+import '../tools/media_slot_configs.dart';
 import '../tools/obligation_tool.dart';
 import '../tools/working_set_tool.dart';
 import '../tools/password_prompt.dart';
@@ -155,14 +156,25 @@ final class MediaToolServices {
 /// main-connection accessors and gates on the main provider kind itself
 /// before any network call. Its own bundle means a host that wires no
 /// [MediaToolServices] still surfaces `decide` when it provides this
-/// facility (matching `agent_cli_tools.dart`, which declares `decide`
-/// unconditionally).
+/// facility. GOAL #28 (issue #2416): [mainProviderKind] is the BIRTH
+/// capability source — the tool registers at boot only when the main
+/// connection's provider is OpenRouter (the tool's own call-time gate
+/// becomes the registration predicate); the host's live sync (its
+/// availability rebuild) re-decides from the live agent model afterwards.
 final class DecisionsServices {
   /// The live main API key — resolved per call so runtime `/provider`
   /// switches apply to decisions calls exactly as to chat calls.
   final String Function() mainApiKey;
 
-  const DecisionsServices({required this.mainApiKey});
+  /// The main connection's provider id (`openrouter`, `openai`, …) — read
+  /// once at birth for the registration predicate; live transitions are
+  /// the host availability rebuild's job.
+  final String Function() mainProviderKind;
+
+  const DecisionsServices({
+    required this.mainApiKey,
+    required this.mainProviderKind,
+  });
 }
 
 /// The subagent/task complex the builder assembles when the profile wires
@@ -921,36 +933,62 @@ List<AgentTool> _buildCoreTools({
     ...?media == null
         ? null
         : [
-            generateImageTool(
-              env: env,
-              modelsConfig: media.modelsConfig,
-              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
-              mainModelId: () => currentAgent()!.state.model.id,
-              mainApiKey: media.mainApiKey,
-              resolveKey: media.resolveKey,
-            ),
-            generateVideoTool(
-              env: env,
-              modelsConfig: media.modelsConfig,
-              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
-              mainModelId: () => currentAgent()!.state.model.id,
-              mainApiKey: media.mainApiKey,
-              resolveKey: media.resolveKey,
-            ),
+            // GOAL #28 (issue #2416): capability-conditional birth — a
+            // media tool whose slot is unset or marked unsupported is
+            // ABSENT (unregistered; the host's /tools names the reason),
+            // never present-and-erroring (#1079 rule). Pure
+            // configuration checks: no key is resolved here (the async
+            // endpoint resolvers keep that at call time).
+            ...?mediaGenerationSlotCapability(
+                  media.modelsConfig,
+                  'imageGeneration',
+                ).present
+                ? [
+                    generateImageTool(
+                      env: env,
+                      modelsConfig: media.modelsConfig,
+                      mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+                      mainModelId: () => currentAgent()!.state.model.id,
+                      mainApiKey: media.mainApiKey,
+                      resolveKey: media.resolveKey,
+                    ),
+                  ]
+                : null,
+            ...?mediaGenerationSlotCapability(
+                  media.modelsConfig,
+                  'videoGeneration',
+                ).present
+                ? [
+                    generateVideoTool(
+                      env: env,
+                      modelsConfig: media.modelsConfig,
+                      mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+                      mainModelId: () => currentAgent()!.state.model.id,
+                      mainApiKey: media.mainApiKey,
+                      resolveKey: media.resolveKey,
+                    ),
+                  ]
+                : null,
           ],
     // gh-1844: structured decisions via OpenRouter's Decisions API —
     // rides the main connection when (and only when) the main provider
     // is OpenRouter (the tool gates with an actionable error otherwise,
     // before any network call). Its own facility bundle (review): the
-    // tool's availability must not depend on the media facility.
+    // tool's availability must not depend on the media facility. GOAL
+    // #28: the call-time gate is also the BIRTH registration predicate.
     ...?services.decisions == null
         ? null
         : [
-            decideTool(
-              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
-              mainProviderKind: () => currentAgent()!.state.model.provider,
-              mainApiKey: services.decisions!.mainApiKey,
-            ),
+            ...?services.decisions!.mainProviderKind() == 'openrouter'
+                ? [
+                    decideTool(
+                      mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+                      mainProviderKind: () =>
+                          currentAgent()!.state.model.provider,
+                      mainApiKey: services.decisions!.mainApiKey,
+                    ),
+                  ]
+                : null,
           ],
     ...?browser,
   ];

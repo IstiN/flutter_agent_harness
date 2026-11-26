@@ -327,7 +327,7 @@ export 'src/tools/working_set_tool.dart';
 export 'src/tools/session_search_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';
-export 'src/tools/discover_tools_tool.dart';
+export 'src/tools/others_tool.dart';
 export 'src/tools/load_modes.dart';
 export 'src/tools/archive_reader.dart';
 export 'src/tools/bash_auto_background.dart';

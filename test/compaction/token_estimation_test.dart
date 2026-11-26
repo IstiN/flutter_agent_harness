@@ -948,4 +948,40 @@ void main() {
       expect(estimateProjectedBranchTokens(branch.sublist(4)), 100);
     });
   });
+
+  group(
+    'estimateRequestOverheadTokens tracks the mounted set (GOAL #2416 UT-9)',
+    () {
+      Tool tool(
+        String name,
+        String description,
+        Map<String, Object?> parameters,
+      ) => Tool(name: name, description: description, parameters: parameters);
+
+      test('a slimmer manifest prices less; a mount raises the overhead', () {
+        final big = tool('big_tool', 'x' * 4000, {
+          'type': 'object',
+          'properties': {
+            'path': {'type': 'string'},
+          },
+        });
+        final stub = tool('others', 'y' * 300, {
+          'type': 'object',
+          'properties': {
+            'tool_name': {'type': 'string'},
+          },
+        });
+        final full = estimateRequestOverheadTokens(null, [big, stub]);
+        final partitioned = estimateRequestOverheadTokens(null, [stub]);
+        final mounted = estimateRequestOverheadTokens(null, [stub, big]);
+        expect(partitioned, lessThan(full), reason: 'demotion saves overhead');
+        expect(
+          mounted,
+          greaterThan(partitioned),
+          reason: 'a mount adds it back',
+        );
+        expect(mounted, full, reason: 'mounting restores the exact overhead');
+      });
+    },
+  );
 }

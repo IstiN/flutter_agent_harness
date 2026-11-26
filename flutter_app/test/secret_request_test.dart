@@ -137,6 +137,8 @@ void main() {
         env: MemoryExecutionEnv(cwd: '/', shell: shell),
         sessionKeys: sessionKeys,
       );
+      // GOAL #28: request_secret defers to the others surface.
+      await mountViaOthers(service, ['request_secret']);
       final tool = service.toolsForTest.whereType<AgentTool>().singleWhere(
         (tool) => tool.name == 'request_secret',
       );
@@ -253,5 +255,17 @@ final class _RecordingShell implements Shell {
   }) async {
     lastOptions = options;
     return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+}
+
+/// GOAL #28 (issue #2416): deferred tools mount through the `others`
+/// discovery surface — the app-side test helper mirroring the model's own
+/// flow: execute others with tool_name per deferred name.
+Future<void> mountViaOthers(AgentService service, List<String> names) async {
+  final others = service.toolsForTest.whereType<AgentTool>().singleWhere(
+    (t) => t.name == 'others',
+  );
+  for (final name in names) {
+    await others.execute({'tool_name': name}, null, null);
   }
 }

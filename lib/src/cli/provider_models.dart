@@ -1392,6 +1392,7 @@ extension on AgentCli {
       io.writeln('  ${_providerKeyLine(spec, def.baseUrl, explicit: false)}');
     }
     await config.onModelChanged?.call(_agent.state.model);
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// Compact post-switch note: the role models that did NOT move with the
@@ -1528,6 +1529,7 @@ extension on AgentCli {
       // per-provider model memory write must survive restarts even when
       // nothing else changed).
       await _recordCustomModel(modelId);
+      unawaited(AgentCliTools(this).rebuildToolAvailability());
       return;
     }
     _agent.state.model = Model(
@@ -1563,6 +1565,7 @@ extension on AgentCli {
     // _recordCustomModel ALWAYS notifies the host (not just with an active
     // custom entry) — the single onModelChanged fire for this switch.
     await _recordCustomModel(modelId);
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// The G1 backstop verdict (gh-178) for an id reaching [_switchModel]

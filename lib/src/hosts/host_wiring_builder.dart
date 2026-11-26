@@ -110,13 +110,13 @@ hostCapabilityCatalog = Map.unmodifiable({
   ),
   HostCapability.loadModes: CapabilitySpec(
     capability: HostCapability.loadModes,
-    title: 'Load modes + discover_tools',
-    note: 'Essential-set demotion and the discover_tools registration.',
+    title: 'Load modes + others',
+    note: 'Partition demotion and the others discovery registration.',
     cliWiringSites: [
       'bin/fah.dart (loadMode)',
       'lib/src/cli/agent_cli_tools.dart',
     ],
-    surface: CapabilitySurface(tokens: {'discover_tools'}),
+    surface: CapabilitySurface(tokens: {'others'}),
   ),
   HostCapability.mcp: CapabilitySpec(
     capability: HostCapability.mcp,

@@ -87,6 +87,8 @@ void main() {
         'ranks it for its own keywords', () async {
       final env = MemoryExecutionEnv(cwd: '/');
       final service = await _createService(env);
+      // GOAL #28: memory_list defers to the others surface — mount it.
+      await mountViaOthers(service, ['memory_list']);
 
       const note =
           'User prefers running flutter tests with --concurrency 1 on CI';
@@ -215,4 +217,16 @@ void main() {
       },
     );
   });
+}
+
+/// GOAL #28 (issue #2416): deferred tools mount through the `others`
+/// discovery surface — the app-side test helper mirroring the model's own
+/// flow: execute others with tool_name per deferred name.
+Future<void> mountViaOthers(AgentService service, List<String> names) async {
+  final others = service.toolsForTest.whereType<AgentTool>().singleWhere(
+    (t) => t.name == 'others',
+  );
+  for (final name in names) {
+    await others.execute({'tool_name': name}, null, null);
+  }
 }

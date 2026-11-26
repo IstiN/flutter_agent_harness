@@ -548,7 +548,7 @@ void main() {
         'capability',
         HostCapability.compaction,
       ),
-      'load modes + discover_tools': ('capability', HostCapability.loadModes),
+      'load modes + others': ('capability', HostCapability.loadModes),
       'mcp servers (stdio + remote)': ('capability', HostCapability.mcp),
       'messaging fabric (file + hub + a2a)': (
         'capability',
@@ -763,7 +763,7 @@ void main() {
       expectCapabilitySurfaces(plan, HostCapability.jsExtensions);
       expect(
         plan.surfacedTokens,
-        containsAll({'discover_tools', 'bash_job', 'mcp:stdio', 'mcp:remote'}),
+        containsAll({'others', 'bash_job', 'mcp:stdio', 'mcp:remote'}),
       );
     });
   });

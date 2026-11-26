@@ -42,10 +42,12 @@ void main() {
   tearDown(() => io.close());
 
   /// Seeds the resumed session with a base transcript just UNDER the
-  /// compaction trigger (11 × ~1k-token messages + the ~10k request
-  /// overhead ≈ 21k of a 24,576 trigger): no boot cap, no pre-flight
-  /// compaction — the ONLY thing that pushes the context over the trigger
-  /// is the mid-run restore in run 3. The post-read transcript (~17k)
+  /// compaction trigger (17 × ~1k-token messages + the ~3.9k request
+  /// overhead ≈ 21k of a 24,576 trigger — issue #2416: the slim manifest
+  /// removed ~12.5k overhead tokens, so the seed count re-tunes to hold
+  /// the same ~21k boot shape): no boot cap, no pre-flight compaction —
+  /// the ONLY thing that pushes the context over the trigger is the
+  /// mid-run restore in run 3. The post-read transcript (~17k)
   /// also stays under the summarizer's single-chunk payload budget
   /// (window − reserve = 24,576), so the forced pass makes exactly ONE
   /// summarizer call.
@@ -55,7 +57,7 @@ void main() {
       JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
     );
     await seed.appendSessionName('restore-budget-target');
-    for (var i = 0; i < 11; i++) {
+    for (var i = 0; i < 17; i++) {
       await seed.appendMessage(UserMessage.text('seed$i ${'a' * 4000}'));
     }
   }

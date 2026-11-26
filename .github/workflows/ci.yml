@@ -5078,8 +5078,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: [binaries, web-spa, build-extension]
     timeout-minutes: 10
+    # gh-2436 (v1.0.782): != 'skipped', NOT == 'success'. A CANCELLED or
+    # FAILED binaries stage used to SKIP the publish point (run
+    # 45830131519: the fa-m5-3 checkout hang hit the 45m timeout) — and
+    # `gh run rerun --failed` never resurrects skipped jobs (v1.0.483),
+    # so the red tag + stale vpinned marker needed a ~2h FULL rerun
+    # instead of a rerun --failed recovery. Now the job RUNS in that
+    # state and its gh-1832 required-assets gate fails LOUDLY on the
+    # missing asset BEFORE "Build and sign SHA256SUMS" and BEFORE the
+    # --draft=false --latest flip — fail-closed, draft untouched, and a
+    # FAILED job IS rerunnable (gh-1899 vessel). When binaries SKIPS
+    # (failed quality gate / non-release refs) nothing was built, so
+    # provenance still skips: `!= 'skipped'` keeps exactly that arm.
     if: >-
-      !cancelled() && needs.binaries.result == 'success' &&
+      !cancelled() && needs.binaries.result != 'skipped' &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'release')
     permissions:

@@ -449,6 +449,13 @@ class Agent {
   /// Executes tool calls requested by the model. See [ToolExecutor].
   ToolExecutor toolExecutor;
 
+  /// GOAL #28 (issue #2416 review round 2): resolves a tool call naming a
+  /// tool MISSING from the manifest (the default partition defers it) by
+  /// mounting it live and returning it — the deferred-mount path. Null
+  /// keeps the plain not-found semantics. See
+  /// [AgentLoopConfig.missingToolResolver].
+  Future<Tool?> Function(String name)? missingToolResolver;
+
   /// The tool-misuse circuit breaker (issue #862): 3 consecutive identical
   /// tool-call rejections arm a corrective note in the next request
   /// payload; 6 stop executing that identical call for the rest of the run.
@@ -934,6 +941,7 @@ class Agent {
       takePendingNotices: _takePendingContextNotices,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
+      missingToolResolver: missingToolResolver,
       transformContext: transformContext,
       budgetLineProvider: budgetLineProvider,
       prepareNextTurn: prepareNextTurn == null
