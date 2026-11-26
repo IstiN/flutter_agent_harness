@@ -222,7 +222,12 @@ void main() {
         reason: after,
       );
       expect(after, isNot(contains('older message(s) were dropped')));
-      final messages = stream.contexts.single.messages;
+      // The turn's request is the FIRST context. Under the merged
+      // machinery (gh-2423 post-hide notice + the slim manifest's smaller
+      // overhead) a post-run fold may add a summarizer context after it,
+      // so `.single` no longer holds — same seam as the sibling
+      // resume_boot_cap locator fix.
+      final messages = stream.contexts.first.messages;
       // gh-2423 C3: the near-limit notice (the calibrated estimate sits in
       // the band of this small fixture window) rides the first request as
       // the LAST message — the queued-notice delivery contract. The turn
