@@ -64,6 +64,19 @@ block a release again.
   unknown-route pass-through; grep guard test pins the single
   construction site.
 
+- fix(2362): nightly-red tracker self-heal — the auto-issue close leg fires
+  on red nights too (step-level `success()` inside the `always()`-gated
+  job cannot see `needs` failures), so the open tracker got a "Green
+  again" close while the run's PTY/CLI + ios legs had failed hours
+  earlier, and the reopen keeping it alive lived outside the bot (fleet
+  monitor sweeps) — it missed 2/2 consecutive nights (manual reopens of
+  #1953). The close leg itself is unchanged (AC3) and now only exports
+  the number it closed; a new schedule-only self-heal step re-opens the
+  tracker back-to-back on red nights, verifies OPEN with one bounded
+  retry (AC1), and stamps a `reopen-failed` label + comment on
+  exhaustion (AC2). Decision pinned by
+  scripts/nightly_red_tracker_selftest.sh (stubbed gh, #1100 pattern),
+  wired into ci.yml Static gates.
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in
