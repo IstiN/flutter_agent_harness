@@ -521,31 +521,12 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       },
       onAuthRecovery: (providerId) async {
-        // The host session (gh-2391): one silent bridge re-read first —
-        // the host page may have re-published a fresh scoped key since the
-        // failure. Restored → invite a retry; still gone → the providers
-        // screen (the host entry reads "not configured" there; the stock
-        // connect flows remain reachable). Local session data is never
-        // touched, and never a manual key dialog.
+        // The host session (gh-2391) owns its own recovery path — kept
+        // out of this build method (the CRAP ratchet: build is at the
+        // ratchet's edge; the branch-heavy recovery lives in
+        // [_handleHostAuthRecovery]).
         if (providerId == 'host') {
-          final restored = HostSessionHandle.instance.reResolveKey();
-          if (!context.mounted) return;
-          if (restored) {
-            fa_ui.showFahSnack(context, context.l10n.hostSessionRestored);
-          } else {
-            unawaited(
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    service: service,
-                    env: service.env,
-                    registry: widget.registry,
-                    lastConnectionStore: widget.lastConnectionStore,
-                  ),
-                ),
-              ),
-            );
-          }
+          unawaited(_handleHostAuthRecovery(context));
           return;
         }
         if (providerId != 'codemie') return;
@@ -569,6 +550,34 @@ class _ChatScreenState extends State<ChatScreen> {
       videoControllerFactory: widget.videoControllerFactory,
     );
   }
+  /// The host session's auth-expired recovery (gh-2391): one silent
+  /// bridge re-read first — the host page may have re-published a fresh
+  /// scoped key since the failure. Restored → invite a retry; still gone →
+  /// the providers screen (the host entry reads "not configured" there;
+  /// the stock connect flows remain reachable). Local session data is
+  /// never touched, and never a manual key dialog.
+  Future<void> _handleHostAuthRecovery(BuildContext context) async {
+    final service = widget.service;
+    final restored = HostSessionHandle.instance.reResolveKey();
+    if (!context.mounted) return;
+    if (restored) {
+      fa_ui.showFahSnack(context, context.l10n.hostSessionRestored);
+    } else {
+      unawaited(
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SettingsScreen(
+              service: service,
+              env: service.env,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
 }
 
 /// Maps a [permission] name to the macOS Privacy & Security pane anchor.
