@@ -102,6 +102,20 @@ if [ "\$1" = "release" ] && [ "\$2" = "create" ]; then
     echo "body is too long (maximum is 125000 characters)" >&2
     exit 1
   fi
+  # gh-2432: fail the FIRST N creates with a TRANSIENT GitHub API 5xx —
+  # the exact v1.0.778 shape (HTTP 500 from POST /releases on every
+  # hosted binaries leg while the release still materialised minutes
+  # later). The counter counts create ATTEMPTS, so the retry under test
+  # answers 500 for attempts ≤ N and succeeds afterwards.
+  n5xx="\${GH_STUB_CREATE_FAILS_5XX_N:-0}"
+  if [ "\$n5xx" -gt 0 ]; then
+    n=\$(( \$(cat "\$GH_STUB_STATE/creates-attempted" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" > "\$GH_STUB_STATE/creates-attempted"
+    if [ "\$n" -le "\$n5xx" ]; then
+      echo "HTTP 500 (https://api.github.com/repos/OWNER/REPO/releases) (stub)" >&2
+      exit 1
+    fi
+  fi
   exit 0
 fi
 exit 0
