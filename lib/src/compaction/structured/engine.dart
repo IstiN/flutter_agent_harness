@@ -1683,13 +1683,55 @@ final class StructuredCompactor {
         if (!_nonFoldable(view_, entry.recordId, userTurn)) entry,
     ];
     if (foldable.isEmpty) return null;
-    var tailBudget = settings.keepRecentTokens;
+    // gh-2411 × the keep-recent walk (the flutter_app compaction ITs, the
+    // agent_service twin of the CLI seam): the protected turn never enters
+    // `foldable`, but its weight still consumes keep-recent budget — the
+    // walk below measures FOLDABLE tokens only. A fat newest user prompt
+    // (the app's three-turn fixture class, and any chat session whose
+    // question outweighs `keepRecentTokens`) used to leave the walk with
+    // `cut == 0` — fold nothing — while the transcript sat OVER the
+    // trigger: the ladder honestly surfaced `false`, and the lossy
+    // classic residual took the pass, dropping the question anyway —
+    // the exact outcome the invariant exists to prevent. The turn's
+    // weight moves to the fold side here: the kept tail budgets
+    // `keepRecentTokens` MINUS what the protected turn already occupies.
+    // The invariant is untouched (the turn is never foldable); only the
+    // relief math sees it, so a ladder pass over the trigger still folds
+    // for relief and the newest question always survives.
+    //
+    // The seed is a RELIEF-required-context correction and applies to the
+    // ladder and the merged hand-over gate only (`wholeWorldDeclines ==
+    // false`): the escalation's deepening pass runs UNDER the trigger,
+    // where gh-2044 semantic 5 forbids folding the live tail, and its
+    // chunker calibration (UT-ESC-11) is pinned to the unseeded walk.
+    var protectedTurnTokens = 0;
+    if (!wholeWorldDeclines) {
+      for (final entry in view_.ledger.entries) {
+        if (userTurn.contains(entry.recordId)) {
+          protectedTurnTokens += entry.tokens;
+        }
+      }
+    }
+    // The protected turn alone can OUTWEIGH `keepRecentTokens` (the app's
+    // hand-over IT keeps the boundary at 24 tokens against a ~150-token
+    // prompt): the seed then lands at or below zero and there is no
+    // foldable tail to keep — the protected turn IS the kept tail, and
+    // the whole foldable prefix folds. Skipping the walk at a non-positive
+    // seed restores the pre-invariant hand-over/ladder behaviour (the
+    // range picker never declined this fixture class); a positive seed
+    // walks exactly as before, minus the turn's weight.
+    final seededBudget = wholeWorldDeclines
+        ? settings.keepRecentTokens
+        : settings.keepRecentTokens - protectedTurnTokens;
+    var tailBudget = seededBudget > 0 ? seededBudget : 0;
     var cut = foldable.length;
-    for (var i = foldable.length - 1; i >= 0; i--) {
-      tailBudget -= foldable[i].tokens;
-      if (tailBudget <= 0) {
-        cut = i;
-        break;
+    if (seededBudget > 0) {
+      for (var i = foldable.length - 1; i >= 0; i--) {
+        tailBudget -= foldable[i].tokens;
+        if (tailBudget <= 0) {
+          cut = i;
+          break;
+        }
       }
     }
     // gh-2044 rework (CI regression): when the walk above never exhausts
