@@ -2643,7 +2643,12 @@ ToolExecutionResult _exceptionToolResult(String name, Object message) {
               // gh-1444 AC5: a shell timeout is the command's verdict, not
               // a harness fault — the honest "timed out after Ns" carrier
               // must not wear the "uncaught exception" hint.
-              text.contains('Command timed out')));
+              text.contains('Command timed out') ||
+              // Issue #2415: fd-table exhaustion is the environment's
+              // state, not a harness defect — the typed "fd pressure"
+              // carrier (spawn EMFILE, retried once by the tool layer)
+              // must not tell the model its bash tool is broken.
+              text.contains('fd pressure')));
   final rendered = text.isEmpty ? '<no error message>' : text;
   return ToolExecutionResult(
     content: [

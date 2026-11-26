@@ -1,106 +1,105 @@
-/// The VM [FdLimitBackend] (gh-2415): `getrlimit`/`setrlimit(RLIMIT_NOFILE)`
-/// through `dart:ffi` against the process's own libc — macOS and 64-bit
-/// Linux only, the two POSIX hosts the CLI ships for where the launchd /
-/// systemd soft default (256 / 1024) is the exhaustion driver. Every
-/// failure degrades to null / false: the raise is best-effort and never
-/// takes a boot down. Platform glue only — exported from `lib/io.dart`
-/// behind the web stub.
+/// Process file-descriptor limit handling (issue #2415).
+///
+/// A long-lived orchestrator session spikes its fd table (3 pipes per bash
+/// call, subagent hooks, directory watchers, adopted-job polls) against the
+/// macOS launchd default soft limit of 256 — `ulimit -Hn` is unlimited, so
+/// the soft limit is raised once at host startup, best-effort, through
+/// libc's `getrlimit`/`setrlimit` (every Dart VM process links libc).
+///
+/// Exported only from `lib/io.dart` — web has no FFI; Windows has no
+/// equivalent soft limit (the stub answers null).
 library;
 
-import 'dart:ffi';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
-// The constructor params keep their public names (get/set) while the
-// fields stay private — same shape as scheduled_receipts.dart.
-// ignore_for_file: prefer_initializing_formals
+/// The soft limit the CLI raises to (`min(hard, 10240)` — the value the
+/// issue measured as safe headroom for a 3-subagent orchestrator).
+const fdLimitTarget = 10240;
 
-import 'fd_limit.dart';
+/// Darwin `RLIM_INFINITY` (max int64); Linux uses max uint64, which loads
+/// as a negative Dart int. Anything in this class is "unlimited".
+const int _rlimInfinitySentinel = 0x7fffffffffffffff;
 
-/// `struct rlimit { rlim_t rlim_cur; rlim_t rlim_max; }` — `rlim_t` is
-/// `unsigned long`, 64-bit on both supported hosts.
-final class _Rlimit extends Struct {
-  @Uint64()
-  external int cur;
-  @Uint64()
-  external int max;
-}
-
-typedef _GetrlimitC = Int32 Function(Int32 resource, Pointer<_Rlimit> rlim);
-typedef _GetrlimitDart = int Function(int resource, Pointer<_Rlimit> rlim);
-typedef _SetrlimitC = Int32 Function(Int32 resource, Pointer<_Rlimit> rlim);
-typedef _SetrlimitDart = int Function(int resource, Pointer<_Rlimit> rlim);
-
-/// `RLIMIT_NOFILE`: 8 on Darwin, 7 on generic Linux (x86_64 / aarch64).
+/// `RLIMIT_NOFILE`: 8 on macOS, 7 on Linux (both in `sys/resource.h`).
 int get _rlimitNofile => Platform.isMacOS ? 8 : 7;
 
-/// The backend over this process's libc, or null when the host has no
-/// POSIX rlimit (Windows, a non Darwin/Linux POSIX with other constants),
-/// the ABI is not 64-bit, or the symbols are missing.
-FdLimitBackend? systemFdLimitBackend() {
-  if (!Platform.isMacOS && !Platform.isLinux) return null;
-  if (sizeOf<IntPtr>() != 8) return null;
+final class _RLimit extends ffi.Struct {
+  @ffi.Uint64()
+  external int rlimCur;
+
+  @ffi.Uint64()
+  external int rlimMax;
+}
+
+typedef _RLimitOpC = ffi.Int32 Function(ffi.Int32, ffi.Pointer<_RLimit>);
+typedef _RLimitOpDart = int Function(int, ffi.Pointer<_RLimit>);
+
+/// The current (soft, hard) fd limits; null when unsupported or the libc
+/// lookup fails (never throws — callers are best-effort boot paths).
+({int soft, int hard})? fdLimits() {
+  if (Platform.isWindows) return null;
   try {
-    final lib = DynamicLibrary.process();
-    final getrlimit = lib.lookupFunction<_GetrlimitC, _GetrlimitDart>(
+    final libc = ffi.DynamicLibrary.process();
+    final getrlimit = libc.lookupFunction<_RLimitOpC, _RLimitOpDart>(
       'getrlimit',
     );
-    final setrlimit = lib.lookupFunction<_SetrlimitC, _SetrlimitDart>(
-      'setrlimit',
-    );
-    final resource = _rlimitNofile;
-    return _FfiFdLimitBackend(
-      get: (out) => getrlimit(resource, out) == 0,
-      set: (rlim) => setrlimit(resource, rlim) == 0,
-    );
+    final rl = calloc<_RLimit>();
+    try {
+      if (getrlimit(_rlimitNofile, rl) != 0) return null;
+      return (soft: rl.ref.rlimCur, hard: rl.ref.rlimMax);
+    } finally {
+      calloc.free(rl);
+    }
   } on Object {
     return null;
   }
 }
 
-final class _FfiFdLimitBackend implements FdLimitBackend {
-  _FfiFdLimitBackend({
-    required bool Function(Pointer<_Rlimit>) get,
-    required bool Function(Pointer<_Rlimit>) set,
-  }) : _get = get,
-       _set = set;
+bool _raisedOnce = false;
 
-  final bool Function(Pointer<_Rlimit>) _get;
-  final bool Function(Pointer<_Rlimit>) _set;
-
-  @override
-  FdLimits? getLimits() {
-    final out = calloc<_Rlimit>();
+/// Raises the fd soft limit to `min(hard, [target])`, once per process.
+/// Returns the limits AFTER the attempt (the raised state on success, the
+/// untouched state when already at/above the target or the syscall
+/// refused); null when unsupported. Best-effort: never throws.
+({int soft, int hard})? raiseFdLimitOnce({int target = fdLimitTarget}) {
+  final limits = fdLimits();
+  if (limits == null) return null;
+  final hard = limits.hard < 0 || limits.hard >= _rlimInfinitySentinel
+      ? target
+      : limits.hard;
+  final wanted = hard < target ? hard : target;
+  if (_raisedOnce || limits.soft >= wanted) return limits;
+  _raisedOnce = true;
+  try {
+    final libc = ffi.DynamicLibrary.process();
+    final setrlimit = libc.lookupFunction<_RLimitOpC, _RLimitOpDart>(
+      'setrlimit',
+    );
+    final rl = calloc<_RLimit>();
     try {
-      if (!_get(out)) return null;
-      // RLIM_INFINITY arrives as all-ones: Dart's signed 64-bit int reads
-      // it as -1 — the backend contract's "unlimited".
-      return (soft: out.ref.cur, hard: out.ref.max);
+      rl.ref.rlimCur = wanted;
+      rl.ref.rlimMax = limits.hard;
+      if (setrlimit(_rlimitNofile, rl) != 0) return limits;
     } finally {
-      calloc.free(out);
+      calloc.free(rl);
     }
+  } on Object {
+    return limits;
   }
-
-  @override
-  bool setSoftLimit(int soft) {
-    final current = getLimits();
-    if (current == null) return false;
-    final rlim = calloc<_Rlimit>();
-    try {
-      rlim.ref.cur = soft;
-      rlim.ref.max = current.hard;
-      return _set(rlim);
-    } finally {
-      calloc.free(rlim);
-    }
-  }
+  return fdLimits();
 }
 
-FdLimitRaiser? _raiser;
-
-/// Raises this process's `RLIMIT_NOFILE` soft limit to
-/// min(hard, [fdLimitTarget]) — exactly once per process (the second call
-/// is a no-op answering null). Null when the host has no backend.
-FdLimitOutcome? raiseFdLimitOnce() =>
-    (_raiser ??= FdLimitRaiser(backend: systemFdLimitBackend())).apply();
+/// True when [error] is the spawn-time fd-table exhaustion (EMFILE 24 /
+/// ENFILE 23, or the strerror text as a belt for platform variants) —
+/// issue #2415: the bash tool must answer this as a typed, environmental
+/// failure, not an uncaught `ProcessException`.
+bool isFdExhaustion(Object error) {
+  if (error is ProcessException) {
+    // EMFILE (24) / ENFILE (23) — dart:io names the field `errorCode`.
+    if (error.errorCode == 23 || error.errorCode == 24) return true;
+  }
+  return error.toString().contains('Too many open files');
+}

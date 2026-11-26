@@ -92,10 +92,20 @@ part 'fah_runapp.dart';
 part 'fah_wire_host.dart';
 
 Future<void> main(List<String> args) async {
-  // gh-2415: lift the descriptor soft limit (launchd's 256) to
-  // min(hard, 10240) before anything opens files — exactly once, a no-op
-  // on hosts without RLIMIT_NOFILE, microseconds on a --version boot.
-  raiseFdLimitOnce();
+  // Issue #2415: the macOS launchd default soft fd limit (256) is far
+  // below what a long-lived orchestrator session spikes to (3 pipes per
+  // bash call, subagent hooks, watchers) — raise it once, best-effort,
+  // before anything spawns. Hard limit is unlimited on this host class,
+  // so the target is min(hard, 10240).
+  final fdSoftBefore = fdLimits()?.soft;
+  final fdSoftAfter = raiseFdLimitOnce()?.soft;
+  if (fdSoftBefore != null &&
+      fdSoftAfter != null &&
+      fdSoftAfter > fdSoftBefore) {
+    stderr.writeln(
+      '[fd] raised soft file-descriptor limit: $fdSoftBefore → $fdSoftAfter',
+    );
+  }
   // Provider forensics composition root (gh-1395 review round 1): the
   // pure barrel carries only the contracts; the io seams (env knob
   // lookup, [conn-trace] stderr lines, the observed dart:io client, the

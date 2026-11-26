@@ -15,6 +15,7 @@ import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
 import 'bash_guard_io.dart';
 import 'execution_env.dart';
+import 'fd_limit_io.dart'; // issue #2415: fd-pressure typing
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
 import 'job_log_redaction.dart';
@@ -855,6 +856,30 @@ final class LocalShell implements Shell, BackgroundShell {
       return (Ok<Process, ExecutionError>(process), scriptDir);
     } on Object catch (error) {
       _deleteScriptNow(scriptDir);
+      // Issue #2415: fd-table exhaustion is the environment's state — not
+      // a broken command and not a harness defect. Type it so the tool
+      // layer can retry once and the transcript carries an honest,
+      // actionable line instead of the "uncaught ProcessException"
+      // mislabel that told the model its bash tool was broken.
+      if (isFdExhaustion(error)) {
+        final limits = fdLimits();
+        final soft = limits?.soft;
+        return (
+          Err<Process, ExecutionError>(
+            ExecutionError(
+              ExecutionErrorCode.fdExhausted,
+              'fd pressure: cannot spawn "$executable" ($error)'
+              '${soft == null ? '' : ' — the process fd soft limit is $soft'}'
+              '. Not a command failure: the session is out of open file '
+              'descriptors (pipes of running bash jobs, hooks, watchers). '
+              'Wait for background jobs to settle, stop unneeded jobs, or '
+              'raise the limit (ulimit -n).',
+              cause: error,
+            ),
+          ),
+          null,
+        );
+      }
       return (
         Err<Process, ExecutionError>(
           ExecutionError(

@@ -314,6 +314,12 @@ enum ExecutionErrorCode {
   /// The process could not be spawned.
   spawnError,
 
+  /// The spawn failed because the process fd table is exhausted
+  /// (EMFILE/ENFILE, issue #2415). Environmental — not a command failure
+  /// and not a harness defect: the tool layer retries once and the
+  /// transcript carries the honest fd-pressure text.
+  fdExhausted,
+
   /// An output callback threw.
   callbackError,
 
