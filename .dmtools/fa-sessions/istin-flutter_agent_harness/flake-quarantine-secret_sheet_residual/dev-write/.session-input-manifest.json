@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-26T12:25:50.481Z",
+  "ticketKey": "pr-2428",
+  "headSha": "95ab560b6727feedd6dd253c0103eed37740ca80",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:a22b7a84a78fb90f",
+      "size": 597
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:e610c485f0d5236c",
+      "size": 1355
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:d1458db505b7f35e",
+      "size": 1472
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:8ff5ab4bdffae9c8",
+      "size": 845
+    },
+    "request.md": {
+      "hash": "fnv1a64:b15d1833be971048",
+      "size": 475
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f73ca41bb4b4bbcd",
+      "size": 376
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c699ae9fc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f97a8e5e81993fdf",
+      "size": 529
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b15d1833be971048",
+      "size": 475
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer ec9bbef5550de82bfd587626cceb0d7d4b1220c6 — run 45699928444 still queued at 2026-11-25T21:58:12.630Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "thread-2",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 stale-cancel 7fc8cede3d2d8493966ca349615d4fd2225ec8ba — stale base at 2026-11-25T21:58:14.322Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-25:1fa1473b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer ec9bbef5550de82bfd587626cceb0d7d4b1220c6 — run 45699928444 still queued at 2026-11-25T21:58:12.630Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-25:4cc507e3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-25",
+      "updatedAt": "2026-11-25",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 7fc8cede3d2d8493966ca349615d4fd2225ec8ba — stale base at 2026-11-25T21:58:14.322Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
