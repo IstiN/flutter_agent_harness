@@ -336,6 +336,35 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   'featureFlags': config.featureFlags.toList()..sort(),
   'driveAliases': config.driveAliases.toList()..sort(),
   'storageSchemaVersion': config.storageSchemaVersion,
+  // The host-session bridge section (issue #2391) rides the public
+  // runtime profile verbatim: it names WHERE the host page publishes a
+  // scoped key, never a credential value.
+  if (config.hostConnection != null)
+    'hostConnection': _publicHostConnection(config.hostConnection!),
+};
+
+/// The verbatim public form of a validated [HostConnectionConfig].
+Map<String, Object?> _publicHostConnection(HostConnectionConfig host) => {
+  'name': host.name,
+  'baseUrl': host.baseUrl.toString(),
+  'sessionBridge': {
+    'storage': host.sessionBridge.storage,
+    'key': host.sessionBridge.key,
+  },
+  'defaultModel': host.defaultModel,
+  if (host.modelRoles.isNotEmpty)
+    'modelRoles': Map<String, Object?>.of(host.modelRoles),
+  if (host.mediaSlots.isNotEmpty)
+    'mediaSlots': {
+      for (final entry in host.mediaSlots.entries)
+        entry.key: {'model': entry.value.model},
+    },
+  if (host.quota != null)
+    'quota': {
+      'status': host.quota!.status,
+      'errorCode': host.quota!.errorCode,
+      if (host.quota!.url != null) 'url': host.quota!.url.toString(),
+    },
 };
 
 Map<String, Object?> _manifest(FaProductConfig config) => {
