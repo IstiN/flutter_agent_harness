@@ -58,9 +58,7 @@ void main() {
   /// a text transfer, agent → the next `read`, then `done`), recording
   /// every agent request. [files] = how many big files the run reads
   /// before the `done` answer (see setUp for the per-scenario geometry).
-  ({StreamFunction stream, List<Context> contexts}) foldRun({
-    int files = 5,
-  }) {
+  ({StreamFunction stream, List<Context> contexts}) foldRun({int files = 5}) {
     var nextFile = 1;
     final contexts = <Context>[];
     List<AssistantMessageEvent> answer(Context context) {

@@ -57,15 +57,16 @@ void main() {
       JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
     );
     await seed.appendSessionName('restore-budget-target');
-    // 14 × ~1k-token messages: with the merged gh-2411 estimator pricing
+    // 13 × ~1k-token messages: with the merged gh-2411 estimator pricing
     // (the slim manifest's overhead at ~6-9k estimated tokens of the
     // 24,576 trigger, vs ~3.9k at the pre-merge density) 17 seeds pushed
-    // the BOOT itself to the trigger and run 1's pre-flight consumed the
-    // scripted turns before the AC4 detour could fire. 14 seeds hold the
-    // same ≈21k boot shape the scenario pins: no boot cap, no pre-flight
-    // compaction, the ONLY thing crossing the trigger is run 3's
-    // mid-run read + stale-checkpoint auto-close.
-    for (var i = 0; i < 14; i++) {
+    // the BOOT itself to the trigger and the GENERIC pre-flight pass —
+    // not the AC4 guard — capped the context before the detour could
+    // fire (no `[checkpoint]` receipt, the guard degenerated). 13 seeds
+    // hold main's shape: run 3's submission lands just UNDER the trigger
+    // (no generic pass), the read pushes it over, and the stale-
+    // checkpoint auto-close hands the cap to the AC4 guard.
+    for (var i = 0; i < 13; i++) {
       await seed.appendMessage(UserMessage.text('seed$i ${'a' * 4000}'));
     }
   }
@@ -118,6 +119,25 @@ void main() {
 
       final run = agent.run();
       io.sendLine('start the detour');
+      await waitForIt(
+        () => stream.calls >= 2 && !agent.isBusy,
+        reason: 'run 1 created the checkpoint',
+      );
+      io.sendLine('any luck?');
+      await waitForIt(
+        () => stream.calls >= 3 && !agent.isBusy,
+        reason: 'run 2 landed the real user turn inside the detour scope',
+      );
+      io.sendLine('wrap it up');
+      await waitForIt(
+        () =>
+            !agent.isBusy &&
+            io.out.toString().contains('final answer after restore budget cap'),
+        reason:
+            'run 3: read → stale-checkpoint auto-close → guard cap → '
+            'final answer',
+      );
+      io.sendLine('/exit');
       await run;
 
       final output = io.out.toString();
@@ -149,10 +169,7 @@ void main() {
 
       // AC4: the next request after the auto-close rides the CAPPED
       // context — never above window − reserve.
-      expect(
-        int.parse(capLine.group(2)!),
-        lessThanOrEqualTo(_threshold),
-      );
+      expect(int.parse(capLine.group(2)!), lessThanOrEqualTo(_threshold));
       expect(
         requestTokensOf(stream.contexts.last),
         lessThanOrEqualTo(_threshold),
@@ -303,9 +320,9 @@ class _RoutedRestoreBudgetStream extends FakeStreamFunction {
     final isSummarizer = text.contains('<conversation>');
     final events = isSummarizer
         ? textTurn('restore budget compaction summary')
-        : _script[
-            _agentCalls < _script.length ? _agentCalls++ : _script.length - 1
-          ];
+        : _script[_agentCalls < _script.length
+              ? _agentCalls++
+              : _script.length - 1];
     final stream = AssistantMessageEventStream();
     for (final event in events) {
       stream.push(event);
