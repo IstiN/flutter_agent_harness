@@ -319,6 +319,46 @@ class ProviderRegistry extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Appends [entry], or replaces the existing entry with the same id in
+  /// place (insertion order preserved) — the boot-time seam for entries
+  /// whose id is fixed by contract (the host-session `host` row, issue
+  /// #2391). Persists and notifies. Content (not the id-only [==-based]
+  /// equality) decides whether a write happens at all.
+  Future<CustomProvider> upsert(CustomProvider entry) async {
+    final index = _providers.indexWhere((p) => p.id == entry.id);
+    if (index >= 0) {
+      final existing = _providers[index];
+      final same =
+          existing.name == entry.name &&
+          existing.baseUrl == entry.baseUrl &&
+          existing.modelId == entry.modelId &&
+          existing.provenance == entry.provenance &&
+          existing.kind == entry.kind &&
+          existing.requiresKey == entry.requiresKey;
+      if (same) return existing;
+      _providers[index] = entry;
+    } else {
+      _providers.add(entry);
+    }
+    await _save();
+    notifyListeners();
+    return entry;
+  }
+
+  /// Remembers [key] for provider [id] in PROCESS MEMORY ONLY — the
+  /// host-session bridge's invariant (issue #2391): the bridged key is
+  /// never written to providers.json, never flipped onto the entry's
+  /// requiresKey marker, and never persisted to any secure store. A reload
+  /// re-reads it from the bridge. An empty key forgets the entry.
+  void rememberSessionKey(String id, String key) {
+    if (key.isEmpty) {
+      _sessionKeys.remove(id);
+    } else {
+      _sessionKeys[id] = key;
+    }
+    notifyListeners();
+  }
+
   /// Removes the provider with [id] and its key (Keychain slot included).
   /// A Copilot entry's GitHub token also lives entry-scoped
   /// (`FA_KEY_COPILOT_<NAME>`, the CLI contract) — that slot is removed

@@ -636,4 +636,87 @@ void main() {
       );
     });
   });
+
+  group('ProviderRegistry host-session seam (issue #2391)', () {
+    test('upsert replaces by id and preserves insertion order', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final first = await registry.add(
+        name: 'First',
+        baseUrl: 'https://first.example/v1',
+        modelId: 'first-1',
+      );
+      await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'Host',
+          baseUrl: 'https://api.example/v1',
+          modelId: 'host/flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'Host Renamed',
+          baseUrl: 'https://api.example/v2',
+          modelId: 'host/pro',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      expect(registry.providers.length, 2);
+      expect(registry.providers.first.id, first.id);
+      final host = registry.providers.last;
+      expect(host.id, 'host');
+      expect(host.name, 'Host Renamed');
+      expect(host.baseUrl, 'https://api.example/v2');
+      expect(host.modelId, 'host/pro');
+      expect(host.provenance, 'host');
+      expect(host.kind, 'host-session');
+      // The definition persists; a reload sees it.
+      final reloaded = await ProviderRegistry.load(env);
+      expect(reloaded.providers.where((p) => p.id == 'host').length, 1);
+    });
+
+    test('rememberSessionKey stays in memory: no file, no keychain, '
+        'no requiresKey flip', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(env);
+      final host = await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'Host',
+          baseUrl: 'https://api.example/v1',
+          modelId: 'host/flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      registry.rememberSessionKey('host', 'bridged-secret');
+      expect(registry.keyFor('host'), 'bridged-secret');
+      expect(
+        registry.keyValueForName(
+          ProviderRegistry.keyNameFor('https://api.example/v1'),
+        ),
+        'bridged-secret',
+      );
+      expect(host.requiresKey, isFalse);
+      // Nothing persisted: the providers.json write only carries the
+      // non-secret definition (no requiresKey marker, no key value).
+      final persisted =
+          jsonDecode(
+                (await env.readTextFile(
+                  '${env.cwd}/providers.json',
+                )).valueOrNull!,
+              )
+              as Map<String, dynamic>;
+      expect(jsonEncode(persisted).contains('bridged-secret'), isFalse);
+      expect(jsonEncode(persisted).contains('requiresKey'), isFalse);
+      // An empty value forgets, same convention as rememberKey.
+      registry.rememberSessionKey('host', '');
+      expect(registry.keyFor('host'), isNull);
+    });
+  });
 }
