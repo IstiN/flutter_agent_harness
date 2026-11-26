@@ -327,4 +327,58 @@ void main() {
       );
     },
   );
+
+  test(
+    'gh-2432 rework: a landed-500 that resolves LATE mints a same-marker twin — the dedupe must keep exactly one own draft',
+    () {
+      // The review thread on #2434 (release_lazy_draft.sh:163): the
+      // landed-500 heal only fires when the draft becomes visible AT the
+      // retry boundary. In the incident's own shape the draft resolved
+      // MINUTES later: attempt 1 500s but lands (D1, our exact marker),
+      // the boundary re-view still sees nothing, attempt 2's create
+      // succeeds and mints D2 — and GitHub does not enforce
+      // one-release-per-tag for drafts (gh-2372/gh-1899). Both twins
+      // carry the same run/job identity, so the tag resolves
+      // ambiguously and the twin rots into the daily sweep — the exact
+      // recurrence gh-2432 closes, reachable through the fix itself.
+      // The success-path dedupe must resolve the pair: exactly ONE
+      // same-marker draft (the oldest, first-created) survives.
+      final r = runReleaseMintFixture(
+        'scripts/release_lazy_draft.sh',
+        args: const ['v1.2.3'],
+        name: 'lazy-landed-500-late-twin',
+        ghToken: 'pat-token-for-test',
+        seedTag: true,
+        // NO viewFoundAfterFirst: the landed draft stays invisible past
+        // the retry boundary (the "resolved minutes later" shape).
+        githubRunId: '222',
+        githubJob: 'build-extension',
+        extraEnv: const {
+          'GH_STUB_CREATE_FAILS_5XX_N': '1',
+          'RELEASE_LAZY_CREATE_TRIES': '3',
+          'RELEASE_LAZY_CREATE_SLEEP': '0',
+        },
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.output, contains('✅ lazy draft ready'));
+      expect(
+        r.ghLog.where((l) => l.contains('release create v1.2.3')),
+        hasLength(2),
+        reason: 'the landed-500 was retried — two attempts, D1 + D2 minted',
+      );
+      expect(
+        r.rosterIds,
+        ['100'],
+        reason:
+            'exactly one same-marker draft survives the create+dedupe: the '
+            'newer twin (id 101, the retry mint) is deleted by id, the '
+            'landed-500 draft (id 100, first-created) keeps the tag',
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('-X DELETE repos/OWNER/REPO/releases/')),
+        hasLength(1),
+        reason: 'one own twin deleted — never zero, never both',
+      );
+    },
+  );
 }
