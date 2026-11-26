@@ -31,6 +31,8 @@ final class FaProductConfig {
     this.driveAliases = const {},
     this.storageSchemaVersion = 1,
     this.hostConnection,
+    this.providerCatalog,
+    this.signInUrl,
   }) : _stock = false;
 
   const FaProductConfig._stock()
@@ -52,6 +54,8 @@ final class FaProductConfig {
       driveAliases = const {},
       storageSchemaVersion = 1,
       hostConnection = null,
+      providerCatalog = null,
+      signInUrl = null,
       _stock = true;
 
   /// Default Fa identity. No profile file is required to retain this behavior.
@@ -88,6 +92,22 @@ final class FaProductConfig {
   /// section names a storage location, never a credential value — no
   /// credential can be expressed in a profile.
   final HostConnectionConfig? hostConnection;
+
+  /// The provider-catalog surface policy (gh-2391 addendum 4): absent = the
+  /// full stock catalog; `host-only` = a branded build with a bridge NEVER
+  /// advertises third-party providers or launches Fa's own OAuth flows —
+  /// the only sign-in path is the host's own (see [signInUrl]). Requires
+  /// [hostConnection].
+  final String? providerCatalog;
+
+  /// True when the profile restricts the provider surface to the host
+  /// connection only.
+  bool get hostOnlyProviderCatalog => providerCatalog == 'host-only';
+
+  /// The host cabinet's sign-in URL (HTTPS; the host page may encode its
+  /// own return parameter). Requires [hostConnection] — the cabinet
+  /// publishes the bridge key on sign-in.
+  final Uri? signInUrl;
 
   final bool _stock;
 
@@ -211,6 +231,12 @@ final class FaProductConfig {
       throw const FormatException('storageSchemaVersion must be 1..100');
     }
     final apiEndpointUri = endpoint('apiEndpoint');
+    final providerCatalogRaw = json['providerCatalog'];
+    final signInUrlRaw = json['signInUrl'];
+    if (providerCatalogRaw == null && signInUrlRaw != null) {
+      // Reaching here means signInUrl parsed below would lack its
+      // prerequisite — validated in full after hostConnection parses.
+    }
     final hostConnection = json['hostConnection'] == null
         ? null
         : HostConnectionConfig.fromJson(
@@ -224,6 +250,14 @@ final class FaProductConfig {
         'grants model access, not a verified CloudIdentity',
       );
     }
+    final providerCatalog = _providerCatalog(
+      providerCatalogRaw,
+      hasHostConnection: hostConnection != null,
+    );
+    final signInUrl = _signInUrl(
+      signInUrlRaw,
+      hasHostConnection: hostConnection != null,
+    );
     final rawThemePack = json['themePack'];
     Map<String, Object?>? themePack;
     if (rawThemePack != null) {
@@ -279,11 +313,53 @@ final class FaProductConfig {
       driveAliases: Set.unmodifiable(aliases),
       storageSchemaVersion: schema,
       hostConnection: hostConnection,
+      providerCatalog: providerCatalog,
+      signInUrl: signInUrl,
     );
     if (config.oauthCallback != null && config.authEndpoint == null) {
       throw const FormatException('oauthCallback requires authEndpoint');
     }
     return config;
+  }
+
+  /// The `providerCatalog` profile field (gh-2391 addendum 4): absent =
+  /// the full stock catalog; the only supported value in this card is
+  /// `host-only`, and it requires the bridge section.
+  static String? _providerCatalog(
+    Object? value, {
+    required bool hasHostConnection,
+  }) {
+    if (value == null) return null;
+    if (value != 'host-only') {
+      throw const FormatException(
+        'providerCatalog must be "host-only" (the only catalog policy in '
+        'this card)',
+      );
+    }
+    if (!hasHostConnection) {
+      throw const FormatException(
+        'providerCatalog "host-only" requires hostConnection',
+      );
+    }
+    return value as String;
+  }
+
+  /// The `signInUrl` profile field (gh-2391 addendum 4): the host
+  /// cabinet's sign-in page (HTTPS; the host encodes its own return
+  /// parameter — Fa opens the URL verbatim). Requires the bridge section.
+  static Uri? _signInUrl(Object? value, {required bool hasHostConnection}) {
+    if (value == null) return null;
+    if (!hasHostConnection) {
+      throw const FormatException('signInUrl requires hostConnection');
+    }
+    if (value is! String) {
+      throw const FormatException('signInUrl must be a URI');
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+      throw FormatException('signInUrl must be an HTTPS endpoint: $value');
+    }
+    return uri;
   }
 
   static bool _secureEndpoint(Uri uri) {

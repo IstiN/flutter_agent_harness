@@ -384,6 +384,25 @@ void main() {
       },
     );
 
+    test('providerCatalog + signInUrl ride the emitted profile', () async {
+      final json = _profile(hostConnection: true)
+        ..['providerCatalog'] = 'host-only'
+        ..['signInUrl'] = 'https://app.example/app/';
+      profile.writeAsStringSync(jsonEncode(json));
+      final output = '${temp.path}/branded-hostonly';
+      await buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: output,
+        builder: (path) async => _fixtureShell(Directory(path)),
+      );
+      final emitted =
+          jsonDecode(File('$output/product_config.json').readAsStringSync())
+              as Map<String, Object?>;
+      expect(emitted['providerCatalog'], 'host-only');
+      expect(emitted['signInUrl'], 'https://app.example/app/');
+    });
+
     test('profile without the section emits no hostConnection key', () async {
       final output = '${temp.path}/branded-plain';
       await buildProductWeb(

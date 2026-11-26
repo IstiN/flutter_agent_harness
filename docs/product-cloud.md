@@ -36,6 +36,8 @@ A profile is external JSON, not a source-tree edit:
   "oauthCallback": "https://app.host.example/oauth/callback",
   "defaultProviderKey": "openrouter",
   "localeStorageKey": "host_lang",
+  "providerCatalog": "host-only",
+  "signInUrl": "https://app.host.example/app/?return=%2Fagent%2F",
   "legalLinks": {"privacy": "https://legal.host.example/privacy"},
   "featureFlags": ["cloudSync"],
   "brandAssets": {
@@ -77,6 +79,17 @@ choice, then the device locale; stock behavior is unchanged.
 
 OAuth accepts only the exact configured callback and expected non-empty state.
 Storage keys use `fa-product:<id>:schema:<n>`, with a SHA-256 tenant+subject
+`providerCatalog: "host-only"` (gh-2391 addendum 4) restricts a branded
+build with `hostConnection` to the host connection alone: the onboarding
+provider step renders a single **Sign in to <displayName>** CTA
+(`signInUrl`, opened verbatim — the host page encodes its own return
+parameter), the third-party provider catalog is never shown, and none of
+Fa's own OAuth/connect flows launch. When the visitor returns from the
+host cabinet, the published bridge key completes onboarding on app resume
+and the workspace boots without any gate. Absent (stock and every
+existing profile) the full catalog applies byte-identically; the field
+requires `hostConnection`, and `signInUrl` must be HTTPS.
+
 account partition. Upgrading `storageSchemaVersion` creates a new cache; the
 service worker deletes only caches under the same product root, never stock or
 another product. No profile becomes executable trusted markup.

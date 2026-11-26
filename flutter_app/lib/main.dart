@@ -35,6 +35,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/l10n/locale_override.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/boot/host_connection_resolver.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -375,6 +376,7 @@ class MyApp extends StatelessWidget {
         networkSessions: networkSessions,
         productConfig: productConfig,
         hostSession: hostSession,
+        mediaModelsStore: mediaModelsStore,
       ),
     );
   }
@@ -547,6 +549,8 @@ class BootstrapScreen extends StatefulWidget {
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
     this.hostSession,
+    this.mediaModelsStore,
+    this.hostBridge,
   });
 
   final FaProductConfig productConfig;
@@ -555,6 +559,15 @@ class BootstrapScreen extends StatefulWidget {
   /// product's own connection straight to the workspace — no provider
   /// gate, no onboarding, no connect flow. Null keeps the stock decisions.
   final HostSessionState? hostSession;
+
+  /// The media-model overrides store (gh-2391 addendum 4): the onboarding
+  /// return path needs it to resolve a host session that appeared AFTER
+  /// boot (sign-in at the host cabinet, back to the shell).
+  final MediaModelsStore? mediaModelsStore;
+
+  /// The host-session bridge reader (gh-2391 addendum 4); injectable for
+  /// tests, defaults to the platform reader.
+  final HostSessionBridge? hostBridge;
 
   /// The shared execution env handed to [AgentService.create].
   final ExecutionEnv? env;
@@ -916,6 +929,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       networkMode: widget.networkMode,
       networkSessions: widget.networkSessions,
       productConfig: widget.productConfig,
+      hostBridge: widget.hostBridge,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
     );
   }
@@ -934,7 +948,37 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       _onboardingDone = true;
       _config = config;
     });
-    if (config != null) unawaited(_boot());
+    if (config != null) {
+      unawaited(_boot());
+    } else {
+      unawaited(_resolveHostSessionAfterOnboarding());
+    }
+  }
+
+  /// The host-only return path (gh-2391 addendum 4): the visitor signed in
+  /// at the host cabinet and came back with a fresh bridge key — no
+  /// restorable connection exists, so resolve the host session NOW and
+  /// boot straight into the workspace. A still-empty bridge is the stock
+  /// post-onboarding state (home with an empty manager).
+  Future<void> _resolveHostSessionAfterOnboarding() async {
+    final connection = widget.productConfig.hostConnection;
+    final registry = widget.registry;
+    final taskModels = widget.taskModelsStore;
+    final mediaModels = widget.mediaModelsStore;
+    if (connection == null || registry == null) return;
+    final state = await resolveHostSession(
+      productConfig: widget.productConfig,
+      registry: registry,
+      taskModels: taskModels ?? TaskModelsStore.inMemory(),
+      mediaModels: mediaModels ?? MediaModelsStore.inMemory(),
+      bridge: widget.hostBridge,
+    );
+    if (state == null || !mounted) return;
+    HostSessionHandle.instance.install(state, registry: registry);
+    setState(() {
+      _config = state.bootConfig;
+    });
+    unawaited(_boot());
   }
 
   @override

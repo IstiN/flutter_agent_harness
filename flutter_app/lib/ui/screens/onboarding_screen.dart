@@ -14,6 +14,7 @@ import 'package:fa/services/agent_service.dart' show AgentConfig;
 import 'package:fa/services/analytics.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
@@ -43,6 +44,7 @@ class OnboardingScreen extends StatefulWidget {
     this.networkMode,
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
+    this.hostBridge,
   });
 
   final OnboardingStore? onboardingStore;
@@ -64,6 +66,10 @@ class OnboardingScreen extends StatefulWidget {
   /// credential/key wallet as the rest of the app, never a parallel flow.
   final NetworkModeController? networkMode;
   final NetworkSessionManager? networkSessions;
+
+  /// The host-session bridge reader (gh-2391 addendum 4); injectable for
+  /// tests, defaults to the platform reader (browser localStorage on web).
+  final HostSessionBridge? hostBridge;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -109,7 +115,8 @@ Color _onbPrimary(BuildContext context) =>
 List<BoxShadow> _onbCardShadow(BuildContext context) =>
     _onbDark(context) ? [] : _kCardShadow;
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
+class _OnboardingScreenState extends State<OnboardingScreen>
+    with WidgetsBindingObserver {
   /// Step labels in page order.
   List<String> get _labels => [
     context.l10n.onboardingStepAsk,
@@ -160,14 +167,45 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AppAnalytics.instance.onboardingStarted();
     AppAnalytics.instance.screenOpened('onboarding');
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pc.dispose();
     super.dispose();
+  }
+
+  /// The host-only catalog (gh-2391 addendum 4): the sign-in cabinet is
+  /// the only path. When the visitor returns from it — the host page has
+  /// then published the bridge key — the provider step completes and the
+  /// boot re-evaluates straight into the workspace.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    _recheckHostBridge();
+  }
+
+  /// Test seam: the app-resume bridge re-check, invoked directly (the
+  /// binding lifecycle dispatch is exercised by the direct-screen test).
+  @visibleForTesting
+  void recheckHostBridgeForTest() => _recheckHostBridge();
+
+  void _recheckHostBridge() {
+    final connection = widget.productConfig.hostConnection;
+    if (connection == null || !_providerGateActive) return;
+    final key = (widget.hostBridge ?? platformHostSessionBridge)
+        .read(connection.sessionBridge.key)
+        ?.trim();
+    if (key == null || key.isEmpty) return;
+    setState(() {
+      _providerConfigured = true;
+      _configuredProviderKey = 'host';
+    });
+    _finish(skipped: false);
   }
 
   void _finish({required bool skipped}) {
@@ -290,21 +328,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   onPageChanged: (p) => setState(() => _page = p),
                   children: [
                     _P1(wide: wide),
-                    _P2(
-                      key: _p2Key,
-                      wide: wide,
-                      defaultProvider: defaultProvider,
-                      registry: widget.registry,
-                      lastConnectionStore: widget.lastConnectionStore,
-                      configuredKey: _configuredProviderKey,
-                      onConfigured: _providerDone,
-                      networkSelected: _networkSelected,
-                      onJoinNetwork:
-                          widget.networkMode != null &&
-                              widget.networkSessions != null
-                          ? _joinNetwork
-                          : null,
-                    ),
+                    if (widget.productConfig.hostOnlyProviderCatalog)
+                      _HostSignInStep(
+                        wide: wide,
+                        productConfig: widget.productConfig,
+                      )
+                    else
+                      _P2(
+                        key: _p2Key,
+                        wide: wide,
+                        defaultProvider: defaultProvider,
+                        registry: widget.registry,
+                        lastConnectionStore: widget.lastConnectionStore,
+                        configuredKey: _configuredProviderKey,
+                        onConfigured: _providerDone,
+                        networkSelected: _networkSelected,
+                        onJoinNetwork:
+                            widget.networkMode != null &&
+                                widget.networkSessions != null
+                            ? _joinNetwork
+                            : null,
+                      ),
                     _P3(wide: wide),
                     _P4(wide: wide),
                   ],
@@ -2395,5 +2439,68 @@ class _P4 extends StatelessWidget {
       centerVertically: wide,
       child: body,
     );
+  }
+}
+
+/// The host-only provider step (gh-2391 addendum 4): a branded build with
+/// `providerCatalog: "host-only"` never shows third-party providers or
+/// launches Fa's own OAuth flows. The single path is the host's own
+/// cabinet (`signInUrl`): sign in there, the bridge key lands in
+/// same-origin storage, the app resume re-check completes the step.
+class _HostSignInStep extends StatelessWidget {
+  const _HostSignInStep({required this.wide, required this.productConfig});
+
+  final bool wide;
+  final FaProductConfig productConfig;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _Logo(productConfig: productConfig),
+              const SizedBox(height: 24),
+              Text(
+                'Sign in to ${productConfig.displayName}',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '${productConfig.displayName} runs on your ${productConfig.displayName} '
+                'account — sign in once in the ${productConfig.displayName} app and '
+                'come right back. Third-party providers are not part of this '
+                'workspace.',
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              if (productConfig.signInUrl != null)
+                FilledButton.icon(
+                  onPressed: () {
+                    unawaited(
+                      url_launcher.launchUrl(
+                        productConfig.signInUrl!,
+                        mode: url_launcher.LaunchMode.externalApplication,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: Text('Sign in to ${productConfig.displayName}'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (wide) return body;
+    return SingleChildScrollView(child: body);
   }
 }

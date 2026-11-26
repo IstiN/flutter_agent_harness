@@ -341,6 +341,8 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   // scoped key, never a credential value.
   if (config.hostConnection != null)
     'hostConnection': _publicHostConnection(config.hostConnection!),
+  if (config.providerCatalog != null) 'providerCatalog': config.providerCatalog,
+  if (config.signInUrl != null) 'signInUrl': config.signInUrl.toString(),
 };
 
 /// The verbatim public form of a validated [HostConnectionConfig].

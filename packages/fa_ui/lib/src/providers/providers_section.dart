@@ -58,11 +58,18 @@ class ProvidersSection extends StatelessWidget {
     this.modelsFetcher,
     this.quotas,
     this.showTitle = true,
+    this.showAddProvider = true,
   });
 
   /// The user-added providers; `null` falls back to a non-persisting
   /// in-memory registry (tests, previews).
   final ProviderRegistry? registry;
+
+  /// Hides the Add-provider entry (gh-2391 addendum 4): a
+  /// `providerCatalog: "host-only"` branded build never advertises the
+  /// third-party catalog — the host cabinet is the only sign-in path.
+  /// Default true (stock behavior byte-identical).
+  final bool showAddProvider;
 
   /// On-device provider routes (WebLLM, transformers.js, …). Shown
   /// after the custom providers when non-empty.
@@ -250,14 +257,15 @@ class ProvidersSection extends StatelessWidget {
               thickness: 1,
               color: theme.dividerColor.withValues(alpha: .6),
             ),
-            _buildRow(
-              context,
-              theme,
-              label: strings.settingsAddProvider,
-              leadingIcon: Icons.add,
-              showChevron: false,
-              onTap: () => _addProvider(context, registry),
-            ),
+            if (showAddProvider)
+              _buildRow(
+                context,
+                theme,
+                label: strings.settingsAddProvider,
+                leadingIcon: Icons.add,
+                showChevron: false,
+                onTap: () => _addProvider(context, registry),
+              ),
           ],
         );
       },

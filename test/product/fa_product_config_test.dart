@@ -567,6 +567,81 @@ void main() {
       );
     });
 
+    test(
+      'providerCatalog host-only + signInUrl parse (gh-2391 addendum 4)',
+      () {
+        final config = FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            providerCatalog: 'host-only',
+            signInUrl: 'https://app.example/app/?return=%2Fagent%2F',
+          ),
+        );
+        expect(config.providerCatalog, 'host-only');
+        expect(config.hostOnlyProviderCatalog, isTrue);
+        expect(
+          config.signInUrl,
+          Uri.parse('https://app.example/app/?return=%2Fagent%2F'),
+        );
+      },
+    );
+
+    test('the fields are absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.providerCatalog, isNull);
+      expect(FaProductConfig.stock.hostOnlyProviderCatalog, isFalse);
+      expect(FaProductConfig.stock.signInUrl, isNull);
+      expect(FaProductConfig.fromJson(_valid()).providerCatalog, isNull);
+      expect(FaProductConfig.fromJson(_valid()).signInUrl, isNull);
+    });
+
+    test('providerCatalog must be host-only and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            providerCatalog: 'allowlist',
+          ),
+          'unknown catalog value',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], providerCatalog: 'host-only'),
+          'no hostConnection',
+        ),
+        (_valid(featureFlags: <Object?>[], providerCatalog: 42), 'non-string'),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('signInUrl must be HTTPS and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            signInUrl: 'http://app.example/app/',
+          ),
+          'plain http',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], signInUrl: 'https://app.example/'),
+          'no hostConnection',
+        ),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
     test('credential-shaped fields are rejected anywhere in the section', () {
       for (final bad in [
         _hostConnection(apiKeyValue: 'sk-hunt'),
@@ -642,6 +717,8 @@ Map<String, Object?> _valid({
   Object? apiKey,
   Object? extension,
   Object? hostConnection,
+  Object? providerCatalog,
+  Object? signInUrl,
 }) {
   final json = <String, Object?>{
     'productId': productId,
@@ -658,6 +735,8 @@ Map<String, Object?> _valid({
     'featureFlags': featureFlags,
   };
   if (hostConnection != null) json['hostConnection'] = hostConnection;
+  if (providerCatalog != null) json['providerCatalog'] = providerCatalog;
+  if (signInUrl != null) json['signInUrl'] = signInUrl;
   if (apiKey case final key?) json['apiKey'] = key;
   if (extension case final value?) json['extension'] = value;
   return json;
