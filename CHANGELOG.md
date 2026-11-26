@@ -68,6 +68,18 @@ block a release again.
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
   it in TUI and line mode via `isObligationsLedgerNotice` (one heading
   constant shared with the renderer).
+- refactor(2395): single mobile deep-link router — one `OAuthDeepLinkRouter`
+  (`fah://oauth/*`) now owns the app's only `AppLinks()` subscription at
+  boot (`openrouter_oauth_links_io.dart`); flows register per-route
+  receivers (`/openrouter` → OpenRouter coordinator, `/network` → Networks
+  `DeepLinkOAuthReceiver` on Android), callbacks the OS delivered before a
+  flow registered are buffered (bounded, and time-bounded to the flow
+  timeout so a stale callback can never fail a later flow with a state
+  mismatch) and replayed once, unknown `fah://oauth/*` links are logged
+  once (deduped, scheme/host/path only — no credential query) and dropped. No behavior change to
+  iOS `ASWebAuthenticationSession`, desktop loopback, or the engine-side
+  unknown-route pass-through; grep guard test pins the single
+  construction site.
 
 - fix(2362): nightly-red tracker self-heal — the auto-issue close leg fires
   on red nights too (step-level `success()` inside the `always()`-gated

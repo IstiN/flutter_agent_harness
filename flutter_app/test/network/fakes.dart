@@ -299,16 +299,24 @@ NetworkSession buildSession({
 /// A fake OAuth callback receiver (auth_flow seam): [redirectUri] defaults
 /// to a desktop loopback and can be replaced with a web origin callback;
 /// [callback] resolves with [callbackUri] (or throws [callbackError]);
-/// [closed] records teardown.
+/// [preArrivedCallback] seeds the cold-start replay slot; [closed] records
+/// teardown.
 class FakeOAuthReceiver implements OAuthCallbackReceiver {
-  FakeOAuthReceiver({this.callbackUri, this.callbackError, Uri? redirectUri})
-    : redirectUri = redirectUri ?? Uri.parse('http://127.0.0.1:5555/callback');
+  FakeOAuthReceiver({
+    this.callbackUri,
+    this.callbackError,
+    this.preArrivedCallback,
+    Uri? redirectUri,
+  }) : redirectUri = redirectUri ?? Uri.parse('http://127.0.0.1:5555/callback');
 
   /// The URI [callback] resolves with (null → a null URI completes).
   final Uri? callbackUri;
 
   /// When set, [callback] throws it instead of resolving.
   final Object? callbackError;
+
+  @override
+  final Uri? preArrivedCallback;
 
   @override
   final Uri redirectUri;

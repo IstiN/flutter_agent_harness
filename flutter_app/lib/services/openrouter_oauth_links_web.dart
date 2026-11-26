@@ -145,7 +145,7 @@ Future<String?> completeOpenRouterOAuthFromRedirect() async {
 /// `BroadcastChannel` (Safari fallback, because ITP may strip `window.opener`
 /// after the cross-origin OpenRouter redirect), or by `localStorage` polling
 /// for older browsers.
-Future<void> attachOpenRouterOAuthLinks() async {
+Future<void> attachOAuthDeepLinks() async {
   html.window.onMessage.listen((event) => _completeFromData(event.data));
 
   try {
