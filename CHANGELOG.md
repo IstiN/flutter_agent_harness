@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- fix(gh-2426): every CodeMie request now carries the `x-codemie-client`
+  budget-attribution header. The CodeMie gateway picks the BILLING BUDGET
+  by that header; a request without it lands in the user's PERSONAL budget
+  and dies with `429 ExceededBudget` even though the org/client budget has
+  headroom (server quirk — no retry/cooldown/429-classifier change). One
+  source of truth (`codeMieRequestHeaders` next to `codeMieProjectHeader`
+  in `codemie_sso.dart`), wired into the openai-completions defaults slot
+  URL-gated by `isCodeMieBaseUrl` (chat on every host — CLI, app,
+  extension bridge, serve; SSO cookie + JWT legs, retries and failover
+  re-sends included), the catalog + boot-restore model builds
+  (`buildCatalogModel`/`buildCliDefaultModel`), the SSO-cookie switch and
+  live re-apply headers, the `/llm_models` + `/v1/user` fetch twins (cookie
+  + JWT), the quota adapter, and the app's `AgentConfig.toModel()`
+  (reconfigure + compaction summarizer). Merge order (defaults →
+  model.headers → options) keeps an explicit user `x-codemie-client` entry
+  winning and a null option suppressing; non-CodeMie providers stay
+  byte-identical on the wire.
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`

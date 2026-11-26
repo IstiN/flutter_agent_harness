@@ -535,7 +535,11 @@ extension on AgentCli {
       cost: model.cost,
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
-      headers: {'cookie': cookie, codeMieProjectHeader: ?entry.project},
+      headers: {
+        ...codeMieRequestHeaders,
+        'cookie': cookie,
+        codeMieProjectHeader: ?entry.project,
+      },
       compat: model.compat,
       maxImages: model.maxImages,
     );

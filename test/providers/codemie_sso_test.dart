@@ -217,4 +217,96 @@ void main() {
       expect(projects, isEmpty);
     });
   });
+
+  group('codeMieRequestHeaders (issue #2426)', () {
+    test('carries exactly one non-empty ASCII client entry', () {
+      const expected = {'x-codemie-client': codeMieClient};
+      expect(codeMieRequestHeaders, expected);
+      expect(codeMieClient, isNotEmpty);
+      // `package:http` rejects non-Latin-1 header values — the identity
+      // must stay ASCII.
+      expect(codeMieClient.runes.every((r) => r >= 0x20 && r <= 0x7e), isTrue);
+      // Lowercase canonical name (issue #2426 E5): the merge is
+      // case-sensitive by map key, so mixed-case entries would ride as a
+      // SECOND header instead of overriding.
+      expect(codeMieRequestHeaders.keys.single, codeMieClientHeader);
+    });
+
+    test('rides the models fetch (cookie auth)', () async {
+      final headers = <String, String>{};
+      final client = http_testing.MockClient((request) async {
+        headers.addAll(request.headers);
+        return http.Response(
+          jsonEncode([
+            {'id': 'm'},
+          ]),
+          200,
+        );
+      });
+      await fetchCodeMieModels(
+        'https://org/code-assistant-api/v1',
+        'k=v',
+        client: client,
+      );
+      expect(headers[codeMieClientHeader], codeMieClient);
+    });
+
+    test('rides the models fetch (JWT auth)', () async {
+      final headers = <String, String>{};
+      final client = http_testing.MockClient((request) async {
+        headers.addAll(request.headers);
+        return http.Response(
+          jsonEncode([
+            {'id': 'm'},
+          ]),
+          200,
+        );
+      });
+      await fetchCodeMieModelsWithJwt(
+        'https://org/code-assistant-api/v1',
+        'jwt',
+        client: client,
+      );
+      expect(headers[codeMieClientHeader], codeMieClient);
+      expect(headers['authorization'], 'Bearer jwt');
+    });
+
+    test('rides the projects fetch (cookie auth)', () async {
+      final headers = <String, String>{};
+      final client = http_testing.MockClient((request) async {
+        headers.addAll(request.headers);
+        return http.Response(
+          jsonEncode({
+            'applications': ['a'],
+          }),
+          200,
+        );
+      });
+      await fetchCodeMieProjects(
+        'https://org/code-assistant-api',
+        'k=v',
+        client: client,
+      );
+      expect(headers[codeMieClientHeader], codeMieClient);
+    });
+
+    test('rides the projects fetch (JWT auth)', () async {
+      final headers = <String, String>{};
+      final client = http_testing.MockClient((request) async {
+        headers.addAll(request.headers);
+        return http.Response(
+          jsonEncode({
+            'applications': ['a'],
+          }),
+          200,
+        );
+      });
+      await fetchCodeMieProjectsWithJwt(
+        'https://org/code-assistant-api',
+        'jwt',
+        client: client,
+      );
+      expect(headers[codeMieClientHeader], codeMieClient);
+    });
+  });
 }

@@ -127,6 +127,61 @@ void main() {
       expect(plain.headers, isNull);
     });
 
+    test('CodeMie catalog models carry the client header '
+        '(issue #2426 AC2 / P4)', () {
+      const codemieUrl = 'https://codemie.lab.epam.com/code-assistant-api/v1';
+
+      // buildCatalogModel: client header + project ride together.
+      final withProject = buildCatalogModel(
+        'openai',
+        'codemie-model',
+        baseUrl: codemieUrl,
+        projectHeader: 'demo-project',
+      );
+      expect(withProject.headers?[codeMieClientHeader], codeMieClient);
+      expect(withProject.headers?['x-codemie-project'], 'demo-project');
+
+      // No project still carries the client header — the budget
+      // attribution never depends on a picked project.
+      final noProject = buildCatalogModel(
+        'openai',
+        'codemie-model',
+        baseUrl: codemieUrl,
+      );
+      expect(noProject.headers?[codeMieClientHeader], codeMieClient);
+      expect(noProject.headers?.containsKey('x-codemie-project'), isFalse);
+
+      // buildCliDefaultModel (the boot/restore build) rides the same set.
+      final restored = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'codemie-model',
+        baseUrl: codemieUrl,
+        projectHeader: 'demo-project',
+      );
+      expect(restored.headers?[codeMieClientHeader], codeMieClient);
+      expect(restored.headers?['x-codemie-project'], 'demo-project');
+
+      // A custom CodeMie org URL (openai kind) is gated by the URL, not
+      // the provider name.
+      final custom = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'm',
+        baseUrl: 'https://codemy-org.example.com/code-assistant-api/v1',
+      );
+      expect(custom.headers?[codeMieClientHeader], codeMieClient);
+
+      // Non-CodeMie providers stay byte-identical: no headers at all
+      // (INV-3), with and without a project.
+      final plain = buildCatalogModel('openai', 'plain-model');
+      expect(plain.headers, isNull);
+      final plainProject = buildCatalogModel(
+        'openai',
+        'plain-model',
+        projectHeader: 'p',
+      );
+      expect(plainProject.headers, {'x-codemie-project': 'p'});
+    });
+
     test('buildCliDefaultModel builds only from an explicit model id', () {
       // Providers carry NO default model (silent defaults picked paid
       // flagships behind the user's back): every provider without

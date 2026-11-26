@@ -65,4 +65,116 @@ void main() {
     ).toList();
     expect(requests.last.headers.containsKey('x-codemie-project'), isFalse);
   });
+
+  test('the client header rides every CodeMie chat request via the '
+      'defaults slot (issue #2426 AC2)', () async {
+    final requests = <http.BaseRequest>[];
+    final client = http_testing.MockClient.streaming((request, body) async {
+      requests.add(request);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(_okSse)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    // SSO-cookie leg (cookie rides model.headers, no Bearer).
+    await streamOpenAICompletions(
+      _codemieModel(headers: {'cookie': 'k=v'}),
+      _simpleContext(),
+      const OpenAICompletionsOptions(),
+      client,
+    ).toList();
+    expect(requests.single.headers['x-codemie-client'], codeMieClient);
+    expect(requests.single.headers['cookie'], 'k=v');
+
+    // JWT Bearer leg (regular auth path, no model headers at all — the
+    // defaults slot alone carries the client header).
+    await streamOpenAICompletions(
+      _codemieModel(),
+      _simpleContext(),
+      const OpenAICompletionsOptions(apiKey: 'jwt-token'),
+      client,
+    ).toList();
+    expect(requests.last.headers['x-codemie-client'], codeMieClient);
+  });
+
+  test('a non-CodeMie endpoint carries none of the CodeMie headers '
+      '(issue #2426 AC4 / INV-3)', () async {
+    final requests = <http.BaseRequest>[];
+    final client = http_testing.MockClient.streaming((request, body) async {
+      requests.add(request);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(_okSse)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    final plain = Model(
+      id: 'gpt-4o',
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.example/v1',
+      contextWindow: 128000,
+      maxTokens: 8192,
+    );
+    await streamOpenAICompletions(
+      plain,
+      _simpleContext(),
+      const OpenAICompletionsOptions(apiKey: 'sk'),
+      client,
+    ).toList();
+    expect(requests.single.headers.containsKey('x-codemie-client'), isFalse);
+    expect(requests.single.headers.containsKey('x-codemie-project'), isFalse);
+
+    // A custom provider whose BASE URL is CodeMie rides the same gate —
+    // the URL decides, not the provider name.
+    final customCodemie = Model(
+      id: 'm',
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://codemy-org.example.com/code-assistant-api/v1',
+      contextWindow: 128000,
+      maxTokens: 8192,
+    );
+    await streamOpenAICompletions(
+      customCodemie,
+      _simpleContext(),
+      const OpenAICompletionsOptions(apiKey: 'k'),
+      client,
+    ).toList();
+    expect(requests.last.headers['x-codemie-client'], codeMieClient);
+  });
+
+  test('an explicit user entry overrides the client header default '
+      '(issue #2426 AC5 / INV-2)', () async {
+    final requests = <http.BaseRequest>[];
+    final client = http_testing.MockClient.streaming((request, body) async {
+      requests.add(request);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(_okSse)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    await streamOpenAICompletions(
+      _codemieModel(headers: {codeMieClientHeader: 'my-org-client'}),
+      _simpleContext(),
+      const OpenAICompletionsOptions(),
+      client,
+    ).toList();
+    expect(requests.single.headers['x-codemie-client'], 'my-org-client');
+
+    // A null options entry suppresses the default (pi's ProviderHeaders
+    // semantics).
+    await streamOpenAICompletions(
+      _codemieModel(),
+      _simpleContext(),
+      const OpenAICompletionsOptions(headers: {codeMieClientHeader: null}),
+      client,
+    ).toList();
+    expect(requests.last.headers.containsKey(codeMieClientHeader), isFalse);
+  });
 }

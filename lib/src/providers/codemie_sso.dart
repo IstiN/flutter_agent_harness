@@ -28,6 +28,31 @@ const defaultCodeMieBaseUrl = 'https://codemie.lab.epam.com';
 /// shows another one selected.
 const codeMieProjectHeader = 'x-codemie-project';
 
+/// The `x-codemie-client` header name — the CodeMie gateway picks the
+/// BUDGET a request bills by this header (issue #2426): a request WITHOUT
+/// it lands in the user's PERSONAL budget and dies with
+/// `429 ExceededBudget` once personal spend is exhausted, even though the
+/// client's org/app budget has headroom. A server quirk, not rate
+/// limiting — the structured 429 decode and the queue cooldown keep
+/// working unchanged.
+const codeMieClientHeader = 'x-codemie-client';
+
+/// The client identity sent as [codeMieClientHeader]: the value a CodeMie
+/// org registers its client/app budget against (issue #2426). ASCII by
+/// contract (`package:http` rejects non-Latin-1 header values).
+const codeMieClient = 'flutter-agent-harness';
+
+/// The always-on CodeMie request headers (issue #2426): EVERY request to a
+/// CodeMie endpoint starts from this map — chat rides it through the
+/// openai-completions defaults slot (URL-gated by [isCodeMieBaseUrl]),
+/// the fetch family spreads it into its per-call header maps. The merge
+/// order (defaults → `Model.headers` → options) keeps an explicit user
+/// entry of the same name winning; the canonical name is lowercase (the
+/// merge is case-sensitive by map key — E5).
+const codeMieRequestHeaders = <String, String>{
+  codeMieClientHeader: codeMieClient,
+};
+
 /// Normalizes an organization URL to the API base:
 /// `https://host` → `https://host/code-assistant-api` (idempotent).
 String codeMieApiBase(String rawUrl) {
@@ -246,7 +271,10 @@ Future<List<String>> fetchCodeMieProjects(
   String cookie, {
   http.Client? client,
 }) {
-  return _fetchCodeMieProjects('$apiBase/v1/user', {'cookie': cookie}, client);
+  return _fetchCodeMieProjects('$apiBase/v1/user', {
+    ...codeMieRequestHeaders,
+    'cookie': cookie,
+  }, client);
 }
 
 /// The JWT Bearer twin of [fetchCodeMieProjects] (`Authorization: Bearer`).
@@ -256,6 +284,7 @@ Future<List<String>> fetchCodeMieProjectsWithJwt(
   http.Client? client,
 }) {
   return _fetchCodeMieProjects('$apiBase/v1/user', {
+    ...codeMieRequestHeaders,
     'authorization': 'Bearer $jwtToken',
   }, client);
 }
@@ -303,7 +332,11 @@ Future<List<String>> fetchCodeMieModels(
     final response = await httpClient
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
-          headers: {'cookie': cookie, codeMieProjectHeader: ?project},
+          headers: {
+            ...codeMieRequestHeaders,
+            'cookie': cookie,
+            codeMieProjectHeader: ?project,
+          },
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 401 || response.statusCode == 403) {
@@ -353,6 +386,7 @@ Future<List<String>> fetchCodeMieModelsWithJwt(
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
           headers: {
+            ...codeMieRequestHeaders,
             'authorization': 'Bearer $jwtToken',
             codeMieProjectHeader: ?project,
           },
