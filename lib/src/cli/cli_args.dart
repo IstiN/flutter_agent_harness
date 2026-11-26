@@ -116,6 +116,7 @@ final class CliArgs extends CliArgsResult {
     this.ompMode = false,
     this.debugSecrets = false,
     this.noFormat = false,
+    this.forceGlobalConfig = false,
     this.streamThinking = false,
     this.noStreamThinking = false,
     this.timer,
@@ -305,6 +306,13 @@ final class CliArgs extends CliArgsResult {
   /// `FA_NO_FORMAT` env var.
   final bool noFormat;
 
+  /// `--global` (gh-2422): force every session config save onto the
+  /// global `~/.fah/config.yaml` — even the project-capable sections
+  /// (memory/cube/tools/…) the workspace's `.fah/config.yaml` carries,
+  /// which by default are written THERE (the scope that wins at boot).
+  /// For workspaces whose project file is not this machine's to edit.
+  final bool forceGlobalConfig;
+
   /// `--stream-thinking` (gh-1198): the opt-in live thinking stream for
   /// this run — line-mode/headless runs print thinking deltas dimmed,
   /// live, like the TUI. Wins over the `output.streamThinking` config
@@ -390,6 +398,10 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
   }
   if (arg == '--no-format') {
     values.noFormat = true;
+    return true;
+  }
+  if (arg == '--global') {
+    values.forceGlobalConfig = true;
     return true;
   }
   if (arg == '--stream-thinking') {
@@ -1441,6 +1453,7 @@ final class _CliArgValues {
   bool ompMode = false;
   bool debugSecrets = false;
   bool noFormat = false;
+  bool forceGlobalConfig = false;
   bool streamThinking = false;
   bool noStreamThinking = false;
   final promptTemplateDirs = <String>[];
@@ -1524,6 +1537,7 @@ final class _CliArgValues {
       ompMode: ompMode,
       debugSecrets: debugSecrets,
       noFormat: noFormat,
+      forceGlobalConfig: forceGlobalConfig,
       streamThinking: streamThinking,
       noStreamThinking: noStreamThinking,
       timer: timer,

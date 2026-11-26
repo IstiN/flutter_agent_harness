@@ -111,6 +111,14 @@ OPTIONS
                                run (csv: web_search=off,mcp:fs=on); wins
                                over the FA_TOOLS env var and the config
                                tools: section
+  --global                     Save session config edits to the global
+                               ~/.fah/config.yaml even for sections the
+                               project .fah/config.yaml carries (memory/
+                               cube/tools/spills/compaction/trajectory/
+                               logging are written THERE by default — the
+                               scope that wins at boot). Use when the
+                               workspace's .fah/config.yaml is not this
+                               machine's to edit
   --pi                          pi benchmark mode (issue #679): 4-tool
                                surface (read/write/edit/bash), bare
                                prompt; wins over FA_PI_MODE=1 and the

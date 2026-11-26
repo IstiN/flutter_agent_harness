@@ -46,6 +46,8 @@ import 'links_config.dart';
 import 'output_config.dart';
 import 'tui_status_line.dart';
 
+part 'config_save_merge.dart';
+
 /// Parses the `logging:` section (issue #2117): console/file levels plus
 /// the optional line pattern and time format. Strict — a bad schema
 /// throws [ConfigException] naming the key, like every other section.
@@ -2267,38 +2269,92 @@ int _configTmpCounter = 0;
 /// union (the caller's entries win per name; on-disk entries the caller
 /// never loaded survive). Every other section is caller-wins, as before.
 ///
+/// Three-way merge on [base] (gh-2422): the boot's `persistConfig` passes
+/// the config it loaded at startup (the executable's `saved` snapshot,
+/// re-synced after sanctioned settings-hub writes). With a baseline, only
+/// the top-level sections the caller CHANGED vs [base] render over the
+/// current disk state — a section whose render is byte-identical to the
+/// baseline is dropped from the emit and the on-disk block survives, so a
+/// long-lived REPL can never re-render its boot values over another
+/// process's mid-session edits. A section the caller REMOVED (rendered by
+/// the baseline, absent now) is deleted from disk. Without [base] the
+/// whole render wins, exactly as before this parameter existed.
+///
+/// Project targeting on [projectDir]: a changed project-capable section
+/// ([_projectSaveSections]) that LIVES in `<projectDir>/.fah/config.yaml`
+/// is written THERE — the project scope wins at boot, so that is where an
+/// edit must land — and the global file keeps its bytes. [forceGlobal]
+/// (the `--global` boot flag) skips the targeting and forces the global
+/// file for every section.
+///
 /// An unparseable on-disk file makes the save REFUSE with a loud
 /// [ConfigException] instead of clobbering the file with defaults (E3).
 /// The write itself is atomic (unique temp file + rename): a concurrent
 /// reader never observes a torn document and a crash mid-write leaves the
 /// previous file intact.
-Future<void> saveCliConfig(String homeDir, CliConfig config) async {
+Future<void> saveCliConfig(
+  String homeDir,
+  CliConfig config, {
+  CliConfig? base,
+  String? projectDir,
+  bool forceGlobal = false,
+}) async {
   final dir = Directory('$homeDir/.fah');
   if (!dir.existsSync()) dir.createSync(recursive: true);
   final file = File('${dir.path}/config.yaml');
+  // The project targeting runs BEFORE the global write chain (its own
+  // serialized op on the project path): nesting it inside the global
+  // chain would deadlock a workspace whose project file IS the global
+  // file (same chain key waiting on itself), and the project write is an
+  // independent destination anyway.
+  final targeted = (projectDir == null || forceGlobal)
+      ? const <String>{}
+      : await _saveChangedProjectSections(
+          projectDir: projectDir,
+          config: config,
+          base: base,
+          globalConfigPath: file.path,
+        );
   await _serializedConfigWrite(file.path, () async {
     final diskText = file.existsSync() ? file.readAsStringSync() : '';
     final merged = _mergeWithOnDisk(file, config, diskText);
-    final finalText = _preserveDiskSections(diskText, merged.toYaml());
+    final (:emitted, :removed) = _threeWayEmit(merged, base);
+    // The sections the project write took over are dropped from the
+    // global emit (their global copy stays byte-identical — shadowed,
+    // never re-rendered).
+    final finalText = _preserveDiskSections(
+      diskText,
+      _dropTopLevelBlocks(emitted, targeted),
+      threeWay: base != null,
+      removedKeys: removed,
+    );
     // gh-1572: boot calls the save unconditionally — an unchanged save
     // must not touch the file (no mtime churn, no canonicalizing rewrite
     // when the emitter already matches the disk, no writer race noise).
     if (finalText == diskText) return;
-    final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
-    await tmp.writeAsString(finalText);
-    try {
-      await tmp.rename(file.path);
-    } on FileSystemException {
-      // Windows cannot rename over an existing file.
-      if (!Platform.isWindows) rethrow;
-      try {
-        await file.delete();
-      } on PathNotFoundException {
-        // Raced away — the rename below recreates it.
-      }
-      await tmp.rename(file.path);
-    }
+    await _atomicConfigWrite(file, finalText);
   });
+}
+
+/// Writes [text] to [file] atomically: a unique temp file + rename, so a
+/// concurrent reader never observes a torn document and a crash mid-write
+/// leaves the previous content intact. Shared by the global and the
+/// project config writes.
+Future<void> _atomicConfigWrite(File file, String text) async {
+  final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
+  await tmp.writeAsString(text);
+  try {
+    await tmp.rename(file.path);
+  } on FileSystemException {
+    // Windows cannot rename over an existing file.
+    if (!Platform.isWindows) rethrow;
+    try {
+      await file.delete();
+    } on PathNotFoundException {
+      // Raced away — the rename below recreates it.
+    }
+    await tmp.rename(file.path);
+  }
 }
 
 /// Top-level sections whose on-disk block survives a save when the
@@ -2362,49 +2418,50 @@ const _diskPreservedSections = {
   'providersQueue',
 };
 
-/// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
-/// [emitted] when the emitter did not render them itself (the caller
-/// wins wherever it rendered the section). "Rendered" means a top-level
-/// `key:` line at column 0 — an ANCHORED match: an unanchored substring
-/// check would let a scalar or nested key mentioning `memory:` (or an
-/// `xmemory:`-style key) count as rendered and silently drop the real
-/// on-disk section.
-String _preserveDiskSections(String diskText, String emitted) {
+/// Re-attaches the on-disk blocks of [diskText] to [emitted] when the
+/// emitter did not render them itself (the caller wins wherever it
+/// rendered the section). "Rendered" means a top-level `key:` line at
+/// column 0 — an ANCHORED match: an unanchored substring check would let
+/// a scalar or nested key mentioning `memory:` (or an `xmemory:`-style
+/// key) count as rendered and silently drop the real on-disk section.
+///
+/// Without [threeWay] (the legacy caller-wins shape) only the
+/// [_diskPreservedSections] list survives. With it (the gh-2422 three-way
+/// merge) EVERY on-disk block the emit lacks survives — the merge dropped
+/// exactly the sections this process did not change, and their current
+/// disk state is what must stay — except the keys the process removed
+/// ([removedKeys]): removal semantics beat block survival.
+String _preserveDiskSections(
+  String diskText,
+  String emitted, {
+  bool threeWay = false,
+  Set<String> removedKeys = const <String>{},
+}) {
   var result = emitted;
   if (diskText.trim().isEmpty) return result;
   for (final key in _diskPreservedSections) {
-    if (_topLevelYamlBlockOf(result, key) != null) continue;
-    final block = _topLevelYamlBlockOf(diskText, key);
-    if (block != null) result = '$result$block';
+    if (_topLevelYamlBlock(result, key) != null) continue;
+    final block = _topLevelYamlBlock(diskText, key);
+    if (block != null && !removedKeys.contains(key)) result = '$result$block';
   }
-  return result;
+  if (!threeWay) return result;
+  return _reattachUnlistedDiskBlocks(result, diskText, removedKeys);
 }
 
-/// The `key:` top-level block of [text] (key line + indented body) as a
-/// trailing-newline-terminated string, or null when absent. Column-0
-/// comment lines continue the block: comments are invisible to yaml
-/// indentation, so a `# …` line between the section's own lines is
-/// still inside the section (stopping at it would truncate the block
-/// and silently drop every line below the comment).
-String? _topLevelYamlBlockOf(String text, String key) {
-  final lines = text.split('\n');
-  var start = -1;
-  for (var i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith('$key:')) {
-      start = i;
-      break;
-    }
+/// The gh-2422 backstop half: re-attaches every on-disk block [result]
+/// lacks, in disk order, except the removed keys. Split out of
+/// [_preserveDiskSections] for the CRAP ratchet.
+String _reattachUnlistedDiskBlocks(
+  String result,
+  String diskText,
+  Set<String> removedKeys,
+) {
+  for (final entry in _topLevelYamlBlocks(diskText).entries) {
+    if (removedKeys.contains(entry.key)) continue;
+    if (_topLevelYamlBlock(result, entry.key) != null) continue;
+    result = '$result${entry.value}';
   }
-  if (start < 0) return null;
-  var end = start + 1;
-  while (end < lines.length &&
-      (lines[end].isEmpty ||
-          lines[end].startsWith(' ') ||
-          lines[end].startsWith('\t') ||
-          lines[end].startsWith('#'))) {
-    end++;
-  }
-  return '${lines.sublist(start, end).join('\n').trimRight()}\n';
+  return result;
 }
 
 /// Re-reads [file] and merges its `customProviders:` section into

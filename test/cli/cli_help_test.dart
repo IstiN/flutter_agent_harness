@@ -35,6 +35,7 @@ void main() {
       '--cube',
       '--cube-config',
       '--tools',
+      '--global',
       '--log-file',
       '--log-level',
       '--attach',
