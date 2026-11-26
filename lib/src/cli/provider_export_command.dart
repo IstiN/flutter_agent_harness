@@ -149,17 +149,20 @@ extension on AgentCli {
   }
 
   /// The credential kind the CURRENT provider carries: CodeMie entries are
-  /// SSO-cookie or JWT by their `authMethod` (the URL marker routes the
-  /// switch), ChatGPT/Copilot are OAuth blobs, everything else is a plain
-  /// api-key/JWT secret.
+  /// SSO-cookie or JWT by their `authMethod` — with the gh-2424 RULE-M/P
+  /// fallback: the URL marker (`isCodeMieBaseUrl`) routes the switch, so a
+  /// LEGACY entry saved before `authMethod` existed (parses as the
+  /// `apiKey` default) round-trips as the SSO kind it actually is, while
+  /// an explicit `jwt` keeps the plain-secret kind. ChatGPT/Copilot are
+  /// OAuth blobs, everything else is a plain api-key/JWT secret.
   ProviderTransferKeyKind _transferKeyKind(
     ProviderSpec spec,
     CustomProviderEntry? entry,
   ) {
-    if (entry != null && entry.baseUrl.contains('/code-assistant-api/')) {
-      return entry.authMethod == CustomProviderAuthMethod.sso
-          ? ProviderTransferKeyKind.sso
-          : ProviderTransferKeyKind.apiKey;
+    if (entry != null && isCodeMieBaseUrl(entry.baseUrl)) {
+      return entry.authMethod == CustomProviderAuthMethod.jwt
+          ? ProviderTransferKeyKind.apiKey
+          : ProviderTransferKeyKind.sso;
     }
     switch (spec.name) {
       case 'chatgpt':

@@ -878,6 +878,89 @@ void main() {
       expect(storeB.map['FA_KEY_CODMIE_EXAMPLE_COM'], cookie);
     });
 
+    test('legacy CodeMie entry (no authMethod) exports as the sso key '
+        'kind (gh-2424 AC4)', () async {
+      const cookie = 'RFC=cookie-value; JSESSIONID=abc';
+      // The legacy shape: NO authMethod on disk (parses as apiKey).
+      final entry = CustomProviderEntry(
+        name: 'codmie',
+        apiType: 'openai',
+        baseUrl: 'https://codmie.example.com/code-assistant-api/v1',
+        modelId: 'gpt-4o',
+        keyName: 'FA_KEY_CODMIE_EXAMPLE_COM',
+      );
+      await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_CODMIE_EXAMPLE_COM': cookie}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'codmie',
+        ),
+      );
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import', 'container passphrase'),
+          ('pass-phrase-1', 'imported provider codmie (sso)'),
+          ('n', 'keeping the current provider'),
+        ],
+      );
+
+      final landed = registryB.find('codmie');
+      expect(landed, isNotNull);
+      expect(
+        landed!.baseUrl,
+        'https://codmie.example.com/code-assistant-api/v1',
+      );
+      expect(storeB.map['FA_KEY_CODMIE_EXAMPLE_COM'], cookie);
+    });
+
+    test('explicit jwt CodeMie entry still exports the api-key kind '
+        '(gh-2424 RULE-P no-regression)', () async {
+      final entry = CustomProviderEntry(
+        name: 'codmie',
+        apiType: 'openai',
+        baseUrl: 'https://codmie.example.com/code-assistant-api/v1',
+        modelId: 'gpt-4o',
+        keyName: 'FA_KEY_CODMIE_EXAMPLE_COM',
+        authMethod: CustomProviderAuthMethod.jwt,
+      );
+      await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({
+            'FA_KEY_CODMIE_EXAMPLE_COM': 'eyJhbGciOiJIUzI1NiJ9.e30.sig',
+          }),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'codmie',
+        ),
+      );
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import', 'container passphrase'),
+          ('pass-phrase-1', 'imported provider codmie (api-key)'),
+          ('n', 'keeping the current provider'),
+        ],
+      );
+
+      expect(registryB.find('codmie'), isNotNull);
+    });
+
     test('wrong passphrase fails loudly with zero writes', () async {
       final entry = _acmeEntry();
       await exportContainer(
