@@ -120,10 +120,12 @@ Future<void> bootAppRoutes(
       analytics: analytics,
     ),
   );
-  // Attach deep-link (mobile) and postMessage (web) listeners for the
-  // OpenRouter OAuth callback. This is fire-and-forget: the coordinator
-  // singleton forwards codes to any in-flight settings-sheet flow.
-  unawaited(attachOpenRouterOAuthLinks());
+  // Attach the single mobile deep-link router (issue #2395) and the
+  // postMessage (web) listeners for the OpenRouter OAuth callback. This is
+  // fire-and-forget: the router forwards links to each flow's registered
+  // receiver; the coordinator singleton forwards codes to any in-flight
+  // settings-sheet flow.
+  unawaited(attachOAuthDeepLinks());
   _exchangeOpenRouterWebRedirect(stores.sessionKeys);
 }
 

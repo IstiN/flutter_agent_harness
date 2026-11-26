@@ -3,7 +3,7 @@
 // in the LICENSE file.
 
 /// No-op stub for platforms that do not use deep links or `postMessage`.
-Future<void> attachOpenRouterOAuthLinks() async {}
+Future<void> attachOAuthDeepLinks() async {}
 
 /// No-op stub: verifier persistence is only needed on web for the redirect
 /// flow.

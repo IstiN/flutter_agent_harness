@@ -185,6 +185,74 @@ void main() {
       expect(httpClient.requests, hasLength(1));
     });
 
+    test('a pre-arrival callback matching the state answers the flow without '
+        'opening the browser (cold-start replay)', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: initiateBody)
+        ..respond(200, body: exchangeBody);
+      final flow = NetworkAuthFlow(
+        client: FaNetworkClient(baseUrl: testBase, httpClient: httpClient),
+      );
+
+      var launched = false;
+      final tokens = await flow.signIn(
+        provider: 'google',
+        startReceiver: () async => FakeOAuthReceiver(
+          preArrivedCallback: Uri.parse(
+            'fah://oauth/network?code=pre-1&state=st-1',
+          ),
+        ),
+        openUrl: (authUrl) async {
+          launched = true;
+        },
+      );
+
+      // The replayed callback already carried the flow's code — the
+      // browser handoff is skipped and the exchange uses the pre-arrival.
+      expect(launched, isFalse);
+      expect(jsonDecode(httpClient.requests[1].body), {
+        'code': 'pre-1',
+        'state': 'st-1',
+      });
+      expect(tokens.accessToken, 'at-1');
+    });
+
+    test('a pre-arrival from a dead attempt is ignored — the flow completes '
+        'from its own live callback', () async {
+      final httpClient = FakeHttpClient()
+        ..respond(200, body: initiateBody)
+        ..respond(200, body: exchangeBody);
+      final flow = NetworkAuthFlow(
+        client: FaNetworkClient(baseUrl: testBase, httpClient: httpClient),
+      );
+
+      var launched = false;
+      final tokens = await flow.signIn(
+        provider: 'google',
+        startReceiver: () async => FakeOAuthReceiver(
+          // A stale link from an attempt that already died: its state
+          // belongs to no live flow.
+          preArrivedCallback: Uri.parse(
+            'fah://oauth/network?code=OLD&state=S_OLD',
+          ),
+          callbackUri: kFakeOAuthCallback,
+        ),
+        openUrl: (authUrl) async {
+          launched = true;
+        },
+      );
+
+      // The mismatched pre-arrival is noise — the browser still opens
+      // and the flow completes from its own callback, no state-mismatch
+      // failure, no poison loop.
+      expect(launched, isTrue);
+      expect(jsonDecode(httpClient.requests[1].body), {
+        'code': 'temp-1',
+        'state': 'st-1',
+      });
+      expect(tokens.accessToken, 'at-1');
+    });
+
     test('an exchange failure surfaces as FaNetworkException', () async {
       final httpClient = FakeHttpClient()
         ..respond(200, body: initiateBody)
