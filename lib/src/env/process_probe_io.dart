@@ -167,6 +167,7 @@ List<ShellSurvivor> classifyShellSurvivors({
         ? row.pgid == childPid
         : _isOwnedOrphan(
             row,
+            childPid: childPid,
             windowStartMs: windowStartMs,
             windowEndMs: execEnd?.millisecondsSinceEpoch,
             ourPgid: ourPgid,
@@ -183,11 +184,13 @@ List<ShellSurvivor> classifyShellSurvivors({
 
 /// The non-ownGroup candidate test (gh-2413), every clause explicit:
 /// in OUR group, started inside the call's window (both ends, whole-second
-/// grain), and PROVABLY ours — the row or an ancestor still wears this
-/// harness's [marker] ([ownedByMarker]). No marker, no window, no start
-/// string or a failed proof each answer false on their own. Pure.
+/// grain), and PROVABLY a leftover of THIS call — its `ppid` chain leads
+/// into the completed call's subtree through this harness's [marker]
+/// ([ownedByCall]). No marker, no window, no start string or a failed
+/// proof each answer false on their own. Pure.
 bool _isOwnedOrphan(
   ProcessDetailRow row, {
+  required int childPid,
   required int? windowStartMs,
   required int? windowEndMs,
   required int? ourPgid,
@@ -201,28 +204,42 @@ bool _isOwnedOrphan(
   final startedMs = tryParseLstart(row.lstart)?.millisecondsSinceEpoch;
   if (startedMs == null || startedMs < windowStartMs) return false;
   if (windowEndMs != null && startedMs > windowEndMs) return false;
-  return ownedByMarker(row, byPid, marker);
+  return ownedByCall(row, byPid, childPid, marker);
 }
 
-/// The gh-2413 ownership proof for one non-ownGroup candidate: the row's
-/// own command, or some ancestor's — the `ppid` chain walked inside the
-/// SAME snapshot ([byPid]) — still carries this harness's [marker]
-/// (`fa_sh_cmd_<pid>_…`, the wrapper argv a backgrounded subshell keeps).
-/// A chain that reaches init without the tag (a peer's wrapper, a detached
-/// program whose launcher exited) is NOT ours. Bounded depth guards
-/// against a table with a cycle (a recycled pid mid-walk); pure.
-bool ownedByMarker(
+/// The gh-2413 ownership proof for one non-ownGroup candidate of the
+/// COMPLETED call ([childPid]): the `ppid` chain, walked inside the same
+/// snapshot ([byPid]), must lead into THAT call's leftover subtree —
+/// through [childPid] itself (a child the snapshot still shows under the
+/// dead wrapper) or through an ORPHANED subshell (`ppid == 1`) that still
+/// wears this harness's [marker] (`fa_sh_cmd_<pid>_…`: forked from our
+/// wrapper, re-parented to init because its parent — the completed call —
+/// is gone). A process under a LIVE wrapper is NOT a survivor of this
+/// call even when that wrapper wears the same marker — it is another job
+/// of this very harness (the marker names the harness, not the call; a
+/// settled job once adopted its running sibling's `sleep` as a duplicate
+/// and doubled the waiting row, gh-2413 regression). A chain that reaches
+/// init without the tag (a peer's wrapper, a detached program whose
+/// launcher exited) is NOT ours either. Bounded depth guards against a
+/// table with a cycle (a recycled pid mid-walk); pure.
+bool ownedByCall(
   ProcessDetailRow row,
   Map<int, ProcessDetailRow> byPid,
+  int childPid,
   String marker,
 ) {
   var current = row;
   for (var depth = 0; depth < 128; depth++) {
-    if (current.command?.contains(marker) ?? false) return true;
-    final parent = byPid[current.ppid];
-    if (parent == null || parent.pid == current.pid || current.ppid <= 1) {
-      return false;
+    // A child the snapshot still shows under the completed call's pid:
+    // the dead wrapper itself is already reaped and absent from the table,
+    // so the `ppid` hit is the only trace of that subtree.
+    if (current.pid == childPid || current.ppid == childPid) return true;
+    if (current.ppid <= 1) {
+      // An orphan: ours only as a tagged subshell of this harness.
+      return current.command?.contains(marker) ?? false;
     }
+    final parent = byPid[current.ppid];
+    if (parent == null || parent.pid == current.pid) return false;
     current = parent;
   }
   return false;

@@ -29,6 +29,12 @@ block a release again.
   instead of an uncaught `ProcessException: Too many open files`); the
   session listing's header reads are an explicit open/read/close.
 
+- fix(tools): gh-2413 follow-up — survivor ownership is scoped to the
+  COMPLETED call, not the harness: a settled job's post-exit scan no
+  longer adopts a running sibling job's subtree (same wrapper tag), which
+  doubled the waiting row (`○ waiting · 2 jobs` with an `adopted:` duplicate
+  of the live job). The `ppid` chain must lead into the call's own
+  subtree; a live job's wrapper is never a survivor of another call.
 - fix(messaging): gh-2415 — the scheduled-message receipt writer backs off
   under fd pressure: a failed write keeps the receipt in memory, retries
   with exponential backoff (2 s → 5 min cap), warns once per pressure

@@ -235,9 +235,12 @@ void main() async {
         command: 'sleep 9',
       );
       final byPid = {tagged.pid: tagged};
-      expect(ownedByMarker(tagged, byPid, marker), isTrue);
+      // childPid 9 = the completed call's (dead, reaped) wrapper pid.
+      bool owned(ProcessDetailRow r, {int childPid = 9}) =>
+          ownedByCall(r, byPid, childPid, marker);
+      expect(owned(tagged), isTrue);
       // Chain to init without a tag.
-      expect(ownedByMarker(orphan, byPid, marker), isFalse);
+      expect(owned(orphan), isFalse);
       // Parent missing from the table.
       final stray = (
         pid: 12,
@@ -246,22 +249,62 @@ void main() async {
         lstart: fresh,
         command: 'sleep 9',
       );
-      expect(ownedByMarker(stray, byPid, marker), isFalse);
+      expect(owned(stray), isFalse);
       // A cycle (a recycled pid mid-walk) terminates — false, never hangs.
       final cyc = <int, ProcessDetailRow>{
         20: (pid: 20, ppid: 21, pgid: 50, lstart: fresh, command: 'a'),
         21: (pid: 21, ppid: 20, pgid: 50, lstart: fresh, command: 'b'),
       };
-      expect(ownedByMarker(cyc[20]!, cyc, marker), isFalse);
-      // A grandchild two levels under the tag.
+      expect(ownedByCall(cyc[20]!, cyc, 9, marker), isFalse);
+      // Grandchildren under the tag.
       final tree = {
         ...byPid,
         orphan.pid: orphan,
         stray.pid: (pid: 12, ppid: 10, pgid: 50, lstart: fresh, command: 'c'),
         13: (pid: 13, ppid: 12, pgid: 50, lstart: fresh, command: 'd'),
       };
-      expect(ownedByMarker(tree[12]!, tree, marker), isTrue);
-      expect(ownedByMarker(tree[13]!, tree, marker), isTrue);
+      expect(ownedByCall(tree[12]!, tree, 9, marker), isTrue);
+      expect(ownedByCall(tree[13]!, tree, 9, marker), isTrue);
+    });
+
+    test('gh-2413: a LIVE sibling job\'s subtree is never a survivor of the '
+        'completed call (same harness marker)', () {
+      // The harness (pid 50) runs two jobs: call A (pid 101, just exited)
+      // and job B (wrapper 200 alive, child 201 = `sleep 4`). B wears the
+      // same harness marker — ownership of the HARNESS is not ownership of
+      // the CALL: a settled job must never adopt its running sibling.
+      final marker = shellCommandOwnerMarker(50);
+      final wrapper = 'sh -c . \$1 sh /T/${marker}Ab/cmd.sh';
+      final table = [
+        (pid: 50, ppid: 1, pgid: 50, lstart: old, command: 'dart fa'),
+        (pid: 200, ppid: 50, pgid: 50, lstart: fresh, command: wrapper),
+        (pid: 201, ppid: 200, pgid: 50, lstart: fresh, command: 'sleep 4'),
+        // A's own leftover: an orphaned tagged subshell and its work.
+        (pid: 300, ppid: 1, pgid: 50, lstart: fresh, command: wrapper),
+        (pid: 301, ppid: 300, pgid: 50, lstart: fresh, command: 'sleep 8'),
+        // A child the snapshot still shows under A's dead wrapper.
+        (pid: 302, ppid: 101, pgid: 50, lstart: fresh, command: 'sleep 7'),
+      ];
+      print(
+        'DBG row300=${ownedByCall(table[3], {for (final r in table) r.pid: r}, 101, marker)} row302=${ownedByCall(table[5], {for (final r in table) r.pid: r}, 101, marker)} win=${spawn.millisecondsSinceEpoch}..${spawn.add(const Duration(seconds: 2)).millisecondsSinceEpoch} started=${tryParseLstart(fresh)?.millisecondsSinceEpoch}',
+      );
+      final survivors = classifyShellSurvivors(
+        childPid: 101,
+        ownGroup: false,
+        ourPgid: 50,
+        execStart: spawn,
+        execEnd: spawn.add(const Duration(minutes: 2)),
+        ownerMarker: marker,
+        table: table,
+      );
+      expect(survivors.map((s) => s.pid).toSet(), {300, 301, 302});
+      final byPid = {for (final r in table) r.pid: r};
+      expect(
+        ownedByCall(table[2], byPid, 101, marker),
+        isFalse,
+        reason: "job B's sleep is B's, not A's",
+      );
+      expect(ownedByCall(table[1], byPid, 101, marker), isFalse);
     });
 
     test('gh-2413 (a): the upper bound — a process started after the call '
@@ -1424,18 +1467,29 @@ void main() async {
             .where((s) => s.command!.contains('sleep $m'))
             .toList();
         expect(under, hasLength(1));
-        final shellPid = under.single.pid - 1;
+        // The tagged subshell that launched it. NOT pinned to
+        // `work.pid - 1`: pid allocation is not contiguous under load
+        // (a hook run interleaved other forks between the two).
         final tagged = execResult.survivors
-            .where(
-              (s) =>
-                  s.pid == shellPid &&
-                  s.command!.contains(shellCommandOwnerMarker(pid)),
-            )
+            .where((s) => s.command!.contains(shellCommandOwnerMarker(pid)))
             .toList();
-        expect(tagged, hasLength(1));
-        // Kill the work first (the subshell waits on it), then the shell.
+        expect(tagged, isNotEmpty);
+        // Honest linkage: the work's `ppid` (one fresh table read) IS one
+        // of the tagged shells — the ancestry proof the classifier used.
+        final table = await processDetailTableSnapshot();
+        final parentOf = {
+          for (final r in table ?? const <ProcessDetailRow>[]) r.pid: r.ppid,
+        };
+        expect(
+          tagged.map((s) => s.pid),
+          contains(parentOf[under.single.pid]),
+          reason: 'the adopted sleep must hang under the adopted subshell',
+        );
+        // Kill the work first (the subshell waits on it), then the shells.
         Process.killPid(under.single.pid, ProcessSignal.sigkill);
-        Process.killPid(shellPid, ProcessSignal.sigkill);
+        for (final shell in tagged) {
+          Process.killPid(shell.pid, ProcessSignal.sigkill);
+        }
       },
     );
 
@@ -1613,13 +1667,21 @@ void main() async {
         if (!ownGroup) {
           // The tagged subshell that launched the work rides along (its
           // pid is the work's fork parent) — the ancestry proof itself.
+          // Honest linkage: the adopted work's `ppid` (one fresh table
+          // read) is the adopted tagged subshell — the ancestry proof.
+          final table = await processDetailTableSnapshot();
+          final parentOf = {
+            for (final r in table ?? const <ProcessDetailRow>[]) r.pid: r.ppid,
+          };
+          final shells = adopted
+              .where((e) => e.command.contains(shellCommandOwnerMarker(pid)))
+              .map((e) => e.pid)
+              .toSet();
+          expect(shells, isNotEmpty);
           expect(
-            adopted.any(
-              (e) =>
-                  e.pid == work.single.pid! - 1 &&
-                  e.command.contains(shellCommandOwnerMarker(pid)),
-            ),
-            isTrue,
+            shells,
+            contains(parentOf[work.single.pid]),
+            reason: 'the adopted sleep must hang under the adopted subshell',
           );
         }
         // Stop everything adopted (leftovers included) so nothing outlives

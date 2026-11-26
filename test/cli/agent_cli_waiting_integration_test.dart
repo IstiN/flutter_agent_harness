@@ -1205,6 +1205,64 @@ void main() async {
     expect(cli.waitingLostJobsForTest, 0);
   });
 
+  test(
+    'waiting row (no PTY): two own waiters listed once each; the row '
+    'follows the outstanding one after the first settles (gh-2413 / #615)',
+    () async {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+      cli.waitingOwnerTagForTest = 'sess-A';
+      // Pids above macOS's pid ceiling: the real stop/liveness probes below
+      // can never match a live process (and the start-tag guard would
+      // refuse it anyway) — they only ever answer "gone".
+      cli.waitingProcessTableForTest = () async => (
+        pids: {990001, 990002},
+        starts: {
+          990001: 'Mon Nov 16 10:00:00 2026',
+          990002: 'Mon Nov 16 10:00:01 2026',
+        },
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await seedManifest([
+        {
+          'id': 'sh-a',
+          'command': 'sleep 2',
+          'pid': '990001',
+          'pidStart': 'Mon Nov 16 10:00:00 2026',
+          'startedAtMs': now,
+          'owner': 'sess-A',
+        },
+        {
+          'id': 'sh-b',
+          'command': 'sleep 4',
+          'pid': '990002',
+          'pidStart': 'Mon Nov 16 10:00:01 2026',
+          'startedAtMs': now,
+          'owner': 'sess-A',
+        },
+      ]);
+      await cli.waitingCaptureLostJobsForTest();
+      var snap = await cli.waitersSnapshotForTest();
+      expect(snap.jobs, ['adopted: sleep 2 (sh-a)', 'adopted: sleep 4 (sh-b)']);
+      expect(cli.shellJobsRegistryForTest.jobs, hasLength(2));
+      // The first waiter settles (a stop whose fresh probe finds the pid
+      // gone marks it gone without signaling anything): the row re-points
+      // at the outstanding one — exactly once, never a duplicate of the
+      // still-running job.
+      final first = cli.shellJobsRegistryForTest.job('sh-a')!;
+      first.suppressSettleNotification();
+      await first.stop();
+      await pumpEventQueue();
+      snap = await cli.waitersSnapshotForTest();
+      expect(snap.jobs, ['adopted: sleep 4 (sh-b)']);
+      expect(
+        cli.shellJobsRegistryForTest.jobs
+            .where((j) => j.isRunning)
+            .map((j) => j.id),
+        ['sh-b'],
+      );
+    },
+  );
+
   test('boot reconcile: a LEGACY owner-less entry keeps the old adoption and '
       'its notices say "adopted from unknown owner" (gh-2413 c)', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
