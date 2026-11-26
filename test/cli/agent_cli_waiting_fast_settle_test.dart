@@ -43,6 +43,16 @@ void main() {
     // the pid START probe against the settle chain, nothing else.
     cli.waitingProcessTableForTest = () async =>
         (pids: <int>{}, starts: <int, String>{});
+    // Pin the registry adopted-poll table too (gh-2430): both fabricated
+    // pids stay verifiably alive on every host. Without this the poll's
+    // real `ps` probe judges them dead ~5 s after adoption — always past
+    // the body end — and the unawaited settle chain rewrites running.json
+    // in the temp workspace: under load inside the teardown delete
+    // (ENOTEMPTY, errno 39 — the v1.0.779 hostile-env red), outside it a
+    // resurrected deleted dir. Presence-only rows (empty start map) keep
+    // the entries running forever — same rule the #2201 poll applies.
+    cli.shellJobsRegistryForTest.livenessTableOverride = () async =>
+        (pids: <int>{4242, 4243}, starts: <int, String>{});
     cli.waitingPidStartProbeForTest = pidStart;
     return (cli, env, io, '$dir/.fah/bash_jobs/running.json');
   }
@@ -140,4 +150,54 @@ void main() {
       );
     },
   );
+
+  test('REGRESSION (gh-2430, v1.0.779 hostile-env red): the adopted '
+      'liveness poll never settles a fabricated pid off the REAL process '
+      'table — the late jobSetled must not rewrite running.json past the '
+      'body', () async {
+    final (cli, env, io, manifest) = await settleCli(
+      'repro',
+      pidStart: (pid) async => null,
+    );
+    // A fabricated pid (the whole file fabricates its jobs): real CI
+    // hosts have no pid 4242, so the un-pinned poll's real `ps` probe
+    // judges it dead and the settle chain rewrites running.json AFTER
+    // the body ended. Under load that write lands inside the teardown
+    // delete — "Directory not empty, errno = 39" (the v1.0.779 red) —
+    // and outside it the write resurrects the deleted temp dir.
+    final job = cli.shellJobsRegistryForTest.adoptRunningEntry(
+      id: 'sh-gh2430',
+      command: 'true',
+      pid: 4242,
+    );
+    // adoptRunningEntry fires onStart → an unawaited jobStarted add
+    // chain; await it so the body leaves NO pending manifest writer
+    // behind (the AC1 shape).
+    await cli.waitingJobStartedForTest(job);
+    // Drive one poll tick deterministically: the production wall-clock
+    // timer fires 5 s after adoption — always past the body end, where
+    // the assertions below cannot observe it. One awaited tick IS the
+    // late writer, deterministically.
+    await cli.shellJobsRegistryForTest.adoptedPollTickForTest();
+    // Let any settle chain the tick started land (it is unawaited).
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    // The pinned poll table keeps the fabricated pid verifiably alive:
+    // the entry stays recorded exactly as the add wrote it — no settle,
+    // no late rewrite. Pre-pin, the real probe dropped it and the
+    // manifest came back empty (the late jobSetled).
+    expect(
+      [
+        for (final entry in manifestEntries(
+          (await env.readTextFile(manifest)).valueOrNull,
+        ))
+          entry['id'],
+      ],
+      ['sh-gh2430'],
+      reason:
+          'a fabricated adopted pid must never be settled by the real '
+          'process-table probe — the late jobSetled rewrite lands past '
+          'the body end and races the teardown delete '
+          '(errno 39, v1.0.779 hostile-env red)',
+    );
+  });
 }
