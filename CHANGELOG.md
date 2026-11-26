@@ -13,6 +13,13 @@ block a release again.
 
 ## Unreleased
 
+- fix(messaging): the autonomous-chain token budget is OFF by default
+  (PR #2435 addendum, owner directive "let the mail arrive"):
+  `messaging.chainBudgetTokens` defaults to 0 — spend alone never pauses
+  a chain, mail always wakes the agent, and the loop detector (ON by
+  default) remains the evidence-based bound for true storms. A positive
+  value re-enables the #2226 budget pause (400000 was the pre-#2435
+  default).
 - fix(compaction): unanswered inbound inter-agent mail is never a mechanical
   compaction candidate (PR #2435 addendum). New `compaction/inbound_mail.dart`
   — the ONE record- and message-level definition (DM `from <id>:`, channel
