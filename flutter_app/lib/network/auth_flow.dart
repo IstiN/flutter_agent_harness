@@ -34,6 +34,14 @@ abstract interface class OAuthCallbackReceiver {
   /// Resolves with the callback URI (or throws on timeout).
   Future<Uri> get callback;
 
+  /// A callback that arrived BEFORE this receiver bound — the mobile
+  /// router replays links that landed while no receiver lived (the
+  /// cold-start race). Null when none. The flow decides after initiate
+  /// whether it belongs to this flow (state match → answers the flow
+  /// directly) or is a dead attempt's callback (mismatch → noise, not a
+  /// failure — unlike a mismatched live [callback], which is fatal).
+  Uri? get preArrivedCallback;
+
   /// Tears the listener down (never awaited inside fake-async tests).
   void close();
 }
@@ -86,6 +94,17 @@ final class NetworkAuthFlow {
         clientType: clientType,
         environment: environment,
       );
+      // A cold-start replay may have delivered our callback BEFORE the
+      // receiver bound (the mobile router hands buffered links to the
+      // next registering receiver). A pre-arrival whose state matches
+      // this flow answers it directly — the browser handoff is skipped.
+      // A MISMATCHED pre-arrival is a dead attempt's callback: noise,
+      // not a failure — the flow keeps waiting for its own callback (a
+      // mismatched live callback stays fatal: the CSRF guard).
+      final preArrived = receiver.preArrivedCallback;
+      final preArrivedMatches =
+          preArrived != null &&
+          preArrived.queryParameters['state'] == initiated.state;
       // The browser handoff may kill the app. Persist everything the next
       // process needs BEFORE launching it; the code itself arrives later.
       pending = PendingOAuthFlow(
@@ -97,8 +116,8 @@ final class NetworkAuthFlow {
         createdAt: _clock().toUtc(),
       );
       await pendingStore?.save(pending);
-      await openUrl(initiated.authUrl);
-      final callback = await receiver.callback;
+      if (!preArrivedMatches) await openUrl(initiated.authUrl);
+      final callback = preArrivedMatches ? preArrived : await receiver.callback;
       final error = callback.queryParameters['error'];
       if (error != null && error.isNotEmpty) {
         throw AuthFlowException(
