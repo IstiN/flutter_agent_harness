@@ -178,7 +178,12 @@ void main() {
       }
       // ignore: avoid_print
       print('DBG_CALLS=' + stream.calls.toString());
-      for (final l in io.out.toString().split('\n')) { if (l.contains('compacted') || l.contains('trim') || l.contains('warning') || l.contains('exceeded') || l.contains('checkpoint') || l.contains('final answer') || l.contains('no findings')) print('DBG_OUT: ' + l); }
+      // ignore: avoid_print
+      print('DBG_FULL_OUT_BEGIN');
+      // ignore: avoid_print
+      print(io.out.toString());
+      // ignore: avoid_print
+      print('DBG_FULL_OUT_END');
       final dbgLog = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ?? '';
       // ignore: avoid_print
       for (final l in dbgLog.split('\n')) { if (l.contains('pass') || l.contains('compact') || l.contains('checkpoint') || l.contains('window') || l.contains('trim')) print('DBG_LOG: ' + l); }

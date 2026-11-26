@@ -113,65 +113,11 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
       await seedBaseTranscript();
-      final stream = _CyclingStreamFunction([
-        // Run 1 ("start the detour"): the model marks a checkpoint.
-        toolTurn([
-          const ToolCall(
-            id: 'c1',
-            name: 'checkpoint',
-            arguments: {'goal': 'detour'},
-          ),
-        ]),
-        textTurn('detour started'),
-        // Run 2 ("any luck?"): a REAL user turn lands inside the detour
-        // scope — the checkpoint goes stale (userTurn) from here on.
-        textTurn('no findings yet'),
-        // Run 3 ("wrap it up"): first balloon the context past the
-        // trigger with a real tool result…
-        toolTurn([
-          const ToolCall(
-            id: 't1',
-            name: 'read',
-            arguments: {'path': 'big.txt'},
-          ),
-        ]),
-        // …then close the stale checkpoint: the auto-close fires the AC4
-        // restore-budget guard (over the trigger → forced pass).
-        toolTurn([
-          const ToolCall(
-            id: 'c2',
-            name: 'checkpoint',
-            arguments: {'goal': 'close it out'},
-          ),
-        ]),
-        // The guard's forced compaction summarizer.
-        textTurn('restore budget compaction summary'),
-        // The run continues ON THE CAPPED CONTEXT.
-        textTurn('final answer after restore budget cap'),
-      ]);
+      final stream = _RoutedRestoreBudgetStream();
       final agent = cli(stream);
 
       final run = agent.run();
       io.sendLine('start the detour');
-      await waitForIt(
-        () => stream.calls >= 2 && !agent.isBusy,
-        reason: 'run 1 created the checkpoint',
-      );
-      io.sendLine('any luck?');
-      await waitForIt(
-        () => stream.calls >= 3 && !agent.isBusy,
-        reason: 'run 2 landed the real user turn inside the detour scope',
-      );
-      io.sendLine('wrap it up');
-      await waitForIt(
-        () =>
-            !agent.isBusy &&
-            io.out.toString().contains('final answer after restore budget cap'),
-        reason:
-            'run 3: read → stale-checkpoint auto-close → guard cap → '
-            'final answer',
-      );
-      io.sendLine('/exit');
       await run;
 
       final output = io.out.toString();
@@ -187,14 +133,26 @@ void main() {
 
       // The detonation was real: at the auto-close the restored context
       // (full detour history + the big tool result) sat OVER the trigger.
+      // #2416 merge: the guard fires one scripted call earlier than the
+      // main-tuned positional script assumed (the merged boot is bigger),
+      // so the over-trigger figure is pinned against the visible cap
+      // receipt instead of a positional request index.
+      final capLine = RegExp(
+        r'auto-compacted · main=\S+: (\d+) → (\d+) tokens \((\d+) freed',
+      ).firstMatch(output);
+      expect(capLine, isNotNull, reason: output);
       expect(
-        requestTokensOf(stream.contexts[4]),
+        int.parse(capLine!.group(1)!),
         greaterThan(_threshold),
         reason: 'fixture check: the auto-close must fire over the trigger',
       );
 
       // AC4: the next request after the auto-close rides the CAPPED
       // context — never above window − reserve.
+      expect(
+        int.parse(capLine.group(2)!),
+        lessThanOrEqualTo(_threshold),
+      );
       expect(
         requestTokensOf(stream.contexts.last),
         lessThanOrEqualTo(_threshold),
@@ -279,10 +237,49 @@ void main() {
 /// size, so an over-trigger transcript is multi-chunk by construction),
 /// and the memory-extraction hook may add one more. The scripted prefix
 /// stays exact; only the overflow repeats the final-answer turn.
-class _CyclingStreamFunction extends FakeStreamFunction {
-  _CyclingStreamFunction(super.turns);
+/// A content-routed fake for the AC4 restore-budget scenario: the guard's
+/// forced classic summarizer call is answered WITHOUT consuming a scripted
+/// agent turn (#2416 merge: the merged boot is bigger, so the auto-close
+/// fires one scripted call earlier than the main-tuned positional script
+/// assumed — the summarizer used to eat the scripted `read` turn and the
+/// queue misaligned). Agent calls consume the script in order; a script-dry
+/// agent call repeats the final answer (the memory-extraction hook may add
+/// one more call).
+class _RoutedRestoreBudgetStream extends FakeStreamFunction {
+  _RoutedRestoreBudgetStream() : super(const []);
 
-  List<AssistantMessageEvent>? _last;
+  int _agentCalls = 0;
+
+  static final List<List<AssistantMessageEvent>> _script = [
+    // Run 1 ("start the detour"): the model marks a checkpoint.
+    toolTurn([
+      const ToolCall(
+        id: 'c1',
+        name: 'checkpoint',
+        arguments: {'goal': 'detour'},
+      ),
+    ]),
+    textTurn('detour started'),
+    // Run 2 ("any luck?"): a REAL user turn lands inside the detour
+    // scope — the checkpoint goes stale (userTurn) from here on.
+    textTurn('no findings yet'),
+    // Run 3 ("wrap it up"): balloon the context past the trigger with a
+    // real tool result…
+    toolTurn([
+      const ToolCall(id: 't1', name: 'read', arguments: {'path': 'big.txt'}),
+    ]),
+    // …then close the stale checkpoint: the auto-close fires the AC4
+    // restore-budget guard (over the trigger → forced pass).
+    toolTurn([
+      const ToolCall(
+        id: 'c2',
+        name: 'checkpoint',
+        arguments: {'goal': 'close it out'},
+      ),
+    ]),
+    // The run continues ON THE CAPPED CONTEXT.
+    textTurn('final answer after restore budget cap'),
+  ];
 
   @override
   AssistantMessageEventStream call(
@@ -290,11 +287,30 @@ class _CyclingStreamFunction extends FakeStreamFunction {
     Context context, {
     CancelToken? cancelToken,
   }) {
-    if (turns.isNotEmpty) {
-      _last = turns.first;
-    } else if (_last != null) {
-      turns.add(_last!);
+    models.add(model);
+    contexts.add(
+      Context(
+        systemPrompt: context.systemPrompt,
+        messages: List.of(context.messages),
+        tools: context.tools,
+      ),
+    );
+    final last = context.messages.lastOrNull;
+    final text = last is UserMessage ? messageText(last) : '';
+    // The restore-budget guard's forced classic summarizer: its request
+    // wraps the transcript in `<conversation>` tags. It never consumes a
+    // scripted agent turn.
+    final isSummarizer = text.contains('<conversation>');
+    final events = isSummarizer
+        ? textTurn('restore budget compaction summary')
+        : _script[
+            _agentCalls < _script.length ? _agentCalls++ : _script.length - 1
+          ];
+    final stream = AssistantMessageEventStream();
+    for (final event in events) {
+      stream.push(event);
     }
-    return super.call(model, context, cancelToken: cancelToken);
+    stream.end();
+    return stream;
   }
 }
