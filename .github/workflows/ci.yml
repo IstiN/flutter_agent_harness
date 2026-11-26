@@ -2846,7 +2846,9 @@ jobs:
       - run: cd packages/fa_ui && flutter pub get
 
       # gh-2425 rework: the fa_ui dependency graph carries sqlite3
-      # directly (packages/fa_ui/pubspec.yaml `sqlite3: ^3.5.1`), so the
+      # transitively (repo-root pubspec.yaml:76 `sqlite3: ^3.5.1`,
+      # inherited through the flutter_agent_harness path dependency;
+      # packages/fa_ui/pubspec.yaml itself never names it), so the
       # `flutter test` step below builds the native-assets hook and rides
       # the hook's single-attempt GitHub download — one transient
       # `504 Gateway Timeout` red'd shard 0/3 (run 45904218215), the

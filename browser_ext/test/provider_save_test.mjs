@@ -225,3 +225,57 @@ test('gh-2425: a model-less save keeps the stored model (merge contract parity)'
   assert.equal(h.data.faProvider.model, 'glm-5');
   assert.equal(h.data.faProvider.apiKey, 'stored-key', 'a key the user did not retype is not wiped');
 });
+
+// gh-2425 rework review (PRT_kwDOTXdlLc68lzcU, BLOCKING): the per-key union
+// made header deletions impossible — a stored authorization header kept
+// riding every request to a NEW endpoint after the user deleted its line.
+test('gh-2425 rework: a save with a reduced header set REPLACES the stored set — deletions stick', async () => {
+  const h = boot({
+    baseUrl: 'https://a/v1',
+    apiKey: 'stored-key',
+    model: 'm',
+    headers: { authorization: 'Bearer secret-token', 'x-old': '1' },
+  });
+  // The user deleted the authorization + x-old lines and typed one new header.
+  await h.send({ type: 'provider.save', baseUrl: 'https://a/v1', apiKey: 'new-key', model: 'm', headers: 'x-new: yes' });
+  assert.deepEqual(
+    plain(h.data.faProvider.headers),
+    { 'x-new': 'yes' },
+    'replace-by-presence: stored keys the incoming set drops are gone (Dart settings_put parity)',
+  );
+
+  // The documented blank-keeps-stored behavior still holds after a replacement.
+  await h.send({ type: 'provider.save', baseUrl: 'https://a/v1', apiKey: 'new-key', model: 'm', headers: '' });
+  assert.deepEqual(plain(h.data.faProvider.headers), { 'x-new': 'yes' }, 'blank header text still means keep');
+});
+
+// gh-2425 rework review (PRT_kwDOTXdlLc68lzfa, SUGGESTION): the Dart reader
+// only accepts positive ints (storedIntSetting int.tryParse + the
+// windowSettingsFromStored > 0 guard) — a stored float/negative override
+// never applies, so storing it silently is a save-succeeded-does-nothing trap.
+test('gh-2425 rework: non-integral / non-positive contextWindow input falls back to stored', async () => {
+  const bads = ['264000.5', '-5', '0', 264000.5, -5, 0];
+  for (const bad of bads) {
+    const h = boot({ baseUrl: 'https://a/v1', apiKey: 'stored-key', model: 'm', contextWindow: 128000 });
+    await h.send({ type: 'provider.save', baseUrl: 'https://a/v1', apiKey: 'new-key', model: 'm', contextWindow: bad });
+    assert.equal(
+      h.data.faProvider.contextWindow,
+      128000,
+      `contextWindow ${JSON.stringify(bad)} is dropped (Dart parity), stored value survives`,
+    );
+    assert.equal(
+      h.boots[0].provider.contextWindow,
+      128000,
+      `boot config carries the surviving window, not ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('gh-2425 rework: provider.get drops a non-integral stored window (read-back parity)', async () => {
+  // Storage garbage from a pre-fix save must read like the Dart reader reads
+  // it: dropped (UI answers the 0 = no-override encoding).
+  const h = boot({ baseUrl: 'https://a/v1', apiKey: 'stored-key', model: 'm', contextWindow: 264000.5 });
+  const reply = await h.send({ type: 'provider.get' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.provider.contextWindow, 0, 'a stored double is dropped, not echoed into the panel');
+});

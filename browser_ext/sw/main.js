@@ -95,18 +95,23 @@ async function waitForHubJoin(channel) {
 // "Context window exhausted". The merge below is the SAME contract as the
 // Dart settings_put hook (browser_ext/dart/src/settings_merge.dart): a
 // non-empty incoming string wins, a blank/absent one keeps the stored value;
-// the int fields merge by presence and tolerate the string-encoded form
-// (the panel sends input values as strings); `headers` merges as a
-// sanitized map.
+// the int fields merge by presence, tolerate the string-encoded form (the
+// panel sends input values as strings) and accept positive ints only, like
+// the Dart reader; `headers` merges by presence over a sanitized map — a
+// non-empty incoming set replaces the stored one, a blank/absent one keeps
+// it (so a deleted header actually deletes).
 
-/** int | numeric string → number; blank/garbled/other → null. */
+/** Positive int | positive-int numeric string → number; non-integral,
+ * non-positive, blank/garbled/other → null. Dart reader parity
+ * (browser_ext/dart/src/providers.dart): `storedIntSetting` int-parses
+ * decimal digits only and `windowSettingsFromStored` drops values <= 0 —
+ * storing a float/negative would silently save an override that never
+ * applies. */
 function storedInt(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const t = value.trim();
-    if (t !== '' && Number.isFinite(Number(t))) return Number(t);
-  }
-  return null;
+  const t = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  if (!/^[+-]?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n > 0 ? n : null;
 }
 
 /** Custom-header map from `Name: value` lines (or an object). Names are
@@ -137,7 +142,11 @@ function sanitizeHeaders(raw) {
 
 /** Merged `faProvider` map for a panel save: incoming fields that carry a
  * value win, everything else keeps the stored one (a key the user did not
- * retype, a window override, custom headers — none are wiped). baseUrl and
+ * retype, a window override, custom headers when the save omits the field
+ * or sends a blank one — none are wiped). A non-empty incoming header set
+ * REPLACES the stored one (merge-by-presence, same as the Dart hook): a
+ * header the user deleted stops riding requests, and a dropped
+ * `authorization` header does not leak to a new endpoint. baseUrl and
  * model are trimmed (legacy panel behavior); the key keeps the legacy
  * untrimmed storage (a stray space is data, and the Dart merge hook stores
  * it untrimmed too). */
@@ -151,7 +160,14 @@ function mergeProviderSave(stored, msg) {
   const intField = (name) => storedInt(msg?.[name]) ?? (stored ? storedInt(stored[name]) : null);
   const contextWindow = intField('contextWindow');
   const contextWindowCap = intField('contextWindowCap');
-  const headers = { ...sanitizeHeaders(stored?.headers), ...sanitizeHeaders(msg?.headers) };
+  // Headers merge by presence over a sanitized map — the SAME contract as
+  // the Dart settings_put hook: a non-empty incoming set REPLACES the
+  // stored one (deletions stick), a blank/absent field keeps the stored
+  // set. An empty merged result omits the key entirely.
+  const incomingHeaders = sanitizeHeaders(msg?.headers);
+  const headers = Object.keys(incomingHeaders).length
+    ? incomingHeaders
+    : sanitizeHeaders(stored?.headers);
   return {
     baseUrl: field('baseUrl'),
     apiKey: field('apiKey', true),

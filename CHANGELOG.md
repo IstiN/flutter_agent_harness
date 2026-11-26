@@ -18,7 +18,9 @@ block a release again.
   save reset the stored window override (gh-2059) and a 264k-token model ran on
   the shared fallback window until "Context window exhausted". `provider.save`
   now merges field-wise (the same contract as the Dart settings_put merge:
-  non-empty wins, blank keeps stored, ints by presence string-tolerant) and
+  non-empty wins, blank keeps stored, ints by presence string-tolerant,
+  custom headers replace-by-presence so a header line the user deleted
+  actually deletes — a dropped authorization header stops riding requests) and
   `provider.get` answers the panel with every field EXCEPT the key (write-only
   UI, hub.bind.get principle). Custom request headers (`faProvider.headers`,
   `Name: value` lines in the new panel field) ride `Model.headers` through the

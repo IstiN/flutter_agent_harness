@@ -107,7 +107,10 @@ const sqlite3PrewarmJobs = <String, List<String>>{
     'binaries',
     'binaries-pr',
     // gh-2425 rework: the fa_ui shards compile packages/fa_ui — a graph
-    // that carries sqlite3 directly (pubspec `sqlite3: ^3.5.1`) — so the
+    // that carries sqlite3 transitively (repo-root pubspec.yaml:76
+    // `sqlite3: ^3.5.1`, inherited through the flutter_agent_harness
+    // path dependency; packages/fa_ui/pubspec.yaml itself never names
+    // it) — so the
     // `flutter test` step builds the native-assets hook and rolls the
     // hook's single-attempt download dice; shard 0/3 red'd on one
     // transient 504 Gateway Timeout (run 45904218215) exactly the
