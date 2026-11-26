@@ -13,6 +13,7 @@ import 'dart:io';
 
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -221,6 +222,65 @@ void main() {
         );
       },
     );
+
+    test('stock boot provisions no host session (AC3)', () async {
+      final stores = await loadBootStores(MemoryExecutionEnv());
+      addTearDown(() => FaUiHost.keyResolver = null);
+      expect(stores.hostSession, isNull);
+      expect(stores.registry.providers, isEmpty);
+    });
+
+    group('host-session boot (issue #2391)', () {
+      final config = FaProductConfig.fromJson({
+        'productId': 'ain',
+        'displayName': 'AIN Agent',
+        'apiEndpoint': 'https://api.ain.example/v1',
+        'featureFlags': <String>[],
+        'hostConnection': {
+          'baseUrl': 'https://api.ain.example/v1',
+          'sessionBridge': {
+            'storage': 'localStorage',
+            'key': 'ain_agent_session',
+          },
+          'defaultModel': 'ain/ain_flash',
+          'modelRoles': {'smol': 'ain/ain_flash'},
+          'mediaSlots': {
+            'imageGeneration': {'model': 'ain/ain_image'},
+          },
+        },
+      });
+
+      test('a populated bridge resolves the session at boot', () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+          hostSessionBridge: _FakeHostBridge({'ain_agent_session': 'bk'}),
+        );
+        addTearDown(() => FaUiHost.keyResolver = null);
+        expect(stores.hostSession, isNotNull);
+        expect(stores.hostSession!.bridgedKey, 'bk');
+        expect(stores.registry.providers.single.id, 'host');
+        // Role and slot defaults are provisioned on the same boot.
+        expect(stores.taskModels.overrideFor('smol')!.modelId, 'ain/ain_flash');
+        expect(
+          stores.mediaModels.overrideFor('imageGeneration')!.modelId,
+          'ain/ain_image',
+        );
+      });
+
+      test('an empty bridge leaves the stock boot untouched', () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+          hostSessionBridge: _FakeHostBridge({'ain_agent_session': ''}),
+        );
+        addTearDown(() => FaUiHost.keyResolver = null);
+        expect(stores.hostSession, isNull);
+        expect(stores.registry.providers, isEmpty);
+        expect(stores.taskModels.overrideFor('smol'), isNull);
+        expect(stores.mediaModels.overrideFor('imageGeneration'), isNull);
+      });
+    });
   });
 
   group('bootTelemetry (telemetry stage)', () {
@@ -526,4 +586,14 @@ final class _FakeDocumentsPathProvider extends PathProviderPlatform {
 
   @override
   Future<String?> getApplicationDocumentsPath() async => _documents.path;
+}
+
+/// A fake [HostSessionBridge]: the host page's same-origin storage, as a
+/// test-controlled map (issue #2391).
+final class _FakeHostBridge implements HostSessionBridge {
+  _FakeHostBridge(this.values);
+  final Map<String, String> values;
+
+  @override
+  String? read(String key) => values[key];
 }

@@ -33,6 +33,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/l10n/locale_override.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -117,6 +118,7 @@ Future<void> bootAppRoutes(
       networkMode: stores.networkMode,
       networkSessions: stores.networkSessions,
       productConfig: stores.productConfig,
+      hostSession: stores.hostSession,
       analytics: analytics,
     ),
   );
@@ -200,6 +202,7 @@ class MyApp extends StatelessWidget {
     this.networkMode,
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
+    this.hostSession,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -275,6 +278,10 @@ class MyApp extends StatelessWidget {
 
   /// Host product identity; existing tests/hosts default to stock Fa.
   final FaProductConfig productConfig;
+
+  /// The resolved host session (issue #2391); null keeps every stock boot
+  /// decision byte-identical.
+  final HostSessionState? hostSession;
 
   /// Fallback for [themeController] when none is injected (tests): a single
   /// shared in-memory controller so every [MyApp] build sees the same one.
@@ -366,6 +373,7 @@ class MyApp extends StatelessWidget {
         networkMode: networkMode,
         networkSessions: networkSessions,
         productConfig: productConfig,
+        hostSession: hostSession,
       ),
     );
   }
@@ -532,9 +540,15 @@ class BootstrapScreen extends StatefulWidget {
     this.networkMode,
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
+    this.hostSession,
   });
 
   final FaProductConfig productConfig;
+
+  /// The resolved host session (issue #2391): a populated bridge boots the
+  /// product's own connection straight to the workspace — no provider
+  /// gate, no onboarding, no connect flow. Null keeps the stock decisions.
+  final HostSessionState? hostSession;
 
   /// The shared execution env handed to [AgentService.create].
   final ExecutionEnv? env;
@@ -620,10 +634,13 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       );
       return;
     }
-    _config = restorableBootConfig(
-      connection: widget.lastConnectionStore?.connection,
-      registry: widget.registry,
-      sessionKeysStore: widget.sessionKeysStore,
+    _config = bootConfigWithHostSession(
+      restorable: restorableBootConfig(
+        connection: widget.lastConnectionStore?.connection,
+        registry: widget.registry,
+        sessionKeysStore: widget.sessionKeysStore,
+      ),
+      hostSession: widget.hostSession,
     );
     // The skills-consent dialog fires only for an EXPLICIT `ask` choice
     // (Settings) — discovery is on by default, so a fresh install never

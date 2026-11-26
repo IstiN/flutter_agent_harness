@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/network/network_mode.dart';
@@ -980,6 +982,82 @@ void main() {
       expect(find.byType(OnboardingScreen), findsNothing);
     });
 
+    testWidgets('a resolved host session boots straight to the workspace — '
+        'no provider gate, no onboarding (issue #2391)', (tester) async {
+      final hostSession = HostSessionState(
+        provider: const CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: 'https://api.ain.example/v1',
+          modelId: 'ain/ain_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+        bridgedKey: 'bridged-key',
+        connection: _hostConnectionConfig(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            onboardingStore: OnboardingStore.inMemory(),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+            hostSession: hostSession,
+          ),
+        ),
+      );
+      await tester.pump();
+      // The provider gate never appears: no onboarding, no setup form —
+      // the boot goes straight to the restore spinner and the home.
+      expect(find.byType(OnboardingScreen), findsNothing);
+      expect(find.byType(SetupScreen), findsNothing);
+      expect(find.byType(FaBrandTile), findsOneWidget);
+    });
+
+    testWidgets('a persisted host last-connection restores with the freshly '
+        'bridged key (issue #2391)', (tester) async {
+      final hostSession = HostSessionState(
+        provider: const CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: 'https://api.ain.example/v1',
+          modelId: 'ain/ain_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+        bridgedKey: 'bridged-key',
+        connection: _hostConnectionConfig(),
+      );
+      // The persisted connection names the user's chosen host model;
+      // the key never persists, so this boot re-attaches the bridged one.
+      final store = LastConnectionStore.inMemory();
+      await store.save(
+        const LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'ain/ain_pro',
+          baseUrl: 'https://api.ain.example/v1',
+        ),
+      );
+      final registry = ProviderRegistry.inMemory();
+      await registry.upsert(hostSession.provider);
+      final config = bootConfigWithHostSession(
+        restorable: restorableBootConfig(
+          connection: store.connection,
+          registry: registry,
+          sessionKeysStore: null,
+        ),
+        hostSession: hostSession,
+      );
+      expect(config, isNotNull);
+      expect(config!.modelId, 'ain/ain_pro');
+      expect(config.baseUrl, 'https://api.ain.example/v1');
+      expect(config.apiKey, 'bridged-key');
+    });
+
     testWidgets(
       'seen onboarding + ask-mode skills consent shows the one-time dialog',
       (tester) async {
@@ -1142,3 +1220,14 @@ void main() {
     );
   });
 }
+
+/// A minimal validated hostConnection section for the routing tests.
+HostConnectionConfig _hostConnectionConfig() => HostConnectionConfig.fromJson(
+  {
+    'baseUrl': 'https://api.ain.example/v1',
+    'sessionBridge': {'storage': 'localStorage', 'key': 'ain_agent_session'},
+    'defaultModel': 'ain/ain_flash',
+  },
+  apiEndpoint: Uri.parse('https://api.ain.example/v1'),
+  displayName: () => 'AIN',
+);

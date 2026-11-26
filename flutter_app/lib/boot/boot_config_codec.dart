@@ -11,6 +11,7 @@
 /// decode here) is unit-testable without booting the app.
 library;
 
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -182,6 +183,29 @@ AgentConfig? _bootOutcome(ProviderRegistry? registry, AgentConfig config) {
   if (problem != null) {
     debugPrint('[Fa] boot: refusing broken connection — $problem');
     return null;
+  }
+  return config;
+}
+
+/// Merges the restored connection with the resolved host session (issue
+/// #2391) into THE boot config:
+///
+/// - no host session → the restored config verbatim (stock byte-identical);
+/// - nothing restorable → the host session's product default model;
+/// - a restorable connection that IS the host entry → the user's chosen
+///   model on the host entry, re-attached to the freshly bridged key (the
+///   key never persists, so the restored form alone would boot keyless);
+/// - any other restorable connection → the user's own choice wins.
+AgentConfig? bootConfigWithHostSession({
+  required AgentConfig? restorable,
+  required HostSessionState? hostSession,
+}) {
+  final host = hostSession;
+  if (host == null) return restorable;
+  final config = restorable;
+  if (config == null) return host.bootConfig;
+  if (config.baseUrl == host.provider.baseUrl) {
+    return host.configFor(config.modelId);
   }
   return config;
 }

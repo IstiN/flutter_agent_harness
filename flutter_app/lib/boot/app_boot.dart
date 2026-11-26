@@ -16,6 +16,8 @@ library;
 import 'dart:async';
 
 import 'package:fa/boot/boot_watchdog.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/firebase_options.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/auth_pending_store.dart';
@@ -77,6 +79,7 @@ final class BootStores {
     required this.networkSessions,
     required this.quotas,
     this.productConfig = FaProductConfig.stock,
+    this.hostSession,
   });
 
   /// The shared execution env (also on [BootStores] so the routes stage
@@ -131,6 +134,10 @@ final class BootStores {
 
   /// Immutable host product identity; stock by default on every existing host.
   final FaProductConfig productConfig;
+
+  /// The resolved host session (issue #2391) — null on stock profiles and
+  /// whenever the bridge holds no key (then the stock flow applies).
+  final HostSessionState? hostSession;
 }
 
 /// The process-wide boot watchdog (gh-1507): one instance, installed once
@@ -265,6 +272,11 @@ Future<BootStores> loadBootStores(
   ExecutionEnv env, {
   FaProductConfig productConfig = FaProductConfig.stock,
   Iterable<InstalledThemePack> hostThemePacks = const [],
+
+  /// The host-page bridge (issue #2391); injectable for tests. Null (or
+  /// omitted) uses the platform reader — browser localStorage on web,
+  /// nothing elsewhere.
+  HostSessionBridge? hostSessionBridge,
 }) async {
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
@@ -306,6 +318,19 @@ Future<BootStores> loadBootStores(
   BootSteps.begin('storage:taskModels');
   final taskModels = await TaskModelsStore.load(env);
   BootSteps.mark('storage:taskModels');
+  // The host-session resolver (issue #2391) runs once the registry and
+  // the role/slot stores are loaded: a populated bridge upserts the `host`
+  // entry, keeps the key memory-only, and applies the profile defaults;
+  // an empty bridge leaves every stock behavior byte-identical.
+  BootSteps.begin('storage:hostSession');
+  final hostSession = await resolveHostSession(
+    productConfig: productConfig,
+    registry: registry,
+    taskModels: taskModels,
+    mediaModels: mediaModels,
+    bridge: hostSessionBridge,
+  );
+  BootSteps.mark('storage:hostSession');
   BootSteps.begin('storage:onDeviceConfig');
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
   BootSteps.mark('storage:onDeviceConfig');
@@ -373,6 +398,7 @@ Future<BootStores> loadBootStores(
     networkSessions: networkSessions,
     quotas: QuotaStore.instance,
     productConfig: productConfig,
+    hostSession: hostSession,
   );
 }
 
