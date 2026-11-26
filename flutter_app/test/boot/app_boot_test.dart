@@ -31,6 +31,10 @@ import 'package:flutter/widgets.dart';
 import 'package:fa/sandbox/env_factory_io.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:flutter/material.dart' show Color;
+import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/theme_packs.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -205,6 +209,54 @@ void main() {
           stores.themePacks.byId('host-theme')!.spec.dark!.accent,
           isNotNull,
         );
+      },
+    );
+
+    test(
+      'the profile theme pack is a DEFAULT: a saved user pack wins (gh-2391)',
+      () async {
+        final env = MemoryExecutionEnv();
+        // The user already picked a pack on a previous boot: persist it the
+        // way ThemeController does, then boot over the same env.
+        final packStore = await ThemePackStore.load(env);
+        packStore.registerHostPack(
+          const InstalledThemePack(
+            spec: ThemePackSpec(
+              id: 'user-pack',
+              name: 'User Pack',
+              version: '1.0.0',
+              dark: ThemePackColors(accent: Color(0xFF2E7D32)),
+            ),
+            wallpaperBytes: null,
+          ),
+        );
+        final prior = await ThemeController.load(env);
+        await prior.setPack('user-pack');
+        final stores = await loadBootStores(
+          env,
+          productConfig: _ainPorcelainProfile(),
+        );
+        // The user's saved selection survived the branded profile default.
+        expect(stores.themeController.packId, 'user-pack');
+        // The profile pack is still registered and available in pickers.
+        expect(stores.themePacks.byId('ain-porcelain'), isNotNull);
+      },
+    );
+
+    test(
+      'the AIN porcelain pack applies on a fresh boot and validates',
+      () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: _ainPorcelainProfile(),
+        );
+        expect(stores.themeController.packId, 'ain-porcelain');
+        final spec = stores.themePacks.byId('ain-porcelain')!.spec;
+        // The AIN palette rides the standard slots: green accent, violet
+        // second accent, ink background, porcelain light surfaces.
+        expect(spec.dark!.accent, isNotNull);
+        expect(spec.dark!.accent2, isNotNull);
+        expect(spec.light, isNotNull);
       },
     );
 
@@ -597,3 +649,51 @@ final class _FakeHostBridge implements HostSessionBridge {
   @override
   String? read(String key) => values[key];
 }
+
+/// The AIN product profile carrying the Porcelain theme pack (gh-2391
+/// addendum #2): porcelain soft-neutral light surfaces, the AIN ink dark
+/// background, the green primary accent, the violet/cyan secondaries.
+FaProductConfig _ainPorcelainProfile() => FaProductConfig.fromJson({
+  'productId': 'ain',
+  'displayName': 'AIN Agent',
+  'themePackId': 'ain-porcelain',
+  'themePack': {
+    'name': 'AIN Porcelain',
+    'version': '1.0.0',
+    'colors': {
+      'light': {
+        'background': '#F4F2EE',
+        'surface': '#FAF8F5',
+        'surfaceAlt': '#ECE9E3',
+        'border': '#DDD9D1',
+        'borderBright': '#C9C4BA',
+        'text': '#1C1B18',
+        'muted': '#6E6A62',
+        'accent': '#4ADE80',
+        'accent2': '#7C3AED',
+        'onAccent': '#07080D',
+        'error': '#B3261E',
+        'userBubble': '#E7F9EE',
+        'userBubbleBorder': '#0891B2',
+        'codeBg': '#EFEDE8',
+      },
+      'dark': {
+        'background': '#07080D',
+        'surface': '#101218',
+        'surfaceAlt': '#161923',
+        'border': '#232733',
+        'borderBright': '#333849',
+        'text': '#E9EAEE',
+        'muted': '#8B8F9B',
+        'accent': '#4ADE80',
+        'accent2': '#7C3AED',
+        'onAccent': '#07080D',
+        'error': '#F2B8B5',
+        'userBubble': '#12251C',
+        'userBubbleBorder': '#0891B2',
+        'codeBg': '#0D0F15',
+      },
+    },
+  },
+  'featureFlags': <String>[],
+});

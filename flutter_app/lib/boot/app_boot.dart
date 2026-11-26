@@ -472,7 +472,13 @@ Future<ThemePackStore> _configureBootTheme(
   if (productConfig.themePackId != null && selectedPack == null) {
     throw const FormatException('declared host themePackId was not provided');
   }
-  if (selectedPack != null) {
+  // The profile pack is a DEFAULT (gh-2391 addendum #2): it applies while
+  // the visitor has not picked a pack of their own; a saved selection —
+  // including "another pack" — always wins. (A persisted revert-to-stock
+  // reads as "no pack chosen", so the profile default applies; the
+  // persisted store carries no explicit-null marker.)
+  final userChoseAPack = themeController.packId != null;
+  if (selectedPack != null && !userChoseAPack) {
     await themeController.setPack(
       selectedPack.id,
       hasWallpaper: selectedPack.wallpaperBytes != null,
