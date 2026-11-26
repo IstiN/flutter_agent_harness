@@ -617,6 +617,7 @@ jobs:
           fi
 
       - name: Close the nightly-red issue on a green run
+        id: close
         # Schedule-only: a manual (drill) dispatch is not a night — its
         # green must never close the live nightly tracker.
         if: success() && github.event_name == 'schedule'
@@ -634,12 +635,36 @@ jobs:
             gh issue comment "$existing" --repo "$repo" \
               --body "Green again: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID} — closing."
             gh issue close "$existing" --repo "$repo"
+            # #2362: exported so the self-heal leg below can pair with
+            # THIS run's close (behavior otherwise unchanged — AC3).
+            echo "closed_number=${existing}" >> "$GITHUB_OUTPUT"
             echo "decision: closed #$existing — nightly green again"
             echo "decision: closed #$existing — nightly green again" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "decision: why-not close — no open nightly-red tracker"
             echo "decision: why-not close — no open nightly-red tracker" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # #2362: the close leg reads green from in-job step outcomes only —
+      # inside this always()-gated job a step-level success() never sees
+      # the `needs` failures, so a red night closes the tracker anyway
+      # (2026-11-20/21: #1953 closed while the PTY/CLI + ios legs had
+      # failed 3h earlier — runs 44667132620 / 44860623417), and the
+      # reopen that kept it alive lived OUTSIDE the bot (fleet monitor
+      # sweeps that missed 2/2 nights). This leg re-opens the just-closed
+      # tracker back-to-back, verifies the OPEN state with one bounded
+      # retry (AC1), and stamps a reopen-failed label + comment on
+      # exhaustion (AC2) instead of waiting on a 15-min SLA timer.
+      # Fixture-tested: scripts/nightly_red_tracker_selftest.sh
+      # (ci.yml Static gates).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: success() && github.event_name == 'schedule'
+      - name: Self-heal a premature close (#2362 AC1/AC2)
+        if: success() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOSED_NUMBER: ${{ steps.close.outputs.closed_number }}
+        run: bash scripts/nightly_red_tracker.sh self-heal "$CLOSED_NUMBER"
 
       - name: Create or update the nightly-red issue
         if: failure()
