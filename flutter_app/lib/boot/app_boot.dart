@@ -330,6 +330,18 @@ Future<BootStores> loadBootStores(
     mediaModels: mediaModels,
     bridge: hostSessionBridge,
   );
+  // The wiring-layer seam (quota notice, 401 re-resolve, gh-2391): the
+  // handle reflects exactly what this boot resolved — a stock boot (or a
+  // dropped section) uninstalls it, never leaving a stale seam behind.
+  if (hostSession != null) {
+    HostSessionHandle.instance.install(
+      hostSession,
+      registry: registry,
+      bridge: hostSessionBridge,
+    );
+  } else {
+    HostSessionHandle.instance.uninstall();
+  }
   BootSteps.mark('storage:hostSession');
   BootSteps.begin('storage:onDeviceConfig');
   final onDeviceConfig = await OnDeviceConfigStore.load(env);

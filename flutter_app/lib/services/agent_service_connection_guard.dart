@@ -325,3 +325,131 @@ extension _ProviderLinkage on AgentService {
     }
   }
 }
+
+/// The host-session quota marker (gh-2391): `[[host-quota:<url>]]` — the
+/// chat renders it as the out-of-allowance card with an optional link.
+/// The URL inside the marker ALWAYS comes from the profile's `quota.url`
+/// (the decorator builds it); a response body can never inject one (E11).
+const hostQuotaMarkerPrefix = '[[host-quota:';
+
+/// The quota notice suffix when the profile declares no link.
+const hostQuotaMarkerNoLink = '[[host-quota:]]';
+
+/// Builds the marker for a validated profile [HostQuotaConfig].
+String hostQuotaMarker(HostQuotaConfig? quota) {
+  final url = quota?.url;
+  if (url == null) return hostQuotaMarkerNoLink;
+  return '$hostQuotaMarkerPrefix$url]]';
+}
+
+/// The host-session stream decorator (gh-2391): wraps the auth-decorated
+/// provider stream for requests that ride the host entry.
+///
+/// - A response matching the profile's `quota` shape (status + error code)
+///   ends the run with the TERMINAL notice marker — one notice, optional
+///   profile link, no retry, no fallback. Any other status keeps the
+///   normal failure path (the bounded retry policy upstream).
+/// - A 401/403 triggers exactly ONE silent bridge re-resolution (the host
+///   page may have rotated the scoped key); a fresh key retries the
+///   request transparently. A persistent failure surfaces the host
+///   sign-in card (`[[auth-expired:host]]`) — never a manual key dialog.
+StreamFunction decorateHostSession(
+  StreamFunction inner,
+  AgentConfig config, {
+  StreamFunction Function(String apiKey)? rebuildWithKey,
+}) {
+  return (model, context, {cancelToken}) {
+    final controller = AssistantMessageEventStream();
+    var reResolved = false;
+    var attempt = inner;
+    Future<void> pump() async {
+      try {
+        await for (final event in attempt(
+          model,
+          context,
+          cancelToken: cancelToken,
+        )) {
+          if (event is ErrorEvent) {
+            final text = event.error.errorMessage ?? '';
+            final status = _leadingStatus(text);
+            // Quota: terminal notice, never a retry.
+            if (_matchesHostQuota(status, text)) {
+              controller.push(
+                ErrorEvent(
+                  reason: event.reason,
+                  error: event.error.copyWith(
+                    errorMessage: hostQuotaMarker(
+                      HostSessionHandle.instance.state?.connection.quota,
+                    ),
+                  ),
+                ),
+              );
+              break;
+            }
+            // Auth: one silent bridge re-read, then a transparent retry.
+            if (_isAuthStatus(status) &&
+                HostSessionHandle.instance.serves(config.baseUrl) &&
+                !reResolved) {
+              reResolved = true;
+              if (HostSessionHandle.instance.reResolveKey()) {
+                final fresh = HostSessionHandle.instance.state!.bridgedKey;
+                attempt = rebuildWithKey?.call(fresh) ?? attempt;
+                await pump();
+                return;
+              }
+              controller.push(
+                ErrorEvent(
+                  reason: event.reason,
+                  error: event.error.copyWith(
+                    errorMessage: '$authExpiredMarkerPrefix host]]',
+                  ),
+                ),
+              );
+              break;
+            }
+          }
+          controller.push(event);
+        }
+      } on Object catch (error) {
+        controller.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              errorMessage: '[internal] $error',
+              timestamp: DateTime.now(),
+            ),
+          ),
+        );
+      }
+      controller.end();
+    }
+
+    unawaited(pump());
+    return controller;
+  };
+}
+
+/// The leading `NNN:` status of a formatted provider error, if any.
+int? _leadingStatus(String text) {
+  final match = RegExp(r'^(\d{3}):').firstMatch(text.trim());
+  if (match == null) return null;
+  return int.tryParse(match.group(1)!);
+}
+
+/// Whether [status]+[text] match the profile's quota shape: the declared
+/// status AND the declared error code somewhere in the body. No profile
+/// quota declared → never matches.
+bool _matchesHostQuota(int? status, String text) {
+  final quota = HostSessionHandle.instance.state?.connection.quota;
+  if (quota == null || status != quota.status) return false;
+  return text.contains(quota.errorCode);
+}
+
+/// 401/403 — the host-entry auth failures worth one re-resolve.
+bool _isAuthStatus(int? status) => status == 401 || status == 403;

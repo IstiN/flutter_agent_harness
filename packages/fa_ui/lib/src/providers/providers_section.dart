@@ -202,9 +202,12 @@ class ProvidersSection extends StatelessWidget {
                 label: provider.name,
                 // Provenance (issue #327 AC4): `[local]` vs `[synced]`, the
                 // extension panel's wording — a pane partition holding
-                // only synced seeds (or only local edits) is visible.
+                // only synced seeds (or only local edits) is visible. The
+                // host-session row (gh-2391) gets its own `[host]` badge.
                 badge: _provenanceBadge(provider.provenance),
-                subtitle: provider.modelId.isEmpty
+                subtitle: provider.provenance == hostProviderProvenance
+                    ? strings.providersHostProvidedBy(provider.name)
+                    : provider.modelId.isEmpty
                     ? providerHostOf(provider.baseUrl)
                     : strings.mediaModelsOverrideSummary(
                         provider.modelId,
@@ -219,7 +222,12 @@ class ProvidersSection extends StatelessWidget {
                   providerMarkKeyForBaseUrl(provider.baseUrl),
                   connected: (registry.keyFor(provider.id) ?? '').isNotEmpty,
                 ),
-                onTap: () => _editCustom(context, registry, provider),
+                // The host row is read-only (gh-2391 AC11): no editor, no
+                // key field, no reconnect, no delete — the profile is the
+                // single source of truth for it.
+                onTap: provider.provenance == hostProviderProvenance
+                    ? null
+                    : () => _editCustom(context, registry, provider),
               ),
             // On-device engines are provider types too — plain rows in the
             // same list, not a separate "Local models" section.
@@ -341,7 +349,7 @@ class ProvidersSection extends StatelessWidget {
     Widget? trailing,
     IconData? leadingIcon = Icons.cloud_outlined,
     bool showChevron = true,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return InkWell(
       onTap: onTap,
@@ -572,5 +580,8 @@ class ProvidersSection extends StatelessWidget {
 /// The provenance badge for a saved provider row (issue #327 AC4) — the
 /// extension panel's wording: `local` renders `[local]`, any synced
 /// provenance (`synced-from-cli@<host>`) renders `[synced]`.
-String _provenanceBadge(String provenance) =>
-    provenance == localProviderProvenance ? '[local]' : '[synced]';
+String _provenanceBadge(String provenance) => switch (provenance) {
+  localProviderProvenance => '[local]',
+  hostProviderProvenance => '[host]',
+  _ => '[synced]',
+};

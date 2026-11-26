@@ -140,6 +140,26 @@ key/payload-substitution rejection, stale-base conflict, download hashes and
 conditional delete. The function requires `allowMutations: true` to prevent
 accidental production traffic.
 
+## Host session lifecycle (issue #2391)
+
+The `hostConnection` bridge resolves at boot; the runtime contract:
+
+- **Model choice** — the product's `defaultModel` applies directly on
+  session bootstrap and the visitor lands in the workspace (v4 decision:
+  no onboarding model step; `GET {baseUrl}/models` is not consumed by the
+  shell in this card). Model choice remains available later through the
+  Providers screen.
+- **Quota** — a response matching the profile's `quota` shape (status +
+  error code) ends the run with one terminal notice; when `quota.url` is
+  declared (HTTPS), the notice carries the link. No retry, no fallback,
+  and no URL is ever taken from a response body.
+- **Session loss** — a 401/403 from the host entry triggers exactly one
+  silent bridge re-resolution (the host page may have rotated the scoped
+  key); a fresh key retries the request transparently. A persistent
+  failure renders the sign-in card (`[[auth-expired:host]]`) whose action
+  re-reads the bridge once and otherwise opens the Providers screen —
+  never a manual key dialog, and local session data is never touched.
+
 ## Host product analytics bridge
 
 A branded web shell can receive Fa's product events through one

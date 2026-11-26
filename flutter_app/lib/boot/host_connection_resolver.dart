@@ -93,7 +93,7 @@ Future<HostSessionState?> resolveHostSession({
       name: section.name,
       baseUrl: section.baseUrl.toString(),
       modelId: section.defaultModel,
-      provenance: 'host',
+      provenance: hostProviderProvenance,
       kind: 'host-session',
     ),
   );
@@ -166,5 +166,67 @@ Future<void> _removeStaleHostEntry(ProviderRegistry registry) async {
   ];
   for (final provider in stale) {
     await registry.remove(provider.id);
+  }
+}
+
+/// The process-level handle over the resolved host session (gh-2391):
+/// the wiring layer (quota notice, 401 re-resolve) reads it without
+/// threading boot state through every [AgentService.create] call site.
+///
+/// Lifecycle: [install] when a boot resolves a session, [uninstall] when
+/// the profile drops the section or no bridge key exists (stock boot).
+final class HostSessionHandle {
+  HostSessionHandle._();
+
+  static final HostSessionHandle instance = HostSessionHandle._();
+
+  HostSessionState? _state;
+  ProviderRegistry? _registry;
+  HostSessionBridge? _bridge;
+
+  /// The live state (null after uninstall / a stock boot).
+  HostSessionState? get state => _state;
+
+  /// Boot wiring: the resolved session + the seams re-resolution needs.
+  void install(
+    HostSessionState state, {
+    required ProviderRegistry registry,
+    HostSessionBridge? bridge,
+  }) {
+    _state = state;
+    _registry = registry;
+    _bridge = bridge;
+  }
+
+  /// Stock boot / profile dropped the section: no host seam afterwards.
+  void uninstall() {
+    _state = null;
+    _registry = null;
+    _bridge = null;
+  }
+
+  /// Whether [baseUrl] is served by the host entry.
+  bool serves(String baseUrl) => _state?.provider.baseUrl == baseUrl;
+
+  /// One SILENT bridge re-read (the 401/403 path): the host page may have
+  /// rotated the scoped key mid-session. A fresh key updates the registry's
+  /// session-memory entry in place (never any persistent store) and the
+  /// live state; returns true when the caller should retry with it. An
+  /// unchanged or still-empty bridge returns false — the caller shows the
+  /// host sign-in action instead.
+  bool reResolveKey() {
+    final state = _state;
+    final bridge = _bridge;
+    final registry = _registry;
+    if (state == null || bridge == null || registry == null) return false;
+    final fresh = bridge.read(state.connection.sessionBridge.key)?.trim() ?? '';
+    if (fresh.isEmpty || fresh == state.bridgedKey) return false;
+    registry.rememberSessionKey('host', fresh);
+    _state = HostSessionState(
+      provider: state.provider,
+      bridgedKey: fresh,
+      connection: state.connection,
+    );
+    return true;
   }
 }

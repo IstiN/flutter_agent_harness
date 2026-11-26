@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa/analytics/product_analytics_bridge.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaApprovalModeController,

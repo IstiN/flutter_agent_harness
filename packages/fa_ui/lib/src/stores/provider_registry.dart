@@ -18,6 +18,12 @@ import 'package:fa_ui/src/stores/session_keys_store.dart';
 /// local) rows is visible, not silent.
 const localProviderProvenance = 'local';
 
+/// Provenance of the host-session entry (issue #2391): upserted by the
+/// boot resolver from the product profile, single source of truth — the
+/// profile — and read-only on the Providers screen (`[host]` badge, no
+/// key/reconnect/delete).
+const hostProviderProvenance = 'host';
+
 /// A user-added OpenAI-compatible provider definition.
 ///
 /// Definitions are non-secret (name, endpoint, default model) and are

@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
 
@@ -676,6 +677,11 @@ class ChatMessageTile extends StatelessWidget {
         onPermissionAction,
       );
     }
+    // Host-quota terminal notice (gh-2391): the profile-shaped 429 ends
+    // the run with a dedicated card — one notice, optional profile link.
+    if (content.contains('[[host-quota:')) {
+      return _hostQuotaCard(context, palette, content, isLight);
+    }
     // Auth-expired provider errors (SSO session expired) get a special card
     // with an Authorize button that re-launches the SSO flow.
     final expiredProvider = authExpiredProvider(content);
@@ -1233,6 +1239,93 @@ Widget _permissionCard(
 /// app host. The card strips the `(CLI: …)` hint; when the host wires
 /// [onAuthorize], the button plus an explicit action line replace it (the
 /// CLI host keeps its own renderer and its own hint — unchanged).
+/// The host-quota terminal notice card (gh-2391): "out of allowance"
+/// with the profile's optional link. The URL arrives inside the
+/// `[[host-quota:<url>]]` marker and is rendered only when it is HTTPS —
+/// response bodies can never inject a link (the decorator builds the
+/// marker from the profile alone).
+Widget _hostQuotaCard(
+  BuildContext context,
+  FahColors palette,
+  String content,
+  bool isLight,
+) {
+  final theme = Theme.of(context);
+  final strings = FaChatStrings.of(context);
+  final link = hostQuotaLinkFrom(content);
+  final body = stripHostQuotaMarker(content);
+  return Container(
+    margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: isLight ? Colors.white : palette.panelAlt,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: palette.error.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.pause_circle_outline, size: 14, color: palette.error),
+              const SizedBox(width: 4),
+              Text(
+                strings.chatHostQuotaTitle,
+                style: TextStyle(
+                  color: palette.error,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          strings.chatHostQuotaBody,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        if (body.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            body,
+            style: theme.textTheme.bodySmall?.copyWith(color: palette.dim),
+          ),
+        ],
+        if (link != null) ...[
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: () {
+              url_launcher.launchUrl(
+                link,
+                mode: url_launcher.LaunchMode.externalApplication,
+              );
+            },
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: Text(strings.chatHostQuotaLinkLabel),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
 Widget _authExpiredCard(
   BuildContext context,
   FahColors palette,
@@ -1332,6 +1425,25 @@ Widget _authExpiredCard(
 /// marker and any `(CLI: …)` recovery hint. The CLI instruction is dead
 /// text on app hosts (mobile/desktop/overlay), where the surface's own
 /// Authorize button is the actionable path.
+/// The host-quota marker link (gh-2391): the HTTPS url inside
+/// `[[host-quota:<url>]]`, or null (absent / non-HTTPS — never opened).
+Uri? hostQuotaLinkFrom(String content) {
+  const prefix = '[[host-quota:';
+  final start = content.indexOf(prefix);
+  if (start < 0) return null;
+  final end = content.indexOf(']]', start + prefix.length);
+  if (end < 0) return null;
+  final raw = content.substring(start + prefix.length, end).trim();
+  if (raw.isEmpty) return null;
+  final uri = Uri.tryParse(raw);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return null;
+  return uri;
+}
+
+/// Removes the host-quota marker (and surrounding whitespace).
+String stripHostQuotaMarker(String content) =>
+    content.replaceAll(RegExp(r'\[\[host-quota:[^\]]*\]\]'), '').trim();
+
 String authExpiredDisplayText(String content) {
   var text = stripAuthExpiredMarker(content);
   text = text.replaceAll(RegExp(r'\s*\(CLI:[^)]*\)'), '');

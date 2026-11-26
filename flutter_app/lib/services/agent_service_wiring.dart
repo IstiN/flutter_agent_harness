@@ -28,16 +28,27 @@ extension AgentServiceWiring on AgentService {
     // Issue #327: provider auth failures surface the owning row's name —
     // a bare `401: No cookie auth credentials found` gives the user no
     // idea WHICH provider row to fix. On-device bridges keep raw errors.
-    return decorateAuthErrors(
+    StreamFunction authDecorated(String key) => decorateAuthErrors(
       providerStreamFunction(
         config.providerKind,
-        apiKey,
+        key,
         sessionId: () => _session?.cachedId,
       ),
       () => _connectionDisplayName(
         _providerRegistry,
         config.baseUrl,
       ), // null = pass-through, no registry row to name.
+    );
+    // The host-session seam (gh-2391): requests riding the host entry get
+    // the quota notice + one silent bridge re-resolution. Non-host (and
+    // stock) connections keep the exact pre-2391 stream shape.
+    if (!HostSessionHandle.instance.serves(config.baseUrl)) {
+      return authDecorated(apiKey);
+    }
+    return decorateHostSession(
+      authDecorated(apiKey),
+      config,
+      rebuildWithKey: authDecorated,
     );
   }
 
