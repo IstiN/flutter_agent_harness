@@ -6271,6 +6271,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sign in to {displayName}'**
   String onboardingHostSignInCta(Object displayName);
+
+  /// The host one-shot 401 re-resolution succeeded — invite a retry
+  ///
+  /// In en, this message translates to:
+  /// **'Host session restored — try sending your message again.'**
+  String get hostSessionRestored;
 }
 
 class _AppLocalizationsDelegate

@@ -531,10 +531,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final restored = HostSessionHandle.instance.reResolveKey();
           if (!context.mounted) return;
           if (restored) {
-            fa_ui.showFahSnack(
-              context,
-              'Host session restored — try sending your message again.',
-            );
+            fa_ui.showFahSnack(context, context.l10n.hostSessionRestored);
           } else {
             unawaited(
               Navigator.of(context).push(

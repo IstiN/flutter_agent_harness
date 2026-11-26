@@ -46,7 +46,11 @@ HostSessionState _state({required String bridgedKey}) {
 }
 
 /// A scripted stream: one ErrorEvent with [errorText], then end.
-StreamFunction _errorStream(String errorText, {int invocations = 0}) {
+StreamFunction _errorStream(
+  String errorText, {
+  int invocations = 0,
+  RateLimitInfo? rateLimit,
+}) {
   return (model, context, {cancelToken}) {
     invocations++;
     final stream = AssistantMessageEventStream();
@@ -58,6 +62,7 @@ StreamFunction _errorStream(String errorText, {int invocations = 0}) {
       usage: Usage.zero,
       stopReason: StopReason.error,
       errorMessage: errorText,
+      rateLimit: rateLimit,
       timestamp: DateTime.now(),
     );
     stream.push(ErrorEvent(reason: StopReason.error, error: message));
@@ -238,7 +243,117 @@ void main() {
       expect(events, hasLength(1));
       expect(
         (events.single as ErrorEvent).error.errorMessage,
-        '[[auth-expired: host]]',
+        '[[auth-expired:host]]',
+      );
+    });
+
+    test('the wiring composition (auth label OUTSIDE the host decorator) '
+        'lets a raw 401 fire the one-shot re-resolution', () async {
+      // gh-2391 review BLOCKING 1: the previous order —
+      // decorateHostSession(decorateAuthErrors(...)) — let the row-label
+      // decoration rewrite `401: …` to `[AIN] 401: …` BEFORE the host
+      // decorator saw it, so _leadingStatus never matched and the
+      // transparent retry never fired. The composed shape must intercept.
+      final registry = ProviderRegistry.inMemory()
+        ..upsert(
+          const CustomProvider(
+            id: 'host',
+            name: 'AIN',
+            baseUrl: 'https://api.ain.example/v1',
+            modelId: 'ain/ain_flash',
+            provenance: 'host',
+            kind: 'host-session',
+          ),
+        )
+        ..rememberSessionKey('host', 'k1');
+      final bridge = _Bridge({'ain_session': 'k2'});
+      HostSessionHandle.instance.install(
+        _state(bridgedKey: 'k1'),
+        registry: registry,
+        bridge: bridge,
+      );
+      final events = await _collect(
+        // Exactly the wiring's new shape: raw provider errors reach the
+        // host decorator; the label decoration names what passes through.
+        decorateAuthErrors(
+          decorateHostSession(
+            _errorStream('401: unauthorized'),
+            AgentConfig(
+              providerKind: 'openai-completions',
+              modelId: 'ain/ain_flash',
+              baseUrl: 'https://api.ain.example/v1',
+              apiKey: 'host-key',
+            ),
+            rebuildWithKey: (fresh) => fresh == 'k2'
+                ? (model, context, {cancelToken}) {
+                    final stream = AssistantMessageEventStream();
+                    stream.push(
+                      DoneEvent(
+                        reason: StopReason.stop,
+                        message: AssistantMessage(
+                          content: [TextContent(text: 'ok')],
+                          api: model.api,
+                          provider: model.provider,
+                          model: model.id,
+                          usage: Usage.zero,
+                          stopReason: StopReason.stop,
+                          timestamp: DateTime.now(),
+                        ),
+                      ),
+                    );
+                    stream.end();
+                    return stream;
+                  }
+                : _errorStream('401: unauthorized'),
+          ),
+          () => 'AIN',
+        ),
+      );
+      expect(registry.keyFor('host'), 'k2', reason: 'the retry fired');
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+      expect(events, hasLength(1));
+    });
+
+    test('a structured 429 (rateLimit info, no raw body in the text) '
+        'matches the profile quota shape', () async {
+      // gh-2391 review BLOCKING 2: _validateStreamResponse re-renders a
+      // live 429 through the structured rate-limit message — the profile's
+      // errorCode never appears in the rendered text. The match reads the
+      // structure.
+      final registry = ProviderRegistry.inMemory()
+        ..upsert(
+          const CustomProvider(
+            id: 'host',
+            name: 'AIN',
+            baseUrl: 'https://api.ain.example/v1',
+            modelId: 'ain/ain_flash',
+            provenance: 'host',
+            kind: 'host-session',
+          ),
+        );
+      HostSessionHandle.instance.install(
+        _state(bridgedKey: 'k1'),
+        registry: registry,
+        bridge: _Bridge({'ain_session': 'k1'}),
+      );
+      final events = await _collect(
+        decorateHostSession(
+          _errorStream(
+            '429: plan limit reached — resets in 2h',
+            rateLimit: const RateLimitInfo(errorType: 'limit_reached'),
+          ),
+          AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'ain/ain_flash',
+            baseUrl: 'https://api.ain.example/v1',
+            apiKey: 'host-key',
+          ),
+        ),
+      );
+      expect(
+        (events.single as ErrorEvent).error.errorMessage,
+        '[[host-quota:https://app.example/allowance]]',
+        reason: 'the structured errorType matches the profile errorCode',
       );
     });
 

@@ -3580,4 +3580,8 @@ class AppLocalizationsRu extends AppLocalizations {
   String onboardingHostSignInCta(Object displayName) {
     return 'Войти в $displayName';
   }
+
+  @override
+  String get hostSessionRestored =>
+      'Сессия хоста восстановлена — попробуйте отправить сообщение ещё раз.';
 }

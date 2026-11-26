@@ -2416,5 +2416,9 @@
       "displayName": {}
     },
     "description": "Host-only catalog: the external-browser sign-in button"
+  },
+  "hostSessionRestored": "Host session restored — try sending your message again.",
+  "@hostSessionRestored": {
+    "description": "The host one-shot 401 re-resolution succeeded — invite a retry"
   }
 }

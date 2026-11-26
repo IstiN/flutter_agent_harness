@@ -1230,15 +1230,6 @@ Widget _permissionCard(
   );
 }
 
-/// An auth-expired card for provider SSO sessions that have expired:
-/// red badge + explanatory text + Authorize button. Mirrors the
-/// permission-denied card pattern.
-///
-/// Issue #692 A: the raw provider error carries CLI-centric recovery text
-/// ("Re-authorize … (CLI: /provider codemie sso)") — dead guidance on an
-/// app host. The card strips the `(CLI: …)` hint; when the host wires
-/// [onAuthorize], the button plus an explicit action line replace it (the
-/// CLI host keeps its own renderer and its own hint — unchanged).
 /// The host-quota terminal notice card (gh-2391): "out of allowance"
 /// with the profile's optional link. The URL arrives inside the
 /// `[[host-quota:<url>]]` marker and is rendered only when it is HTTPS —
@@ -1326,6 +1317,15 @@ Widget _hostQuotaCard(
   );
 }
 
+/// An auth-expired card for provider SSO sessions that have expired:
+/// red badge + explanatory text + Authorize button. Mirrors the
+/// permission-denied card pattern.
+///
+/// Issue #692 A: the raw provider error carries CLI-centric recovery text
+/// ("Re-authorize … (CLI: /provider codemie sso)") — dead guidance on an
+/// app host. The card strips the `(CLI: …)` hint; when the host wires
+/// [onAuthorize], the button plus an explicit action line replace it (the
+/// CLI host keeps its own renderer and its own hint — unchanged).
 Widget _authExpiredCard(
   BuildContext context,
   FahColors palette,
@@ -1421,10 +1421,6 @@ Widget _authExpiredCard(
 }
 
 /// The auth-expired surface body (card AND the chat's error banner,
-/// issue #692): the raw provider error minus the `[[auth-expired:…]]`
-/// marker and any `(CLI: …)` recovery hint. The CLI instruction is dead
-/// text on app hosts (mobile/desktop/overlay), where the surface's own
-/// Authorize button is the actionable path.
 /// The host-quota marker link (gh-2391): the HTTPS url inside
 /// `[[host-quota:<url>]]`, or null (absent / non-HTTPS — never opened).
 Uri? hostQuotaLinkFrom(String content) {
@@ -1444,6 +1440,11 @@ Uri? hostQuotaLinkFrom(String content) {
 String stripHostQuotaMarker(String content) =>
     content.replaceAll(RegExp(r'\[\[host-quota:[^\]]*\]\]'), '').trim();
 
+/// The auth-expired display text (issue #692): the raw provider error
+/// minus the `[[auth-expired:…]]` marker and any `(CLI: …)` recovery
+/// hint. The CLI instruction is dead text on app hosts
+/// (mobile/desktop/overlay), where the surface's own Authorize button is
+/// the actionable path.
 String authExpiredDisplayText(String content) {
   var text = stripAuthExpiredMarker(content);
   text = text.replaceAll(RegExp(r'\s*\(CLI:[^)]*\)'), '');

@@ -373,7 +373,7 @@ StreamFunction decorateHostSession(
             final text = event.error.errorMessage ?? '';
             final status = _leadingStatus(text);
             // Quota: terminal notice, never a retry.
-            if (_matchesHostQuota(status, text)) {
+            if (_matchesHostQuota(status, text, event.error.rateLimit)) {
               controller.push(
                 ErrorEvent(
                   reason: event.reason,
@@ -401,7 +401,7 @@ StreamFunction decorateHostSession(
                 ErrorEvent(
                   reason: event.reason,
                   error: event.error.copyWith(
-                    errorMessage: '$authExpiredMarkerPrefix host]]',
+                    errorMessage: '${authExpiredMarkerPrefix}host]]',
                   ),
                 ),
               );
@@ -442,13 +442,29 @@ int? _leadingStatus(String text) {
   return int.tryParse(match.group(1)!);
 }
 
-/// Whether [status]+[text] match the profile's quota shape: the declared
-/// status AND the declared error code somewhere in the body. No profile
-/// quota declared → never matches.
-bool _matchesHostQuota(int? status, String text) {
+/// Whether the failure matches the profile's quota shape: the declared
+/// status AND the declared error code. The live `openai-completions`
+/// path never carries the raw body in [text] — `_validateStreamResponse`
+/// re-renders a 429 through the structured [RateLimitInfo] (`429: plan
+/// limit reached …`), so the code is matched against the structure first
+/// (`errorType`, `rawBody`) with the rendered text as the fallback for
+/// providers that keep the payload inline. No profile quota declared →
+/// never matches.
+bool _matchesHostQuota(int? status, String text, Object? rateLimit) {
   final quota = HostSessionHandle.instance.state?.connection.quota;
   if (quota == null || status != quota.status) return false;
-  return text.contains(quota.errorCode);
+  final String? errorType;
+  final String? rawBody;
+  if (rateLimit is RateLimitInfo) {
+    errorType = rateLimit.errorType;
+    rawBody = rateLimit.rawBody;
+  } else {
+    errorType = null;
+    rawBody = null;
+  }
+  return errorType == quota.errorCode ||
+      (rawBody?.contains(quota.errorCode) ?? false) ||
+      text.contains(quota.errorCode);
 }
 
 /// 401/403 — the host-entry auth failures worth one re-resolve.
