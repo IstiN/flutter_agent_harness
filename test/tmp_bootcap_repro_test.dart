@@ -112,6 +112,12 @@ void main() {
     // gh-241 follow-up #5 (F3): the boot cap and the soft-window relief
     // cut only MEASURED sessions; [measured: false] is the unanchored one.
     bool measured = true,
+    // #2416 merge: the slim manifest shrank the seam's fixed overhead
+    // (~3.4k → ~1.1k), which widens the resume walk's tail budget and
+    // shifts the boot-valve arithmetic these scenarios pin. A filler
+    // block restores the pre-merge overhead for the tests whose token
+    // math assumes it.
+    String promptPad = '',
   }) => AgentCli(
     config: AgentCliConfig(
       model: model ?? _model,
@@ -122,7 +128,7 @@ void main() {
       providerKind: 'openai-completions',
       skillsAccess: SkillsAccess.granted,
       compactionEngine: CompactionEngine.classic,
-      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      systemPrompt: tinyOverhead ? tinyPrompt + promptPad : null,
       runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
       initialOverheadCalibration: measured ? _measured : null,
     ),
@@ -261,7 +267,11 @@ void main() {
         textTurn('summary of the kept history'),
         textTurn('answered on the capped context'),
       ]);
-      final agent = cli(env, stream, tinyOverhead: true, measured: false);
+      final agent = cli(env, stream, tinyOverhead: true, measured: false,
+          // #2416 merge: hold the pre-merge ~3.4k seam overhead — the
+          // resume walk's tail budget, the boot valve's trim target and
+          // the calibration ratio all assume it.
+          promptPad: 'x' * 5800);
 
       final run = agent.run();
       // The boot load runs before the first idle: wait for the restored
@@ -271,9 +281,9 @@ void main() {
         reason: 'boot settles',
       );
       await waitForIt(() => !agent.isBusy, reason: 'idle after boot');
+      expect(stream.calls, 0, reason: 'no model call at boot');
       // ignore: avoid_print
       print('DBG_CALLS_BOOT=' + stream.calls.toString());
-      expect(stream.calls, 0, reason: 'no model call at boot');
       final out = io.out.toString();
       // R3: the loaded projection is a budgeted tail of the file → one
       // visible line, with the estimate marker.
@@ -297,10 +307,11 @@ void main() {
       print('DBG_CALLS_END=' + stream.calls.toString());
       for (var i = 0; i < stream.contexts.length; i++) {
         final c = stream.contexts[i];
+        final last = c.messages.isEmpty ? 'empty' : c.messages.last.runtimeType.toString();
         // ignore: avoid_print
-        print('DBG_CTX$i: last=' + (c.messages.lastOrNull == null ? 'null' : c.messages.last.runtimeType.toString()) + ' msgs=' + c.messages.length.toString());
+        print('DBG_CTX$i: last=' + last + ' msgs=' + c.messages.length.toString());
       }
-      for (final l in io.out.toString().split('\n')) { if (l.contains('resume') || l.contains('compacted') || l.contains('trim') || l.contains('warning')) print('DBG_OUT: ' + l); }
+      for (final l in io.out.toString().split('\n')) { if (l.contains('resume') || l.contains('compacted') || l.contains('trim') || l.contains('warning') || l.contains('exceeded')) print('DBG_OUT: ' + l); }
       io.sendLine('/exit');
       await run;
 

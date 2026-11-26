@@ -112,6 +112,12 @@ void main() {
     // gh-241 follow-up #5 (F3): the boot cap and the soft-window relief
     // cut only MEASURED sessions; [measured: false] is the unanchored one.
     bool measured = true,
+    // #2416 merge: the slim manifest shrank the seam's fixed overhead
+    // (~3.4k → ~1.1k), which widens the resume walk's tail budget and
+    // shifts the boot-valve arithmetic these scenarios pin. A filler
+    // block restores the pre-merge overhead for the tests whose token
+    // math assumes it.
+    String promptPad = '',
   }) => AgentCli(
     config: AgentCliConfig(
       model: model ?? _model,
@@ -122,7 +128,7 @@ void main() {
       providerKind: 'openai-completions',
       skillsAccess: SkillsAccess.granted,
       compactionEngine: CompactionEngine.classic,
-      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      systemPrompt: tinyOverhead ? tinyPrompt + promptPad : null,
       runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
       initialOverheadCalibration: measured ? _measured : null,
     ),
@@ -261,7 +267,11 @@ void main() {
         textTurn('summary of the kept history'),
         textTurn('answered on the capped context'),
       ]);
-      final agent = cli(env, stream, tinyOverhead: true, measured: false);
+      final agent = cli(env, stream, tinyOverhead: true, measured: false,
+          // #2416 merge: hold the pre-merge ~3.4k seam overhead — the
+          // resume walk's tail budget, the boot valve's trim target and
+          // the calibration ratio all assume it.
+          promptPad: 'x' * 5800);
 
       final run = agent.run();
       // The boot load runs before the first idle: wait for the restored
@@ -307,17 +317,23 @@ void main() {
             file.contains('context_trim_receipt'),
       );
       expect(durable, isTrue, reason: 'calls=${stream.calls}');
-      // The turn's request is the context that ends with the prompt (the
-      // stream also saw the summarizer's).
+      // The turn's request is the context that carries the prompt as a
+      // REAL user message (the stream also saw the summarizer's).
+      // gh-2423 C3: a context notice may ride AFTER the prompt as the
+      // queued-notice delivery — machine content, never the turn.
       final turnContext = stream.contexts.firstWhere(
-        (c) =>
-            c.messages.last is UserMessage &&
-            messageText(c.messages.last) == 'go onward zebra-42',
+        (c) => c.messages.any(
+          (m) =>
+              m is UserMessage &&
+              !isContextNoticeText(messageText(m)) &&
+              messageText(m) == 'go onward zebra-42',
+        ),
       );
       expect(turnContext.messages.first, isA<UserMessage>());
       final texts = [
         for (final m in turnContext.messages)
-          if (m is UserMessage) messageText(m),
+          if (m is UserMessage && !isContextNoticeText(messageText(m)))
+            messageText(m),
       ];
       expect(texts.last, 'go onward zebra-42', reason: 'verbatim');
       // The classic pass summarised the prefix; the kept tail rides.

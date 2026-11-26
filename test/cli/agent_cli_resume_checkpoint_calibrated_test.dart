@@ -109,7 +109,15 @@ void main() {
     timeout: const Timeout(Duration(minutes: 4)),
     () async {
       final heuristicOverhead = await probeHeuristicOverhead();
-      final window = (heuristicOverhead * 1.12).round();
+      // #2416 merge: the slim manifest shrank the seam the 1.12×
+      // multiplier was sized against — at the merged ~2.7k seam the old
+      // window put the BOOT transcript (tail + overhead) over the
+      // trigger, the armed pass degenerated (empty foldable range → a
+      // failed pass) and the turn was retried (a second request).
+      // window = overhead + a full forWindow reserve keeps the boot
+      // transcript UNDER the trigger: no armed pass, no soft-window
+      // regime (trigger > overhead), one request, no relief, no trim.
+      final window = heuristicOverhead + 1300;
       final reserve = window ~/ 4;
       // The window puts the session in the SOFT-WINDOW regime on the raw
       // heuristic and takes it out once calibrated at x0.7 — the owner's
