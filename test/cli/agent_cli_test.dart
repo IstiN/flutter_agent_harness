@@ -35,6 +35,8 @@ void main() {
     String? providerKind,
     SkillsAccess? skillsAccess,
     CompactionEngine? compactionEngine,
+    String? systemPrompt,
+    ToolsConfig? runtimeTools,
     ApprovalMode approvalMode = ApprovalMode.yolo,
   }) {
     return AgentCli(
@@ -60,6 +62,8 @@ void main() {
         // tests pin the classic rollback explicitly (its summary records,
         // prompts and failure UX are what they assert).
         compactionEngine: compactionEngine,
+        systemPrompt: systemPrompt,
+        runtimeTools: runtimeTools,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -874,11 +878,12 @@ void main() {
 
   test('auto-compacts after a turn over the threshold', () async {
     // Window 16384 (forWindow: reserve 4096, keep 20000, trigger at 12288).
-    // Every request also carries ~8.4k of system prompt + tool schemas
-    // (counted while the transcript is unanchored), so the first request
-    // (~8.4k) still passes the loop's mid-turn over-window guard, while
-    // the ~5000-token answer pushes the post-turn request size over the
-    // compaction threshold.
+    // The fixed overhead here is ~3.4k (tiny prompt + tool schemas,
+    // gh-2411: with the REAL prompt the overhead alone would reach the
+    // trigger — the soft-window regime, where compaction is skipped by
+    // design), so the first request still passes the loop's mid-turn
+    // over-window guard, while the ~10000-token answer pushes the
+    // post-turn request size over the compaction threshold.
     const tinyWindow = Model(
       id: 'tiny',
       api: 'test-api',
@@ -888,7 +893,7 @@ void main() {
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      textTurn('a' * 40000),
       textTurn('AUTO SUMMARY'),
     ]);
     // Issue #287: pins the classic rollback's CompactionRecord outcome.
@@ -896,6 +901,9 @@ void main() {
       fake.call,
       model: tinyWindow,
       compactionEngine: CompactionEngine.classic,
+      // gh-2411: overflow through messages, not overhead.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read', 'bash']),
     );
     final run = cli.run();
 
@@ -928,9 +936,11 @@ void main() {
         maxTokens: 4096,
       );
       final fake = FakeStreamFunction([
-        // 1. Three tool calls whose outputs (~8200 tokens each) balloon the
-        //    next request past the window (3 × 8200 + the ~8.4k system
-        //    prompt/tool-schema overhead > 32768).
+        // 1. Three tool calls whose outputs (~11000 tokens each) balloon
+        //    the next request past the window (3 × 11000 + the ~3.4k
+        //    system prompt/tool-schema overhead > 32768 — gh-2411: the
+        //    overflow is the MESSAGES'; with the real prompt the overhead
+        //    alone would reach the trigger, the soft-window regime).
         toolTurn([
           ToolCall(
             id: 'c1',
@@ -955,13 +965,16 @@ void main() {
         //    at the turn boundary — the relief never touched it).
         textTurn('S'),
       ]);
-      final shell = FakeShell(stdout: 'x' * 32800);
+      final shell = FakeShell(stdout: 'x' * 44000);
       final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
       final cli = cliFor(
         fake.call,
         model: window32k,
         envOverride: shellEnv,
         compactionEngine: CompactionEngine.classic,
+        // gh-2411: overflow through messages, not overhead.
+        systemPrompt: tinyPrompt,
+        runtimeTools: tinyTools(const ['read', 'bash']),
       );
       final run = cli.run();
 

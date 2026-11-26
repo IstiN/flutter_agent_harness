@@ -56,7 +56,7 @@ keys, verify after every edit, and report what changed and when it applies.
 | File | Scope | Notes |
 |---|---|---|
 | `~/.fah/config.yaml` | user (global) | main settings file; loaded by `loadCliConfig` |
-| `<project>/.fah/config.yaml` | project | only the `memory:`, `cube:`, `tools:`, `spills:` sections are read from here — each wins over the user file |
+| `<project>/.fah/config.yaml` | project | only the `memory:`, `cube:`, `tools:`, `spills:` sections and the `agent.contextWindowCap` key are read from here — each wins over the user file |
 | `<project>/.fah/rules.yaml` | project | TTSR stream rules; project rules win name clashes over the `ttsr:` section |
 | `<project>/.fah/lsp.json` | project | LSP server map |
 | `<project>/.fah/packages.yaml` | project | plugin configuration |
@@ -67,7 +67,12 @@ Project precedence is per section, not per file: `memory:`, `cube:`,
 (`loadProjectMemoryConfig`, `loadProjectCubeSettings`,
 `loadProjectToolsConfig`, `loadProjectSpillsConfig`) and win over the
 same section in `~/.fah/config.yaml`. All other sections are read from
-the user file only.
+the user file only — with ONE exception: `agent.contextWindowCap` is
+also read from the project file (`loadProjectContextWindowCap`; the
+project value wins over the user value, and the boot log line
+`context window cap source=project window=<n>` names the winner). Every
+other `agent.*` key in a project file is dead config (`fa config check`
+names it).
 
 Project sections are strict: a present-but-invalid section throws
 `ConfigException` at startup. A project `.fah/` that does not exist yet is
@@ -97,7 +102,7 @@ same core the human CLI verbs wrap:
 |---|---|---|
 | `check` | — | validate both config files with the real parsers; prints errors, warnings, notes and a final `config check: ok` / `config check: failed` |
 | `path` | — | list the config file locations and whether each exists |
-| `get` | `key` | the effective value of a dotted key; project scope wins for `memory`/`cube`/`tools` |
+| `get` | `key` | the effective value of a dotted key; project scope wins for `memory`/`cube`/`tools`/`spills` and `agent.contextWindowCap` |
 | `set` | `key`, `value`, `scope`? | surgical single-key write; the edited file is validated BEFORE the write, so an invalid value persists nothing |
 
 `set` answers with the file, scope, old → new value, and whether the change
@@ -246,6 +251,9 @@ providerTimeouts:              # GLOBAL fallback: only these two keys
 agent:                         # strict: contextWindowCap (issue #273) +
                                # foreground-call budget keys (issue #1786)
   contextWindowCap: 262144     # owner context cap; min 16384 = the compaction reserve
+                               # ALSO honored from the PROJECT .fah/config.yaml
+                               # (agent.contextWindowCap — the project value wins;
+                               # strict: an invalid value fails startup)
   foregroundCallBudgetSeconds: 600  # foreground tool-call budget B in seconds;
                                     # int > 0, default 600 (10 min)
   foregroundCallAutoConvert: offer  # rung-1 behavior at B/2: offer (default, ask)

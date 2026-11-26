@@ -44,6 +44,7 @@ import '../session/session_tree.dart';
 import '../types.dart';
 import '../user_text.dart';
 import 'cache_policy.dart';
+import 'newest_user_turn.dart';
 import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
@@ -710,6 +711,19 @@ int _snapBackOverNonMessages(
 /// valid cut point at/after the floor, guaranteeing a retry cut is strictly
 /// newer than the cut that just failed. A natural cut newer than the floor
 /// is left alone.
+///
+/// Header of the verbatim ask a split newest turn carries (gh-2411).
+const carriedUserTurnHeader = '**Latest user request (kept verbatim):**';
+
+/// The real user message a turn-leading [entry] projects (the gh-2411
+/// carry source), or `null` when it projects anything else.
+UserMessage? _realUserTurnMessage(SessionRecord entry) {
+  final messages = _entryToSummarizableMessages(entry);
+  return messages.length == 1 && messages.single is UserMessage
+      ? messages.single as UserMessage
+      : null;
+}
+
 CutPointResult findCutPoint(
   List<SessionRecord> entries,
   int startIndex,
@@ -1192,6 +1206,7 @@ final class CompactionPreparation {
     required this.turnPrefixMessages,
     required this.isSplitTurn,
     required this.tokensBefore,
+    this.carriedUserTurn,
     this.previousSummary,
     this.readFiles = const [],
     this.modifiedFiles = const [],
@@ -1207,6 +1222,11 @@ final class CompactionPreparation {
 
   /// Prefix messages summarized separately when compaction splits a turn.
   final List<Message> turnPrefixMessages;
+
+  /// The ask of a split NEWEST turn (gh-2411): it is in neither
+  /// summarized list — its text rides the summary verbatim, so the
+  /// model still sees the request the kept tail answers to.
+  final UserMessage? carriedUserTurn;
 
   /// Whether compaction splits a turn.
   final bool isSplitTurn;
@@ -1471,6 +1491,13 @@ final class CompactionManager {
     final previousSummary = prevContext.previousSummary;
     final boundaryStart = prevContext.boundaryStart;
 
+    // gh-2411: the newest real user turn is never summarized away. The
+    // cut itself stays the natural one — a long turn still folds (the
+    // funnel backstop's bounded pass depends on it); when the cut
+    // SPLITS the newest turn, the ask leaves the summarized turn prefix
+    // and rides the summary VERBATIM instead
+    // ([CompactionPreparation.carriedUserTurn]).
+    final newestTurn = newestRealUserTurnRecordIndex(pathEntries);
     final cutPoint = _escalateRepeatedCut(
       pathEntries: pathEntries,
       boundaryStart: boundaryStart,
@@ -1497,10 +1524,14 @@ final class CompactionManager {
         summarizableRecordIds.add(pathEntries[i].id);
       }
     }
+    final carriedUserTurn =
+        cutPoint.isSplitTurn && newestTurn == cutPoint.turnStartIndex
+        ? _realUserTurnMessage(pathEntries[newestTurn])
+        : null;
     final turnPrefixMessages = cutPoint.isSplitTurn
         ? _summarizableMessagesInRange(
             pathEntries,
-            cutPoint.turnStartIndex,
+            cutPoint.turnStartIndex + (carriedUserTurn == null ? 0 : 1),
             cutPoint.firstKeptEntryIndex,
           )
         : <Message>[];
@@ -1512,6 +1543,7 @@ final class CompactionManager {
       firstKeptEntryId: firstKeptEntryId,
       messagesToSummarize: messagesToSummarize,
       turnPrefixMessages: turnPrefixMessages,
+      carriedUserTurn: carriedUserTurn,
       isSplitTurn: cutPoint.isSplitTurn,
       tokensBefore: tokensBefore,
       previousSummary: previousSummary,
@@ -1594,6 +1626,13 @@ final class CompactionManager {
       ]),
     );
     summary = sanitized.text;
+    // gh-2411: the split newest turn's ask rides VERBATIM, on top.
+    final ask = preparation.carriedUserTurn;
+    if (ask != null) {
+      summary =
+          '$carriedUserTurnHeader\n${userMessageText(ask.content)}'
+          '\n\n$summary';
+    }
 
     summary += formatFileOperations(
       preparation.readFiles,

@@ -39,7 +39,12 @@ final int _contractTokens = () {
       descriptions
           .map((d) => d.length - contract < 0 ? 0 : d.length - contract)
           .fold<int>(0, (a, b) => a + b);
-  return (growthChars / 4).ceil();
+  // gh-2411: the fixed request overhead (system prompt + tool schemas)
+  // is priced at 2.5 chars/token, so the window the contract footprint
+  // rides in is sized on the SAME density (chars/4 made the overhead
+  // alone reach the trigger — the soft-window regime, where the guard
+  // and compaction stand down by design).
+  return (growthChars / 2.5).ceil();
 }();
 
 /// Tiny window, same calibration as subagent_compaction_test.dart: the

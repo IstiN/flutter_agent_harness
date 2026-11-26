@@ -26,10 +26,10 @@ const _model = Model(
   maxTokens: 4096,
 );
 
-/// Window 16384: the ~5000-token answer pushes the post-turn request size
-/// (transcript + ~8.4k system-prompt/tool-schema overhead while unanchored)
-/// over the compaction threshold at 12288 (same shape as the auto-compact
-/// suite).
+/// Window 16384: the ~10000-token answer pushes the post-turn request size
+/// (transcript + the ~3.4k system-prompt/tool-schema overhead of the
+/// gh-2411 fixture seam, while unanchored) over the compaction threshold
+/// at 12288 (same shape as the auto-compact suite).
 const _tinyWindow = Model(
   id: 'tiny',
   api: 'test-api',
@@ -159,6 +159,11 @@ void main() {
     StreamFunction streamFunction, {
     Model model = _model,
     bool persistAbortedPartials = false,
+    // gh-2411: the compaction suites overflow through MESSAGES — with
+    // the real CLI prompt the ~14.4k-token fixed overhead alone crosses
+    // the 16384 window's 12288 trigger: the soft-window regime, where no
+    // compaction run opens by design.
+    bool tinyOverhead = false,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -167,6 +172,8 @@ void main() {
         env: env,
         sessionRoot: '/sessions',
         persistAbortedPartials: persistAbortedPartials,
+        systemPrompt: tinyOverhead ? tinyPrompt : null,
+        runtimeTools: tinyOverhead ? tinyTools(const ['read']) : null,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -307,10 +314,10 @@ void main() {
 
   test('compaction over threshold emits compaction_start/end frames', () async {
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      textTurn('a' * 40000),
       textTurn('AUTO SUMMARY'),
     ]);
-    final cli = cliFor(fake.call, model: _tinyWindow);
+    final cli = cliFor(fake.call, model: _tinyWindow, tinyOverhead: true);
     final frames = <String>[];
     final hep = HepWriter(emit: frames.add, fahVersion: 'test');
 
@@ -338,15 +345,22 @@ void main() {
     // A pass-carrying run: every engine receipt counts toward the counter
     // (the runs themselves must not — pinned at 0 by the zero-pass test
     // below), and the bracket stays balanced with honest freed numbers.
+    // The foldable material is a tool group of the run's own turn
+    // (gh-2411: the newest user turn is pinned and never folds, so a
+    // lone prompt-and-answer transcript has nothing to checkpoint).
+    env.writeFile('big.txt', List.filled(800, 'x' * 45).join('\n'));
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      toolTurn([
+        const ToolCall(id: 'c1', name: 'read', arguments: {'path': 'big.txt'}),
+      ]),
+      textTurn('done reading'),
       textTurn('AUTO SUMMARY'),
       textTurn('AUTO SUMMARY'),
       textTurn('AUTO SUMMARY'),
       textTurn('AUTO SUMMARY'),
       textTurn('mem'),
     ]);
-    final cli = cliFor(fake.call, model: _tinyWindow);
+    final cli = cliFor(fake.call, model: _tinyWindow, tinyOverhead: true);
     io.eventsMode = true;
     final frames = <String>[];
     final hep = HepWriter(emit: frames.add, fahVersion: 'test');
@@ -374,7 +388,7 @@ void main() {
     // structured engine now sees an under-trigger transcript and returns
     // without a pass or provider call.
     final fake = FakeStreamFunction([textTurn('healthy answer')]);
-    final cli = cliFor(fake.call, model: _tinyWindow);
+    final cli = cliFor(fake.call, model: _tinyWindow, tinyOverhead: true);
     io.eventsMode = true;
     final frames = <String>[];
     var compactionStarts = 0;
@@ -384,9 +398,15 @@ void main() {
       switch (frame['type']) {
         case 'hep_header':
           // The header fires after session initialization and before the
-          // pre-flight gate. ~5000 transcript tokens plus overhead crosses
-          // the 16384-token model's 12288-token compaction trigger.
-          cli.agent.state.messages = [UserMessage.text('a' * 20000)];
+          // pre-flight gate. An older ~10000-token turn plus the ~3.4k
+          // overhead crosses the 16384-token model's 12288-token
+          // compaction trigger. The newest user turn stays small on
+          // purpose (gh-2411): a lone huge user turn IS the soft-window
+          // regime, where the gate stands down before any run opens.
+          cli.agent.state.messages = [
+            UserMessage.text('a' * 40000),
+            UserMessage.text('q'),
+          ];
         case 'compaction_start':
           compactionStarts++;
           // The gate has committed to a run; the engine re-estimates after

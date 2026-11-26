@@ -61,6 +61,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCompactionEngine,
         loadProjectCompactionTuning,
         loadProjectContextWindowCap,
+        resolveContextWindowCap,
         loadProjectLoggingSection,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
@@ -169,8 +170,12 @@ export 'src/compaction/context_window_registry.dart';
 // ── Compaction 2.0 hand-over (GOAL #2394; append-only) ──
 export 'src/compaction/compaction_mode.dart';
 export 'src/compaction/hand_over_trigger.dart';
+export 'src/compaction/newest_user_turn.dart';
+export 'src/compaction/overhead_calibration.dart';
 export 'src/compaction/record_tag.dart';
+export 'src/compaction/record_tag_echo.dart';
 export 'src/compaction/request_snapshot.dart';
+export 'src/compaction/soft_window.dart';
 export 'src/compaction/structured/engine.dart' show HandOverPassMetrics;
 export 'src/compaction/structured/hand_over.dart';
 export 'src/compaction/structured/hand_over_dispose.dart';

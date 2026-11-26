@@ -26,6 +26,8 @@ import '../cancel_token.dart';
 import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
 import '../compaction/compaction_mode.dart';
+import '../compaction/newest_user_turn.dart'
+    show newestRealUserTurnIndex, pinnedBoundarySummaryIndices;
 import '../compaction/request_snapshot.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
@@ -374,6 +376,7 @@ final class AutoCompactor {
     state.messages,
     systemPrompt: state.systemPrompt,
     tools: state.tools,
+    calibration: state.overheadCalibration,
   );
 
   /// gh-1680: whether the live message count reached the learned cap's
@@ -633,6 +636,7 @@ final class AutoCompactor {
           const [],
           systemPrompt: state.systemPrompt,
           tools: state.tools,
+          calibration: state.overheadCalibration,
         ),
       );
 
@@ -1010,6 +1014,29 @@ final class _PickOutcome {
     }
   }
   if (cut <= 0) return null;
+  // gh-2411: a cut BEHIND the newest real user turn dropped the
+  // question two records back, and the model saw only its record tag.
+  // The turn outranks the budget — but as a CARRIED record, not a floor:
+  // it re-homes verbatim right after the marker, so the older tool
+  // groups of the SAME turn stay droppable (a long agentic turn still
+  // bounds its live context). A floor at the turn would leave nothing
+  // trimmable after one big tool result.
+  final turn = newestRealUserTurnIndex(messages);
+  final carried = turn >= 0 && turn < cut ? messages[turn] : null;
+  // gh-241 follow-up #5e (E4 — owner live test round 6): the newest
+  // boundary summary is pinned exactly like the turn. The budget cut
+  // took BOTH checkpoint summaries out of a resumed context and the
+  // model answered "I see no earlier conversation". They re-home right
+  // after the marker, oldest first; older summaries beyond the pinned
+  // ones stay droppable.
+  final summaries = [
+    for (final i in pinnedBoundarySummaryIndices(messages))
+      if (i < cut) messages[i],
+  ];
+  final dropped = cut - summaries.length - (carried == null ? 0 : 1);
+  // Nothing actually dropped (the one record behind the cut WAS the
+  // turn): the same "nothing droppable" null as an empty walk.
+  if (dropped <= 0) return null;
   final kept = messages.sublist(cut);
   if (kept.isEmpty) return null;
   // Pairing integrity (issue #85): a token-boundary cut can land between
@@ -1021,12 +1048,15 @@ final class _PickOutcome {
   // synthesizes missing results, hoists displaced ones. In-memory only —
   // the session file keeps every record.
   final rebuilt = repairToolPairing([
+    // E4: the summaries OPEN the request; the trim marker follows.
+    ...summaries,
     UserMessage.text(
       '$localTrimMarkerPrefix $reason, '
-      '$cut older message(s) were dropped from the live context at '
+      '$dropped older message(s) were dropped from the live context at '
       '${DateTime.now().toUtc().toIso8601String()} — the full history '
       'stays in the session file]',
     ),
+    ?carried,
     // Zero the kept generations' usage anchors — a stale generation-time
     // anchor would keep the estimate over the window and retrigger the
     // compactor on the next turn (same rule as the success pass).
@@ -1036,7 +1066,7 @@ final class _PickOutcome {
       else
         message,
   ]);
-  return (messages: rebuilt.messages, dropped: cut);
+  return (messages: rebuilt.messages, dropped: dropped);
 }
 
 /// Source for the [AutoCompactor] smol/main summarizers. Hosts plug in
@@ -1226,6 +1256,7 @@ class AutoCompactorFactory {
     state.messages,
     systemPrompt: state.systemPrompt,
     tools: state.tools,
+    calibration: state.overheadCalibration,
   );
 
   /// Builds the [AutoCompactor] and runs it. Hosts that want to

@@ -91,6 +91,93 @@ block a release again.
   it in TUI and line mode via `isObligationsLedgerNotice` (one heading
   constant shared with the renderer).
 
+- fix(compaction): gh-241 follow-up #5e (owner live test round 6) — the
+  newest durable boundary's summary survives a resume. A measured resume
+  keeps it RESIDENT: the walk opens the window at the boundary cluster
+  and the parity trim stands down while a checkpoint summary is
+  resident; the request opens with the summary and then only the raw
+  tail it does not cover, and the local-trim valve pins it like the
+  newest user turn. An over-trigger first request goes out as loaded
+  and takes the existing first-turn pre-flight compaction path.
+  A context stop that compacts and continues is logged `turn end …
+  stop=compacting (continuation pending)` — never as `stop=error` —
+  and `run end` is written exactly once, at the true end of the run.
+  The hand-over instruction states whether the final assistant reply
+  was delivered, so a checkpoint no longer calls a delivered reply
+  «not yet delivered».
+- fix(compaction): gh-241 follow-up #5d (owner live test round 5) —
+  resume and relief are honest about what they measure and cut. The
+  overhead calibration anchors on the session's FIRST valid provider
+  report (`resume calibration source=…` is always logged); an unbudgeted
+  resume walk stops at the newest durable boundary (classic compaction or
+  structured checkpoint) instead of paging the whole branch, so a resume
+  no longer resurrects history an earlier cut removed; the newest REAL
+  user turn survives every in-memory relief (projection markers are no
+  longer mistaken for it); after a context stop the promised
+  auto-compaction pass runs for real (never over a disabled engine) and
+  in the soft-window regime an over-window request with relief spent is
+  sent instead of ending a read-only turn in `stop=error`; notices say
+  what happened ("relieved" when no summary pass ran, a trim receipt only
+  when content was cut, a calibrated resume tail line).
+- fix(compaction): gh-2411 follow-up #5c (owner live test round 4) —
+  the overhead calibration survives checkpoints and resume: it is
+  derived from the last valid provider report anywhere in the session
+  (a bounded backward walk to the reply and the boundary that opens its
+  context), so a resume right after a `compact_checkpoint` logs
+  `budget=<n> calibrated xN (reported)` instead of
+  `budget=none (unmeasured)` and no longer falls into the soft-window
+  regime on the raw heuristic (three warnings and a trim to 3 messages
+  against a provider truth of 15,310). The soft-window warning latches
+  once per distinct text (a resumed session no longer prints it at boot
+  AND at its first prompt). The resume budget trim never opens the kept
+  tail on an assistant or tool message. The `[resume] loaded the last
+  K message(s)` line prints overhead + the estimated tail — the number
+  the first request is metered at (it printed the overhead alone:
+  ≈15,732 against a real 18,228).
+
+- fix(cli): gh-2411 follow-up #5b (owner live test, B1) — the PROJECT
+  `.fah/config.yaml` `agent.contextWindowCap` is now honored by the CLI
+  through the app's existing loader (`loadProjectContextWindowCap`); the
+  project value wins over the user value, the strict validation is the
+  same as the user key's (min 16384; an invalid value fails startup),
+  and the boot log names the winner
+  (`context window cap source=project window=<n>`). `fa config check`
+  no longer calls that key dead config — it names the OTHER `agent.*`
+  keys by key instead of the whole section — and `fa config set
+  agent.contextWindowCap` reads/writes the project scope (the default
+  for this key). Previously a tester's project override of 25000 was
+  silently ignored (dead config).
+
+- fix(compaction): gh-2411 follow-up #5 (owner live test, rounds 1–2) —
+  a restarted session at a small window failed every prompt the same
+  way: the resume boundary walk truncated the transcript to a one-message
+  tail on the unmeasured heuristic's say-so (28,440 → 17,773 prompt
+  tokens, silently — no record, no line), and the over-window guard then
+  hard-stopped the first request on the same heuristic (no reply → no
+  anchor → every prompt failed identically). The overhead calibration is
+  now taken at load/resume from the transcript's first vouchable usage
+  report; the walk keeps its parity budget only for MEASURED sessions
+  and otherwise loads to the newest compaction boundary or the file head;
+  a tail load always prints one line (`[resume] loaded the last K
+  message(s) …; ≈T tokens, estimate`). Unmeasured estimates never cut in
+  memory (boot cap, soft-window relief) and never hard-stop the loop; a
+  ceiling-clamped calibration never trips the guard. Every in-memory cut
+  opens the request on a user turn, leaves a `context_trim_receipt`
+  record and a diagnostic line; heuristic numbers the host prints carry
+  an explicit estimate marker. A hand-over transfer without the
+  `## Open User Requests` heading gets ONE corrective retry.
+
+- fix(compaction): gh-2411 — a 20k user-set context window below the
+  fixed request overhead (system prompt + tool schemas, ~23.6k real
+  tokens) made the ctx meter read 65–78% (chars/4 under-counted the
+  overhead 2.3×), the over-window guard trimmed on EVERY turn, and the
+  newest user turn vanished from the live context. The newest real user
+  turn is now never dropped (non-foldable, never a hide candidate, and
+  CARRIED verbatim when a mechanical cut lands behind it); the overhead
+  is priced at 2.5 chars/token and calibrated per session from the first valid
+  provider `usage.input` (meter, guard and trigger share the basis);
+  when `overhead + newest turn ≥ window − reserve` compaction is skipped
+  for the session with ONE visible warning instead of thrashing.
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

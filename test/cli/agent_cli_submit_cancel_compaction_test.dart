@@ -32,7 +32,11 @@ import 'agent_cli_test_support.dart';
 // Over-TRIGGER but UNDER-WINDOW resume (the lazy regime, gh-1425 AC5):
 // boot defers and the first turn's pre-flight owns the durable compaction —
 // the exact window gh-1929 crashes in. Same numbers the resume-boot-cap
-// suite pins: 131072 window (trigger 114688), ~115k seeded tokens.
+// suite pins: 131072 window (trigger 114688), ~115k seeded tokens —
+// UNDER the window only with the gh-2411 fixture seam (`tinyPrompt` +
+// `tinyTools`): the real CLI prompt's overhead (~19k tokens with skills
+// granted) pushed the seed over the window, and the boot then trimmed
+// locally instead of deferring to the first turn's pre-flight.
 const _window = 131072;
 
 Model get _bigModel => const Model(
@@ -197,6 +201,8 @@ void main() {
         ], hangFromCall: 1);
         final cli = AgentCli(
           config: AgentCliConfig(
+            systemPrompt: tinyPrompt,
+            runtimeTools: tinyTools(const ['read', 'bash']),
             model: _bigModel,
             apiKey: 'test-key',
             env: env,
@@ -280,6 +286,8 @@ void main() {
         ], hangFromCall: 1);
         final cli = AgentCli(
           config: AgentCliConfig(
+            systemPrompt: tinyPrompt,
+            runtimeTools: tinyTools(const ['read', 'bash']),
             model: _bigModel,
             apiKey: 'test-key',
             env: env,
@@ -332,6 +340,8 @@ void main() {
       ], hangFromCall: 1);
       final cli = AgentCli(
         config: AgentCliConfig(
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: _bigModel,
           apiKey: 'test-key',
           env: env,

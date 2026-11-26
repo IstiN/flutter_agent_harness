@@ -104,6 +104,11 @@ void main() {
     FakeStreamFunction stream, {
     int? contextWindowCap,
     CompactionSettings? compactionSettings,
+    // gh-2411: the gh-241 fixture seam (tinyPrompt + tinyTools) for the
+    // tests whose HARD-CODED seeds need transcript headroom under the
+    // threshold — the real CLI prompt prices ~19k tokens here (skills
+    // granted) against a 24576-token threshold.
+    bool tinyOverhead = false,
   }) => AgentCli(
     config: AgentCliConfig(
       model: _model,
@@ -116,6 +121,15 @@ void main() {
       compactionEngine: CompactionEngine.classic,
       contextWindowCap: contextWindowCap,
       compactionSettings: compactionSettings,
+      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
+      // gh-2411 follow-up #5 (F3/R2-R4): the resume budget applies to
+      // MEASURED sessions only — this suite pins the budget path, so its
+      // fixtures are measured (ratio 1.0: today's numbers stand).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
@@ -126,6 +140,11 @@ void main() {
     FakeStreamFunction stream, {
     int? contextWindowCap,
     CompactionSettings? compactionSettings,
+    // gh-2411: the gh-241 fixture seam (tinyPrompt + tinyTools) for the
+    // tests whose HARD-CODED seeds need transcript headroom under the
+    // threshold — the real CLI prompt prices ~19k tokens here (skills
+    // granted) against a 24576-token threshold.
+    bool tinyOverhead = false,
   }) => AgentCli(
     config: AgentCliConfig(
       model: _model,
@@ -138,6 +157,15 @@ void main() {
       compactionEngine: CompactionEngine.classic,
       contextWindowCap: contextWindowCap,
       compactionSettings: compactionSettings,
+      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
+      // gh-2411 follow-up #5 (F3/R2-R4): the resume budget applies to
+      // MEASURED sessions only — this suite pins the budget path, so its
+      // fixtures are measured (ratio 1.0: today's numbers stand).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
@@ -283,7 +311,7 @@ void main() {
       await seedFlat(probeEnv, 'parity-target', 2);
       var stream = FakeStreamFunction([textTurn('ok')]);
       final probe = await resumeAndTurn(
-        interactiveCli(probeEnv, stream),
+        interactiveCli(probeEnv, stream, tinyOverhead: true),
         stream,
       );
       final overhead = overheadOf(probe);
@@ -300,7 +328,7 @@ void main() {
       await seedFlat(env, 'parity-target', budgetCount + 16);
       io = FakeCliIO();
       stream = FakeStreamFunction([textTurn('ok')]);
-      final cli = interactiveCli(env, stream);
+      final cli = interactiveCli(env, stream, tinyOverhead: true);
       final context = await resumeAndTurn(cli, stream);
 
       final output = io.out.toString();
@@ -423,6 +451,7 @@ void main() {
       final headlessExit = await headlessCli(
         headlessEnv,
         headlessStream,
+        tinyOverhead: true,
       ).runHeadless('go');
       expect(headlessExit, 0);
 
@@ -431,7 +460,7 @@ void main() {
       await seedWithBoundary(interactiveEnv, 'parity-target', 10, 10);
       final interactiveStream = FakeStreamFunction([textTurn('ok')]);
       final interactiveContext = await resumeAndTurn(
-        interactiveCli(interactiveEnv, interactiveStream),
+        interactiveCli(interactiveEnv, interactiveStream, tinyOverhead: true),
         interactiveStream,
       );
 

@@ -38,10 +38,12 @@ import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
+import '../compaction/overhead_calibration.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
 import '../compaction/request_snapshot.dart'
     show RequestRouting, RequestSnapshot, RequestSnapshotStore;
 import '../compaction/structured/projection.dart' show RecordSeqIndex;
+import '../compaction/soft_window.dart' show softWindowRegime, softWindowSkip;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -390,6 +392,8 @@ final class AgentLoopConfig {
     this.transformContext,
     this.prepareNextTurn,
     this.overWindowRelief,
+    this.overheadCalibration,
+    this.windowReserveTokens,
     this.messageCapPolicy,
     this.messageCapRelief,
     this.getSteeringMessages,
@@ -444,6 +448,20 @@ final class AgentLoopConfig {
   /// most once per response before the guard's refusal surfaces; see
   /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
   final OverWindowRelief? overWindowRelief;
+
+  /// gh-2411: the session's overhead calibration, read per request so the
+  /// guard prices an unanchored request exactly as the host's ctx meter
+  /// does. `null` = the uncalibrated heuristic.
+  final OverheadCalibration Function()? overheadCalibration;
+
+  /// gh-2411: the host's compaction reserve for the effective window —
+  /// the soft-window regime (fixed overhead + newest user turn ≥
+  /// `window - reserve`: no trim can ever land under the TRIGGER) lets a
+  /// request through untrimmed while it is still UNDER the window; over
+  /// the window the guard keeps its stop (the owner's live test: skipping
+  /// there grew the context to 114%). `null`/absent = the window itself
+  /// is the line (no reserve).
+  final int Function()? windowReserveTokens;
 
   /// gh-1680: the learned per-model message-cap policy: a classified cap
   /// refusal is learned and the loop retries ONCE (coalesced payload +
@@ -644,6 +662,8 @@ final class AgentLoopConfig {
       transformContext: transformContext,
       prepareNextTurn: prepareNextTurn,
       overWindowRelief: overWindowRelief,
+      overheadCalibration: overheadCalibration,
+      windowReserveTokens: windowReserveTokens,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
       steeringNotifications: steeringNotifications,
@@ -1549,8 +1569,9 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
   bool reliefUsed,
   CancelToken? cancelToken,
   int window,
-  int tokens,
-) async {
+  int tokens, {
+  bool sendAnyway = false,
+}) async {
   // `window`/`tokens` are computed synchronously by the caller (the same
   // accounting basis as the host's ctx meter and the compaction
   // threshold: transcript estimate PLUS the system-prompt / tool-schema
@@ -1611,6 +1632,16 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
         );
       }
     }
+  }
+  // gh-241 follow-up #5d (D5 — owner live test round 5): in the
+  // soft-window regime the configured window is below what EVERY request
+  // carries (fixed overhead + reserve); relief freed nothing; the
+  // provider is the real limit — it accepted 108–123 % requests all
+  // along. Stopping here ended a read-only turn in `stop=error`, exit 1:
+  // an unsent request is worse than a slightly over one. The request
+  // goes out as is.
+  if (sendAnyway) {
+    return (context: context, reliefUsed: true, retried: false, terminal: null);
   }
   return (
     context: context,

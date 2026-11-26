@@ -191,6 +191,157 @@ pinned expansions never hide (F8/#1379), hides are lossless appends
 continues visibly (`[resuming] continuing the turn on the compacted
 context`).
 
+### Soft window and honest overhead (gh-2411)
+
+The context window is a SOFT target — a slight overrun is accepted; an
+invisible user turn is not. Three rules, one basis:
+
+- **The newest real user turn never drops.** The turn and its pair
+  group are excluded from the checkpoint range and from every hide
+  candidate (real user text was already exempt). When a mechanical cut
+  has to land BEHIND the turn — the local trim valve's budget walk, or
+  a classic cut that splits the turn — the turn is CARRIED: the valve
+  re-homes it verbatim right after its `[context trimmed]` marker, and
+  the classic summary opens with the ask verbatim. A hard floor at the
+  turn was tried and rejected: it leaves a long tool-using turn with
+  nothing trimmable and kills the funnel backstop
+  (`lib/src/compaction/newest_user_turn.dart`).
+- **The overhead is priced as the provider bills it.** Every request
+  carries a fixed overhead — the system prompt and the tool schemas.
+  It is priced at 2.5 chars/token, not the transcript's 4 (measured on
+  the gh-2411 session: 65,561 overhead chars — 12,105 of system prompt
+  plus 34 tool schemas — were billed 24,126 provider tokens, 2.72
+  chars/token, where chars/4 priced 16,407, 32% under).
+  Per session the first valid provider `usage.input` calibrates the
+  estimate (`OverheadCalibration`, ratio clamped to [0.6, 4.0];
+  re-derived at resume from the last valid provider report anywhere in
+  the session — gh-2411 follow-up #5c) — it may LOWER an over-reading heuristic too (the
+  owner's live test: glm-5.3-flash billed 15,792 tokens where the
+  heuristic read 24,348, ratio 0.65) — and the ctx meter, the loop's
+  over-window guard and the compaction trigger all read that same
+  basis (`estimateRequestTokens`). The heuristic itself is a
+  per-provider average: before the first anchor lands the meter can be
+  off by that ratio.
+- **Soft window — no trim thrash, no unbounded growth.** When
+  `overhead + newest user turn ≥ window − reserve`, no trim can ever
+  reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
+  trimmed: automatic compaction is skipped and the session is warned
+  ONCE per distinct warning text (a resumed session does not repeat it
+  at its first prompt): `context window {window} is below the fixed request overhead
+  ≈{overhead} tokens (estimated from the system prompt + tool schemas)
+  — raising the window or disabling tools is the only fix; automatic
+  compaction is skipped while the context stays under the window`. AT OR OVER THE WINDOW the
+  request is simply over the window: the automatic pass is the
+  hide-only, LM-free relief (the same one the loop guard runs — the
+  newest user turn is still carried verbatim), a pass that frees
+  nothing re-runs only after the transcript changed, and the loop's
+  over-window guard keeps its stop. ONE predicate decides both sides —
+  `softWindowSkip`: the regime AND `estimate < window`
+  (`lib/src/compaction/soft_window.dart`). Skipping over the window as
+  well was the first cut; the owner's live test grew a session to 114%
+  with no pass ever running.
+
+#### Anchored at load/resume; unmeasured estimates never cut or stop (gh-2411 follow-up #5)
+
+The overhead calibration is taken at LOAD/RESUME too: a transcript that
+carries a vouchable provider usage report (after its newest compaction
+boundary, or on a branch complete to its root) anchors the estimate the
+moment it is loaded, so a restarted session is priced by the provider's
+own number on its very first request.
+
+**Resume with a checkpoint summary (gh-2411 follow-up #5e).** The resume
+parity trim stands down while a checkpoint summary is resident: the walk
+opens the window at the newest durable boundary, the request opens with
+its summary and then only the raw tail the summary does not cover, and
+the local-trim valve pins that summary like the newest user turn. An
+over-trigger first request goes out as loaded and takes the existing
+first-turn pre-flight compaction path. The resume tail line and the
+`resume summary` diagnostic name the summary's record.
+
+**The stop that compacts is not an error (gh-2411 follow-up #5e, E2).** A
+turn the loop stops so compaction can run and continue is logged `turn
+end … stop=compacting (continuation pending)`; `run end` is written once,
+at the true end of the run (the continuation's own run). A stop with no
+continuation — or one whose continuation did not complete the turn — keeps
+the honest `stop=error`. Internal stop reasons and persisted records are
+unchanged; only the log tells the truth.
+
+**The hand-over knows how the run ended (E3a).** The hand-over request is
+the last request's context, which never carries the final assistant reply;
+the instruction therefore states it: `Run status: the final assistant reply
+WAS delivered — that turn is answered, not pending`, or that the newest
+user turn has no delivered reply, or that no claim can be made (a hand-over
+built without a transcript).
+
+The resume boundary walk is a MEASUREMENT or it is nothing. A measured
+session keeps today's parity budget (`window − calibrated overhead −
+reserve`) — the walk stops at it and trims record-granularly. An
+unmeasured one walks with NO budget: to the newest compaction boundary or
+the file head — only a boundary (durable, visible) may limit what loads.
+A budget of zero (the window below overhead + reserve) is no budget
+either: its one-record tail dropped the newest user turn. Whenever the
+loaded projection is a tail of the file, one line says so, in the
+transcript and on screen: `[resume] loaded the last K message(s) of the
+session (N older record(s) left on disk …; ≈T tokens, estimate)`.
+
+A resume right after a durable checkpoint is MEASURED too (gh-2411
+follow-up #5c): the overhead is a property of the system prompt + the
+tool schemas, not of the folded history, so the calibration is derived
+from the last valid provider report anywhere in the session — a bounded
+backward walk pages older records until that reply and the boundary (or
+the file head) that opens its context are resident. Without it the
+resume read `budget=none (unmeasured: estimate only)`, fell back into
+the soft-window regime on the raw heuristic and trimmed the context to
+three messages against a provider truth of 15,310. Two more invariants
+of the same round: the budget trim never opens the kept tail on an
+assistant or tool message (`projectedBranchBudgetCut` →
+`_openOnUserTurn`), and the tail line's figure is overhead + the
+estimated tail — the number the first request is metered at, not the
+overhead alone.
+
+Until the provider has answered in a session and nothing is measured, no
+in-memory cut runs on the heuristic alone — not the boot cap, not the
+soft-window relief — and the loop's over-window guard does not stop: the
+request goes out, the answer anchors the session, a real overflow takes
+the existing overflow path. A calibration pinned on the 4x ceiling is no
+measurement either — the guard ignores it. Every in-memory cut opens the
+request on a user turn (never on an assistant or tool fragment), leaves a
+`context_trim_receipt` record in the session and a diagnostic line, and
+every heuristic number the host prints carries an explicit `≈`/estimate
+marker.
+
+A hand-over reply whose transfer carries no `## Open User Requests`
+heading gets ONE corrective retry (the retry names the section and
+quotes the defective reply); a second miss keeps the failure.
+
+#### First-anchor overhead, bounded resume walk, honest relief (gh-241 follow-up #5d)
+
+- **The overhead anchor is the session's FIRST valid provider report** — the
+  overhead-dominated request — not the tail-heavy reply after the newest
+  boundary (`resume calibration source=first|pre-boundary|post-boundary
+  anchor=<id> ratio=x<N>` is always logged). At the owner's 25k window the
+  two reports differ (x0.66 vs x0.82 → overhead ≈19.5k vs ≈15.7k tokens).
+- **An unbudgeted resume walk (`budget=none`) stops at the newest durable
+  boundary** — a classic compaction or a structured `compact_checkpoint` —
+  instead of paging to the file head. Everything file-older than that
+  boundary cluster stays on disk: a resume never resurrects history an
+  earlier cut removed from the live context.
+- **The newest REAL user turn survives every in-memory relief.** Projection
+  markers the engine writes as user-role messages (hidden/ckpt markers,
+  `[expand N-M]` pointers, the local-trim marker) are machine content and
+  are never taken for it.
+- **A context stop keeps its promise.** After the guard's stop the
+  under-window paths run first (the regime's hide-only relief, the unforced
+  pass); when they yield nothing the `auto-compacting…` pass runs FORCED —
+  never over a disabled engine. In the soft-window regime an over-window
+  request with relief spent is SENT (the provider is the real limit): a
+  read-only turn no longer ends in `stop=error`.
+- **Notices say what happened.** "Relieved" when no summary pass ran; a
+  `context_trim_receipt` only when content was actually hidden or trimmed;
+  the resume tail line prints overhead plus the estimated tail on the
+  calibrated basis once a report exists. The estimator's density under-read
+  for non-Latin text is a separate follow-up.
+
 ### Quality tier — turn boundaries, judge-led
 
 Digests, checkpoints, the judge and escalation run only at turn

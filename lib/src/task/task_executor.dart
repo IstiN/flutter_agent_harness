@@ -504,6 +504,7 @@ final class TaskExecutor {
         // gh-1948: resumed children ride the same per-boundary transcript
         // flush as fresh spawns (see _buildChild).
         unawaited(_flushChildTranscript(id, agent));
+        _rememberLastAssistant(agent);
         return _compactChildAtBoundary(id, agent, wiring, nextTurn);
       };
       // The resume run's tool calls resolve the child identity through the
@@ -1379,6 +1380,7 @@ final class TaskExecutor {
     // and must never block the next provider request.
     child.prepareNextTurn = (nextTurn) async {
       unawaited(_flushChildTranscript(id, child));
+      _rememberLastAssistant(child);
       return _compactChildAtBoundary(id, child, wiring, nextTurn);
     };
     if (cancelToken != null) {
@@ -1722,6 +1724,24 @@ final class TaskExecutor {
   /// double-counting the same turn (issue #332).
   final _usageCursors = <String, int>{};
 
+  /// The child's last assistant message as it stood BEFORE the latest
+  /// turn-boundary compaction (gh-2411). With honest overhead accounting a
+  /// finished run can end over the trigger with its whole foldable path
+  /// inside keep-recent — the ladder pass then folds the very reply that
+  /// ended the run and the live projection holds no assistant message at
+  /// all. The final-answer contract (gh-1951 AC3) must still read it.
+  final _lastAssistantBeforeBoundary = Expando<AssistantMessage>();
+
+  /// Snapshots [child]'s last assistant message before a boundary pass may
+  /// fold it (see [_lastAssistantBeforeBoundary]).
+  void _rememberLastAssistant(Agent child) {
+    for (final message in child.state.messages) {
+      if (message is AssistantMessage) {
+        _lastAssistantBeforeBoundary[child] = message;
+      }
+    }
+  }
+
   /// Starts turn-boundary usage billing for [child] (issue #332): every
   /// finished turn is added onto the registry row immediately, so a host
   /// restart mid-run leaves a persisted 'running' row that already carries
@@ -1907,6 +1927,9 @@ final class TaskExecutor {
     for (final message in child.state.messages) {
       if (message is AssistantMessage) last = message;
     }
+    // gh-2411: a turn-boundary pass may have folded the run's final reply
+    // out of the live projection — the answer itself is not lost.
+    last ??= _lastAssistantBeforeBoundary[child];
     if (last == null) {
       throw StateError('subagent produced no assistant message');
     }

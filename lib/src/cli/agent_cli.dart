@@ -129,6 +129,11 @@ import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/newest_user_turn.dart'
+    show isBoundarySummary, leadingBoundaryCluster, newestBoundarySummaries;
+import '../compaction/overhead_calibration.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
@@ -893,6 +898,10 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    final seededCalibration = config.initialOverheadCalibration;
+    if (seededCalibration != null) {
+      _agent.state.overheadCalibration = seededCalibration;
+    }
     // Issue #1786: the one-key accept + the watchdog's escalate rung call
     // into the loop's budget ladder through these controls.
     _agent.foregroundBudgetControls = _foregroundBudgetControls;
@@ -1859,11 +1868,37 @@ class AgentCli {
   /// must not re-warn each time.
   bool _heavyScanGuardShown = false;
 
+  /// gh-2411: the soft-window warning's once-per-session latch (the
+  /// regime holds for every turn; the notice shows once). Lives on
+  /// [AgentCli] — extensions can't declare fields.
+  /// gh-241 follow-up #5d (D6): whether the last over-window relief
+  /// hid or trimmed content (a receipt and a "cut" line need it).
+  bool _reliefCutContent = false;
+
+  final SoftWindowNotice _softWindowNotice = SoftWindowNotice();
+
+  /// Scope-2 B: the over-window guard-stop notice's once-per-session
+  /// latch (same mechanism as the soft-window warning).
+  final SoftWindowNotice _guardStopNotice = SoftWindowNotice();
+
+  /// gh-2411 (owner live test): the transcript length at which the
+  /// soft window's hide-only relief last freed NOTHING — it re-runs
+  /// only after the transcript changed (a bounded pass, never a
+  /// per-prompt retry). `null` = no no-op remembered.
+  int? _softWindowReliefNoOpAt;
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.
   HepWriter? _hep;
   var _persistedCount = 0;
+
+  /// gh-241 follow-up #5 (F3/R3): the one-line notice of the LAST loaded
+  /// session whose projection is a tail of the file (`[resume] loaded the
+  /// last K message(s) …`) — re-printed by the TUI restored-session
+  /// replay, because the boot load runs before the alternate screen.
+  /// `null` = the whole session loaded (or nothing loaded yet).
+  String? _resumeTailNotice;
   var _streamedText = false;
 
   /// The session instance the gh-1241 usage segment-start marker was
@@ -2606,6 +2641,10 @@ class AgentCli {
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// The context-stop turn end stashed by `_logEventForensics` — logged
+  /// when the run settles, not when the turn ends (gh-241 #5e, E2).
+  AssistantMessage? _pendingContextStop;
 
   /// The user-wired cancellation for the in-flight compaction, if any
   /// (issue #1085 M3): Ctrl+C during a 15-30 min pre-flight / relief /

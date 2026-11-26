@@ -78,6 +78,13 @@ void main() {
         reserveTokens: 8192,
         keepRecentTokens: 4096,
       ),
+      // gh-2411 follow-up #5 (F3/R6): the guard and its relief own a
+      // MEASURED session — an unmeasured one sends the first request as
+      // is. This suite pins the guard cap, so its fixture is measured.
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
