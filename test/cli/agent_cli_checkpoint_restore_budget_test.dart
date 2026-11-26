@@ -57,7 +57,15 @@ void main() {
       JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
     );
     await seed.appendSessionName('restore-budget-target');
-    for (var i = 0; i < 17; i++) {
+    // 14 × ~1k-token messages: with the merged gh-2411 estimator pricing
+    // (the slim manifest's overhead at ~6-9k estimated tokens of the
+    // 24,576 trigger, vs ~3.9k at the pre-merge density) 17 seeds pushed
+    // the BOOT itself to the trigger and run 1's pre-flight consumed the
+    // scripted turns before the AC4 detour could fire. 14 seeds hold the
+    // same ≈21k boot shape the scenario pins: no boot cap, no pre-flight
+    // compaction, the ONLY thing crossing the trigger is run 3's
+    // mid-run read + stale-checkpoint auto-close.
+    for (var i = 0; i < 14; i++) {
       await seed.appendMessage(UserMessage.text('seed$i ${'a' * 4000}'));
     }
   }
