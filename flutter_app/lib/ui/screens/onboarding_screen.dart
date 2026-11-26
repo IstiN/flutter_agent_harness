@@ -2455,6 +2455,7 @@ class _HostSignInStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final body = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
@@ -2466,7 +2467,7 @@ class _HostSignInStep extends StatelessWidget {
               _Logo(productConfig: productConfig),
               const SizedBox(height: 24),
               Text(
-                'Sign in to ${productConfig.displayName}',
+                l10n.onboardingHostSignInTitle(productConfig.displayName),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -2474,10 +2475,7 @@ class _HostSignInStep extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                '${productConfig.displayName} runs on your ${productConfig.displayName} '
-                'account — sign in once in the ${productConfig.displayName} app and '
-                'come right back. Third-party providers are not part of this '
-                'workspace.',
+                l10n.onboardingHostSignInBody(productConfig.displayName),
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ),
@@ -2493,7 +2491,9 @@ class _HostSignInStep extends StatelessWidget {
                     );
                   },
                   icon: const Icon(Icons.open_in_new, size: 18),
-                  label: Text('Sign in to ${productConfig.displayName}'),
+                  label: Text(
+                    l10n.onboardingHostSignInCta(productConfig.displayName),
+                  ),
                 ),
             ],
           ),

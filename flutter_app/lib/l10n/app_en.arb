@@ -2059,7 +2059,11 @@
   "onboardingMockupCreateWithFa": "Create with {product}",
   "@onboardingMockupCreateWithFa": {
     "description": "Mockup app tile label",
-    "placeholders": {"product": {"type": "String"}}
+    "placeholders": {
+      "product": {
+        "type": "String"
+      }
+    }
   },
   "onboardingMockupBadgeDemo": "Demo",
   "@onboardingMockupBadgeDemo": {
@@ -2301,7 +2305,11 @@
   "onboardingTimelineFaBuilt": "{product} built and added this app to your workspace.",
   "@onboardingTimelineFaBuilt": {
     "description": "Ready page mock timeline entry body",
-    "placeholders": {"product": {"type": "String"}}
+    "placeholders": {
+      "product": {
+        "type": "String"
+      }
+    }
   },
   "onboardingTimelineYouAsked": "You asked",
   "@onboardingTimelineYouAsked": {
@@ -2310,7 +2318,11 @@
   "onboardingTimelineFaDelivered": "{product} delivered",
   "@onboardingTimelineFaDelivered": {
     "description": "Ready page mock timeline entry title",
-    "placeholders": {"product": {"type": "String"}}
+    "placeholders": {
+      "product": {
+        "type": "String"
+      }
+    }
   },
   "onboardingTimelineFaDeliveredDesc": "Focus Timer — 25/5 focus sessions with work and break cycles.",
   "@onboardingTimelineFaDeliveredDesc": {
@@ -2383,5 +2395,26 @@
   "onboardingProviderDescCustom": "Any OpenAI-compatible endpoint",
   "@onboardingProviderDescCustom": {
     "description": "Onboarding provider card description (Custom); mirrors the fa_ui preset"
+  },
+  "onboardingHostSignInTitle": "Sign in to {displayName}",
+  "@onboardingHostSignInTitle": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the sign-in step headline"
+  },
+  "onboardingHostSignInBody": "{displayName} runs on your {displayName} account — sign in once in the {displayName} app and come right back. Third-party providers are not part of this workspace.",
+  "@onboardingHostSignInBody": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the sign-in step explainer"
+  },
+  "onboardingHostSignInCta": "Sign in to {displayName}",
+  "@onboardingHostSignInCta": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the external-browser sign-in button"
   }
 }
