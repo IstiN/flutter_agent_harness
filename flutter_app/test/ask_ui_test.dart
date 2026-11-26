@@ -265,6 +265,8 @@ void main() {
         env: MemoryExecutionEnv(),
       );
       addTearDown(service.dispose);
+      // GOAL #28: `ask` defers to the others surface — mount it first.
+      await mountViaOthers(service, ['ask']);
       final ask = service.toolsForTest.whereType<AgentTool>().singleWhere(
         (tool) => tool.name == 'ask',
       );
@@ -299,4 +301,16 @@ void main() {
       expect(textOf(answered), 'User selected: yes');
     });
   });
+}
+
+/// GOAL #28 (issue #2416): deferred tools mount through the `others`
+/// discovery surface — the app-side test helper mirroring the model's own
+/// flow: execute others with tool_name per deferred name.
+Future<void> mountViaOthers(AgentService service, List<String> names) async {
+  final others = service.toolsForTest.whereType<AgentTool>().singleWhere(
+    (t) => t.name == 'others',
+  );
+  for (final name in names) {
+    await others.execute({'tool_name': name}, null, null);
+  }
 }

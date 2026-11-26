@@ -44,7 +44,7 @@ enum HostCapability {
   /// `contextWindowCap`.
   compaction,
 
-  /// Load modes + `discover_tools` demotion.
+  /// Load modes + `others` demotion.
   loadModes,
 
   /// MCP servers.

@@ -91,7 +91,10 @@ void main() {
           .toString()
           .split('\n')
           .firstWhere((l) => l.startsWith('inspect_image'.padRight(16)));
-      expect(line, contains(' on '));
+      // GOAL #28 renamed the enabled vocabulary: an enabled conditional
+      // renders `loaded` (the /tools surface is loaded · deferred ·
+      // off(reason)).
+      expect(line, contains(' loaded '));
     },
   );
 
@@ -293,8 +296,10 @@ void main() {
     await waitForIt(() => inspectLines() >= 1);
     expect(
       lastInspectLine(),
-      contains(' on '),
-      reason: 'the live resolver serves a vision config — /tools must say so',
+      contains(' loaded '),
+      reason:
+          'the live resolver serves a vision config — /tools must say '
+          'so (GOAL #28 vocabulary: enabled renders `loaded`)',
     );
     expect(
       cli.agent.state.tools.whereType<AgentTool>().map((t) => t.name),
@@ -323,7 +328,7 @@ void main() {
     );
     io.sendLine('/tools');
     await waitForIt(() => inspectLines() >= 3);
-    expect(lastInspectLine(), contains(' on '));
+    expect(lastInspectLine(), contains(' loaded '));
     expect(
       cli.agent.state.tools.whereType<AgentTool>().map((t) => t.name),
       contains('inspect_image'),

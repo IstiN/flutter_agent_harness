@@ -951,6 +951,13 @@ class AgentService extends ChangeNotifier
     // Capability-gated tool availability (issue #19): capabilities follow
     // the actual wiring above, the gate hides/restores per config, and the
     // seeded store choices apply before the first run.
+    // GOAL #28 (issue #2416 review round 2): a direct call to a deferred
+    // tool routes to the deferred-mount path — mount live, call proceeds.
+    _agent.missingToolResolver = (name) async {
+      final availability = _toolsAvailability;
+      final tool = await availability.resolveDeferredToolForCall(name);
+      return tool;
+    };
     _toolsAvailability = AgentToolAvailability(
       agent: _agent,
       tools: stack.registry.tools,
