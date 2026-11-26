@@ -54,11 +54,46 @@ export '../user_text.dart' show isSyntheticUserText, userMessageText;
 export 'working_set.dart'
     show
         GoalRecitation,
-        goalRecitationBudgetChars,
         goalRecitationFromPayload,
         goalRecitationPayload,
-        goalRecitationRecordType,
-        reciteGoalForStorage;
+        goalRecitationRecordType;
+export 'working_set_snapshot.dart'
+    show
+        appendWorkingSetToSystemPrompt,
+        latestWorkingSetIn,
+        renderWorkingSetSystemBlock,
+        workingSetFromPayload,
+        workingSetMaxChars,
+        workingSetRecordType,
+        workingSetRecordTypes,
+        WorkingSetSnapshot;
+export 'context_notices.dart'
+    show
+        containsForbiddenContextPhrase,
+        contextNoticeEnvelope,
+        contextNoticeForbiddenPhrases,
+        ContextNoticeLatch,
+        estimateMark,
+        hiddenRangeIdsIn,
+        isContextNoticeText,
+        isHideRecord,
+        newlyHiddenRecordCount,
+        nearLimitContextNotice,
+        nearLimitNoticeLine,
+        nearLimitReached,
+        nearLimitRunwayTokens,
+        nearLimitThresholdTokens,
+        nearLimitPercent,
+        nearLimitMinRunwayTokens,
+        postHideContextNotice,
+        postHideNoticeLine;
+export 'working_set_store.dart'
+    show
+        activeWorkingSetStore,
+        runWithWorkingSetStore,
+        SessionWorkingSetStore,
+        WorkingSetSaveResult,
+        WorkingSetStore;
 export '../compaction/structured/expand_tool.dart'
     show CompactExpandController, compactExpandToolName;
 export '../prompts/prompts.g.dart'

@@ -192,26 +192,51 @@ void main() {
     // at every prompt — classic never opts in, so the request carries the
     // stored transcript byte-for-byte.
     final env = await freshEnv();
-    await seedFlat(env, 'parity-target', 4);
+    // gh-2423 C1/C7: the includes fatten the measured overhead the parity
+    // budget subtracts, and the resumed projection's budget-fitted tail no
+    // longer covers four 400-char records — the walk drops the oldest and
+    // the byte-identity check loses its point. The seed text shrinks so
+    // the whole fill fits the budget again.
+    await seedFlat(env, 'parity-target', 4, textChars: 150);
     io = FakeCliIO();
     final stream = FakeStreamFunction([textTurn('ok')]);
     final cli = interactiveCli(env, stream);
     final context = await resumeAndTurn(cli, stream);
+    // The whole fill fits the parity budget again (four records + the
+    // prompt); the estimate stays out of the near-limit band, so no C3
+    // notice rides this request.
     expect(context.messages, hasLength(5));
     // Byte-identity with the stored transcript (the seed texts happen to
     // LOOK like tagged records — `m<i> …` — so the predicate alone cannot
     // tell a wire tag from content; equality can).
     for (var i = 0; i < 4; i++) {
-      expect(firstTextOf(context.messages[i]), 'm$i ${'a' * 4000}');
+      expect(firstTextOf(context.messages[i]), 'm$i ${'a' * 150}');
     }
+    expect(
+      firstTextOf(context.messages[4]),
+      'go',
+      reason: 'the prompt rides after the records, before the notice',
+    );
     expect(cli.agent.recordTagsEnabled, isFalse);
   });
 
+  /// gh-2423 C3: a harness context notice — machine content in the
+  /// `<system-notice>` envelope (post-hide / near-limit), never part of
+  /// the session's own projection.
+  bool isNotice(Message message) =>
+      message is UserMessage &&
+      isContextNoticeText(userMessageText(message.content));
+
   /// Role + text signature of a projected message list — the AC-R0
-  /// token-for-token comparison basis.
+  /// token-for-token comparison basis. ONE deliberate normalization: a
+  /// gh-2423 context notice signs by SHAPE only — its numbers are the
+  /// harness's live request estimate, and the two hosts' system prompts
+  /// legitimately differ (the mailbox section, the finalize gate), so
+  /// the same transcript reads a different token count per host.
   List<String> signatures(Context context) => [
     for (final message in context.messages)
       switch (message) {
+        UserMessage() when isNotice(message) => 'user:<context-notice>',
         UserMessage() =>
           'user:${message.content is String ? message.content : (message.content as List).map((b) => b is TextContent ? b.text : 'image').join('|')}',
         AssistantMessage() =>
@@ -287,7 +312,16 @@ void main() {
         expect(estimate, lessThanOrEqualTo(_threshold));
         // …and the resume carried the WHOLE session (no trim, no
         // auto-compaction — full parity with the pre-exit transcript).
-        expect(context.messages, hasLength(count + 1));
+        // A gh-2423 near-limit notice may ride AFTER the prompt (machine
+        // content, at most one per cycle) — it is not a session record.
+        final sessionMessages = context.messages
+            .where((m) => !isNotice(m))
+            .toList();
+        expect(sessionMessages, hasLength(count + 1));
+        expect(
+          context.messages.length - sessionMessages.length,
+          lessThanOrEqualTo(1),
+        );
         final output = io.out.toString();
         expect(output, isNot(contains('Context window exhausted')));
         expect(output, isNot(contains('auto-compacted')));
@@ -344,8 +378,13 @@ void main() {
       // The budget stop kept older history on disk: the projection is
       // the tail, not the whole file (laziness preserved).
       expect(context.messages.length, lessThan(budgetCount + 17));
-      // The LIVE tail is intact — the prompt rides the request.
-      expect((context.messages.last as UserMessage).content, 'go');
+      // The LIVE tail is intact — the prompt rides the request (a
+      // gh-2423 context notice, if any, is machine content after it).
+      final liveTail = context.messages
+          .whereType<UserMessage>()
+          .where((m) => !isNotice(m))
+          .last;
+      expect(liveTail.content, 'go');
     },
   );
 
@@ -564,9 +603,16 @@ void main() {
       // 'go' (1) + 'done' (1): the only projection delta; a couple of
       // tokens of slack for markers.
       expect(second, greaterThanOrEqualTo(first + 2));
-      expect(second, lessThanOrEqualTo(first + 8));
-      // No ratchet: still under the compaction threshold.
-      expect(second, lessThanOrEqualTo(_threshold));
+      // The second run's own band sighting persists ONE synthetic notice
+      // record (~40 tokens of harness chrome) — the only delta allowed
+      // beyond the appended turn; session content never ratchets.
+      expect(second, lessThanOrEqualTo(first + 56));
+      // No ratchet: still under the compaction threshold. gh-2423 C3:
+      // the near-limit notice this fill's band sights persists as ONE
+      // synthetic record (~40 tokens of harness chrome, not session
+      // fill) and the resumed run's own notice may ride after it — the
+      // bound carries slack for those two, never for session content.
+      expect(second, lessThanOrEqualTo(_threshold + 240));
     },
   );
 }

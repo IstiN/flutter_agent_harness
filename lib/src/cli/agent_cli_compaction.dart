@@ -553,6 +553,12 @@ extension AgentCliCompactionRun on AgentCli {
   /// threshold. Returns whether a compaction pass actually ran and
   /// succeeded — the over-window guard's auto-continuation keys off this
   /// to resume only when the window was really freed.
+  ///
+  /// Gate order (gh-2411 × gh-2423): the under-window soft-window skip,
+  /// the regime's hide-only relief, then the near-limit notice — silent
+  /// in the regime by that very order — then the hard/soft trigger. A
+  /// trigger runs exactly one pass and reports its hides exactly once
+  /// ([_emitPostHideNotice]).
   Future<bool> _maybeAutoCompact({
     bool forceE1Pass = false,
     bool postRun = false,
@@ -581,6 +587,15 @@ extension AgentCliCompactionRun on AgentCli {
     // hide-only relief — the owner's live test: skipping there grew the
     // context to 114% with no pass ever running.
     if (_softWindow) return _softWindowRelief(tokens);
+    // gh-2423 C3: the honest near-limit notice rides the trigger's own
+    // basis, ahead of the hard/soft gates — once per compaction cycle.
+    // It sits AFTER both regime branches on purpose (gh-2411 × gh-2423):
+    // in the soft-window regime it is SILENT — the regime's ONE warning
+    // per session already named the only real fix, and "compaction will
+    // fold older records" would be false where no fold can land under
+    // the window. The latch stays armed: the first crossing outside the
+    // regime is still the cycle's one notice.
+    await _maybeEmitNearLimitNotice(tokens);
     // gh-1680 AC4: the additive message-count trigger — a model with a
     // learned cap compacts when the live count reaches `cap − margin`,
     // BEFORE the request, even when the token trigger is untouched. The
@@ -595,6 +610,8 @@ extension AgentCliCompactionRun on AgentCli {
     if (trigger == null) return false;
     _pushBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
+    // gh-2423 C3: the hide snapshot the post-hide notice counts against.
+    final knownHiddenRanges = hiddenRangeIdsIn(await session.getEntries());
     try {
       // gh-1729 review: when the E1 one-shot pass is the trigger, the
       // funnel's own re-check cannot see it (a cap-UNKNOWN model has no
@@ -624,6 +641,12 @@ extension AgentCliCompactionRun on AgentCli {
     // one-shot resume budget was burned on a transcript that still could
     // not be sent.
     final after = _liveRequestTokens();
+    // gh-2423 C3: exactly one honest post-hide notice per hide pass.
+    await _emitPostHideNotice(
+      knownHiddenRanges: knownHiddenRanges,
+      tokensBefore: tokens,
+      tokensNow: after,
+    );
     // PR #1695: success needs BOTH dimensions — a pass that only shrinks
     // tokens while the message count still trips the cap gate is not a
     // success; the caller retries relief and the funnel reports
@@ -825,6 +848,12 @@ extension AgentCliCompactionRun on AgentCli {
   /// the relief freed tokens. A pass that frees nothing is BOUNDED: it
   /// re-runs only after the transcript changed
   /// ([_softWindowReliefNoOpAt]) — never a per-prompt retry.
+  ///
+  /// gh-2423 C3: the relief's hide reports ITSELF — [_runEmergencyRelief]
+  /// emits the one post-hide notice of the pass (`relief` delivery).
+  /// [_maybeAutoCompact] returns here, before its own hide snapshot and
+  /// notice, so the pass is never reported twice; a pass that hid
+  /// nothing prints none.
   Future<bool> _softWindowRelief(int tokens, {Session? session}) async {
     // gh-241 follow-up #5 (F3/R6): the relief is an in-memory cut — an
     // UNMEASURED estimate never makes it, at the first prompt's pre-flight
@@ -1234,8 +1263,17 @@ extension AgentCliCompactionRun on AgentCli {
     _runAbortRequested = false;
     _pushBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
+    // gh-2423 C3: a manual hide is a hide — the model gets the same
+    // honest numbers.
+    final knownHiddenRanges = hiddenRangeIdsIn(await session.getEntries());
     try {
       final reported = await _runAutoCompact('[compacted]');
+      await _emitPostHideNotice(
+        session: session,
+        knownHiddenRanges: knownHiddenRanges,
+        tokensBefore: before,
+        tokensNow: _liveRequestTokens(),
+      );
       if (!reported && _liveRequestTokens() >= before) {
         // A no-op manual /compact (already compacted at the leaf) prints no
         // report block — say why instead of looking like a silent hang.
@@ -1532,12 +1570,19 @@ extension OverWindowGuardRelief on AgentCli {
   /// entry point awaits inline (there is no fire-and-forget compactor),
   /// so this cannot overlap the quality tier's post-run pass.
   Future<EmergencyReliefOutcome> _runEmergencyRelief({Session? session}) async {
+    final target = session ?? _session!;
     final relief = EmergencyRelief(
-      session: session ?? _session!,
+      session: target,
       state: _agent.state,
       window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,
     );
+    // The hide snapshot reads the SAME session the relief runs on: the
+    // boot-cap relief passes an explicit session while `_session` is
+    // still unset (gh-241 × gh-2423 fusion — the snapshot rode `_session!`
+    // and crashed the boot-cap relief with a null check).
+    final knownHiddenRanges = hiddenRangeIdsIn(await target.getEntries());
+    final tokensBefore = _liveRequestTokens();
     final outcome = await relief.run();
     // The relief re-anchored the live transcript from the session
     // projection (refreshAgentState) — keep the persist cursor in step,
@@ -1553,6 +1598,16 @@ extension OverWindowGuardRelief on AgentCli {
       'over-window relief replaced the '
       'projection',
     );
+    // gh-2423 C3: the emergency tier's hide gets its honest numbers too
+    // (the #2264 continuation notice names the event; this names N/X/Y/W).
+    if (outcome.hiddenRecords > 0) {
+      await _emitPostHideNotice(
+        knownHiddenRanges: knownHiddenRanges,
+        tokensBefore: tokensBefore,
+        tokensNow: _liveRequestTokens(),
+        relief: true,
+      );
+    }
     return outcome;
   }
 }

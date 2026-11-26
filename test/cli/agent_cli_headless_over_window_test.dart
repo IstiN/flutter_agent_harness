@@ -46,19 +46,23 @@ void main() {
     FakeStreamFunction stream, {
     CompactionEngine? engine,
     CompactionSettings? settings,
-    int window = 12000,
+    // Null = the 12k default grown by the gh-2423 working-set surface's
+    // measured footprint (gh2423ContextIncludesTokens — a non-const
+    // helper, so the adjustment lives here, not in the default value);
+    // an explicit window is the test's own exact arithmetic.
+    int? window,
   }) => AgentCli(
     config: AgentCliConfig(
       // gh-2411: overflow through messages, not overhead.
       systemPrompt: tinyPrompt,
       runtimeTools: tinyTools(const ['read', 'bash']),
-      // Non-const: the window is the test's (gh-2411 follow-up).
+      // Non-const: the window is the test's (gh-241 follow-up).
       model: Model(
         id: 'tiny-window',
         api: 'test-api',
         provider: 'test-provider',
         baseUrl: 'https://example.test',
-        contextWindow: window,
+        contextWindow: window ?? 12000 + gh2423ContextIncludesTokens,
         maxTokens: 4096,
       ),
       apiKey: '[REDACTED:Sensitive-Value]',
@@ -121,7 +125,6 @@ void main() {
       );
 
       final exitCode = await cli.runHeadless('count the words');
-
       // Guard stop → the deterministic relief (zero LM calls mid-turn) →
       // settle-path compaction (call 2, frees the window) → continuation
       // turn (call 3): the task DROVE TO COMPLETION.
@@ -136,8 +139,10 @@ void main() {
       );
       // The continuation is the notice prompt, not a bare retry of the
       // original user text.
+      // (A gh-2423 context notice may ride after it — machine content.)
       final lastPrompt = stream.contexts[2].messages
           .whereType<UserMessage>()
+          .where((m) => !isContextNoticeText(userMessageText(m.content)))
           .last;
       expect(
         lastPrompt.content as String,
@@ -203,6 +208,11 @@ void main() {
         bigReadTurn(),
         textTurn('summary of the second compaction'),
         textTurn('task complete: all files counted'),
+        // The post-run fold's fire-and-forget memory extraction (the
+        // compaction manager's hook is UNAWAITED by contract — it must
+        // never block a compaction) may land inside this run window as a
+        // sixth call; give it a clean answer so the fold never errors.
+        textTurn('no durable facts — nothing worth remembering'),
       ]);
       final cli = buildCli(
         stream,
@@ -242,10 +252,12 @@ void main() {
       expect(warnings.single, contains('auto-compacting'));
       expect(
         stream.calls,
-        5,
+        anyOf(5, 6),
         reason:
             'both stops ran their relief: read, compaction, read, '
-            'compaction, then the terminal stop',
+            'compaction, then the terminal stop — plus, on the timing '
+            'where the fire-and-forget memory extraction of the last pass '
+            'lands inside the run window, that one unawaited call',
       );
       // The second stop exhausts the run's single continuation retry —
       // the existing contract (never a masked 0).
@@ -413,12 +425,13 @@ void main() {
       // ladder with a transient wording, attempt 2 recovers.
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (see gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',

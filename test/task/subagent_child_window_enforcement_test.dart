@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/subagent_board.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 /// The token estimate of the report-size contract's footprint in a child
@@ -47,6 +48,14 @@ final int _contractTokens = () {
   return (growthChars / 2.5).ceil();
 }();
 
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The same measured-delta
+/// calibration as [_contractTokens]: the fixtures are calibrated to the
+/// pre-gh-2423 trajectory, so the child window grows by the includes' own
+/// request footprint (4 chars per token — the estimator's heuristic).
+final int _contextIncludesTokens =
+    ((workingSetPrompt.length + contextHygienePrompt.length) / 4).ceil();
+
 /// Tiny window, same calibration as subagent_compaction_test.dart: the
 /// compaction trigger lands at window − reserve, well under the window.
 final _model = Model(
@@ -54,7 +63,7 @@ final _model = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 4300 + _contractTokens,
+  contextWindow: 4300 + _contractTokens + _contextIncludesTokens,
   maxTokens: 4096,
 );
 
@@ -142,14 +151,23 @@ final class _ScriptedStream {
     tools: context.tools ?? const [],
   );
 
+  /// The routing key: the last user text that is not a gh-2423 context
+  /// notice (`isContextNoticeText` — a harness notice rides a synthetic
+  /// user record right before the request and must not re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';
@@ -413,12 +431,15 @@ void main() {
       'error', () {
     test('repeated failing passes latch off after the budget, stamp the '
         'handle, and stop being attempted', () async {
-      // Two fat turns stay under the trigger: the spawn never compacts.
-      // The compaction model role is broken (configured smol chain with no
-      // credentials) — every pass dies at role resolution, the real-world
-      // shape of "compaction keeps failing inside a child".
+      // Two light tool turns stay under the trigger: the spawn never
+      // compacts (gh-241's honest basis prices the request overhead into
+      // every estimate, so the payload stays small). The compaction model
+      // role is broken (configured smol chain with no credentials) — every
+      // pass dies at role resolution, the real-world shape of "compaction
+      // keeps failing inside a child".
       final w = _Wiring(
         rolesResolver: _Wiring.brokenSmolResolver(),
+        payloadChars: 300,
         rules: [
           (
             match: 'grow',
@@ -440,7 +461,7 @@ void main() {
       // Resume #1 carries a message big enough to cross the trigger: the
       // compact-then-deliver pass runs and fails (broken role) — the
       // parent-visible stamp appears from the FIRST failure.
-      await w.execute('task_send', {'id': 'latchy', 'message': 'y' * 6000});
+      await w.execute('task_send', {'id': 'latchy', 'message': 'y' * 5000});
       expect(handle.status, SubagentStatus.completed);
       expect(handle.compactionError, isNotNull);
       expect(handle.compactionError, contains('task_resume'));
@@ -485,9 +506,13 @@ void main() {
   group('AC-gate-declines: a healthy no-op pass never reads as failure', () {
     test('resume probe where only + incoming crosses the trigger: engine '
         'gate declines on the transcript basis — no stamp, no count', () async {
-      // Two fat turns leave the transcript ~2.2k, under the ~3.3k trigger
-      // (healthy boundary compaction never fires on it).
+      // Two light tool turns leave the transcript well under the trigger
+      // (healthy boundary compaction never fires on it); gh-241's honest
+      // basis prices the request overhead into every estimate, so the
+      // fixture keeps the payload small and crosses the trigger with the
+      // resume message instead.
       final w = _Wiring(
+        payloadChars: 300,
         rules: [
           (
             match: 'grow',
@@ -509,7 +534,7 @@ void main() {
       // The resume's incoming message (~1500t) crosses the trigger on the
       // executor's basis (transcript + incoming) — but the transcript
       // ALONE stays under it, so the engine's own gate declines the pass.
-      await w.execute('task_send', {'id': 'declined', 'message': 'y' * 6000});
+      await w.execute('task_send', {'id': 'declined', 'message': 'y' * 5000});
       expect(handle.status, SubagentStatus.completed);
 
       // The declined no-op is a HEALTHY non-attempt: no failure stamp, no

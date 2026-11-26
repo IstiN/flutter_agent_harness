@@ -49,6 +49,7 @@ import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
 import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
 import '../compaction/compaction_engine.dart' show CompactionEngine;
+import '../compaction/working_set_store.dart' show WorkingSetStore;
 import '../compaction/tuning.dart' show CompactionTuning;
 import '../compaction/context_window_registry.dart' show ContextWindowRegistry;
 import '../config/config_service.dart';
@@ -98,7 +99,7 @@ import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
 import '../tools/obligation_tool.dart';
-import '../tools/recite_goal_tool.dart';
+import '../tools/working_set_tool.dart';
 import '../tools/password_prompt.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/shell_jobs.dart';
@@ -347,15 +348,15 @@ final class AgentCoreServices {
   /// the same always-registered contract as [onAsk].
   final ObligationClose? obligationsClose;
 
-  /// The goal-recitation write path (`recite_goal`, gh-210). Null = the
-  /// host does not maintain the slot: the tool still registers and
-  /// answers gracefully in-tool — the same always-registered contract as
-  /// [obligationsClose].
-  final GoalRecite? goalRecite;
-
-  /// The goal-recitation discovery read (current slot content). Null =
-  /// discovery reports an empty slot.
-  final GoalReciteCurrent? goalReciteCurrent;
+  /// The working-set store of the host's MAIN agent session (issue #2423
+  /// C1 — replaces gh-210's `goalRecite`). The `working_set` tool
+  /// registers UNCONDITIONALLY on every host; this is its fallback for an
+  /// agent running outside a task-child scope. Null = the host binds no
+  /// session: the tool still registers and answers gracefully in-tool —
+  /// the same always-registered contract as [obligationsClose]. Task
+  /// children never use it: the executor binds each child's own session
+  /// through `Agent.workingSetStore` (the zone-scoped store wins).
+  final WorkingSetStore? workingSet;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
 
@@ -517,8 +518,7 @@ final class AgentCoreServices {
     this.onRequestSecret,
     this.isUnattended,
     this.obligationsClose,
-    this.goalRecite,
-    this.goalReciteCurrent,
+    this.workingSet,
     this.vision,
     this.transcribe,
     this.visionResolver,
@@ -794,6 +794,15 @@ final class WiredAgentCore {
       messageCapPolicy: spec.messageCapPolicy,
       messageCapRelief: spec.messageCapRelief,
     );
+    // gh-2423 C1: the main agent's working-set store. The request
+    // builder reads the newest snapshot from the agent's OWN session on
+    // EVERY request (the system-channel block); `Agent._runWithLifecycle`
+    // publishes it for the run, so the `working_set` tool writes through
+    // the store the next request reads. Task children bind their own
+    // session (the executor); a null service leaves the agent block-free.
+    if (services.workingSet case final workingSetStore?) {
+      agent.workingSetStore = workingSetStore;
+    }
     telemetryAdapter?.attach(agent);
     return WiredAgentStack(registry: registry, agent: agent);
   }
@@ -876,11 +885,10 @@ List<AgentTool> _buildCoreTools({
     // The obligations close path (issue #1380 lifecycle): same
     // always-registered graceful-null contract as ask/request_secret.
     obligationMarkDoneTool(close: services.obligationsClose),
-    // The goal-recitation write path (gh-210): same contract.
-    reciteGoalTool(
-      write: services.goalRecite,
-      current: services.goalReciteCurrent,
-    ),
+    // The working-set write path (issue #2423 C1; replaces gh-210's
+    // `recite_goal`): same contract — the tool is pure SDK and needs no
+    // host capability; the store is the main agent's session.
+    workingSetTool(store: services.workingSet),
     // Deliberate env-chain change vs the pre-conversion CLI (review,
     // #1230): vision/transcribe/media used to ride the RAW base env and
     // bypassed the sandbox; they now take the decorated chain

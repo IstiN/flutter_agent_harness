@@ -85,6 +85,9 @@ block a release again.
   window (`[sched] receipt write deferred: fd pressure …`), flushes on
   recovery — a lost receipt is impossible.
 
+- feat(tools): gh-2423 C1 — the `working_set(text)` tool (every agent, every host): the agent's own status — decisions, red list, next steps, rules — stored as an append-only record of its own session and pinned into the system channel of every request; it survives compaction, `--resume` and a crash restart. Redacted on write, capped at 4096 chars (over-cap is refused, not clipped), never grants an approval. Retires gh-210's host-only `recite_goal` (legacy `goal_recitation` snapshots still render as the working set).
+- feat(compaction): gh-2423 C3 — honest notices in the harness's numbers: `compacted: N records hidden; context now ≈X/W (was ≈Y); …` after every hide and `context ≈85% (X/W): update your working set … KEEP WORKING` once per cycle near the trigger — model-visible `<system-notice>` records, one dim TUI line, HEP `context_notice` (post-hide/near-limit, `estimate: true` provenance) and `working_set` frames. Every heuristic figure is marked `≈`; never "at the limit".
+- feat(prompts): gh-2423 C7 — context-hygiene rules in the agent prompt (reads ≤ 50 lines, `grep -n` then a short window, test output through `grep`/`tail`, `bash_job` by id, thinking ≈ 150 words), each tied to its measured cost.
 - fix(2363): the resume replay no longer re-prints the obligations-ledger
   tail block — the level-0 `<system-notice>` is model context (#1380
   invariant untouched), not transcript chrome; `buildReplayEntries` skips

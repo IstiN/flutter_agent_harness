@@ -176,6 +176,49 @@ String hepCompactionEndFrame(int turnId, int tokensFreed) => jsonEncode({
   'tokens_freed': tokensFreed,
 });
 
+/// Builds `context_notice` (issue #2423 C3) — the honest context notice
+/// the harness handed the model: `kind` is `post-hide` (after a hide:
+/// `hidden` records, the context now `tokens` of `window`) or
+/// `near-limit` (the pre-request estimate reached the near-limit point).
+/// Numbers only — the frame never carries the notice text (a supervisor
+/// reads the same harness numbers the model read). `estimate` is the
+/// provenance of `tokens` (the owner's one-basis rule): `true` — the
+/// harness's heuristic figure, the `≈` of the notice text; `false` only
+/// for a figure a provider reported. `window` and `hidden` are exact.
+String hepContextNoticeFrame({
+  required int turnId,
+  required String kind,
+  required int tokens,
+  required int window,
+  int? hidden,
+  bool estimated = true,
+}) => jsonEncode({
+  'type': 'context_notice',
+  'turn_id': turnId,
+  'kind': kind,
+  'tokens': tokens,
+  'window': window,
+  'hidden': ?hidden,
+  'estimate': estimated,
+});
+
+/// Builds `working_set` (issue #2423 C1) — the agent wrote its working
+/// set: the stored size (`chars`), the write time and whether the write
+/// CLEARED the slot. NEVER the text (I8: a session's notes stay in the
+/// session).
+String hepWorkingSetFrame({
+  required int turnId,
+  required int chars,
+  required String updated,
+  required bool cleared,
+}) => jsonEncode({
+  'type': 'working_set',
+  'turn_id': turnId,
+  'chars': chars,
+  'updated': updated,
+  'cleared': cleared,
+});
+
 /// Renders tool-call arguments for a `tool_start` frame.
 String hepArgsSummary(Map<String, dynamic> args, HepToolArgs mode) {
   if (mode == HepToolArgs.full) {
@@ -266,6 +309,42 @@ class HepWriter {
   /// its `agent_start`/terminal frames follow under the same id.
   void compactionEnd(int tokensFreed) {
     _emit(hepCompactionEndFrame(_openTurnId ?? currentTurnId, tokensFreed));
+  }
+
+  /// Emits `context_notice` (issue #2423 C3) — see [hepContextNoticeFrame].
+  void contextNotice({
+    required String kind,
+    required int tokens,
+    required int window,
+    int? hidden,
+    bool estimated = true,
+  }) {
+    _emit(
+      hepContextNoticeFrame(
+        turnId: _openTurnId ?? currentTurnId,
+        kind: kind,
+        tokens: tokens,
+        window: window,
+        hidden: hidden,
+        estimated: estimated,
+      ),
+    );
+  }
+
+  /// Emits `working_set` (issue #2423 C1) — see [hepWorkingSetFrame].
+  void workingSet({
+    required int chars,
+    required String updated,
+    required bool cleared,
+  }) {
+    _emit(
+      hepWorkingSetFrame(
+        turnId: _openTurnId ?? currentTurnId,
+        chars: chars,
+        updated: updated,
+        cleared: cleared,
+      ),
+    );
   }
 
   /// Handles one agent event (AgentListener shape). The turn-lifecycle

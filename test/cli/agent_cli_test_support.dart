@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 /// A [StreamFunction] turn that hangs until cancelled, then reports aborted.
@@ -487,3 +488,15 @@ String handOverReplyFor(
     text,
   ].join('\n');
 }
+
+/// gh-2423 (C1/C7): the request-footprint delta the always-on working-set
+/// surface adds to EVERY CLI request — the two system-prompt includes
+/// (`working_set`, `context_hygiene`) plus the `working_set` tool's
+/// description and schema, priced by the estimator itself. The tiny-window
+/// fixtures are calibrated to the pre-gh-2423 trajectory; a window grows by
+/// this measured delta to keep its trigger crossings where they were (the
+/// same calibration the #1829 / gh-1956 contract tokens use).
+final int gh2423ContextIncludesTokens = estimateRequestOverheadTokens(
+  '$workingSetPrompt\n$contextHygienePrompt',
+  [workingSetTool()],
+);

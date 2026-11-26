@@ -231,12 +231,14 @@ void main() {
           systemPrompt: tinyPrompt,
           homeDir: '/home',
           runtimeTools: tinyTools(const ['read', 'bash']),
-          model: const Model(
+          // Non-const: the window carries the gh-2423 footprint.
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',
@@ -1137,12 +1139,14 @@ void main() {
           // gh-2411: overflow through messages, not overhead.
           systemPrompt: tinyPrompt,
           runtimeTools: tinyTools(const ['read', 'bash']),
-          model: const Model(
+          // Non-const: the window carries the gh-2423 footprint.
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 20000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 20000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',

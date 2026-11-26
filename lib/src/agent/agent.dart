@@ -36,6 +36,9 @@ import '../compaction/record_tag_echo.dart' show stripRecordTagEcho;
 import '../compaction/overhead_calibration.dart';
 import '../compaction/token_estimation.dart' show deriveOverheadCalibration;
 import '../compaction/request_snapshot.dart' show RequestSnapshotStore;
+import '../compaction/working_set_snapshot.dart' show WorkingSetSnapshot;
+import '../compaction/working_set_store.dart'
+    show WorkingSetStore, runWithWorkingSetStore;
 import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
@@ -277,6 +280,7 @@ class Agent {
     this.foregroundCall,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    this.workingSetStore,
     Set<String>? reportedOrphanKeys,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
@@ -360,6 +364,38 @@ class Agent {
   /// requests. Mutable by design: `/skills reload` and availability
   /// toggles swap the list.
   List<Skill> operativeSkills;
+
+  /// gh-2423 (C1): the agent's OWN working-set store — the session the
+  /// `working_set` tool writes into and the loop reads the newest
+  /// snapshot from for the system channel of every request. Null = the
+  /// agent has no session to pin notes in (the tool answers gracefully,
+  /// the request carries no block — byte-identical to before). Set by the
+  /// session's OWNER: the host for its main agent, the task executor for
+  /// each child (its own file). Mutable like [transformContext]: hosts
+  /// attach it after construction; a run reads it once at start.
+  WorkingSetStore? workingSetStore;
+
+  /// gh-2423 (C3): context notices waiting for the agent's NEXT request
+  /// (the honest post-hide / near-limit `<system-notice>` records a host
+  /// emits at a compaction boundary). Drained by the loop right before it
+  /// injects queued steering, so a notice rides the next request the run
+  /// makes anyway — same inject/persist path as steering, but it never
+  /// opens a turn of its own ([queueContextNotice] vs [steer]). Empty on
+  /// every request when no notice is pending: byte-identical to before.
+  final _pendingContextNotices = <Message>[];
+
+  /// Queues a harness context notice for the agent's next request (see
+  /// [_pendingContextNotices]). Not [steer]: a steered message that lands
+  /// after a run's last boundary is delivered by the loop's stop-check
+  /// drain as a whole extra turn — right for user mail, wrong for a
+  /// notice the model should simply see with its next request.
+  void queueContextNotice(Message message) =>
+      _pendingContextNotices.add(message);
+
+  /// The notices waiting for the next request, oldest first (test /
+  /// diagnostic read; the loop drains through its config).
+  List<Message> get pendingContextNotices =>
+      List.unmodifiable(_pendingContextNotices);
 
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s, mutable — the agent loop adds every key
@@ -820,6 +856,31 @@ class Agent {
     );
   }
 
+  /// gh-2423 (C1): the loop's working-set provider — resolves the
+  /// agent's newest snapshot before a provider call; null when the agent
+  /// has no store (the request is then byte-identical to before). The
+  /// store is read ONCE here, at run start (the config is per run); a
+  /// failing read resolves to null — the block is additive and must never
+  /// fail the request.
+  Future<WorkingSetSnapshot?> Function()? _workingSetProvider() {
+    final store = workingSetStore;
+    if (store == null) return null;
+    return () => store.load().then<WorkingSetSnapshot?>(
+      (snapshot) => snapshot,
+      onError: (_) => null,
+    );
+  }
+
+  /// gh-2423 (C3): hands the queued context notices to the loop and
+  /// empties the queue (drained right before the queued steering is
+  /// injected — see [_pendingContextNotices]).
+  List<Message> _takePendingContextNotices() {
+    if (_pendingContextNotices.isEmpty) return const <Message>[];
+    final drained = List<Message>.of(_pendingContextNotices);
+    _pendingContextNotices.clear();
+    return drained;
+  }
+
   AgentLoopConfig _createLoopConfig({bool skipInitialSteeringPoll = false}) {
     var skip = skipInitialSteeringPoll;
     final relief = overWindowRelief;
@@ -869,6 +930,8 @@ class Agent {
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
+      workingSetProvider: _workingSetProvider(),
+      takePendingNotices: _takePendingContextNotices,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
       transformContext: transformContext,
@@ -945,7 +1008,17 @@ class Agent {
     _armRunWatchdog();
 
     try {
-      await executor(run.source.token, run.source);
+      // gh-2423 (C1): the run publishes the agent's working-set store in
+      // the zone, so the `working_set` tool resolves the CALLING agent's
+      // own session at call time (a task child's file, never the host's) —
+      // the same mechanism as the subagent scope.
+      final workingSet = workingSetStore;
+      await (workingSet == null
+          ? executor(run.source.token, run.source)
+          : runWithWorkingSetStore(
+              workingSet,
+              () => executor(run.source.token, run.source),
+            ));
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {

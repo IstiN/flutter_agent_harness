@@ -61,6 +61,8 @@ export 'stuck_tool.dart'
         stuckBackgroundHandbackMarker,
         stuckBackgroundHandbackSentence,
         stuckBackgroundHandbackText;
+import '../compaction/working_set_snapshot.dart'
+    show WorkingSetSnapshot, appendWorkingSetToSystemPrompt;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -414,6 +416,8 @@ final class AgentLoopConfig {
     this.foregroundBudgetControls,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    this.workingSetProvider,
+    this.takePendingNotices,
     this.reportedOrphanKeys,
     this.budgetLineProvider,
     this.imageCapLatches,
@@ -628,6 +632,27 @@ final class AgentLoopConfig {
   /// untouched. Payload-only — the transcript is never modified.
   final String? Function()? budgetLineProvider;
 
+  /// gh-2423 (C1): resolves the agent's newest working-set snapshot before
+  /// a provider call; non-null result ⇒ the `<working-set>` block rides
+  /// the SYSTEM channel of that request (a suffix on the system prompt —
+  /// payload-only, the transcript and the static prompt are untouched);
+  /// null (no store / no snapshot / cleared) ⇒ the request is
+  /// byte-identical to before. Read per request, so a `working_set` write
+  /// lands on the very next call.
+  final Future<WorkingSetSnapshot?> Function()? workingSetProvider;
+
+  /// gh-2423 (C3): drains the host's pending context notices (the
+  /// post-hide / near-limit `<system-notice>` records). Called right
+  /// before the queued steering is injected — a notice rides the NEXT
+  /// request the run makes anyway (user prompt, tool continuation,
+  /// over-window continuation), through the same inject/persist path as
+  /// steering, but it is NOT steering: it never opens a turn of its own
+  /// (the steering queue's stop-check drain would turn every notice into
+  /// an extra model turn — and, under a low trigger, into a
+  /// notice → answer → hide → notice loop). An empty result ⇒ the loop
+  /// is byte-identical to before.
+  final List<Message> Function()? takePendingNotices;
+
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s). The loop adds every key it reports in
   /// [ToolPairingRepairReport.notedOrphanKeys] back into the set once the
@@ -682,6 +707,8 @@ final class AgentLoopConfig {
       foregroundBudgetControls: foregroundBudgetControls,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
+      workingSetProvider: workingSetProvider,
+      takePendingNotices: takePendingNotices,
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
@@ -1240,6 +1267,14 @@ Future<List<Message>> _runAgentLoop({
       firstTurn = false;
 
       // Inject queued messages before the next assistant response.
+      // gh-2423 (C3): pending context notices join the injection — they
+      // ride this request (last, after any steering) and never count as
+      // steering extensions.
+      final pendingNotices =
+          currentConfig.takePendingNotices?.call() ?? const <Message>[];
+      if (pendingNotices.isNotEmpty) {
+        pendingMessages = [...pendingMessages, ...pendingNotices];
+      }
       await _injectPendingMessages(
         pendingMessages,
         emit,
@@ -1853,6 +1888,24 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       messages: [...requestContext.messages, UserMessage.text(misuseNote)],
       tools: requestContext.tools,
     );
+  }
+  // gh-2423 (C1): the agent's working set rides the SYSTEM channel of
+  // every request — a suffix on the system prompt, decided LAST so every
+  // rewrite above priced the static prompt and the request snapshot
+  // captures what is really sent. Payload-only: no message, no record.
+  final workingSet = await config.workingSetProvider?.call();
+  if (workingSet != null) {
+    final systemPrompt = appendWorkingSetToSystemPrompt(
+      requestContext.systemPrompt,
+      workingSet,
+    );
+    if (!identical(systemPrompt, requestContext.systemPrompt)) {
+      requestContext = Context(
+        systemPrompt: systemPrompt,
+        messages: requestContext.messages,
+        tools: requestContext.tools,
+      );
+    }
   }
   return (requestContext, repaired.report);
 }

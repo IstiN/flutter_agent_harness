@@ -223,8 +223,16 @@ void main() {
       );
       expect(after, isNot(contains('older message(s) were dropped')));
       final messages = stream.contexts.single.messages;
+      // gh-2423 C3: the near-limit notice (the calibrated estimate sits in
+      // the band of this small fixture window) rides the first request as
+      // the LAST message — the queued-notice delivery contract. The turn
+      // itself is still the last REAL user message.
       expect(
-        messages.whereType<UserMessage>().map((m) => m.content).last,
+        messages
+            .whereType<UserMessage>()
+            .map((m) => m.content)
+            .where((c) => !isContextNoticeText(userMessageText(c)))
+            .last,
         _turn,
       );
     },
@@ -514,12 +522,21 @@ void main() {
     await run;
 
     final request = stream.contexts.single;
-    expect(
-      request.messages.whereType<UserMessage>().map((m) => m.content).last,
-      _turn,
-    );
+    // gh-2423 C3: the near-limit notice rides this request last (the
+    // queued-notice delivery contract; the calibrated estimate sits in
+    // this small fixture window's band). It is harness chrome, not
+    // metered session content — exclude it from the turn-verbatim and
+    // tail-figure arithmetic.
+    final metered = request.messages
+        .where(
+          (m) =>
+              !(m is UserMessage &&
+                  isContextNoticeText(userMessageText(m.content))),
+        )
+        .toList();
+    expect(metered.whereType<UserMessage>().map((m) => m.content).last, _turn);
     final first = estimateRequestTokens(
-      request.messages,
+      metered,
       systemPrompt: request.systemPrompt,
       tools: request.tools ?? const [],
       calibration: cli.agent.state.overheadCalibration,
