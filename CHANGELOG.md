@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- build(scripts): the pre-commit hook drops the coverage stage — CI-only
+  coverage (hook speed, owner directive 2026-11-26, PR #2435). The hook's
+  core/integ/all stage lists select WITHOUT `coverage` and `test-core`
+  instruments (`--coverage=coverage`) only when the coverage stage is
+  selected, so hook runs pay no instrumentation tax; CI keeps computing
+  its own (the `test-core` shards pass `--coverage` explicitly,
+  `coverage-gate` merges and owns the diff-coverage / main ratchet) and
+  never consumed the hook's coverage/ dir. Non-hook runs keep coverage in
+  every stage list (ci.yml fallback parity); an explicit
+  `--stages coverage` still runs the ratchet standalone. Pinned by
+  `test/ci_hook_coverage_ci_only_guard_test.dart` (AC1 hook lists without
+  coverage, AC2 non-hook parity, AC3 the explicit fail-path, AC4 the
+  conditional instrumentation, AC5 the CI parity).
+
 - fix(scripts): gh-1199 AC6 quarantine parity — the local `integration-mock`
   stage of `scripts/ci_fast_gate.sh` now pipes its targets through
   `scripts/apply_quarantine.py` like both CI legs (`integration-mock`,

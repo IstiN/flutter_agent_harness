@@ -26,13 +26,20 @@ issue #194 its PR path classification runs through the SAME script
 set of thresholds; parity is checkable by diffing the hook's
 `GATE_STAGE <name> OK|SKIP` markers against the stages the CI changes job
 logs for the same diff. Path filters: docs/markdown/prompts-only →
-size+analyze; lib/bin/test/example/pubspec → +tests, coverage, CRAP,
+size+analyze; lib/bin/test/example/pubspec → +tests, CRAP,
 jscpd + cross-module dupx; `test/integration/**` → + `integration-mock`
 (issue #551: the no-key legs run per-PR); flutter_app/packages → +dupx,
 flutter analyze+tests;
 scripts/.github/crap4dart.yaml/unknown → everything (safe default, E2 —
 holds in CI too). Hook-only extras: dart format self-heal of staged files
 and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
+COVERAGE is CI-only in the hook (owner directive 2026-11-26, PR #2435):
+the hook's core/integ/all stage lists drop the coverage stage and
+`test-core` instruments (`--coverage=coverage`) only when the coverage
+stage is selected — CI computes its own (the `test-core` shards pass
+`--coverage` explicitly; `coverage-gate` merges and owns the
+diff-coverage / main ratchet) and never consumes the hook's coverage/
+dir. An explicit `--stages coverage` still runs the ratchet standalone.
 
 - `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
