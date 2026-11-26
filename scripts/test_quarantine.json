@@ -138,6 +138,16 @@
         44247676021,
         44143260755
       ]
+    },
+    {
+      "file": "test/integration/secret_sheet_residual_test.dart",
+      "test": "RT1: a second, shorter sheet fully replaces the first",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/2427",
+      "since": "2026-11-26",
+      "runs": [
+        45638891484,
+        45630982662
+      ]
     }
   ]
 }
