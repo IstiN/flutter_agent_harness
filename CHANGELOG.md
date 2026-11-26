@@ -107,6 +107,18 @@ block a release again.
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
   it in TUI and line mode via `isObligationsLedgerNotice` (one heading
   constant shared with the renderer).
+- refactor(2395): single mobile deep-link router — one `OAuthDeepLinkRouter`
+  (`fah://oauth/*`) now owns the app's only `AppLinks()` subscription at
+  boot (`openrouter_oauth_links_io.dart`); flows register per-route
+  receivers (`/openrouter` → OpenRouter coordinator, `/network` → Networks
+  `DeepLinkOAuthReceiver` on Android), callbacks the OS delivered before a
+  flow registered are buffered (bounded, and time-bounded to the flow
+  timeout so a stale callback can never fail a later flow with a state
+  mismatch) and replayed once, unknown `fah://oauth/*` links are logged
+  once (deduped, scheme/host/path only — no credential query) and dropped. No behavior change to
+  iOS `ASWebAuthenticationSession`, desktop loopback, or the engine-side
+  unknown-route pass-through; grep guard test pins the single
+  construction site.
 
 - fix(compaction): gh-241 follow-up #5e (owner live test round 6) — the
   newest durable boundary's summary survives a resume. A measured resume
@@ -195,6 +207,19 @@ block a release again.
   provider `usage.input` (meter, guard and trigger share the basis);
   when `overhead + newest turn ≥ window − reserve` compaction is skipped
   for the session with ONE visible warning instead of thrashing.
+- fix(2362): nightly-red tracker self-heal — the auto-issue close leg fires
+  on red nights too (step-level `success()` inside the `always()`-gated
+  job cannot see `needs` failures), so the open tracker got a "Green
+  again" close while the run's PTY/CLI + ios legs had failed hours
+  earlier, and the reopen keeping it alive lived outside the bot (fleet
+  monitor sweeps) — it missed 2/2 consecutive nights (manual reopens of
+  #1953). The close leg itself is unchanged (AC3) and now only exports
+  the number it closed; a new schedule-only self-heal step re-opens the
+  tracker back-to-back on red nights, verifies OPEN with one bounded
+  retry (AC1), and stamps a `reopen-failed` label + comment on
+  exhaustion (AC2). Decision pinned by
+  scripts/nightly_red_tracker_selftest.sh (stubbed gh, #1100 pattern),
+  wired into ci.yml Static gates.
 - fix(ci): gh-2408 — v1.0.775 binaries macos-x64 red: the fa-clip step ran
   `arch -x86_64 bash ...`, and on the self-hosted macos-m5 pool PATH
   resolves `bash` to the ARM-only Homebrew build (`Bad CPU type in

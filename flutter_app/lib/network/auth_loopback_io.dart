@@ -8,10 +8,12 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
+
+import 'package:fa/services/openrouter_oauth_links_io.dart'
+    show oauthDeepLinkRouter, sharedOAuthAppLinks;
 
 import '../services/provider_auth_surface.dart';
 import 'auth_deep_link.dart';
@@ -71,6 +73,9 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
       }
     });
   }
+
+  @override
+  Uri? get preArrivedCallback => null;
 
   @override
   void close() {
@@ -150,6 +155,9 @@ final class WebAuthSessionOAuthReceiver implements OAuthCallbackReceiver {
   }
 
   @override
+  Uri? get preArrivedCallback => null;
+
+  @override
   void close() {
     if (_closed) return;
     _closed = true;
@@ -200,14 +208,10 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiverForPlatform({
     return receiver;
   }
   if (isAndroid) {
-    final appLinks = AppLinks();
-    // Subscribe to the link stream BEFORE checking the initial link —
-    // a link delivered in between is dropped otherwise (see
-    // DeepLinkOAuthReceiver.bindWithInitialLink).
-    return DeepLinkOAuthReceiver.bindWithInitialLink(
-      links: appLinks.uriLinkStream,
-      getInitialLink: appLinks.getInitialLink,
-    );
+    // The shared `fah://oauth/*` router owns the only AppLinks
+    // subscription (issue #2395); a callback the OS delivered before this
+    // registration replays from the router's buffer.
+    return DeepLinkOAuthReceiver.bindWithRouter(oauthDeepLinkRouter);
   }
   return LoopbackOAuthReceiver.bind();
 }
@@ -225,7 +229,7 @@ Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() =>
 Future<Uri?> getOAuthInitialLinkImpl() async {
   if (!Platform.isIOS && !Platform.isAndroid) return null;
   try {
-    return await AppLinks().getInitialLink();
+    return await sharedOAuthAppLinks.getInitialLink();
   } on Object {
     return null;
   }
