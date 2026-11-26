@@ -470,14 +470,6 @@ void main() {
         }) {
           calls++;
           ctxSizes.add(context.messages.length);
-          // ignore: avoid_print
-          print('CALL $calls msgs=${context.messages.length}');
-          if (calls >= 3) {
-            // ignore: avoid_print
-            print(
-              'CALL$calls TRIGGER:\n${StackTrace.current.toString().split('\n').take(14).join('\n')}',
-            );
-          }
           if (calls == 1) {
             final stream = AssistantMessageEventStream();
             scheduleMicrotask(() {
