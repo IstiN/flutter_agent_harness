@@ -205,7 +205,11 @@ void main() {
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+      // #2416: ~11.8k tokens — the slim manifest shrank the seam's fixed
+      // overhead (~1.9k), so the result grew to push the post-read request
+      // over the window (the over-window relief engages; its keep-recent
+      // floor declines and the funnel backstop takes over).
+      env.writeFile('big.txt', List.filled(1050, 'x' * 45).join('\n'));
       final io = FakeCliIO();
       // The keep-recent floor (400) sits BELOW the newest message: the
       // deterministic relief's valve finds nothing droppable (its budget
@@ -1087,23 +1091,24 @@ void main() {
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      // The refusal shape: a moderately large real-user prompt (~6.8k
+      // The refusal shape: a moderately large real-user prompt (~7k
       // tokens — real user turns never hide, F8) plus growing read
-      // results (700·i tokens, DISTINCT paths so the dedup has nothing
+      // results (1050·i tokens, DISTINCT paths so the dedup has nothing
       // to fold). With the request-size overhead on top, the in-turn
-      // requests stay under the window until the fifth read lands, where the relief's keep-2 hide budget cannot free the overage and
-      // its valve declines (every result exceeds the 200-token keep
-      // budget) — so the window guard REFUSES with BOTH dimensions over:
-      // tokens > window AND count ≥ cap − margin. (issue #2416: the slim
-      // manifest removed ~12.5k overhead tokens from every estimate, so
-      // the per-read size re-tunes from 500·i to hold the same
-      // under/under/under/over/over request shape.)
+      // requests stay under the window until the fifth read lands, where
+      // the relief's keep-2 hide budget cannot free the overage and its
+      // valve declines (every result exceeds the 200-token keep budget)
+      // — so the window guard REFUSES with BOTH dimensions over: tokens
+      // > window AND count ≥ cap − margin. (issue #2416: the slim
+      // manifest shrank the seam's fixed overhead to ~1.9k, so the
+      // per-read size re-tunes from 700·i to hold the same
+      // under/under/under/under/over request shape.)
       for (var i = 1; i <= 5; i++) {
-        // gh-2411: 700·i tokens — with the tiny prompt's ~3.4k overhead
-        // the five reads still push the post-fifth-read request past
-        // the 20k window (6.8k + 10.5k + 3.4k), as the real prompt's
-        // larger overhead did before.
-        env.writeFile('note$i.txt', List.filled(140 * i, 'x' * 20).join('\n'));
+        // gh-2411 + #2416: 1050·i tokens — with the tiny prompt's ~1.9k
+        // overhead the five reads still push the post-fifth-read request
+        // past the ~21.5k window (7k + 15.75k + 1.9k), as the real
+        // prompt's larger overhead did before.
+        env.writeFile('note$i.txt', List.filled(200 * i, 'x' * 20).join('\n'));
       }
       final home = await Directory.systemTemp.createTemp('fa_2264_');
       // A learned cap (24 → trigger at count ≥ 8) the way a previous

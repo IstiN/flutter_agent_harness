@@ -60,10 +60,12 @@ void main() {
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
-    // ~7.8k tokens: with the request overhead (~3.4k at the overhead
-    // density, gh-2411) the transcript stays UNDER the 12k window — the
-    // post-run funnel fires, the over-window guard does not.
-    env.writeFile('big1.txt', List.filled(760, 'x' * 40).join('\n'));
+    // ~10.6k tokens: with the request overhead (~1.9k at the overhead
+    // density, gh-2411 — the #2416 slim manifest shrank the seam's fixed
+    // footprint, so the fixture grew to hold the same under-window band)
+    // the transcript crosses the post-run trigger and stays UNDER the 12k
+    // window — the post-run funnel fires, the over-window guard does not.
+    env.writeFile('big1.txt', List.filled(1060, 'x' * 40).join('\n'));
   });
 
   tearDown(() => io.close());

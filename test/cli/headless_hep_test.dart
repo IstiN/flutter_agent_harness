@@ -314,7 +314,10 @@ void main() {
 
   test('compaction over threshold emits compaction_start/end frames', () async {
     final fake = FakeStreamFunction([
-      textTurn('a' * 40000),
+      // gh-2411 + #2416: ~12.5k tokens — the slim manifest shrank the
+      // seam's fixed overhead (~1.9k), so the answer grew to keep the
+      // post-turn request over the 12288 trigger, under the 16384 window.
+      textTurn('a' * 50000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: _tinyWindow, tinyOverhead: true);
@@ -348,7 +351,10 @@ void main() {
     // The foldable material is a tool group of the run's own turn
     // (gh-2411: the newest user turn is pinned and never folds, so a
     // lone prompt-and-answer transcript has nothing to checkpoint).
-    env.writeFile('big.txt', List.filled(800, 'x' * 45).join('\n'));
+    // #2416: ~12.4k tokens — the slim manifest shrank the seam's fixed
+    // overhead (~1.9k), so the result grew to keep the post-turn request
+    // over the 12288 trigger, under the 16384 window.
+    env.writeFile('big.txt', List.filled(1100, 'x' * 45).join('\n'));
     final fake = FakeStreamFunction([
       toolTurn([
         const ToolCall(id: 'c1', name: 'read', arguments: {'path': 'big.txt'}),
@@ -398,13 +404,14 @@ void main() {
       switch (frame['type']) {
         case 'hep_header':
           // The header fires after session initialization and before the
-          // pre-flight gate. An older ~10000-token turn plus the ~3.4k
-          // overhead crosses the 16384-token model's 12288-token
-          // compaction trigger. The newest user turn stays small on
-          // purpose (gh-2411): a lone huge user turn IS the soft-window
-          // regime, where the gate stands down before any run opens.
+          // pre-flight gate. An older ~12500-token turn plus the ~1.9k
+          // overhead (#2416: the slim manifest's seam footprint) crosses
+          // the 16384-token model's 12288-token compaction trigger. The
+          // newest user turn stays small on purpose (gh-2411): a lone
+          // huge user turn IS the soft-window regime, where the gate
+          // stands down before any run opens.
           cli.agent.state.messages = [
-            UserMessage.text('a' * 40000),
+            UserMessage.text('a' * 50000),
             UserMessage.text('q'),
           ];
         case 'compaction_start':

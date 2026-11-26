@@ -26,7 +26,11 @@ void main() {
     // full (short lines stay under its line cap; ~46k chars ≈ 11.5k
     // estimated tokens) — not a split assistant turn, so the classic
     // prefix compaction hides it cleanly.
-    env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+    // #2416: ~12.15k tokens — the slim manifest shrank the seam's fixed
+    // overhead (~1.9k), so the result grew to keep the post-read request
+    // over the window (the guard refuses request 2) and over the
+    // post-run trigger after the deterministic relief frees nothing.
+    env.writeFile('big.txt', List.filled(1080, 'x' * 45).join('\n'));
   });
 
   tearDown(() {
@@ -271,20 +275,21 @@ void main() {
     'user turn rides verbatim, and an under-window prompt is left alone',
     timeout: const Timeout(Duration(seconds: 180)),
     () async {
-      // Window 13k, reserve 3250 → trigger 9750. The ~3.4k fixed overhead
-      // plus a ~7.4k-token prompt is over the trigger (the regime — no
-      // trim could ever reach it) while request 1 (~10.9k) is still UNDER
-      // the window: nothing is trimmed, the request goes as is (ONE
-      // warning). Two tool results later the request is over the window:
-      // the LM-free emergency relief runs INSTEAD of a skip (the mid-turn
-      // hide pass keeps both recent reads; the settle relief's local trim
-      // valve then frees the window) — the prompt is carried verbatim
-      // and the turn completes under the window.
+      // Window 13k, reserve 3250 → trigger 9750. The ~1.9k fixed overhead
+      // (#2416: the slim manifest's seam footprint) plus a ~9.2k-token
+      // prompt is over the trigger (the regime — no trim could ever reach
+      // it) while request 1 (~11.1k) is still UNDER the window: nothing
+      // is trimmed, the request goes as is (ONE warning). Two tool
+      // results later the request is over the window: the LM-free
+      // emergency relief runs INSTEAD of a skip (the mid-turn hide pass
+      // keeps both recent reads; the settle relief's local trim valve
+      // then frees the window) — the prompt is carried verbatim and the
+      // turn completes under the window.
       env.writeFile('old.txt', List.filled(120, 'o' * 40).join('\n'));
       env.writeFile('new.txt', List.filled(120, 'n' * 40).join('\n'));
       final prompt =
           'Count the words in old.txt and new.txt, then answer. '
-          '${'question ' * 3300}';
+          '${'question ' * 4100}';
       final stream = FakeStreamFunction([
         toolTurn([
           const ToolCall(
