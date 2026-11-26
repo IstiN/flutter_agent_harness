@@ -38,16 +38,17 @@ void main() {
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
     io = FakeCliIO();
     // Three huge files, read one per turn (the structured-observability
-    // fixture): the executed tool results blow the 40k window on the
-    // THIRD read's request — the settle funnel folds exactly once. The
-    // line count is calibrated against the gh-2411 estimator's DENSE
-    // overhead pricing (the fixed request overhead ≈19.2k of these
-    // 40k/55k windows, measured via estimateRequestOverheadTokens):
-    // request k carries ≈19.8k + (k−1) × 10·L tokens, so 903 lines puts
-    // the first two requests under the trigger, the third over it, and
-    // the IT-near-limit 55k run's end inside the near-limit band.
-    for (var i = 1; i <= 3; i++) {
-      env.writeFile('big$i.txt', List.filled(903, 'x' * 40).join('\n'));
+    // fixture). #2416 merge: the slim manifest shrank the real CLI
+    // prompt+manifest overhead from ≈19.2k to ≈8.8k estimated tokens
+    // (measured via estimateRequestOverheadTokens), so both scenarios
+    // below now write their own files: the IT-post-hide 40k run reads
+    // FIVE 750-line files (request k ≈ 8.8k + (k−1) × 750 tokens — the
+    // FIFTH read's request lands at ≈38.8k, inside the (38k trigger,
+    // 40k window) fold band the settle funnel folds exactly once in),
+    // and the IT-near-limit 55k run reads FOUR 1000-token files (the run
+    // ends ≈48.8k, inside the near-limit band, under the hide trigger).
+    for (var i = 1; i <= 5; i++) {
+      env.writeFile('big$i.txt', List.filled(750, 'x' * 40).join('\n'));
     }
   });
 
@@ -55,8 +56,11 @@ void main() {
 
   /// The content-aware fake (judge → hide picks, hand-over/checkpoint →
   /// a text transfer, agent → the next `read`, then `done`), recording
-  /// every agent request.
-  ({StreamFunction stream, List<Context> contexts}) foldRun() {
+  /// every agent request. [files] = how many big files the run reads
+  /// before the `done` answer (see setUp for the per-scenario geometry).
+  ({StreamFunction stream, List<Context> contexts}) foldRun({
+    int files = 5,
+  }) {
     var nextFile = 1;
     final contexts = <Context>[];
     List<AssistantMessageEvent> answer(Context context) {
@@ -81,7 +85,7 @@ void main() {
           tools: context.tools,
         ),
       );
-      if (nextFile > 3) return textTurn('done: all files counted');
+      if (nextFile > files) return textTurn('done: all files counted');
       final file = nextFile++;
       return toolTurn([
         ToolCall(
@@ -256,8 +260,17 @@ void main() {
     'trigger',
     timeout: const Timeout(Duration(seconds: 180)),
     () async {
-      final run = foldRun();
-      // A 55k window: the run ends ≈49k estimated tokens — inside the
+      // #2416 merge: this scenario's geometry differs from the IT-post-hide
+      // one — FOUR read-cap-sized files (≈40.2k chars each ≈ 10.0k rendered
+      // tokens at the harness's transcript density): the merged ≈8.8k
+      // overhead + 4 reads puts the run's end ≈49.0k inside the near-limit
+      // band and under the hide trigger, so nothing folds and the post-run
+      // boundary check is the ONE notice.
+      for (var i = 1; i <= 4; i++) {
+        env.writeFile('big$i.txt', List.filled(980, 'x' * 40).join('\n'));
+      }
+      final run = foldRun(files: 4);
+      // A 55k window: the run ends ≈49.0k estimated tokens — inside the
       // near-limit band [46,750, 54,800) and under the hide trigger, so
       // nothing folds and the post-run boundary check is the ONE notice.
       expect(

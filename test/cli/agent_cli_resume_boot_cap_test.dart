@@ -267,11 +267,16 @@ void main() {
         textTurn('summary of the kept history'),
         textTurn('answered on the capped context'),
       ]);
-      final agent = cli(env, stream, tinyOverhead: true, measured: false,
-          // #2416 merge: hold the pre-merge ~3.4k seam overhead — the
-          // resume walk's tail budget, the boot valve's trim target and
-          // the calibration ratio all assume it.
-          promptPad: 'x' * 5800);
+      final agent = cli(
+        env,
+        stream,
+        tinyOverhead: true,
+        measured: false,
+        // #2416 merge: hold the pre-merge ~3.4k seam overhead — the
+        // resume walk's tail budget, the boot valve's trim target and
+        // the calibration ratio all assume it.
+        promptPad: 'x' * 5800,
+      );
 
       final run = agent.run();
       // The boot load runs before the first idle: wait for the restored

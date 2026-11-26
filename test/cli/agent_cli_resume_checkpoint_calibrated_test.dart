@@ -111,13 +111,16 @@ void main() {
       final heuristicOverhead = await probeHeuristicOverhead();
       // #2416 merge: the slim manifest shrank the seam the 1.12×
       // multiplier was sized against — at the merged ~2.7k seam the old
-      // window put the BOOT transcript (tail + overhead) over the
-      // trigger, the armed pass degenerated (empty foldable range → a
-      // failed pass) and the turn was retried (a second request).
-      // window = overhead + a full forWindow reserve keeps the boot
-      // transcript UNDER the trigger: no armed pass, no soft-window
-      // regime (trigger > overhead), one request, no relief, no trim.
-      final window = heuristicOverhead + 1300;
+      // window left the metered resume estimate ABOVE the post-run
+      // hand-over line (W − reserve − runway), so the settle funnel fired
+      // a second model call on a degenerate checkpoint-only tail (the
+      // pass failed, the turn was retried, contexts.single threw).
+      // window = overhead + 680 keeps the same owner shape on the merged
+      // seam: the raw-heuristic regime precondition holds (0.75W < H),
+      // the calibrated x0.7 estimate sits UNDER the trigger (regime off,
+      // no warning), and UNDER the post-run hand-over line (one request,
+      // no relief, no trim).
+      final window = heuristicOverhead + 680;
       final reserve = window ~/ 4;
       // The window puts the session in the SOFT-WINDOW regime on the raw
       // heuristic and takes it out once calibrated at x0.7 — the owner's
