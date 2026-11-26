@@ -822,6 +822,16 @@ extension AgentCliCompactionRun on AgentCli {
       text: 'soft-window:$_effectiveContextWindow',
     )) {
       final overhead = _liveOverheadTokens();
+      // The regime's REAL arithmetic (windowBelowFixedOverhead): overhead
+      // + the never-dropped newest user turn >= trigger. The warning
+      // states what actually holds — a fat newest turn alone can cross
+      // the trigger with M < N, so the old "window is below the fixed
+      // request overhead" wording could state a false condition (the
+      // review's honest-numbers contract).
+      final turn = newestRealUserTurnIndex(_agent.state.messages);
+      final turnTokens = turn < 0
+          ? 0
+          : estimateTokens(_agent.state.messages[turn]);
       _logDiagnostic(
         'soft window sid=$_logSid window=$_effectiveContextWindow '
         'overhead≈$overhead (estimate) — while the regime holds, automatic '
@@ -829,10 +839,11 @@ extension AgentCliCompactionRun on AgentCli {
       );
       io.writeln(
         tuiWarning(
-          'warning: context window $_effectiveContextWindow is below the '
-          'fixed request overhead ≈$overhead tokens (estimated from the '
-          'system prompt + tool schemas) — raising the window or disabling '
-          'tools is the only fix; '
+          'warning: context window $_effectiveContextWindow cannot take a '
+          'trim below its trigger — fixed request overhead ≈$overhead '
+          'tokens + the newest user turn ≈$turnTokens tokens already reach '
+          'it (estimated from the system prompt, tool schemas and the '
+          'turn); raising the window or disabling tools is the only fix; '
           'automatic compaction is skipped while the context stays under '
           'the window',
         ),

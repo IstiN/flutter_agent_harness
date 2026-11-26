@@ -132,7 +132,11 @@ import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
 import '../compaction/newest_user_turn.dart'
-    show isBoundarySummary, leadingBoundaryCluster, newestBoundarySummaries;
+    show
+        isBoundarySummary,
+        leadingBoundaryCluster,
+        newestBoundarySummaries,
+        newestRealUserTurnIndex;
 import '../compaction/overhead_calibration.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap;
 import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;

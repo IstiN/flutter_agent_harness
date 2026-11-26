@@ -385,7 +385,7 @@ void main() {
       );
       final output = io.out.toString();
       const warning =
-          'context window 12000 is below the fixed request overhead';
+          'context window 12000 cannot take a trim below its trigger';
       expect(output, contains(warning));
       expect(
         warning.allMatches(output),

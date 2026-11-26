@@ -227,7 +227,7 @@ invisible user turn is not. Three rules, one basis:
   reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
   trimmed: automatic compaction is skipped and the session is warned
   ONCE per distinct warning text (a resumed session does not repeat it
-  at its first prompt): `context window {window} is below the fixed request overhead
+  at its first prompt): `context window {window} cannot take a trim below its trigger
   ≈{overhead} tokens (estimated from the system prompt + tool schemas)
   — raising the window or disabling tools is the only fix; automatic
   compaction is skipped while the context stays under the window`. AT OR OVER THE WINDOW the

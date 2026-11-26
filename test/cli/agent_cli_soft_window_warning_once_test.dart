@@ -13,7 +13,7 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
-const _warning = 'is below the fixed request overhead';
+const _warning = 'cannot take a trim below its trigger';
 
 void main() {
   late FakeCliIO io;

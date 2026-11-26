@@ -385,7 +385,7 @@ void main() {
         reason: 'no LM pass ran (hide + valve only); output:\n${io.out}',
       );
       const warning =
-          'context window 13000 is below the fixed request overhead';
+          'context window 13000 cannot take a trim below its trigger';
       expect(
         warning.allMatches(io.out.toString()),
         hasLength(1),
