@@ -1149,6 +1149,17 @@
       "requests": 1,
       "source": "estimated",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-26T06:41:29Z",
+      "prompt": 10252,
+      "completion": 0,
+      "total": 10252,
+      "cacheRead": 0,
+      "requests": 1,
+      "source": "estimated",
+      "model": "glm-5.3-flash"
     }
   ]
 }
