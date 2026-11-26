@@ -154,7 +154,17 @@ void main() {
     );
     await seed.appendSessionName(name);
     for (var i = 0; i < turns; i++) {
-      await seed.appendMessage(UserMessage.text('filler$i ${'x' * 2000}'));
+      await seed.appendMessage(
+        UserMessage.text(
+          // The FIRST filler carries the request-1 heuristic the
+          // calibration ratio divides by: with the #2416 slim manifest's
+          // seam overhead (~1.1k vs the pre-merge ~3.4k) the 2k-char
+          // filler priced the ratio past the x4.0 clamp ceiling and the
+          // whole boot arithmetic exploded. ~9.5k chars restores the
+          // pre-merge ratio ≈x2.9 (10010 / (2377 + ~1080 seam + prompt)).
+          'filler$i ${'x' * (i == 0 ? 9500 : 2000)}',
+        ),
+      );
       if (pairs) {
         await seed.appendMessage(
           AssistantMessage(
