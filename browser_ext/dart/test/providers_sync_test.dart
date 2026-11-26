@@ -8,6 +8,7 @@ library;
 import 'dart:io';
 
 import '../src/providers.dart';
+import '../src/settings_merge.dart' show headersFromStored;
 // The in-package re-export shim (src/host_compaction.dart → lib/src/), NOT
 // the package URI: the Static gates analyze this test in the ROOT context,
 // where the nested fa_browser_agent package's own deps do not resolve
@@ -395,6 +396,60 @@ void main() {
         ),
         (contextWindow: null, contextWindowCap: null),
       );
+    });
+  });
+
+  group('custom provider headers (gh-2425)', () {
+    test('headersFromStored sanitizes the stored map — strings only, '
+        'non-empty name AND value, never throws', () {
+      expect(headersFromStored(null), isEmpty);
+      expect(headersFromStored('garbled'), isEmpty);
+      expect(
+        headersFromStored(const {
+          'x-a': '1',
+          'x-drop-num': 42,
+          'x-empty': '',
+          '': 'no name',
+        }),
+        const {'x-a': '1'},
+      );
+    });
+
+    test('modelForConfig carries the headers on the Model (the core '
+        '_buildHeaders merge sends them with every direct request)', () {
+      final model = modelForConfig(
+        (baseUrl: 'https://api/v1', apiKey: '', model: 'm'),
+        headers: const {'x-copilot-integration-id': 'vscode-chat'},
+      );
+      expect(model.headers, {'x-copilot-integration-id': 'vscode-chat'});
+    });
+
+    test('modelForConfig without headers (or empty) keeps Model.headers '
+        'null — byte-identical requests for header-less configs', () {
+      expect(
+        modelForConfig((baseUrl: 'b', apiKey: '', model: 'm')).headers,
+        isNull,
+      );
+      expect(
+        modelForConfig((
+          baseUrl: 'b',
+          apiKey: '',
+          model: 'm',
+        ), headers: const {}).headers,
+        isNull,
+      );
+    });
+
+    test('two header sets differ on the built Model (not a shared map)', () {
+      final a = modelForConfig(
+        (baseUrl: 'b', apiKey: '', model: 'm'),
+        headers: const {'x-a': '1'},
+      );
+      final b = modelForConfig(
+        (baseUrl: 'b', apiKey: '', model: 'm'),
+        headers: const {'x-b': '2'},
+      );
+      expect(a.headers, isNot(b.headers));
     });
   });
 }

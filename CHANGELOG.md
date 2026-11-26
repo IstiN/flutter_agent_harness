@@ -13,6 +13,18 @@ block a release again.
 
 ## Unreleased
 
+- fix(browser_ext): provider.save drops contextWindow/custom headers (gh-2425) —
+  the panel save overwrote `faProvider` with baseUrl/apiKey/model only, so every
+  save reset the stored window override (gh-2059) and a 264k-token model ran on
+  the shared fallback window until "Context window exhausted". `provider.save`
+  now merges field-wise (the same contract as the Dart settings_put merge:
+  non-empty wins, blank keeps stored, ints by presence string-tolerant) and
+  `provider.get` answers the panel with every field EXCEPT the key (write-only
+  UI, hub.bind.get principle). Custom request headers (`faProvider.headers`,
+  `Name: value` lines in the new panel field) ride `Model.headers` through the
+  core `_buildHeaders` merge on direct providers (Copilot/CodeMie gateways) —
+  ACTIVE-source-only, never inherited by synced registry entries.
+
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
