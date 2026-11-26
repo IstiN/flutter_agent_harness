@@ -251,6 +251,61 @@ void main() async {
   );
 
   test(
+    'gh-2413: a settled job never adopts a LIVE sibling job\'s subtree — '
+    'the waiting row keeps exactly the outstanding waiter (no PTY pin)',
+    skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah2413-sib-');
+      addTearDown(() => workspace.delete(recursive: true));
+      LocalShell.ownProcessGroupOverride = false;
+      LocalShell.ourPgidOverride = 700;
+      LocalShell.signalPidOverride = (_, _) {};
+      final wrapper =
+          'sh -c . \$1 sh /T/${currentProcessOwnerMarker()}Live/cmd.sh';
+      final fresh = _lstartOf(DateTime.now());
+      // The post-exit table of job A (just settled): the harness itself,
+      // job B still running (its wrapper wears OUR marker + its `sleep 4`
+      // child), and A's genuine leftover (an orphaned tagged subshell).
+      LocalShell.processDetailTableSnapshotOverride = () async => [
+        (pid: pid, ppid: 1, pgid: 700, lstart: fresh, command: 'dart test'),
+        (pid: 90100, ppid: pid, pgid: 700, lstart: fresh, command: wrapper),
+        (pid: 90101, ppid: 90100, pgid: 700, lstart: fresh, command: 'sleep 4'),
+        (pid: 90200, ppid: 1, pgid: 700, lstart: fresh, command: wrapper),
+      ];
+      final adoptedBatches = <List<ShellJobEntry>>[];
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: workspace.path),
+        onAdopt: (adopted, {required source}) => adoptedBatches.add(adopted),
+        livenessTableOverride: () async => null,
+        stopAdoptedOverride: (_) async => const [],
+      );
+      final job = await registry.start('echo done');
+      await job.settled;
+      await pumpEventQueue();
+      final batches = [
+        for (final batch in adoptedBatches)
+          for (final entry in batch) entry,
+      ];
+      expect(
+        batches.map((e) => e.pid),
+        [90200],
+        reason:
+            'only the orphaned tagged subshell is A\'s survivor; '
+            "job B's wrapper and its sleep are B's, never a duplicate",
+      );
+      final running = [
+        for (final entry in registry.jobs)
+          if (entry.isRunning) entry.command,
+      ];
+      expect(running, [wrapper]);
+      for (final entry in batches) {
+        await entry.stop();
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
+
+  test(
     'AC1 real walk: stop kills a TERM-trapping grandchild after the leader '
     'is reaped',
     skip: Platform.isWindows || !psAvailable

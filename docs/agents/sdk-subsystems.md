@@ -313,12 +313,16 @@
   a foreign settle), and the #517 sweep gets own pids only. Survivor
   detection on hosts without `setsid` (macOS) is MARKER-GATED: the orphan
   window is bounded on both ends (`execStart`…`execEnd`) and a candidate
-  must be provably OURS from the same `ps` snapshot: its own command or an
-  ancestor's (`ppid` chain) still carries this harness's wrapper tag
-  `fa_sh_cmd_<pid>_…` (the per-exec script dir a backgrounded subshell
-  inherits in its argv) — the `sleep`-style work under our tagged subshell
-  is ours, the same shape under a peer's tag or a detached program
-  (`nohup prog &`, launcher gone) is not and is left alone; the notice reads `Detected N orphaned process(es) in this
+  must be provably a leftover of THE COMPLETED CALL from the same `ps`
+  snapshot: its `ppid` chain leads into that call's subtree — through the
+  call's own pid, or through an ORPHANED (`ppid == 1`) subshell that still
+  carries this harness's wrapper tag `fa_sh_cmd_<pid>_…` (the per-exec
+  script dir a backgrounded subshell inherits in its argv). The tag names
+  the HARNESS, not the call: a process under a LIVE wrapper is another
+  job of this same harness and is never adopted as a duplicate (a settled
+  job once adopted its running sibling's `sleep` and doubled the waiting
+  row); the same shape under a peer's tag, or a detached program
+  (`nohup prog &`, launcher gone), is left alone too; the notice reads `Detected N orphaned process(es) in this
   session's process group near <cmd>` (never "left by"). `bash_job stop`
   refuses to signal a pid whose start time was never recorded while the
   platform reports one now (a recycled pid would be a stranger). gh-2415
