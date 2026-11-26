@@ -172,6 +172,7 @@ export 'src/compaction/context_window_registry.dart';
 // ── Compaction 2.0 hand-over (GOAL #2394; append-only) ──
 export 'src/compaction/compaction_mode.dart';
 export 'src/compaction/hand_over_trigger.dart';
+export 'src/compaction/inbound_mail.dart';
 export 'src/compaction/newest_user_turn.dart';
 export 'src/compaction/overhead_calibration.dart';
 export 'src/compaction/record_tag.dart';

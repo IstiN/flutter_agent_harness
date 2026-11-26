@@ -40,6 +40,7 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart' show Session;
 import '../types.dart';
 import '../agent/auto_compactor.dart' show localTrimValve;
+import '../compaction/inbound_mail.dart' show unansweredInboundMailRecordIds;
 import 'compaction.dart' show CompactionSettings;
 import 'token_estimation.dart' show estimateRequestTokens;
 import 'structured/engine.dart' show classicTransform, refreshAgentState;
@@ -338,7 +339,11 @@ final class EmergencyRelief {
       }
     }
     final protectedTail = protectedTailIds(view.ledger, protectLastN);
-    final pinned = view.state.pinnedRecordIds;
+    final pinned = {
+      ...view.state.pinnedRecordIds,
+      // PR #2435 addendum: unanswered inbound mail never folds.
+      ...unansweredInboundMailRecordIds(view.path),
+    };
     final ids = <String>{};
     var paths = 0;
     for (final entry in byPath.entries) {
@@ -387,7 +392,11 @@ final class EmergencyRelief {
     final perClassNewest = <String, int>{};
     final candidates = <(String, int)>[];
     final protectedTail = protectedTailIds(view.ledger, protectLastN);
-    final pinned = view.state.pinnedRecordIds;
+    final pinned = {
+      ...view.state.pinnedRecordIds,
+      // PR #2435 addendum: unanswered inbound mail never folds.
+      ...unansweredInboundMailRecordIds(view.path),
+    };
     for (final group in groups) {
       if (group.recordIds.any(dedupedIds.contains)) continue;
       final buster = busterFloor > 0 && group.heaviestResult >= busterFloor;

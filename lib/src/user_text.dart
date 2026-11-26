@@ -20,6 +20,17 @@ import 'types.dart';
 /// whitespace variants.
 final _agentMailPattern = RegExp(r'^from\s+\S+:\s');
 
+/// Channel-delivered inter-agent mail (`from <id> in #<channel>: …`) —
+/// the DAP/network delivery shape the multi-agent sessions actually
+/// carry.
+final _agentChannelMailPattern = RegExp(r'^from\s+\S+\s+in\s+#\S+:\s');
+
+/// The channel-mail reply instruction the delivery envelope appends
+/// (matched anywhere: the anchor closes a multi-line body).
+final _replyAnchorPattern = RegExp(
+  r'\[reply into this channel with agent_message to:',
+);
+
 /// Branch summaries projected as user messages (see `branchSummaryPrefix`).
 final _branchSummaryPattern = RegExp(
   r'^The following is a summary of a branch',
@@ -81,6 +92,24 @@ bool isSyntheticUserText(String text) {
 /// as, followed by the summary text and its hidden index.
 bool isCheckpointSummaryText(String text) =>
     _checkpointMarkerPattern.hasMatch(text.trim());
+
+/// Whether a user-role text is inter-agent mail: the DM delivery shape
+/// (`from <id>: …` — the [isSyntheticUserText] anchor) or the channel
+/// delivery shape (`from <id> in #<channel>: …`, optionally closing with
+/// the `[reply into this channel…]` anchor). Mail is data, never the
+/// user's own words.
+///
+/// Deliberately broader than [isSyntheticUserText]: the synthetic
+/// classification is pinned by gh-241 semantics (channel mail still
+/// counts as a real user turn there — flipping it is a behavior change
+/// far beyond the compaction belt), while the unanswered-mail
+/// protection needs the wider view of what is mail.
+bool isAgentMailText(String text) {
+  final trimmed = text.trim();
+  return _agentMailPattern.hasMatch(trimmed) ||
+      _agentChannelMailPattern.hasMatch(trimmed) ||
+      _replyAnchorPattern.hasMatch(trimmed);
+}
 
 /// gh-241 follow-up #5e (E1/E6): whether a user-role text opens with a
 /// projection marker — a hidden-range or checkpoint marker, a fold

@@ -41,6 +41,7 @@ import '../../context.dart';
 import '../../types.dart';
 import '../compaction.dart';
 import '../newest_user_turn.dart' show newestUserTurnRecordIds;
+import '../inbound_mail.dart' show unansweredInboundMailRecordIds;
 import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import 'judge.dart';
@@ -782,7 +783,13 @@ final class StructuredCompactor {
       picks,
       view.ledger,
       protectLastN: protectLastN,
-      pinnedRecordIds: view.state.pinnedRecordIds,
+      pinnedRecordIds: {
+        ...view.state.pinnedRecordIds,
+        // PR #2435 addendum: the judge never hides unanswered inbound
+        // mail — the mechanical veto behind the prompt-level
+        // `## Open User Requests` belt.
+        ...unansweredInboundMailRecordIds(view.path),
+      },
     );
     if (ids.isEmpty) return (killed: false, decided: true);
     await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -1678,9 +1685,16 @@ final class StructuredCompactor {
     // (a long agentic turn still checkpoints); coverage is by explicit
     // ids, so the turn keeps rendering between the folds around it.
     final userTurn = newestUserTurnRecordIds(view_.path);
+    // PR #2435 addendum: unanswered inbound inter-agent mail is open
+    // data — never folds (mirrors the user-turn pin; folds once a reply
+    // lands). The group-aware check keeps a mail pinned through any
+    // carrier/result group it ends up inside.
+    final openMail = unansweredInboundMailRecordIds(view_.path);
     final foldable = [
       for (final entry in projected)
-        if (!_nonFoldable(view_, entry.recordId, userTurn)) entry,
+        if (!_nonFoldable(view_, entry.recordId, userTurn) &&
+            !_isProtectedMail(view_, entry.recordId, openMail))
+          entry,
     ];
     if (foldable.isEmpty) return null;
     // gh-2411 × the keep-recent walk (the flutter_app compaction ITs, the
@@ -1778,6 +1792,19 @@ final class StructuredCompactor {
     return group.any(
       (id) => view.state.pinnedRecordIds.contains(id) || userTurn.contains(id),
     );
+  }
+
+  /// PR #2435 addendum: whether [recordId]'s pair group covers an
+  /// unanswered inbound mail id — group-aware like [_nonFoldable], so
+  /// hiding a carrier never folds the mail parked next to it.
+  bool _isProtectedMail(
+    _LedgerView view,
+    String recordId,
+    Set<String> openMail,
+  ) {
+    if (openMail.isEmpty) return false;
+    final group = view.ledger.groupOf(recordId);
+    return group.any(openMail.contains);
   }
 
   bool _sharesGroup(

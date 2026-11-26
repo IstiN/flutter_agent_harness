@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): unanswered inbound inter-agent mail is never a mechanical
+  compaction candidate (PR #2435 addendum). New `compaction/inbound_mail.dart`
+  — the ONE record- and message-level definition (DM `from <id>:`, channel
+  `from <id> in #<channel>:` and the reply-anchor shapes via the new
+  `user_text.isAgentMailText`): a mail record with no later assistant reply
+  (an `agent_message` tool call or pure prose — tool-call carriers are the
+  agent working, not answering) never enters the structured engine's foldable
+  range, never passes `validateHidePicks`, never joins the emergency relief's
+  keep-N veto, and the local trim valve CARRIES it across its cut like the
+  pinned newest user turn. Answered mail folds like any other data. Motivation:
+  a live clip where a budget-paused chain left a peer message queued while
+  earlier delivered-but-unanswered mail was foldable by every tier (the
+  prompt-level `## Open User Requests` belt is judgment-only, issue #81 AC9).
 - build(scripts): the pre-commit hook drops the coverage stage — CI-only
   coverage (hook speed, owner directive 2026-11-26, PR #2435). The hook's
   core/integ/all stage lists select WITHOUT `coverage` and `test-core`

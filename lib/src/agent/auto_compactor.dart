@@ -26,6 +26,7 @@ import '../cancel_token.dart';
 import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
 import '../compaction/compaction_mode.dart';
+import '../compaction/inbound_mail.dart' show unansweredAgentMailMessageIndices;
 import '../compaction/newest_user_turn.dart'
     show newestRealUserTurnIndex, pinnedBoundarySummaryIndices;
 import '../compaction/request_snapshot.dart';
@@ -1033,7 +1034,16 @@ final class _PickOutcome {
     for (final i in pinnedBoundarySummaryIndices(messages))
       if (i < cut) messages[i],
   ];
-  final dropped = cut - summaries.length - (carried == null ? 0 : 1);
+  // PR #2435 addendum: unanswered inbound inter-agent mail behind the
+  // cut is CARRIED like the turn and the summaries — an open peer
+  // request must never vanish with the trimmed region. Answered mail
+  // folds like any other data.
+  final carriedMail = [
+    for (final i in unansweredAgentMailMessageIndices(messages))
+      if (i < cut) messages[i],
+  ];
+  final dropped =
+      cut - summaries.length - carriedMail.length - (carried == null ? 0 : 1);
   // Nothing actually dropped (the one record behind the cut WAS the
   // turn): the same "nothing droppable" null as an empty walk.
   if (dropped <= 0) return null;
@@ -1056,6 +1066,9 @@ final class _PickOutcome {
       '${DateTime.now().toUtc().toIso8601String()} — the full history '
       'stays in the session file]',
     ),
+    // PR #2435 addendum: unanswered inbound mail re-homes oldest-first,
+    // ahead of the pinned turn (the mail may BE what the turn answers).
+    ...carriedMail,
     ?carried,
     // Zero the kept generations' usage anchors — a stale generation-time
     // anchor would keep the estimate over the window and retrigger the
