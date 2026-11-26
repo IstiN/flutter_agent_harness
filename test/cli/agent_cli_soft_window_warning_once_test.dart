@@ -47,9 +47,14 @@ void main() {
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            // Under the ≈5k fixed overhead of even the tiny fixture: the
-            // soft-window regime on every prompt.
-            contextWindow: 6000,
+            // Under the ≈2.7k fixed overhead of the merged seam (#2416:
+            // the slim manifest shrank the tiny fixture's footprint —
+            // prompt composition + bash + working_set schemas ≈2723
+            // tokens): trigger = window − reserve = 3400 − 1024 = 2376
+            // < 2723 — the soft-window regime on every prompt — while
+            // the estimate stays UNDER the window (the skip-and-warn
+            // path, as before).
+            contextWindow: 3400,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',
