@@ -394,6 +394,7 @@ extension on AgentCli {
     io.writeln('  key: JWT Bearer token (saved as $keyName)');
     io.writeln(modelLine);
     await config.onProviderChanged?.call(_providerKind, _apiKey);
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
   }
 
   /// Switches to a saved CodeMie provider, dispatching on its auth method:

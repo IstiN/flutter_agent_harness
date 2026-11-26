@@ -2724,7 +2724,7 @@ extension SettingsFlow on AgentCli {
   }
 
   /// Live-applies [mode] (issue #680): re-assigns the CLI's live preset
-  /// and rebuilds availability (which also syncs the `discover_tools`
+  /// and rebuilds availability (which also syncs the `others`
   /// meta tool and recomposes the prompt), so the next request's
   /// schema reflects the switch without a restart.
   void _applyLoadModeLive(AgentLoadMode mode) {

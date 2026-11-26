@@ -10,8 +10,12 @@
 /// settings switch (`agent.mode: default|pi|omp`) and the coexistence
 /// tests have one source of truth.
 ///
-/// `defaultMode` is no preset at all: every present tool loads exactly as
-/// before this feature (byte-identical behavior — REG).
+/// Since GOAL #28 (issue #2416) `defaultMode` is the owner's partition:
+/// thirteen essential tool NAMES (the keep-12 plus `session_search`,
+/// [essentialToolNamesByLoadMode])
+/// load into the schema, everything else defers to the `others` discovery
+/// surface, and the four capability-bound media/decide tools stay
+/// conditional on their capability ([conditionalCapabilityToolNames]).
 ///
 /// Pure Dart: no `dart:io`.
 library;
@@ -65,13 +69,13 @@ String? agentLoadModeValidationError(Object? value) {
   return '"agent.mode" must be one of: ${agentLoadModeLabels.join(', ')}';
 }
 
-/// Whether a preset ships the `discover_tools` discovery surface (issue
-/// #680): omp demotes everything non-essential and discovers it back on
-/// demand; pi is pi-mono's exact benchmark shape (issue #679) — 4 tools,
-/// discovery off, no meta tool; the default mode has no demotion at all
-/// (REG) and therefore nothing to discover.
+/// Whether a preset ships the `others` discovery surface (issue #2416,
+/// replacing #680's `discover_tools`): the default partition and omp
+/// demote non-essential tools and discover them back through `others`;
+/// pi is pi-mono's exact benchmark shape (issue #679) — 4 tools,
+/// discovery off, no discovery surface.
 const discoveryEnabledByLoadMode = <AgentLoadMode, bool>{
-  AgentLoadMode.defaultMode: false,
+  AgentLoadMode.defaultMode: true,
   AgentLoadMode.pi: false,
   AgentLoadMode.omp: true,
 };
@@ -87,6 +91,56 @@ const discoveryEnabledByLoadMode = <AgentLoadMode, bool>{
 const essentialToolIdsByLoadMode = <AgentLoadMode, Set<String>>{
   AgentLoadMode.pi: {'read', 'write', 'edit', 'bash'},
   AgentLoadMode.omp: {'read', 'write', 'edit', 'bash', 'ls', 'task', 'ask'},
+};
+
+/// The default partition's ESSENTIAL tool NAMES (GOAL #28, issue #2416 —
+/// the owner's keep-12, pinned 2026-11-25). Name-level, not id-level: the
+/// `memory` id splits (`memory_add` + `memory_search` stay loaded,
+/// `memory_list`/`memory_delete` defer) and `reply` (a `task`-family
+/// member) stays loaded so subagents deliver natively. Pinned — no scope
+/// can demote them; `off` still disables (`tools: {id: off}`), and
+/// `tools: {id: on}` is the standing mount that keeps any family loaded.
+const essentialToolNamesByLoadMode = <AgentLoadMode, Set<String>>{
+  AgentLoadMode.defaultMode: {
+    'read',
+    'write',
+    'edit',
+    'ls',
+    'bash',
+    'bash_job',
+    'lsp',
+    'web_search',
+    'web_fetch',
+    'memory_add',
+    'memory_search',
+    'reply',
+    // GOAL #28 review round 2 (CI red 45638891484): `session_search` is
+    // an ALWAYS-ON tool — the prompt-recall contract pins it registered
+    // under BOTH compaction engines (agent_cli_prompt_recall_test), so
+    // it rides the keep set despite the card's tier table (row 19 said
+    // deferred). The keep set is thirteen names; the deferred set is 17.
+    'session_search',
+  },
+};
+
+/// The capability-conditional tool NAMES (GOAL #28): present in the
+/// manifest iff the host's capability for them exists, absent
+/// (unregistered, with the reason in /tools) otherwise — call-time
+/// refusal replaced by capability-conditional registration.
+///
+/// - `inspect_image` — a vision model is configured (gh-1984 live sync).
+/// - `generate_image` / `generate_video` — the `models.slots.
+///   imageGeneration`/`videoGeneration` slot resolves (or the explicit
+///   `useMainConnection` opt-in).
+/// - `decide` — the main connection's provider is OpenRouter.
+/// - `transcribe_audio` — already capability-bound (transcription slot);
+///   unchanged, listed here so the partition never defers it.
+const conditionalCapabilityToolNames = <String>{
+  'inspect_image',
+  'generate_image',
+  'generate_video',
+  'decide',
+  'transcribe_audio',
 };
 
 /// Resolves the load mode for this boot: flag > env > config (issue #680

@@ -11,6 +11,11 @@ You can call tools to act on the user's behalf. The available tools are:
 
 {{tools}}
 
+Some tools are **deferred**: they are listed under `others` instead of
+above. Call `others` with `tool_name` once to load a deferred tool's full
+description and schema, then call the tool normally. A tool named in a
+skill or prompt but absent from your list is deferred, not missing.
+
 ## Calling a tool
 
 To call a tool, output a fenced code block tagged `tool_call` containing one JSON object with the tool's `name` and its `arguments`:

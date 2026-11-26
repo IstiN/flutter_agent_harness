@@ -64,9 +64,16 @@ void main() {
 
       // The floor is capability, not desktopness: these RUN inside the
       // sandbox (Future-based jobs, LLM-backed children) and stay.
+      // GOAL #28 (issue #2416): the default partition boots keep-12 +
+      // `others` — `task`/`agent_message` stay capability-backed but are
+      // DEFERRED (one `others(tool_name)` call loads them), while the
+      // keep-12 ride the manifest directly.
       expect(names, contains('bash_job'));
-      expect(names, contains('task'));
-      expect(names, contains('agent_message'));
+      expect(names, contains('others'));
+      expect(names, containsAll(['memory_add', 'memory_search', 'reply']));
+      expect(names, isNot(contains('task')), reason: 'deferred to others');
+      expect(names, isNot(contains('agent_message')),
+          reason: 'deferred to others');
     });
 
     test('the mobile host profile claims match the registry reality', () async {

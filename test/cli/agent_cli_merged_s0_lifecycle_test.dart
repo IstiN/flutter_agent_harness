@@ -54,7 +54,13 @@ void main() {
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
-    env.writeFile('big1.txt', List.filled(900, 'x' * 40).join('\n'));
+    // ~700 lines x 40 chars = ~28700 chars = ~7175 tokens: with the slim
+    // manifest's ~3.9k request overhead the post-turn context lands in the
+    // (compaction trigger, window) band — the gross over-window guard
+    // stays out and the POST-RUN merged pass owns the scenario (issue
+    // #2416: the fat manifest's ~12.5k overhead used to push this into
+    // the guard band instead).
+    env.writeFile('big1.txt', List.filled(700, 'x' * 40).join('\n'));
   });
 
   tearDown(() => io.close());
