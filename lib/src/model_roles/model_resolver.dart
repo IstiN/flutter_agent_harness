@@ -597,7 +597,10 @@ final class ModelRolesResolver {
   }
 
   /// Replaces [role]'s chain (the settings-hub agent-models flow); the new
-  /// chain takes effect on the next run.
+  /// chain takes effect on the next run. The role is [ModelRolesConfig
+  /// .runtimePinned] so its chain beats every path override — a runtime
+  /// switch must never be silently out-voted by the longest-match entry
+  /// (gh-2433: the Copilot switch that kept running on Bedrock).
   void setRoleChain(String role, List<ModelRef> chain) {
     if (chain.isEmpty) {
       throw ArgumentError.value(
@@ -610,6 +613,7 @@ final class ModelRolesResolver {
       roles: {...config.roles, role: chain},
       pathOverrides: config.pathOverrides,
       retry: config.retry,
+      runtimePinned: {...config.runtimePinned, role},
     );
     _wrappers.remove(role);
   }
@@ -623,6 +627,7 @@ final class ModelRolesResolver {
       roles: config.roles,
       pathOverrides: config.pathOverrides,
       retry: policy,
+      runtimePinned: config.runtimePinned,
     );
     _wrappers.clear();
   }
@@ -636,6 +641,9 @@ final class ModelRolesResolver {
   }
 
   /// "use the main model" escape of the settings-hub agent-models flow).
+  /// Clears the role's [ModelRolesConfig.runtimePinned] pin with its chain:
+  /// the pin exists only because of the runtime chain, and dropping both
+  /// restores config-driven resolution (a path override may apply again).
   void clearRoleChain(String role) {
     if (role == defaultModelRole) {
       throw ArgumentError.value(role, 'role', 'the default role is required');
@@ -646,6 +654,7 @@ final class ModelRolesResolver {
       roles: roles,
       pathOverrides: config.pathOverrides,
       retry: config.retry,
+      runtimePinned: {...config.runtimePinned}..remove(role),
     );
     _wrappers.remove(role);
   }
