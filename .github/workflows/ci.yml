@@ -794,6 +794,15 @@ jobs:
       - name: Flake watcher dedup self-test (gh-1364)
         run: bash scripts/flake_watch_selftest.sh
 
+      # #2362: the nightly-red tracker's close self-heal is fixture-tested
+      # against a stubbed gh (no network) — a premature close on a red
+      # night is re-opened back-to-back and verified OPEN (one bounded
+      # retry), retry exhaustion stamps reopen-failed, and a green run
+      # leaves the close standing (scripts/nightly_red_tracker.sh, wired
+      # into nightly.yml right after the close leg).
+      - name: Nightly-red tracker self-heal self-test (#2362)
+        run: bash scripts/nightly_red_tracker_selftest.sh
+
       # gh-1568: the SM merge guard's gh-side lookups are fixture-tested
       # against the REAL commits-API shape (tree nested under `commit`)
       # on a PATH-stubbed gh — the `.tree.sha` jq bug false-alarmed every
