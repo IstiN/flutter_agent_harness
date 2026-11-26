@@ -188,4 +188,85 @@ void main() {
       );
     });
   });
+
+  // gh-241 follow-up #5e (E4 — owner live test round 6): the relief
+  // (≈27563 → ≈17627) dropped BOTH checkpoint summaries out of a
+  // resumed context and the model answered "I see no earlier
+  // conversation". The newest boundary summary is pinned exactly like
+  // the newest user turn: no in-memory cut removes it.
+  group('gh-241 follow-up #5e (E4): boundary summaries are pinned', () {
+    const summaryA = '[3-17:ckpt·1.9k→15tok·covers:3-17]\nsummary of the early';
+    const summaryB =
+        '[18-29:ckpt·812→15tok·covers:18-29]\nsummary of the middle';
+    const settings = CompactionSettings(
+      enabled: true,
+      reserveTokens: 100,
+      keepRecentTokens: 60,
+    );
+
+    ({List<Message> messages, int dropped})? valve(List<Message> messages) =>
+        localTrimValve(
+          messages: messages,
+          reason: 'test valve',
+          window: 300,
+          settings: settings,
+          overheadTokens: 0,
+        );
+
+    List<String> texts(List<Message> messages) => [
+      for (final m in messages) firstTextOf(m),
+    ];
+
+    test('a context that opens with the boundary cluster keeps every '
+        'summary — ahead of the trim marker', () {
+      final trimmed = valve([
+        UserMessage.text(summaryA),
+        UserMessage.text(summaryB),
+        UserMessage.text('older tail question ${'o' * 400}'),
+        _answer('older tail answer ${'a' * 400}'),
+        UserMessage.text('the REAL newest question'),
+      ])!;
+      final out = texts(trimmed.messages);
+      expect(out.sublist(0, 2), [summaryA, summaryB]);
+      expect(out[2], startsWith('[context trimmed locally:'));
+      // keepRecent (60) holds the newest question alone; the question
+      // and answer before it went — the summaries are not counted as
+      // dropped.
+      expect(out.sublist(3), ['the REAL newest question']);
+      expect(trimmed.dropped, 2);
+    });
+
+    test('a checkpoint that rides after the tail it summarizes moves up '
+        'when the cut reaches it', () {
+      final trimmed = valve([
+        UserMessage.text('older question ${'o' * 400}'),
+        _answer('older answer ${'a' * 400}'),
+        UserMessage.text(summaryB),
+        UserMessage.text('middle question ${'o' * 400}'),
+        _answer('middle answer ${'a' * 400}'),
+        UserMessage.text('the REAL newest question'),
+      ])!;
+      final out = texts(trimmed.messages);
+      expect(out.first, summaryB);
+      expect(out[1], startsWith('[context trimmed locally:'));
+      expect(out.sublist(2), ['the REAL newest question']);
+      expect(trimmed.dropped, 4);
+    });
+
+    test('a summary beyond the pinned ones — not the newest, not in the '
+        'leading cluster — stays droppable', () {
+      final trimmed = valve([
+        UserMessage.text('older question ${'o' * 400}'),
+        UserMessage.text(summaryA),
+        UserMessage.text('middle question ${'o' * 400}'),
+        UserMessage.text(summaryB),
+        _answer('middle answer ${'a' * 400}'),
+        UserMessage.text('the REAL newest question'),
+      ])!;
+      final out = texts(trimmed.messages);
+      expect(out.first, summaryB);
+      expect(out, isNot(contains(summaryA)));
+      expect(trimmed.dropped, 4);
+    });
+  });
 }

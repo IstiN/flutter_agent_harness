@@ -26,7 +26,8 @@ import '../cancel_token.dart';
 import '../compaction/cache_policy.dart';
 import '../compaction/compaction.dart';
 import '../compaction/compaction_mode.dart';
-import '../compaction/newest_user_turn.dart' show newestRealUserTurnIndex;
+import '../compaction/newest_user_turn.dart'
+    show newestRealUserTurnIndex, pinnedBoundarySummaryIndices;
 import '../compaction/request_snapshot.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
@@ -1022,7 +1023,17 @@ final class _PickOutcome {
   // trimmable after one big tool result.
   final turn = newestRealUserTurnIndex(messages);
   final carried = turn >= 0 && turn < cut ? messages[turn] : null;
-  final dropped = cut - (carried == null ? 0 : 1);
+  // gh-241 follow-up #5e (E4 — owner live test round 6): the newest
+  // boundary summary is pinned exactly like the turn. The budget cut
+  // took BOTH checkpoint summaries out of a resumed context and the
+  // model answered "I see no earlier conversation". They re-home right
+  // after the marker, oldest first; older summaries beyond the pinned
+  // ones stay droppable.
+  final summaries = [
+    for (final i in pinnedBoundarySummaryIndices(messages))
+      if (i < cut) messages[i],
+  ];
+  final dropped = cut - summaries.length - (carried == null ? 0 : 1);
   // Nothing actually dropped (the one record behind the cut WAS the
   // turn): the same "nothing droppable" null as an empty walk.
   if (dropped <= 0) return null;
@@ -1037,6 +1048,8 @@ final class _PickOutcome {
   // synthesizes missing results, hoists displaced ones. In-memory only —
   // the session file keeps every record.
   final rebuilt = repairToolPairing([
+    // E4: the summaries OPEN the request; the trim marker follows.
+    ...summaries,
     UserMessage.text(
       '$localTrimMarkerPrefix $reason, '
       '$dropped older message(s) were dropped from the live context at '

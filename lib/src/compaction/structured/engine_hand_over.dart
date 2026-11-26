@@ -416,6 +416,7 @@ Future<bool> _runHandOverPass(
   required int trigger,
   required bool force,
   required bool softTriggered,
+  required String runStatus,
 }) async {
   final handOver = c.handOver!;
   final snapshot = c.requestSnapshot!;
@@ -437,6 +438,7 @@ Future<bool> _runHandOverPass(
     range: armed.range,
     openAsks: openAsks,
     contextTokens: before,
+    runStatus: runStatus,
   );
   if (c._ladderTerminated) return false;
   final HandOverCallResult result;
@@ -547,6 +549,7 @@ String _handOverInstruction(
   required _CkptRange range,
   required List<String> openAsks,
   required int contextTokens,
+  required String runStatus,
 }) {
   final folded = [
     for (final ckpt in c._flattenForDepthCap(range))
@@ -563,5 +566,6 @@ String _handOverInstruction(
     openUserRequests: openAsks,
     pinnedOperative: c.pinnedOperativeBlock,
     foldedCheckpoints: folded.isEmpty ? null : folded.join('\n'),
+    runStatus: runStatus,
   );
 }

@@ -13,6 +13,20 @@ block a release again.
 
 ## Unreleased
 
+- fix(compaction): gh-241 follow-up #5e (owner live test round 6) — the
+  newest durable boundary's summary survives a resume. A measured resume
+  keeps it RESIDENT: the walk opens the window at the boundary cluster
+  and the parity trim stands down while a checkpoint summary is
+  resident; the request opens with the summary and then only the raw
+  tail it does not cover, and the local-trim valve pins it like the
+  newest user turn. An over-trigger first request goes out as loaded
+  and takes the existing first-turn pre-flight compaction path.
+  A context stop that compacts and continues is logged `turn end …
+  stop=compacting (continuation pending)` — never as `stop=error` —
+  and `run end` is written exactly once, at the true end of the run.
+  The hand-over instruction states whether the final assistant reply
+  was delivered, so a checkpoint no longer calls a delivered reply
+  «not yet delivered».
 - fix(compaction): gh-241 follow-up #5d (owner live test round 5) —
   resume and relief are honest about what they measure and cut. The
   overhead calibration anchors on the session's FIRST valid provider

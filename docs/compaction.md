@@ -249,6 +249,30 @@ boundary, or on a branch complete to its root) anchors the estimate the
 moment it is loaded, so a restarted session is priced by the provider's
 own number on its very first request.
 
+**Resume with a checkpoint summary (gh-2411 follow-up #5e).** The resume
+parity trim stands down while a checkpoint summary is resident: the walk
+opens the window at the newest durable boundary, the request opens with
+its summary and then only the raw tail the summary does not cover, and
+the local-trim valve pins that summary like the newest user turn. An
+over-trigger first request goes out as loaded and takes the existing
+first-turn pre-flight compaction path. The resume tail line and the
+`resume summary` diagnostic name the summary's record.
+
+**The stop that compacts is not an error (gh-2411 follow-up #5e, E2).** A
+turn the loop stops so compaction can run and continue is logged `turn
+end … stop=compacting (continuation pending)`; `run end` is written once,
+at the true end of the run (the continuation's own run). A stop with no
+continuation — or one whose continuation did not complete the turn — keeps
+the honest `stop=error`. Internal stop reasons and persisted records are
+unchanged; only the log tells the truth.
+
+**The hand-over knows how the run ended (E3a).** The hand-over request is
+the last request's context, which never carries the final assistant reply;
+the instruction therefore states it: `Run status: the final assistant reply
+WAS delivered — that turn is answered, not pending`, or that the newest
+user turn has no delivered reply, or that no claim can be made (a hand-over
+built without a transcript).
+
 The resume boundary walk is a MEASUREMENT or it is nothing. A measured
 session keeps today's parity budget (`window − calibrated overhead −
 reserve`) — the walk stops at it and trims record-granularly. An

@@ -1205,9 +1205,23 @@ extension ApprovalCommands on AgentCli {
           category: LogCategory.tool,
         );
       case TurnEndEvent(:final message):
-        _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
+        // gh-241 follow-up #5e (E2): a turn stopped so compaction can
+        // run and continue is not an error. The line is settled when the
+        // run settles ([_settleContextStopLog]) — `stop=compacting` when
+        // a continuation follows, the honest `stop=error` otherwise.
+        if (isContextWindowExhaustedError(message.errorMessage)) {
+          _pendingContextStop = message;
+        } else {
+          _logDiagnostic(
+            'turn end sid=$_logSid stop=${message.stopReason.name}',
+          );
+        }
       case AgentEndEvent():
-        _logDiagnostic('run end sid=$_logSid');
+        // A context stop that will continue is not the end of the run:
+        // the continuation's own run logs `run end` — exactly once.
+        if (_pendingContextStop == null) {
+          _logDiagnostic('run end sid=$_logSid');
+        }
       default:
       // The record-persisting cases (tool-call heartbeats, stuck calls,
       // pairing repairs, message-cap repairs) log where the record is

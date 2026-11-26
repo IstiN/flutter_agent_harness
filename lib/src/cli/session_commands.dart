@@ -1049,7 +1049,11 @@ extension on AgentCli {
   /// screen). A whole-session projection prints nothing.
   /// Sets [_resumeTailNotice] — the R3 line of a session whose loaded
   /// projection is a tail; the TUI replay re-prints it.
-  void _reportResumeTail(Session session, List<Message> messages) {
+  void _reportResumeTail(
+    Session session,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
     final report = session.resumeWalkReport();
     if (report.droppedByBudget == 0 && !report.hasOlder) return;
     final estimate = estimateContextTokens(messages);
@@ -1074,7 +1078,7 @@ extension on AgentCli {
         : 'older history sits above the newest compaction boundary';
     final line =
         '[resume] loaded the last ${messages.length} message(s) of the '
-        'session ($how; ≈$tokens tokens, $provenance)';
+        'session ($how; ≈$tokens tokens, $provenance)${_resumeSummaryNote(session, messages, seqs)}';
     _logDiagnostic('resume tail sid=${session.cachedId} $line');
     if (!_useTui) io.writeln(_style.dim(line));
     _resumeTailNotice = line;
@@ -1316,6 +1320,12 @@ extension on AgentCli {
     required String sid,
   }) async {
     final budget = plan.budget;
+    // gh-241 follow-up #5e (E1): a measured budget accounts for the
+    // newest durable boundary's summary FIRST — page to it, capture it,
+    // then bound the raw tail under budget − summary. The tail-first
+    // walk met the budget before it met the boundary: the owner's
+    // session opened on a raw tool result and the model answered "I see
+    // no earlier conversation".
     final boundaryResident = await session.ensureCompactionBoundaryResident(
       tokenBudget: budget,
       checkpointsAreBoundaries: budget == null,
@@ -1344,6 +1354,100 @@ extension on AgentCli {
     );
   }
 
+  static bool _hasResumeSummary(List<Message> messages) =>
+      newestBoundarySummaries(messages).isNotEmpty;
+
+  /// E1: does the window as it stands already hold a durable boundary —
+  /// a checkpoint summary the belt recognises (`ckpt·` header), or a
+  /// compaction / checkpoint record on the resident branch (a CLASSIC
+  /// compaction summary has no recognizable header, and HEAD's budget
+  /// walk already opens on it)? Record-level too on purpose. Read-only:
+  /// neither the walk report nor the window is touched.
+  static Future<bool> _windowHasDurableBoundary(
+    Session session,
+    List<Message> built,
+  ) async =>
+      _hasResumeSummary(built) ||
+      (await session.getBranch()).any(
+        (record) =>
+            record is CompactCheckpointRecord || record is CompactionRecord,
+      );
+
+  /// E6: the newest boundary's summaries OPEN the context, oldest first
+  /// — a checkpoint that rides after the tail it summarizes moves up.
+  /// Same projection, so every message keeps its record alias.
+  SessionContext _carryResumeSummary(SessionContext built) {
+    final messages = built.messages;
+    final run = newestBoundarySummaries(messages);
+    if (run.isEmpty) return built;
+    final first = messages.indexOf(run.first);
+    if (first == 0) return built;
+    final last = messages.indexOf(run.last);
+    final seqs = built.recordSeqs;
+    bool kept(int i) => i < first || i > last;
+    int? alias(int i) =>
+        seqs != null && i < seqs.headSeqs.length ? seqs.headSeqs[i] : null;
+    return SessionContext(
+      messages: [
+        for (var i = first; i <= last; i++) messages[i],
+        for (var i = 0; i < messages.length; i++)
+          if (kept(i)) messages[i],
+      ],
+      thinkingLevel: built.thinkingLevel,
+      model: built.model,
+      activeToolNames: built.activeToolNames,
+      recordSeqs: seqs == null
+          ? null
+          : TranscriptSeqMap(
+              headSeqs: [
+                for (var i = first; i <= last; i++) alias(i),
+                for (var i = 0; i < messages.length; i++)
+                  if (kept(i)) alias(i),
+              ],
+              index: seqs.index,
+            ),
+    );
+  }
+
+  static int _summaryTokens(List<Message> messages) => [
+    for (final message in messages) estimateTokens(message),
+  ].fold(0, (a, b) => a + b);
+
+  /// The id of the record the request's opening summary projects from
+  /// (`<untagged>` outside a tag epoch), and its tokens.
+  ({String id, int tokens}) _resumeSummaryRef(
+    List<Message> summaries,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
+    final at = messages.indexOf(summaries.last);
+    return (
+      id: seqs?.recordIdAt(at) ?? '<untagged>',
+      tokens: _summaryTokens(summaries),
+    );
+  }
+
+  /// The resume tail line's summary field: the record the request's
+  /// opening summary projects from and its tokens, or why there is none.
+  String _resumeSummaryNote(
+    Session session,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
+    final summaries = [
+      for (final message in leadingBoundaryCluster(messages))
+        if (isBoundarySummary(message)) message,
+    ];
+    if (summaries.isNotEmpty) {
+      final ref = _resumeSummaryRef(summaries, messages, seqs);
+      return ' (summary=${ref.id} ≈${ref.tokens} tokens)';
+    }
+    final why = session.resumeWalkReport().hasOlder
+        ? 'no durable boundary found'
+        : 'tail reaches the file head';
+    return ' (no summary: $why)';
+  }
+
   /// Builds the resumed context and applies the late anchor (R2 — the
   /// walk surfaced a usage report the resident tail could not vouch
   /// for): a surfaced report measures the session, and a measured
@@ -1359,6 +1463,38 @@ extension on AgentCli {
     void Function(String name) stage,
   ) async {
     var built = await session.buildContext();
+    // gh-241 follow-up #5e (E1): a MEASURED budget walk that did NOT
+    // reach the newest durable boundary (the tail-first walk met the
+    // budget before it met the boundary: the owner's session opened on
+    // a raw tool result and the model answered "I see no earlier
+    // conversation") pages to that boundary — the window then opens at
+    // the summary plus the raw tail after it, untrimmed by the budget
+    // (it cuts oldest-first, so it took the summary before any tail
+    // record; an over-window tail is the boot cap's — the valve pins
+    // the summaries like the newest user turn). A window that already
+    // opens at a checkpoint boundary is HEAD's, record for record —
+    // one walk, one build (regression pins AC3/AC5 of the resume boot
+    // cap: a second walk or build is not free, it dropped the classic
+    // summary's hidden-segment index and one record).
+    if (budget != null &&
+        !await _windowHasDurableBoundary(session, built.messages)) {
+      await session.ensureCompactionBoundaryResident(
+        maxPages: 16,
+        checkpointsAreBoundaries: true,
+      );
+      var paged = await session.buildContext();
+      // No boundary within reach: HEAD's window stands — the page-in
+      // is undone by the same budget walk, so the request is HEAD's
+      // record for record.
+      if (!await _windowHasDurableBoundary(session, paged.messages)) {
+        await session.ensureCompactionBoundaryResident(
+          tokenBudget: budget,
+          checkpointsAreBoundaries: false,
+        );
+        paged = await session.buildContext();
+      }
+      built = paged;
+    }
     if (residentCalibration != null) {
       if (!_agent.state.overheadCalibration.measured) {
         _agent.state.overheadCalibration = residentCalibration;
@@ -1374,6 +1510,7 @@ extension on AgentCli {
         built = await _trimToSurfacedBudget(session, surfaced, built);
       }
     }
+    built = _carryResumeSummary(built);
     stage('context');
     await _rememberResumedContext(metadata, fpBefore, budget ?? -1, built);
     return built;
@@ -1400,6 +1537,9 @@ extension on AgentCli {
       calibration: surfaced,
     );
     if (loadedTokens <= calibratedBudget) return built;
+    // gh-241 follow-up #5e (E1): the summary outranks the parity trim
+    // — it cuts oldest-first and would take the boundary first.
+    if (_hasResumeSummary(built.messages)) return built;
     await session.ensureCompactionBoundaryResident(
       tokenBudget: calibratedBudget,
     );
@@ -1411,7 +1551,15 @@ extension on AgentCli {
   /// included, via [_rememberResumedContext]).
   void _adoptResumedContext(Session session, SessionContext context) {
     final messages = context.messages;
-    _reportResumeTail(session, messages);
+    _reportResumeTail(session, messages, context.recordSeqs);
+    final summaries = newestBoundarySummaries(messages);
+    if (summaries.isNotEmpty) {
+      final ref = _resumeSummaryRef(summaries, messages, context.recordSeqs);
+      _logDiagnostic(
+        'resume summary sid=$_logSid summary=${ref.id} '
+        '≈${ref.tokens} tokens',
+      );
+    }
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and
     // fire a no-op compaction on every resume. Re-anchor at chars/4.

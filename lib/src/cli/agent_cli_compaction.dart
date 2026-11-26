@@ -1674,6 +1674,9 @@ OverWindowReliefVerdict overWindowReliefVerdict({
 String compactionPassesLabel(int passesRan) =>
     passesRan == 1 ? 'pass' : 'passes';
 
+/// How a context-window stop settled (gh-241 follow-up #5e, E2).
+enum ContextStopOutcome { compacting, ended, failed }
+
 extension OverWindowContinuation on AgentCli {
   /// The continuation prompt for an over-window resume, naming what the
   /// compaction hid — record kinds + turn spans — and how to recover it
@@ -1691,6 +1694,47 @@ extension OverWindowContinuation on AgentCli {
     );
   }
 
+  /// Whether the over-window continuation WILL run for [message]: the
+  /// guards of [_maybeOverWindowContinue], shared so the forensics log
+  /// and the settlement can never disagree (gh-241 follow-up #5e, E2).
+  bool _contextStopContinuationArmed(
+    AssistantMessage lastMessage, {
+    required bool isAutoContinue,
+  }) =>
+      !isAutoContinue &&
+      !_overWindowAutoResumed &&
+      isContextWindowExhaustedError(lastMessage.errorMessage);
+
+  /// Settles the stashed context-stop turn end (gh-241 follow-up #5e,
+  /// E2). `compacting`: `stop=compacting (continuation pending)` and NO
+  /// `run end` (the continuation's own run logs it). `ended` /
+  /// `failed`: the honest `stop=error` plus `run end`. One line per
+  /// stop; a second call for the same stop is a no-op.
+  void _settleContextStopLog(ContextStopOutcome outcome) {
+    final pending = _pendingContextStop;
+    if (pending == null) return;
+    switch (outcome) {
+      case ContextStopOutcome.compacting:
+        _pendingContextStop = null;
+        _logDiagnostic(
+          'turn end sid=$_logSid stop=compacting (continuation pending)',
+        );
+      case ContextStopOutcome.ended:
+        _pendingContextStop = null;
+        _logDiagnostic('turn end sid=$_logSid stop=${pending.stopReason.name}');
+        _logDiagnostic('run end sid=$_logSid');
+      case ContextStopOutcome.failed:
+        // `compacting` was already logged for this stop: the continuation
+        // ran but did not complete the turn — the run ends here, once.
+        _pendingContextStop = null;
+        _logDiagnostic(
+          'turn end sid=$_logSid stop=error (the continuation did not '
+          'complete)',
+        );
+        _logDiagnostic('run end sid=$_logSid');
+    }
+  }
+
   /// Over-window auto-continuation: on a context-window-exhausted stop,
   /// persist, auto-compact and — when the window was actually freed —
   /// resume the interrupted task on its own (ending the run there left
@@ -1705,9 +1749,10 @@ extension OverWindowContinuation on AgentCli {
     AssistantMessage lastMessage, {
     required bool isAutoContinue,
   }) async {
-    if (isAutoContinue ||
-        _overWindowAutoResumed ||
-        !isContextWindowExhaustedError(lastMessage.errorMessage)) {
+    if (!_contextStopContinuationArmed(
+      lastMessage,
+      isAutoContinue: isAutoContinue,
+    )) {
       return false;
     }
     _overWindowAutoResumed = true;

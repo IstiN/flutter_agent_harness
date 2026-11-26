@@ -129,7 +129,10 @@ import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/newest_user_turn.dart'
+    show isBoundarySummary, leadingBoundaryCluster, newestBoundarySummaries;
 import '../compaction/overhead_calibration.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap;
 import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -2635,6 +2638,10 @@ class AgentCli {
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// The context-stop turn end stashed by `_logEventForensics` — logged
+  /// when the run settles, not when the turn ends (gh-241 #5e, E2).
+  AssistantMessage? _pendingContextStop;
 
   /// The user-wired cancellation for the in-flight compaction, if any
   /// (issue #1085 M3): Ctrl+C during a 15-30 min pre-flight / relief /

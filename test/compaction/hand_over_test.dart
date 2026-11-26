@@ -403,4 +403,80 @@ void main() {
       expect(verdict.missing, isEmpty);
     });
   });
+
+  // gh-241 follow-up #5e (E3a): the hand-over model is TOLD how the run
+  // ended — the request snapshot never carries the final assistant reply.
+  group('handOverRunStatus (gh-241 follow-up #5e, E3a)', () {
+    test('a delivered final reply is stated as delivered', () {
+      final status = handOverRunStatus([
+        UserMessage.text('build the mips interpreter'),
+        AssistantMessage(
+          content: const [TextContent(text: 'done — it builds.')],
+          api: 'a',
+          provider: 'p',
+          model: 'm',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      ]);
+      expect(status, contains('WAS delivered'));
+      expect(status, contains('not pending'));
+    });
+
+    test('an unanswered newest user turn is stated as waiting', () {
+      final status = handOverRunStatus([
+        AssistantMessage(
+          content: const [TextContent(text: 'done — it builds.')],
+          api: 'a',
+          provider: 'p',
+          model: 'm',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage.text('and now this'),
+      ]);
+      expect(status, handOverRunStatusNoReply);
+    });
+
+    test('a tool-call-only or error assistant record is not a reply', () {
+      final status = handOverRunStatus([
+        UserMessage.text('go'),
+        AssistantMessage(
+          content: const [],
+          api: 'a',
+          provider: 'p',
+          model: 'm',
+          usage: Usage.zero,
+          stopReason: StopReason.error,
+          errorMessage: 'x',
+          timestamp: DateTime.utc(2026),
+        ),
+      ]);
+      expect(status, handOverRunStatusNoReply);
+    });
+
+    test('the instruction carries the status under its own heading', () {
+      final instruction = renderHandOverInstruction(
+        template: compactionHandOverPrompt,
+        contextTokens: 10,
+        windowTokens: 100,
+        foldFrom: 2,
+        foldTo: 6,
+        runStatus: handOverRunStatus(const []),
+      );
+      expect(instruction, contains('Run status: '));
+      expect(
+        renderHandOverInstruction(
+          template: compactionHandOverPrompt,
+          contextTokens: 10,
+          windowTokens: 100,
+          foldFrom: 2,
+          foldTo: 6,
+        ),
+        contains('Run status: '),
+      );
+    });
+  });
 }

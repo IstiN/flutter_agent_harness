@@ -428,6 +428,9 @@ final class StructuredCompactor {
         this,
         trigger: trigger,
         force: force,
+        // gh-241 follow-up #5e (E3a): the live transcript, unlike the
+        // request snapshot, holds the final assistant reply.
+        runStatus: handOverRunStatus(state.messages),
         softTriggered: softTriggered,
       );
     }

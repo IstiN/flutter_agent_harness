@@ -405,6 +405,18 @@ void main() {
         reason: 'boot settles instantly without any compaction pass',
       );
       expect(stream.calls, 0);
+      // gh-241 follow-up #5e (E1 regression pin, orchestrator decision
+      // 02:56): the walk HEAD ships opens this classic-boundary session
+      // on the boundary's summary plus every kept message. The
+      // summary-first re-page may only apply to a window WITHOUT a
+      // boundary — it used to open this one at "kept7", 8 records in.
+      final loaded = agent.agent.state.messages;
+      expect(
+        (loaded.first as UserMessage).content.toString(),
+        startsWith('The conversation history before this point was compacted'),
+      );
+      expect(loaded, hasLength(116), reason: 'summary + 115 kept messages');
+      expect(stream.calls, 0);
       expect(
         io.out.toString(),
         contains('compaction deferred to the first message'),

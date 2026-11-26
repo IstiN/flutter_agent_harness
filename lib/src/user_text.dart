@@ -48,6 +48,10 @@ final _projectionMarkerPattern = RegExp(
   r'|^\[context trimmed locally:',
 );
 
+/// gh-241 follow-up #5e (E4/E6): the checkpoint projection header —
+/// `[a-b:ckpt·…]`, optionally behind its record tag.
+final _checkpointMarkerPattern = RegExp(r'^(?:m\d+ )?\[\d+(?:-\d+)?:ckpt·');
+
 /// A consolidated hide marker is a label closed by its pointer
 /// (`old session list [expand 142-143]`): the pointer ends the text.
 final _labeledExpandPointerPattern = RegExp(r'\[expand \d+(?:-\d+)?\]$');
@@ -71,6 +75,20 @@ bool isSyntheticUserText(String text) {
       _projectionMarkerPattern.hasMatch(trimmed) ||
       _labeledExpandPointerPattern.hasMatch(trimmed);
 }
+
+/// gh-241 follow-up #5e (E4/E6): whether a user-role text is a rendered
+/// checkpoint summary — the `[a-b:ckpt·…]` header a checkpoint projects
+/// as, followed by the summary text and its hidden index.
+bool isCheckpointSummaryText(String text) =>
+    _checkpointMarkerPattern.hasMatch(text.trim());
+
+/// gh-241 follow-up #5e (E1/E6): whether a user-role text opens with a
+/// projection marker — a hidden-range or checkpoint marker, a fold
+/// pointer or the local trim marker. A resume walk that stops at the
+/// newest durable boundary OPENS the context with that boundary's
+/// markers.
+bool opensWithProjectionMarker(String text) =>
+    _projectionMarkerPattern.hasMatch(text.trim());
 
 /// Flattens a user-message content (plain text or content blocks) to its
 /// text — the same fold every projection and preview uses. Non-text

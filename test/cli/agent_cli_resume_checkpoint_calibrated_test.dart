@@ -294,6 +294,23 @@ void main() {
         UserMessage.text('follow-up question about the registers'),
       );
       final stream = FakeStreamFunction([textTurn('answered after resume')]);
+      // gh-241 follow-up #5e (E2): the pre-flight pass's failed judge
+      // calls used to eat the ONLY scripted answer, so the MAIN request
+      // itself errored (`turn end … stop=error`) behind a vacuous
+      // assertion. The main request (a multi-message context; the
+      // pass's prompts are single-message ones) now gets its answer
+      // just in time — the judge flow above it is unchanged.
+      AssistantMessageEventStream routed(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        if (context.messages.length > 1) {
+          stream.turns.insert(0, textTurn('answered after resume'));
+        }
+        return stream.call(model, context, cancelToken: cancelToken);
+      }
+
       final cli = AgentCli(
         config: _config(
           _model(window),
@@ -302,7 +319,7 @@ void main() {
           '/sessions',
         ),
         io: io,
-        streamFunction: stream.call,
+        streamFunction: routed,
       );
       final run = cli.run();
       await waitForIt(() => !cli.isBusy, reason: 'idle after boot');
@@ -348,47 +365,73 @@ void main() {
         reason: after,
       );
       expect(after, isNot(contains('older message(s) were dropped')));
+      // gh-241 follow-up #5e (E1): the boundary-resident context is no
+      // longer budget-trimmed, so a first turn over the trigger runs its
+      // pre-flight pass first — the MAIN request is the multi-message one.
+      final main = stream.contexts.firstWhere(
+        // (the pass's summarizer prompts are single-message contexts)
+        (c) => c.messages.length > 1,
+      );
       expect(
-        stream.contexts.single.messages
-            .whereType<UserMessage>()
-            .map((m) => m.content)
-            .last,
-        _turn,
+        main.messages.whereType<UserMessage>().map((m) => m.content.toString()),
+        contains(anyOf(equals(_turn), endsWith(_turn))),
       );
-      // D7: the tail line names the cut, and its figure is the number
-      // the first request is metered at (overhead + the loaded tail).
-      final tailLine = io.out
-          .toString()
-          .split('\n')
-          .firstWhere((l) => l.contains('[resume] loaded the last'));
-      final shown = int.parse(
-        RegExp(r'≈(\d+) tokens').firstMatch(tailLine)!.group(1)!,
-      );
-      final request = stream.contexts.single;
-      final firstEstimate = estimateRequestTokens(
-        request.messages,
-        systemPrompt: request.systemPrompt,
-        tools: request.tools ?? const [],
-        calibration: cli.agent.state.overheadCalibration,
-      );
-      final prompt = estimateTokens(UserMessage.text(_turn));
-      expect(
-        shown + prompt,
-        closeTo(firstEstimate, 4),
-        reason: 'tail line: $tailLine (first request $firstEstimate tokens)',
-      );
-      final texts = request.messages
+      // gh-241 follow-up #5e (E1): the boundary-resident window is not
+      // budget-trimmed, so the resume itself cuts nothing — no tail
+      // line — and the main request OPENS with the checkpoint summary.
+      // The first turn's pre-flight pass (summarizer down in this
+      // fixture) trims in memory with the summary pinned: the OLDEST raw
+      // history is gone from the request, the summary stays.
+      final texts = main.messages
           .whereType<UserMessage>()
           .map((m) => m.content.toString())
           .join('\n');
-      // The parity budget (907 tokens here) keeps the newest records;
-      // the OLDEST raw history stays on disk.
       expect(texts, isNot(contains('early raw 0')), reason: texts);
       expect(
-        tailLine,
-        contains('older record(s) left on disk'),
-        reason: tailLine,
+        main.messages.whereType<UserMessage>().first.content.toString(),
+        matches(RegExp(r'^(m\d+ )?\[\d+(?:-\d+)?:ckpt·')),
+        reason: 'the summary opens the request: $texts',
       );
+      // gh-241 follow-up #5e (E1, orchestrator decision 02:56): HEAD's
+      // budget walk runs FIRST (its route is byte-for-byte HEAD's
+      // whenever it reaches a boundary — the resume boot-cap pins
+      // AC3/AC5); here it stopped in the raw tail and E1 paged back to
+      // the boundary. The walk's report still names the records beyond
+      // the boundary, so the tail line MAY print — at most once, and
+      // only as the truthful boundary-bounded note carrying the summary,
+      // never with parity-cut wording.
+      final tailLines = io.out
+          .toString()
+          .split('\n')
+          .where((line) => line.contains('[resume] loaded the last'))
+          .toList();
+      expect(tailLines, hasLength(lessThanOrEqualTo(1)), reason: why);
+      for (final line in tailLines) {
+        expect(line, contains('(summary='), reason: line);
+        expect(line, isNot(contains('parity')), reason: line);
+        expect(line, isNot(contains('cut')), reason: line);
+      }
+      // … and (orchestrator decision, round 7): an over-trigger first
+      // request takes the EXISTING first-turn pre-flight compaction path
+      // — honestly: no `turn end stop=error` precedes what follows.
+      final logAfter =
+          (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ?? '';
+      final firstTurn = logAfter.substring(
+        logAfter.indexOf('resume walk sid=') > 0
+            ? logAfter.indexOf('resume walk sid=')
+            : 0,
+      );
+      expect(
+        firstTurn,
+        matches(RegExp(r'(auto-compact|compaction|over-window relief)')),
+        reason: 'the first turn runs the pre-flight path: $firstTurn',
+      );
+      expect(
+        logAfter,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: logAfter,
+      );
+      expect(logAfter, contains('run end sid='), reason: logAfter);
     },
   );
   test('C4: the tail line prints overhead + the estimated tail — the number '

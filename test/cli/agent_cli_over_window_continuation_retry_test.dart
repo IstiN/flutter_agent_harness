@@ -80,6 +80,18 @@ class ScriptedThenHangStream {
   }
 }
 
+/// Waits until the chained diagnostic log (fa.log) carries [needle] —
+/// `_logDiagnostic` appends asynchronously (gh-241 follow-up #5e, E2).
+Future<String> _logUntil(MemoryExecutionEnv env, String needle) async {
+  var log = '';
+  for (var i = 0; i < 100; i++) {
+    log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ?? '';
+    if (log.contains(needle)) return log;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  return log;
+}
+
 void main() {
   test(
     'the emergency relief recovers deterministically: no summarizer call',
@@ -217,6 +229,7 @@ void main() {
         config: AgentCliConfig(
           // gh-2411: overflow through messages, not overhead.
           systemPrompt: tinyPrompt,
+          homeDir: '/home',
           runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
@@ -258,6 +271,20 @@ void main() {
       // …and the loud terminal verdict is GONE.
       expect(output, isNot(contains('did not free it')));
       expect(output, isNot(contains('The task was NOT continued')));
+      // gh-241 follow-up #5e (E2): the stop that compacted and continued
+      // is logged as such — no `stop=error`, `run end` exactly once.
+      final log = await _logUntil(env, 'run end sid=');
+      expect(
+        log,
+        contains('stop=compacting (continuation pending)'),
+        reason: log,
+      );
+      expect(
+        log,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: log,
+      );
+      expect('run end sid='.allMatches(log).length, 1, reason: log);
     },
   );
 
@@ -298,6 +325,7 @@ void main() {
         config: AgentCliConfig(
           // gh-2411: overflow through messages, not overhead.
           systemPrompt: tinyPrompt,
+          homeDir: '/home',
           runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
@@ -332,6 +360,15 @@ void main() {
       );
 
       final exitCode = await cli.runHeadless('x' * 50000);
+      // gh-241 follow-up #5e (E2): a request that went out is not an
+      // error stop — no `stop=error`, `run end` exactly once.
+      final sentLog = await _logUntil(env, 'run end sid=');
+      expect(
+        sentLog,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: sentLog,
+      );
+      expect('run end sid='.allMatches(sentLog).length, 1, reason: sentLog);
       await io.close();
 
       expect(exitCode, 0, reason: 'in the regime the guard stands down');
