@@ -9,6 +9,7 @@ import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/boot/app_boot.dart';
+import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/network/network_mode.dart';
@@ -613,6 +614,16 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// First-launch onboarding shows only when nothing can be restored
   /// (upgraders with a saved connection never see it) and the persisted
   /// flag is still unseen.
+  /// Whether this boot will actually render the stock onboarding flow
+  /// (the source: stock analytics case — fresh, nothing restorable).
+  bool _stockOnboardingWillShow() {
+    final store = widget.onboardingStore;
+    final restorableNetwork =
+        widget.networkMode?.mode == AppMode.network &&
+        widget.networkMode?.networkId != null;
+    return store != null && !store.seen && !restorableNetwork;
+  }
+
   bool get _showOnboarding {
     final store = widget.onboardingStore;
     final restorableNetwork =
@@ -647,6 +658,17 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       ),
       hostSession: widget.hostSession,
     );
+    // Product analytics (gh-2391 addendum 3): the boot's session source,
+    // once per process. The bridge is a no-op without the host hook.
+    if (widget.hostSession != null) {
+      ProductAnalyticsBridge.instance.track('agent_session_started', {
+        'source': 'host',
+      });
+    } else if (_config == null && _stockOnboardingWillShow()) {
+      ProductAnalyticsBridge.instance.track('agent_session_started', {
+        'source': 'stock',
+      });
+    }
     // The skills-consent dialog fires only for an EXPLICIT `ask` choice
     // (Settings) — discovery is on by default, so a fresh install never
     // sees it. Mobile never asks: the third-party roots don't exist there.

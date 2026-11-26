@@ -140,6 +140,38 @@ key/payload-substitution rejection, stale-base conflict, download hashes and
 conditional delete. The function requires `allowMutations: true` to prevent
 accidental production traffic.
 
+## Host product analytics bridge
+
+A branded web shell can receive Fa's product events through one
+window-global hook (gh-2391 addendum). The bridge is host-agnostic: Fa
+never talks to GA4, consent or any vendor — it forwards a fixed event
+vocabulary to `window.ainTrack(name, params)` when that function exists.
+
+Host contract:
+
+- The host page (its site-wide wrapper script) defines
+  `window.ainTrack(name: string, params: object)` before or during the
+  shell's lifetime. The hook self-gates on the host's consent flow: before
+  consent it is a no-op. Fa never gates, buffers, queues or retries — a
+  call is fire-and-forget, once, at the documented moment.
+- A missing or non-function hook disables the bridge entirely: every call
+  is a no-op. Stock Fa (no host wrapper) and native hosts have no hook, so
+  their behavior is byte-identical to before. The hook name is declared
+  once in `flutter_app/lib/analytics/product_analytics_sink_web.dart`
+  (`productAnalyticsHookName`).
+- Fa never reads anything back from the hook, and a throwing hook is
+  swallowed — the host's analytics can never break the app.
+- Events carry no PII: only the fields listed below, all non-personal.
+
+| Event | Params | Fired when |
+|---|---|---|
+| `agent_session_started` | `source`: `"host"` (the hostConnection bridge resolved at boot) or `"stock"` (the stock first-launch onboarding is about to render) | once per process boot |
+| `agent_chat_message_sent` | `model`: the model id of the connection | the FIRST turn of a session that actually starts (steering into a streaming turn never counts) |
+| `agent_theme_changed` | `packId`: the theme pack id, `""` for the stock look | a visitor (or an in-app js-app theme switch) applies a different pack; the boot-time profile-default apply is NOT tracked |
+
+Extension of the event vocabulary follows the same rules: flat string
+params, no PII, documented here first.
+
 ## Focused verification
 
 ```sh

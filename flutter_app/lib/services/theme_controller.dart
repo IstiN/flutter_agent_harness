@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -125,7 +126,16 @@ class ThemeController extends ChangeNotifier {
   /// [hasWallpaper] so [wallpaperPackId] tracks the last pack that did
   /// ship one, independently of [packId]. Persistence is best effort,
   /// same contract as [setMode].
-  Future<void> setPack(String? packId, {bool? hasWallpaper}) async {
+  ///
+  /// A real selection fires the product analytics bridge
+  /// (`agent_theme_changed {packId}`, gh-2391 addendum — empty packId =
+  /// stock). Boot-time profile-default applies pass [productTracked]:
+  /// false — the visitor did not change anything.
+  Future<void> setPack(
+    String? packId, {
+    bool? hasWallpaper,
+    bool productTracked = true,
+  }) async {
     if (packId == _packId && hasWallpaper != true) return;
     _packId = packId;
     if (packId == null) {
@@ -135,6 +145,11 @@ class ThemeController extends ChangeNotifier {
     }
     await _persist();
     notifyListeners();
+    if (productTracked) {
+      ProductAnalyticsBridge.instance.track('agent_theme_changed', {
+        'packId': packId ?? '',
+      });
+    }
   }
 
   /// Writes the current envelope; best effort by design.

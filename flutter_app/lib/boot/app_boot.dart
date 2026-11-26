@@ -482,6 +482,9 @@ Future<ThemePackStore> _configureBootTheme(
     await themeController.setPack(
       selectedPack.id,
       hasWallpaper: selectedPack.wallpaperBytes != null,
+      // The profile default is not a visitor action (gh-2391 addendum):
+      // it never fires agent_theme_changed.
+      productTracked: false,
     );
   }
   return themePacks;

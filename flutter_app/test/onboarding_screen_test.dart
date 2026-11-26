@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/l10n/app_localizations.dart';
@@ -980,6 +981,82 @@ void main() {
       expect(find.byType(FaBrandTile), findsOneWidget);
       expect(find.byType(SetupScreen), findsNothing);
       expect(find.byType(OnboardingScreen), findsNothing);
+    });
+
+    testWidgets(
+      'boot tracks agent_session_started {source: host} (gh-2391 addendum)',
+      (tester) async {
+        final recorded = <List<Object?>>[];
+        ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+          recorded.add([event, params]);
+        });
+        addTearDown(
+          ProductAnalyticsBridge.instance.restorePlatformSinkResolver,
+        );
+        final hostSession = HostSessionState(
+          provider: const CustomProvider(
+            id: 'host',
+            name: 'AIN',
+            baseUrl: 'https://api.ain.example/v1',
+            modelId: 'ain/ain_flash',
+            provenance: 'host',
+            kind: 'host-session',
+          ),
+          bridgedKey: 'bridged-key',
+          connection: _hostConnectionConfig(),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: BootstrapScreen(
+              env: MemoryExecutionEnv(),
+              lastConnectionStore: LastConnectionStore.inMemory(),
+              onboardingStore: OnboardingStore.inMemory(),
+              sessionKeysStore: SessionKeysStore.inMemory(),
+              hostSession: hostSession,
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(recorded, [
+          [
+            'agent_session_started',
+            {'source': 'host'},
+          ],
+        ]);
+      },
+    );
+
+    testWidgets('stock first-launch onboarding tracks agent_session_started '
+        '{source: stock}', (tester) async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            onboardingStore: OnboardingStore.inMemory(),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(OnboardingScreen), findsOneWidget);
+      expect(recorded, [
+        [
+          'agent_session_started',
+          {'source': 'stock'},
+        ],
+      ]);
     });
 
     testWidgets('a resolved host session boots straight to the workspace — '
