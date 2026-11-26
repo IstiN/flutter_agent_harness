@@ -66,8 +66,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   scheduled-or-gate live runs in the PR path. A proven flake (red in ≥2
   distinct-SHA gate runs within 24h) is quarantined via
   `scripts/test_quarantine.json` (checked in, reviewed in the fix PR;
-  `flake-watch.yml` files the issue and opens the PR) — the gate legs pipe
-  their targets through `scripts/apply_quarantine.py`, while nightly
+  `flake-watch.yml` files the issue and opens the PR) — the gate legs (CI's
+  `integration-mock` and `pty-integration-linux` jobs and the local
+  `stage_integration_mock` of `scripts/ci_fast_gate.sh`) pipe their targets
+  through `scripts/apply_quarantine.py`, while nightly
   KEEPS running the file to produce the un-quarantine repeat-run proof.
   Flake intake consumes PR-dispatch runs only (gh-1537:
   `scripts/flake_watch.py` filters to `workflow_dispatch` events — the

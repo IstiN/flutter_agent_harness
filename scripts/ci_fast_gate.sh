@@ -283,21 +283,47 @@ stage_integration_mock() {
   # green in isolation) — the budget turns one flaky PTY case from a full
   # leg rerun into a minutes-scoped file rerun, mirroring CI's
   # retrigger-recovery behaviour (ci.yml watchdog: ONE retrigger, never a
-  # blind rerun). 0 (the default) keeps the single-shot leg below
-  # byte-identical. Files come from scripts/gate_failed_targets.py over
+  # blind rerun). 0 (the default) keeps the single-shot leg
+  # single-shot — no rerun. Files come from scripts/gate_failed_targets.py over
   # the dart json file-reporter log; when the log yields no targets
   # (crash before the reporter flushed) the stage fails WITHOUT a rerun —
   # never rerun blind.
   local retries="${FA_GATE_PTY_RETRIES:-0}"
+  #
+  # Quarantine parity (gh-1199 AC6): a file listed in
+  # scripts/test_quarantine.json is REMOVED from every deterministic
+  # integration gate leg until its fix lands — nightly still runs it.
+  # CI's two legs (ci.yml jobs `integration-mock` and
+  # `pty-integration-linux`) pipe their target list through
+  # scripts/apply_quarantine.py; this stage ran the bare directory, so the
+  # hook ran files CI never runs and went red on them (#1422 AC1 and #1469
+  # are deterministic reds on macOS → every hook run that triggers the
+  # stage failed on pre-existing, already-quarantined tests). Same sorted
+  # explicit-file-list shape as ci.yml; the filter prints a `::warning::`
+  # per dropped file (E3: a quarantine never swallows a regression
+  # silently). Pinned by test/ci_integration_mock_quarantine_guard_test.dart.
+  local targets
+  targets=$(find test/integration -name '*_test.dart' | sort \
+    | python3 scripts/apply_quarantine.py) || {
+    echo "❌ quarantine filter failed — refusing to run an unfiltered leg" >&2
+    exit 1
+  }
+  # An empty selection must run NOTHING: a `dart test` without a path
+  # argument would silently run the whole default test tree instead.
+  if [ -z "$targets" ]; then
+    echo "   every integration file is quarantined — nothing to run" >&2
+    return 0
+  fi
+  echo "   targets after the quarantine filter: $(printf '%s\n' $targets | wc -l | tr -d ' ')"
   if [ "$retries" -le 0 ]; then
     TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
-      dart test ${conc:+--concurrency=$conc} test/integration \
+      dart test ${conc:+--concurrency=$conc} $targets \
       --exclude-tags llm,browser-ext,perf,pty
     return
   fi
   local log="build/test-results/gate-integration-mock.json"
   mkdir -p build/test-results
-  local targets="test/integration"
+  local attempt=0
   local attempt=0
   while true; do
     attempt=$((attempt + 1))

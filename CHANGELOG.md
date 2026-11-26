@@ -13,6 +13,16 @@ block a release again.
 
 ## Unreleased
 
+- fix(scripts): gh-1199 AC6 quarantine parity — the local `integration-mock`
+  stage of `scripts/ci_fast_gate.sh` now pipes its targets through
+  `scripts/apply_quarantine.py` like both CI legs (`integration-mock`,
+  `pty-integration-linux`); it ran the bare `test/integration` directory,
+  so the pre-commit hook ran the 13 flake-quarantined files CI never runs
+  and went red on them (#1422 AC1 and #1469 are deterministic reds on
+  macOS). A failed filter refuses to run an unfiltered leg; an
+  all-quarantined selection runs nothing. Guard:
+  `test/ci_integration_mock_quarantine_guard_test.dart`.
+
 - fix(network): device-WS eviction storm — N `fa` sessions on one Mac each
   held their own upstream WebSocket under ONE enrolled device while fa_network
   evicts the older socket on every new dial (contract §10): ~100 dials/min and
