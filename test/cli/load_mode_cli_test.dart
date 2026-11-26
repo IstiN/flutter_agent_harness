@@ -83,8 +83,9 @@ void main() {
     // This fake env wires no vision/transcription/media slots and the
     // test model is not OpenRouter, so the four conditional tools are
     // capability-absent; lsp/web_search/web_fetch are capability-absent
-    // too (no transports). The keep-12 minus those + the `others` stub =
-    // exactly 10 entries.
+    // too (no transports). The keep-12 minus those + the `others` stub +
+    // the gh-2423 always-on `working_set` (every agent, every host) =
+    // exactly 12 entries.
     test(
       'default boot = keep-12 ∩ capabilities + others, nothing else',
       () async {
@@ -100,7 +101,9 @@ void main() {
         // GOAL #28 review round 2: session_search rides the keep set
         // always-on (the prompt-recall contract pins it under BOTH
         // engines), so the boot manifest is the keep-13 minus the
-        // capability-absent names + the `others` stub = 11 entries.
+        // capability-absent names + the `others` stub + the gh-2423
+        // always-on `working_set` (C1: every agent, every host) = 12
+        // entries.
         expect(bootNames, {
           'read',
           'write',
@@ -110,6 +113,7 @@ void main() {
           'bash_job',
           'memory_add',
           'memory_search',
+          'working_set',
           'reply',
           'session_search',
           'others',
