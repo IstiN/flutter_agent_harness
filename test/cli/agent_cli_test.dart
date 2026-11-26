@@ -888,7 +888,9 @@ void main() {
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      // 80000 chars = 20k tokens — crosses the 16k window on its own
+      // (issue #2416: the slim manifest removed ~12.5k overhead tokens).
+      textTurn('a' * 80000),
       textTurn('AUTO SUMMARY'),
     ]);
     // Issue #287: pins the classic rollback's CompactionRecord outcome.
@@ -955,7 +957,14 @@ void main() {
         //    at the turn boundary — the relief never touched it).
         textTurn('S'),
       ]);
-      final shell = FakeShell(stdout: 'x' * 32800);
+      final shell = FakeShell(
+        stdout:
+            // 45000 chars = 11250 tokens — three of these cross the 32k
+            // window on their own (issue #2416: the slim manifest removed
+            // ~12.5k overhead tokens from every estimate), under the
+            // 51200-byte tool-output cap so truncation keeps them intact.
+            'x' * 45000,
+      );
       final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
       final cli = cliFor(
         fake.call,

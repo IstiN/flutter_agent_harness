@@ -50,6 +50,20 @@ void main() {
   String textOf(ToolExecutionResult result) =>
       result.content.whereType<TextContent>().map((b) => b.text).join();
 
+  /// GOAL #28 (issue #2416): the task_* lifecycle tools DEFER to the
+  /// `others` surface — mount them by name before driving their flows.
+  Future<void> mountLifecycle(AgentCli cli, List<String> names) async {
+    final others = cli.agent.state.tools.whereType<AgentTool>().firstWhere(
+      (t) => t.name == 'others',
+      orElse: () => throw StateError(
+        'the others stub must be registered under the default partition',
+      ),
+    );
+    for (final name in names) {
+      await others.execute({'tool_name': name}, null, null);
+    }
+  }
+
   test('the real CLI registers WORKING lifecycle tools (readMessages, '
       'resumeChild, childSessionOpener all wired)', () async {
     final fake = FakeStreamFunction([
@@ -84,7 +98,9 @@ void main() {
     });
     expect(cli.subagentManager['scout']!.status, SubagentStatus.completed);
 
-    // Registered through the real tool registry (the model-visible list).
+    // GOAL #28: the lifecycle tools defer to `others` — mount them, then
+    // the real registry carries them (the model-visible list).
+    await mountLifecycle(cli, ['task_send', 'task_resume', 'task_observe']);
     final tools = cli.agent.state.tools.whereType<AgentTool>().toList();
     final names = tools.map((t) => t.name).toSet();
     expect(names, containsAll(['task_send', 'task_resume', 'task_observe']));
@@ -155,6 +171,7 @@ void main() {
     cli.subagentManager['scout']!.sessionId =
         '${cli.subagentManager.mailboxPrefix}/scout';
 
+    await mountLifecycle(cli, ['task_observe']);
     final tools = cli.agent.state.tools.whereType<AgentTool>().toList();
     final observe = tools.firstWhere((t) => t.name == 'task_observe');
     final observed = textOf(await observe.execute({'id': 'scout'}, null, null));

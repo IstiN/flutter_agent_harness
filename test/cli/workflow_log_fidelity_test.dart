@@ -882,7 +882,11 @@ void main() {
       );
       final env = MemoryExecutionEnv(
         cwd: '/work',
-        shell: FakeShell(stdout: 'x' * 32800),
+        // 45000 chars = 11250 tokens per result — the three outputs
+        // cross the 32k window on their own (issue #2416: the slim
+        // manifest removed ~12.5k overhead tokens from every estimate)
+        // while staying under the 51200-byte tool-output cap.
+        shell: FakeShell(stdout: 'x' * 45000),
       );
       // Suppress session-start memory maintenance so the scripted turns
       // feed only the run under test (agent_cli_test pattern).

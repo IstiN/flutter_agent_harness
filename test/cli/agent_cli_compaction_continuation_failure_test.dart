@@ -43,7 +43,11 @@ void main() {
       contextWindow: 32768,
       maxTokens: 4096,
     );
-    final shell = FakeShell(stdout: 'x' * 32800);
+    // 56000 chars = 14k tokens per result; three of them cross the 32k
+    // window on their own, under the 51200-byte tool-output cap
+    // (issue #2416: the slim manifest removed ~12.5k
+    // overhead tokens from every over-window estimate).
+    final shell = FakeShell(stdout: 'x' * 45000);
     final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
     // Suppress session-start memory maintenance so the scripted turns
     // feed only the turn under test (same pattern as agent_cli_test).
@@ -52,7 +56,8 @@ void main() {
     final io = _BombingIO('BOOM', 2);
     final fake = FakeStreamFunction([
       // The guard's over-window shape: three tool calls whose outputs
-      // (~8200 tokens each) balloon the next request past the window.
+      // (~11250 tokens each, under the 51200-byte tool-output cap so they
+      // survive truncation) balloon the next request past the window.
       // gh-209: the mid-turn relief is the deterministic emergency tier
       // — no buster candidate (no single result near the window), no
       // dedup (three different paths), and the trim valve keeps its

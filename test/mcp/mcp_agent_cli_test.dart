@@ -89,11 +89,40 @@ void main() {
       streamFunction: stream.call,
     );
     final run = cli.run();
-    // The server connects in the background: the tool is not in the
-    // registry at construction but arrives before the first turn ends.
+    // GOAL #28 (issue #2416): the connected MCP tool DEFERS under the
+    // default partition — hidden from the schema, mounted through the
+    // `others` discovery surface (the model's own flow). The server
+    // connects in the background; once it does, others names the tool and
+    // the mount puts it in the registry.
+    Tool? othersTool() => cli.agent.state.tools
+        .whereType<Tool>()
+        .where((t) => t.name == 'others')
+        .firstOrNull;
     await waitForIt(
-      () => cli.agent.state.tools.any((t) => t.name == 'mcp__fake__echo'),
-      reason: 'mcp tool registered',
+      () => othersTool() != null,
+      reason: 'the others stub registered',
+    );
+    await waitForIt(() async {
+      final listing = await (othersTool()! as AgentTool).execute(
+        const {},
+        null,
+        null,
+      );
+      return (listing.content
+              .whereType<TextContent>()
+              .map((b) => b.text)
+              .join())
+          .contains('mcp__fake__echo');
+    }, reason: 'the connected mcp tool is deferred-but-discoverable');
+    await (othersTool()! as AgentTool).execute(
+      const {'tool_name': 'mcp__fake__echo'},
+      null,
+      null,
+    );
+    expect(
+      cli.agent.state.tools.any((t) => t.name == 'mcp__fake__echo'),
+      isTrue,
+      reason: 'mounted mcp tool enters the schema',
     );
     expect(cli.systemPrompt, contains('## MCP servers'));
     expect(cli.systemPrompt, contains('`fake` (connected): 1 tool(s)'));

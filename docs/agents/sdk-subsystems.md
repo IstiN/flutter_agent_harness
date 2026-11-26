@@ -350,16 +350,21 @@
   (hide/restore + prompt rebuild) and tombstones calls to disabled tools.
   CLI surface in `lib/src/cli/agent_cli_tools.dart` (`/tools`, live
   rebuild); docs/tool-availability.md is the user-facing page.
-- `lib/src/tools/load_modes.dart` + `discover_tools_tool.dart` — agent
-  load modes (issue #680): `--omp` > `FA_AGENT_MODE` > `agent.mode`
-  (`default|pi|omp`) pick the tool-LOAD preset — `default` loads every
-  enabled tool; `pi` the 4-tool benchmark base (issue #679, discovery
-  off); `omp` the essential base with everything else discoverable,
-  mounted on demand through the omp-only `discover_tools` meta tool (an
-  explicit `tools: {id: on}` is a standing mount). The gate's
-  `discoveryEnabled` flag keeps the discoverable tombstone from
-  dead-ending on `discover_tools` in modes that don't register it. CLI
-  sync + `/settings` switch in `agent_cli_tools.dart`/`settings_flow.dart`;
+- `lib/src/tools/load_modes.dart` + `others_tool.dart` — agent load
+  modes (issue #680 + GOAL #28/#2416): `--omp` > `FA_AGENT_MODE` >
+  `agent.mode` (`default|pi|omp`) pick the tool-LOAD preset. `default`
+  is the owner's partition: the keep-12 essential NAMES load (the
+  `memory` family splits; `reply` stays), the capability-conditional
+  tools (`inspect_image`, `generate_image`, `generate_video`, `decide`,
+  `transcribe_audio`) register iff their capability exists, and
+  everything else defers to the ONE `others` discovery surface (list +
+  per-name mount; no proxy execution — real tool names everywhere).
+  `pi` keeps the 4-tool benchmark base (issue #679, discovery off); `omp`
+  its essential id set with id-level demotion, discovered through
+  `others` too (an explicit `tools: {id: on}` is a standing mount). The
+  gate's `discoveryEnabled` flag keeps the deferred tombstone from
+  dead-ending on `others` in modes that don't register it. CLI sync +
+  `/settings` switch in `agent_cli_tools.dart`/`settings_flow.dart`;
   user-facing docs: docs/tool-availability.md §Load modes.
 - `lib/src/lsp/` — `lsp` tool (diagnostics/definition/references/rename):
   pure-Dart JSON-RPC client over `LspTransport`; `.dart` →

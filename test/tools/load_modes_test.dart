@@ -40,15 +40,6 @@ void main() {
       }
     });
 
-    test('discovery ships with omp only (pi is #679\'s exact shape)', () {
-      // The review of PR #690 pinned this: pi is pi-mono's exact
-      // benchmark config — 4 tools, discovery OFF — so the meta tool is
-      // omp's alone; the default mode has no demotion to discover.
-      expect(discoveryEnabledByLoadMode[AgentLoadMode.omp], isTrue);
-      expect(discoveryEnabledByLoadMode[AgentLoadMode.pi], isFalse);
-      expect(discoveryEnabledByLoadMode[AgentLoadMode.defaultMode], isFalse);
-    });
-
     test('labels round-trip through agentLoadModeFromLabel', () {
       for (final mode in AgentLoadMode.values) {
         expect(agentLoadModeFromLabel(mode.label), mode);
@@ -122,6 +113,68 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('default partition (GOAL #2416 UT-1)', () {
+    test(
+      'default essential names are exactly the keep-12 + session_search',
+      () {
+        // GOAL #28 review round 2: session_search rides the keep set
+        // always-on (the prompt-recall contract pins it under BOTH engines)
+        // — thirteen names.
+        expect(essentialToolNamesByLoadMode[AgentLoadMode.defaultMode], {
+          'read',
+          'write',
+          'edit',
+          'ls',
+          'bash',
+          'bash_job',
+          'lsp',
+          'web_search',
+          'web_fetch',
+          'memory_add',
+          'memory_search',
+          'reply',
+          'session_search',
+        });
+      },
+    );
+
+    test('pi and omp id presets are unchanged (GOAL #2416 non-goal)', () {
+      expect(essentialToolIdsByLoadMode[AgentLoadMode.pi], {
+        'read',
+        'write',
+        'edit',
+        'bash',
+      });
+      expect(essentialToolIdsByLoadMode[AgentLoadMode.omp], {
+        'read',
+        'write',
+        'edit',
+        'bash',
+        'ls',
+        'task',
+        'ask',
+      });
+      expect(essentialToolIdsByLoadMode[AgentLoadMode.defaultMode], isNull);
+    });
+
+    test('discovery on for default and omp, off for pi', () {
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.defaultMode], isTrue);
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.omp], isTrue);
+      expect(discoveryEnabledByLoadMode[AgentLoadMode.pi], isFalse);
+    });
+
+    test('the conditional set names the four capability-bound tools '
+        'plus transcribe_audio', () {
+      expect(conditionalCapabilityToolNames, {
+        'inspect_image',
+        'generate_image',
+        'generate_video',
+        'decide',
+        'transcribe_audio',
+      });
     });
   });
 
