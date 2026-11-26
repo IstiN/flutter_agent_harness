@@ -13,6 +13,23 @@ block a release again.
 
 ## Unreleased
 
+- feat(2416): GOAL #28 slim tool manifest — the default load mode is the
+  owner's partition: twelve always-visible tools (keep-12, name-level:
+  `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
+  defer; `reply` stays for subagent delivery) + one `others` discovery
+  stub replacing the 34-schema manifest (≈50.1k → ≈19.1k wire chars,
+  −62%). `others` lists deferred tools with one-line docs and mounts one
+  per call, returning the tool's own description + compact schema (the
+  ledger bytes — no proxy execution, real names everywhere); `discover_tools`
+  is retired (omp discovers through `others`, `pi` keeps discovery off).
+  `generate_image`/`generate_video`/`decide` (with `inspect_image`) are
+  capability-conditional: registered iff the media slot resolves /
+  the main provider is OpenRouter, live-synced on `/models set`,
+  `/model`, `/provider` — absent with a reason, never present-and-erroring.
+  New availability ids `config`/`compact_expand`/`decide` + `task_resume`
+  in the `task` family; `/tools` renders loaded · deferred · off(reason)
+  plus the `others` row; tools-section prompt names the deferred rule;
+  REG pin: default manifest ≤ 21,000 wire chars (hard gate).
 - fix(network): device-WS eviction storm — N `fa` sessions on one Mac each
   held their own upstream WebSocket under ONE enrolled device while fa_network
   evicts the older socket on every new dial (contract §10): ~100 dials/min and

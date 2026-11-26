@@ -99,19 +99,20 @@ Hard rules the stack cannot override:
 
 ## Load modes
 
-**Load modes** (issue #680) decide how much of the available tool set is
-LOADED into the provider-facing schema at boot — after oh-my-pi's
-`essential-tools` model: a curated base loads, everything else stays
-**discoverable** (enabled but out of the schema until mounted on demand).
-A mode never disables anything: every enabled tool stays enabled, and
-`tools:` scopes resolve exactly as above — the preset only picks which
-enabled ids sit in the prompt from the start.
+**Load modes** (issue #680; the default partition is GOAL #28, issue
+#2416) decide how much of the available tool set is LOADED into the
+provider-facing schema at boot — after oh-my-pi's `essential-tools`
+model: a curated base loads, everything else stays **deferred** (enabled
+but out of the schema until mounted on demand). A mode never disables
+anything: every enabled tool stays enabled, and `tools:` scopes resolve
+exactly as above — the preset only picks which enabled tools sit in the
+prompt from the start.
 
 | Mode | Schema at boot | Everything else |
 |---|---|---|
-| `default` | Every enabled tool — no preset, byte-identical to pre-#680 behavior. | — |
-| `pi` | `read`, `write`, `edit`, `bash` (pi-mono's exact benchmark shape, issue #679). | Discoverable, **discovery off** — no `discover_tools`; switch modes to load more. |
-| `omp` | `read`, `write`, `edit`, `bash`, `ls`, `task`, `ask`. | Discoverable, **discovery on** — listed/mounted via `discover_tools`. |
+| `default` | The **keep-12 + `session_search`** (`read`, `write`, `edit`, `ls`, `bash`, `bash_job`, `lsp`, `web_search`, `web_fetch`, `memory_add`, `memory_search`, `reply`, `session_search` — the recall contract pins it always-on under both engines, issue #2416 review round 2) plus every **capability-conditional** tool whose capability is present (`inspect_image`, `generate_image`, `generate_video`, `decide`, `transcribe_audio`), plus the `others` stub. | Deferred, **discovery on** — listed/mounted via `others` (one `tool_name` call each). |
+| `pi` | `read`, `write`, `edit`, `bash` (pi-mono's exact benchmark shape, issue #679). | Deferred, **discovery off** — no discovery surface; switch modes to load more. |
+| `omp` | `read`, `write`, `edit`, `bash`, `ls`, `task`, `ask`. | Deferred, **discovery on** — listed/mounted via `others`. |
 
 Three surfaces pick the mode, deepest wins (issue #680 AC3): the
 `--omp` flag (boots the omp preset outright), the `FA_AGENT_MODE` env
@@ -122,41 +123,60 @@ must never silently boot the default mode. The CLI `/settings` "Load
 mode" picker switches live: it writes `agent.mode` and re-applies
 without a restart.
 
-Demotion rules (what a preset pushes to discoverable):
+Demotion rules (what a preset pushes to deferred):
 
-- Every ENABLED id outside the preset's essential set — static tool ids
-  and `mcp:<server>` families alike (MCP schemas are the heaviest; the
-  card lists `mcp__*` among the discoverable).
+- The omp/pi presets demote every ENABLED **id** outside their essential
+  set — static tool ids and `mcp:<server>` families alike (MCP schemas
+  are the heaviest; the card lists `mcp__*` among the deferred).
+- The default partition demotes by **NAME**: an enabled tool defers iff
+  its name is outside the keep-12 and the capability-conditional set.
+  Family ids whose members split resolve per name — `memory_add` +
+  `memory_search` load while `memory_list`/`memory_delete` defer, and
+  `reply` (a `task`-family member) stays loaded so subagents deliver
+  natively. Family-less ids (`dap`, `sqlite`) and every `mcp:<server>`
+  family defer at id level; MCP, host-extension, plugin and
+  subagent-only tools follow the same rule: loaded only via a standing
+  mount or `others`.
+- Capability-conditional tools (GOAL #28) never defer under the default
+  partition — but a missing capability is the hard floor: such a tool is
+  ABSENT (unregistered, with the reason in `/tools`), never
+  present-and-erroring, and invisible to both the schema and the
+  `others` listing.
 - An explicit `tools: {id: on}` in any scope is a **standing mount**:
   the id loads even under a preset (the user asked for the tool; the
-  preset only curates the default). Per-server `tools: {mcp:<server>: on}`
+  partition only curates the default). Per-server `tools: {mcp:<server>: on}`
   and the aggregate `tools: {mcp: on}` keep MCP families loaded the same
   way.
 - An explicit `off` still disables — disable is disable, never demotion;
   the essential set itself is pinned (nothing in the scope stack can
-  demote it).
+  demote it), and a disabled tool is in neither the schema nor the
+  `others` listing (mount refuses with the disabled tombstone).
 
-### The `discover_tools` surface
+### The `others` surface
 
-`discover_tools` is the discovery meta tool of the omp mode — registered
-ONLY in omp (`discoveryEnabledByLoadMode`; the availability rebuild
-syncs it, so a mid-session `/settings` mode switch registers or
-unregisters it live). It carries no availability id, so it sits outside
+`others` is the ONE discovery surface (GOAL #28, issue #2416 — it
+replaced #680's `discover_tools`): registered iff discovery is on for
+the mode AND at least one deferred tool exists (nothing deferred means
+no stub; an MCP server connecting later brings it back through the next
+availability rebuild). It carries no availability id, so it sits outside
 the `tools:` scope stack — no config can hide it. Pi keeps pi-mono's
-exact four-tool shape with discovery off (issue #679), and the default
-mode never sees it.
+exact four-tool shape with discovery off (issue #679).
 
-Called with no arguments it lists every discoverable-and-unmounted tool
-with a one-line doc; with `mount: [names]` it loads those tools into the
-schema for the rest of the session (a mount is session-scoped and
-survives availability re-applies — nothing unmounts automatically; there
-is deliberately no GC). Mounting re-applies the availability resolution,
-so the tool enters the registry and the prompt rebuilds.
+Called with no `tool_name` it lists every deferred tool with a one-line
+doc; with `tool_name` it mounts exactly that tool and returns its full
+description plus the compact parameter schema — the same bytes the
+providers serialize and the trajectory ledger captures (no second
+documentation source exists). `others` never executes anything: there is
+no proxy call, and every gate (approval tiers, redaction, misuse policy,
+ttsr, skills, HEP frames, the ledger) keeps seeing the REAL tool name of
+every executed call. A mount is session-scoped and survives availability
+re-applies and mode switches — nothing unmounts automatically; there is
+deliberately no GC.
 
-A call to a discoverable tool that is not mounted never executes: the
+A call to a deferred tool that is not mounted never executes: the
 executor answers a tombstone that follows the live mode — while the
-discovery surface is registered (omp) it says to call `discover_tools`
-and mount by name; in a mode without it (pi) it points at the
+discovery surface is registered (default, omp) it says to call
+`others` with `tool_name`; in a mode without it (pi) it points at the
 `/settings` load-mode switch (`agent.mode`) and this page instead of a
 tool that mode never shipped.
 

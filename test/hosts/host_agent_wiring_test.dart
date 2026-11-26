@@ -42,7 +42,30 @@ AgentCoreServices fullServices(
   ),
   onAsk: (questions) async => null,
   onRequestSecret: (name, reason) async => null,
-  media: MediaToolServices(mainApiKey: () => 'key'),
+  // GOAL #28: the media tools are capability-conditional at birth — the
+  // full bundle carries both slots so the order-parity fixture still
+  // surfaces generate_image/generate_video.
+  media: MediaToolServices(
+    mainApiKey: () => 'key',
+    modelsConfig: ModelsConfig(
+      slots: {
+        'imageGeneration': MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://media.test/v1',
+          modelId: 'img-1',
+        ),
+        'videoGeneration': MediaSlotModelConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://media.test/v1',
+          modelId: 'vid-1',
+        ),
+      },
+    ),
+  ),
+  decisions: DecisionsServices(
+    mainApiKey: () => 'key',
+    mainProviderKind: () => 'openrouter',
+  ),
   hubFabric: const _HubRepo(),
   mainMailbox: () => 'main',
   extRuntimeFactory: Object(),
@@ -366,7 +389,10 @@ void main() {
         baseEnv: MemoryExecutionEnv(cwd: '/w'),
         sandbox: const SandboxServices(),
         sessionRoot: '/tmp/fah-test',
-        decisions: DecisionsServices(mainApiKey: () => 'k'),
+        decisions: DecisionsServices(
+          mainApiKey: () => 'k',
+          mainProviderKind: () => 'openrouter',
+        ),
       );
       final wired = wireAgentCore(profile: cliProfile, services: services);
       final names = wired.tools.map((t) => t.name).toSet();
@@ -384,6 +410,87 @@ void main() {
       final wired = wireAgentCore(profile: cliProfile, services: services);
       final names = wired.tools.map((t) => t.name).toSet();
       expect(names, isNot(contains('decide')));
+    });
+
+    test('decide is absent at birth on a non-OpenRouter main (GOAL #28)', () {
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        sessionRoot: '/tmp/fah-test',
+        decisions: DecisionsServices(
+          mainApiKey: () => 'k',
+          mainProviderKind: () => 'anthropic',
+        ),
+      );
+      final wired = wireAgentCore(profile: cliProfile, services: services);
+      expect(wired.tools.map((t) => t.name), isNot(contains('decide')));
+    });
+  });
+
+  group('capability-conditional media birth (GOAL #28, issue #2416)', () {
+    AgentCoreServices mediaServices(ModelsConfig? modelsConfig) =>
+        AgentCoreServices(
+          baseEnv: MemoryExecutionEnv(cwd: '/w'),
+          sandbox: const SandboxServices(),
+          sessionRoot: '/tmp/fah-test',
+          media: MediaToolServices(
+            mainApiKey: () => 'k',
+            modelsConfig: modelsConfig,
+          ),
+        );
+
+    test('unset slots keep both media tools absent at birth', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: mediaServices(null),
+      );
+      final names = wired.tools.map((t) => t.name).toSet();
+      expect(names, isNot(contains('generate_image')));
+      expect(names, isNot(contains('generate_video')));
+    });
+
+    test('configured slots surface both media tools at birth', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: mediaServices(
+          ModelsConfig(
+            slots: {
+              'imageGeneration': const MediaSlotModelConfig(
+                providerKind: 'openai-completions',
+                baseUrl: 'https://media.test/v1',
+                modelId: 'img-1',
+              ),
+              'videoGeneration': const MediaSlotModelConfig(
+                providerKind: 'openai-completions',
+                baseUrl: 'https://media.test/v1',
+                modelId: 'vid-1',
+              ),
+            },
+          ),
+        ),
+      );
+      final names = wired.tools.map((t) => t.name).toSet();
+      expect(names, containsAll(['generate_image', 'generate_video']));
+    });
+
+    test('an unsupported slot keeps its tool absent (#2085 rule)', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: mediaServices(
+          ModelsConfig(
+            slots: {
+              'imageGeneration': const MediaSlotModelConfig(
+                providerKind: 'openai-completions',
+                baseUrl: 'https://media.test/v1',
+                modelId: 'img-1',
+                unsupported: true,
+              ),
+            },
+          ),
+        ),
+      );
+      final names = wired.tools.map((t) => t.name).toSet();
+      expect(names, isNot(contains('generate_image')));
     });
   });
 

@@ -415,6 +415,7 @@ final class AgentLoopConfig {
     this.imageCapLatches,
     this.imageRecovery,
     this.onTruncatedToolCall,
+    this.missingToolResolver,
     this.steeringStallWindow = _defaultSteeringStallWindow,
     this.steeringInterruptNotice,
     this.recordSeqs,
@@ -430,6 +431,18 @@ final class AgentLoopConfig {
 
   /// Called before each tool execution; can block it.
   final BeforeToolCallHook? beforeToolCall;
+
+  /// GOAL #28 (issue #2416 review round 2): called when a tool call names
+  /// a tool MISSING from [Context.tools] — the manifest partition keeps
+  /// enabled-but-deferred tools out of the schema, so a direct call to
+  /// one must route to the host's DEFERRED-MOUNT path instead of a dead
+  /// not-found gate. The resolver mounts the tool live (registry +
+  /// `agent.state.tools` + prompt rebuild) and returns it; the call then
+  /// proceeds natively — the REAL name rides approval tiers, redaction,
+  /// misuse policy and the executor exactly like any mounted call (I2).
+  /// Return null (or omit the hook) to keep pi's plain not-found
+  /// semantics — disabled and capability-absent tools never resolve.
+  final Future<Tool?> Function(String name)? missingToolResolver;
 
   /// Called after each tool execution; can override the result.
   final AfterToolCallHook? afterToolCall;
@@ -2103,12 +2116,29 @@ Future<_ExecutedToolCallBatch> _executeToolCalls(
   ToolExecutor toolExecutor,
   CancelToken? cancelToken,
   AgentEventSink emit,
-) {
-  final hasSequentialToolCall = toolCalls.any((toolCall) {
-    final tool = _findTool(context, toolCall.name);
-    return tool is AgentTool &&
-        tool.executionMode == ToolExecutionMode.sequential;
-  });
+) async {
+  // GOAL #28 (issue #2416 CI round 3): the manifest partition keeps
+  // deferred tools OUT of [context.tools], so a batch of FIRST calls to a
+  // sequential-only deferred tool (e.g. five `config` calls in one turn)
+  // must consult the deferred-mount resolver for the mode decision too —
+  // otherwise the batch runs parallel and same-file writers race. The
+  // resolver mounts idempotently; the later preparation reuses the
+  // mounted tool through the live registry.
+  var hasSequentialToolCall =
+      config.toolExecution == ToolExecutionMode.sequential;
+  if (!hasSequentialToolCall) {
+    for (final toolCall in toolCalls) {
+      var tool = _findTool(context, toolCall.name);
+      if (tool == null && config.missingToolResolver != null) {
+        tool = await config.missingToolResolver!(toolCall.name);
+      }
+      if (tool is AgentTool &&
+          tool.executionMode == ToolExecutionMode.sequential) {
+        hasSequentialToolCall = true;
+        break;
+      }
+    }
+  }
   return config.toolExecution == ToolExecutionMode.sequential ||
           hasSequentialToolCall
       ? _executeToolCallsSequential(
@@ -2283,11 +2313,19 @@ Future<_ToolCallPreparation> _prepareToolCall(
   AgentLoopConfig config,
   CancelToken? cancelToken,
 ) async {
-  if (_findTool(context, toolCall.name) == null) {
-    return _ImmediateToolCall(
-      _errorToolResult('Tool ${toolCall.name} not found'),
-      true,
-    );
+  var tool = _findTool(context, toolCall.name);
+  if (tool == null) {
+    // GOAL #28 (issue #2416 review round 2): a direct call to a
+    // deferred-but-enabled tool routes to the deferred-mount path — the
+    // host resolver mounts it live and the call proceeds natively.
+    final resolver = config.missingToolResolver;
+    tool = resolver == null ? null : await resolver(toolCall.name);
+    if (tool == null) {
+      return _ImmediateToolCall(
+        _errorToolResult('Tool ${toolCall.name} not found'),
+        true,
+      );
+    }
   }
 
   // Issue #862: after 6 consecutive identical failures the loop refuses to

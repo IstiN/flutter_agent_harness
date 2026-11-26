@@ -307,7 +307,7 @@ void main() {
 
   test('compaction over threshold emits compaction_start/end frames', () async {
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      textTurn('a' * 80000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: _tinyWindow);
@@ -339,7 +339,7 @@ void main() {
     // (the runs themselves must not — pinned at 0 by the zero-pass test
     // below), and the bracket stays balanced with honest freed numbers.
     final fake = FakeStreamFunction([
-      textTurn('a' * 20000),
+      textTurn('a' * 80000),
       textTurn('AUTO SUMMARY'),
       textTurn('AUTO SUMMARY'),
       textTurn('AUTO SUMMARY'),
@@ -386,7 +386,7 @@ void main() {
           // The header fires after session initialization and before the
           // pre-flight gate. ~5000 transcript tokens plus overhead crosses
           // the 16384-token model's 12288-token compaction trigger.
-          cli.agent.state.messages = [UserMessage.text('a' * 20000)];
+          cli.agent.state.messages = [UserMessage.text('a' * 80000)];
         case 'compaction_start':
           compactionStarts++;
           // The gate has committed to a run; the engine re-estimates after

@@ -23,7 +23,7 @@ void attachApproval(Agent agent, ApprovalManager manager) {
   agent.beforeToolCall = (hookContext, cancelToken) async {
     final outcome = await manager.authorize(
       toolName: hookContext.toolCall.name,
-      tier: _tierFor(hookContext.context, hookContext.toolCall.name),
+      tier: _tierFor(agent, hookContext.context, hookContext.toolCall.name),
       arguments: hookContext.toolCall.arguments,
     );
     if (!outcome.allowed) {
@@ -38,11 +38,18 @@ void attachApproval(Agent agent, ApprovalManager manager) {
 
 /// The tier of the tool named [toolName] in [context]: its declared
 /// [AgentTool.tier], or [ApprovalTier.exec] — the safe default — for plain
-/// [Tool] entries and anything else.
-ApprovalTier _tierFor(Context context, String toolName) {
-  for (final tool in context.tools ?? const <Tool>[]) {
-    if (tool.name == toolName) {
-      return tool is AgentTool ? tool.tier : ApprovalTier.exec;
+/// [Tool] entries and anything else. GOAL #28 (issue #2416 CI round 3): a
+/// tool the deferred-mount path mounted MID-RUN is absent from the
+/// in-flight [context] snapshot but present in the agent's live
+/// `state.tools` — consult that before falling to the exec default, so a
+/// mounted call carries its DECLARED tier (the boot-registered shape),
+/// never the prompt-for-everything default.
+ApprovalTier _tierFor(Agent agent, Context context, String toolName) {
+  for (final tools in [context.tools, agent.state.tools]) {
+    for (final tool in tools ?? const <Tool>[]) {
+      if (tool.name == toolName) {
+        return tool is AgentTool ? tool.tier : ApprovalTier.exec;
+      }
     }
   }
   return ApprovalTier.exec;
