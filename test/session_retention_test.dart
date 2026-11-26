@@ -520,6 +520,27 @@ void main() {
         currentSessionId: null,
       );
       final report = await flippingSweeper.sweep(dryRun: false);
+      // The sweep must APPLY here — the cap (total − 2·unit + 1) forces
+      // deletions and the presence flips are choreographed below. Any
+      // no-op abort (under cap, presence probe failure, missing store)
+      // fails HERE with the named path instead of a bare `Actual:
+      // Set:[]` downstream — the one-occurrence CI red (run
+      // 45904218215) was exactly such an undiagnosable empty set; the
+      // next occurrence must carry its own diagnosis.
+      expect(
+        report.applied,
+        isTrue,
+        reason:
+            'the sweep no-oped instead of applying — cap='
+            '${report.capBytes} total=${report.totalBytes} '
+            'capConfigured=${report.capConfigured} notes=${report.notes} '
+            'log=${report.logLines}',
+      );
+      // The flip choreography: exactly three presence probes — the
+      // plan, a's pre-unlink check, b's pre-unlink check. A refactor
+      // that adds or drops a probe shifts the flip timing and must fail
+      // loudly here, not as a confusing deletion set downstream.
+      expect(listCalls, 3);
       final deleted = report.deletions.map((d) => d.sessionId).toSet();
       expect(deleted, contains(a));
       expect(report.logLines.where((l) => l.contains('skipped')), isNotEmpty);

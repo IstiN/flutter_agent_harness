@@ -2845,6 +2845,25 @@ jobs:
 
       - run: cd packages/fa_ui && flutter pub get
 
+      # gh-2425 rework: the fa_ui dependency graph carries sqlite3
+      # directly (packages/fa_ui/pubspec.yaml `sqlite3: ^3.5.1`), so the
+      # `flutter test` step below builds the native-assets hook and rides
+      # the hook's single-attempt GitHub download — one transient
+      # `504 Gateway Timeout` red'd shard 0/3 (run 45904218215), the
+      # exact gh-2072 incident shape. Prewarm the hook's reuse cache
+      # through the shared composite (bounded retry + status check +
+      # sha256 verification) before the first hook-building step, like
+      # every other hook-building leg (pinned by
+      # test/ci_sqlite3_prewarm_guard_test.dart). package-roots points at
+      # the ONLY root this job resolves — the inline pub get above runs
+      # inside packages/fa_ui, so the `.` default would read a repo-root
+      # package_config.json that never exists here and silently degrade
+      # to the unprotected hook download (gh-2072 review threads 3/4).
+      - uses: ./.github/actions/sqlite3-native-assets-prewarm
+        with:
+          package-roots: packages/fa_ui
+          targets: auto
+
       # E2: a NEW test file added by a PR needs no manifest edit —
       # shard_files.py bin-packs uncovered files into shards at runtime;
       # the weekly rebalance then absorbs them into the manifest.
