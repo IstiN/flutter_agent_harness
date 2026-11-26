@@ -4,7 +4,8 @@
 
 import 'dart:async';
 
-import 'auth_flow.dart';
+import 'package:fa/network/auth_flow.dart';
+import 'package:fa/services/oauth_deep_link_router.dart';
 
 /// Whether [uri] is the network OAuth callback registered on iOS/Android.
 bool isNetworkOAuthDeepLink(Uri uri) =>
@@ -18,71 +19,66 @@ bool isNetworkOAuthDeepLink(Uri uri) =>
 /// proxies the provider callback there, the OS routes the link back into
 /// the app, and [callback] resolves with the full URI (code + state).
 ///
-/// Pure seam: the AppLinks stream (and the initial link, for the race
-/// where the OS delivered the link before the listener attached) are
-/// injected, so the receiver is fully testable on the VM.
-///
-/// The initial-link ordering lives in [bindWithInitialLink], not in the
-/// caller: the stream subscription must attach BEFORE `getInitialLink()`
-/// is awaited, or a link delivered in between is dropped (broadcast
-/// streams drop events with no listener) and the flow hangs until the
-/// timeout.
+/// Links arrive through the shared [OAuthDeepLinkRouter] (issue #2395):
+/// the receiver never touches the AppLinks stream itself. A link the OS
+/// delivered BEFORE [bindWithRouter] registered (cold-start race) is
+/// replayed by the router at registration time.
 final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
-  DeepLinkOAuthReceiver._(this._links)
+  DeepLinkOAuthReceiver._(this._router)
     : redirectUri = Uri.parse('fah://oauth/network');
 
-  /// Wires the receiver to a platform link stream (AppLinks on device).
+  final OAuthDeepLinkRouter _router;
+
+  /// Registers the receiver on [router] and starts the flow timeout.
   ///
-  /// For the production ordering (subscribe, THEN check the initial
-  /// link) use [bindWithInitialLink]; this constructor's [initialLink]
-  /// check exists for tests and callers that already hold the initial
-  /// link.
-  static DeepLinkOAuthReceiver bind({
-    required Stream<Uri> links,
-    required Uri? initialLink,
+  /// Production: `bindWithRouter(oauthDeepLinkRouter)` from the Android
+  /// branch of the auth flow. A callback buffered on the router (delivered
+  /// before this registration — the cold-start race) replays here
+  /// synchronously inside [OAuthDeepLinkRouter.register] into the
+  /// PRE-ARRIVAL slot, not into [callback]: the flow checks its state
+  /// after initiate and answers only a matching pre-arrival, so a dead
+  /// attempt's replayed callback can never fail a later flow.
+  static DeepLinkOAuthReceiver bindWithRouter(
+    OAuthDeepLinkRouter router, {
     Duration timeout = const Duration(minutes: 3),
   }) {
-    final receiver = DeepLinkOAuthReceiver._(links);
-    receiver._listen(initialLink, timeout);
-    return receiver;
-  }
-
-  /// Binds the receiver and then checks the initial link — in THAT
-  /// order. `AppLinks.uriLinkStream` is a broadcast-style stream: a link
-  /// delivered while no listener is attached (e.g. the OS fires
-  /// `onNewIntent` during a warm resume while the platform-channel
-  /// `getInitialLink()` call is still in flight) is dropped, and
-  /// `getInitialLink()` returns null on a warm resume — so the callback
-  /// would be missed and the flow would wait out the full timeout.
-  /// Subscribing first closes that window; a link arriving on both paths
-  /// is deduped by [complete]'s `isCompleted` guard.
-  static Future<DeepLinkOAuthReceiver> bindWithInitialLink({
-    required Stream<Uri> links,
-    required Future<Uri?> Function() getInitialLink,
-    Duration timeout = const Duration(minutes: 3),
-  }) async {
-    final receiver = DeepLinkOAuthReceiver.bind(
-      links: links,
-      initialLink: null, // checked below, after the listener is attached
-      timeout: timeout,
+    final receiver = DeepLinkOAuthReceiver._(router);
+    receiver._binding = true;
+    router.register(
+      OAuthDeepLinkRoute(
+        flow: _flow,
+        matches: receiver.matches,
+        onLink: receiver.complete,
+      ),
     );
-    Uri? initial;
-    try {
-      initial = await getInitialLink();
-    } on Object {
-      // Best-effort: the stream listener is the primary path.
-      initial = null;
-    }
-    if (initial != null && receiver.matches(initial)) {
-      receiver.complete(initial);
-    }
+    receiver._binding = false;
+    // The flow must not wait on the browser forever.
+    receiver._timer = Timer(timeout, () {
+      receiver._timer = null;
+      if (!receiver._completer.isCompleted) {
+        receiver._completer.completeError(
+          const AuthFlowException(
+            'timed out waiting for the sign-in redirect back to the app',
+          ),
+        );
+      }
+    });
     return receiver;
   }
 
-  final Stream<Uri> _links;
+  static const _flow = 'network';
+
   final Completer<Uri> _completer = Completer<Uri>();
-  StreamSubscription<Uri>? _subscription;
   Timer? _timer;
+
+  /// Set while [bindWithRouter] registers on the router: the register
+  /// call replays buffered links synchronously, and those land in the
+  /// pre-arrival slot instead of completing the flow.
+  bool _binding = false;
+  Uri? _preArrived;
+
+  @override
+  Uri? get preArrivedCallback => _preArrived;
 
   @override
   final Uri redirectUri;
@@ -97,44 +93,29 @@ final class DeepLinkOAuthReceiver implements OAuthCallbackReceiver {
   /// into the app must be answered, never silently ignored.
   bool matches(Uri uri) => isNetworkOAuthDeepLink(uri);
 
-  /// Completes the flow with [uri] when it matches — a no-op once the
-  /// callback already completed (a link delivered on both the stream and
-  /// the initial-link path is deduped here).
+  /// Completes the flow with [uri] when it matches. During
+  /// [bindWithRouter]'s registration the router's replay lands in the
+  /// PRE-ARRIVAL slot instead — a link that outlived its flow must not
+  /// complete a later one (the flow state-checks the slot after
+  /// initiate). A live dispatch completes the callback — a no-op once
+  /// already completed (a link delivered twice is deduped here).
   void complete(Uri uri) {
-    if (matches(uri)) _complete(uri);
+    if (!matches(uri)) return;
+    if (_binding) {
+      _preArrived ??= uri;
+      return;
+    }
+    _complete(uri);
   }
 
   void _complete(Uri uri) {
     if (!_completer.isCompleted) _completer.complete(uri);
   }
 
-  void _listen(Uri? initialLink, Duration timeout) {
-    if (initialLink != null && matches(initialLink)) {
-      _complete(initialLink);
-      return;
-    }
-    _subscription = _links.where(matches).listen(_complete);
-    // The flow must not wait on the browser forever.
-    _timer = Timer(timeout, () {
-      _timer = null;
-      if (!_completer.isCompleted) {
-        _completer.completeError(
-          const AuthFlowException(
-            'timed out waiting for the sign-in redirect back to the app',
-          ),
-        );
-      }
-    });
-  }
-
   @override
   void close() {
     _timer?.cancel();
     _timer = null;
-    // Fire-and-forget: cancel futures resolve on the zone's event queue —
-    // awaiting them inside a fake-async test wedges the runner.
-    final subscription = _subscription;
-    _subscription = null;
-    if (subscription != null) unawaited(subscription.cancel());
+    _router.unregister(_flow);
   }
 }
