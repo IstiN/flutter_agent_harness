@@ -40,7 +40,7 @@ import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/video_tool.dart';
 import 'package:fa/ui/markdown_style.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/fa_route_header.dart'
     show FaWindowChrome, faAppBar;
@@ -1252,7 +1252,10 @@ class _JsAppViewState extends State<JsAppView> {
                         heroTag: 'fa-${widget.app.id}',
                         tooltip: context.l10n.appsAskFaTooltip,
                         onPressed: _openFaSheet,
-                        child: const FaMark(size: 18),
+                        child: ProductBrandMark(
+                          productConfig: ProductConfigScope.of(context),
+                          size: 18,
+                        ),
                       ),
                     ),
                   if (_agentService != null) ...[
@@ -1677,7 +1680,10 @@ class _FaReplySheetState extends State<FaReplySheet>
                         listenable: widget.service,
                         builder: (context, _) => widget.service.isStreaming
                             ? FaOrbitIndicator(animation: _orbit, size: 22)
-                            : const FaMark(size: 18),
+                            : ProductBrandMark(
+                                productConfig: ProductConfigScope.of(context),
+                                size: 18,
+                              ),
                       ),
                     ),
                     const SizedBox(width: 10),

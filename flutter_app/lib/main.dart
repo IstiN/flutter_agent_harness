@@ -379,12 +379,20 @@ class MyApp extends StatelessWidget {
   }
 
   Widget _navigatorBuilder(BuildContext context, Widget? navigatorChild) {
+    // The ambient product identity scope (issue #2391 addendum): every
+    // surface — the work bar, the chat overlay, js apps, settings — reads
+    // ProductConfigScope.of(context), so branded builds never render the
+    // stock Fa mark and stock Fa renders it unchanged.
+    final child = ProductConfigScope(
+      productConfig: productConfig,
+      child: navigatorChild ?? const SizedBox.shrink(),
+    );
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
-      return _plainNavigatorChild(navigatorChild);
+      return child;
     }
     return Stack(
       children: [
-        Positioned.fill(child: _plainNavigatorChild(navigatorChild)),
+        Positioned.fill(child: child),
         // Transparent drag strip for window movement.
         const Positioned(
           top: 0,
@@ -396,9 +404,6 @@ class MyApp extends StatelessWidget {
       ],
     );
   }
-
-  Widget _plainNavigatorChild(Widget? navigatorChild) =>
-      navigatorChild ?? const SizedBox.shrink();
 
   /// The scope wrappers over the optional stores: every present store gets
   /// its InheritedWidget down the tree.

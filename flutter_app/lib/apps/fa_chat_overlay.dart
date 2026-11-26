@@ -13,7 +13,7 @@ import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
@@ -251,7 +251,10 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
             const SizedBox(height: 6),
             Row(
               children: [
-                const FaMark(size: 18),
+                ProductBrandMark(
+                  productConfig: ProductConfigScope.of(context),
+                  size: 18,
+                ),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.open_in_new, size: 16),
