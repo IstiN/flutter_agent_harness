@@ -111,6 +111,42 @@ winner=$(printf '%s' "$list" | jq -s -r --arg tag "$tag" --arg assignee "$assign
   | length > 0')
 
 if [ "$winner" != "true" ]; then
+  # gh-2432 rework (review thread on PR #2434, release_lazy_draft.sh:163):
+  # TWO OR MORE OWN-MARKER drafts — the landed-500 retry shape. Attempt 1
+  # got HTTP 500 but LANDED server-side (draft D1, our exact marker) and
+  # stayed invisible past the retry boundary, so attempt 2's create
+  # succeeded and minted D2 (gh-2372/gh-1899: GitHub does not enforce one
+  # release per tag for drafts). Nothing external precedes us — mine_min
+  # is our own older draft — so the election above cannot fire and BOTH
+  # drafts would survive: the tag resolves ambiguously for the attach
+  # gates and the twin rots into the daily sweep (the exact recurrence
+  # gh-2432 closes). The same shape falls out of a RE-RUN of this job
+  # (same run/job identity, the first draft still staged). Elect the
+  # OLDEST own draft (lowest id — first-created, the object a concurrent
+  # reader most likely already resolved; ids are monotonic, so no
+  # interleaving can make two legs keep different winners) and delete our
+  # own NEWER twins by id: both carry this job's exact marker, so the
+  # delete stays inside the "a job only ever deletes drafts it just
+  # created" invariant. Best-effort like every cleanup here (gh-1899):
+  # a failed DELETE warns and leaves the sweeper as the backstop; the
+  # caller attaches into the kept draft by tag (gh-1801 tolerance).
+  own_count=$(printf '%s\n' "$mine_ids" | grep -c .)
+  if [ "$own_count" -gt 1 ]; then
+    deleted=0
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      if [ "$id" = "$mine_min" ]; then
+        continue
+      fi
+      if gh api -X DELETE "repos/$repo/releases/$id" >/dev/null 2>&1; then
+        deleted=$((deleted + 1))
+      else
+        echo "::warning::release twin dedupe: deleting our own newer twin draft $id for $tag failed — the daily sweeper reclaims it (gh-2372)" >&2
+      fi
+    done <<< "$mine_ids"
+    echo "::warning::release twin dedupe: deleted $deleted own newer twin draft(s) for $tag — kept the oldest own draft $mine_min (gh-2432: two drafts carrying this job's exact marker — the landed-500 retry or a job re-run — cannot both survive); the caller attaches into the kept draft by tag (gh-1801)" >&2
+    exit 0
+  fi
   echo "release twin dedupe: our draft for $tag is the oldest same-tag release — it stays"
   exit 0
 fi
