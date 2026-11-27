@@ -191,6 +191,159 @@ pinned expansions never hide (F8/#1379), hides are lossless appends
 continues visibly (`[resuming] continuing the turn on the compacted
 context`).
 
+### Soft window and honest overhead (gh-2411)
+
+The context window is a SOFT target — a slight overrun is accepted; an
+invisible user turn is not. Three rules, one basis:
+
+- **The newest real user turn never drops.** The turn and its pair
+  group are excluded from the checkpoint range and from every hide
+  candidate (real user text was already exempt). When a mechanical cut
+  has to land BEHIND the turn — the local trim valve's budget walk, or
+  a classic cut that splits the turn — the turn is CARRIED: the valve
+  re-homes it verbatim right after its `[context trimmed]` marker, and
+  the classic summary opens with the ask verbatim. A hard floor at the
+  turn was tried and rejected: it leaves a long tool-using turn with
+  nothing trimmable and kills the funnel backstop
+  (`lib/src/compaction/newest_user_turn.dart`).
+- **The overhead is priced as the provider bills it.** Every request
+  carries a fixed overhead — the system prompt and the tool schemas.
+  It is priced at 2.5 chars/token, not the transcript's 4 (measured on
+  the gh-2411 session: 65,561 overhead chars — 12,105 of system prompt
+  plus 34 tool schemas — were billed 24,126 provider tokens, 2.72
+  chars/token, where chars/4 priced 16,407, 32% under).
+  Per session the first valid provider `usage.input` calibrates the
+  estimate (`OverheadCalibration`, ratio clamped to [0.6, 4.0];
+  re-derived at resume from the last valid provider report anywhere in
+  the session — gh-2411 follow-up #5c) — it may LOWER an over-reading heuristic too (the
+  owner's live test: glm-5.3-flash billed 15,792 tokens where the
+  heuristic read 24,348, ratio 0.65) — and the ctx meter, the loop's
+  over-window guard and the compaction trigger all read that same
+  basis (`estimateRequestTokens`). The heuristic itself is a
+  per-provider average: before the first anchor lands the meter can be
+  off by that ratio.
+- **Soft window — no trim thrash, no unbounded growth.** When
+  `overhead + newest user turn ≥ window − reserve`, no trim can ever
+  reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
+  trimmed: automatic compaction is skipped and the session is warned
+  ONCE per distinct warning text (a resumed session does not repeat it
+  at its first prompt): `context window {window} cannot take a trim below
+  its trigger — fixed request overhead ≈{overhead} tokens + the newest
+  user turn ≈{turn} tokens already reach it (estimated from the system
+  prompt, tool schemas and the turn); raising the window or disabling
+  tools is the only fix; automatic compaction is skipped while the
+  context stays under the window`. AT OR OVER THE WINDOW the
+  request is simply over the window: the automatic pass is the
+  hide-only, LM-free relief (the same one the loop guard runs — the
+  newest user turn is still carried verbatim), a pass that frees
+  nothing re-runs only after the transcript changed, and the loop's
+  over-window guard keeps its stop. ONE predicate decides both sides —
+  `softWindowSkip`: the regime AND `estimate < window`
+  (`lib/src/compaction/soft_window.dart`). Skipping over the window as
+  well was the first cut; the owner's live test grew a session to 114%
+  with no pass ever running.
+
+#### Anchored at load/resume; unmeasured estimates never cut or stop (gh-2411 follow-up #5)
+
+The overhead calibration is taken at LOAD/RESUME too: a transcript that
+carries a vouchable provider usage report (after its newest compaction
+boundary, or on a branch complete to its root) anchors the estimate the
+moment it is loaded, so a restarted session is priced by the provider's
+own number on its very first request.
+
+**Resume with a checkpoint summary (gh-2411 follow-up #5e).** The resume
+parity trim stands down while a checkpoint summary is resident: the walk
+opens the window at the newest durable boundary, the request opens with
+its summary and then only the raw tail the summary does not cover, and
+the local-trim valve pins that summary like the newest user turn. An
+over-trigger first request goes out as loaded and takes the existing
+first-turn pre-flight compaction path. The resume tail line and the
+`resume summary` diagnostic name the summary's record.
+
+**The stop that compacts is not an error (gh-2411 follow-up #5e, E2).** A
+turn the loop stops so compaction can run and continue is logged `turn
+end … stop=compacting (continuation pending)`; `run end` is written once,
+at the true end of the run (the continuation's own run). A stop with no
+continuation — or one whose continuation did not complete the turn — keeps
+the honest `stop=error`. Internal stop reasons and persisted records are
+unchanged; only the log tells the truth.
+
+**The hand-over knows how the run ended (E3a).** The hand-over request is
+the last request's context, which never carries the final assistant reply;
+the instruction therefore states it: `Run status: the final assistant reply
+WAS delivered — that turn is answered, not pending`, or that the newest
+user turn has no delivered reply, or that no claim can be made (a hand-over
+built without a transcript).
+
+The resume boundary walk is a MEASUREMENT or it is nothing. A measured
+session keeps today's parity budget (`window − calibrated overhead −
+reserve`) — the walk stops at it and trims record-granularly. An
+unmeasured one walks with NO budget: to the newest compaction boundary or
+the file head — only a boundary (durable, visible) may limit what loads.
+A budget of zero (the window below overhead + reserve) is no budget
+either: its one-record tail dropped the newest user turn. Whenever the
+loaded projection is a tail of the file, one line says so, in the
+transcript and on screen: `[resume] loaded the last K message(s) of the
+session (N older record(s) left on disk …; ≈T tokens, estimate)`.
+
+A resume right after a durable checkpoint is MEASURED too (gh-2411
+follow-up #5c): the overhead is a property of the system prompt + the
+tool schemas, not of the folded history, so the calibration is derived
+from the last valid provider report anywhere in the session — a bounded
+backward walk pages older records until that reply and the boundary (or
+the file head) that opens its context are resident. Without it the
+resume read `budget=none (unmeasured: estimate only)`, fell back into
+the soft-window regime on the raw heuristic and trimmed the context to
+three messages against a provider truth of 15,310. Two more invariants
+of the same round: the budget trim never opens the kept tail on an
+assistant or tool message (`projectedBranchBudgetCut` →
+`_openOnUserTurn`), and the tail line's figure is overhead + the
+estimated tail — the number the first request is metered at, not the
+overhead alone.
+
+Until the provider has answered in a session and nothing is measured, no
+in-memory cut runs on the heuristic alone — not the boot cap, not the
+soft-window relief — and the loop's over-window guard does not stop: the
+request goes out, the answer anchors the session, a real overflow takes
+the existing overflow path. A calibration pinned on the 4x ceiling is no
+measurement either — the guard ignores it. Every in-memory cut opens the
+request on a user turn (never on an assistant or tool fragment), leaves a
+`context_trim_receipt` record in the session and a diagnostic line, and
+every heuristic number the host prints carries an explicit `≈`/estimate
+marker.
+
+A hand-over reply whose transfer carries no `## Open User Requests`
+heading gets ONE corrective retry (the retry names the section and
+quotes the defective reply); a second miss keeps the failure.
+
+#### First-anchor overhead, bounded resume walk, honest relief (gh-241 follow-up #5d)
+
+- **The overhead anchor is the session's FIRST valid provider report** — the
+  overhead-dominated request — not the tail-heavy reply after the newest
+  boundary (`resume calibration source=first|pre-boundary|post-boundary
+  anchor=<id> ratio=x<N>` is always logged). At the owner's 25k window the
+  two reports differ (x0.66 vs x0.82 → overhead ≈19.5k vs ≈15.7k tokens).
+- **An unbudgeted resume walk (`budget=none`) stops at the newest durable
+  boundary** — a classic compaction or a structured `compact_checkpoint` —
+  instead of paging to the file head. Everything file-older than that
+  boundary cluster stays on disk: a resume never resurrects history an
+  earlier cut removed from the live context.
+- **The newest REAL user turn survives every in-memory relief.** Projection
+  markers the engine writes as user-role messages (hidden/ckpt markers,
+  `[expand N-M]` pointers, the local-trim marker) are machine content and
+  are never taken for it.
+- **A context stop keeps its promise.** After the guard's stop the
+  under-window paths run first (the regime's hide-only relief, the unforced
+  pass); when they yield nothing the `auto-compacting…` pass runs FORCED —
+  never over a disabled engine. In the soft-window regime an over-window
+  request with relief spent is SENT (the provider is the real limit): a
+  read-only turn no longer ends in `stop=error`.
+- **Notices say what happened.** "Relieved" when no summary pass ran; a
+  `context_trim_receipt` only when content was actually hidden or trimmed;
+  the resume tail line prints overhead plus the estimated tail on the
+  calibrated basis once a report exists. The estimator's density under-read
+  for non-Latin text is a separate follow-up.
+
 ### Quality tier — turn boundaries, judge-led
 
 Digests, checkpoints, the judge and escalation run only at turn
@@ -383,7 +536,7 @@ legitimate context and carry their origin by the prompt's
 "with what produced them" convention — the mechanical mark arm stays out
 of them to keep false fires off real context.
 
-## The working set and the goal slot (gh-210)
+## The working set (gh-2423) and the honest notices
 
 After any compaction, the context tail carries a bounded re-injection so
 operative continuity stops depending on what happened to survive the
@@ -404,26 +557,111 @@ records it cannot see and cannot sink them:
   file's latest snapshot wins for entries the writer did not mutate
   since seed, so an external cleanup is never buried by a stale
   in-memory re-assert.
-- **The working-set block** (`lib/src/compaction/working_set.dart`) —
-  `goal:` first, then `recently touched files` once a compaction
-  boundary exists (structured hide/checkpoint OR a classic
-  `CompactionRecord`; the classic engine's folded-off records count
-  too). Files render as PATH references only — content re-reads on
-  demand — so the block stays bounded.
+- **The recently-touched-files block**
+  (`lib/src/compaction/working_set.dart`) — `recently touched files`
+  once a compaction boundary exists (structured hide/checkpoint OR a
+  classic `CompactionRecord`; the classic engine's folded-off records
+  count too). Files render as PATH references only — content re-reads on
+  demand — so the block stays bounded. It caps at
+  `defaultWorkingSetMaxPaths` lines (the oldest counted away as
+  `… and N more touched files`) and `defaultWorkingSetBudgetChars` chars
+  (the oldest files drop first) — explicit markers, never silent cuts.
 
-Budgets, enforced with explicit markers, never silent cuts: the file
-list caps at `defaultWorkingSetMaxPaths` lines (the oldest counted away
-as `… and N more touched files`), the whole block caps at
-`defaultWorkingSetBudgetChars` chars (the oldest files drop first), and
-an oversized goal clips with a `[clipped at N chars]` marker. Operative
-skills are NOT re-listed here — the gh-1409 pinned-operative mechanism
-already carries them through checkpoints, and this card leaves the
-prior mechanisms untouched.
+Operative skills are NOT re-listed here — the gh-1409 pinned-operative
+mechanism already carries them through checkpoints.
 
-**The goal recitation slot** is the agent-updatable `goal:` line. The
-agent writes it with the `recite_goal` tool (latest-wins, one new
-append-only `goal_recitation` snapshot per recite; no goal argument =
-read the current slot). Goals bound at `goalRecitationBudgetChars`
-before the write lands — the render never clips again. A session with
-no recitation and no compaction boundary projects byte-identically to
-the pre-gh-210 shape.
+### The agent's working set — `working_set(text)` (issue #2423, C1)
+
+The audit behind #2423: a hide-only compaction freed 131k tokens and the
+worker asked for a fresh one 76 s later "near my context limit again",
+on a 54k context — it could not see what it had decided, what was red,
+what came next. The working set is the agent's OWN answer to that: the
+short status it keeps for its next request — decisions made, the red
+list / never-do, next steps, rules to keep. Notes, not instructions to
+the harness, and never a place for secrets.
+
+- **Surface.** The `working_set` tool (pure SDK, `lib/src/tools/
+  working_set_tool.dart`) is registered for EVERY agent on every host
+  and every child agent — it needs no host capability. `working_set(text)`
+  creates or replaces; the newest write wins; `working_set("")` clears.
+  It replaces gh-210's host-only `recite_goal` (retired without an
+  alias): a legacy `goal_recitation` snapshot still renders as the
+  working-set text until a `working_set` record exists on the branch.
+- **Storage.** An append-only `custom` record (`working_set`) in the
+  agent's OWN session file — never the orchestrator's or the parent's.
+  Resume and a crash restart re-read it from the file (latest wins).
+  The text passes the redaction pipeline on write; the tool result
+  reports the stored size (`working set saved: N chars — pinned in every
+  request, survives compaction`) or a refusal.
+- **Cap.** `workingSetMaxChars` (4096). Longer text is REFUSED, not
+  clipped: `working set NOT saved: … over the 4096-char cap — shorten it
+  and call again (the previous working set stays pinned)`.
+- **Injection.** The newest working set rides the SYSTEM channel of
+  every request — the `<working-set source="agent" updated="HH:MM">`
+  block at the very tail of the system prompt (`AgentLoopConfig.
+  workingSetProvider`, `lib/src/agent/agent_loop.dart`). It is not a
+  transcript record, so no hide, fold, trim or summary path can drop it
+  by construction; a session with no working set projects byte-
+  identically to the pre-gh-2423 shape. The text is DATA: it never
+  grants an approval, never changes a tool tier and never feeds the
+  approval gate (`test/approval/working_set_independence_test.dart`).
+- **Discovery.** Two generated prompt includes ride the mode prompt on
+  every host (`prompts/compaction/working_set.md` — what the working set
+  is for, when to update it, that it is capped and not for secrets;
+  `prompts/compaction/context_hygiene.md` — the C7 read/test/think
+  hygiene rules). An explicit `systemPrompt` override is the whole
+  prompt, as with the recall contract.
+- **Visibility.** The TUI prints one dim line per write (`working set
+  updated (N chars)` / `working set cleared`); HEP emits a
+  `working_set` frame `{chars, updated, cleared}` — never the text.
+
+### Honest notices (issue #2423, C3)
+
+The harness knows the estimate (X) and the one window (W); the model
+cannot estimate its own context and does not need to. Two notices hand
+it the harness's numbers (`lib/src/compaction/context_notices.dart`),
+each a SYNTHETIC user record — the `<system-notice>` envelope, machine
+content for every classifier (never a pinned user turn, never an
+obligation) — that rides the agent's NEXT request as its last message:
+
+- **Post-hide** — exactly one per hide pass that hid records:
+  `compacted: N records hidden; context now ≈X/W (was ≈Y); your working
+  set is pinned — continue`. With no working set yet the last clause
+  reads `no working set yet — write one now with working_set(text), then
+  continue`. N counts the distinct records the pass took out of the
+  projection under every hide mechanism — a `hidden_range`, a structured
+  `compact_checkpoint` (the records its text replaced) or a classic
+  `compaction` summary boundary. A child whose run ends at that boundary
+  gets the notice with its next run's first request.
+- **Near-limit** — once per compaction cycle (armed at session start,
+  re-armed by every hide), when the pre-request estimate reaches
+  `min(0.85·W, trigger − max(2,000, 0.05·W))` (85 % of the window, always
+  below the trigger with a runway) — never at or past the trigger
+  itself, where the hide runs next and its own notice is the message:
+  `context ≈P% (X/W): update your working set with decisions, red tests
+  and next steps, then KEEP WORKING; compaction will fold older records`.
+
+A notice is QUEUED (`Agent.queueContextNotice`), not steered: the loop
+drains the queue right before it injects queued steering, so the notice
+is delivered and persisted with a request the run makes anyway (a tool
+continuation, the next prompt, the over-window continuation) and never
+opens a model turn of its own — a steered notice landing after a run's
+last boundary would be delivered as a whole extra turn, and under a low
+trigger every notice would breed an answer that re-crosses the trigger.
+The one exception is the over-window / message-cap relief: its retried
+request is built without that injection point, so there the notice is
+persisted first and mirrored into the live transcript the retry uses.
+
+The texts never say "at the limit" / "context limit" / "out of
+context" / "cannot continue" (`contextNoticeForbiddenPhrases`, pinned by
+test). Every token figure is the harness's pre-request ESTIMATE on the
+compaction trigger's own basis, so the texts mark it `≈` and the HEP
+frame carries `estimate: true` — an exact number is shown only when a
+provider reported it (none does for a request that was not sent yet);
+one private seam per number (`_noticeContextWindow`,
+`_noticeNumbersEstimated`) is where the shared context-usage source of
+truth re-points the notices. The TUI prints each notice once, dim, as a transcript row (not a
+user bubble); HEP emits a `context_notice` frame
+`{kind: post-hide|near-limit, tokens, window, hidden?}` — numbers only
+(see `docs/hep.md`). Children get the same texts through the task
+executor (the same queued notice before their next request).

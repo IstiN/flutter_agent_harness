@@ -197,6 +197,41 @@ void main() {
   ];
 
   group('IT-10 merged pass on a fake session', () {
+    test('gh-241 follow-up #5e (E3a): a DELIVERED final reply is stated as '
+        'delivered in the instruction', () async {
+      final s = await session();
+      // The run ENDED with a delivered reply (owner live test, run 3:
+      // the checkpoint called it «NOT yet delivered» 30 s later).
+      await s.appendMessage(_assistant('fixed — the crash is gone'));
+      final state = AgentState(model: _model, messages: []);
+      final snapshot = await snapshotOf(s);
+      final fake = _Fake(['7 old read output\n-\n$_transfer']);
+      final hooks = _Hooks();
+      final compactor = compactorFor(
+        s,
+        state,
+        handOver: callFor(fake, snapshot),
+        snapshot: snapshot,
+        hooks: hooks,
+      );
+
+      expect(await compactor.run(force: true), isTrue);
+      expect(fake.contexts, hasLength(1));
+      // AC3/AC6: the prefix is S0 as sent, the instruction is the only
+      // delta and carries the fold range, the asks block and the tags.
+      final sent = fake.contexts.single.messages;
+      expect(
+        [for (final m in sent.take(snapshot.prefixLength)) m.toJson()],
+        [for (final m in snapshot.messages) m.toJson()],
+      );
+      final instruction = _textOf(sent.last);
+      expect(
+        instruction,
+        contains('Run status: the final assistant reply WAS delivered'),
+      );
+      expect(instruction, isNot(contains(handOverRunStatusNoReply)));
+    });
+
     test('ONE call → hidden_range (labels, consolidated) + checkpoint '
         '(layout tail); the file stays a byte-prefix', () async {
       final s = await session();
@@ -226,6 +261,10 @@ void main() {
       );
       final instruction = _textOf(sent.last);
       expect(instruction, contains('Fold range: records 2-5'));
+      // gh-241 follow-up #5e (E3a): the transcript ends with an UNANSWERED
+      // user turn — the instruction says so (the request snapshot alone
+      // cannot: it never carries the final reply).
+      expect(instruction, contains('Run status: $handOverRunStatusNoReply'));
       expect(instruction, contains('<open-user-requests>'));
       expect(instruction, contains('fix the login crash'));
       expect(texts(sent.take(snapshot.prefixLength)).first, startsWith('m2 '));
@@ -465,6 +504,60 @@ void main() {
       final pass = hooks.passes.single;
       expect(pass.ok, isFalse);
       expect('${pass.error}', contains('Open User Requests'));
+    });
+
+    test(
+      'gh-2411 follow-up #5 F2: a transfer without the section ONCE → ONE '
+      'corrective retry that names it → the pass succeeds (two calls)',
+      () async {
+        // Session 01a21373 (owner live test, round 2): the hand-over reply
+        // carried no `## Open User Requests` heading and the whole pass
+        // failed — "the agent cannot make progress until you switch
+        // models". Small models drop the heading; ONE retry names it.
+        final s = await session();
+        final snapshot = await snapshotOf(s);
+        final fake = _Fake([
+          '7 old read output\n-\nNo heading hand-over.',
+          '7 old read output\n-\n$_transfer',
+        ]);
+        final hooks = _Hooks();
+        final compactor = compactorFor(
+          s,
+          AgentState(model: _model, messages: []),
+          handOver: callFor(fake, snapshot),
+          snapshot: snapshot,
+          hooks: hooks,
+        );
+        expect(await compactor.run(force: true), isTrue);
+        expect(fake.contexts, hasLength(2), reason: 'exactly ONE retry');
+        final retry = texts(fake.contexts.last.messages).join('\n');
+        expect(retry, contains('## Open User Requests'));
+        expect(hooks.passes.single.ok, isTrue);
+      },
+    );
+
+    test('gh-2411 follow-up #5 F2: still missing after the ONE retry → the '
+        'existing failure, nothing appended, exactly two calls', () async {
+      final s = await session();
+      final count = (await s.getEntries()).length;
+      final snapshot = await snapshotOf(s);
+      final fake = _Fake([
+        '7 old read output\n-\nNo heading hand-over.',
+        '7 old read output\n-\nStill no heading.',
+      ]);
+      final hooks = _Hooks();
+      final compactor = compactorFor(
+        s,
+        AgentState(model: _model, messages: []),
+        handOver: callFor(fake, snapshot),
+        snapshot: snapshot,
+        hooks: hooks,
+      );
+      expect(await compactor.run(force: true), isFalse);
+      expect(await s.getEntries(), hasLength(count));
+      expect(fake.contexts, hasLength(2), reason: 'ONE retry, never a loop');
+      expect(hooks.passes.single.ok, isFalse);
+      expect('${hooks.passes.single.error}', contains('Open User Requests'));
     });
 
     test(

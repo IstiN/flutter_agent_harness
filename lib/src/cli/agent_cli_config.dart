@@ -128,8 +128,10 @@ final class AgentCliConfig {
     this.compactionSettings,
     this.compactionTuning,
     this.compactionEngine,
+    this.initialOverheadCalibration,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
+    this.contextWindowCapSource,
     this.stuckTool,
     this.foregroundCall,
     // gh-1577: the empty-hiccup retry knobs, threaded next to the loop's
@@ -286,6 +288,15 @@ final class AgentCliConfig {
   /// (classic remains the explicit rollback choice).
   final CompactionEngine? compactionEngine;
 
+  /// Test seam (gh-2411 follow-up #5): a session that starts MEASURED. The
+  /// real path takes the calibration from the provider's first reply or,
+  /// at load/resume, from the transcript's first usage report; a fixture
+  /// that pins the over-window guard's stop on a first request (no
+  /// provider answer yet) hands the measurement in here — otherwise the
+  /// unmeasured request is sent (provider truth decides). `null` = the
+  /// real behavior.
+  final OverheadCalibration? initialOverheadCalibration;
+
   /// Owner-side effective context override (`agent.contextWindowCap`,
   /// issues #273/#729), threaded into the [Agent] (loop guard) and into
   /// every consumer of the effective window (compaction thresholds, ctx
@@ -293,6 +304,13 @@ final class AgentCliConfig {
   /// it raises the effective window to the served truth. `null` =
   /// uncapped.
   final int? contextWindowCap;
+
+  /// gh-241 follow-up #5b: which file set [contextWindowCap] —
+  /// `'project'` (`<project>/.fah/config.yaml`, the same loader the app
+  /// uses) or `'user'`; `null` when no cap applies. Logged at boot
+  /// (`context window cap source=… window=N`) so a live test can see
+  /// which setting won.
+  final String? contextWindowCapSource;
 
   /// Stuck-call supervision (`agent.stuckTool`, gh-1054): liveness
   /// heartbeats for long-running tool calls plus the autonomous

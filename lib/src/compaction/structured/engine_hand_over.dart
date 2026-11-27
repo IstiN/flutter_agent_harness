@@ -150,6 +150,123 @@ Future<HandOverCallResult> _callHandOver(
 /// protected) and verified against the mechanical asks. `null` for a
 /// hide-only reply (E5); [failed] when the check failed (nothing may be
 /// appended, the pass reported its failure through [fail]).
+/// The reply's transfer text after the belt (think blocks and echo tags
+/// out, gh-2103 origin evidence, the pinned lines protected); `null` for a
+/// hide-only reply (E5) or an emptied transfer.
+String? _sanitizedHandOverTransfer(
+  StructuredCompactor c, {
+  required HandOverReply reply,
+  required RequestSnapshot snapshot,
+}) {
+  final raw = reply.transfer;
+  if (raw == null || raw.trim().isEmpty) return null;
+  final transfer = sanitizeSummary(
+    stripRecordTags(stripThinkBlocks(raw)),
+    protectedLines: c.pinnedLines,
+    origins: SummaryOriginEvidence(snapshot.messages),
+  ).text.trim();
+  return transfer.isEmpty ? null : transfer;
+}
+
+/// gh-2411 follow-up #5 (owner live test, round 2): a transfer WITHOUT the
+/// `## Open User Requests` heading gets ONE corrective retry. The heading
+/// is the belt's grading basis, and a small model drops it — the whole
+/// pass then failed with nothing appended ("the agent cannot make
+/// progress until you switch models"). The retry re-sends the instruction
+/// with a correction that names the section (and allows `- none` under it
+/// when no request is open) and quotes the defective reply. One retry
+/// only: a second miss — or a retry that cannot be made — keeps the
+/// existing failure. A dropped ASK (heading present) is never retried.
+Future<
+  ({
+    String? transfer,
+    bool failed,
+    HandOverReply reply,
+    HandOverCallResult result,
+  })
+>
+_handOverTransferWithRetry(
+  StructuredCompactor c, {
+  required HandOverCallResult result,
+  required HandOverCall handOver,
+  required RequestSnapshot snapshot,
+  required String instruction,
+  required List<String> openAsks,
+  required void Function(Object error) fail,
+}) async {
+  final first = _handOverReply(result.response!);
+  ({
+    String? transfer,
+    bool failed,
+    HandOverReply reply,
+    HandOverCallResult result,
+  })
+  settle(HandOverReply reply, HandOverCallResult result) {
+    final settled = _handOverTransfer(
+      c,
+      reply: reply,
+      snapshot: snapshot,
+      openAsks: openAsks,
+      fail: fail,
+    );
+    return (
+      transfer: settled.transfer,
+      failed: settled.failed,
+      reply: reply,
+      result: result,
+    );
+  }
+
+  final sanitized = _sanitizedHandOverTransfer(
+    c,
+    reply: first,
+    snapshot: snapshot,
+  );
+  final asks = sanitized == null
+      ? null
+      : verifyOpenUserRequests(sanitized, openAsks);
+  if (asks == null || asks.heading) return settle(first, result);
+  final quoted = (first.transfer ?? '').trim();
+  final corrective =
+      '$instruction\n\n'
+      'CORRECTION — your previous reply carried no '
+      '`## Open User Requests` section, so nothing could be graded or '
+      'appended. Answer again with the complete hand-over. The transfer '
+      'text MUST contain the heading `## Open User Requests`; under it '
+      'list every open user request verbatim, or `- none` when none is '
+      'open.\n\nYour previous reply was:\n'
+      '${quoted.length > handOverRetryQuoteMaxChars ? quoted.substring(0, handOverRetryQuoteMaxChars) : quoted}';
+  final HandOverCallResult retry;
+  try {
+    retry = await _callHandOver(
+      c,
+      handOver: handOver,
+      snapshot: snapshot,
+      instruction: corrective,
+    );
+  } on TimeoutException {
+    rethrow;
+  } on Object {
+    // The retry could not be made: the first reply's defect stands.
+    fail(CompactionException(_handOverAskFailure(asks)));
+    return (transfer: null, failed: true, reply: first, result: result);
+  }
+  if (c._ladderTerminated) {
+    return (transfer: null, failed: true, reply: first, result: result);
+  }
+  if (!retry.ok) {
+    fail(CompactionException(_handOverAskFailure(asks)));
+    return (transfer: null, failed: true, reply: first, result: result);
+  }
+  // The pass receipt carries the retry's result (the call that produced
+  // the appended transfer); the first call's usage is not re-billed here.
+  return settle(_handOverReply(retry.response!), retry);
+}
+
+/// The defective reply quoted into the corrective instruction is capped
+/// (a runaway transfer must not double the retry's price).
+const int handOverRetryQuoteMaxChars = 12000;
+
 ({String? transfer, bool failed}) _handOverTransfer(
   StructuredCompactor c, {
   required HandOverReply reply,
@@ -157,14 +274,12 @@ Future<HandOverCallResult> _callHandOver(
   required List<String> openAsks,
   required void Function(Object error) fail,
 }) {
-  final raw = reply.transfer;
-  if (raw == null || raw.trim().isEmpty) return (transfer: null, failed: false);
-  var transfer = sanitizeSummary(
-    stripRecordTags(stripThinkBlocks(raw)),
-    protectedLines: c.pinnedLines,
-    origins: SummaryOriginEvidence(snapshot.messages),
-  ).text.trim();
-  if (transfer.isEmpty) return (transfer: null, failed: false);
+  final transfer = _sanitizedHandOverTransfer(
+    c,
+    reply: reply,
+    snapshot: snapshot,
+  );
+  if (transfer == null) return (transfer: null, failed: false);
   final asks = verifyOpenUserRequests(transfer, openAsks);
   if (!asks.heading || asks.missing.isNotEmpty) {
     fail(CompactionException(_handOverAskFailure(asks)));
@@ -301,6 +416,7 @@ Future<bool> _runHandOverPass(
   required int trigger,
   required bool force,
   required bool softTriggered,
+  required String runStatus,
 }) async {
   final handOver = c.handOver!;
   final snapshot = c.requestSnapshot!;
@@ -322,6 +438,7 @@ Future<bool> _runHandOverPass(
     range: armed.range,
     openAsks: openAsks,
     contextTokens: before,
+    runStatus: runStatus,
   );
   if (c._ladderTerminated) return false;
   final HandOverCallResult result;
@@ -357,18 +474,19 @@ Future<bool> _runHandOverPass(
     );
     return false;
   }
-  final reply = _handOverReply(result.response!);
-  final transfer = _handOverTransfer(
+  final transfer = await _handOverTransferWithRetry(
     c,
-    reply: reply,
+    result: result,
+    handOver: handOver,
     snapshot: snapshot,
+    instruction: instruction,
     openAsks: openAsks,
     fail: fail,
   );
   if (transfer.failed) return false;
   final verdict = _handOverVerdict(
     c,
-    reply: reply,
+    reply: transfer.reply,
     snapshot: snapshot,
     view: armed.view,
     range: armed.range,
@@ -385,7 +503,7 @@ Future<bool> _runHandOverPass(
   c.hooks?.onPass(
     _handOverPassReport(
       c,
-      result: result,
+      result: transfer.result,
       verdict: verdict,
       snapshot: snapshot,
       before: before,
@@ -431,6 +549,7 @@ String _handOverInstruction(
   required _CkptRange range,
   required List<String> openAsks,
   required int contextTokens,
+  required String runStatus,
 }) {
   final folded = [
     for (final ckpt in c._flattenForDepthCap(range))
@@ -447,5 +566,6 @@ String _handOverInstruction(
     openUserRequests: openAsks,
     pinnedOperative: c.pinnedOperativeBlock,
     foldedCheckpoints: folded.isEmpty ? null : folded.join('\n'),
+    runStatus: runStatus,
   );
 }

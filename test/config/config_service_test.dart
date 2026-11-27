@@ -128,6 +128,95 @@ void main() {
       expect(report.warnings.single.message, contains('bogusKey'));
     });
 
+    // gh-241 follow-up #5b (parity with the app): `agent.contextWindowCap`
+    // is the ONE `agent.*` key the project file is read for.
+    test(
+      'agent.contextWindowCap in the project file is READ, not dead config',
+      () async {
+        await env.writeFile(
+          _globalConfig,
+          '$_validGlobal\nagent:\n  contextWindowCap: 40000\n',
+        );
+        await env.writeFile(
+          _projectConfig,
+          '$_validProject\nagent:\n  contextWindowCap: 25000\n',
+        );
+        final report = await checkOrThrow(service);
+        expect(
+          report.warnings
+              .map((w) => w.message)
+              .where((m) => m.contains('dead config')),
+          isEmpty,
+        );
+        final result = await service.get('agent.contextWindowCap');
+        expect(result.found, isTrue);
+        expect(result.display, '25000');
+        expect(result.scope, 'project');
+        expect(result.file, _projectConfig);
+      },
+    );
+
+    test('every OTHER agent.* key in the project file still warns as dead '
+        'config — by name', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      await env.writeFile(
+        _projectConfig,
+        '$_validProject\nagent:\n  contextWindowCap: 25000\n'
+        '  misuseBreaker: false\n',
+      );
+      final report = await checkOrThrow(service);
+      final dead = report.warnings
+          .map((w) => w.message)
+          .where((m) => m.contains('dead config'))
+          .toList();
+      expect(dead, hasLength(1));
+      expect(dead.single, contains('"agent.misuseBreaker"'));
+      expect(dead.single, isNot(contains('"agent.contextWindowCap"')));
+    });
+
+    test(
+      'fa config set agent.contextWindowCap --scope project writes the '
+      'project file, validates it, and is the default scope for the key',
+      () async {
+        await env.writeFile(_globalConfig, _validGlobal);
+        final explicit = await service.set(
+          'agent.contextWindowCap',
+          '25000',
+          scope: ConfigScope.project,
+        );
+        expect(explicit.scope, 'project');
+        expect(explicit.file, _projectConfig);
+        expect(
+          (await env.readTextFile(_projectConfig)).getOrThrow(),
+          contains('contextWindowCap: 25000'),
+        );
+        // Same validation as the user key: not a positive-enough integer.
+        await expectLater(
+          service.set(
+            'agent.contextWindowCap',
+            '0',
+            scope: ConfigScope.project,
+          ),
+          throwsConfigException,
+        );
+        // Other agent.* keys stay user-only.
+        await expectLater(
+          service.set(
+            'agent.misuseBreaker',
+            'false',
+            scope: ConfigScope.project,
+          ),
+          throwsConfigException,
+        );
+        final defaulted = await service.set('agent.contextWindowCap', '20000');
+        expect(defaulted.scope, 'project');
+        expect(defaulted.newDisplay, '20000');
+        final stored = (await env.readTextFile(_projectConfig)).getOrThrow();
+        expect(stored, contains('contextWindowCap: 20000'));
+        expect(stored, isNot(contains('contextWindowCap: 25000')));
+      },
+    );
+
     test(
       'global-only sections in the project file warn as dead config',
       () async {
@@ -139,6 +228,49 @@ void main() {
         );
       },
     );
+    // gh-2411 rework review (spills): the project file participates in the
+    // `spills:` section too — the app host has always read it
+    // (loadProjectSpillsConfig ?? user section) and the self-settings doc
+    // documents it; the check must not call a live section dead.
+    test('spills in the project file is READ, not dead config', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\nspills:\n  threshold: 4096\n',
+      );
+      await env.writeFile(
+        _projectConfig,
+        '$_validProject\nspills:\n  threshold: 1024\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(
+        report.warnings
+            .map((w) => w.message)
+            .where((m) => m.contains('dead config')),
+        isEmpty,
+      );
+      final result = await service.get('spills.threshold');
+      expect(result.found, isTrue);
+      expect(result.display, '1024');
+      expect(result.scope, 'project');
+      expect(result.file, _projectConfig);
+    });
+
+    test('fa config set spills.threshold defaults to the project scope and '
+        'validates the value', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      final defaulted = await service.set('spills.threshold', '2048');
+      expect(defaulted.scope, 'project');
+      expect(defaulted.file, _projectConfig);
+      expect(
+        (await env.readTextFile(_projectConfig)).getOrThrow(),
+        contains('threshold: 2048'),
+      );
+      // The spills section parses TOLERANTLY by design (issue #678): a
+      // mistyped scalar is a note at boot, never a failure — the write
+      // must succeed exactly like the boot parse accepts it.
+      final tolerant = await service.set('spills.threshold', 'many');
+      expect(tolerant.scope, 'project');
+    });
 
     test(
       'cwd == home: the project pass is skipped — one file, one pass (gh-1573)',

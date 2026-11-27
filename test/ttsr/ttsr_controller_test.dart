@@ -642,6 +642,7 @@ void main() {
       () async {
         final host = _TestHost(await newSession());
         final fake = _FakeStreamFunction([
+          _textTurn('Sure.'),
           _textTurnChunks(['I will use con', 'sole.log(']),
           _textTurn('Switched to the logger.'),
         ]);
@@ -654,6 +655,10 @@ void main() {
           sink: host.sink,
         );
 
+        // gh-2411: an OLDER turn — the newest real user turn never folds,
+        // so the compaction below needs a foldable region before it.
+        await agent.prompt('warm up');
+        await host.flush(agent);
         await agent.prompt('add logging');
         await controller.settled;
         await host.flush(agent);

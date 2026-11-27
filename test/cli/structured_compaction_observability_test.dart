@@ -92,6 +92,11 @@ void main() {
     bool showCompactionDetails = false,
   }) => AgentCli(
     config: AgentCliConfig(
+      // gh-2411: overflow through messages, not overhead — with the
+      // real CLI prompt (~14.4k tokens) the guard would already refuse
+      // the request after the SECOND read, one turn early.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read', 'bash']),
       model: const Model(
         id: 'tiny-window',
         api: 'test-api',

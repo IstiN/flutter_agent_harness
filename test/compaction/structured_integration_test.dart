@@ -262,6 +262,51 @@ void main() {
       );
     });
 
+    // gh-241 follow-up #5b (parity with the app, owner live test): the CLI
+    // now honors the PROJECT `agent.contextWindowCap` through the app's
+    // loader — a tester's project `25000` used to be dead config.
+    test('loadProjectContextWindowCap: absent/valid/invalid project file', () {
+      final dir = Directory.systemTemp.createTempSync('fa_projcap_');
+      try {
+        expect(loadProjectContextWindowCap(dir.path), isNull);
+        final file = File('${dir.path}/.fah/config.yaml')
+          ..createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 25000\n');
+        expect(loadProjectContextWindowCap(dir.path), 25000);
+        // Present-but-invalid throws — the same validation as the user key.
+        file.writeAsStringSync('agent:\n  contextWindowCap: 0\n');
+        expect(
+          () => loadProjectContextWindowCap(dir.path),
+          throwsA(isA<ConfigException>()),
+        );
+        file.writeAsStringSync('agent:\n  contextWindowCap: big\n');
+        expect(
+          () => loadProjectContextWindowCap(dir.path),
+          throwsA(isA<ConfigException>()),
+        );
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test(
+      'resolveContextWindowCap: the project cap wins, else the user cap',
+      () {
+        expect(resolveContextWindowCap(userCap: 40000, projectCap: 25000), (
+          cap: 25000,
+          source: 'project',
+        ));
+        expect(resolveContextWindowCap(userCap: 40000, projectCap: null), (
+          cap: 40000,
+          source: 'user',
+        ));
+        expect(resolveContextWindowCap(userCap: null, projectCap: null), (
+          cap: null,
+          source: null,
+        ));
+      },
+    );
+
     test('loadProjectCompactionEngine: absent/valid/invalid project file', () {
       final dir = Directory.systemTemp.createTempSync('fa_compcfg_');
       try {

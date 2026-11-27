@@ -130,14 +130,16 @@ refresh: `dart run scripts/sync_codex_models.dart`. Details:
 The hook is a thin wrapper over `scripts/ci_fast_gate.sh`; CI classifies
 PRs through the same script (`--dry-run`) — one classifier, one threshold
 set, hook/CI parity via `GATE_STAGE` markers. Path rules: docs/markdown/
-prompts-only → size + analyze; lib/bin/test/pubspec → +tests, coverage,
-CRAP, dup, dupx; `test/integration/**` → +integration-mock;
+prompts-only → size + analyze; lib/bin/test/pubspec → +tests, CRAP,
+dup, dupx (coverage CI-only — the hook does not instrument);
+`test/integration/**` → +integration-mock;
 flutter_app/packages → +flutter; scripts/.github → everything. Invariants:
 
 - analyze + format clean; `dart test` green — **deterministic-only**
   (mock LLM; live models never in the gate; `llm`-tagged files run only in
   the tag-only provider smoke + nightly).
-- Line coverage of `lib/` ≥ 80%; jscpd < 1% core / < 3.7% app; cross-module
+- Line coverage of `lib/` ≥ 80% (CI-only ratchet — `coverage-gate`; the
+  pre-commit hook does not instrument); jscpd < 1% core / < 3.7% app; cross-module
   dup < 0.31%; CRAP ratchet: core 12.0, app 30.0 (thresholds only-down);
   ≤ 2800 lines per `.dart` file; AGENTS.md ceiling (top of this file).
 - Red-in-≥2-distinct-SHA-runs flakes quarantine via

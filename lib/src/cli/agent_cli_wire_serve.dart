@@ -80,9 +80,11 @@ extension WireServeBoot on AgentCli {
   /// second writer, it refuses with the banner, exit 3.
   Future<_WireServeRuntime?> _wireServeBoot(void Function() pumpSub) async {
     await _cubeBootRestore();
-    await _waiting.captureLostJobs();
     _session = await _initializeSession();
     _notifyPluginSessionReady();
+    // Restart honesty (issue #450) — after the session opens so the
+    // gh-2413 owner filter knows which entries are this session's.
+    await _waiting.captureLostJobs();
     final claim = await _claimSessionLeaseHeadless();
     switch (claim) {
       case HeadlessLeaseClaimAcquired():

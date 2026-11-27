@@ -40,6 +40,8 @@ import '../../session/session_tree.dart';
 import '../../context.dart';
 import '../../types.dart';
 import '../compaction.dart';
+import '../newest_user_turn.dart' show newestUserTurnRecordIds;
+import '../inbound_mail.dart' show unansweredInboundMailRecordIds;
 import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import 'judge.dart';
@@ -382,6 +384,7 @@ final class StructuredCompactor {
     state.messages,
     systemPrompt: state.systemPrompt,
     tools: state.tools,
+    calibration: state.overheadCalibration,
   );
 
   /// Runs both passes; returns whether the context settled at or below
@@ -426,6 +429,9 @@ final class StructuredCompactor {
         this,
         trigger: trigger,
         force: force,
+        // gh-241 follow-up #5e (E3a): the live transcript, unlike the
+        // request snapshot, holds the final assistant reply.
+        runStatus: handOverRunStatus(state.messages),
         softTriggered: softTriggered,
       );
     }
@@ -777,7 +783,13 @@ final class StructuredCompactor {
       picks,
       view.ledger,
       protectLastN: protectLastN,
-      pinnedRecordIds: view.state.pinnedRecordIds,
+      pinnedRecordIds: {
+        ...view.state.pinnedRecordIds,
+        // PR #2435 addendum: the judge never hides unanswered inbound
+        // mail — the mechanical veto behind the prompt-level
+        // `## Open User Requests` belt.
+        ...unansweredInboundMailRecordIds(view.path),
+      },
     );
     if (ids.isEmpty) return (killed: false, decided: true);
     await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -1654,69 +1666,190 @@ final class StructuredCompactor {
     if (view_ == null) return null;
     final projected = _projectedEntries(view_);
     if (projected.isEmpty) return null;
-
-    // The foldable prefix: pins and their whole pair groups drop out
-    // BEFORE the keep-recent walk (issue #1379 tier 2 rework). They
-    // can never fold, so they consume no keep-recent budget and never
-    // clamp the window — the walk measures foldable bytes only. A deep
-    // pin cannot starve checkpointing: every pass still folds the
-    // oldest unpinned content wherever the pin sits, while pinned
-    // records keep rendering at their positions, unswallowed and
-    // unsummarized. The only stall left is an empty foldable prefix —
-    // the same honest nothing-to-fold an exempt range gives, never a
-    // pin-induced fallback to the lossy classic path (the judge,
-    // deterministic and LRU passes still run).
-    final foldable = [
-      for (final entry in projected)
-        if (!view_.ledger
-            .groupOf(entry.recordId)
-            .any(view_.state.pinnedRecordIds.contains))
-          entry,
-    ];
+    final userTurn = newestUserTurnRecordIds(view_.path);
+    final openMail = unansweredInboundMailRecordIds(view_.path);
+    final foldable = _foldableEntries(view_, projected, userTurn, openMail);
     if (foldable.isEmpty) return null;
-    var tailBudget = settings.keepRecentTokens;
-    var cut = foldable.length;
-    for (var i = foldable.length - 1; i >= 0; i--) {
-      tailBudget -= foldable[i].tokens;
-      if (tailBudget <= 0) {
-        cut = i;
-        break;
-      }
-    }
-    // gh-2044 rework (CI regression): when the walk above never exhausts
-    // its budget, the ENTIRE foldable path fits INSIDE the keep-recent
-    // region — the default `cut = foldable.length` then folds everything
-    // and keeps zero recent context, swallowing the live tail (the newest
-    // user ask and assistant turn included). Nothing below the keep-recent
-    // boundary means nothing to fold — except an all-markers path (every
-    // record already hidden), whose deterministic consolidation (issue
-    // #387) is lossless and touches no live content. The decline applies
-    // only to the escalation's deepening (semantic 5); ladder passes run
-    // over the trigger and fold for relief (UT-ESC-13).
+    final cut = _keepRecentCut(
+      foldable,
+      _keepRecentSeedBudget(view_, userTurn, wholeWorldDeclines),
+    );
+    // gh-2044 rework (CI regression): when the walk in [_keepRecentCut]
+    // never exhausts its budget, the ENTIRE foldable path fits INSIDE the
+    // keep-recent region — the default `cut = foldable.length` then folds
+    // everything and keeps zero recent context, swallowing the live tail
+    // (the newest user ask and assistant turn included). Nothing below the
+    // keep-recent boundary means nothing to fold — except an all-markers
+    // path (every record already hidden), whose deterministic
+    // consolidation (issue #387) is lossless and touches no live content.
+    // The decline applies only to the escalation's deepening (semantic 5);
+    // ladder passes run over the trigger and fold for relief (UT-ESC-13).
     if (cut == foldable.length &&
         _wholeWorldDeclines(view_, foldable, wholeWorldDeclines)) {
       return null;
     }
     // Snap inward at group boundaries: a range never splits a pair.
-    while (cut > 1 && _sharesGroup(foldable, cut, view_.ledger)) {
-      cut--;
-    }
-    final members = foldable.take(cut).toList();
+    final snapped = _snapInwardAtGroupBoundary(foldable, cut, view_.ledger);
+    final members = foldable.take(snapped).toList();
     if (members.isEmpty) return null;
-
-    final coveredIds = <String>{};
-    for (final member in members) {
-      coveredIds.add(member.recordId);
-      coveredIds.addAll(view_.ledger.groupOf(member.recordId));
-    }
     return _CkptRange(
       firstRecordId: members.first.recordId,
       lastRecordId: members.last.recordId,
-      coveredRecordIds: coveredIds.toList()..sort(),
+      coveredRecordIds: _coveredRecordIds(view_.ledger, members).toList()
+        ..sort(),
       state: view_.state,
       visible: view_.visible,
       seqs: view_.seqs,
     );
+  }
+
+  /// The foldable prefix: pins and their whole pair groups drop out
+  /// BEFORE the keep-recent walk (issue #1379 tier 2 rework). They
+  /// can never fold, so they consume no keep-recent budget and never
+  /// clamp the window — the walk measures foldable bytes only. A deep
+  /// pin cannot starve checkpointing: every pass still folds the
+  /// oldest unpinned content wherever the pin sits, while pinned
+  /// records keep rendering at their positions, unswallowed and
+  /// unsummarized. The only stall left is an empty foldable prefix —
+  /// the same honest nothing-to-fold an exempt range gives, never a
+  /// pin-induced fallback to the lossy classic path (the judge,
+  /// deterministic and LRU passes still run).
+  /// gh-2411: the newest real user turn is non-foldable the same way —
+  /// the incident's checkpoints listed the question itself in
+  /// `coversRecordIds` ("dropped by the local trim"), and the model saw
+  /// only its record tag. Tool groups of the same turn stay foldable
+  /// (a long agentic turn still checkpoints); coverage is by explicit
+  /// ids, so the turn keeps rendering between the folds around it.
+  /// PR #2435 addendum: unanswered inbound inter-agent mail is open
+  /// data — never folds (mirrors the user-turn pin; folds once a reply
+  /// lands). The group-aware check keeps a mail pinned through any
+  /// carrier/result group it ends up inside.
+  List<_ProjectedEntry> _foldableEntries(
+    _LedgerView view,
+    List<_ProjectedEntry> projected,
+    Set<String> userTurn,
+    Set<String> openMail,
+  ) {
+    return [
+      for (final entry in projected)
+        if (!_nonFoldable(view, entry.recordId, userTurn) &&
+            !_isProtectedMail(view, entry.recordId, openMail))
+          entry,
+    ];
+  }
+
+  /// The keep-recent seed for the checkpoint walk (see [_keepRecentCut]).
+  /// gh-2411 × the keep-recent walk (the flutter_app compaction ITs, the
+  /// agent_service twin of the CLI seam): the protected turn never enters
+  /// `foldable`, but its weight still consumes keep-recent budget — the
+  /// walk below measures FOLDABLE tokens only. A fat newest user prompt
+  /// (the app's three-turn fixture class, and any chat session whose
+  /// question outweighs `keepRecentTokens`) used to leave the walk with
+  /// `cut == 0` — fold nothing — while the transcript sat OVER the
+  /// trigger: the ladder honestly surfaced `false`, and the lossy
+  /// classic residual took the pass, dropping the question anyway —
+  /// the exact outcome the invariant exists to prevent. The turn's
+  /// weight moves to the fold side here: the kept tail budgets
+  /// `keepRecentTokens` MINUS what the protected turn already occupies.
+  /// The invariant is untouched (the turn is never foldable); only the
+  /// relief math sees it, so a ladder pass over the trigger still folds
+  /// for relief and the newest question always survives.
+  ///
+  /// The seed is a RELIEF-required-context correction and applies to the
+  /// ladder and the merged hand-over gate only (`wholeWorldDeclines ==
+  /// false`): the escalation's deepening pass runs UNDER the trigger,
+  /// where gh-2044 semantic 5 forbids folding the live tail, and its
+  /// chunker calibration (UT-ESC-11) is pinned to the unseeded walk.
+  int _keepRecentSeedBudget(
+    _LedgerView view,
+    Set<String> userTurn,
+    bool wholeWorldDeclines,
+  ) {
+    var protectedTurnTokens = 0;
+    if (!wholeWorldDeclines) {
+      for (final entry in view.ledger.entries) {
+        if (userTurn.contains(entry.recordId)) {
+          protectedTurnTokens += entry.tokens;
+        }
+      }
+    }
+    // The protected turn alone can OUTWEIGH `keepRecentTokens` (the app's
+    // hand-over IT keeps the boundary at 24 tokens against a ~150-token
+    // prompt): the seed then lands at or below zero and there is no
+    // foldable tail to keep — the protected turn IS the kept tail, and
+    // the whole foldable prefix folds. Skipping the walk at a non-positive
+    // seed restores the pre-invariant hand-over/ladder behaviour (the
+    // range picker never declined this fixture class); a positive seed
+    // walks exactly as before, minus the turn's weight.
+    return wholeWorldDeclines
+        ? settings.keepRecentTokens
+        : settings.keepRecentTokens - protectedTurnTokens;
+  }
+
+  /// The keep-recent walk over the FOLDABLE path only: walk backward from
+  /// the newest foldable entry until [seededBudget] is exhausted; the cut
+  /// lands on the first entry that no longer fits. A non-positive seed
+  /// (the protected turn outweighed the budget) keeps nothing foldable —
+  /// the whole foldable prefix folds.
+  int _keepRecentCut(List<_ProjectedEntry> foldable, int seededBudget) {
+    if (seededBudget <= 0) return foldable.length;
+    var tailBudget = seededBudget;
+    for (var i = foldable.length - 1; i >= 0; i--) {
+      tailBudget -= foldable[i].tokens;
+      if (tailBudget <= 0) return i;
+    }
+    return foldable.length;
+  }
+
+  /// Snap a walk cut inward at group boundaries: a range never splits a
+  /// pair.
+  int _snapInwardAtGroupBoundary(
+    List<_ProjectedEntry> foldable,
+    int cut,
+    ContextLedger ledger,
+  ) {
+    var snapped = cut;
+    while (snapped > 1 && _sharesGroup(foldable, snapped, ledger)) {
+      snapped--;
+    }
+    return snapped;
+  }
+
+  /// The ids a checkpoint range covers: every member plus each member's
+  /// whole pair group.
+  Set<String> _coveredRecordIds(
+    ContextLedger ledger,
+    List<_ProjectedEntry> members,
+  ) {
+    final coveredIds = <String>{};
+    for (final member in members) {
+      coveredIds.add(member.recordId);
+      coveredIds.addAll(ledger.groupOf(member.recordId));
+    }
+    return coveredIds;
+  }
+
+  /// Whether [recordId]'s whole pair group can never fold into a
+  /// checkpoint: a pin (issue #1379 tier 2) or the newest real user turn
+  /// (gh-2411).
+  bool _nonFoldable(_LedgerView view, String recordId, Set<String> userTurn) {
+    final group = view.ledger.groupOf(recordId);
+    return group.any(
+      (id) => view.state.pinnedRecordIds.contains(id) || userTurn.contains(id),
+    );
+  }
+
+  /// PR #2435 addendum: whether [recordId]'s pair group covers an
+  /// unanswered inbound mail id — group-aware like [_nonFoldable], so
+  /// hiding a carrier never folds the mail parked next to it.
+  bool _isProtectedMail(
+    _LedgerView view,
+    String recordId,
+    Set<String> openMail,
+  ) {
+    if (openMail.isEmpty) return false;
+    final group = view.ledger.groupOf(recordId);
+    return group.any(openMail.contains);
   }
 
   bool _sharesGroup(
