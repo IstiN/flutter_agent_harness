@@ -148,7 +148,7 @@ check "AC3b cancelled job with an unconcluded (null) mid-flight step trips" $?
 
 # CK1 — the continue-on-error producer timeout kill (gh-2455 review,
 # thread on ci.yml:4287): build-extension carries job-level
-# `continue-on-error: true` (ci.yml:5018; web-spa at :4893) and now
+# `continue-on-error: true` (ci.yml:5023; web-spa at :4897) and now
 # rides in the watchdog `needs`. A `timeout-minutes` kill is a
 # CANCELLATION — the runner masks only Failed→Succeeded
 # (ApplyContinueOnError, ExecutionContext.cs:1424: `if (Result !=

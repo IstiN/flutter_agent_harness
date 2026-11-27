@@ -359,7 +359,7 @@ void main() {
         isTrue,
         reason:
             'gh-2455 review (thread on ci.yml:4287): build-extension '
-            '(ci.yml:5018) and web-spa (ci.yml:4893) carry job-level '
+            '(ci.yml:5023) and web-spa (ci.yml:4897) carry job-level '
             'continue-on-error: true and now ride in the watchdog '
             '`needs`. A `timeout-minutes` kill is a CANCELLATION, not a '
             'failure — the runner masks only Failed→Succeeded '
