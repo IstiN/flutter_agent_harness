@@ -18,10 +18,17 @@
 ///       SUCCESS — web-spa/build-extension cannot redden a run), and is
 ///       armed on tag pushes (its `if` is absent, event-agnostic, or
 ///       mentions push). quality-gate itself is the pre-gate arm,
-///  AC3  the `if` ORs every covered leg's result == 'failure' — the
-///       fa#456 transitive-skip lesson: key on direct results, never
-///       transitive skips. No dead clauses either: every needs entry
-///       must appear in the if (the continue-on-error review finding),
+///  AC3  the `if` ORs every covered leg's direct result — 'failure' OR
+///       'cancelled' (fa#456 transitive-skip lesson: key on direct
+///       results, never transitive skips). Cancelled is a red source,
+///       not a skip (gh-2436 / v1.0.782 run 45830131519: the hung
+///       binaries-macos-x64 leg hit timeout-minutes:45 and concluded
+///       CANCELLED — invisible to failure-only arms; the report fired
+///       only through the downstream fail-closed install-pin-bump
+///       symptom, and a mid-flight run cancel with zero failures would
+///       have left every in-flight leg cancelled: silent vanish).
+///       No dead clauses either: every needs entry must appear in the
+///       if (the continue-on-error review finding),
 ///  AC4  every listed need is a real job key (a phantom key is a
 ///       workflow parse error).
 ///
@@ -179,7 +186,7 @@ void main() {
   });
 
   group('AC3 — the if keys on each covered leg directly (fa#456)', () {
-    test('every needs entry appears as needs.<key>.result == failure', () {
+    test('every needs entry arms on failure AND cancelled', () {
       final jobs = _jobs();
       final ifText = (jobs['ci-red-report'] as YamlMap)['if'].toString();
       final covered = _needsOf(jobs, 'ci-red-report');
@@ -193,7 +200,35 @@ void main() {
               'can never conclude failure) only delay the report; '
               'transitive skips are never a substitute (fa#456)',
         );
+        expect(
+          ifText,
+          contains("needs.$leg.result == 'cancelled'"),
+          reason:
+              '"$leg" concluding CANCELLED must arm the report too — '
+              'cancelled is a red source, not a skip (v1.0.782 run '
+              '45830131519: the hung binaries-macos-x64 leg was '
+              'cancelled at timeout-minutes:45 and failure-only arms '
+              'never saw it; only the downstream fail-closed '
+              'install-pin-bump symptom filed the ticket, and a '
+              'mid-flight run cancel with zero failures would have '
+              'vanished silently)',
+        );
       }
+    });
+
+    test('the filed issue names cancelled legs, not just failures', () {
+      expect(
+        read('.github/workflows/ci.yml'),
+        contains(
+          'select(.conclusion == "failure" or .conclusion == "cancelled")',
+        ),
+        reason:
+            'the tracker item must list the ROOT leg — v1.0.782 (run '
+            '45830131519) filed only the downstream fail-closed symptom '
+            '("Advance vpinned marker") while the actually-hung '
+            'binaries-macos-x64 leg, cancelled at timeout-minutes, was '
+            'filtered out by the failure-only conclusion query',
+      );
     });
   });
 
