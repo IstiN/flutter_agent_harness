@@ -434,34 +434,30 @@ void main() {
     expect(records.whereType<CompactCheckpointRecord>(), isEmpty);
   });
 
-  /// gh-1743: a transcript over the window with a droppable read pair —
-  /// the shape the local trim can rescue.
+  /// gh-1743: a transcript over the window with a droppable head — the
+  /// shape the local trim can rescue. The droppable part is OLDER history
+  /// before the newest user turn (gh-2411: that turn is the valve's kept
+  /// floor, so nothing after it is food — the pre-fix fixture dropped the
+  /// user's own turn together with its read pair).
   Future<(Session, AgentState)> overWindowSessionWithDroppableTail() async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('an earlier ask'));
+    // Two heavy earlier replies (~900 tokens each) push the transcript
+    // over the 900-token trigger; the newest turn is tiny.
+    for (var i = 0; i < 2; i++) {
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'o' * 3600)],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+    }
     await session.appendMessage(UserMessage.text('fix the login crash'));
-    await session.appendMessage(
-      AssistantMessage(
-        content: [
-          const TextContent(text: 'looking'),
-          ToolCall(id: 'c1', name: 'read', arguments: const {}),
-        ],
-        api: 'test-api',
-        provider: 'test-provider',
-        model: 'test-model',
-        usage: Usage.zero,
-        stopReason: StopReason.stop,
-        timestamp: DateTime.utc(2026),
-      ),
-    );
-    await session.appendMessage(
-      ToolResultMessage(
-        toolCallId: 'c1',
-        toolName: 'read',
-        content: [TextContent(text: 'x' * 16000)],
-        isError: false,
-        timestamp: DateTime.utc(2026),
-      ),
-    );
     for (var i = 0; i < 11; i++) {
       await session.appendMessage(
         AssistantMessage(
@@ -533,8 +529,8 @@ void main() {
       (p) => p.ok && p.fallback == 'local-trim',
     );
     // … and the receipt explains where the tokens went (issue #673
-    // AC3): the dropped user + tool-call + tool-result read pair, with
-    // every filler kept inside the keepRecent budget.
+    // AC3): the dropped earlier ask + its two heavy replies, with the
+    // newest user turn and every filler kept inside the keepRecent budget.
     expect(trimReceipt.droppedMessages, 3);
     // … and the hooks bracket closed exactly once.
     expect(hooks.doneCount, 1);
@@ -550,17 +546,35 @@ void main() {
     expect(marker.content as String, contains('[context trimmed locally'));
     // Wire stays pair-safe; the session file keeps every record.
     expect(validateToolPairing(state.messages), isEmpty);
-    expect((await session.getEntries()).whereType<MessageRecord>().length, 14);
+    // The newest user turn survived the rescue (gh-2411).
+    expect(
+      state.messages.whereType<UserMessage>().map((m) => m.content),
+      contains('fix the login crash'),
+    );
+    expect((await session.getEntries()).whereType<MessageRecord>().length, 15);
   });
 
   test('gh-1743: when nothing is droppable the budget timeout keeps the '
       'failure verdict', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-    // A single tiny user turn with the trigger at zero (window 100,
-    // reserve 100): the structured checkpoint pass reaches the wedged
-    // summarizer, but the trim valve finds nothing droppable (the kept
-    // region would be empty) — so the honest failure verdict must stay.
+    // A tiny user turn plus one tiny reply, with the trigger at zero
+    // (window 100, reserve 100): the structured checkpoint pass reaches
+    // the wedged summarizer (the reply is foldable), but the trim valve
+    // finds nothing droppable — the user turn is its kept floor
+    // (gh-2411) and the reply sits after it — so the honest failure
+    // verdict must stay.
     await session.appendMessage(UserMessage.text('a' * 40));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [TextContent(text: 'x' * 12)],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
     final state = AgentState(
       model: _model,
       messages: await session.buildContextMessages(),
@@ -616,7 +630,9 @@ void main() {
     // No trim means no live-context change (AgentState copies on assign,
     // so compare element identity, not list identity).
     expect(state.messages.length, messagesBefore.length);
-    expect(identical(state.messages.single, messagesBefore.single), isTrue);
+    for (var i = 0; i < messagesBefore.length; i++) {
+      expect(identical(state.messages[i], messagesBefore[i]), isTrue);
+    }
   });
 
   test('gh-1743: a cancelled run token surfaces the abort — the rescue '

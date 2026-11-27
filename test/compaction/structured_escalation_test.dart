@@ -445,16 +445,21 @@ void main() {
 
     test('negative margin (still over the trigger) is not a thin '
         'settlement: no escalation, verdict fails', () async {
-      // Judge declines: nothing relieves, settle == entry over the trigger.
+      // Judge declines; the ladder checkpoint folds the prefix past
+      // keep-recent and the settle keeps a FULL reserve of headroom
+      // (margin ≥ reserve) — outside the band, so no escalation. gh-2411:
+      // the ask is non-foldable, so it counts toward the settle — the
+      // fold covers FEW records (one huge pair: every covered record also
+      // leaves a wire marker), leaving user + checkpoint + small tail.
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
-      await session.appendMessage(UserMessage.text('u' * 400));
+      await session.appendMessage(UserMessage.text('u' * 40));
       await session.appendMessage(_filler(4));
-      for (var i = 0; i < 5; i++) {
-        await session.appendMessage(_carrier('c$i'));
-        await session.appendMessage(_result('c$i', 100));
-      }
+      await session.appendMessage(_carrier('c0'));
+      await session.appendMessage(_result('c0', 500));
+      await session.appendMessage(_carrier('c1'));
+      await session.appendMessage(_result('c1', 80));
       await session.appendMessage(_filler(28));
       assert(
         _requestTokens(_stateFor(await session.buildContextMessages())) > 600,
@@ -515,9 +520,12 @@ void main() {
 
   group('UT-ESC-6 — bounded work', () {
     test('exactly one escalation; a still-thin result does not loop', () async {
-      // user 100 + 9 pairs of 56 = 604 (over the 600 trigger); the ladder
-      // checkpoint folds user+pair1, the escalation folds pair2 — the
-      // result is still in the band and must NOT re-escalate.
+      // user 100 + 9 pairs of 56 = 604 (over the 600 trigger), keep-recent
+      // 300: the ladder checkpoint folds the pairs past keep-recent and
+      // settles thin (less than the 200 reserve of headroom); the
+      // escalation deepens once — the result is still in the band and
+      // must NOT re-escalate. gh-2411: the ask is non-foldable, so the
+      // foldable path is the pairs alone.
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
@@ -535,7 +543,7 @@ void main() {
         settings: const CompactionSettings(
           enabled: true,
           reserveTokens: 200,
-          keepRecentTokens: 400,
+          keepRecentTokens: 300,
         ),
         judge: (_, [token]) async => '[]',
         summarize: (_) => Future.value(SummarizationResult.success('CKPT')),
@@ -918,7 +926,14 @@ void main() {
         session: session,
         state: state,
         window: 800,
-        settings: _boundarySettings,
+        // gh-2411: the ask is non-foldable and no longer weighs in the
+        // range; keep-recent 100 (instead of the boundary 200) pulls a
+        // third kept pair past the 256-token chunker floor.
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 200,
+          keepRecentTokens: 100,
+        ),
         judge: (_, [token]) async => judgeAnswerFor(entries, hiddenIds),
         summarize: (request) {
           summarizerCalls++;

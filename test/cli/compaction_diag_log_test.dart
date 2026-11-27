@@ -117,9 +117,16 @@ AgentCli _cli(
     homeDir: '/home',
     providerKind: 'openai-completions',
     skillsAccess: SkillsAccess.granted,
+    // gh-2411: the gh-241 fixture seam (tinyPrompt + tinyTools) — the
+    // fixed request overhead of the real CLI prompt outgrew the old 800
+    // token trigger, which puts the session in the SOFT-WINDOW regime
+    // (compaction skipped by design). The seam takes the overhead out
+    // of the way (~3.4k); the trigger sits above it.
+    systemPrompt: tinyPrompt,
+    runtimeTools: tinyTools(const ['bash']),
   ),
   io: io,
-  environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '800'},
+  environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '6000'},
   streamFunction: stream.call,
 );
 
@@ -167,7 +174,7 @@ void main() {
         () =>
             stream.contexts.isNotEmpty &&
             stream.contexts.any(
-              (c) => (c.systemPrompt ?? '').startsWith('You are Fa'),
+              (c) => (c.systemPrompt ?? '').startsWith(tinyPrompt),
             ) &&
             !agent.isBusy,
         () => 'turn 1: calls=${stream.contexts.length}',
@@ -275,6 +282,12 @@ void main() {
           homeDir: home,
           providerKind: 'openai-completions',
           approvalMode: ApprovalMode.yolo,
+          // gh-2411: the gh-241 fixture seam (tinyPrompt + tinyTools) —
+          // see `_cli` above: the real prompt's fixed overhead put the
+          // 800 token trigger in the soft-window regime (no pass ever
+          // ran, so the latch had nothing to skip).
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['bash']),
           // GOAL #2394: a distinct smol digest role keeps the judge
           // ladder (`standalone` mode) — without one the default is the
           // merged hand-over call and the judge never runs.
@@ -297,7 +310,7 @@ void main() {
           ),
         ),
         io: FakeCliIO(),
-        environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '800'},
+        environment: const {'FAH_COMPACT_TRIGGER_TOKENS': '6000'},
         streamFunction: routed,
       );
       final exit = await cli.runHeadless('read two big files');

@@ -32,7 +32,10 @@ extension AgentCliPromptComposition on AgentCli {
     }
     _agent.state.systemPrompt = _mcp.composePrompt(
       _withFinalizeGate(
-        config.systemPrompt ?? _withRecallContract(_currentMode.systemPrompt),
+        config.systemPrompt ??
+            _withContextIncludes(
+              _withRecallContract(_currentMode.systemPrompt),
+            ),
       ),
       contextSection: formatProjectContext(_context),
       skillsSection: formatSkillsForPrompt(
@@ -63,6 +66,15 @@ extension AgentCliPromptComposition on AgentCli {
   /// (v1: no interactive-mode behavior change).
   String _withFinalizeGate(String base) =>
       config.headlessRun ? '$base\n\n$finalizeGateContractPrompt' : base;
+
+  /// The context includes (issue #2423 C1/C7): the working-set contract
+  /// and the context-hygiene rules ride the MODE prompt on every host —
+  /// `working_set` has no availability id, so it is registered in every
+  /// load mode and the paragraph never names an absent tool. NOT composed
+  /// over an explicit `systemPrompt` override (same rule as the recall
+  /// contract: an override IS the whole prompt, byte-exact).
+  String _withContextIncludes(String base) =>
+      '$base\n\n$workingSetPrompt\n\n$contextHygienePrompt';
 
   /// The recall-hygiene contract (issue #1380 A3): structured-engine
   /// sessions run with the total-recall contract appended to the MODE

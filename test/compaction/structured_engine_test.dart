@@ -271,13 +271,25 @@ void main() {
         ckpt.coversRecordIds,
         containsAll([ckpt.firstRecordId, ckpt.lastRecordId]),
       );
-      // Prompt carried the conversation, the covers line, open asks, and
-      // the instruction tail.
+      // Prompt carried the conversation, the covers line and the
+      // instruction tail. The user's ask is NOT inside it (gh-2411): the
+      // newest real user turn never folds into a checkpoint — it stays
+      // live below the checkpoint instead of surviving only as the
+      // "open ask" of a range that swallowed it.
       final prompt = prompts.single;
       expect(prompt, contains('<conversation>'));
       expect(prompt, contains('<covers>'));
-      expect(prompt, contains('fix the login crash'));
+      expect(prompt, isNot(contains('fix the login crash')));
       expect(prompt, contains('CHECKPOINT INSTRUCTIONS'));
+      final userRecordId = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .firstWhere((record) => record.message is UserMessage)
+          .id;
+      expect(ckpt.coversRecordIds, isNot(contains(userRecordId)));
+      expect(
+        state.messages.whereType<UserMessage>().map((m) => m.content),
+        contains('fix the login crash'),
+      );
       // State renders the checkpoint marker in place of the range and
       // stays wire-valid.
       final marker = state.messages

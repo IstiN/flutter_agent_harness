@@ -678,6 +678,22 @@ Future<void> _runApp(List<String> args) async {
     global: saved.compactionEngine,
   );
 
+  // gh-241 follow-up #5b (parity with the app, owner live test): the
+  // PROJECT `.fah/config.yaml` `agent.contextWindowCap` wins over the
+  // saved user cap — through the loader the Flutter app already uses. The
+  // CLI used to ignore it (dead config there: a tester's project `25000`
+  // was silently dropped). Same validation as the user key: a strict
+  // parse error is a hard startup error (reported, never a stack trace).
+  ({int? cap, String? source}) contextWindowCap = (cap: null, source: null);
+  try {
+    contextWindowCap = resolveContextWindowCap(
+      userCap: saved.contextWindowCap,
+      projectCap: loadProjectContextWindowCap(cwd),
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+
   // Judge budget knob (issue #541): user-level `compaction.
   // judgeBudgetSeconds`; `null` keeps the 90s default.
   final compactionJudgeBudgetSeconds = saved.compactionJudgeBudgetSeconds;
@@ -1842,7 +1858,8 @@ Future<void> _runApp(List<String> args) async {
         trajectoryRequestBlobMaxMb: trajectoryRequestBlobMaxMb,
         trajectoryRequestBlobMaxBytes: trajectoryRequestBlobMaxBytes,
         trajectoryRequestBlobTtlDays: trajectoryRequestBlobTtlDays,
-        contextWindowCap: saved.contextWindowCap,
+        contextWindowCap: contextWindowCap.cap,
+        contextWindowCapSource: contextWindowCap.source,
         stuckTool: saved.stuckTool,
         foregroundCall: saved.foregroundCall,
         subagents: saved.subagents,
