@@ -28,6 +28,56 @@ const defaultCodeMieBaseUrl = 'https://codemie.lab.epam.com';
 /// shows another one selected.
 const codeMieProjectHeader = 'x-codemie-project';
 
+/// The `x-codemie-client` header name — the CodeMie gateway picks the
+/// BUDGET a request bills by this header (issue #2426): a request WITHOUT
+/// it lands in the user's PERSONAL budget and dies with
+/// `429 ExceededBudget` once personal spend is exhausted, even though the
+/// client's org/app budget has headroom. A server quirk, not rate
+/// limiting — the structured 429 decode and the queue cooldown keep
+/// working unchanged.
+const codeMieClientHeader = 'x-codemie-client';
+
+/// The client identity sent as [codeMieClientHeader]: the value a CodeMie
+/// org registers its client/app budget against (issue #2426). ASCII by
+/// contract (`package:http` rejects non-Latin-1 header values).
+const codeMieClient = 'flutter-agent-harness';
+
+/// The environment variable carrying the per-deployment [codeMieClient]
+/// override (issue #2426 review): orgs whose gateway attributes budgets to
+/// a different registered client id set it instead of patching the
+/// constant. CLI: process environment; app: `.env`.
+const codeMieClientOverrideEnvVar = 'CODEMIE_CLIENT_ID';
+
+/// Deployment override for [codeMieClient] — resolved by the host ONCE at
+/// startup via [resolveCodeMieClientOverride] and stored here (same pattern
+/// as `providerFilterEnvOverride`: lib/ stays dart:io-free, web hosts with
+/// no process-env concept keep null). Null (the default) keeps
+/// [codeMieClient]; tests may set it directly (reset afterwards).
+String? codeMieClientOverride;
+
+/// Folds the `CODEMIE_CLIENT_ID` deployment override out of [env]: the
+/// TRIMMED value when present and non-empty, null otherwise. A blank value
+/// must never blank the header — the gateway would lose the budget
+/// attribution entirely (the header-less-request 429 is the bug being
+/// fixed, issue #2426).
+String? resolveCodeMieClientOverride(Map<String, String> env) {
+  final value = env[codeMieClientOverrideEnvVar]?.trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
+/// The always-on CodeMie request headers (issue #2426): EVERY request to a
+/// CodeMie endpoint starts from this map — chat rides it through the
+/// openai-completions defaults slot (URL-gated by [isCodeMieBaseUrl]),
+/// the fetch family spreads it into its per-call header maps. The client
+/// value resolves [codeMieClientOverride] first (deployment adaptation,
+/// issue #2426 review), falling back to the [codeMieClient] constant. The
+/// merge order (defaults → `Model.headers` → options) keeps an explicit
+/// user entry of the same name winning; the canonical name is lowercase
+/// (the merge is case-sensitive by map key — E5).
+Map<String, String> get codeMieRequestHeaders => {
+  codeMieClientHeader: codeMieClientOverride ?? codeMieClient,
+};
+
 /// Normalizes an organization URL to the API base:
 /// `https://host` → `https://host/code-assistant-api` (idempotent).
 String codeMieApiBase(String rawUrl) {
@@ -246,7 +296,10 @@ Future<List<String>> fetchCodeMieProjects(
   String cookie, {
   http.Client? client,
 }) {
-  return _fetchCodeMieProjects('$apiBase/v1/user', {'cookie': cookie}, client);
+  return _fetchCodeMieProjects('$apiBase/v1/user', {
+    ...codeMieRequestHeaders,
+    'cookie': cookie,
+  }, client);
 }
 
 /// The JWT Bearer twin of [fetchCodeMieProjects] (`Authorization: Bearer`).
@@ -256,6 +309,7 @@ Future<List<String>> fetchCodeMieProjectsWithJwt(
   http.Client? client,
 }) {
   return _fetchCodeMieProjects('$apiBase/v1/user', {
+    ...codeMieRequestHeaders,
     'authorization': 'Bearer $jwtToken',
   }, client);
 }
@@ -303,7 +357,11 @@ Future<List<String>> fetchCodeMieModels(
     final response = await httpClient
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
-          headers: {'cookie': cookie, codeMieProjectHeader: ?project},
+          headers: {
+            ...codeMieRequestHeaders,
+            'cookie': cookie,
+            codeMieProjectHeader: ?project,
+          },
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode == 401 || response.statusCode == 403) {
@@ -353,6 +411,7 @@ Future<List<String>> fetchCodeMieModelsWithJwt(
         .get(
           Uri.parse('$apiBase/llm_models?include_all=true'),
           headers: {
+            ...codeMieRequestHeaders,
             'authorization': 'Bearer $jwtToken',
             codeMieProjectHeader: ?project,
           },

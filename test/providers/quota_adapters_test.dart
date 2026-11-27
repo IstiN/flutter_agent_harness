@@ -294,6 +294,20 @@ void main() {
       },
     );
 
+    test('the client header rides the quota fetch (issue #2426 AC3)', () async {
+      final client = mockClient((request) => {'usage': 1, 'limit': 10});
+      final adapter = CodeMieQuotaAdapter(
+        client: client,
+        resolveSessionCookie: () async => 'sso=cookie',
+        limitsEndpoint: Uri.parse(
+          'https://codemie.lab.epam.com/code-assistant-api/v1/quota',
+        ),
+        now: () => now,
+      );
+      await adapter.fetch();
+      expect(captured.single.headers['x-codemie-client'], codeMieClient);
+    });
+
     test(
       'null/absent payload fields degrade to unknown, never crash (E2)',
       () async {

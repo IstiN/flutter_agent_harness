@@ -10,6 +10,7 @@ Future<void> _runApp(List<String> args) async {
     os: Platform.operatingSystem,
   );
   _applyProviderFilterEnv();
+  _applyCodeMieClientEnv();
   // Platform-aware chord display (issue #809): Option/Cmd labels on macOS.
   tuiKeyHintDarwin = Platform.isMacOS;
   // Device-network management has no model/provider dependency. Intercept

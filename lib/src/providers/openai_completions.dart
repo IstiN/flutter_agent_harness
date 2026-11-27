@@ -34,6 +34,7 @@ import '../event_stream.dart';
 import '../model.dart';
 import '../types.dart';
 import 'aiin_auth.dart';
+import 'codemie_sso.dart' show codeMieRequestHeaders, isCodeMieBaseUrl;
 import 'provider_common.dart';
 
 /// Options for [streamOpenAICompletions].
@@ -897,6 +898,14 @@ Map<String, String> _buildHeaders(
       : options?.sessionId;
   final headers = mergeProviderHeaders(
     {
+      // Issue #2426: the CodeMie gateway picks the BILLING BUDGET by
+      // `x-codemie-client` — a request without it drains the user's
+      // personal budget and 429s (ExceededBudget) while the org budget has
+      // headroom. The always-on set enters the DEFAULTS slot for CodeMie
+      // endpoints (the URL decides, not the provider name — custom
+      // entries included); merge order keeps an explicit Model.headers /
+      // options entry winning and a null option suppressing.
+      if (isCodeMieBaseUrl(model.baseUrl)) ...codeMieRequestHeaders,
       'content-type': 'application/json',
       // An empty/absent key sends NO Authorization header: keyless local
       // servers (llama.cpp, Ollama, LM Studio) exist, and some reject a
