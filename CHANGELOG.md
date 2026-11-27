@@ -18,15 +18,23 @@ block a release again.
   save reset the stored window override (gh-2059) and a 264k-token model ran on
   the shared fallback window until "Context window exhausted". `provider.save`
   now merges field-wise (the same contract as the Dart settings_put merge:
-  non-empty wins, blank keeps stored, ints by presence string-tolerant,
-  custom headers replace-by-presence so a header line the user deleted
-  actually deletes — a dropped authorization header stops riding requests) and
-  `provider.get` answers the panel with every field EXCEPT the key (write-only
-  UI, hub.bind.get principle). Custom request headers (`faProvider.headers`,
-  `Name: value` lines in the new panel field) ride `Model.headers` through the
-  core `_buildHeaders` merge on direct providers (Copilot/CodeMie gateways) —
-  ACTIVE-source-only, never inherited by synced registry entries.
-
+  non-empty wins, blank keeps stored, positive ints by presence,
+  string-tolerant, custom headers replace-by-presence so a header line the
+  user deleted actually deletes — a dropped authorization header stops riding
+  requests) and
+- fix(2427): un-quarantine `secret_sheet_residual_test.dart` — the RT1
+  flake's product root cause was the #2416 round-2 deferred resolver
+  dying as plain `Tool request_secret not found` on the SECOND direct
+  call to a tool the keep-12 partition demoted and the same run had
+  already mounted (the tool leaves the discoverable set; the run's
+  stale context snapshot still misses it) — the second sheet never
+  opened, so the residual assertions found no frame at all. Fixed by
+  #2416 round 3's live-registry lookup; this change pins that path with
+  a hermetic regression test (`test/cli/request_secret_remount_test.dart`,
+  red on the round-2 resolver shape) and anchors RT1's second-sheet wait
+  on the frame-unique reason row (`waitForScreen`, gh-1049) instead of
+  the raw-stream match that raced the sheet paint. Quarantine entry
+  removed; the gate runs the file again.
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
