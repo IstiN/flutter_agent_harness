@@ -2761,7 +2761,6 @@ class _NoServiceSettings extends StatelessWidget {
   const _NoServiceSettings({required this.onAddProvider});
 
   final Future<void> Function() onAddProvider;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
