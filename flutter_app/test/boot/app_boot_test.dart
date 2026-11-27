@@ -130,6 +130,15 @@ void main() {
       // No .env loaded under the test runner: the override stays unset.
       expect(providerFilterEnvOverride, isNull);
     });
+    test(
+      'resolves the CodeMie client override without plugin channels',
+      () async {
+        await bootServices();
+        // No CODEMIE_CLIENT_ID under the test runner: the constant keeps
+        // serving (issue #2426 review).
+        expect(codeMieClientOverride, isNull);
+      },
+    );
     test('degrades on platforms with no Firebase registration', () async {
       // The template firebase_options throw `Unsupported operation` for
       // platforms without a registration (Windows/Linux desktop) — the

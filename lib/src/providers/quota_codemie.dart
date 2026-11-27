@@ -14,7 +14,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'codemie_sso.dart' show codeMieProjectHeader;
+import 'codemie_sso.dart' show codeMieProjectHeader, codeMieRequestHeaders;
 import 'quota.dart';
 
 class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
@@ -60,6 +60,7 @@ class CodeMieQuotaAdapter implements QuotaAdapter, QuotaAwareProvider {
       response = await client.get(
         endpoint,
         headers: {
+          ...codeMieRequestHeaders,
           'Cookie': cookie,
           'Accept': 'application/json',
           codeMieProjectHeader: ?project,

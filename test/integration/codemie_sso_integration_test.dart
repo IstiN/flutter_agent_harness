@@ -124,8 +124,12 @@ void main() {
         expect(entry, isNotNull);
         expect(store.map[entry!.keyName], guidedSetupCookie);
 
-        // The model uses cookie-header auth.
-        expect(cli.agent.state.model.headers, {'cookie': guidedSetupCookie});
+        // The model uses cookie-header auth (plus the issue-#2426 client
+        // header).
+        expect(cli.agent.state.model.headers, {
+          codeMieClientHeader: codeMieClient,
+          'cookie': guidedSetupCookie,
+        });
 
         // The model endpoint is the CodeMie v1 API.
         expect(
@@ -220,8 +224,12 @@ void main() {
       io.sendLine('/exit');
       await run;
 
-      // The model should have cookie headers, not Bearer.
-      expect(cli.agent.state.model.headers, {'cookie': cookie});
+      // The model should have cookie headers (plus the issue-#2426 client
+      // header), not Bearer.
+      expect(cli.agent.state.model.headers, {
+        codeMieClientHeader: codeMieClient,
+        'cookie': cookie,
+      });
     });
   });
 }
