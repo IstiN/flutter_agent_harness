@@ -4265,7 +4265,26 @@ jobs:
     # `needs` or the watchdog fires before they settle — a degraded-runner
     # timeout there would land after the scan and never get its one-shot
     # retrigger. Cost: the watchdog waits for them.
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, app-crap-gate, pty-integration-linux, pty-visual]
+    # gh-2455: the release-asset producer legs ride along too — binaries,
+    # web-spa, build-extension, the three producers of the gh-1832
+    # required-asset set (fa-macos-*/fa-linux-*/fa-windows-*,
+    # fa-web-spa.zip, fa-extension.zip). The v1.0.788 tag run
+    # (46024478783) hung the arm64 macOS binaries leg in its checkout
+    # `git fetch` for 44 min and the `timeout-minutes: 45` kill landed at
+    # 16:41:02Z — 56 minutes AFTER the watchdog had settled (15:45:21Z;
+    # binaries only STARTS once quality-gate does, ~15:51-15:56): the scan
+    # ran against a document where the leg was still `conclusion: null`
+    # (in-flight jobs are filtered out of the kill signature), trip=false,
+    # no dispatch, and the release train sat red on the missing
+    # fa-macos-arm64.tar.gz (gh-1832 refused to sign, pin_release refused
+    # to move vpinned) until a manual rerun. With the producers in
+    # `needs`, the same kill shape (cancelled job + cancelled checkout
+    # step + no failed step — verified against the real run's jobs JSON)
+    # trips the scan and the gh-2290 tag-arm dispatch rebuilds the
+    # missing asset on a fresh allocation. Skipped producers (PR arm,
+    # deduped twins) satisfy `needs` as `skipped` — no added latency
+    # there.
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, app-crap-gate, pty-integration-linux, pty-visual, binaries, web-spa, build-extension]
     # Same-repo PRs: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref. Tag pushes: the
     # release gate (gh-2290).

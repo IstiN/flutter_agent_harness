@@ -129,6 +129,38 @@ void main() {
             'needs or the watchdog fires before it settles',
       );
     });
+
+    test('watchdog waits for the release-asset producers before scanning', () {
+      // gh-2455: the v1.0.788 tag run (46024478783) hung the arm64 macOS
+      // binaries leg in its checkout `git fetch` for 44 min; the
+      // `timeout-minutes: 45` kill landed at 16:41:02Z — 56 minutes AFTER
+      // the watchdog had settled (15:45:21Z, job 140603114709), because
+      // `binaries` was not in its `needs`. The watchdog scanned a jobs
+      // document where the arm64 leg was still `conclusion: null`
+      // (in-flight legs are filtered out of the kill signature), tripped
+      // nothing, and the gh-2290 tag-arm retrigger never fired: the train
+      // sat red (no fa-macos-arm64.tar.gz → gh-1832 refused to sign,
+      // pin_release refused to move vpinned) until a manual rerun. The
+      // three producer legs of the gh-1832 required-asset set — binaries
+      // (fa-linux-*/fa-windows-*/fa-macos-*), web-spa (fa-web-spa.zip),
+      // build-extension (fa-extension.zip) — MUST all be in `needs`, or
+      // a degraded-runner kill on any of them lands after the scan and
+      // never gets its one-shot retrigger (the exact warning the
+      // workflow's own needs-comment carries).
+      final needs = watchdog!['needs'];
+      final names = needs is YamlList
+          ? needs.map((n) => n.toString()).toSet()
+          : <String>{needs.toString()};
+      expect(
+        names,
+        containsAll(<String>['binaries', 'web-spa', 'build-extension']),
+        reason:
+            'the release-train asset producers must be in needs or the '
+            'watchdog settles before they even start — the gh-2455 kill '
+            'mode (arm64 binaries timeout at 16:41, watchdog settled '
+            '15:45, trip never evaluated against the kill)',
+      );
+    });
   });
 
   group('AC2 — the trip decision is a network-free repo script', () {
