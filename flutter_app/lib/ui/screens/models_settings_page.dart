@@ -97,6 +97,7 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
           service: widget.service,
           lastConnectionStore: widget.lastConnectionStore,
           taskModelsStore: taskModels,
+          registry: widget.registry,
         ),
         const SizedBox(height: 24),
         const Divider(),
