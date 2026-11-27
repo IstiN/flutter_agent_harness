@@ -122,4 +122,45 @@ void main() {
     // WHO cancelled the run — e.g. the run-idle watchdog.
     expect(text, contains('run was aborted by signal'));
   });
+
+  // Issue #2415: the typed fd-pressure failure (EMFILE at spawn, retried
+  // once by the tool layer) is the ENVIRONMENT's state — not a harness
+  // defect. The generic uncaught-exception hint told the model its bash
+  // tool was broken and to route around it (the reported TUI symptom:
+  // `ProcessException: Too many open files` + "The tool may be
+  // unavailable in this environment").
+  test('an fd-pressure failure from a tool renders as an environmental '
+      'error, not a harness defect', () async {
+    final fake = _FakeStreamFunction([
+      _toolTurn([ToolCall(id: 'c1', name: 'bash', arguments: const {})]),
+      _textTurn('done'),
+    ]);
+    final agent = Agent(
+      model: _model,
+      streamFunction: fake.call,
+      toolExecutor: (toolCall, cancelToken, onUpdate) async {
+        throw StateError(
+          'ExecutionError(fdExhausted): fd pressure: cannot spawn "sh" '
+          '(ProcessException: Too many open files, errno = 24) — the '
+          'process fd soft limit is 256. Not a command failure: the '
+          'session is out of open file descriptors (pipes of running bash '
+          'jobs, hooks, watchers). Wait for background jobs to settle, '
+          'stop unneeded jobs, or raise the limit (ulimit -n).',
+        );
+      },
+    );
+    agent.state.tools = [_tool('bash')];
+
+    await agent.prompt('start the long thing');
+
+    final toolResult = agent.state.messages
+        .whereType<ToolResultMessage>()
+        .single;
+    final text = (toolResult.content.single as TextContent).text;
+    expect(text, contains('Tool error (bash):'));
+    expect(text, contains('fd pressure'));
+    expect(text, contains('ulimit -n'));
+    expect(text, isNot(contains('uncaught exception inside the harness')));
+    expect(text, isNot(contains('may be unavailable')));
+  });
 }
