@@ -1745,5 +1745,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2452": [
+    {
+      "leg": "review",
+      "at": "2026-11-27T05:47:34Z",
+      "prompt": 161070,
+      "completion": 26602,
+      "total": 187672,
+      "cacheRead": 1445120,
+      "requests": 37,
+      "source": "",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
