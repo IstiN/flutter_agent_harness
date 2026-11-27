@@ -98,20 +98,24 @@ void main() {
 
   /// Polls whether [pid] is still in the process table (~3s budget) so the
   /// assertions stay load-independent (signal delivery lags the killer).
-  Future<bool> stillAlive(int pid, {Map<String, String>? env}) async {
-    var alive = false;
+  ///
+  /// The probe is a bare `ps` — NOT a guarded `LocalShell` exec: the shell
+  /// bootstrap (shim provisioning) costs 100–300ms per call on loaded CI
+  /// runners, which turned every full alive-window into seconds of pure
+  /// probe overhead. Same 30×100ms budget, same early exit, same
+  /// `ps -o pid=` semantics (exit 0 = in the table, zombie included).
+  Future<bool> stillAlive(int pid) async {
     for (var i = 0; i < 30; i++) {
-      final probe = await const LocalShell().exec(
-        'if ps -o pid= -p $pid >/dev/null 2>&1; then echo alive; '
-        'else echo dead; fi',
-        options: env == null ? null : ShellExecOptions(env: env),
-      );
-      final out = probe.getOrThrow().stdout.trim();
-      alive = out.contains('alive');
-      if (!alive) return false;
+      final probe = await Process.run('ps', <String>[
+        '-o',
+        'pid=',
+        '-p',
+        '$pid',
+      ]);
+      if (probe.exitCode != 0 || probe.stdout.trim().isEmpty) return false;
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    return alive;
+    return true;
   }
 
   /// Polls `pgrep` (the exact matcher the guard shims delegate to) until
@@ -352,7 +356,7 @@ void main() {
           contains('skipped protected'),
           reason: 'the guard must report the skipped protected group target',
         );
-        final alive = await stillAlive(dummy.pid, env: env);
+        final alive = await stillAlive(dummy.pid);
         expect(
           alive,
           isTrue,
@@ -379,7 +383,7 @@ void main() {
           options: const ShellExecOptions(env: env),
         );
         expect(result.getOrThrow().stdout.trim(), 'rc=0');
-        final alive = await stillAlive(dummy.pid, env: env);
+        final alive = await stillAlive(dummy.pid);
         expect(
           alive,
           isFalse,
@@ -408,8 +412,8 @@ void main() {
           options: ShellExecOptions(env: env),
         );
         expect(result.getOrThrow().stdout.trim(), 'rc=0');
-        final groupAlive = await stillAlive(grouped.pid, env: env);
-        final freeAlive = await stillAlive(free.pid, env: env);
+        final groupAlive = await stillAlive(grouped.pid);
+        final freeAlive = await stillAlive(free.pid);
         expect(
           groupAlive,
           isTrue,
@@ -502,8 +506,8 @@ void main() {
         );
         final exec = result.getOrThrow();
         expect(exec.stdout.trim(), 'rc=0');
-        final protectedAlive = await stillAlive(protected.pid, env: env);
-        final freeAlive = await stillAlive(free.pid, env: env);
+        final protectedAlive = await stillAlive(protected.pid);
+        final freeAlive = await stillAlive(free.pid);
         expect(
           protectedAlive,
           isTrue,

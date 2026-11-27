@@ -1138,17 +1138,22 @@ gh release create "v9.9.9" \
       expect(out.trim(), isNot(''));
     });
 
-    test('E4: 200 commits -> capped at 50 with an "and N more" line', () {
+    test('E4: 60 commits -> capped at 50 with an "and N more" line', () {
+      // The count is fixture diet, not semantics: the cap path
+      // (`RELEASE_NOTES_MAX` default 50 + the overflow line) is purely
+      // count-based and fires identically for any N > 50 — 200 paid
+      // triple the git spawns to verify the same three properties
+      // (hard cap, exact overflow count, newest-kept/oldest-dropped).
       final repo = fixtureRepo('notes-cap', ['chore: seed'], ['v4.0.0'], null, [
-        for (var i = 1; i <= 200; i++) 'feat: change $i',
+        for (var i = 1; i <= 60; i++) 'feat: change $i',
       ]);
       final out = notes(repo, ['4.0.1']);
       final bullets = RegExp(r'^- ', multiLine: true).allMatches(out).length;
       expect(bullets, lessThanOrEqualTo(50));
-      expect(out, contains('and 150 more'));
+      expect(out, contains('and 10 more'));
       expect(
         out,
-        contains('change 200'),
+        contains('change 60'),
         reason: 'newest commits stay, oldest drop',
       );
     });
