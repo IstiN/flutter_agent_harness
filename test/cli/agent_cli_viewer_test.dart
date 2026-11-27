@@ -7,6 +7,16 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+/// 14:32 local wall-clock: the banner's "since HH:MM" round-trips
+/// through toLocal, so this pins the exact banner text in any TZ.
+final DateTime _kFixedWhen = DateTime(2026, 9, 15, 14, 32);
+
+/// The compressed inbox tick for cadence-bound rigs: 20ms keeps the
+/// every-other-tick lease wiring intact while "waits one tick" walls
+/// shrink from seconds to milliseconds. The production default (2s)
+/// stays pinned by its own test.
+const Duration _kFastTick = Duration(milliseconds: 20);
+
 /// Session ownership from the CLI's side (#428): a live `_owner.json`
 /// lease turns a second `fa` into a VIEWER (exact banner, composer →
 /// owner's mailbox, zero session-file writes); graceful exit releases;
@@ -45,7 +55,7 @@ void main() {
     String bootId = 'owner-boot',
     DateTime? acquiredAt,
   }) async {
-    final when = (acquiredAt ?? _fixedWhen).toUtc();
+    final when = (acquiredAt ?? _kFixedWhen).toUtc();
     await env.writeFile(
       store.sidecarPath(sessionPath),
       const JsonEncoder.withIndent('  ').convert({
@@ -59,7 +69,11 @@ void main() {
     );
   }
 
-  AgentCli cliFor(StreamFunction streamFunction, {String? sessionName}) {
+  AgentCli cliFor(
+    StreamFunction streamFunction, {
+    String? sessionName,
+    Duration? inboxTickInterval,
+  }) {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -71,6 +85,7 @@ void main() {
         leaseStore: store,
         processId: 4242,
         presenceStore: presence,
+        inboxTickInterval: inboxTickInterval ?? const Duration(seconds: 2),
       ),
       io: io,
       streamFunction: streamFunction,
@@ -423,6 +438,7 @@ void main() {
         sessionName: 'shared',
         leaseStore: store,
         processId: 4242,
+        inboxTickInterval: _kFastTick,
       ),
       io: ownerIo,
       streamFunction: ownerFake.call,
@@ -432,7 +448,11 @@ void main() {
 
     // A second CLI opens the same session: the live lease makes it a
     // viewer; its composer hands the words to the owner's agent.
-    final viewer = cliFor(FakeStreamFunction([]).call, sessionName: 'shared');
+    final viewer = cliFor(
+      FakeStreamFunction([]).call,
+      sessionName: 'shared',
+      inboxTickInterval: _kFastTick,
+    );
     final viewerRun = viewer.run();
     await waitForIt(
       () => out().contains('you are viewing'),
@@ -478,6 +498,7 @@ void main() {
         sessionName: 'shared',
         leaseStore: store,
         processId: 4242,
+        inboxTickInterval: _kFastTick,
       ),
       io: ownerIo,
       streamFunction: ownerFake.call,
@@ -486,7 +507,11 @@ void main() {
     await waitForIt(() => ownerIo.out.isNotEmpty, reason: 'owner boot');
 
     final viewerFake = FakeStreamFunction([]);
-    final viewer = cliFor(viewerFake.call, sessionName: 'shared');
+    final viewer = cliFor(
+      viewerFake.call,
+      sessionName: 'shared',
+      inboxTickInterval: _kFastTick,
+    );
     final viewerRun = viewer.run();
     await waitForIt(
       () => out().contains('you are viewing'),
@@ -525,7 +550,11 @@ void main() {
     await seedLiveLease(leased.path);
 
     final fake = FakeStreamFunction([textTurn('ok')]);
-    final cli = cliFor(fake.call, sessionName: 'leased');
+    final cli = cliFor(
+      fake.call,
+      sessionName: 'leased',
+      inboxTickInterval: _kFastTick,
+    );
     final run = cli.run();
     await waitForIt(
       () => out().contains('you are viewing'),
@@ -616,7 +645,11 @@ void main() {
       'the owner dies mid-view', () async {
     final meta = await namedSession('tickflip');
     await seedLiveLease(meta.path);
-    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'tickflip');
+    final cli = cliFor(
+      FakeStreamFunction([]).call,
+      sessionName: 'tickflip',
+      inboxTickInterval: _kFastTick,
+    );
     final run = cli.run();
     await waitForIt(
       () => out().contains('you are viewing'),
@@ -633,7 +666,10 @@ void main() {
       () => out().contains('looks dead — reopen this session to drive it'),
       reason: 'the live→stale flip notice',
     );
-    await Future<void>.delayed(const Duration(seconds: 5));
+    // 300ms ≈ 15 fast ticks: an order more than the single tick a
+    // per-tick re-print would need, so the once-only property holds
+    // under far more probing than the old 5s sleep over 2s ticks.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     expect(
       'looks dead — reopen'.allMatches(out()).length,
       1,
@@ -649,7 +685,11 @@ void main() {
     final owner = await repo.open(meta);
     await owner.appendMessage(UserMessage.text('pre-rewrite row'));
     await seedLiveLease(meta.path);
-    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'reanchor');
+    final cli = cliFor(
+      FakeStreamFunction([]).call,
+      sessionName: 'reanchor',
+      inboxTickInterval: _kFastTick,
+    );
     final run = cli.run();
     await waitForIt(
       () => out().contains('you are viewing'),
@@ -683,7 +723,11 @@ void main() {
   test('heartbeat: losing the lease mid-run demotes this CLI to a viewer '
       'of the new owner', () async {
     final meta = await namedSession('stolen');
-    final cli = cliFor(FakeStreamFunction([]).call, sessionName: 'stolen');
+    final cli = cliFor(
+      FakeStreamFunction([]).call,
+      sessionName: 'stolen',
+      inboxTickInterval: _kFastTick,
+    );
     final run = cli.run();
     var live = LeaseInspect.free();
     for (var i = 0; i < 5000 && live.state != LeaseState.live; i++) {
@@ -878,10 +922,6 @@ void main() {
     },
   );
 }
-
-/// 14:32 local wall-clock: the banner's "since HH:MM" round-trips
-/// through toLocal, so this pins the exact banner text in any TZ.
-final DateTime _fixedWhen = DateTime(2026, 9, 15, 14, 32);
 
 /// The #2257 rig: makes the next N sidecar READS fail with a raw fs
 /// error while everything else delegates to the shared memory env —
