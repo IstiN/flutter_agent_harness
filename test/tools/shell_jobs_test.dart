@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/env/fd_pressure.dart';
 import 'package:test/test.dart';
 
 /// A controllable fake background job over the in-memory fs: tests write log
@@ -67,6 +69,137 @@ final class _FakeShellJob implements ShellJob {
   Future<void> stop() async {
     complete(143, reason: 'stopped');
   }
+}
+
+/// A job backend that records [ResourceReleaser.releaseResources] (gh-2415
+/// fd-pressure guard): the registry releases SETTLED entries' resources
+/// before refusing a `Process.start`.
+final class _ReleasingShellJob implements ShellJob, ResourceReleaser {
+  _ReleasingShellJob(this.id, this.command);
+
+  final _output = StreamController<String>.broadcast();
+  final _settled = Completer<void>();
+  int? _exitCode;
+
+  /// How many times the registry asked this job to release its resources.
+  int releases = 0;
+
+  @override
+  final String id;
+
+  @override
+  final String command;
+
+  @override
+  String get logPath => '';
+
+  @override
+  int? get pid => null;
+
+  @override
+  bool get isRunning => _exitCode == null;
+
+  @override
+  int? get exitCode => _exitCode;
+
+  @override
+  String? get stopReason => null;
+
+  @override
+  Future<void> get settled => _settled.future;
+
+  @override
+  Stream<String> get output => _output.stream;
+
+  @override
+  bool writeStdin(String data) => true;
+
+  @override
+  Future<void> stop() async => complete(143);
+
+  @override
+  void releaseResources() {
+    releases++;
+  }
+
+  void complete(int code) {
+    if (_exitCode != null) return;
+    _exitCode = code;
+    _settled.complete();
+  }
+}
+
+/// A process-capable env handing out [_ReleasingShellJob]s (gh-2415).
+final class _ReleasingEnv implements ExecutionEnv, BackgroundShell {
+  _ReleasingEnv([MemoryExecutionEnv? delegate])
+    : _delegate = delegate ?? MemoryExecutionEnv();
+
+  final MemoryExecutionEnv _delegate;
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async => Ok(_ReleasingShellJob(id, command));
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      _delegate.noSuchMethod(invocation);
+}
+
+/// An env whose [exec] is scripted per test (gh-2415 bash tool mapping):
+/// a canned [Result], a thrown object, or a plain success.
+final class _ExecScriptedEnv implements ExecutionEnv, BackgroundShell {
+  _ExecScriptedEnv(this._delegate);
+
+  final MemoryExecutionEnv _delegate;
+  Result<ShellExecResult, ExecutionError>? execResult;
+  Object? execThrow;
+  int execCalls = 0;
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    execCalls++;
+    final thrown = execThrow;
+    if (thrown != null) throw thrown;
+    return execResult ??
+        const Ok(ShellExecResult(stdout: 'hi', stderr: '', exitCode: 0));
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async => Err(ExecutionError(ExecutionErrorCode.shellUnavailable, 'fake'));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      _delegate.noSuchMethod(invocation);
 }
 
 /// MemoryExecutionEnv wrapper with the [BackgroundShell] capability; members
@@ -829,5 +962,142 @@ void main() {
       expect(notice, contains('finished with exit code 0'));
       expect(notice, isNot(contains('Stop reason')));
     });
+  });
+
+  group('fd-pressure guard (gh-2415)', () {
+    Future<
+      ({
+        ShellJobRegistry registry,
+        _ReleasingShellJob settled,
+        _ReleasingShellJob running,
+      })
+    >
+    seeded(
+      _ReleasingEnv env, {
+      required FdPressureSnapshot? Function() probe,
+    }) async {
+      final registry = ShellJobRegistry(env: env, fdPressureProbe: probe);
+      final settled =
+          (await registry.start('done.sh')).job as _ReleasingShellJob;
+      final running =
+          (await registry.start('live.sh')).job as _ReleasingShellJob;
+      settled.complete(0);
+      await pumpEventQueue();
+      return (registry: registry, settled: settled, running: running);
+    }
+
+    test('below the threshold: a no-op, nothing released', () async {
+      final s = await seeded(
+        _ReleasingEnv(),
+        probe: () => (open: 100, limit: 256),
+      );
+      expect(() => s.registry.guardFdPressure(), returnsNormally);
+      expect(s.settled.releases, 0);
+    });
+
+    test('above the threshold: SETTLED jobs release their resources and a '
+        'table back under the limit lets the call through', () async {
+      var calls = 0;
+      final s = await seeded(
+        _ReleasingEnv(),
+        probe: () =>
+            ++calls == 1 ? (open: 250, limit: 256) : (open: 120, limit: 256),
+      );
+      expect(() => s.registry.guardFdPressure(), returnsNormally);
+      expect(calls, 2, reason: 'sampled, released, re-sampled');
+      expect(s.settled.releases, 1, reason: 'the settled job released');
+      expect(s.running.releases, 0, reason: 'a running job is never touched');
+      expect(s.registry.releaseSettledJobResources(), 1);
+      expect(s.settled.releases, 2);
+    });
+
+    test('still above after releasing: the typed, visible FdPressureException '
+        'names N/M — never an uncaught ProcessException', () async {
+      final s = await seeded(
+        _ReleasingEnv(),
+        probe: () => (open: 250, limit: 256),
+      );
+      expect(
+        s.registry.guardFdPressure,
+        throwsA(
+          isA<FdPressureException>()
+              .having((e) => e.open, 'open', 250)
+              .having((e) => e.limit, 'limit', 256)
+              .having(
+                (e) => e.message,
+                'message',
+                startsWith('fd pressure: 250/256 open'),
+              ),
+        ),
+      );
+      expect(s.settled.releases, 1);
+    });
+
+    test('a null probe (web) keeps the guard off', () async {
+      final s = await seeded(_ReleasingEnv(), probe: () => null);
+      expect(() => s.registry.guardFdPressure(), returnsNormally);
+      expect(s.settled.releases, 0);
+    });
+
+    test(
+      'the bash tool: pressure before Process.start refuses with the typed '
+      'error; an EMFILE from the exec surfaces as the same tool error',
+      () async {
+        final env = _ExecScriptedEnv(MemoryExecutionEnv());
+        final registry = ShellJobRegistry(
+          env: env,
+          fdPressureProbe: () => (open: 250, limit: 256),
+        );
+        final tool = shellTool(
+          env,
+          jobs: registry,
+          autoBackgroundAfter: Duration.zero,
+        );
+        await expectLater(
+          tool.execute({'command': 'echo hi'}, null, null),
+          throwsA(isA<FdPressureException>()),
+        );
+        expect(env.execCalls, 0, reason: 'refused BEFORE Process.start');
+        // Under the limit, but the exec itself hits EMFILE: the spawn
+        // error path maps errno 24 to the typed error too.
+        registry.fdPressureProbe = () => (open: 10, limit: 256);
+        env.execResult = const Err(
+          ExecutionError(
+            ExecutionErrorCode.spawnError,
+            'ProcessException: Too many open files, errno = 24',
+          ),
+        );
+        await expectLater(
+          tool.execute({'command': 'echo hi'}, null, null),
+          throwsA(
+            isA<FdPressureException>().having(
+              (e) => e.message,
+              'message',
+              contains('fd pressure'),
+            ),
+          ),
+        );
+        // A thrown FileSystemException with errno 24 — same mapping.
+        env.execThrow = const FileSystemException(
+          'Cannot open file',
+          '/x',
+          OSError('Too many open files', 24),
+        );
+        await expectLater(
+          tool.execute({'command': 'echo hi'}, null, null),
+          throwsA(isA<FdPressureException>()),
+        );
+        // Any other failure keeps today's shape (rethrown untouched).
+        env.execThrow = const FileSystemException(
+          'Cannot open file',
+          '/x',
+          OSError('No such file or directory', 2),
+        );
+        await expectLater(
+          tool.execute({'command': 'echo hi'}, null, null),
+          throwsA(isA<FileSystemException>()),
+        );
+      },
+    );
   });
 }

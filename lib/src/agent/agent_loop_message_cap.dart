@@ -428,12 +428,22 @@ Future<_AttemptResult> _streamAttempt(
     config.model.contextWindow,
     config.contextWindowCap,
   );
+  final guardCalibration = _guardCalibration(
+    config.overheadCalibration?.call(),
+  );
   final tokens = estimateRequestTokens(
     requestContext.messages,
     systemPrompt: requestContext.systemPrompt,
     tools: requestContext.tools ?? const [],
+    calibration: guardCalibration,
   );
-  if (window > 0 && tokens > window) {
+  if (_overWindowGuardTrips(
+    config,
+    requestContext,
+    window,
+    tokens,
+    guardCalibration,
+  )) {
     final guard = await _overWindowGuardTurn(
       context,
       requestContext,
@@ -443,6 +453,17 @@ Future<_AttemptResult> _streamAttempt(
       cancelToken,
       window,
       tokens,
+      // gh-241 follow-up #5d (D5): the regime's window cannot hold what
+      // every request carries — over it, with relief spent, the guard
+      // stands down instead of stopping the turn.
+      sendAnyway: softWindowRegime(
+        messages: requestContext.messages,
+        systemPrompt: requestContext.systemPrompt,
+        tools: requestContext.tools ?? const [],
+        window: window,
+        reserveTokens: config.windowReserveTokens?.call() ?? 0,
+        calibration: guardCalibration,
+      ),
     );
     if (guard.terminal != null) return _AttemptReturn(guard.terminal!);
     if (guard.retried) {
@@ -531,6 +552,61 @@ Future<_AttemptResult> _streamAttempt(
     ),
     context,
   ));
+}
+
+/// Whether the mid-turn over-window guard trips on this request: past the
+/// window, and NOT let through by the soft window (gh-2411 + the owner's
+/// live test — [softWindowSkip], the ONE predicate the hosts share): the
+/// soft window stands down only while the honest estimate is UNDER the
+/// window; a request at or over the window keeps the guard and its
+/// relief whatever the regime (skipping there let a session grow to 114%
+/// with no pass ever running). The cheap `tokens > window` test runs
+/// first — the predicate (an overhead estimate) only runs on an overflow.
+/// The calibration the over-window guard prices a request with (the
+/// session's measurement, [calibration]): a measured one — unless it sits
+/// on the ceiling clamp. A report claiming [OverheadCalibration.maxRatio]
+/// times the estimate is no density measurement but a cumulative-billing
+/// gateway's total (the "667k reads as lifetime" shape); the clamp exists
+/// so the METER over-reads such a session, never so the guard refuses a
+/// context that fits by its own estimate.
+OverheadCalibration _guardCalibration(OverheadCalibration? calibration) {
+  final measured = calibration ?? OverheadCalibration.uncalibrated;
+  return measured.ratio >= OverheadCalibration.maxRatio
+      ? OverheadCalibration.uncalibrated
+      : measured;
+}
+
+bool _overWindowGuardTrips(
+  AgentLoopConfig config,
+  Context requestContext,
+  int window,
+  int tokens,
+  OverheadCalibration guardCalibration,
+) {
+  if (window <= 0 || tokens <= window) return false;
+  // gh-2411 follow-up #5 (owner live test, round 2): never a hard stop on
+  // the heuristic alone. Until the provider has answered in this session —
+  // no assistant message in the transcript — and nothing is measured, the
+  // chars/token density is the only price of the request (+54% on the
+  // owner's prompt). It goes out: the provider's answer anchors the
+  // session, a real overflow takes the existing overflow path. Stopping
+  // here dead-locked the FIRST prompt of every restarted session at a
+  // small window — no reply, so no anchor, so the next prompt failed
+  // identically. A session that HAS been answered is anchored (every
+  // reply carries usage) or calibrated; there the guard owns the window.
+  if (!guardCalibration.measured &&
+      !requestContext.messages.any((m) => m is AssistantMessage)) {
+    return false;
+  }
+  return !softWindowSkip(
+    messages: requestContext.messages,
+    systemPrompt: requestContext.systemPrompt,
+    tools: requestContext.tools ?? const [],
+    window: window,
+    reserveTokens: config.windowReserveTokens?.call() ?? 0,
+    requestTokens: tokens,
+    calibration: guardCalibration,
+  );
 }
 
 /// Consumes the provider [response] stream, emitting message lifecycle

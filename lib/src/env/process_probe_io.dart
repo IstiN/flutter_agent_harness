@@ -15,6 +15,12 @@ library;
 import 'dart:io';
 
 import 'execution_env.dart' show ShellSurvivor;
+import 'process_lstart.dart';
+
+// gh-2413: the lstart parser moved to the pure `process_lstart.dart` (the
+// boot reconcile compares start times without dart:io); re-exported here
+// so the existing io-side importers are unchanged.
+export 'process_lstart.dart';
 
 /// The raw `ps -ax -o pid=,lstart=` stdout, or null when ps fails.
 Future<String?> processTableSnapshot() =>
@@ -42,9 +48,6 @@ Future<String?> pidStartSnapshot(int pid) async {
 // ---------------------------------------------------------------------------
 
 final _psWhitespace = RegExp(r'\s+');
-final _lstartPattern = RegExp(
-  r'^(\w{3}) (\w{3})\s+(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$',
-);
 
 /// One `ps -ax -o pid=,ppid=,pgid=,lstart=,command=` row: the full
 /// identity a survivor classification and liveness sample read.
@@ -90,34 +93,21 @@ Future<List<ProcessDetailRow>?> processDetailTableSnapshot() async {
 /// Parses one `ps -o lstart=` value ("Mon Nov 16 10:00:00 2026", LOCAL
 /// time); null when the shape does not match. Second resolution only —
 /// ps never reports sub-second starts.
-DateTime? tryParseLstart(String value) {
-  final m = _lstartPattern.firstMatch(value.trim());
-  if (m == null) return null;
-  const months = {
-    'Jan': 1,
-    'Feb': 2,
-    'Mar': 3,
-    'Apr': 4,
-    'May': 5,
-    'Jun': 6,
-    'Jul': 7,
-    'Aug': 8,
-    'Sep': 9,
-    'Oct': 10,
-    'Nov': 11,
-    'Dec': 12,
-  };
-  final month = months[m.group(2)!];
-  if (month == null) return null;
-  return DateTime(
-    int.parse(m.group(7)!),
-    month,
-    int.parse(m.group(3)!),
-    int.parse(m.group(4)!),
-    int.parse(m.group(5)!),
-    int.parse(m.group(6)!),
-  );
-}
+/// The per-exec script dir prefix (gh-1763): every bash tool / job command
+/// runs as `sh -c '. "$1"' sh <dir>/cmd.sh` with `<dir>` a private temp
+/// dir under this prefix.
+const shellCommandTempPrefix = 'fa_sh_cmd_';
+
+/// This harness's positive owner marker for survivor classification
+/// (gh-2413): `fa_sh_cmd_<pid>_` — the [shellCommandTempPrefix] dir name
+/// carrying the owning harness pid. `_writeGuardedScript` creates the dir
+/// under exactly this prefix, so a backgrounded SUBSHELL keeps the wrapper
+/// argv (and the marker) while a detached program's own argv never does.
+String shellCommandOwnerMarker(int pid) => '$shellCommandTempPrefix${pid}_';
+
+/// [shellCommandOwnerMarker] for THIS harness process — the one form the
+/// io layer's job class can name (its own `pid` member shadows dart:io's).
+String currentProcessOwnerMarker() => shellCommandOwnerMarker(pid);
 
 /// The survivor candidates of one completed call (issue #2201),
 /// classified over one POST-EXIT process table. Two disjoint strategies:
@@ -127,16 +117,24 @@ DateTime? tryParseLstart(String value) {
 ///   keep it after the leader's death (reparented, group unchanged), so
 ///   `pgid == childPid` catches every child regardless of when the script
 ///   forked it.
-/// - **non-ownGroup hosts** (macOS has no setsid): the orphan-window
-///   heuristic. The child ran in OUR group, so its survivors are processes
-///   that are (a) orphans now (`ppid == 1` — the shell that spawned them
-///   is gone), (b) still in our group, and (c) started no earlier than
-///   this call's spawn second. Race-free where a parent-chain snapshot
-///   was not: an instant `nohup x &` script exits before any pre-exit
-///   sample could run, but its orphaned child stays visible in the
-///   post-exit table. Best-effort by design — the documented detection
-///   heuristic, not a guarantee (a process that escaped our group via its
-///   own `setsid` is invisible here).
+/// - **non-ownGroup hosts** (macOS has no setsid): the orphan window,
+///   bounded on BOTH ends (gh-2413) and gated on a positive OWNER proof.
+///   The child ran in OUR group — which every process of a peer session
+///   this harness (or a job-control-less parent) spawned shares — so
+///   "in our group, started within this call's lifetime" only NAMES
+///   candidates; ownership needs proof from the same snapshot: the row's
+///   own command, or some ANCESTOR's (the `ppid` chain walked inside the
+///   table), still carries this harness's wrapper tag
+///   ([shellCommandOwnerMarker] — `fa_sh_cmd_<pid>_…`, the per-exec script
+///   dir every backgrounded subshell inherits in its argv). A survivor is
+///   a child like `sleep 300` whose own argv carries nothing: it is OURS
+///   when the subshell that launched it still wears the tag, a peer's
+///   when the chain hits `fa_sh_cmd_<other>_` or init. A detached program
+///   whose launcher already exited (`nohup prog &`, chain → pid 1) cannot
+///   be proven ours on these hosts: it is left alone — never adopted,
+///   never a cross-session "left by" misattribution (gh-2413). The upper
+///   bound (`startedMs <= execEndMs`) stops an hours-long call from
+///   adopting every later orphan in the group.
 ///
 /// The direct child itself is never a survivor. Pure.
 List<ShellSurvivor> classifyShellSurvivors({
@@ -144,6 +142,8 @@ List<ShellSurvivor> classifyShellSurvivors({
   required bool ownGroup,
   required int? ourPgid,
   required DateTime? execStart,
+  DateTime? execEnd,
+  String? ownerMarker,
   required List<ProcessDetailRow>? table,
 }) {
   if (table == null) return const [];
@@ -153,28 +153,96 @@ List<ShellSurvivor> classifyShellSurvivors({
       ? null
       : execStart.millisecondsSinceEpoch -
             execStart.millisecondsSinceEpoch % 1000;
+  final marker = ownerMarker;
+  // The ancestry lookup for the ownership proof; empty when no marker was
+  // given (nothing can then be proven ours).
+  final byPid = marker == null
+      ? const <int, ProcessDetailRow>{}
+      : {for (final row in table) row.pid: row};
   final out = <ShellSurvivor>[];
   for (final row in table) {
     if (row.pid == childPid) continue;
-    final bool matches;
-    if (ownGroup) {
-      matches = row.pgid == childPid;
-    } else {
-      final startedMs = tryParseLstart(row.lstart)?.millisecondsSinceEpoch;
-      matches =
-          windowStartMs != null &&
-          ourPgid != null &&
-          row.pgid == ourPgid &&
-          row.ppid == 1 &&
-          startedMs != null &&
-          startedMs >= windowStartMs;
-    }
+    final matches = ownGroup
+        // ownGroup hosts: the authoritative group scan.
+        ? row.pgid == childPid
+        : _isOwnedOrphan(
+            row,
+            childPid: childPid,
+            windowStartMs: windowStartMs,
+            windowEndMs: execEnd?.millisecondsSinceEpoch,
+            ourPgid: ourPgid,
+            marker: marker,
+            byPid: byPid,
+          );
     if (!matches) continue;
     out.add(
       ShellSurvivor(pid: row.pid, startTag: row.lstart, command: row.command),
     );
   }
   return out;
+}
+
+/// The non-ownGroup candidate test (gh-2413), every clause explicit:
+/// in OUR group, started inside the call's window (both ends, whole-second
+/// grain), and PROVABLY a leftover of THIS call — its `ppid` chain leads
+/// into the completed call's subtree through this harness's [marker]
+/// ([ownedByCall]). No marker, no window, no start string or a failed
+/// proof each answer false on their own. Pure.
+bool _isOwnedOrphan(
+  ProcessDetailRow row, {
+  required int childPid,
+  required int? windowStartMs,
+  required int? windowEndMs,
+  required int? ourPgid,
+  required String? marker,
+  required Map<int, ProcessDetailRow> byPid,
+}) {
+  if (windowStartMs == null || ourPgid == null || marker == null) {
+    return false;
+  }
+  if (row.pgid != ourPgid) return false;
+  final startedMs = tryParseLstart(row.lstart)?.millisecondsSinceEpoch;
+  if (startedMs == null || startedMs < windowStartMs) return false;
+  if (windowEndMs != null && startedMs > windowEndMs) return false;
+  return ownedByCall(row, byPid, childPid, marker);
+}
+
+/// The gh-2413 ownership proof for one non-ownGroup candidate of the
+/// COMPLETED call ([childPid]): the `ppid` chain, walked inside the same
+/// snapshot ([byPid]), must lead into THAT call's leftover subtree —
+/// through [childPid] itself (a child the snapshot still shows under the
+/// dead wrapper) or through an ORPHANED subshell (`ppid == 1`) that still
+/// wears this harness's [marker] (`fa_sh_cmd_<pid>_…`: forked from our
+/// wrapper, re-parented to init because its parent — the completed call —
+/// is gone). A process under a LIVE wrapper is NOT a survivor of this
+/// call even when that wrapper wears the same marker — it is another job
+/// of this very harness (the marker names the harness, not the call; a
+/// settled job once adopted its running sibling's `sleep` as a duplicate
+/// and doubled the waiting row, gh-2413 regression). A chain that reaches
+/// init without the tag (a peer's wrapper, a detached program whose
+/// launcher exited) is NOT ours either. Bounded depth guards against a
+/// table with a cycle (a recycled pid mid-walk); pure.
+bool ownedByCall(
+  ProcessDetailRow row,
+  Map<int, ProcessDetailRow> byPid,
+  int childPid,
+  String marker,
+) {
+  var current = row;
+  for (var depth = 0; depth < 128; depth++) {
+    // A child the snapshot still shows under the completed call's pid:
+    // the dead wrapper itself is already reaped and absent from the table,
+    // so the `ppid` hit is the only trace of that subtree.
+    if (current.pid == childPid || current.ppid == childPid) return true;
+    if (current.ppid <= 1) {
+      // An orphan: ours only as a tagged subshell of this harness.
+      return current.command?.contains(marker) ?? false;
+    }
+    final parent = byPid[current.ppid];
+    if (parent == null || parent.pid == current.pid) return false;
+    current = parent;
+  }
+  return false;
 }
 
 /// Grace between the TERM and KILL rounds of [stopDetachedProcess].

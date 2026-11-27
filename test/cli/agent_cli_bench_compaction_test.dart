@@ -42,6 +42,17 @@ const _checkpointReply =
 // grows past the trigger.
 final _bigAnswer = 'growth ${'y' * 40000}';
 
+/// The gh-2411 seam variant of [_bigAnswer] (the tiny-prompt test only):
+/// ~12.7k estimated tokens on top of the ~27k tiny-overhead seed — the
+/// first turn's context crosses the 32k bench trigger, while the answer
+/// itself still fits the 16k keep region, so the seeded tool pair stays
+/// the protected tail.
+final _benchOverflowAnswer = 'growth ${'y' * 48000}';
+
+/// The main-prompt prefix of the pre-seam fixtures (the second test
+/// keeps the real CLI prompt).
+final _agentPrompt = RegExp(r'^You are Fa');
+
 /// A structured-compaction-aware fake stream: judge calls (the
 /// context-hygiene judge prompt) answer `[]` (hide nothing — the passes
 /// proceed deterministically), checkpoint calls answer the canned
@@ -121,7 +132,17 @@ void main() {
   /// is the NEWEST records — the protected tail at compaction time.
   /// The compaction must fire MID-RUN when the big first answer pushes
   /// the context past the trigger — not at boot.
-  Future<MemoryExecutionEnv> seedUnderTrigger(String name) async {
+  ///
+  /// [foldableBallast] (gh-2411, the tiny-prompt test only): the ballast
+  /// is ASSISTANT text instead of user messages. A user message is an
+  /// ask — the structured engine re-homes every folded ask verbatim in
+  /// the S0 prefix, so user ballast frees nothing; against the 32k bench
+  /// trigger the mid-run pin needs ballast the checkpoint can fold. The
+  /// default (user ballast) is byte-identical to the pre-gh-2411 seed.
+  Future<MemoryExecutionEnv> seedUnderTrigger(
+    String name, {
+    bool foldableBallast = false,
+  }) async {
     final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
     // Suppress session-start memory maintenance (suite pattern).
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
@@ -146,8 +167,23 @@ void main() {
         },
       ],
     );
-    for (var i = 0; i < 40; i++) {
-      await seed.appendMessage(UserMessage.text('filler$i ${'x' * 1000}'));
+    final fillers = foldableBallast ? 72 : 40;
+    for (var i = 0; i < fillers; i++) {
+      if (!foldableBallast) {
+        await seed.appendMessage(UserMessage.text('filler$i ${'x' * 1000}'));
+        continue;
+      }
+      await seed.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'filler$i ${'x' * 1000}')],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
     }
     await seed.appendMessage(
       AssistantMessage(
@@ -180,6 +216,15 @@ void main() {
     Map<String, String> environment = const {
       'FAH_COMPACT_TRIGGER_TOKENS': '$_benchTriggerTokens',
     },
+    // gh-2411: the gh-241 fixture seam (tinyPrompt + tinyTools) — with
+    // the real CLI prompt the fixed overhead grew ~3.6k tokens and the
+    // 32k bench trigger lost its headroom on both sides (the first turn
+    // no longer crossed it; after the fold the S0 re-homed asks + the
+    // 16k keep region rode above it), so the first test's "every later
+    // request stays under the bench cap" pin needs the overhead OUT of
+    // the way (the transcript is what overflows). The second test keeps
+    // the real prompt: it pins the byte-identical default.
+    bool tinyOverhead = false,
   }) => AgentCli(
     config: AgentCliConfig(
       model: _model,
@@ -189,6 +234,8 @@ void main() {
       sessionName: 'bench-trigger-target',
       providerKind: 'openai-completions',
       skillsAccess: SkillsAccess.granted,
+      systemPrompt: tinyOverhead ? tinyPrompt : null,
+      runtimeTools: tinyOverhead ? tinyTools(const ['read', 'bash']) : null,
     ),
     io: io,
     environment: environment,
@@ -204,7 +251,8 @@ void main() {
   Iterable<Context> turnRequests(_CompactionAwareStream stream) =>
       stream.contexts.where(
         (context) =>
-            (context.systemPrompt ?? '').startsWith('You are Fa') &&
+            (_agentPrompt.hasMatch(context.systemPrompt ?? '') ||
+                (context.systemPrompt ?? '').startsWith(tinyPrompt)) &&
             !isHandOverCall(context),
       );
 
@@ -214,10 +262,13 @@ void main() {
     'result survive',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
-      final env = await seedUnderTrigger('bench-trigger-target');
+      final env = await seedUnderTrigger(
+        'bench-trigger-target',
+        foldableBallast: true,
+      );
       final stream = _CompactionAwareStream()
-        ..turnAnswers.addAll([_bigAnswer, 'second answer']);
-      final agent = cli(env, stream);
+        ..turnAnswers.addAll([_benchOverflowAnswer, 'second answer']);
+      final agent = cli(env, stream, tinyOverhead: true);
 
       final run = agent.run();
       io.sendLine('go');

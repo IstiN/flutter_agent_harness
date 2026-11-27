@@ -35,6 +35,50 @@ block a release again.
   on the frame-unique reason row (`waitForScreen`, gh-1049) instead of
   the raw-stream match that raced the sheet paint. Quarantine entry
   removed; the gate runs the file again.
+- fix(messaging): the autonomous-chain token budget is OFF by default
+  (PR #2435 addendum, owner directive "let the mail arrive"):
+  `messaging.chainBudgetTokens` defaults to 0 — spend alone never pauses
+  a chain, mail always wakes the agent, and the loop detector (ON by
+  default) remains the evidence-based bound for true storms. A positive
+  value re-enables the #2226 budget pause (400000 was the pre-#2435
+  default).
+- fix(compaction): unanswered inbound inter-agent mail is never a mechanical
+  compaction candidate (PR #2435 addendum). New `compaction/inbound_mail.dart`
+  — the ONE record- and message-level definition (DM `from <id>:`, channel
+  `from <id> in #<channel>:` and the reply-anchor shapes via the new
+  `user_text.isAgentMailText`): a mail record with no later assistant reply
+  (an `agent_message` tool call or pure prose — tool-call carriers are the
+  agent working, not answering) never enters the structured engine's foldable
+  range, never passes `validateHidePicks`, never joins the emergency relief's
+  keep-N veto, and the local trim valve CARRIES it across its cut like the
+  pinned newest user turn. Answered mail folds like any other data. Motivation:
+  a live clip where a budget-paused chain left a peer message queued while
+  earlier delivered-but-unanswered mail was foldable by every tier (the
+  prompt-level `## Open User Requests` belt is judgment-only, issue #81 AC9).
+- build(scripts): the pre-commit hook drops the coverage stage — CI-only
+  coverage (hook speed, owner directive 2026-11-26, PR #2435). The hook's
+  core/integ/all stage lists select WITHOUT `coverage` and `test-core`
+  instruments (`--coverage=coverage`) only when the coverage stage is
+  selected, so hook runs pay no instrumentation tax; CI keeps computing
+  its own (the `test-core` shards pass `--coverage` explicitly,
+  `coverage-gate` merges and owns the diff-coverage / main ratchet) and
+  never consumed the hook's coverage/ dir. Non-hook runs keep coverage in
+  every stage list (ci.yml fallback parity); an explicit
+  `--stages coverage` still runs the ratchet standalone. Pinned by
+  `test/ci_hook_coverage_ci_only_guard_test.dart` (AC1 hook lists without
+  coverage, AC2 non-hook parity, AC3 the explicit fail-path, AC4 the
+  conditional instrumentation, AC5 the CI parity).
+
+- fix(scripts): gh-1199 AC6 quarantine parity — the local `integration-mock`
+  stage of `scripts/ci_fast_gate.sh` now pipes its targets through
+  `scripts/apply_quarantine.py` like both CI legs (`integration-mock`,
+  `pty-integration-linux`); it ran the bare `test/integration` directory,
+  so the pre-commit hook ran the 13 flake-quarantined files CI never runs
+  and went red on them (#1422 AC1 and #1469 are deterministic reds on
+  macOS). A failed filter refuses to run an unfiltered leg; an
+  all-quarantined selection runs nothing. Guard:
+  `test/ci_integration_mock_quarantine_guard_test.dart`.
+
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
@@ -85,6 +129,38 @@ block a release again.
   single-flight (ticks during a pass coalesce into one follow-up), gated on
   the upstream link (disconnected ticks are no-ops, reconnect refreshes
   once), default interval 10 s → 30 s (`catalogPollInterval`).
+
+- fix(tools): gh-2413 — bash job cross-session cross-talk: `.fah/bash_jobs/
+  running.json` entries are owner-tagged (session id) and a boot adopts only
+  this session's (legacy owner-less records still adopt, notice says
+  `adopted from unknown owner`); foreign live entries are never adopted,
+  reaped or removed; the macOS orphan-window classifier is bounded by the
+  exec end and gated on this harness's `fa_sh_cmd_<pid>_` wrapper marker;
+  notice wording "orphaned … in this session's process group near" replaces
+  "left by"; `bash_job stop` refuses an unverifiable pid.
+
+- fix(env): gh-2415 — fd exhaustion: `fa` raises the descriptor soft limit
+  to min(hard, 10240) at startup (`setrlimit`, once, no-op on web/Windows);
+  the bash tool guards every `Process.start` against fd pressure (releases
+  settled jobs' leftovers, then a typed `fd pressure: N/M open` tool error
+  instead of an uncaught `ProcessException: Too many open files`); the
+  session listing's header reads are an explicit open/read/close.
+
+- fix(tools): gh-2413 follow-up — survivor ownership is scoped to the
+  COMPLETED call, not the harness: a settled job's post-exit scan no
+  longer adopts a running sibling job's subtree (same wrapper tag), which
+  doubled the waiting row (`○ waiting · 2 jobs` with an `adopted:` duplicate
+  of the live job). The `ppid` chain must lead into the call's own
+  subtree; a live job's wrapper is never a survivor of another call.
+- fix(messaging): gh-2415 — the scheduled-message receipt writer backs off
+  under fd pressure: a failed write keeps the receipt in memory, retries
+  with exponential backoff (2 s → 5 min cap), warns once per pressure
+  window (`[sched] receipt write deferred: fd pressure …`), flushes on
+  recovery — a lost receipt is impossible.
+
+- feat(tools): gh-2423 C1 — the `working_set(text)` tool (every agent, every host): the agent's own status — decisions, red list, next steps, rules — stored as an append-only record of its own session and pinned into the system channel of every request; it survives compaction, `--resume` and a crash restart. Redacted on write, capped at 4096 chars (over-cap is refused, not clipped), never grants an approval. Retires gh-210's host-only `recite_goal` (legacy `goal_recitation` snapshots still render as the working set).
+- feat(compaction): gh-2423 C3 — honest notices in the harness's numbers: `compacted: N records hidden; context now ≈X/W (was ≈Y); …` after every hide and `context ≈85% (X/W): update your working set … KEEP WORKING` once per cycle near the trigger — model-visible `<system-notice>` records, one dim TUI line, HEP `context_notice` (post-hide/near-limit, `estimate: true` provenance) and `working_set` frames. Every heuristic figure is marked `≈`; never "at the limit".
+- feat(prompts): gh-2423 C7 — context-hygiene rules in the agent prompt (reads ≤ 50 lines, `grep -n` then a short window, test output through `grep`/`tail`, `bash_job` by id, thinking ≈ 150 words), each tied to its measured cost.
 - fix(2363): the resume replay no longer re-prints the obligations-ledger
   tail block — the level-0 `<system-notice>` is model context (#1380
   invariant untouched), not transcript chrome; `buildReplayEntries` skips
@@ -103,6 +179,93 @@ block a release again.
   unknown-route pass-through; grep guard test pins the single
   construction site.
 
+- fix(compaction): gh-241 follow-up #5e (owner live test round 6) — the
+  newest durable boundary's summary survives a resume. A measured resume
+  keeps it RESIDENT: the walk opens the window at the boundary cluster
+  and the parity trim stands down while a checkpoint summary is
+  resident; the request opens with the summary and then only the raw
+  tail it does not cover, and the local-trim valve pins it like the
+  newest user turn. An over-trigger first request goes out as loaded
+  and takes the existing first-turn pre-flight compaction path.
+  A context stop that compacts and continues is logged `turn end …
+  stop=compacting (continuation pending)` — never as `stop=error` —
+  and `run end` is written exactly once, at the true end of the run.
+  The hand-over instruction states whether the final assistant reply
+  was delivered, so a checkpoint no longer calls a delivered reply
+  «not yet delivered».
+- fix(compaction): gh-241 follow-up #5d (owner live test round 5) —
+  resume and relief are honest about what they measure and cut. The
+  overhead calibration anchors on the session's FIRST valid provider
+  report (`resume calibration source=…` is always logged); an unbudgeted
+  resume walk stops at the newest durable boundary (classic compaction or
+  structured checkpoint) instead of paging the whole branch, so a resume
+  no longer resurrects history an earlier cut removed; the newest REAL
+  user turn survives every in-memory relief (projection markers are no
+  longer mistaken for it); after a context stop the promised
+  auto-compaction pass runs for real (never over a disabled engine) and
+  in the soft-window regime an over-window request with relief spent is
+  sent instead of ending a read-only turn in `stop=error`; notices say
+  what happened ("relieved" when no summary pass ran, a trim receipt only
+  when content was cut, a calibrated resume tail line).
+- fix(compaction): gh-2411 follow-up #5c (owner live test round 4) —
+  the overhead calibration survives checkpoints and resume: it is
+  derived from the last valid provider report anywhere in the session
+  (a bounded backward walk to the reply and the boundary that opens its
+  context), so a resume right after a `compact_checkpoint` logs
+  `budget=<n> calibrated xN (reported)` instead of
+  `budget=none (unmeasured)` and no longer falls into the soft-window
+  regime on the raw heuristic (three warnings and a trim to 3 messages
+  against a provider truth of 15,310). The soft-window warning latches
+  once per distinct text (a resumed session no longer prints it at boot
+  AND at its first prompt). The resume budget trim never opens the kept
+  tail on an assistant or tool message. The `[resume] loaded the last
+  K message(s)` line prints overhead + the estimated tail — the number
+  the first request is metered at (it printed the overhead alone:
+  ≈15,732 against a real 18,228).
+
+- fix(cli): gh-2411 follow-up #5b (owner live test, B1) — the PROJECT
+  `.fah/config.yaml` `agent.contextWindowCap` is now honored by the CLI
+  through the app's existing loader (`loadProjectContextWindowCap`); the
+  project value wins over the user value, the strict validation is the
+  same as the user key's (min 16384; an invalid value fails startup),
+  and the boot log names the winner
+  (`context window cap source=project window=<n>`). `fa config check`
+  no longer calls that key dead config — it names the OTHER `agent.*`
+  keys by key instead of the whole section — and `fa config set
+  agent.contextWindowCap` reads/writes the project scope (the default
+  for this key). Previously a tester's project override of 25000 was
+  silently ignored (dead config).
+
+- fix(compaction): gh-2411 follow-up #5 (owner live test, rounds 1–2) —
+  a restarted session at a small window failed every prompt the same
+  way: the resume boundary walk truncated the transcript to a one-message
+  tail on the unmeasured heuristic's say-so (28,440 → 17,773 prompt
+  tokens, silently — no record, no line), and the over-window guard then
+  hard-stopped the first request on the same heuristic (no reply → no
+  anchor → every prompt failed identically). The overhead calibration is
+  now taken at load/resume from the transcript's first vouchable usage
+  report; the walk keeps its parity budget only for MEASURED sessions
+  and otherwise loads to the newest compaction boundary or the file head;
+  a tail load always prints one line (`[resume] loaded the last K
+  message(s) …; ≈T tokens, estimate`). Unmeasured estimates never cut in
+  memory (boot cap, soft-window relief) and never hard-stop the loop; a
+  ceiling-clamped calibration never trips the guard. Every in-memory cut
+  opens the request on a user turn, leaves a `context_trim_receipt`
+  record and a diagnostic line; heuristic numbers the host prints carry
+  an explicit estimate marker. A hand-over transfer without the
+  `## Open User Requests` heading gets ONE corrective retry.
+
+- fix(compaction): gh-2411 — a 20k user-set context window below the
+  fixed request overhead (system prompt + tool schemas, ~23.6k real
+  tokens) made the ctx meter read 65–78% (chars/4 under-counted the
+  overhead 2.3×), the over-window guard trimmed on EVERY turn, and the
+  newest user turn vanished from the live context. The newest real user
+  turn is now never dropped (non-foldable, never a hide candidate, and
+  CARRIED verbatim when a mechanical cut lands behind it); the overhead
+  is priced at 2.5 chars/token and calibrated per session from the first valid
+  provider `usage.input` (meter, guard and trigger share the basis);
+  when `overhead + newest turn ≥ window − reserve` compaction is skipped
+  for the session with ONE visible warning instead of thrashing.
 - fix(2362): nightly-red tracker self-heal — the auto-issue close leg fires
   on red nights too (step-level `success()` inside the `always()`-gated
   job cannot see `needs` failures), so the open tracker got a "Green

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -159,7 +160,14 @@ void main() {
         );
         final code = await cli.runHeadless('hi');
         expect(code, 0);
-        expect(capturedSystemPrompt, 'CONFIG HEADLESS PROMPT');
+        // gh-2423 C1/C7: a config-overridden MODE prompt stays the base,
+        // byte-exact, and the harness-owned context includes (the
+        // working-set contract + the context-hygiene rules — the same
+        // composition class as the recall contract) ride after it.
+        expect(
+          capturedSystemPrompt,
+          'CONFIG HEADLESS PROMPT\n\n$workingSetPrompt\n\n$contextHygienePrompt',
+        );
       },
     );
 

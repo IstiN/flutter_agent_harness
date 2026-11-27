@@ -1320,6 +1320,69 @@ void main() {
       expect(agent.hasQueuedMessages(), isFalse);
     });
   });
+  group(
+    'gh-2411 follow-up #5: overhead calibration anchors at load/resume',
+    () {
+      test('a transcript that carries provider usage anchors the estimate '
+          'the moment it is loaded', () {
+        final fake = _FakeStreamFunction([]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: _unusedExecutor,
+          systemPrompt: 's' * 800,
+        );
+        expect(agent.state.overheadCalibration.measured, isFalse);
+        // A resumed session: the stored reply's usage says the request that
+        // produced it cost the provider 60 tokens (the heuristic prices the
+        // same request far higher). Before, the calibration was runtime-only
+        // — the first request of a restarted session went out on the
+        // heuristic alone and the over-window guard stopped it before the
+        // provider could ever anchor the session (owner live test, round 2).
+        agent.state.messages = [
+          UserMessage.text('hi'),
+          AssistantMessage(
+            content: const [TextContent(text: 'ok')],
+            api: 'test-api',
+            provider: 'test-provider',
+            model: 'test-model',
+            usage: Usage(
+              input: 60,
+              output: 5,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 65,
+              cost: const UsageCost(),
+            ),
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        ];
+        expect(agent.state.overheadCalibration.measured, isTrue);
+        // A 60-token request on a ~330-token heuristic estimate clamps at the
+        // floor (0.6): the session is measured, and the estimate of that
+        // request drops from 330 to 198 before it is ever re-sent.
+        expect(
+          agent.state.overheadCalibration.ratio,
+          OverheadCalibration.minRatio,
+        );
+        expect(agent.state.overheadCalibration.apply(330), 198);
+        // Measured once, it stands: a later transcript swap never re-measures.
+        agent.state.messages = [UserMessage.text('fresh')];
+        expect(agent.state.overheadCalibration.measured, isTrue);
+      });
+
+      test('a fresh transcript (no usage) leaves the session unmeasured', () {
+        final fake = _FakeStreamFunction([]);
+        final agent = Agent(
+          model: _model,
+          streamFunction: fake.call,
+          toolExecutor: _unusedExecutor,
+        );
+        expect(agent.state.overheadCalibration.measured, isFalse);
+      });
+    },
+  );
 }
 
 /// Polls an async [condition] like the stuck suite's [waitForIt].

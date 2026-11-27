@@ -25,9 +25,13 @@ final class MessagingConfig {
   /// re-enables the exact pre-#2226 behavior (10 was the old default).
   static const int defaultWakeChatterCap = 0;
 
-  /// The autonomous-chain budget default: a generous bound (~200 turns of
-  /// spend) — the honest ceiling for true storms, replacing "10 mails".
-  static const int defaultChainBudgetTokens = 400000;
+  /// The autonomous-chain budget default: **OFF** (0) since PR #2435 —
+  /// the owner directive "let the mail arrive": a long productive chain
+  /// must never pause on spend, and the loop detector (ON by default)
+  /// remains the evidence-based bound for true storms. A positive
+  /// `messaging.chainBudgetTokens` re-enables the budget pause (the
+  /// #2226 behavior; 400000 was the pre-#2435 default).
+  static const int defaultChainBudgetTokens = 0;
 
   /// Consecutive agent-kind wakes allowed without user input when
   /// explicitly re-enabled; `0` (default) disables the cap entirely.
@@ -35,7 +39,8 @@ final class MessagingConfig {
 
   /// The token budget an autonomous agent↔agent chain may spend between
   /// user inputs. Exhaustion pauses the chain with a budget digest —
-  /// never a silent refusal. `0` disables the budget.
+  /// never a silent refusal. `0` (the default) disables the budget
+  /// entirely — mail always wakes the agent.
   final int chainBudgetTokens;
 
   /// The smart loop detector (on by default — the #2226 replacement for
@@ -47,7 +52,8 @@ final class MessagingConfig {
   /// ```yaml
   /// messaging:
   ///   wakeChatterCap: 0            # legacy streak cap, OFF by default
-  ///   chainBudgetTokens: 400000    # autonomous agent↔agent spend bound
+  ///   chainBudgetTokens: 0         # OFF by default (PR #2435); a
+  ///                                # positive value re-enables the pause
   ///   loopDetection:
   ///     enabled: true
   ///     similarityThreshold: 0.92  # normalized-text pairwise similarity
