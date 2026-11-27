@@ -2105,6 +2105,18 @@ Future<void> _runApp(List<String> args) async {
         // the global/project flows write their yaml through the targeted
         // upsert themselves and the session scope persists nothing.
       ),
+      // gh-2422 three-way merge: the baseline read AT SAVE TIME (the
+      // mutable [saved], kept fresh by the onUserConfigFileChanged
+      // re-sync) — only the overlays above changed anything vs it, so
+      // every section this session never touched keeps whatever is on
+      // disk right now instead of re-rendering the boot values over
+      // another REPL's mid-session edits.
+      base: saved,
+      // A changed project-capable section that lives in the project
+      // config file is written THERE (the scope that wins at boot);
+      // --global forces the global file for every section.
+      projectDir: cliEnv.cwd,
+      forceGlobal: parsed.forceGlobalConfig,
     );
   };
 
