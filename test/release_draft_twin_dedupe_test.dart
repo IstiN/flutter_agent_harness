@@ -553,4 +553,162 @@ void main() {
       );
     },
   );
+
+  test(
+    'gh-2432 rework: two OWN-MARKER twins with no external winner — the oldest own draft wins, the newer twin is deleted by id',
+    () {
+      // The landed-500 retry shape (review thread on #2434,
+      // release_lazy_draft.sh:163): attempt 1 got HTTP 500 but LANDED
+      // server-side (D1, our exact marker) and stayed invisible past the
+      // retry boundary, so attempt 2's create succeeded and minted D2.
+      // Nothing external precedes us, so the existing election (any
+      // same-tag release with a lower id) cannot fire and BOTH drafts
+      // survive — the tag resolves ambiguously for the attach gates and
+      // the twin rots into the daily sweep. Elect the OLDEST own draft
+      // (lowest id — first-created) and delete our newer twins by id:
+      // both carry this job's exact marker, so the delete stays inside
+      // the "a job only ever deletes drafts it just created" invariant.
+      final r = runTwinFixture(
+        'scripts/release_draft_twin_dedupe.sh',
+        args: const [tag],
+        name: 'dedupe-own-twins-oldest-wins',
+        tag: tag,
+        roster: [
+          release(100, tag: tag, draft: true, marker: mine),
+          release(1001, tag: tag, draft: true, marker: mine),
+        ],
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      final deletes = r.log
+          .where((l) => l.contains('-X DELETE repos/OWNER/REPO/releases/'))
+          .toList();
+      expect(
+        deletes.join('\n'),
+        contains('releases/1001'),
+        reason:
+            'the newer same-marker twin (the retry mint) is deleted by id',
+      );
+      expect(deletes, hasLength(1), reason: r.log.join('\n'));
+      expect(
+        deletes.single.endsWith('/1001'),
+        isTrue,
+        reason:
+            'the oldest own draft (id 100, first-created) is never '
+            'touched — only the newer twin dies',
+      );
+    },
+  );
+
+  test(
+    'gh-2432 rework: an own-twin delete API blip stays best-effort — the leg stays green, the sweeper is the backstop',
+    () {
+      // Same gh-1899 convention as the external-winner path: a failed
+      // DELETE inside the own-twin election must never red a green
+      // create path — both twins then survive for the daily sweeper,
+      // and the warning says so.
+      final r = runTwinFixture(
+        'scripts/release_draft_twin_dedupe.sh',
+        args: const [tag],
+        name: 'dedupe-own-twin-delete-blip',
+        tag: tag,
+        roster: [
+          release(100, tag: tag, draft: true, marker: mine),
+          release(1001, tag: tag, draft: true, marker: mine),
+        ],
+        deleteFails: true,
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.output, contains('::warning::'));
+      expect(r.output, contains('kept the oldest own draft'));
+    },
+  );
+
+  test(
+    'gh-2432 rework: an external winner still deletes ALL own-marker drafts — the own-twin keep never overrides the external election',
+    () {
+      // The own-twin election must live INSIDE the no-external-winner
+      // path: when an older published/pipeline release owns the tag, the
+      // existing contract (delete every draft carrying our exact
+      // marker) holds unchanged.
+      final r = runTwinFixture(
+        'scripts/release_draft_twin_dedupe.sh',
+        args: const [tag],
+        name: 'dedupe-external-wins-over-own-twins',
+        tag: tag,
+        roster: [
+          release(300, tag: tag, draft: false, marker: winnerMarker),
+          release(1001, tag: tag, draft: true, marker: mine),
+          release(1002, tag: tag, draft: true, marker: mine),
+        ],
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      final deletes = r.log
+          .where((l) => l.contains('-X DELETE repos/OWNER/REPO/releases/'))
+          .toList();
+      expect(deletes, hasLength(2), reason: r.log.join('\n'));
+      expect(
+        deletes.join('\n'),
+        contains('releases/1001'),
+        reason: 'our first own twin dies against an external winner',
+      );
+      expect(
+        deletes.join('\n'),
+        contains('releases/1002'),
+        reason: 'our newer own twin dies against an external winner too',
+      );
+      expect(
+        deletes.join('\n'),
+        isNot(contains('releases/300')),
+        reason: 'the external winner is never touched',
+      );
+    },
+  );
+
+  test(
+    'gh-2432 rework: the attach path re-attaches its assets when the dedupe kept an OLDER own twin — a same-marker body must not mask a zero-asset survivor',
+    () {
+      // The attach create CARRIES the assets onto its draft (the newer
+      // twin). When the own-twin election keeps the OLDER same-marker
+      // twin and deletes the create-carried draft, the fall-through
+      // check "resolved body carries our marker" is no longer proof the
+      // assets survived — the kept twin is OUR object with our exact
+      // marker and zero assets. The gh-2372 rework contract ("the loser
+      // lands its assets on the winner IN THE SAME RUN") must hold: the
+      // attach path re-attaches unless every asset of this call is
+      // already on the resolved object.
+      final r = runTwinFixture(
+        'scripts/release_attach_or_create.sh',
+        args: const [tag, 'fa-fake.tar.gz'],
+        name: 'attach-own-twin-reattaches',
+        tag: tag,
+        roster: [
+          release(100, tag: tag, draft: true, marker: mine),
+          release(1001, tag: tag, draft: true, marker: mine),
+        ],
+        // The race window: the pre-create view misses (the landed-500
+        // twin is not visible yet), so the script takes the create path.
+        viewSeq: const ['missing'],
+        // After create + dedupe the tag resolves to OUR KEPT twin (id
+        // 100) — its body carries our exact marker.
+        winnerBody: 'Release $tag\n<!-- release-draft-owner: $mine -->',
+        // ...and the kept twin carries NOTHING — the create-carried
+        // assets died with the deleted newer twin.
+        resolvedAssets: const [],
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(
+        r.log.join('\n'),
+        contains('api -X DELETE repos/OWNER/REPO/releases/1001'),
+        reason: 'the newer twin (the create-carried draft) is self-deleted',
+      );
+      expect(
+        r.log.join('\n'),
+        contains('release upload $tag fa-fake.tar.gz'),
+        reason:
+            'the assets must land on the kept own twin in the SAME run — '
+            'exiting green with them buried in the deleted draft regresses '
+            'the gh-2372 rework attach contract',
+      );
+    },
+  );
 }
