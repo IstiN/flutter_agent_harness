@@ -36,7 +36,6 @@ class MediaModelsSection extends StatelessWidget {
     this.mainBaseUrl = '',
     this.registry,
     this.modelsFetcher,
-    this.hiddenSlots = const {},
     this.onSlotEditorOpened,
     this.onSlotOverrideSaved,
   });
@@ -63,11 +62,6 @@ class MediaModelsSection extends StatelessWidget {
   final void Function(String slot)? onSlotOverrideSaved;
 
   /// The icon each slot's row (and the model preset combo summary) shows.
-  /// Slot names this build must NOT render (gh-2391 addendum 5): a
-  /// host-only branded build hides video generation entirely — the slot
-  /// has no managed alias yet, and "not configured" would advertise it.
-  final Set<String> hiddenSlots;
-
   static const slotIcons = <String, IconData>{
     MediaSlot.imageGeneration: Icons.image_outlined,
     MediaSlot.audioTts: Icons.record_voice_over_outlined,
@@ -92,11 +86,6 @@ class MediaModelsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = this.store ?? MediaModelsScope.maybeOf(context);
     return faStoreSection(store, (context, store) {
-      // The host-only hidden slots (gh-2391 addendum 5) drop out BEFORE
-      // indexing — the separator logic keeps working on visible rows.
-      final visibleSlots = MediaSlot.all
-          .where((slot) => !hiddenSlots.contains(slot))
-          .toList();
       final tokens = FaDesignTokens.of(context);
       final strings = FaUiStrings.of(context);
       return [
@@ -122,14 +111,12 @@ class MediaModelsSection extends StatelessWidget {
           ),
         ),
         // One grouped card: 44px+ token rows with hairline separators
-        // (the bare list-with-chevrons idiom leaked stock M3 ink). The
-        // host-only hidden slots (gh-2391 addendum 5) drop out BEFORE
-        // indexing — the separator logic keeps working on visible rows.
+        // (the bare list-with-chevrons idiom leaked stock M3 ink).
         FaSurface(
           borderRadius: BorderRadius.circular(14),
           child: Column(
             children: [
-              for (final (i, slot) in visibleSlots.indexed) ...[
+              for (final (i, slot) in MediaSlot.all.indexed) ...[
                 if (i > 0)
                   Divider(
                     height: 1,

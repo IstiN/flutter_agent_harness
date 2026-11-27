@@ -361,9 +361,6 @@ final class FaProductConfig {
     return config;
   }
 
-  /// The `providerCatalog` profile field (gh-2391 addendum 4): absent =
-  /// the full stock catalog; the only supported value in this card is
-  /// `host-only`, and it requires the bridge section.
   /// Shared single-value catalog-policy validator (gh-2391 addendum 5):
   /// `channels` / `themePicker` — an optional string from a fixed value
   /// set with a structural prerequisite.
@@ -386,6 +383,9 @@ final class FaProductConfig {
     return value;
   }
 
+  /// The `providerCatalog` profile field (gh-2391 addendum 4): absent =
+  /// the full stock catalog; the only supported value in this card is
+  /// `host-only`, and it requires the bridge section.
   static String? _providerCatalog(
     Object? value, {
     required bool hasHostConnection,

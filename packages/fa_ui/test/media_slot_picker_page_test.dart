@@ -850,4 +850,73 @@ void main() {
       expect(find.textContaining('Add provider'), findsNothing);
     });
   });
+
+  group('MediaSlotPickerCatalogScope (gh-2391 review r3)', () {
+    testWidgets('an unargumented page under the scope restricts itself — '
+        'only the host row, no add-provider', (tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'AIIN',
+          baseUrl: 'https://api.aiin.example/v1',
+          modelId: 'aiin/aiin_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      await tester.pumpWidget(
+        MediaSlotPickerCatalogScope(
+          restrictToProviderId: 'host',
+          child: MaterialApp(
+            home: MediaSlotProviderPickerPage(
+              slot: null,
+              title: 'Default chat model',
+              mainBaseUrl: 'https://api.aiin.example/v1',
+              registry: registry,
+              connectedOnly: true,
+              allowMainConnection: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('AIIN'), findsOneWidget);
+      expect(find.text('Acme'), findsNothing);
+      expect(find.textContaining('Add provider'), findsNothing);
+    });
+
+    testWidgets('no scope: the stock zoo renders (REG)', (tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaSlotProviderPickerPage(
+            slot: null,
+            title: 'Default chat model',
+            mainBaseUrl: 'https://openrouter.ai/api/v1',
+            registry: registry,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Acme'), findsOneWidget);
+      expect(find.textContaining('Add provider'), findsOneWidget);
+    });
+  });
 }

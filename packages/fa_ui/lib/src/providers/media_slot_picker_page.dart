@@ -43,6 +43,32 @@ final class MediaSlotEditorResult {
 /// new one. Endpoint providers continue to [MediaSlotModelPage]; a non-null
 /// result from it pops the picker with the same result, so the settings
 /// section's one push handles the whole flow.
+/// The AIN-only catalog restriction scope (gh-2391 review r3): a
+/// host-only branded build wraps its shell ONCE and every
+/// [MediaSlotProviderPickerPage] resolves the restriction itself — no
+/// construction site can forget it. The page's explicit
+/// `restrictToProviderId` argument still wins (tests, previews).
+class MediaSlotPickerCatalogScope extends InheritedWidget {
+  const MediaSlotPickerCatalogScope({
+    super.key,
+    required this.restrictToProviderId,
+    required super.child,
+  });
+
+  /// The only registry row id pickers may list, or null for the full
+  /// stock catalog.
+  final String? restrictToProviderId;
+
+  /// The effective restriction at [context]; null when unrestricted.
+  static String? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<MediaSlotPickerCatalogScope>()
+      ?.restrictToProviderId;
+
+  @override
+  bool updateShouldNotify(MediaSlotPickerCatalogScope oldWidget) =>
+      oldWidget.restrictToProviderId != restrictToProviderId;
+}
+
 class MediaSlotProviderPickerPage extends StatelessWidget {
   const MediaSlotProviderPickerPage({
     super.key,
@@ -115,6 +141,12 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     final registry = this.registry ?? ProviderRegistry.inMemory();
+    // gh-2391 review r3: the scope is the authoritative source — an
+    // unargumented page under a host-only shell restricts itself, so the
+    // five forgotten construction sites cannot leak the third-party zoo.
+    final restrictToProviderId =
+        this.restrictToProviderId ??
+        MediaSlotPickerCatalogScope.maybeOf(context);
     debugPrint(
       '[fah][picker] $title: '
       'registry=${registry.providers.length} providers='

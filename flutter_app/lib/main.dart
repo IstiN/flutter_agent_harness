@@ -56,6 +56,7 @@ import 'package:fa_ui/fa_ui.dart'
     show
         buildFaTheme,
         FaDuoLayoutScope,
+        MediaSlotPickerCatalogScope,
         MediaModelsScope,
         SandboxAudioControllerFactory,
         SandboxVideoControllerFactory,
@@ -386,9 +387,18 @@ class MyApp extends StatelessWidget {
     // surface — the work bar, the chat overlay, js apps, settings — reads
     // ProductConfigScope.of(context), so branded builds never render the
     // stock Fa mark and stock Fa renders it unchanged.
-    final child = ProductConfigScope(
-      productConfig: productConfig,
-      child: navigatorChild ?? const SizedBox.shrink(),
+    // gh-2391 review r3: the AIN-only picker restriction rides the same
+    // ambient layer — one scope above the navigator restricts EVERY
+    // MediaSlotProviderPickerPage (model chip, roles, slots, queues,
+    // ASR), so no construction site can leak the third-party zoo.
+    final child = MediaSlotPickerCatalogScope(
+      restrictToProviderId: productConfig.hostOnlyProviderCatalog
+          ? 'host'
+          : null,
+      child: ProductConfigScope(
+        productConfig: productConfig,
+        child: navigatorChild ?? const SizedBox.shrink(),
+      ),
     );
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
       return child;
