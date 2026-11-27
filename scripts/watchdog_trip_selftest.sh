@@ -37,6 +37,28 @@
 #   FC3  a malformed body fails SAFE to trip=false with a warning (a
 #     broken pre-check must degrade to no retrigger, never to a
 #     spurious dispatch loop),
+#   CK1  the continue-on-error producer kill (gh-2455 review on the
+#     watchdog `needs` lap): a `timeout-minutes` kill on a job-level
+#     `continue-on-error: true` producer (web-spa, build-extension) is a
+#     CANCELLATION, not a failure — the runner's ApplyContinueOnError
+#     masks only Failed→Succeeded and leaves Canceled untouched, and the
+#     jobs-API conclusion stays RAW under job-level coe — the REAL
+#     v1.0.754 tag run 461282156 landed BOTH producers as `failure`
+#     (jobs 135885361844/135885361973) on real upload failures. So the
+#     kill lands `cancelled` — the same gh-2290 shape — and MUST trip,
+#   CK2  the REAL v1.0.754 continue-on-error shape: raw `failure`
+#     conclusion with a genuinely failed upload step trailed by success
+#     steps — a real red on a coe producer never trips (and the raw
+#     conclusion doubles as the proof that coe masking never reaches
+#     the jobs-API `conclusion` the watchdog scans),
+#   CK3  the masked-kill hypothetical pinned NEGATIVE: a `success`
+#     conclusion is never a kill shape (no masked-to-success landing
+#     exists in the jobs API — CK2's raw `failure` is the counterproof),
+#     so a success job with an anomalous cancelled mid-flight step must
+#     NOT trip: widening the signature to success+cut-step would burn
+#     the one-shot retrigger on healthy legs; a success leg that did
+#     drop its asset strands loudly at the gh-1832 required-assets gate
+#     instead (by design),
 #   FC4  the runner died AFTER a real test failure — the red step
 #     concluded `failure` and only the trailing steps froze at `null`:
 #     a genuine red must never trip, regardless of the frozen tail.
@@ -123,6 +145,41 @@ check "AC3 failure job with an UNCONCLUDED (null) mid-flight step trips (gh-2358
 out="$(fixture ac3b "$(json_for cancelled death)")"
 [ "$(trip_line "$out")" = "trip=true" ]
 check "AC3b cancelled job with an unconcluded (null) mid-flight step trips" $?
+
+# CK1 — the continue-on-error producer timeout kill (gh-2455 review,
+# thread on ci.yml:4287): build-extension carries job-level
+# `continue-on-error: true` (ci.yml:5023; web-spa at :4897) and now
+# rides in the watchdog `needs`. A `timeout-minutes` kill is a
+# CANCELLATION — the runner masks only Failed→Succeeded
+# (ApplyContinueOnError, ExecutionContext.cs:1424: `if (Result !=
+# TaskResult.Failed) return;`) — so the jobs-API conclusion lands
+# `cancelled`, the same gh-2290 shape as the binaries kill, and the
+# signature MUST trip for the coe producers too.
+out="$(fixture ck1 '{"jobs": [{"name": "Build Chrome extension (release)", "conclusion": "cancelled", "steps": [{"name": "Run actions/checkout", "conclusion": "cancelled"}, {"name": "Build extension zip", "conclusion": "skipped"}, {"name": "Upload extension to the release", "conclusion": "skipped"}]}]}')"
+[ "$(trip_line "$out")" = "trip=true" ]
+check "CK1 continue-on-error producer timeout kill (cancelled, cut step) trips" $?
+
+# CK2 — the REAL landing shape of a coe producer failure: job-level
+# continue-on-error does NOT mask the jobs-API `conclusion`. The
+# v1.0.754 tag run 461282156 landed BOTH producers as raw `failure`
+# (jobs 135885361844/135885361973): failed upload step, trailing
+# always()-steps success. A real red never trips — and the raw
+# conclusion is the empirical counterproof to the masked-kill worry.
+out="$(fixture ck2 '{"jobs": [{"name": "Build web SPA bundle", "conclusion": "failure", "steps": [{"name": "Build web (release, Pages base)", "conclusion": "success"}, {"name": "Upload bundle to GitHub Release", "conclusion": "failure"}, {"name": "Flag missing bundle in step summary", "conclusion": "success"}]}]}')"
+[ "$(trip_line "$out")" = "trip=false" ]
+check "CK2 real coe-producer red (v1.0.754 run 461282156 shape) does NOT trip" $?
+
+# CK3 — the masked-kill hypothetical, pinned NEGATIVE: even if a kill
+# were ever masked to `success` (it is not — CK2 shows the jobs-API
+# conclusion stays raw), a success conclusion must never trip: the
+# one-shot retrigger is for degraded RUNNERS, not healthy legs, and a
+# success leg that silently dropped its asset strands loudly at the
+# gh-1832 required-assets gate by design. This fixture fails if anyone
+# ever widens the signature to success+cut-step without revisiting the
+# doctrine.
+out="$(fixture ck3 '{"jobs": [{"name": "Build web SPA bundle", "conclusion": "success", "steps": [{"name": "Run actions/checkout", "conclusion": "success"}, {"name": "Build web (release, Pages base)", "conclusion": "cancelled"}, {"name": "Package fa-web-spa.zip (relative base + AC3 guard)", "conclusion": "skipped"}]}]}')"
+[ "$(trip_line "$out")" = "trip=false" ]
+check "CK3 masked-kill hypothetical (success conclusion, cancelled step) does NOT trip" $?
 
 # FC1 — a real test failure must NOT retrigger (both landing shapes).
 out="$(fixture fc1a '{"jobs": [{"name": "Core tests (shard 0/4)", "conclusion": "failure", "steps": [{"name": "dart test", "conclusion": "failure"}, {"name": "junit", "conclusion": "success"}]}]}')"
