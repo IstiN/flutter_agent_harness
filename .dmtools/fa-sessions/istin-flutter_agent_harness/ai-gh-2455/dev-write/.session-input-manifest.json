@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T19:51:47.453Z",
+  "ticketKey": "gh-2455",
+  "headSha": "53e083c2fd287a0dcf59aad082474a0ccbb54100",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:86d554d4910258c1",
+      "size": 468
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:ae217b58746a7343",
+      "size": 58894
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:3be421146dc2e25c",
+      "size": 313925
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:370991317a43732f",
+      "size": 509
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:c71b2c3b0bcdf79e",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:5f4506f8a3be06d3",
+      "size": 10873
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:922896abbd0e9564",
+      "size": 2923
+    },
+    "request.md": {
+      "hash": "fnv1a64:2d59fd980ff3c483",
+      "size": 836
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:b8c4f13fc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:28f620c5ba1550c3",
+      "size": 896
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:2d59fd980ff3c483",
+      "size": 836
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:5f652112",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the fix is only verified for 1 of the 3 producers — `continue-on-error` may mask the kill for `web-spa`/`build-extension`**\n\n`binaries` (the gh-2455 kill mode) has no `continue-on-error`, and its timeout kill is verified (jobs JSON of run 46024478783 → `trip=true`). But the other two producers now riding in `needs` both carry job-level `continue-on-error: true` (`web-spa` at ci.yml:4893, `build-extension` at ci.yml:5018), and the repo's own comments document what that does: \"Job-level continue-on-error reports the job (and its check) as SUCCESS\" (ci.yml:4893-4895).\n\n`scripts/watchdog_trip_check.sh` trips only on job conclusion `failure` OR `cancelled`. If a `timeout-minutes` kill on a `continue-on-error` leg also lands in the jobs JSON as `success` (i.e. if the masking applies to the timeout kill, not just to real build failures), then:\n\n- the trip signature never matches a `build-extension` kill, and\n- `fa-extension.zip` is a gh-1832 **REQUIRED** asset (ci.yml:5019 — \"the release-provenance required-assets gate (gh-1832) is the single publish blocker and strands the draft loudly on the MISSING asset\"), so a degraded-runner kill on that leg strands the release train exactly like the gh-2455 red — with the producer dutifully in `needs` and the watchdog scanning right past it.\n\nThe PR's real-failure parity check fed only the binaries shape through the script; no fixture in `scripts/watchdog_trip_selftest.sh` covers a continue-on-error kill shape, so this hole cannot rot visibly either.\n\n**Please confirm the landing shape** — if a continue-on-error leg's timeout kill concludes `cancelled` (masking applies only to failures), the PR is complete as-is and this downgrades to a docs nit. If it concludes `success`, this becomes blocking. Either way, please pin it in `scripts/watchdog_trip_selftest.sh` (add the fixture: masked/unmasked kill shape) or extend the trip filter so a mid-flight cut with no failed step trips regardless of a continue-on-error-masked conclusion. Cheap verification: reproduce the kill shape by feeding a jobs JSON where `web-spa` has `conclusion: \"success\"` with a cancelled mid-flight step through `scripts/watchdog_trip_check.sh` and asserting the intended outcome.\n\nEvidence that would resolve it one way or the other: GitHub's jobs-API conclusion for a `timeout-minutes` kill on a `continue-on-error: true` job (not documented verbatim in the workflow-syntax docs I could reach from this run — hence the question, not a 🚨)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:e97af203",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread `PRRT_kwDOTXdlLc68478W` — continue-on-error kill shape for `web-spa`/`build-extension`\n\n**Landing shape confirmed: branch 1 — the timeout kill concludes `cancelled` (masking applies only to failures). The PR is complete as-is; no widening of the trip filter. Both the unmasked kill and the masked hypothetical are now pinned as fixtures.**\n\n## The evidence (the jobs-API conclusion you could not reach from the workflow-syntax docs)\n\n1. **Empirical, from this repo's own runs** — job-level `continue-on-error: true` does **not** mask the jobs-API `conclusion`. The **v1.0.754 tag run 461282156** landed BOTH producers as raw `failure`:\n   - `135885361844` \"Build Chrome extension (release)\" → `conclusion: \"failure\"` (step \"Upload extension to the release\" = `failure`, trailing `if: always()` steps `success`)\n   - `135885361973` \"Build web SPA bundle\" → `conclusion: \"failure\"` (step \"Upload bundle to GitHub Release\" = `failure`, trailing steps `success`)\n   Both jobs carried job-level `continue-on-error: true` at that commit (`ci.yml:4731`/`:4857` of `5f6902ce939`). The masking reaches the check-run rollup, **not** the `conclusion` field of the `/actions/runs/<id>/jobs` document the watchdog scans.\n2. **Runner source** — `ApplyContinueOnError` (actions/runner `src/Runner.Worker/ExecutionContext.cs:1424`) bails out unless `Result == TaskResult.Failed`: it masks **only** Failed→Succeeded and leaves `Canceled` untouched. A `timeout-minutes` kill is a cancellation, not a step failure — the v1.0.745 precedent (run 4424840840) already landed such a kill as job conclusion `cancelled` (the gh-2290 shape).\n3. Therefore a `timeout-minutes` kill on `web-spa`/`build-extension` lands **`cancelled` + cancelled mid-flight step + no failed step** — exactly the signature `watchdog_trip_check.sh` already trips on. A masked-to-success landing does not exist in the jobs document (counterproof: CK2's raw `failure` above).\n\n## Pinned so it cannot rot visibly (your \"either way\" ask)\n\nFix `aa52adfc78` adds the fixtures — deliberately **without** widening the filter:\n\n- `scripts/watchdog_trip_selftest.sh` (wired into the static gate, `ci.yml:841`):\n  - **CK1** — coe-producer kill (`cancelled` job, cancelled checkout step, trailing `skipped`) → `trip=true` (passes against the current script: the signature already covers the producers);\n  - **CK2** — the **real** v1.0.754 shape (raw `failure` + genuinely failed upload step + trailing `success`) → `trip=false` (a real red never trips; doubles as the masking counterproof);\n  - **CK3** — the masked-kill hypothetical (`success` conclusion with an anomalous cancelled mid-flight step) → `trip=false`, pinned negative.\n- `test/ci_watchdog_tag_retrigger_guard_test.dart` — the same three shapes as behavioral tests over the real script (`Process.runSync('bash', ['scripts/watchdog_trip_check.sh', …])`).\n\nSelftest: all green (21 checks incl. CK1–CK3). Dart guard: 23/23.\n\n## Why the filter is NOT widened to `success`+cut-step\n\n`watchdog_trip_check.sh` is fail-safe by doctrine (\"a broken pre-check must degrade to no retrigger, never to a spurious dispatch loop\"). Tripping on a `success` conclusion would burn the **one-shot-per-tag** retrigger budget on false alarms; and a `success` leg that silently dropped its asset already strands **loudly** at the gh-1832 required-assets gate (\"strands the draft loudly on the MISSING asset\" — the gate is the single publish blocker). With CK2 proving the raw conclusion, the hole this thread worried about does not exist.\n\n## Severity: ⚠️ → 💡 (justified downgrade)\n\nThe finding asked for one confirmation + a fixture. The confirmation resolves to the branch you pre-defined as \"PR complete as-is → docs nit\": the kill lands `cancelled`, masking never reaches the jobs-API `conclusion` (in-repo empirical proof + runner source), and the shape is now pinned in the selftest so it cannot rot. This is not maintainability debt — the guarded code path is correct as-written and the assumption is enforced by fixtures in the static gate. 🚨 untouched; nothing blocking remains."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:8ffa698e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The `needs` fix is correct and verified for `binaries` (real jobs JSON → `trip=true`, RED→GREEN guard test, 20/20 green, YAML valid, all 13 `needs` targets exist, no cycle). One ⚠️ open: `web-spa`/`build-extension` carry `continue-on-error: true`, and if GitHub reports a `timeout-minutes` kill on such a job as `success` (the repo's own comments document continue-on-error masking for failures), the trip signature never matches a `build-extension` kill — and `fa-extension.zip` is a gh-1832 REQUIRED asset whose loss strands the release train (the exact gh-2455 red), so the PR's \"any producer\" claim needs one confirmation + a selftest fixture.\n\n**Key Issues**:\n- ⚠️ `.github/workflows/ci.yml:4287` — kill shape unverified for the two `continue-on-error` producers; `watchdog_trip_check.sh` selects `failure`|`cancelled` conclusions only (details in inline thread). Please confirm the landing shape and pin it in `scripts/watchdog_trip_selftest.sh`.\n\n**Digest**:\n- `test/ci_watchdog_tag_retrigger_guard_test.dart:134-154` — the ~20-line kill-mode narrative duplicates `ci.yml:4269-4286` nearly verbatim; a one-line pointer to the workflow comment would keep a single source of truth (repo style tolerates the duplication — no thread).\n\n**Next Steps**:\n1. Confirm the jobs-API conclusion of a `timeout-minutes` kill on a `continue-on-error: true` job (`web-spa`/`build-extension`) — or feed both masked and unmasked kill shapes through `scripts/watchdog_trip_check.sh` and pin them as fixtures.\n2. If masked to `success`: extend the trip filter (mid-flight cut with no failed step trips regardless of the masked conclusion) or move those two legs to step-level continue-on-error; if landed as `cancelled`: merge as-is.\n3. Everything else (ticket AC for gh-2455 self-heal, PR-arm skip semantics, no added PR latency, no security/secret surface) checks out — this is the only gating question."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:f4046c90",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The rework closes registry finding F1 — the continue-on-error landing shape is confirmed (`cancelled`, masking applies only to failures), pinned as CK1/CK2/CK3 fixtures in `scripts/watchdog_trip_selftest.sh` and mirrored in the dart guard. `scripts/watchdog_trip_selftest.sh` is 21/21 green and `test/ci_watchdog_tag_retrigger_guard_test.dart` passes; the PR diff stays at 3 CI-wiring files.\n\n**Key Issues**: none blocking. One style-only digest item: the new test comments cite the coe flags as `ci.yml:4893`/`:5018` while the actual lines are `ci.yml:4897`/`:5023` (one-line touch-up, no behavior).\n\n**Next Steps**:\n1. Merge — the watchdog now waits for `binaries`/`web-spa`/`build-extension` and a degraded-runner kill on any producer lands inside the scan window (one-shot retrigger self-heals the missing asset).\n2. Optional: fix the drifted line citations in the new test comments."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:807736c3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 438998c72297c3748dd12ddd8b2f433641448434 — stale base at 2026-11-27T19:11:18.058Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:7c6441d9",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 93c59ed4825456dfffc6bd22ef3cdcb12704fc56 — stale base at 2026-11-27T19:14:32.093Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
