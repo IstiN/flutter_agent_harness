@@ -918,7 +918,6 @@ void main() {
       );
       io.sendLine('/exit');
       await run;
-      await run;
     },
   );
 }

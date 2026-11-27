@@ -1903,7 +1903,7 @@ extension on AgentCli {
       // Pure test seam: production passes null → fetchDialModels creates
       // its own live client (byte-identical legacy behavior); tests inject
       // modelsHttpClient so the DIAL setup stays off the network. The
-      // proxy-gate routing for this path is tracked in #249.
+      // proxy-gate routing for this path is tracked in #2452.
       deployments = await fetchDialModels(
         baseUrl,
         key,

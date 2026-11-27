@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/providers/proxy_connector.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
@@ -35,7 +34,6 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
-    Map<String, ProviderNetworkConfig>? providerNetworks,
     Future<void> Function(String providerKind, String apiKey)?
     onProviderChanged,
     SecureKeyCache? secureKeys,
@@ -81,7 +79,6 @@ void main() {
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
         modelsHttpClient: modelsHttpClient,
-        providerNetworks: providerNetworks ?? const {},
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         customProviders: customProviders,
@@ -1315,7 +1312,8 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
-
+  });
+  group('OpenRouter auth method picker', () {
     test('/provider openrouter shows auth-method picker', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call, envVarValue: (_) => null);
