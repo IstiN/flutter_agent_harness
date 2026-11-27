@@ -1964,5 +1964,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-2445": [
+    {
+      "leg": "review",
+      "at": "2026-11-27T13:50:34Z",
+      "prompt": 181768,
+      "completion": 38142,
+      "total": 219910,
+      "cacheRead": 4492352,
+      "requests": 62,
+      "source": "",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
