@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T15:13:55.691Z",
+  "ticketKey": "gh-2426",
+  "headSha": "d10596613c2a0f8ef79f24f98851860a578f8fbe",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:903f420e9f356447",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b95ea3023761047f",
+      "size": 10160
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ab369656bf771a42",
+      "size": 4256
+    },
+    "request.md": {
+      "hash": "fnv1a64:69c0fbdd21dd470f",
+      "size": 1297
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0e520ca8c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:c3a16f3e88d41892",
+      "size": 1358
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:69c0fbdd21dd470f",
+      "size": 1297
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:4b87834e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the org-dependent `x-codemie-client` value has no config-level override — the Concern (b) mitigation references a surface that does not exist**\n\nThe PR itself flags that `flutter-agent-harness` (the hardcoded `codeMieClient` constant, `lib/src/providers/codemie_sso.dart:43`) may be an unregistered client id on some CodeMie gateways, and offers two mitigations in the PR description: (a) change the constant, or (b) \"per deployment, set `x-codemie-client` on the saved custom-provider entry's headers — an explicit user entry already wins the merge\".\n\nMitigation (b) is not reachable: **`CustomProviderEntry` has no `headers` field** (`lib/src/cli/custom_providers.dart:58-78`; `CustomProviderEntry.fromYaml` parses only `name/apiType/baseUrl/modelId/keyName/authMethod/authHeader/connectTimeoutMs/streamIdleTimeoutMs/keyNotPersisted/project` and silently ignores everything else), and neither roles `ModelRef` nor the `FA_PROVIDER_CONFIG` preconfig nor the Flutter app connection carries a headers map. The tested override (INV-2) exists only at the programmatic adapter level (`Model.headers` / `OpenAICompletionsOptions.headers`), which CLI and app users cannot reach from config.\n\nSo if a gateway attributes budgets only to registered client ids, a CLI/app deployment cannot adapt to its org's expected value without a code change — the exact contingency the PR description rates plausible (\"may not work until resolved\"). Precedent: `x-codemie-project` (issue #1809) got a real per-entry config surface (`entry.project`) for exactly this kind of per-org data.\n\n**Fix options (any one resolves this):**\n1. Add a `headers:` map to `CustomProviderEntry` yaml + flow it into `buildCatalogModel`/`buildCliDefaultModel` (largest, most general); or\n2. An env override (e.g. `CODEMIE_CLIENT_ID`) folded into `codeMieRequestHeaders` resolution (smallest); or\n3. Docs-only: correct the PR Concern (b) and the `docs/agents/providers.md:42` \"explicit user entry of the same name wins the merge\" claim to state the value is compile-time-fixed and per-org changes require a rebuild.\n\nOption 3 alone is acceptable if the CodeMie team confirms any client string is attributed as-is (please note the answer in the thread)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:486e285d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Fix: config-level override for `x-codemie-client` — implemented (fix option 2 + the option-3 docs correction)\n\nAdopted **fix option 2** (the smallest): a `CODEMIE_CLIENT_ID` env override folded into the `codeMieRequestHeaders` resolution — plus the option-3 docs correction of the unreachable \"explicit user entry of the same name wins the merge\" claim you flagged.\n\n## What changed\n\n- **`lib/src/providers/codemie_sso.dart`** — new deployment seam, following the existing `providerFilterEnvOverride` pattern (lib/ stays `dart:io`-free):\n  - `codeMieClientOverride` — resolved once at host startup; null keeps the `flutter-agent-harness` constant.\n  - `resolveCodeMieClientOverride(env)` — folds `CODEMIE_CLIENT_ID` out of an env map; trimmed, blank-safe (a blank value must never blank the header — that would lose budget attribution entirely, the bug #2426 fixes).\n  - `codeMieRequestHeaders` is now a getter resolving `codeMieClientOverride ?? codeMieClient`; every existing spread call site (chat defaults slot, fetch twins, quota, catalog/SSO builds, app `toModel()`) picks it up unchanged.\n- **`bin/fah.dart` / `bin/fah_runapp.dart`** — CLI startup folds `Platform.environment` into the override (`_applyCodeMieClientEnv`, next to `_applyProviderFilterEnv`).\n- **`flutter_app/lib/boot/app_boot.dart`** — `bootServices()` folds `CODEMIE_CLIENT_ID` from the app `.env` (same mechanism as the app's `FA_PROVIDERS` override), before any connection restore, so `AgentConfig.toModel()` bakes the overridden value.\n- **`docs/agents/providers.md:42`** — the Client contract no longer implies a saved-entry headers surface (there is none, as you showed): it now names the reachable surfaces — `CODEMIE_CLIENT_ID` (CLI process env / app `.env`) for per-org adaptation, and the adapter-API `Model.headers`/`options` entry for the merge-wins behavior.\n- **`CHANGELOG.md`** — the gh-2426 entry documents the override.\n\n## Tests (TDD, red → green)\n\n- `test/providers/codemie_sso_test.dart` — resolution semantics (trimmed value, absent → null, blank → null, unrelated keys ignored), getter resolution + reset, and the override riding the `/models` fetch.\n- `test/providers/openai_completions_project_test.dart` — wire-level: with only the env seam set (model carries no headers), the chat request sends `x-codemie-client: my-org-client`.\n- `test/model_roles/model_resolver_test.dart` — the override bakes into `buildCatalogModel` + `buildCliDefaultModel` builds; non-CodeMie builds stay header-less (INV-3).\n- `flutter_app/test/boot/app_boot_test.dart` — `bootServices()` resolves the override without plugin channels (null under the test runner, mirroring the `providerFilterEnvOverride` degrade test).\n\nA CLI/app deployment whose gateway attributes budgets to a different registered client id can now adapt via `CODEMIE_CLIENT_ID=...` with no code change. The gateway-side registration question (whether `flutter-agent-harness` itself must be registered) stays open with the CodeMie team — the override makes it a deployment concern either way."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:9f3b9b6b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The `x-codemie-client` wiring is systematic and well-tested (chat defaults slot, catalog/SSO/boot builds, fetch twins, quota, app `toModel()`; 130 SDK + 2 app tests pass locally, CI green at review time). One ⚠️ issue gates approval: the org-dependent client value has no config-level override — the PR description's Concern (b) mitigation references a `headers` field that `CustomProviderEntry` does not have.\n\n**Key Issues**:\n- ⚠️ `docs/agents/providers.md:42` — the \"explicit user entry of the same name wins the merge\" override is adapter-API-only: no CLI/app config surface (saved entry, roles `ModelRef`, `FA_PROVIDER_CONFIG`, app connection) can produce such an entry, so a gateway expecting a different registered client id cannot be configured without a code change (evidence: `lib/src/cli/custom_providers.dart:58-78`).\n\n**Digest (non-blocking 🪶)**:\n- `lib/src/providers/codemie_sso.dart:38` — merge is case-sensitive by map key: a mixed-case `X-CodeMie-Client` user header rides as a SECOND header instead of overriding (documented E5; server behavior for duplicate values is undefined).\n- `flutter_app/lib/services/agent_service_connection_guard.dart:10` — `isCodeMieProvider` is case-sensitive `contains` vs the adapter's case-insensitive `isCodeMieBaseUrl`; odd-cased URLs skip the app-baked headers but the adapter still adds the header on the wire (pre-existing helper, no wire gap).\n\n**Next Steps**:\n1. Add a config-level override for `x-codemie-client` (entry-level `headers:` or an env var), or correct the Concern (b) / providers.md claim to state the value is compile-time-fixed.\n2. Confirm with the CodeMie team whether `flutter-agent-harness` needs gateway-side registration; note the answer in the thread."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:193d38e4",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer dd9e21a0cb9ec765819e13629c7bce4f089d065e — run 45907999530 still queued at 2026-11-27T01:28:31.281Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:3d303d18",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review round (head `700f96d7c0`): the rework fully resolves F1 — `CODEMIE_CLIENT_ID` (CLI process env via `_runApp` startup fold, app `.env` via `bootServices`) overrides the hardcoded client value with no code change, the unreachable \"saved-entry headers\" claim is corrected in `docs/agents/providers.md:42`, and the seam is tested at every layer (resolution semantics, getter, catalog/boot-restore bake, wire ride; 135 SDK + 25 flutter_app tests pass locally, analyze + format clean). No new findings on the rework hunks; nothing blocks merge.\n\n**Key Issues**: none open.\n\n**Digest (non-blocking 🪶, carried unchanged from round 1 — advisory only)**:\n- `lib/src/providers/codemie_sso.dart:38` — merge is case-sensitive by map key: a mixed-case `X-CodeMie-Client` user header rides as a SECOND header instead of overriding (documented E5; server behavior for duplicate values is undefined).\n- `flutter_app/lib/services/agent_service_connection_guard.dart:10` — `isCodeMieProvider` is case-sensitive `contains` vs the adapter's case-insensitive `isCodeMieBaseUrl`; odd-cased URLs skip the app-baked headers but the adapter still adds the header on the wire (pre-existing helper, no wire gap).\n\n**Next Steps**:\n1. Mergeable as-is. The one open question is non-code: confirm with the CodeMie team whether `flutter-agent-harness` needs gateway-side budget registration (or per-org `CODEMIE_CLIENT_ID`) — already a deployment concern with the override in place."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:aa00da6f",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 700f96d7c0b22e45ff6cef2461089ca1761d29a7 — run 45926383613 still queued at 2026-11-27T04:56:52.464Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    }
+  ]
+}
