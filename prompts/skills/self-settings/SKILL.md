@@ -108,9 +108,10 @@ same core the human CLI verbs wrap:
 `set` answers with the file, scope, old → new value, and whether the change
 applies live or at next boot — echo that in your report (rule 5). `scope`
 defaults by key: `memory`/`cube`/`tools`/`spills` → the project file (created minimal
-when absent), everything else → the user file; pass `global` or `project`
-to override. Keys come from the topic sections below — the tool rejects
-unknown top-level keys instead of writing them.
+when absent), everything else → the user file (`agent.contextWindowCap`
+excepted — it also defaults to the project file); pass `global` or
+`project` to override. Keys come from the topic sections below — the tool
+rejects unknown top-level keys instead of writing them.
 `set` also takes LIST-VALUED keys: pass the value as compact JSON (an
 array or object) and it is rendered as a yaml block — `customProviders`
 provider entries are settable this way, e.g. `config` op `set`, key

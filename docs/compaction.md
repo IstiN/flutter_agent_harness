@@ -227,10 +227,12 @@ invisible user turn is not. Three rules, one basis:
   reach the trigger. WHILE THE ESTIMATE IS UNDER THE WINDOW nothing is
   trimmed: automatic compaction is skipped and the session is warned
   ONCE per distinct warning text (a resumed session does not repeat it
-  at its first prompt): `context window {window} cannot take a trim below its trigger
-  ≈{overhead} tokens (estimated from the system prompt + tool schemas)
-  — raising the window or disabling tools is the only fix; automatic
-  compaction is skipped while the context stays under the window`. AT OR OVER THE WINDOW the
+  at its first prompt): `context window {window} cannot take a trim below
+  its trigger — fixed request overhead ≈{overhead} tokens + the newest
+  user turn ≈{turn} tokens already reach it (estimated from the system
+  prompt, tool schemas and the turn); raising the window or disabling
+  tools is the only fix; automatic compaction is skipped while the
+  context stays under the window`. AT OR OVER THE WINDOW the
   request is simply over the window: the automatic pass is the
   hide-only, LM-free relief (the same one the loop guard runs — the
   newest user turn is still carried verbatim), a pass that frees
