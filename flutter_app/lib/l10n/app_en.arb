@@ -119,6 +119,15 @@
   "chatRecent": "Recent",
   "chatNoConversationsTitle": "No chats yet",
   "chatNoConversationsBody": "Start a local chat. Network sign-in is optional.",
+  "chatNoConversationsBodyHostOnly": "Start a local chat.",
+  "modelPresetHostDescription": "Included with your {name} sign-in.",
+  "@modelPresetHostDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatStartChat": "Start a chat",
   "chatNoUnread": "No unread conversations.",
   "chatNoAgents": "No agents match this filter.",
