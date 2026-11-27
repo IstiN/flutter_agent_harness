@@ -30,7 +30,7 @@ extension AgentCliLifecycle on AgentCli {
   /// 4s, well inside the 15s staleness window).
   Timer _startInboxWatcher() {
     var heartbeatTick = 0;
-    return Timer.periodic(const Duration(seconds: 2), (_) {
+    return Timer.periodic(config.inboxTickInterval, (_) {
       // Viewer mode: follow the lease only — the owner's mail, presence,
       // and orphan reclaims are the OWNER's job, never a viewer's.
       if (_viewer != null) {
