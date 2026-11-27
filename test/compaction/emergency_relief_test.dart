@@ -240,6 +240,12 @@ void main() {
       // hidden-range record at all.
       expect(outcome.dedupedPaths, 0);
       expect(outcome.usedTrimValve, isTrue);
+      // gh-2411: the valve bounded the context AND carried the newest
+      // user turn across its cut — the ask stays live, verbatim.
+      expect(
+        _userTexts(state.messages),
+        anyElement(contains('inspect the config')),
+      );
       expect(await hiddenRangesInFile(session), isEmpty);
     });
 
@@ -565,6 +571,9 @@ void main() {
         expect(outcome.usedTrimValve, isTrue);
         expect(outcome.droppedMessages, greaterThanOrEqualTo(1));
         expect(outcome.alreadyUnder, isFalse);
+        // gh-2411: the cut lands BEHIND the newest user turn and carries
+        // it — the head folds, the ask stays live verbatim.
+        expect(_userTexts(state.messages), anyElement(contains('big')));
         // The session file keeps every record — the trim is in-memory.
         final live = await session.buildContextMessages();
         expect(live.length, greaterThan(state.messages.length));
@@ -747,3 +756,11 @@ void main() {
     });
   });
 }
+
+/// The joined text of every user-role message of [messages] (gh-2411 —
+/// the request-boundary repairer may append a note block to a carried
+/// ask, so the assertion is a substring of the joined text).
+Iterable<String> _userTexts(List<Message> messages) => [
+  for (final message in messages.whereType<UserMessage>())
+    userMessageText(message.content),
+];

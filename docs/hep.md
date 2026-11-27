@@ -53,6 +53,8 @@ round carries the same id.
 | `turn_error` | `turn_id`, `error`, `fatal` | The round failed (provider error). `fatal` is `true` today: headless runs end the run. |
 | `cancelled` | `turn_id` | The run was aborted (SIGINT/SIGTERM); exit code 130. |
 | `compaction_start` / `compaction_end` | `turn_id` / `turn_id`, `tokens_freed` | A context compaction run, bracketed like a round. Pre-flight compaction allocates the id of the round it precedes, so the following `agent_start` reuses it. |
+| `context_notice` | `turn_id`, `kind`, `tokens`, `window`, `hidden`, `estimate` | gh-2423 C3: the harness handed the model an honest context notice — `kind` is `post-hide` (after a hide: `hidden` records, the context now `tokens` of `window`) or `near-limit` (the pre-request estimate reached the near-limit point; no `hidden`). `estimate` is the provenance of `tokens`: `true` = the harness's heuristic figure (the `≈` of the notice text — always the case today, no provider reports the size of a request that was not sent), `false` only for a provider-reported figure. `window` and `hidden` are exact. Numbers only, never the notice text; one per notice, inside the open turn. |
+| `working_set` | `turn_id`, `chars`, `updated`, `cleared` | gh-2423 C1: the agent wrote its working set — the stored size (`chars`), the write time (`updated`, local `HH:MM`) and whether the write cleared it. Never the text (a session's notes stay in the session). |
 
 ## Ordering and flush guarantees
 

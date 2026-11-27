@@ -3,10 +3,13 @@
 /// Ported from pi-mono `packages/agent/src/harness/compaction/compaction.ts`
 /// (`estimateTokens`, `calculateContextTokens`, `estimateContextTokens`).
 /// The heuristic is deliberately crude and provider-agnostic: **4 characters
-/// per token**, with images estimated at 4800 chars (≈ 1200 tokens). When a
-/// provider has reported real usage on an assistant message, that number is
-/// trusted for everything up to and including that message, and only the
-/// trailing messages are estimated.
+/// per token** for transcript text, with images estimated at 4800 chars
+/// (≈ 1200 tokens). The FIXED request overhead (system prompt + tool
+/// schemas) is token-dense and prices at its own density
+/// ([overheadCharsPerToken], gh-2411), corrected per session by
+/// [OverheadCalibration]. When a provider has reported real usage on an
+/// assistant message, that number is trusted for everything up to and
+/// including that message, and only the trailing messages are estimated.
 library;
 
 import 'dart:convert';
@@ -15,6 +18,7 @@ import '../agent/image_registry.dart' show imageContentKey;
 import '../context.dart';
 import '../session/session_record.dart';
 import '../types.dart';
+import 'overhead_calibration.dart';
 import 'record_tag.dart' show tagOverheadTokens, taggedRecordCount;
 
 /// Estimated character cost of an image block (pi's `ESTIMATED_IMAGE_CHARS`:
@@ -29,8 +33,29 @@ const estimatedRepeatImageChars = 32;
 /// [imageContentKey] so the estimator and the registry never drift.
 String estimationImageKey(ImageContent image) => imageContentKey(image);
 
-/// Characters per token in pi's conservative heuristic.
+/// Characters per token in pi's conservative heuristic (transcript
+/// text: prose, tool output).
 const _charsPerToken = 4;
+
+/// Characters per token for the FIXED REQUEST OVERHEAD — the system
+/// prompt and the tool schemas (gh-2411).
+///
+/// JSON schemas and a Markdown system prompt are token-dense: quotes,
+/// colons, braces, paths and ids tokenize far below prose's ~4
+/// chars/token. Measured on the gh-2411 session (Copilot /
+/// claude-haiku-5.5, 2026-11-25): the request carried 12,105 system
+/// prompt chars + 34 tool schemas (317 name + 33,112 description +
+/// 20,027 compact schema chars) = 65,561 chars and the provider charged
+/// 24,126 input tokens — 2.72 chars/token. The chars/4 heuristic priced
+/// the same overhead at 16,407 tokens (32% under), so the ctx meter read
+/// 82% on a request the provider saw at 121%. 2.5 keeps a ~8% margin on
+/// the over-reading side (a per-provider residual is what
+/// [OverheadCalibration] corrects, upward only); the transcript heuristic
+/// above stays at pi's 4 (parity with pi's estimator).
+const double _overheadCharsPerToken = 2.5;
+
+/// The overhead density [estimateRequestOverheadTokens] prices at.
+double get overheadCharsPerToken => _overheadCharsPerToken;
 
 /// Calculate total context tokens from provider usage.
 ///
@@ -155,17 +180,45 @@ const _hiddenMarkerTokens = hiddenRecordMarkerTokens;
 /// `127%/200k` resume). With the parity budget, meter = transcript +
 /// overhead ≤ window − reserve: below the compaction trigger, below the
 /// guard, on every fresh resume.
+///
+/// [overheadCalibration] (gh-241 follow-up #5, R2): a MEASURED session
+/// prices the overhead by the provider's own report — the budget is the
+/// same parity formula with the calibrated overhead. `null` callers skip
+/// the budget altogether (R1): an unmeasured estimate never truncates a
+/// resumed transcript.
 int resumeParityBudget({
   required int effectiveContextWindow,
   required int reserveTokens,
   String? systemPrompt,
   List<Tool> tools = const [],
+  OverheadCalibration overheadCalibration = OverheadCalibration.uncalibrated,
 }) {
   final budget =
       effectiveContextWindow -
-      estimateRequestOverheadTokens(systemPrompt, tools) -
+      overheadCalibration.apply(
+        estimateRequestOverheadTokens(systemPrompt, tools),
+      ) -
       reserveTokens;
   return budget > 0 ? budget : 0;
+}
+
+/// gh-241 follow-up #5 (F3): an in-memory cut must never hand the
+/// provider a context that OPENS on an assistant or tool fragment — its
+/// user turn is gone, several APIs refuse the shape, and the model reads
+/// the missing turns as lost history. Returns the messages from the first
+/// [UserMessage] on (the list itself when it already opens on one or
+/// holds no user message at all — nothing is invented). The caller logs
+/// [leading] through [onDropped].
+List<Message> cutAtUserTurnBoundary(
+  List<Message> messages, {
+  required String reason,
+  void Function(int leading, String reason)? onDropped,
+}) {
+  if (messages.isEmpty || messages.first is UserMessage) return messages;
+  final first = messages.indexWhere((m) => m is UserMessage);
+  if (first <= 0) return messages;
+  onDropped?.call(first, reason);
+  return messages.sublist(first);
 }
 
 /// The projected token cost of ONE record that actually renders — the
@@ -249,7 +302,8 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
         ? (record is CompactCheckpointRecord ? 0 : _hiddenMarkerTokens)
         : _projectedRecordTokens(record);
     if (tally + contribution > budget && i < branch.length - 1) {
-      return i + 1; // stop BEFORE the crossing record
+      // stop BEFORE the crossing record
+      return _openOnUserTurn(branch, i + 1);
     }
     tally += contribution;
     if (_absorbProjectionMarkers(record, hidden, covered)) {
@@ -257,6 +311,23 @@ int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
     }
   }
   return null; // whole branch fits
+}
+
+/// gh-2411 follow-up #5c (C3 — owner live test round 4): the kept tail
+/// must never OPEN on an assistant reply or a tool result — their user
+/// turn is gone (several APIs refuse the shape; the owner's spills 22/24
+/// opened on a 1092/1167-char reply). The same invariant as every
+/// in-memory cut ([cutAtUserTurnBoundary]): leading non-user messages
+/// are dropped with the crossing record. Any other record (a boundary,
+/// a custom message) opens a context legitimately; the newest record is
+/// always kept.
+int _openOnUserTurn(List<SessionRecord> branch, int cut) {
+  for (var i = cut; i < branch.length - 1; i++) {
+    final record = branch[i];
+    if (record is! MessageRecord || record.message is UserMessage) break;
+    cut = i + 1;
+  }
+  return cut;
 }
 
 /// The classic-transform KEPT region of [branch]: the last compaction
@@ -454,7 +525,10 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
 
 /// Estimated token cost of the request parts that are NOT transcript
 /// messages: the system prompt and the tool schemas (name + description +
-/// JSON-encoded parameters), at pi's 4-chars-per-token heuristic.
+/// JSON-encoded parameters), at the overhead density
+/// ([overheadCharsPerToken], gh-2411 — NOT the transcript's chars/4: a
+/// schema-dense overhead under-counted by a third on the incident
+/// session).
 ///
 /// Every wire request carries these, but [estimateContextTokens] never
 /// counts them — they only enter an ANCHORED estimate implicitly, through
@@ -470,7 +544,7 @@ int estimateRequestOverheadTokens(String? systemPrompt, List<Tool> tools) {
         tool.description.length +
         _safeJsonEncode(tool.parameters).length;
   }
-  return (chars / _charsPerToken).ceil();
+  return (chars / _overheadCharsPerToken).ceil();
 }
 
 /// Full next-request estimate — the ONE basis the ctx meter, the loop's
@@ -481,11 +555,17 @@ int estimateRequestOverheadTokens(String? systemPrompt, List<Tool> tools) {
 /// the system prompt and tool schemas in. An anchored estimate already
 /// includes them (the reported usage is the whole previous request), so
 /// adding the overhead there would double-count.
+///
+/// [calibration] (gh-2411) scales the UNANCHORED estimate — transcript
+/// plus overhead — by the multiplier the provider's first valid usage
+/// earned for it (see [deriveOverheadCalibration]); an anchored estimate
+/// is the provider's own number and is never scaled.
 int estimateRequestTokens(
   List<Message> messages, {
   String? systemPrompt,
   List<Tool> tools = const [],
   List<int?>? recordSeqs,
+  OverheadCalibration calibration = OverheadCalibration.uncalibrated,
 }) {
   final estimate = estimateContextTokens(messages);
   // GOAL #2394 (E23): the wire copy carries an `m<seq> ` tag on every
@@ -499,9 +579,50 @@ int estimateRequestTokens(
           taggedRecordCount(recordSeqs, after: estimate.lastUsageIndex),
         );
   if (estimate.lastUsageIndex != null) return estimate.tokens + overhead;
-  return estimate.tokens +
-      estimateRequestOverheadTokens(systemPrompt, tools) +
+  return calibration.apply(
+        estimate.tokens + estimateRequestOverheadTokens(systemPrompt, tools),
+      ) +
       overhead;
+}
+
+/// The session's [OverheadCalibration]: the ratio the FIRST valid
+/// provider usage anchor in [messages] earned for the unanchored estimate
+/// of the request that produced it (`prompt tokens / (transcript prefix
+/// + overhead)`), or `null` when no message carries a valid anchor.
+///
+/// The first anchor on purpose (gh-2411): its request is the smallest,
+/// so the overhead dominates both sides of the ratio. A late anchor —
+/// the transcript a hundred times the overhead — would dilute the
+/// measured overhead error toward 1.0 and hand the next unanchored
+/// estimate (the turn after a compaction zeroed the anchors) the same
+/// under-count the calibration exists to fix.
+/// The provider usage [estimateContextTokens] would anchor on for
+/// [message] — a finished (not aborted/errored) assistant reply with a
+/// non-zero report; `null` otherwise. The public seam of the estimator's
+/// own validity rule (gh-2411 follow-up #5c: the resume calibration
+/// scan looks for the very report the anchor is).
+Usage? assistantUsageOf(Message message) => _assistantUsage(message);
+
+OverheadCalibration? deriveOverheadCalibration(
+  List<Message> messages, {
+  String? systemPrompt,
+  List<Tool> tools = const [],
+}) {
+  for (var i = 0; i < messages.length; i++) {
+    final usage = _assistantUsage(messages[i]);
+    if (usage == null) continue;
+    // The provider's price for the REQUEST: its total minus the reply.
+    // Copilot splits a cache hit into `input` (uncached) + `cacheRead`,
+    // so the raw `input` field under-counts; the total carries both.
+    final promptTokens = calculateContextTokens(usage) - usage.output;
+    return OverheadCalibration.fromUsage(
+      promptTokens: promptTokens,
+      unanchoredRequestTokens:
+          estimateContextTokens(messages.sublist(0, i)).tokens +
+          estimateRequestOverheadTokens(systemPrompt, tools),
+    );
+  }
+  return null;
 }
 
 /// [estimateTokens] against a first-seen set: repeated images charge the

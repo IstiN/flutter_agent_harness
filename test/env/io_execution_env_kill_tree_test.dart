@@ -155,9 +155,8 @@ void main() async {
       // Let stop()'s direct-child backstop reap the shell; the fake table
       // supplies the reparented survivor without requiring real `ps`.
       LocalShell.signalPidOverride = (_, _) {};
-      LocalShell.processDetailTableSnapshotOverride = () async => [
-        _survivorRow(990001),
-      ];
+      LocalShell.processDetailTableSnapshotOverride = () async =>
+          _survivorRows(990000);
 
       final adoptedBatch = Completer<List<ShellJobEntry>>();
       final registry = ShellJobRegistry(
@@ -172,16 +171,25 @@ void main() async {
       await entry.stop();
       await entry.settled;
 
+      // 15 s, not 5: the stop path carries ~0.4 s kill grace + up to 3 s
+      // drain grace of REAL time before the settle listener adopts — under
+      // two parallel gates that alone crowded the old 5 s budget (hook run
+      // 2c: TimeoutException here, green alone x3).
       final adopted = await adoptedBatch.future.timeout(
-        const Duration(seconds: 5),
+        const Duration(seconds: 15),
       );
       expect(entry.stopReason, 'stopped');
-      expect(adopted, hasLength(1));
-      expect(adopted.single.isAdopted, isTrue);
-      expect(adopted.single.pid, 990001);
-      expect(adopted.single.command, 'sleep 606.2276');
-      expect(registry.jobs, contains(adopted.single));
-      await adopted.single.stop();
+      // Both the tagged subshell and the work under it are re-tracked.
+      expect(adopted.map((e) => e.pid).toSet(), {990000, 990001});
+      final work = adopted.firstWhere((e) => e.pid == 990001);
+      expect(work.isAdopted, isTrue);
+      expect(work.command, 'sleep 606.2276');
+      final shell = adopted.firstWhere((e) => e.pid == 990000);
+      expect(shell.command, contains(currentProcessOwnerMarker()));
+      for (final entry in adopted) {
+        expect(registry.jobs, contains(entry));
+        await entry.stop();
+      }
     },
     timeout: const Timeout(Duration(seconds: 15)),
   );
@@ -194,9 +202,8 @@ void main() async {
       LocalShell.ourPgidOverride = 700;
       LocalShell.descendantsOfOverride = (roots) async => Set.of(roots);
       LocalShell.signalPidOverride = (_, _) {};
-      LocalShell.processDetailTableSnapshotOverride = () async => [
-        _survivorRow(990002),
-      ];
+      LocalShell.processDetailTableSnapshotOverride = () async =>
+          _survivorRows(990002);
 
       final result = await const LocalShell().exec(
         'while :; do :; done',
@@ -206,9 +213,94 @@ void main() async {
       expect(result.isErr, isTrue);
       final error = result.errorOrNull!;
       expect(error.code, ExecutionErrorCode.timeout);
-      expect(error.survivors, hasLength(1));
-      expect(error.survivors.single.pid, 990002);
-      expect(error.survivors.single.command, 'sleep 606.2276');
+      expect(error.survivors.map((s) => s.pid).toSet(), {990002, 990003});
+      expect(
+        error.survivors.map((s) => s.command),
+        containsAll([contains(currentProcessOwnerMarker()), 'sleep 606.2276']),
+      );
+    },
+    timeout: const Timeout(Duration(seconds: 15)),
+  );
+
+  test(
+    'gh-2413: a detached program (own argv, no owner marker) is never a '
+    'survivor on non-ownGroup hosts',
+    skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+    () async {
+      LocalShell.ownProcessGroupOverride = false;
+      LocalShell.ourPgidOverride = 700;
+      LocalShell.descendantsOfOverride = (roots) async => Set.of(roots);
+      LocalShell.signalPidOverride = (_, _) {};
+      LocalShell.processDetailTableSnapshotOverride = () async => [
+        _detachedRow(990003),
+        ..._peerRows(990004),
+      ];
+      final result = await const LocalShell().exec(
+        'echo hi',
+        options: const ShellExecOptions(timeout: Duration(seconds: 5)),
+      );
+      expect(result.isOk, isTrue);
+      expect(
+        result.valueOrNull!.survivors,
+        isEmpty,
+        reason:
+            'a detached program and a peer session\'s subtree are '
+            'never adopted on marker-gated hosts',
+      );
+    },
+  );
+
+  test(
+    'gh-2413: a settled job never adopts a LIVE sibling job\'s subtree — '
+    'the waiting row keeps exactly the outstanding waiter (no PTY pin)',
+    skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+    () async {
+      final workspace = await Directory.systemTemp.createTemp('fah2413-sib-');
+      addTearDown(() => workspace.delete(recursive: true));
+      LocalShell.ownProcessGroupOverride = false;
+      LocalShell.ourPgidOverride = 700;
+      LocalShell.signalPidOverride = (_, _) {};
+      final wrapper =
+          'sh -c . \$1 sh /T/${currentProcessOwnerMarker()}Live/cmd.sh';
+      final fresh = _lstartOf(DateTime.now());
+      // The post-exit table of job A (just settled): the harness itself,
+      // job B still running (its wrapper wears OUR marker + its `sleep 4`
+      // child), and A's genuine leftover (an orphaned tagged subshell).
+      LocalShell.processDetailTableSnapshotOverride = () async => [
+        (pid: pid, ppid: 1, pgid: 700, lstart: fresh, command: 'dart test'),
+        (pid: 90100, ppid: pid, pgid: 700, lstart: fresh, command: wrapper),
+        (pid: 90101, ppid: 90100, pgid: 700, lstart: fresh, command: 'sleep 4'),
+        (pid: 90200, ppid: 1, pgid: 700, lstart: fresh, command: wrapper),
+      ];
+      final adoptedBatches = <List<ShellJobEntry>>[];
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: workspace.path),
+        onAdopt: (adopted, {required source}) => adoptedBatches.add(adopted),
+        livenessTableOverride: () async => null,
+        stopAdoptedOverride: (_) async => const [],
+      );
+      final job = await registry.start('echo done');
+      await job.settled;
+      await pumpEventQueue();
+      final batches = [
+        for (final batch in adoptedBatches)
+          for (final entry in batch) entry,
+      ];
+      expect(
+        batches.map((e) => e.pid),
+        [90200],
+        reason:
+            'only the orphaned tagged subshell is A\'s survivor; '
+            "job B's wrapper and its sleep are B's, never a duplicate",
+      );
+      final running = [
+        for (final entry in registry.jobs)
+          if (entry.isRunning) entry.command,
+      ];
+      expect(running, [wrapper]);
+      for (final entry in batches) {
+        await entry.stop();
+      }
     },
     timeout: const Timeout(Duration(seconds: 15)),
   );
@@ -291,7 +383,50 @@ void main() async {
   });
 }
 
-ProcessDetailRow _survivorRow(int pid) => (
+/// The survivor fixture (gh-2413): OUR leftover subtree after the job's
+/// wrapper exited — a backgrounded SUBSHELL still wearing this harness's
+/// wrapper argv (`fa_sh_cmd_<pid>_…`, the owner marker) and, under it, the
+/// child that does the work (`sleep` — its own argv carries nothing; it is
+/// ours because the `ppid` chain reaches the tagged subshell). [wrapperPid]
+/// is the subshell, [wrapperPid] + 1 the sleep.
+List<ProcessDetailRow> _survivorRows(int wrapperPid) => [
+  (
+    pid: wrapperPid,
+    ppid: 1,
+    pgid: 700,
+    lstart: _lstartOf(DateTime.now()),
+    command: 'sh -c . \$1 sh /T/${currentProcessOwnerMarker()}AbC/cmd.sh',
+  ),
+  (
+    pid: wrapperPid + 1,
+    ppid: wrapperPid,
+    pgid: 700,
+    lstart: _lstartOf(DateTime.now()),
+    command: 'sleep 606.2276',
+  ),
+];
+
+/// A PEER session's leftover: the same shape, tagged with another
+/// harness's marker (gh-2413 cross-talk shape) — never ours.
+List<ProcessDetailRow> _peerRows(int wrapperPid) => [
+  (
+    pid: wrapperPid,
+    ppid: 1,
+    pgid: 700,
+    lstart: _lstartOf(DateTime.now()),
+    command: 'sh -c . \$1 sh /T/fa_sh_cmd_${pid + 1}_Zz/cmd.sh',
+  ),
+  (
+    pid: wrapperPid + 1,
+    ppid: wrapperPid,
+    pgid: 700,
+    lstart: _lstartOf(DateTime.now()),
+    command: 'sleep 606.2276',
+  ),
+];
+
+/// A detached program's row: own argv, chain → init (gh-2413 negative).
+ProcessDetailRow _detachedRow(int pid) => (
   pid: pid,
   ppid: 1,
   pgid: 700,

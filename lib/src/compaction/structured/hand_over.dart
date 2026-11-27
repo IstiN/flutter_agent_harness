@@ -10,6 +10,8 @@
 /// [sanitizeHideLabel] before it can reach a marker.
 library;
 
+import '../../types.dart';
+import '../../context.dart';
 import '../record_tag.dart' show stripRecordTags;
 import '../summary_sanitizer.dart';
 
@@ -263,6 +265,47 @@ final RegExp _placeholder = RegExp(r'\{\{(\w+)\}\}');
 /// substituted here, at the call site). Deterministic: same inputs, same
 /// text; an unknown token is left verbatim so a prompt edit naming a new
 /// placeholder surfaces in the output instead of vanishing.
+/// gh-241 follow-up #5e (E3a): what the harness states about the run's
+/// end in the hand-over instruction. The request snapshot is the LAST
+/// REQUEST's context — it never carries the final assistant reply — so
+/// without this line the hand-over model reported a reply that WAS
+/// delivered as "not yet delivered" (owner live test, run 3).
+String handOverRunStatus(List<Message> messages) {
+  // No transcript (session-backed hosts hand the compactor an empty
+  // state): no claim — a wrong "still open" would be worse than none.
+  if (messages.isEmpty) return handOverRunStatusUnknown;
+  for (final message in messages.reversed) {
+    switch (message) {
+      case UserMessage():
+        // The newest user turn has no reply after it.
+        return handOverRunStatusNoReply;
+      case AssistantMessage(:final content):
+        final text = content
+            .whereType<TextContent>()
+            .map((part) => part.text.trim())
+            .where((part) => part.isNotEmpty)
+            .join('\n');
+        if (text.isNotEmpty) {
+          return 'the final assistant reply WAS delivered — that turn is '
+              'answered, not pending.';
+        }
+      // A tool-call-only or error assistant record is not a reply:
+      // keep looking further back.
+    }
+  }
+  return handOverRunStatusNoReply;
+}
+
+/// [handOverRunStatus] when the newest user turn has no delivered reply
+/// (the wording is budget-bound: the whole instruction stays under the
+/// D13 suffix budget).
+const String handOverRunStatusNoReply =
+    'the newest user turn has NO delivered reply — it is still open.';
+
+/// The status for a hand-over built without a transcript.
+const String handOverRunStatusUnknown =
+    'not available — make no claim about the last reply.';
+
 String renderHandOverInstruction({
   required String template,
   required int contextTokens,
@@ -272,8 +315,10 @@ String renderHandOverInstruction({
   List<String> openUserRequests = const [],
   String? pinnedOperative,
   String? foldedCheckpoints,
+  String runStatus = handOverRunStatusUnknown,
 }) {
   final values = <String, String>{
+    'run_status': runStatus,
     'context_tokens': '$contextTokens',
     'window_tokens': '$windowTokens',
     'fold_from': '$foldFrom',

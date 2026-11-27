@@ -92,11 +92,14 @@ void main() {
     'a busy label',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // Three ~15k-token answers in a 40k window cross the compaction
-      // threshold on turn 3 (same arithmetic as the busy-gate test).
-      // Sized manifest-INDEPENDENTLY (issue #2416: the slim manifest
-      // removed ~12.5k overhead tokens from every estimate).
-      final big = 'x' * 60000;
+      // Three ~10k-token answers in a 40k window cross the compaction
+      // threshold on turn 3 (same arithmetic as the busy-gate test) —
+      // with the gh-2411 fixture seam's ~3.4k overhead. The real CLI
+      // prompt prices near 10k here: turn 2 (~29.7k) then reached the
+      // post-run SOFT line (hard 30k − 5 %), the hand-over folded one
+      // turn early, and turn 3's equal pressure stayed muted by the
+      // soft line's hysteresis — no fold, no 4th call.
+      final big = 'x' * 40000;
       const tiny = Model(
         id: 'tiny-window',
         api: 'test-api',
@@ -118,6 +121,9 @@ void main() {
       );
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: tiny,
           apiKey: 'test-key',
           env: env,

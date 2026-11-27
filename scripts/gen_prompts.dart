@@ -113,6 +113,14 @@ const rootSpecs = <PromptSpec>[
     constName: 'recallHygienePrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/working_set.md',
+    constName: 'workingSetPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/compaction/context_hygiene.md',
+    constName: 'contextHygienePrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',

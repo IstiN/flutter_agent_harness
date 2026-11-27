@@ -61,6 +61,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCompactionEngine,
         loadProjectCompactionTuning,
         loadProjectContextWindowCap,
+        resolveContextWindowCap,
         loadProjectLoggingSection,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
@@ -159,6 +160,8 @@ export 'src/compaction/bench_trigger.dart';
 export 'src/compaction/emergency_relief.dart';
 export 'src/compaction/tuning.dart';
 export 'src/compaction/working_set.dart';
+export 'src/compaction/working_set_snapshot.dart';
+export 'src/compaction/working_set_store.dart';
 // gh-1742 review round 1, comment 3: `hasAnyReportedUsage` stays internal
 // until a caller exists (gh-1232: the barrel is append-only — a
 // speculative export is the wrong order). The E1 discrimination it
@@ -169,8 +172,13 @@ export 'src/compaction/context_window_registry.dart';
 // ── Compaction 2.0 hand-over (GOAL #2394; append-only) ──
 export 'src/compaction/compaction_mode.dart';
 export 'src/compaction/hand_over_trigger.dart';
+export 'src/compaction/inbound_mail.dart';
+export 'src/compaction/newest_user_turn.dart';
+export 'src/compaction/overhead_calibration.dart';
 export 'src/compaction/record_tag.dart';
+export 'src/compaction/record_tag_echo.dart';
 export 'src/compaction/request_snapshot.dart';
+export 'src/compaction/soft_window.dart';
 export 'src/compaction/structured/engine.dart' show HandOverPassMetrics;
 export 'src/compaction/structured/hand_over.dart';
 export 'src/compaction/structured/hand_over_dispose.dart';
@@ -315,7 +323,7 @@ export 'src/task/subagent_tools.dart';
 export 'src/task/subagent_scope.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/obligation_tool.dart';
-export 'src/tools/recite_goal_tool.dart';
+export 'src/tools/working_set_tool.dart';
 export 'src/tools/session_search_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';
