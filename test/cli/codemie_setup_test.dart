@@ -122,8 +122,10 @@ void main() {
           cli.agent.state.model.baseUrl,
           'https://codemie.lab.epam.com/code-assistant-api/v1',
         );
-        // The model carries cookie-header auth, not Bearer.
+        // The model carries cookie-header auth (plus the issue-#2426
+        // client header), not Bearer.
         expect(cli.agent.state.model.headers, {
+          'x-codemie-client': codeMieClient,
           'cookie': '_oauth2_proxy=proxy-val;session=s-1',
         });
       },
@@ -181,6 +183,13 @@ void main() {
       expect(
         cli.agent.state.model.headers?['x-codemie-project'],
         'demo-project',
+      );
+      // The budget-attribution client header rides every CodeMie model
+      // (issue #2426): a header-less request 429s against the personal
+      // budget while the org budget has headroom.
+      expect(
+        cli.agent.state.model.headers?[codeMieClientHeader],
+        codeMieClient,
       );
     });
 
@@ -604,6 +613,12 @@ void main() {
         // The picked project persists and rides the requests (gh-1809 AC4).
         expect(entry.project, 'demo');
         expect(cli.agent.state.model.headers?['x-codemie-project'], 'demo');
+        // The client header rides the JWT leg too (issue #2426 AC2) —
+        // headless/CI is the most 429-exposed surface.
+        expect(
+          cli.agent.state.model.headers?[codeMieClientHeader],
+          codeMieClient,
+        );
         expect(store.map[entry.keyName], jwtToken);
         expect(cli.providerKind, 'openai-completions');
         expect(cli.agent.state.model.baseUrl, entry.baseUrl);

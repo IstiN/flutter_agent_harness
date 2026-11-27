@@ -230,6 +230,13 @@ void _applyProviderFilterEnv() {
   }
 }
 
+/// The runtime `CODEMIE_CLIENT_ID` env override, applied at startup (issue
+/// #2426 review): orgs whose CodeMie gateway attributes budgets to a
+/// different registered client id set it instead of patching the constant.
+void _applyCodeMieClientEnv() {
+  codeMieClientOverride = resolveCodeMieClientOverride(Platform.environment);
+}
+
 /// Truthy env-var check (`1`/`true`/`yes`/`on`, case-insensitive).
 /// The inverse default for flags that are ON unless explicitly disabled:
 /// unset or a truthy value → true; only `0`/`false`/`no`/`off` → false.
