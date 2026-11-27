@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/providers/proxy_connector.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
@@ -34,6 +35,7 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
+    Map<String, ProviderNetworkConfig>? providerNetworks,
     Future<void> Function(String providerKind, String apiKey)?
     onProviderChanged,
     SecureKeyCache? secureKeys,
@@ -79,6 +81,7 @@ void main() {
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
         modelsHttpClient: modelsHttpClient,
+        providerNetworks: providerNetworks ?? const {},
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         customProviders: customProviders,
@@ -1312,6 +1315,81 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
+
+    test(
+      'wizard fetch client: re-run entry name → host → catalog; injection wins',
+      () {
+        const url = 'https://ai-proxy.lab.epam.com';
+        final entry = CustomProviderEntry(
+          name: 'my-dial',
+          apiType: 'dial',
+          baseUrl: url,
+          modelId: 'm',
+        );
+        final binding = ProviderNetworkConfig(
+          proxy: Uri.parse('socks5://127.0.0.1:1080'),
+        );
+
+        // Candidate order: the re-run entry's saved name beats the
+        // host-derived default, which beats the catalog name.
+        final rerun = cliFor(
+          FakeStreamFunction([]).call,
+          customProviders: CustomProviderRegistry([entry]),
+          providerNetworks: {'my-dial': binding},
+        );
+        expect(rerun.dialWizardClientKeyCandidates(url), [
+          'my-dial',
+          'ai-proxy.lab.epam.com',
+          'dial',
+        ]);
+        expect(
+          rerun.dialWizardModelFetchClient(url),
+          isNotNull,
+          reason: 'a binding under the saved entry name rides its proxy',
+        );
+
+        // No saved entry: the host-derived default name is the second
+        // candidate — the one the name prompt pre-fills.
+        final hostBound = cliFor(
+          FakeStreamFunction([]).call,
+          providerNetworks: {'ai-proxy.lab.epam.com': binding},
+        );
+        expect(
+          hostBound.dialWizardModelFetchClient(url),
+          isNotNull,
+          reason: 'a binding under the host-derived name rides its proxy',
+        );
+
+        // Catalog binding still works, and nothing bound at all keeps the
+        // direct path (null — fetchDialModels creates its own client).
+        final catalogBound = cliFor(
+          FakeStreamFunction([]).call,
+          providerNetworks: {'dial': binding},
+        );
+        expect(catalogBound.dialWizardModelFetchClient(url), isNotNull);
+        expect(
+          cliFor(FakeStreamFunction([]).call).dialWizardModelFetchClient(url),
+          isNull,
+        );
+
+        // Test injection wins over every binding (the seam the DIAL trio
+        // uses to stay off the network).
+        final injected = MockClient(
+          (request) async => http.Response('not found', 404),
+        );
+        final injectedCli = cliFor(
+          FakeStreamFunction([]).call,
+          modelsHttpClient: injected,
+          customProviders: CustomProviderRegistry([entry]),
+          providerNetworks: {'my-dial': binding},
+        );
+        expect(
+          identical(injectedCli.dialWizardModelFetchClient(url), injected),
+          isTrue,
+          reason: 'modelsHttpClient must win over every proxy binding',
+        );
+      },
+    );
   });
   group('OpenRouter auth method picker', () {
     test('/provider openrouter shows auth-method picker', () async {

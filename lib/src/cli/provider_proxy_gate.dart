@@ -39,4 +39,41 @@ extension ProviderProxyGate on AgentCli {
   /// proxy). Test injection ([AgentCliConfig.modelsHttpClient]) still wins.
   http.Client? modelFetchClient(String providerName) =>
       config.modelsHttpClient ?? proxiedProviderClient(providerName);
+
+  /// The client for a fetch whose provider identity is only one of several
+  /// candidate names (wizard-time fetches run BEFORE the entry name
+  /// exists): test injection wins, then the first BOUND candidate, else
+  /// null — the direct path, byte-identical legacy behavior.
+  http.Client? modelFetchClientFor(List<String> candidateNames) {
+    if (config.modelsHttpClient != null) return config.modelsHttpClient;
+    for (final name in candidateNames) {
+      if (config.providerNetworks.containsKey(name)) {
+        return modelFetchClient(name);
+      }
+    }
+    return null;
+  }
+
+  /// The proxy-binding key candidates for the dial wizard's deployment
+  /// fetch, in binding-probability order: the re-run entry's saved name
+  /// (setup reuses the entry), the host-derived default name (the name
+  /// prompt pre-fills it), the catalog name. A user can bind a `network:`
+  /// block under ANY of the three — the literal catalog key alone missed
+  /// the first two (review of the test-speed branch).
+  List<String> dialWizardClientKeyCandidates(String baseUrl) {
+    String? existingName;
+    final entries = config.customProviders?.entries ?? const [];
+    for (final e in entries) {
+      if (e.apiType == dialDispatchHint && e.baseUrl == baseUrl) {
+        existingName = e.name;
+        break;
+      }
+    }
+    return [?existingName, _codeMieHostName(baseUrl), dialDispatchHint];
+  }
+
+  /// The fail-closed client for the dial wizard's deployment fetch (see
+  /// [dialWizardClientKeyCandidates] for the candidate order).
+  http.Client? dialWizardModelFetchClient(String baseUrl) =>
+      modelFetchClientFor(dialWizardClientKeyCandidates(baseUrl));
 }
