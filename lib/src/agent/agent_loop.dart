@@ -38,10 +38,12 @@ import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
+import '../compaction/overhead_calibration.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap, tagContext;
 import '../compaction/request_snapshot.dart'
     show RequestRouting, RequestSnapshot, RequestSnapshotStore;
 import '../compaction/structured/projection.dart' show RecordSeqIndex;
+import '../compaction/soft_window.dart' show softWindowRegime, softWindowSkip;
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../image_overflow.dart'
     show classifyImageCapError, isPayloadTooLargeError;
@@ -59,6 +61,8 @@ export 'stuck_tool.dart'
         stuckBackgroundHandbackMarker,
         stuckBackgroundHandbackSentence,
         stuckBackgroundHandbackText;
+import '../compaction/working_set_snapshot.dart'
+    show WorkingSetSnapshot, appendWorkingSetToSystemPrompt;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -85,6 +89,7 @@ import 'stuck_tool.dart';
 import 'foreground_call_budget.dart';
 import 'tool_pairing.dart';
 import 'stream_cache_routing.dart';
+part 'agent_loop_entry.dart';
 
 part 'agent_loop_stuck_supervision.dart';
 part 'agent_loop_foreground_budget.dart';
@@ -390,6 +395,8 @@ final class AgentLoopConfig {
     this.transformContext,
     this.prepareNextTurn,
     this.overWindowRelief,
+    this.overheadCalibration,
+    this.windowReserveTokens,
     this.messageCapPolicy,
     this.messageCapRelief,
     this.getSteeringMessages,
@@ -410,6 +417,8 @@ final class AgentLoopConfig {
     this.foregroundBudgetControls,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    this.workingSetProvider,
+    this.takePendingNotices,
     this.reportedOrphanKeys,
     this.budgetLineProvider,
     this.imageCapLatches,
@@ -457,6 +466,20 @@ final class AgentLoopConfig {
   /// most once per response before the guard's refusal surfaces; see
   /// [OverWindowRelief]. `null` = the guard keeps today's behavior.
   final OverWindowRelief? overWindowRelief;
+
+  /// gh-2411: the session's overhead calibration, read per request so the
+  /// guard prices an unanchored request exactly as the host's ctx meter
+  /// does. `null` = the uncalibrated heuristic.
+  final OverheadCalibration Function()? overheadCalibration;
+
+  /// gh-2411: the host's compaction reserve for the effective window —
+  /// the soft-window regime (fixed overhead + newest user turn ≥
+  /// `window - reserve`: no trim can ever land under the TRIGGER) lets a
+  /// request through untrimmed while it is still UNDER the window; over
+  /// the window the guard keeps its stop (the owner's live test: skipping
+  /// there grew the context to 114%). `null`/absent = the window itself
+  /// is the line (no reserve).
+  final int Function()? windowReserveTokens;
 
   /// gh-1680: the learned per-model message-cap policy: a classified cap
   /// refusal is learned and the loop retries ONCE (coalesced payload +
@@ -623,6 +646,27 @@ final class AgentLoopConfig {
   /// untouched. Payload-only — the transcript is never modified.
   final String? Function()? budgetLineProvider;
 
+  /// gh-2423 (C1): resolves the agent's newest working-set snapshot before
+  /// a provider call; non-null result ⇒ the `<working-set>` block rides
+  /// the SYSTEM channel of that request (a suffix on the system prompt —
+  /// payload-only, the transcript and the static prompt are untouched);
+  /// null (no store / no snapshot / cleared) ⇒ the request is
+  /// byte-identical to before. Read per request, so a `working_set` write
+  /// lands on the very next call.
+  final Future<WorkingSetSnapshot?> Function()? workingSetProvider;
+
+  /// gh-2423 (C3): drains the host's pending context notices (the
+  /// post-hide / near-limit `<system-notice>` records). Called right
+  /// before the queued steering is injected — a notice rides the NEXT
+  /// request the run makes anyway (user prompt, tool continuation,
+  /// over-window continuation), through the same inject/persist path as
+  /// steering, but it is NOT steering: it never opens a turn of its own
+  /// (the steering queue's stop-check drain would turn every notice into
+  /// an extra model turn — and, under a low trigger, into a
+  /// notice → answer → hide → notice loop). An empty result ⇒ the loop
+  /// is byte-identical to before.
+  final List<Message> Function()? takePendingNotices;
+
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s). The loop adds every key it reports in
   /// [ToolPairingRepairReport.notedOrphanKeys] back into the set once the
@@ -657,6 +701,8 @@ final class AgentLoopConfig {
       transformContext: transformContext,
       prepareNextTurn: prepareNextTurn,
       overWindowRelief: overWindowRelief,
+      overheadCalibration: overheadCalibration,
+      windowReserveTokens: windowReserveTokens,
       getSteeringMessages: getSteeringMessages,
       getFollowUpMessages: getFollowUpMessages,
       steeringNotifications: steeringNotifications,
@@ -675,6 +721,8 @@ final class AgentLoopConfig {
       foregroundBudgetControls: foregroundBudgetControls,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
+      workingSetProvider: workingSetProvider,
+      takePendingNotices: takePendingNotices,
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
       imageCapLatches: imageCapLatches,
@@ -997,93 +1045,6 @@ final class ToolCallStuckEvent extends AgentEvent {
   final DateTime timestamp;
 }
 
-/// The event stream returned by [agentLoop] and [agentLoopContinue].
-///
-/// Completes on [AgentEndEvent]; [EventStream.result] then yields the
-/// messages produced by the run.
-class AgentEventStream extends EventStream<AgentEvent, List<Message>> {
-  AgentEventStream()
-    : super(
-        isComplete: (event) => event is AgentEndEvent,
-        extractResult: (event) => (event as AgentEndEvent).messages,
-      );
-}
-
-/// Starts an agent loop with new prompt messages.
-///
-/// The prompts are appended to [context] and announced with
-/// [MessageStartEvent]/[MessageEndEvent]; the loop then streams the model,
-/// executes tool calls via [toolExecutor], and re-invokes the model until it
-/// stops calling tools, fails, or [cancelToken] is cancelled. Provider
-/// failures never throw (errors-as-events): they end the loop with an
-/// assistant message whose [AssistantMessage.stopReason] is
-/// [StopReason.error] or [StopReason.aborted].
-///
-/// The returned [AgentEventStream] replays all events to a late listener and
-/// its [EventStream.result] resolves with the messages produced by the run.
-///
-/// [context] is copied defensively; the loop mutates only its own copy.
-AgentEventStream agentLoop({
-  required List<Message> prompts,
-  required Context context,
-  required AgentLoopConfig config,
-  required StreamFunction streamFunction,
-  required ToolExecutor toolExecutor,
-  CancelToken? cancelToken,
-  CancelTokenSource? cancelTokenSource,
-}) {
-  final stream = AgentEventStream();
-  _drive(
-    stream,
-    runAgentLoop(
-      prompts: prompts,
-      context: context,
-      config: config,
-      emit: stream.push,
-      streamFunction: streamFunction,
-      toolExecutor: toolExecutor,
-      cancelToken: cancelToken,
-      cancelTokenSource: cancelTokenSource,
-    ),
-  );
-  return stream;
-}
-
-/// Continues an agent loop from [context] without adding a new message.
-///
-/// Used for retries — the context already ends with a user or tool-result
-/// message the model can respond to. Throws [ConfigException] synchronously
-/// if [context] has no messages or ends with an assistant message (pi
-/// validation).
-AgentEventStream agentLoopContinue({
-  required Context context,
-  required AgentLoopConfig config,
-  required StreamFunction streamFunction,
-  required ToolExecutor toolExecutor,
-  CancelToken? cancelToken,
-}) {
-  if (context.messages.isEmpty) {
-    throw const ConfigException('Cannot continue: no messages in context');
-  }
-  if (context.messages.last.role == 'assistant') {
-    throw const ConfigException('Cannot continue from message role: assistant');
-  }
-
-  final stream = AgentEventStream();
-  _drive(
-    stream,
-    runAgentLoopContinue(
-      context: context,
-      config: config,
-      emit: stream.push,
-      streamFunction: streamFunction,
-      toolExecutor: toolExecutor,
-      cancelToken: cancelToken,
-    ),
-  );
-  return stream;
-}
-
 /// Starts an agent loop with new prompt messages, delivering events to
 /// [emit] and resolving with the messages produced by the run.
 ///
@@ -1233,6 +1194,14 @@ Future<List<Message>> _runAgentLoop({
       firstTurn = false;
 
       // Inject queued messages before the next assistant response.
+      // gh-2423 (C3): pending context notices join the injection — they
+      // ride this request (last, after any steering) and never count as
+      // steering extensions.
+      final pendingNotices =
+          currentConfig.takePendingNotices?.call() ?? const <Message>[];
+      if (pendingNotices.isNotEmpty) {
+        pendingMessages = [...pendingMessages, ...pendingNotices];
+      }
       await _injectPendingMessages(
         pendingMessages,
         emit,
@@ -1562,8 +1531,9 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
   bool reliefUsed,
   CancelToken? cancelToken,
   int window,
-  int tokens,
-) async {
+  int tokens, {
+  bool sendAnyway = false,
+}) async {
   // `window`/`tokens` are computed synchronously by the caller (the same
   // accounting basis as the host's ctx meter and the compaction
   // threshold: transcript estimate PLUS the system-prompt / tool-schema
@@ -1624,6 +1594,16 @@ Future<_OverWindowGuardStep> _overWindowGuardTurn(
         );
       }
     }
+  }
+  // gh-241 follow-up #5d (D5 — owner live test round 5): in the
+  // soft-window regime the configured window is below what EVERY request
+  // carries (fixed overhead + reserve); relief freed nothing; the
+  // provider is the real limit — it accepted 108–123 % requests all
+  // along. Stopping here ended a read-only turn in `stop=error`, exit 1:
+  // an unsent request is worse than a slightly over one. The request
+  // goes out as is.
+  if (sendAnyway) {
+    return (context: context, reliefUsed: true, retried: false, terminal: null);
   }
   return (
     context: context,
@@ -1835,6 +1815,24 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       messages: [...requestContext.messages, UserMessage.text(misuseNote)],
       tools: requestContext.tools,
     );
+  }
+  // gh-2423 (C1): the agent's working set rides the SYSTEM channel of
+  // every request — a suffix on the system prompt, decided LAST so every
+  // rewrite above priced the static prompt and the request snapshot
+  // captures what is really sent. Payload-only: no message, no record.
+  final workingSet = await config.workingSetProvider?.call();
+  if (workingSet != null) {
+    final systemPrompt = appendWorkingSetToSystemPrompt(
+      requestContext.systemPrompt,
+      workingSet,
+    );
+    if (!identical(systemPrompt, requestContext.systemPrompt)) {
+      requestContext = Context(
+        systemPrompt: systemPrompt,
+        messages: requestContext.messages,
+        tools: requestContext.tools,
+      );
+    }
   }
   return (requestContext, repaired.report);
 }

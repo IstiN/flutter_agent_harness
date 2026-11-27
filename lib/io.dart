@@ -25,6 +25,12 @@ export 'src/cli/ext_engine_process.dart';
 export 'src/env/isolate_session_parse_executor.dart';
 export 'src/env/session_parse_executor.dart';
 export 'src/env/free_space_io.dart';
+// gh-2415: the startup RLIMIT_NOFILE raise (soft → min(hard, 10240)) —
+// dart:ffi on VM POSIX hosts, a no-op stub on web; the pure decision core
+// ships with the barrel-less io surface so bin/ can call it first thing.
+export 'src/env/fd_limit.dart';
+export 'src/env/fd_limit_stub.dart'
+    if (dart.library.io) 'src/env/fd_limit_io.dart';
 export 'src/env/bash_guard_io.dart';
 export 'src/env/io_execution_env.dart';
 export 'src/hub/local_hub.dart';

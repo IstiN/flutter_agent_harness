@@ -4,19 +4,27 @@ import 'package:yaml/yaml.dart';
 
 /// The `messaging:` config section (issue #2226): the wake-gating knobs.
 /// Strict parse; the defaults pin the #2226 behavior — cap OFF, smart
-/// detection ON, a generous chain budget.
+/// detection ON — and the PR #2435 owner directive: the autonomous-chain
+/// token budget OFF by default (mail always wakes; a positive
+/// `chainBudgetTokens` re-enables the budget pause).
 void main() {
   Object? yamlNode(String source) => (loadYaml(source) as Map)['messaging'];
 
-  test('#2226 AC6: the defaults are cap OFF + detection ON + a generous '
-      'budget', () {
+  test('#2226 AC6 + PR #2435: the defaults are cap OFF + detection ON + '
+      'the chain budget OFF', () {
     const config = MessagingConfig();
     expect(
       config.wakeChatterCap,
       0,
       reason: 'the raw streak cap is OFF by default now',
     );
-    expect(config.chainBudgetTokens, 400000);
+    expect(
+      config.chainBudgetTokens,
+      0,
+      reason:
+          'the budget pause is OFF by default (PR #2435 owner '
+          'directive: let the mail arrive); a positive value re-enables',
+    );
     expect(config.loopDetection.enabled, isTrue);
     expect(config.loopDetection.similarityThreshold, 0.92);
     expect(config.loopDetection.stuckRounds, 4);
@@ -28,7 +36,7 @@ void main() {
     // same null path, never as a foreign map.
     final config = MessagingConfig.fromYaml(null);
     expect(config.wakeChatterCap, 0);
-    expect(config.chainBudgetTokens, 400000);
+    expect(config.chainBudgetTokens, 0, reason: 'OFF by default');
     expect(config.loopDetection.enabled, isTrue);
   });
 

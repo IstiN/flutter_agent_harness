@@ -178,10 +178,14 @@ void main() {
     // The continuation notice names the recoverables it could still see:
     // the hidden range is resident, so the notice carries the
     // compact_expand hint even though its oldest covered records slid out.
+    // gh-2423 C3: the harness's own post-hide notice may be the newest
+    // synthetic record after the continuation notice — it is machine
+    // content, not the continuation.
     final notice = entries
         .whereType<MessageRecord>()
         .map((r) => r.message)
         .whereType<UserMessage>()
+        .where((m) => !isContextNoticeText(userMessageText(m.content)))
         .last;
     final text = notice.content as String;
     expect(text, contains('<system-notice>'));
