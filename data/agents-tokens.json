@@ -1620,5 +1620,18 @@
       "source": "reported",
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2415": [
+    {
+      "leg": "review",
+      "at": "2026-11-27T01:54:55Z",
+      "prompt": 91933,
+      "completion": 30537,
+      "total": 122470,
+      "cacheRead": 2135040,
+      "requests": 38,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
