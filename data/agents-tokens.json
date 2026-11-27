@@ -2018,6 +2018,17 @@
       "requests": 30,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-27T16:13:06Z",
+      "prompt": 190099,
+      "completion": 9963,
+      "total": 200062,
+      "cacheRead": 1322112,
+      "requests": 29,
+      "source": "",
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-2445": [
