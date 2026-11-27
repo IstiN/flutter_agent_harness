@@ -15,7 +15,10 @@ import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
 import 'bash_guard_io.dart';
 import 'execution_env.dart';
-import 'fd_limit_io.dart'; // issue #2415: fd-pressure typing
+// Issue #2415: dart:ffi does not compile on ANY web flavor (pure dart2js
+// AND flutter web, whose stubbed dart:io still makes dart.library.io
+// true here) — gate on dart.library.ffi, false on both webs.
+import 'fd_limit_stub.dart' if (dart.library.ffi) 'fd_limit_io.dart';
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
 import 'job_log_redaction.dart';

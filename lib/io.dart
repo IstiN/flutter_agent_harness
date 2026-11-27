@@ -26,7 +26,7 @@ export 'src/env/isolate_session_parse_executor.dart';
 export 'src/env/session_parse_executor.dart';
 export 'src/env/free_space_io.dart';
 export 'src/env/fd_limit_stub.dart'
-    if (dart.library.io) 'src/env/fd_limit_io.dart';
+    if (dart.library.ffi) 'src/env/fd_limit_io.dart';
 export 'src/env/bash_guard_io.dart';
 export 'src/env/io_execution_env.dart';
 export 'src/hub/local_hub.dart';
